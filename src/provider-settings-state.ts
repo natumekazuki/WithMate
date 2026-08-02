@@ -11,6 +11,7 @@ import {
   normalizeUserMicrocopyCatalog,
   type MicrocopyCatalog,
 } from "./microcopy-state.js";
+import { normalizeSessionSidePane, type SessionSidePane } from "./session-side-pane.js";
 
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
@@ -18,7 +19,7 @@ export type AppSettings = {
   sessionTurnNotificationEnabled: boolean;
   sessionTurnNotificationResponsePreviewEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
-  sessionRightPaneVisible: boolean;
+  sessionSidePane: SessionSidePane;
   memoryFileQuotaBytes: number;
   userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
@@ -98,7 +99,7 @@ export function createDefaultAppSettings(): AppSettings {
     sessionTurnNotificationEnabled: true,
     sessionTurnNotificationResponsePreviewEnabled: false,
     autoCollapseActionDockOnSend: true,
-    sessionRightPaneVisible: false,
+    sessionSidePane: "none",
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
@@ -324,8 +325,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         : false,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
-    sessionRightPaneVisible:
-      typeof candidate.sessionRightPaneVisible === "boolean" ? candidate.sessionRightPaneVisible : false,
+    sessionSidePane: normalizeSessionSidePane(candidate.sessionSidePane),
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),

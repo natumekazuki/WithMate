@@ -9,6 +9,7 @@ import {
 
 import {
   SESSION_RIGHT_PANE_ID,
+  SESSION_LEFT_PANE_ID,
   SessionActionDockCompactRow,
   SessionChatScreen,
   SessionComposerExpanded,
@@ -31,6 +32,7 @@ export type ChatWindowProps = Omit<ChatScreenProps, "header" | "messageColumn" |
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
+  mainContent?: ChatScreenProps["mainContent"];
 };
 export type ChatSelectOption = SessionSelectOption;
 export type ChatHeaderHandleProps = ComponentProps<typeof SessionHeaderHandle>;
@@ -49,6 +51,7 @@ export type ChatRightPaneShellProps = {
 };
 
 export type ChatWorkbenchSplitterProps = {
+  side?: "left" | "right";
   isActive?: boolean;
   isRightPaneVisible?: boolean;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
@@ -146,6 +149,7 @@ export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowSt
 }
 
 export function ChatWorkbenchSplitter({
+  side = "right",
   isActive = false,
   isRightPaneVisible = true,
   onPointerDown,
@@ -157,10 +161,11 @@ export function ChatWorkbenchSplitter({
     return <div className="session-workbench-splitter is-static" aria-hidden="true" />;
   }
 
+  const paneLabel = side === "left" ? "左ペイン" : "右ペイン";
   const resolvedAriaLabel = ariaLabel
     ?? (
       onToggleRightPane
-        ? (isRightPaneVisible ? "右ペインを非表示" : "右ペインを表示")
+        ? (isRightPaneVisible ? `${paneLabel}を非表示` : `${paneLabel}を表示`)
         : "会話と command pane の幅を調整"
     );
   const resolvedTitle = title
@@ -183,13 +188,15 @@ export function ChatWorkbenchSplitter({
       onPointerDown={onPointerDown}
       onClick={onToggleRightPane}
       aria-label={resolvedAriaLabel}
-      aria-controls={onToggleRightPane ? SESSION_RIGHT_PANE_ID : undefined}
+      aria-controls={onToggleRightPane ? (side === "left" ? SESSION_LEFT_PANE_ID : SESSION_RIGHT_PANE_ID) : undefined}
       aria-expanded={onToggleRightPane ? isRightPaneVisible : undefined}
       title={resolvedTitle}
     >
       {onToggleRightPane ? (
         <span className="session-workbench-splitter-chevron" aria-hidden="true">
-          {isRightPaneVisible ? "›" : "‹"}
+          {side === "left"
+            ? (isRightPaneVisible ? "‹" : "›")
+            : (isRightPaneVisible ? "›" : "‹")}
         </span>
       ) : null}
     </button>

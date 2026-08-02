@@ -2,11 +2,20 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
-  buildDirectoryOpenFallbackCommand,
+  openLocalPathWithDefaultApp,
+  revealLocalPathInFileManager,
   resolveForwardSlashUncPathCandidate,
   resolveOpenPathTarget,
   resolveProtocolRelativeExternalFallback,
+  resolveProtocolRelativeExternalFallbackAfterLocalOpen,
 } from "../../src-electron/open-path.js";
+
+function localPathStat(kind: "file" | "directory") {
+  return {
+    isDirectory: () => kind === "directory",
+    isFile: () => kind === "file",
+  };
+}
 
 describe("resolveOpenPathTarget", () => {
   it("http url はそのまま外部 URL として扱う", () => {
@@ -173,14 +182,151 @@ describe("resolveOpenPathTarget", () => {
     });
   });
 
-  it("Windows の directory open fallback は explorer.exe を使う", () => {
-    assert.deepEqual(buildDirectoryOpenFallbackCommand("C:\\workspace\\project", "win32"), {
-      command: "explorer.exe",
-      args: ["C:\\workspace\\project"],
+});
+
+describe("openLocalPathWithDefaultApp", () => {
+  it("既定アプリで file を開けない場合は自動で Explorer に切り替えず failed を返す", async () => {
+    const revealed: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md", {
+      statTarget: async () => localPathStat("file"),
+      openWithDefaultApp: async () => "No application is associated with the specified file.",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(revealed, []);
+    assert.match(result.message, /No application is associated/i);
+  });
+
+  it("scheme が大文字の file URL も local path に変換する", () => {
+    assert.deepEqual(resolveOpenPathTarget("FILE:///C:/workspace/docs/a%23b.txt#intro"), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\docs\\a#b.txt",
     });
   });
 
-  it("Windows 以外では directory open fallback を持たない", () => {
-    assert.equal(buildDirectoryOpenFallbackCommand("/workspace/project", "linux"), null);
+  it("directory も既定アプリで開く", async () => {
+    const result = await openLocalPathWithDefaultApp("C:\\workspace", {
+      statTarget: async () => localPathStat("directory"),
+      openWithDefaultApp: async () => "",
+    });
+
+    assert.equal(result.status, "opened");
+  });
+
+  it("file / directory 以外の filesystem object は既定アプリへ渡さない", async () => {
+    let openCalls = 0;
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\special", {
+      statTarget: async () => ({
+        isDirectory: () => false,
+        isFile: () => false,
+      }),
+      openWithDefaultApp: async () => {
+        openCalls += 1;
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "failed");
+    assert.equal(openCalls, 0);
+  });
+
+  it("存在しない path は既定アプリを呼ばず not-found を返す", async () => {
+    let openCalls = 0;
+    const result = await openLocalPathWithDefaultApp("C:\\missing.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+      },
+      openWithDefaultApp: async () => {
+        openCalls += 1;
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "not-found");
+    assert.equal(openCalls, 0);
+  });
+
+  it("stat の permission error は not-found にせず failed と診断する", async () => {
+    const result = await openLocalPathWithDefaultApp("C:\\protected.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("EACCES: access denied"), { code: "EACCES" });
+      },
+      openWithDefaultApp: async () => "",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.message, /EACCES: access denied/);
+  });
+
+  it("permission error は protocol-relative URL の外部 fallback を起動しない", () => {
+    assert.equal(resolveProtocolRelativeExternalFallbackAfterLocalOpen("//intranet/app/page", {
+      status: "failed",
+      targetType: "local-path",
+      target: "\\\\intranet\\app\\page",
+      message: "EACCES: access denied",
+    }), null);
+  });
+
+  it("存在しない UNC 候補だけを protocol-relative URL として再解釈できる", () => {
+    assert.equal(resolveProtocolRelativeExternalFallbackAfterLocalOpen("//intranet/app/page", {
+      status: "not-found",
+      targetType: "local-path",
+      target: "\\\\intranet\\app\\page",
+      message: "The local path was not found.",
+    }), "https://intranet/app/page");
+  });
+});
+
+describe("revealLocalPathInFileManager", () => {
+  it("file は明示操作のときだけ file manager に表示する", async () => {
+    const revealed: string[] = [];
+    const result = await revealLocalPathInFileManager("C:\\workspace\\notes.md", {
+      statTarget: async () => localPathStat("file"),
+      openWithDefaultApp: async () => "",
+      revealInFileManager: (targetPath) => revealed.push(targetPath),
+    });
+
+    assert.equal(result.status, "revealed");
+    assert.deepEqual(revealed, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("directory の明示 reveal は既定の file manager で開く", async () => {
+    const opened: string[] = [];
+    const result = await revealLocalPathInFileManager("C:\\workspace", {
+      statTarget: async () => localPathStat("directory"),
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+      revealInFileManager: () => undefined,
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(opened, ["C:\\workspace"]);
+  });
+
+  it("reveal 前の permission error は not-found にせず failed と診断する", async () => {
+    const result = await revealLocalPathInFileManager("C:\\protected.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+      },
+      openWithDefaultApp: async () => "",
+      revealInFileManager: () => undefined,
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(result.message, /EPERM: operation not permitted/);
+  });
+
+  it("reveal 前の ENOTDIR は not-found を返す", async () => {
+    const result = await revealLocalPathInFileManager("C:\\missing\\file.txt", {
+      statTarget: async () => {
+        throw Object.assign(new Error("ENOTDIR"), { code: "ENOTDIR" });
+      },
+      openWithDefaultApp: async () => "",
+      revealInFileManager: () => undefined,
+    });
+
+    assert.equal(result.status, "not-found");
   });
 });

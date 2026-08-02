@@ -29,6 +29,9 @@ import {
 } from "./live-session-projection.js";
 
 export type AgentSessionChatProjectionInput = {
+  mainContent?: ReactNode;
+  leftPane?: ReactNode;
+  isFilesPaneVisible: boolean;
   selectedSession: Session;
   selectedSessionCharacter: CharacterProfile;
   displayedMessages: Message[];
@@ -54,6 +57,7 @@ export type AgentSessionChatProjectionInput = {
   liveRunAssistantText: string;
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
+  inlinePathFeedback: string;
   isMessageListFollowing: boolean;
   pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   retryBanner: SessionRetryBannerProps["retryBanner"];
@@ -87,6 +91,7 @@ export type AgentSessionChatProjectionInput = {
   selectedModelFallbackLabel: string;
   reasoningSelectOptions: SessionComposerExpandedProps["reasoningOptions"];
   actionDockCompactPreview: string;
+  chatNotice?: string;
   attachmentCount: number;
   isActionDockExpanded: boolean;
   isContextRailResizing: boolean;
@@ -137,6 +142,7 @@ export type AgentSessionChatProjectionInput = {
   onResolveLiveApproval: SessionMessageColumnProps["onResolveLiveApproval"];
   onResolveLiveElicitation: SessionMessageColumnProps["onResolveLiveElicitation"];
   onOpenInlinePath: (target: string) => void;
+  onDismissInlinePathFeedback: () => void;
   getChangedFilesEmptyText: SessionMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText: NonNullable<SessionMessageColumnProps["onCopyMessageText"]>;
   onQuoteMessageText: NonNullable<SessionMessageColumnProps["onQuoteMessageText"]>;
@@ -177,6 +183,7 @@ export type AgentSessionChatProjectionInput = {
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
   onToggleContextRailVisibility: () => void;
+  onToggleFilesPaneVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   onCloseDiff: () => void;
@@ -271,6 +278,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       reasoningOptions: input.reasoningSelectOptions,
       selectedReasoningEffort: input.selectedSession.reasoningEffort,
       actionDockCompactPreview: input.actionDockCompactPreview,
+      chatNotice: input.chatNotice,
       attachmentCount: input.attachmentCount,
       onPickFile: input.onPickFile,
       onPickFolder: input.onPickFolder,
@@ -378,11 +386,25 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,
     headerProps,
-    messageColumnProps: chatBodyProps.messageColumnProps,
+    messageColumnProps: {
+      ...chatBodyProps.messageColumnProps,
+      inlinePathFeedback: input.inlinePathFeedback,
+      onDismissInlinePathFeedback: input.onDismissInlinePathFeedback,
+    },
+    mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
     splitterProps: chatBodyProps.splitterProps,
+    leftPane: input.leftPane,
+    leftSplitterProps: {
+      side: "left",
+      isRightPaneVisible: input.isFilesPaneVisible,
+      onToggleRightPane: input.onToggleFilesPaneVisibility,
+      ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
+      title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
+    },
+    isLeftPaneVisible: input.isFilesPaneVisible,
     isRightPaneVisible: input.isContextRailVisible,
     rightPaneProps,
     modals: <ChatSessionModals {...input} />,

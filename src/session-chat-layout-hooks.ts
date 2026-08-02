@@ -8,6 +8,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import type { SessionSidePane } from "./session-side-pane.js";
 
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
 const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
@@ -130,27 +131,34 @@ export function useSessionMessageListFollowing({
   };
 }
 
-export type UseSessionContextRailArgs = {
+export type UseSessionSidePanesArgs = {
   ownerKey: string | null;
   enabled?: boolean;
-  initialContextRailVisibility?: boolean | null;
-  onContextRailVisibilityChange?: (isVisible: boolean) => void;
+  filesPaneEnabled?: boolean;
+  initialSidePane?: SessionSidePane | null;
+  onSidePaneChange?: (sidePane: SessionSidePane) => void;
 };
 
-export function useSessionContextRail({
+function resolveAvailableSidePane(sidePane: SessionSidePane, filesPaneEnabled: boolean): SessionSidePane {
+  return sidePane === "files" && !filesPaneEnabled ? "none" : sidePane;
+}
+
+export function useSessionSidePanes({
   ownerKey,
   enabled = true,
-  initialContextRailVisibility = null,
-  onContextRailVisibilityChange,
-}: UseSessionContextRailArgs) {
+  filesPaneEnabled = true,
+  initialSidePane = null,
+  onSidePaneChange,
+}: UseSessionSidePanesArgs) {
+  const resolvedInitialSidePane = resolveAvailableSidePane(initialSidePane ?? "none", filesPaneEnabled);
   const [contextRailWidth, setContextRailWidth] = useState(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
-  const [isContextRailVisible, setIsContextRailVisible] = useState(initialContextRailVisibility ?? false);
+  const [activeSidePane, setActiveSidePane] = useState<SessionSidePane>(resolvedInitialSidePane);
   const [isContextRailResizing, setIsContextRailResizing] = useState(false);
   const sessionWorkbenchRef = useRef<HTMLDivElement | null>(null);
   const contextRailWidthRef = useRef(SESSION_CONTEXT_RAIL_DEFAULT_WIDTH);
-  const contextRailVisibleRef = useRef(initialContextRailVisibility ?? false);
-  const hasResolvedInitialVisibilityRef = useRef(initialContextRailVisibility !== null);
-  const hasInteractedWithVisibilityRef = useRef(false);
+  const activeSidePaneRef = useRef<SessionSidePane>(resolvedInitialSidePane);
+  const hasResolvedInitialSidePaneRef = useRef(initialSidePane !== null);
+  const hasInteractedWithSidePaneRef = useRef(false);
   const contextRailPointerGestureRef = useRef({
     pointerId: null as number | null,
     startX: 0,
@@ -163,18 +171,19 @@ export function useSessionContextRail({
   }, [contextRailWidth]);
 
   useEffect(() => {
-    if (initialContextRailVisibility === null || hasResolvedInitialVisibilityRef.current) {
+    if (initialSidePane === null || hasResolvedInitialSidePaneRef.current) {
       return;
     }
 
-    hasResolvedInitialVisibilityRef.current = true;
-    if (hasInteractedWithVisibilityRef.current) {
+    hasResolvedInitialSidePaneRef.current = true;
+    if (hasInteractedWithSidePaneRef.current) {
       return;
     }
 
-    contextRailVisibleRef.current = initialContextRailVisibility;
-    setIsContextRailVisible(initialContextRailVisibility);
-  }, [initialContextRailVisibility]);
+    const nextSidePane = resolveAvailableSidePane(initialSidePane, filesPaneEnabled);
+    activeSidePaneRef.current = nextSidePane;
+    setActiveSidePane(nextSidePane);
+  }, [filesPaneEnabled, initialSidePane]);
 
   useLayoutEffect(() => {
     if (!enabled) {
@@ -201,7 +210,7 @@ export function useSessionContextRail({
   }, [enabled, ownerKey]);
 
   useEffect(() => {
-    if (!enabled || !isContextRailVisible || !isContextRailResizing) {
+    if (!enabled || activeSidePane !== "context" || !isContextRailResizing) {
       return;
     }
 
@@ -264,13 +273,13 @@ export function useSessionContextRail({
       document.body.style.cursor = previousCursor;
       document.body.style.userSelect = previousUserSelect;
     };
-  }, [enabled, isContextRailResizing, isContextRailVisible]);
+  }, [activeSidePane, enabled, isContextRailResizing]);
 
   const handleStartContextRailResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
     const workbenchElement = sessionWorkbenchRef.current;
     if (
       !enabled
-      || !isContextRailVisible
+      || activeSidePane !== "context"
       || event.button !== 0
       || !workbenchElement
       || isNarrowSessionLayoutViewport()
@@ -285,7 +294,7 @@ export function useSessionContextRail({
       dragged: false,
     };
     setIsContextRailResizing(true);
-  }, [enabled, isContextRailVisible]);
+  }, [activeSidePane, enabled]);
 
   const handleToggleContextRailVisibility = useCallback(() => {
     if (
@@ -296,12 +305,25 @@ export function useSessionContextRail({
     }
 
     setIsContextRailResizing(false);
-    hasInteractedWithVisibilityRef.current = true;
-    const nextVisible = !contextRailVisibleRef.current;
-    contextRailVisibleRef.current = nextVisible;
-    setIsContextRailVisible(nextVisible);
-    onContextRailVisibilityChange?.(nextVisible);
-  }, [onContextRailVisibilityChange]);
+    hasInteractedWithSidePaneRef.current = true;
+    const nextSidePane = activeSidePaneRef.current === "context" ? "none" : "context";
+    activeSidePaneRef.current = nextSidePane;
+    setActiveSidePane(nextSidePane);
+    onSidePaneChange?.(nextSidePane);
+  }, [onSidePaneChange]);
+
+  const handleToggleFilesPaneVisibility = useCallback(() => {
+    if (!enabled || !filesPaneEnabled) {
+      return;
+    }
+
+    setIsContextRailResizing(false);
+    hasInteractedWithSidePaneRef.current = true;
+    const nextSidePane = activeSidePaneRef.current === "files" ? "none" : "files";
+    activeSidePaneRef.current = nextSidePane;
+    setActiveSidePane(nextSidePane);
+    onSidePaneChange?.(nextSidePane);
+  }, [enabled, filesPaneEnabled, onSidePaneChange]);
 
   const sessionWorkbenchStyle = useMemo(
     () => ({
@@ -313,9 +335,12 @@ export function useSessionContextRail({
   return {
     sessionWorkbenchRef,
     sessionWorkbenchStyle,
-    isContextRailVisible,
+    activeSidePane,
+    isContextRailVisible: activeSidePane === "context",
+    isFilesPaneVisible: activeSidePane === "files",
     isContextRailResizing,
     handleStartContextRailResize,
     handleToggleContextRailVisibility,
+    handleToggleFilesPaneVisibility,
   };
 }

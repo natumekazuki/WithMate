@@ -43,6 +43,7 @@ import {
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
+import { SessionContentFindBar } from "./session-content-find-bar.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -735,6 +736,7 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
 }
 
 export const SESSION_RIGHT_PANE_ID = "session-right-pane";
+export const SESSION_LEFT_PANE_ID = "session-left-pane";
 
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
@@ -742,10 +744,14 @@ export type SessionChatScreenProps = {
   style?: CSSProperties;
   header: ReactNode;
   messageColumn: ReactNode;
+  mainContent?: ReactNode;
   actionDock: ReactNode;
+  leftPane?: ReactNode;
+  leftSplitter?: ReactNode;
   rightPane: ReactNode;
   splitter: ReactNode;
   isRightPaneVisible?: boolean;
+  isLeftPaneVisible?: boolean;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -757,10 +763,14 @@ export function SessionChatScreen({
   style,
   header,
   messageColumn,
+  mainContent,
   actionDock,
+  leftPane = null,
+  leftSplitter = null,
   rightPane,
   splitter,
   isRightPaneVisible = true,
+  isLeftPaneVisible = false,
   workbenchRef,
   workbenchStyle,
   modals,
@@ -772,9 +782,25 @@ export function SessionChatScreen({
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
           <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
-            <div className={`session-main-grid${isRightPaneVisible ? "" : " session-main-grid-right-pane-hidden"}`}>
+            <div className={`session-main-grid${isLeftPaneVisible ? " session-main-grid-left-pane-visible" : ""}${
+              isRightPaneVisible ? " session-main-grid-right-pane-visible" : ""
+            }`}>
+              <div
+                id={SESSION_LEFT_PANE_ID}
+                className="session-left-pane-slot"
+                hidden={!isLeftPaneVisible}
+              >
+                {leftPane}
+              </div>
+
+              {leftSplitter}
               <div className="session-message-stack">
-                {messageColumn}
+                <div className="session-central-surface" hidden={mainContent !== undefined}>
+                  {messageColumn}
+                </div>
+                <div className="session-central-surface" hidden={mainContent === undefined}>
+                  {mainContent}
+                </div>
                 {actionDock}
               </div>
 
@@ -2016,7 +2042,15 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
+  inlinePathFeedback?: string;
+  onDismissInlinePathFeedback?: () => void;
+  isContentActive?: boolean;
 };
+
+function getNonBlankSelectionText(selection: Selection): string | null {
+  const text = selection.toString();
+  return text.trim() ? text : null;
+}
 
 function getSelectionDetailsWithinMessageList(element: Element | null): { anchorRect: DOMRect; text: string } | null {
   if (!element || typeof window === "undefined") {
@@ -2043,8 +2077,8 @@ function getSelectionDetailsWithinMessageList(element: Element | null): { anchor
     return null;
   }
 
-  const text = selection.toString().trim();
-  if (!text) {
+  const text = getNonBlankSelectionText(selection);
+  if (text === null) {
     return null;
   }
 
@@ -2133,6 +2167,94 @@ function MessageResponseActions({
   );
 }
 
+export type SelectionCopySurfaceProps = {
+  children: ReactNode;
+  className?: string;
+  onCopyText: (text: string) => void;
+  surfaceRef?: RefObject<HTMLDivElement | null>;
+};
+
+export function SelectionCopySurface({
+  children,
+  className = "",
+  onCopyText,
+  surfaceRef: externalSurfaceRef,
+}: SelectionCopySurfaceProps) {
+  const internalSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = externalSurfaceRef ?? internalSurfaceRef;
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+
+  const updateSelectionToolbar = useCallback(() => {
+    const surface = surfaceRef.current;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+    if (!surface || !selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    const commonAncestor = range.commonAncestorContainer;
+    const commonElement = commonAncestor.nodeType === Node.ELEMENT_NODE
+      ? commonAncestor as Element
+      : commonAncestor.parentElement;
+    const selectableBody = commonElement?.closest("[data-selection-copy-body='true']") ?? null;
+    const selectedText = getNonBlankSelectionText(selection);
+    if (!selectableBody || !surface.contains(selectableBody) || selectedText === null) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    const anchorRect = range.getBoundingClientRect();
+    const fallbackRect = range.getClientRects()[0] ?? null;
+    const resolvedAnchorRect = anchorRect.width > 0 || anchorRect.height > 0 ? anchorRect : fallbackRect;
+    const boundaryRect = surface.getBoundingClientRect();
+    if (!resolvedAnchorRect || !rectsIntersect(resolvedAnchorRect, boundaryRect)) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    setSelectionToolbar({
+      text: selectedText,
+      style: clampToolbarPosition({
+        anchorRect: resolvedAnchorRect,
+        boundaryRect,
+        toolbarRect: toolbarRef.current?.getBoundingClientRect() ?? { width: 72, height: 32 },
+      }),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+
+    document.addEventListener("selectionchange", updateSelectionToolbar);
+    window.addEventListener("resize", updateSelectionToolbar);
+    const surface = surfaceRef.current;
+    surface?.addEventListener("scroll", updateSelectionToolbar, { passive: true });
+    return () => {
+      document.removeEventListener("selectionchange", updateSelectionToolbar);
+      window.removeEventListener("resize", updateSelectionToolbar);
+      surface?.removeEventListener("scroll", updateSelectionToolbar);
+    };
+  }, [updateSelectionToolbar]);
+
+  return (
+    <div ref={surfaceRef} className={className}>
+      <div data-selection-copy-body="true">{children}</div>
+      {selectionToolbar ? (
+        <MessageResponseActions
+          actionText={selectionToolbar.text}
+          onCopyMessageText={onCopyText}
+          style={selectionToolbar.style}
+          toolbarRef={toolbarRef}
+        />
+      ) : null}
+    </div>
+  );
+}
+
 export function SessionMessageColumn({
   sessionId,
   character,
@@ -2161,11 +2283,17 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
+  inlinePathFeedback = "",
+  onDismissInlinePathFeedback,
+  isContentActive = true,
 }: SessionMessageColumnProps) {
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
@@ -2188,6 +2316,24 @@ export function SessionMessageColumn({
     useFlushSync: false,
   });
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  const messageFindMatches = useMemo(() => {
+    const query = findQuery.trim().toLocaleLowerCase();
+    if (!query) {
+      return [] as number[];
+    }
+    const matches: number[] = [];
+    messages.forEach((message, messageIndex) => {
+      const text = message.text.toLocaleLowerCase();
+      let offset = text.indexOf(query);
+      while (offset >= 0) {
+        matches.push(messageIndex);
+        offset = text.indexOf(query, offset + Math.max(1, query.length));
+      }
+    });
+    return matches;
+  }, [findQuery, messages]);
+  const firstFindMessageIndex = messageFindMatches[0] ?? null;
+  const currentFindMessageIndex = messageFindMatches[currentFindMatch] ?? null;
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
@@ -2262,6 +2408,41 @@ export function SessionMessageColumn({
       messageListElement?.removeEventListener("scroll", updateSelectionToolbar);
     };
   }, [messageListRef, updateSelectionToolbar]);
+
+  useEffect(() => {
+    setCurrentFindMatch(0);
+    if (firstFindMessageIndex !== null) {
+      messageVirtualizer.scrollToIndex(firstFindMessageIndex, { align: "center" });
+    }
+  }, [findQuery, firstFindMessageIndex, messageVirtualizer, sessionId]);
+
+  useEffect(() => {
+    if (!isContentActive) {
+      return;
+    }
+    const handleFindShortcut = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
+        event.preventDefault();
+        setFindOpen(true);
+      } else if (event.key === "Escape" && findOpen) {
+        event.preventDefault();
+        setFindOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleFindShortcut);
+    return () => window.removeEventListener("keydown", handleFindShortcut);
+  }, [findOpen, isContentActive]);
+
+  const navigateFindMatch = useCallback((direction: 1 | -1) => {
+    if (messageFindMatches.length === 0) {
+      return;
+    }
+    setCurrentFindMatch((current) => {
+      const next = (current + direction + messageFindMatches.length) % messageFindMatches.length;
+      messageVirtualizer.scrollToIndex(messageFindMatches[next] ?? 0, { align: "center" });
+      return next;
+    });
+  }, [messageFindMatches, messageVirtualizer]);
 
   useLayoutEffect(() => {
     if (isMessageListFollowing) {
@@ -2381,6 +2562,24 @@ export function SessionMessageColumn({
 
   return (
     <div className="session-message-column">
+      {inlinePathFeedback ? (
+        <div className="session-inline-path-feedback" role="alert">
+          <span>{inlinePathFeedback}</span>
+          {onDismissInlinePathFeedback ? (
+            <button type="button" onClick={onDismissInlinePathFeedback} aria-label="Dismiss path open result">×</button>
+          ) : null}
+        </div>
+      ) : null}
+      <SessionContentFindBar
+        open={findOpen}
+        query={findQuery}
+        currentMatch={currentFindMatch}
+        matchCount={messageFindMatches.length}
+        onQueryChange={setFindQuery}
+        onPrevious={() => navigateFindMatch(-1)}
+        onNext={() => navigateFindMatch(1)}
+        onClose={() => setFindOpen(false)}
+      />
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
@@ -2428,7 +2627,7 @@ export function SessionMessageColumn({
               <div
                 key={`${message.role}-${messageKey}`}
                 ref={messageVirtualizer.measureElement}
-                className={`session-message-virtual-row${
+                className={`session-message-virtual-row${currentFindMessageIndex === absoluteIndex ? " is-find-target" : ""}${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
                 data-index={absoluteIndex}
@@ -2659,6 +2858,7 @@ export type SessionActionDockCompactRowProps = {
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
+  chatNotice?: string;
   isSendDisabled: boolean;
   showJumpToBottom: boolean;
   sendButtonTitle?: string;
@@ -2675,6 +2875,7 @@ export function SessionActionDockCompactRow({
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
+  chatNotice,
   isSendDisabled,
   showJumpToBottom,
   sendButtonTitle,
@@ -2699,6 +2900,9 @@ export function SessionActionDockCompactRow({
           />
         </button>
         <div className="session-action-dock-compact-actions">
+          {chatNotice ? (
+            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+          ) : null}
           {showJumpToBottom ? (
             <button
               className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -2736,6 +2940,9 @@ export function SessionActionDockCompactRow({
         </span>
       </button>
       <div className="session-action-dock-compact-meta" aria-label="draft summary">
+        {chatNotice ? (
+          <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+        ) : null}
         {attachmentCount > 0 ? (
           <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
         ) : null}
@@ -2822,6 +3029,7 @@ export type SessionComposerExpandedProps = {
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
+  chatNotice?: string;
   composerBlocked: boolean;
   canSelectCustomAgent: boolean;
   showAttachmentControls?: boolean;
@@ -2897,6 +3105,7 @@ export function SessionComposerExpanded({
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
+  chatNotice,
   composerBlocked,
   canSelectCustomAgent,
   showAttachmentControls = true,
@@ -2996,6 +3205,7 @@ export function SessionComposerExpanded({
     showJumpToBottom ||
     canCollapseActionDock ||
     !!modeLabel ||
+    !!chatNotice ||
     isRunning;
 
   return (
@@ -3004,6 +3214,9 @@ export function SessionComposerExpanded({
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
           {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+          {chatNotice ? (
+            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+          ) : null}
           {showAttachmentControls ? (
             <div className="composer-attachment-button-group" role="group" aria-label="添付">
               <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>

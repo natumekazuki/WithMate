@@ -52,16 +52,16 @@ test("Artifact result details は長い path と本文を折り返せる", async
   );
 });
 
-test("右ペイン非表示時は pane track を除き、splitter の再表示操作を残す", async () => {
+test("左右ペイン非表示時は pane track を除き、splitter の再表示操作を残す", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
     stylesSource,
-    /\.session-main-grid\.session-main-grid-right-pane-hidden\s*{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)\s*12px;\s*}/,
+    /\.session-main-grid\s*{[\s\S]*?grid-template-columns:\s*12px\s*minmax\(0,\s*1fr\)\s*12px;/,
   );
   assert.match(
     stylesSource,
-    /\.session-right-pane-slot\[hidden\]\s*{\s*display:\s*none;\s*}/,
+    /\.session-left-pane-slot\[hidden\],\s*\.session-right-pane-slot\[hidden\]\s*{\s*display:\s*none;\s*}/,
   );
   assert.match(
     stylesSource,
@@ -71,4 +71,24 @@ test("右ペイン非表示時は pane track を除き、splitter の再表示�
     stylesSource,
     /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-workbench-splitter\.is-static\s*{\s*display:\s*none;\s*}/,
   );
+});
+
+test("file preview は条件付き find / feedback の有無にかかわらず本文を固定 scroll row に置く", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-file-preview\s*{[\s\S]*?grid-template-rows:\s*auto\s+auto\s+minmax\(0,\s*1fr\)\s+auto;[\s\S]*?grid-template-areas:\s*"header"\s*"find"\s*"content"\s*"feedback";/,
+  );
+  assert.match(stylesSource, /\.session-file-preview-header\s*{[\s\S]*?grid-area:\s*header;/);
+  assert.match(stylesSource, /\.session-file-preview\s*>\s*\.session-content-find\s*{\s*grid-area:\s*find;/);
+  assert.match(
+    stylesSource,
+    /\.session-file-text-scroll,\s*\.session-file-markdown-scroll,\s*\.session-file-image-scroll\s*{\s*grid-area:\s*content;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-preview-status,\s*\.session-file-preview-error,\s*\.session-file-preview-large-warning,\s*\.session-file-preview-metadata\s*{\s*grid-area:\s*content;/,
+  );
+  assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
 });

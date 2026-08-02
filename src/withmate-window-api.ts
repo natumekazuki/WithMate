@@ -48,6 +48,7 @@ import type {
 import type {
   ImageFilePickerPurpose,
   OpenPathOptions,
+  OpenPathResult,
   DeleteSessionsLastActiveBeforeRequest,
   DeleteSessionsResult,
   ResetAppDatabaseRequest,
@@ -73,6 +74,20 @@ import type {
   CharacterAuthoringSessionStartResult,
   StartCharacterAuthoringSessionInput,
 } from "./character/character-authoring.js";
+import type { SessionSidePane } from "./session-side-pane.js";
+import type {
+  SessionDirectoryEntry,
+  SessionDirectoryRequest,
+  SessionFileChunkRequest,
+  SessionFileChunkResult,
+  SessionFileDescriptor,
+  SessionFileOpenRequest,
+  SessionFileResourceRequest,
+  SessionFileRoot,
+  WorkspaceChangesResult,
+  WorkspaceFileDiffRequest,
+  WorkspaceFileDiffResult,
+} from "./file-explorer/file-explorer-contract.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -84,7 +99,7 @@ export type WithMateWindowNavigationApi = {
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
-  openPath(target: string, options?: OpenPathOptions): Promise<void>;
+  openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
@@ -103,6 +118,13 @@ export type WithMateWindowCatalogApi = {
 export type WithMateWindowSessionApi = {
   listSessionSummaries(): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
+  listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
+  inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
+  readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
+  openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
+  listWorkspaceChanges(sessionId: string): Promise<WorkspaceChangesResult>;
+  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Promise<WorkspaceFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
@@ -198,7 +220,7 @@ export type WithMateWindowObservabilityApi = {
 export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
-  updateSessionRightPaneVisibility(isVisible: boolean): Promise<AppSettings>;
+  updateSessionSidePane(sidePane: SessionSidePane): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;

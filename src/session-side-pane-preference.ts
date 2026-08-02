@@ -1,8 +1,9 @@
 import type { WithMateWindowApi } from "./withmate-window-api.js";
+import type { SessionSidePane } from "./session-side-pane.js";
 
-type SessionRightPanePreferenceApi = Pick<
+type SessionSidePanePreferenceApi = Pick<
   WithMateWindowApi,
-  "reportRendererLog" | "updateSessionRightPaneVisibility"
+  "reportRendererLog" | "updateSessionSidePane"
 >;
 
 function toLogError(error: unknown): { name?: string; message: string; stack?: string } {
@@ -17,23 +18,23 @@ function toLogError(error: unknown): { name?: string; message: string; stack?: s
   return { message: String(error) };
 }
 
-export async function persistSessionRightPaneVisibility(
-  api: SessionRightPanePreferenceApi | null,
-  isVisible: boolean,
+export async function persistSessionSidePane(
+  api: SessionSidePanePreferenceApi | null,
+  sidePane: SessionSidePane,
 ): Promise<void> {
   if (!api) {
     return;
   }
 
   try {
-    await api.updateSessionRightPaneVisibility(isVisible);
+    await api.updateSessionSidePane(sidePane);
   } catch (error) {
     try {
       api.reportRendererLog({
         level: "error",
-        kind: "session.right-pane-preference-save-failed",
-        message: "Session right pane preference save failed",
-        data: { isVisible },
+        kind: "session.side-pane-preference-save-failed",
+        message: "Session side pane preference save failed",
+        data: { sidePane },
         error: toLogError(error),
       });
     } catch {

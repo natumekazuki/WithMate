@@ -326,6 +326,7 @@ export function buildLiveSessionComposerDockProps(
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
       modeLabel: input.modeLabel,
+      chatNotice: input.chatNotice,
       isSendDisabled: input.isSendDisabled,
       showJumpToBottom,
       sendButtonTitle: input.sendButtonTitle,

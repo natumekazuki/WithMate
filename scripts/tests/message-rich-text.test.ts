@@ -335,22 +335,49 @@ test("MessageRichText は code literal 内の local path link 風テキストを
   assert.match(html, /\[tabbed\]\(meeting notes\.md\)/);
 });
 
-test("MessageRichText は Markdown image を実画像として描画しない", () => {
+test("MessageRichText は local / data / external Markdown image を既定表示する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
       text: [
         "![local](file:///C:/tmp/secret.png)",
         "![embedded](data:image/png;base64,AAAA)",
         "![remote](https://example.test/image.png)",
+        "![protocol-relative](//cdn.example.test/image.png)",
       ].join("\n"),
     }),
   );
 
+  assert.equal((html.match(/<img\b/g) ?? []).length, 4);
+  assert.match(html, /src="file:\/\/\/C:\/tmp\/secret\.png"/);
+  assert.match(html, /src="data:image\/png;base64,AAAA"/);
+  assert.match(html, /src="https:\/\/example\.test\/image\.png"/);
+  assert.match(html, /src="https:\/\/cdn\.example\.test\/image\.png"/);
+});
+
+test("MessageRichText は chat context の相対 Markdown image を環境依存URLとして読み込まない", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: "![relative](images/sample.png)" }),
+  );
+
   assert.doesNotMatch(html, /<img\b/);
-  assert.doesNotMatch(html, /src=/);
-  assert.doesNotMatch(html, /file:\/\/\/C:\/tmp\/secret\.png/);
-  assert.doesNotMatch(html, /data:image\/png/);
-  assert.doesNotMatch(html, /https:\/\/example\.test\/image\.png/);
+  assert.match(html, /Image could not be loaded\./);
+});
+
+test("MessageRichText は protocol-relative link を HTTPS に正規化する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, { text: "[site](//example.test/docs)" }),
+  );
+  assert.match(html, /href="https:\/\/example\.test\/docs"/);
+});
+
+test("MessageRichText は Windows absolute image path を file URL に変換する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: "![local](C:/workspace/image%20folder/sample.png)",
+    }),
+  );
+
+  assert.match(html, /src="file:\/\/\/C:\/workspace\/image%20folder\/sample\.png"/);
 });
 
 test("MessageRichText は先頭空白付き Markdown 行でも停止せずに render できる", { timeout: 2_000 }, () => {

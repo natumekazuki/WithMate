@@ -6,11 +6,14 @@ import remarkMath from "remark-math";
 import type { PluggableList } from "unified";
 
 import { getWithMateApi } from "./renderer-withmate-api.js";
+import { toLocalFileUrl } from "./local-file-url.js";
+import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 
 type MessageRichTextProps = {
   text: string;
   className?: string;
   onOpenPath?: (target: string) => void;
+  resolveImageSource?: (target: string) => Promise<string | null>;
 };
 
 type MarkdownRenderMode = "light" | "full";
@@ -90,11 +93,44 @@ function isAllowedMarkdownHref(target: string): boolean {
   return !hasUnsupportedUrlScheme(target);
 }
 
+function isAllowedMarkdownImageSource(target: string): boolean {
+  if (!target || target.startsWith("//") || isWindowsAbsolutePathTarget(target)) {
+    return true;
+  }
+  if (/^data:image\//i.test(target) || /^blob:/i.test(target)) {
+    return true;
+  }
+  return !hasUnsupportedUrlScheme(target);
+}
+
+function isDirectMarkdownImageSource(target: string): boolean {
+  return Boolean(
+    target
+    && (
+      target.startsWith("//")
+      || isWindowsAbsolutePathTarget(target)
+      || /^(?:https?:|file:|data:image\/|blob:)/i.test(target)
+    )
+  );
+}
+
 const markdownUrlTransform: UrlTransform = (url, key) => {
+  if (key === "src") {
+    if (!isAllowedMarkdownImageSource(url)) {
+      return "";
+    }
+    if (url.startsWith("//")) {
+      return `https:${url}`;
+    }
+    return isWindowsAbsolutePathTarget(url) ? toLocalFileUrl(url) : url;
+  }
   if (key !== "href") {
     return defaultUrlTransform(url);
   }
-  return isAllowedMarkdownHref(url) ? url : "";
+  if (!isAllowedMarkdownHref(url)) {
+    return "";
+  }
+  return url.startsWith("//") ? `https:${url}` : url;
 };
 
 export function openMarkdownLink(target: string, onOpenPath?: (target: string) => void): void {
@@ -103,7 +139,13 @@ export function openMarkdownLink(target: string, onOpenPath?: (target: string) =
     return;
   }
 
-  void getWithMateApi()?.openPath(target);
+  const api = getWithMateApi();
+  if (api) {
+    void resolveOpenPathFeedback(
+      () => api.openPath(target),
+      "The path could not be opened.",
+    ).then(showOpenPathFeedback);
+  }
 }
 
 export function handleMarkdownLinkClick(
@@ -295,8 +337,92 @@ const markdownComponents: Components = {
       {children}
     </strong>
   ),
-  img: () => null,
 };
+
+type MarkdownImageProps = {
+  source: string;
+  alt?: string;
+  title?: string;
+  resolveImageSource?: (target: string) => Promise<string | null>;
+};
+
+function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImageProps) {
+  const canLoadDirectly = !resolveImageSource && isDirectMarkdownImageSource(source);
+  const [resolvedSource, setResolvedSource] = useState(canLoadDirectly ? source : "");
+  const [loadStatus, setLoadStatus] = useState<"resolving" | "loading" | "ready" | "error">(
+    resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error",
+  );
+
+  useEffect(() => {
+    let active = true;
+    let ownedObjectUrl: string | null = null;
+    if (!resolveImageSource) {
+      const directSource = isDirectMarkdownImageSource(source);
+      setResolvedSource(directSource ? source : "");
+      setLoadStatus(directSource ? "loading" : "error");
+      return () => {
+        active = false;
+      };
+    }
+
+    setResolvedSource("");
+    setLoadStatus("resolving");
+    void resolveImageSource(source)
+      .then((resolved) => {
+        if (!active) {
+          if (resolved && resolved !== source && resolved.startsWith("blob:")) {
+            URL.revokeObjectURL(resolved);
+          }
+          return;
+        }
+        if (!resolved) {
+          setLoadStatus("error");
+          return;
+        }
+        if (resolved !== source && resolved.startsWith("blob:")) {
+          ownedObjectUrl = resolved;
+        }
+        setResolvedSource(resolved);
+        setLoadStatus("loading");
+      })
+      .catch(() => {
+        if (active) {
+          setResolvedSource("");
+          setLoadStatus("error");
+        }
+      });
+
+    return () => {
+      active = false;
+      if (ownedObjectUrl) {
+        URL.revokeObjectURL(ownedObjectUrl);
+      }
+    };
+  }, [resolveImageSource, source]);
+
+  return (
+    <span className="message-image-shell">
+      {loadStatus === "resolving" || loadStatus === "loading" ? (
+        <span className="message-image-loading" role="status">Image loading…</span>
+      ) : null}
+      {loadStatus === "error" ? (
+        <span className="message-image-error" role="alert" title={source}>Image could not be loaded.</span>
+      ) : null}
+      {resolvedSource ? (
+        <img
+          className="message-image"
+          src={resolvedSource}
+          alt={alt ?? ""}
+          title={title}
+          loading="lazy"
+          hidden={loadStatus !== "ready"}
+          onLoad={() => setLoadStatus("ready")}
+          onError={() => setLoadStatus("error")}
+        />
+      ) : null}
+    </span>
+  );
+}
 
 function shouldDeferRichMarkdownRender(): boolean {
   return typeof window !== "undefined";
@@ -341,7 +467,10 @@ function scheduleFullMarkdownRender(callback: () => void): () => void {
 
 function createMarkdownComponents(
   onOpenPath?: (target: string) => void,
-  options?: { enableMermaid?: boolean },
+  options?: {
+    enableMermaid?: boolean;
+    resolveImageSource?: (target: string) => Promise<string | null>;
+  },
 ): Components {
   const enableMermaid = options?.enableMermaid ?? true;
   return {
@@ -367,10 +496,26 @@ function createMarkdownComponents(
         </a>
       );
     },
+    img: ({ src, alt, title }) => {
+      const source = typeof src === "string" ? src.trim() : "";
+      return source ? (
+        <MarkdownImage
+          source={source}
+          alt={alt}
+          title={title}
+          resolveImageSource={options?.resolveImageSource}
+        />
+      ) : null;
+    },
   };
 }
 
-function MessageRichTextComponent({ text, className = "message-body", onOpenPath }: MessageRichTextProps) {
+function MessageRichTextComponent({
+  text,
+  className = "message-body",
+  onOpenPath,
+  resolveImageSource,
+}: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
@@ -382,8 +527,8 @@ function MessageRichTextComponent({ text, className = "message-body", onOpenPath
   const renderMode = renderState.text === text ? renderState.mode : shouldDefer ? "light" : "full";
   const isFullRender = renderMode === "full";
   const components = useMemo(
-    () => createMarkdownComponents(onOpenPath, { enableMermaid: isFullRender }),
-    [isFullRender, onOpenPath],
+    () => createMarkdownComponents(onOpenPath, { enableMermaid: isFullRender, resolveImageSource }),
+    [isFullRender, onOpenPath, resolveImageSource],
   );
   const rehypePlugins = useMemo<PluggableList>(
     () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),

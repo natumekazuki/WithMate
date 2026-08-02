@@ -711,6 +711,7 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     isRunning: true,
     pendingRunIndicatorAnnouncement: "実行中",
     pendingRunIndicatorText: "応答を生成中",
+    chatNotice: "New messages",
     modeLabel: "Auxiliary",
     composerBlocked: false,
     canSelectCustomAgent: true,
@@ -779,11 +780,13 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   });
 
   assert.equal(props.composer.showJumpToBottom, true);
+  assert.equal(props.composer.chatNotice, "New messages");
   assert.equal(props.composer.onCollapse, onCollapseActionDock);
   assert.equal(props.compactActionDock.draft, "draft");
   assert.equal(props.compactActionDock.actionDockCompactPreview, "preview");
   assert.equal(props.compactActionDock.attachmentCount, 1);
   assert.equal(props.compactActionDock.modeLabel, "Auxiliary");
+  assert.equal(props.compactActionDock.chatNotice, "New messages");
   assert.equal(props.compactActionDock.showJumpToBottom, true);
   assert.equal(props.compactActionDock.sendButtonTitle, "Stop");
   assert.equal(props.compactActionDock.onExpand, onExpandActionDock);
@@ -880,6 +883,7 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     workbenchRef: React.createRef<HTMLDivElement>(),
     headerProps,
     messageColumnProps,
+    mainContent: React.createElement("div", null, "Preview"),
     isActionDockExpanded: true,
     composerProps,
     compactActionDockProps,
@@ -920,6 +924,8 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
   }>;
 
   assert.equal(agentProps.mode, "agent");
+  assert.equal(agentProps.messageColumnProps.isContentActive, false);
+  assert.equal(companionProps.messageColumnProps.isContentActive, true);
   assert.equal(agentProps.className, "session-page-header-collapsed");
   assert.equal(companionProps.className, "theme-accent session-page-header-collapsed auxiliary-session-mode");
   assert.equal(rightPane.props.children.props.taskTitle, "Right pane");

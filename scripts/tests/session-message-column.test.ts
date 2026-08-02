@@ -263,6 +263,7 @@ async function mountSessionMessageColumn(options: {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
   const previousNode = globalThis.Node;
+  const previousHTMLElement = globalThis.HTMLElement;
   const previousDOMRect = globalThis.DOMRect;
   const previousEvent = globalThis.Event;
   const previousMouseEvent = globalThis.MouseEvent;
@@ -272,6 +273,8 @@ async function mountSessionMessageColumn(options: {
   const messageListRef = createRef<HTMLDivElement>();
   const root = createRoot(container);
   const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
+  const originalAttachEvent = (dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }).attachEvent;
+  const originalDetachEvent = (dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }).detachEvent;
   const originalOffsetHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "offsetHeight");
   const originalClientHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "clientHeight");
   const originalScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
@@ -311,6 +314,18 @@ async function mountSessionMessageColumn(options: {
   Object.defineProperty(dom.window, "ResizeObserver", {
     configurable: true,
     value: TestResizeObserver,
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
   });
   dom.window.HTMLElement.prototype.scrollTo = function scrollTo(
     optionsOrX?: ScrollToOptions | number,
@@ -372,6 +387,7 @@ async function mountSessionMessageColumn(options: {
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
   Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
   Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: dom.window.DOMRect });
   Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
   Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
@@ -449,6 +465,22 @@ async function mountSessionMessageColumn(options: {
         root.unmount();
       });
       dom.window.HTMLElement.prototype.getBoundingClientRect = originalGetBoundingClientRect;
+      if (originalAttachEvent) {
+        Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+          configurable: true,
+          value: originalAttachEvent,
+        });
+      } else {
+        delete (dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }).attachEvent;
+      }
+      if (originalDetachEvent) {
+        Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+          configurable: true,
+          value: originalDetachEvent,
+        });
+      } else {
+        delete (dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }).detachEvent;
+      }
       if (originalOffsetHeight) {
         Object.defineProperty(dom.window.HTMLElement.prototype, "offsetHeight", originalOffsetHeight);
       } else {
@@ -473,6 +505,7 @@ async function mountSessionMessageColumn(options: {
       Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
       Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
       Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+      Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
       Object.defineProperty(globalThis, "DOMRect", { configurable: true, value: previousDOMRect });
       Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
       Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: previousMouseEvent });
@@ -510,6 +543,48 @@ test("SessionMessageColumn は上方向へスクロールして先頭メッセ�
     });
 
     assert.match(mounted.container.textContent ?? "", /message 1(?:\D|$)/);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn は検索開始時に未mountの最初の一致へ移動する", async () => {
+  const messages = createMessages(100);
+  messages[0] = { role: "assistant", text: "only early needle" };
+  const mounted = await mountSessionMessageColumn({ messages });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    const initialScrollTop = messageList.scrollTop;
+    assert.doesNotMatch(mounted.container.textContent ?? "", /only early needle/);
+
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "only early needle");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+
+    assert.ok(messageList.scrollTop < initialScrollTop);
+    await act(async () => {
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    assert.match(mounted.container.textContent ?? "", /only early needle/);
   } finally {
     await mounted.cleanup();
   }
@@ -776,7 +851,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
 
     const assistantBody = container.querySelector("[data-message-text-actions=\"true\"]");
     assert.ok(assistantBody);
-    await selectText(assistantBody, "assistant result", anchorRect);
+    await selectText(assistantBody, "  assistant result\n", anchorRect);
 
     let toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
     assert.ok(toolbar);
@@ -794,8 +869,8 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       copyButton.click();
       quoteButton.click();
     });
-    assert.deepEqual(copiedTexts, ["assistant result"]);
-    assert.deepEqual(quotedTexts, ["assistant result"]);
+    assert.deepEqual(copiedTexts, ["  assistant result\n"]);
+    assert.deepEqual(quotedTexts, ["  assistant result\n"]);
 
     const userBody = Array.from(container.querySelectorAll("[data-message-body=\"true\"]"))
       .find((body) => body.getAttribute("data-message-text-actions") !== "true");
