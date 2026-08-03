@@ -54,6 +54,7 @@ export function useSessionMessageListFollowing({
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageListSignatureRef = useRef("");
   const messageListOwnerKeyRef = useRef<string | null>(null);
+  const messageListEnabledRef = useRef(enabled);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
 
   const scrollMessageListToBottom = useCallback(() => {
@@ -69,6 +70,8 @@ export function useSessionMessageListFollowing({
     const currentSignature = scrollSignature;
     const wasSameOwner = messageListOwnerKeyRef.current === ownerKey;
     const hasSignatureChanged = messageListSignatureRef.current !== currentSignature;
+    const wasEnabled = messageListEnabledRef.current;
+    messageListEnabledRef.current = enabled;
 
     if (!enabled) {
       messageListOwnerKeyRef.current = ownerKey;
@@ -80,6 +83,13 @@ export function useSessionMessageListFollowing({
     if (!messageListElement) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
+      return;
+    }
+
+    if (!wasEnabled) {
+      messageListOwnerKeyRef.current = ownerKey;
+      messageListSignatureRef.current = currentSignature;
+      setIsMessageListFollowing(true);
       return;
     }
 

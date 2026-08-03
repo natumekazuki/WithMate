@@ -243,6 +243,7 @@ type MountedSessionMessageColumn = {
   root: Root;
   rerender: (callbacks: {
     getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+    isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
     messages?: Message[];
@@ -261,6 +262,7 @@ async function mountSessionMessageColumn(options: {
   onQuoteMessageText?: (text: string) => void;
   expandedArtifacts?: Record<string, boolean>;
   getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+  isContentActive?: boolean;
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -406,6 +408,7 @@ async function mountSessionMessageColumn(options: {
   const defaultGetChangedFilesEmptyText = () => "変更ファイルはありません";
   const renderMessageColumn = async (callbacks: {
     getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+    isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
     messages?: Message[];
@@ -434,6 +437,7 @@ async function mountSessionMessageColumn(options: {
           pendingMessageText: callbacks.pendingMessageText ?? options.pendingMessageText,
           pendingMessageGroupId: callbacks.pendingMessageGroupId ?? options.pendingMessageGroupId,
           isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
+          isContentActive: callbacks.isContentActive ?? options.isContentActive ?? true,
           onMessageListScroll() {},
           onToggleArtifact() {},
           onOpenDiff() {},
@@ -944,6 +948,36 @@ test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従�
     });
 
     assert.equal(messageList.scrollTop, nonFollowingScrollTop);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn は非表示から復帰したとき仮想リストの末尾へ移動する", async () => {
+  const mounted = await mountSessionMessageColumn({
+    messages: createMessages(100),
+  });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+
+    await mounted.rerender({
+      isContentActive: false,
+      isMessageListFollowing: false,
+    });
+    messageList.scrollTop = 0;
+
+    await mounted.rerender({
+      isContentActive: true,
+      isMessageListFollowing: false,
+    });
+
+    assert.equal(
+      messageList.scrollTop,
+      messageList.scrollHeight - messageList.clientHeight,
+    );
+    assert.match(mounted.container.textContent ?? "", /message 100(?:\D|$)/);
   } finally {
     await mounted.cleanup();
   }

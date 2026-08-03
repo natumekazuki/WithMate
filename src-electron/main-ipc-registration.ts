@@ -73,6 +73,9 @@ import type {
   SessionFileChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
@@ -130,6 +133,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
   WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -327,6 +332,14 @@ export type MainIpcRegistrationDeps = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  copySessionFilePreviewImage(
+    event: IpcSenderEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageContextMenuResult>;
   listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
   getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -529,6 +542,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
+  | "copySessionFilePreviewImage"
+  | "showSessionFilePreviewImageContextMenu"
   | "listWorkspaceChanges"
   | "getWorkspaceFileDiff"
   | "getSessionMessageArtifact"
@@ -666,6 +681,32 @@ async function assertSessionFileExplorerSender(
     return;
   }
   throw new Error("File Explorer IPC is only available from the owning Session window.");
+}
+
+function parseSessionFilePreviewImageActionRequest(
+  input: unknown,
+): SessionFilePreviewImageActionRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Image copy request is invalid.");
+  }
+  const candidate = input as Partial<SessionFilePreviewImageActionRequest>;
+  const point = candidate.point;
+  if (
+    typeof candidate.sessionId !== "string" ||
+    !candidate.sessionId ||
+    !point ||
+    typeof point !== "object" ||
+    !Number.isSafeInteger(point.x) ||
+    point.x < 0 ||
+    !Number.isSafeInteger(point.y) ||
+    point.y < 0
+  ) {
+    throw new TypeError("Image copy request is invalid.");
+  }
+  return {
+    sessionId: candidate.sessionId,
+    point: { x: point.x, y: point.y },
+  };
 }
 
 type AuxiliaryOwnerWindowKind = "session" | "companion-review";
@@ -1085,6 +1126,16 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     }
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.openSessionFile(request);
+  });
+  ipcMain.handle(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFilePreviewImageActionRequest(input);
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.copySessionFilePreviewImage(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFilePreviewImageActionRequest(input);
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.showSessionFilePreviewImageContextMenu(event, request);
   });
   ipcMain.handle(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, async (event, sessionId: string) => {
     if (typeof sessionId !== "string" || !sessionId) {

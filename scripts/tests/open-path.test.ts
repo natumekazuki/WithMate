@@ -161,6 +161,17 @@ describe("resolveOpenPathTarget", () => {
     });
   });
 
+  it("leading slash 付き Windows absolute path は drive path に正規化する", () => {
+    assert.deepEqual(resolveOpenPathTarget("/C:/workspace/project/src/App.tsx"), {
+      type: "local-path",
+      targetPath: "C:/workspace/project/src/App.tsx",
+    });
+    assert.deepEqual(resolveOpenPathTarget("/C:/workspace/project/src/App.tsx:12:4"), {
+      type: "local-path",
+      targetPath: "C:/workspace/project/src/App.tsx:12:4",
+    });
+  });
+
   it("file url の fragment も外して local path に変換する", () => {
     assert.deepEqual(resolveOpenPathTarget("file:///C:/workspace/project/docs/spec.md#intro"), {
       type: "local-path",
@@ -185,6 +196,101 @@ describe("resolveOpenPathTarget", () => {
 });
 
 describe("openLocalPathWithDefaultApp", () => {
+  it("存在する数字suffix付き path は行番号と解釈せずそのまま開く", async () => {
+    const inspected: string[] = [];
+    const opened: string[] = [];
+    const result = await openLocalPathWithDefaultApp("/workspace/report:12", {
+      statTarget: async (targetPath) => {
+        inspected.push(targetPath);
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(inspected, ["/workspace/report:12"]);
+    assert.deepEqual(opened, ["/workspace/report:12"]);
+  });
+
+  it("存在しない :line suffix は外した file を開く", async () => {
+    const inspected: string[] = [];
+    const opened: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md:12", {
+      statTarget: async (targetPath) => {
+        inspected.push(targetPath);
+        if (targetPath.endsWith(":12")) {
+          throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+        }
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(inspected, ["C:\\workspace\\notes.md:12", "C:\\workspace\\notes.md"]);
+    assert.deepEqual(opened, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("存在しない :line:column suffix は外した file を開く", async () => {
+    const opened: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md:12:4", {
+      statTarget: async (targetPath) => {
+        if (targetPath.endsWith(":12:4")) {
+          throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+        }
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async (targetPath) => {
+        opened.push(targetPath);
+        return "";
+      },
+    });
+
+    assert.equal(result.status, "opened");
+    assert.deepEqual(opened, ["C:\\workspace\\notes.md"]);
+  });
+
+  it("数字suffix付き path と fallback path が存在しない場合は元の path を not-found として返す", async () => {
+    let openCalls = 0;
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\missing.md:12", {
+      statTarget: async () => {
+        throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+      },
+      openWithDefaultApp: async () => {
+        openCalls += 1;
+        return "";
+      },
+    });
+
+    assert.deepEqual(result, {
+      status: "not-found",
+      targetType: "local-path",
+      target: "C:\\workspace\\missing.md:12",
+      message: "The local path was not found.",
+    });
+    assert.equal(openCalls, 0);
+  });
+
+  it("数字suffix付き path の permission error は fallback せず failed を返す", async () => {
+    const inspected: string[] = [];
+    const result = await openLocalPathWithDefaultApp("C:\\workspace\\protected.md:12", {
+      statTarget: async (targetPath) => {
+        inspected.push(targetPath);
+        throw Object.assign(new Error("EACCES: access denied"), { code: "EACCES" });
+      },
+      openWithDefaultApp: async () => "",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.deepEqual(inspected, ["C:\\workspace\\protected.md:12"]);
+  });
+
   it("既定アプリで file を開けない場合は自動で Explorer に切り替えず failed を返す", async () => {
     const revealed: string[] = [];
     const result = await openLocalPathWithDefaultApp("C:\\workspace\\notes.md", {
@@ -278,6 +384,23 @@ describe("openLocalPathWithDefaultApp", () => {
 });
 
 describe("revealLocalPathInFileManager", () => {
+  it("存在しない :line suffix は外した file を Explorer に表示する", async () => {
+    const revealed: string[] = [];
+    const result = await revealLocalPathInFileManager("C:\\workspace\\notes.md:12", {
+      statTarget: async (targetPath) => {
+        if (targetPath.endsWith(":12")) {
+          throw Object.assign(new Error("ENOENT: missing"), { code: "ENOENT" });
+        }
+        return localPathStat("file");
+      },
+      openWithDefaultApp: async () => "",
+      revealInFileManager: (targetPath) => revealed.push(targetPath),
+    });
+
+    assert.equal(result.status, "revealed");
+    assert.deepEqual(revealed, ["C:\\workspace\\notes.md"]);
+  });
+
   it("file は明示操作のときだけ file manager に表示する", async () => {
     const revealed: string[] = [];
     const result = await revealLocalPathInFileManager("C:\\workspace\\notes.md", {

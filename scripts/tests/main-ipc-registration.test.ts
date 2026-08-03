@@ -35,6 +35,8 @@ import {
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
   WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
@@ -137,6 +139,8 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
@@ -309,6 +313,60 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   );
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+});
+
+test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const copyRequests: unknown[] = [];
+  const menuRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    copySessionFilePreviewImage: async (_event: unknown, request: unknown) => {
+      copyRequests.push(request);
+      return { status: "copied" };
+    },
+    showSessionFilePreviewImageContextMenu: async (_event: unknown, request: unknown) => {
+      menuRequests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = { sessionId: "aux-1", point: { x: 24, y: 48 } };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, request),
+    { status: "copied" },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(copyRequests, [request]);
+  assert.deepEqual(menuRequests, [request]);
+
+  for (const invalidRequest of [
+    null,
+    { sessionId: "aux-1", point: { x: -1, y: 2 } },
+    { sessionId: "aux-1", point: { x: 1.5, y: 2 } },
+    { sessionId: "aux-1", point: { x: 1, y: Number.NaN } },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /Image copy request is invalid/,
+    );
+  }
+  assert.deepEqual(copyRequests, [request]);
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>,
     /owning Session window/,
   );
 });

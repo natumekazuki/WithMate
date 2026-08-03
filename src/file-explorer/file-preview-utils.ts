@@ -78,6 +78,19 @@ export function shouldInitiallyFitSvg(bytes: Uint8Array): boolean {
   );
 }
 
+export function calculateImageFitZoom(
+  viewportWidth: number,
+  viewportHeight: number,
+  imageWidth: number,
+  imageHeight: number,
+): number {
+  if (viewportWidth <= 0 || viewportHeight <= 0 || imageWidth <= 0 || imageHeight <= 0) {
+    return 100;
+  }
+  const scale = Math.min(1, viewportWidth / imageWidth, viewportHeight / imageHeight);
+  return Math.max(0.1, Math.round(scale * 1_000) / 10);
+}
+
 export function projectWorkspaceFileDiffAvailability(
   result: WorkspaceChangesResult,
   relativePath: string,
