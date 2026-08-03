@@ -65,12 +65,39 @@ test("左右ペイン非表示時は pane track を除き、splitter の再表�
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-workbench-splitter\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*pointer;[\s\S]*?}/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-dock-splitter\.edge-left,[\s\S]*?\.session-dock-splitter\.edge-right\s*{[\s\S]*?display:\s*block;[\s\S]*?cursor:\s*pointer;[\s\S]*?}/,
   );
   assert.match(
     stylesSource,
-    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-workbench-splitter\.is-static\s*{\s*display:\s*none;\s*}/,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-dock-splitter\.edge-left\.is-static,[\s\S]*?\.session-dock-splitter\.edge-right\.is-static\s*{\s*display:\s*none;\s*}/,
   );
+});
+
+test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
+  const [componentSource, chatWindowSource, sessionProjectionSource, companionProjectionSource, stylesSource] = await Promise.all([
+    readFile("src/session-components.tsx", "utf8"),
+    readFile("src/chat/chat-window.tsx", "utf8"),
+    readFile("src/chat/session-chat-projection.tsx", "utf8"),
+    readFile("src/chat/companion-chat-projection.tsx", "utf8"),
+    readFile("src/styles.css", "utf8"),
+  ]);
+
+  assert.match(componentSource, /session-header-dock-slot[\s\S]*?session-content-grid[\s\S]*?session-action-dock-slot/);
+  assert.match(componentSource, /session-chat-layout[\s\S]*?is-header-visible[\s\S]*?is-action-dock-expanded/);
+  assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
+  assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
+  assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-header-dock-row-height\)[\s\S]*?minmax\(280px, 1fr\)[\s\S]*?var\(--session-action-dock-row-height\);/);
+  assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 326px\)/,
+  );
+  assert.match(chatWindowSource, /className="session-action-dock-expanded-content"/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?resize:\s*none;/);
+  assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
+  assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
 });
 
 test("file preview は条件付き find / feedback の有無にかかわらず本文を固定 scroll row に置く", async () => {

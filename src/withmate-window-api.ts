@@ -27,6 +27,7 @@ import type {
     SessionSummary,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
+import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
 import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
@@ -74,7 +75,6 @@ import type {
   CharacterAuthoringSessionStartResult,
   StartCharacterAuthoringSessionInput,
 } from "./character/character-authoring.js";
-import type { SessionSidePane } from "./session-side-pane.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
@@ -229,7 +229,7 @@ export type WithMateWindowObservabilityApi = {
 export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
-  updateSessionSidePane(sidePane: SessionSidePane): Promise<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;

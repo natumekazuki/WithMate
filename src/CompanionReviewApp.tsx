@@ -176,10 +176,12 @@ import {
   type ComposerPathPickerKind,
 } from "./session-composer-paths.js";
 import {
+  useChatLayoutPresentation,
   useSessionSidePanes,
   useSessionMessageListFollowing,
+  useSessionVerticalDockResize,
 } from "./session-chat-layout-hooks.js";
-import { persistSessionSidePane } from "./session-side-pane-preference.js";
+import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
 import type { SessionSidePane } from "./session-side-pane.js";
 import {
   applyOptimisticSessionRunUpdate,
@@ -461,13 +463,34 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [selectedCodexSandboxMode, setSelectedCodexSandboxMode] = useState<CodexSandboxMode>("workspace-write");
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState(isMergeView);
+  const handleHeaderPreferenceChange = useCallback((value: "hidden" | "visible") => {
+    if (!isMergeView) {
+      void persistChatLayoutPreference(withmateApi, { target: "header", value });
+    }
+  }, [isMergeView, withmateApi]);
+  const handleActionDockPreferenceChange = useCallback((value: "compact" | "expanded") => {
+    if (!isMergeView) {
+      void persistChatLayoutPreference(withmateApi, { target: "actionDock", value });
+    }
+  }, [isMergeView, withmateApi]);
+  const {
+    isHeaderExpanded,
+    setIsHeaderExpanded,
+    isActionDockPinnedExpanded,
+    setIsActionDockPinnedExpanded,
+  } = useChatLayoutPresentation({
+    initialHeader: isMergeView
+      ? "visible"
+      : (isAppSettingsLoaded ? appSettings.chatLayoutPreference.header : null),
+    initialActionDock: isAppSettingsLoaded ? appSettings.chatLayoutPreference.actionDock : null,
+    onHeaderChange: handleHeaderPreferenceChange,
+    onActionDockChange: handleActionDockPreferenceChange,
+  });
   const [mergeFileListPercent, setMergeFileListPercent] = useState(MERGE_FILE_LIST_DEFAULT_PERCENT);
   const [mergeStagePanePercent, setMergeStagePanePercent] = useState(MERGE_STAGE_DEFAULT_PERCENT);
   const [isMergePaneResizing, setIsMergePaneResizing] = useState(false);
   const [isMergeStagePaneResizing, setIsMergeStagePaneResizing] = useState(false);
   const [collapsedMergeTreeDirectories, setCollapsedMergeTreeDirectories] = useState<Set<string>>(() => new Set());
-  const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
   const [composerCaret, setComposerCaret] = useState(0);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
@@ -1145,7 +1168,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     [companionSessionAuditLogs],
   );
   const handleSidePaneChange = useCallback((sidePane: SessionSidePane) => {
-    void persistSessionSidePane(withmateApi, sidePane);
+    void persistChatLayoutPreference(withmateApi, { target: "sidePane", value: sidePane });
   }, [withmateApi]);
   const {
     sessionWorkbenchRef,
@@ -1158,7 +1181,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ownerKey: snapshot?.session.id ?? null,
     enabled: !isMergeView,
     filesPaneEnabled: false,
-    initialSidePane: isAppSettingsLoaded ? appSettings.sessionSidePane : null,
+    initialSidePane: isAppSettingsLoaded ? appSettings.chatLayoutPreference.sidePane : null,
     onSidePaneChange: handleSidePaneChange,
   });
   const companionMessageListScrollSignature = useMemo(
@@ -1350,6 +1373,21 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     isActionDockExpanded,
     canCollapseActionDock,
   } = actionDockRuntimeState;
+  const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
+  const {
+    sessionDockLayoutRef,
+    headerDockRef,
+    actionDockRef,
+    sessionDockLayoutStyle,
+    isActionDockResizing,
+    handleStartActionDockResize,
+    handleHeaderSplitterClick,
+    handleActionDockSplitterClick,
+  } = useSessionVerticalDockResize({
+    ownerKey: snapshot?.session.id ?? null,
+    isHeaderExpanded: isSessionHeaderExpanded,
+    isActionDockExpanded,
+  });
   const retryBannerIdentity = useMemo(() => {
     if (!retryBanner || !snapshot || !lastUserMessage) {
       return null;
@@ -2213,7 +2251,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     getTitle: () => snapshot?.session.taskTitle,
     canStart: () => !!snapshot && !isSelectedSessionRunning,
     setTitleDraft,
-    setHeaderExpanded: setIsHeaderExpanded,
+    setHeaderExpanded: () => {},
     setEditingTitle: setIsEditingTitle,
   });
 
@@ -2255,11 +2293,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setHeaderExpanded: setIsHeaderExpanded,
   });
 
-  const handleToggleContextPaneHeaderExpanded = createHeaderExpandedToggleHandler({
-    isEditingTitle: false,
-    setHeaderExpanded: setIsHeaderExpanded,
-  });
-
   const handleExpandActionDock = createActionDockExpandHandler({
     setPinnedExpanded: setIsActionDockPinnedExpanded,
     focusComposer: () => restoreCurrentComposerTextareaFocusToEnd(() => composerTextareaRef.current),
@@ -2269,6 +2302,16 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     canCollapse: canCollapseActionDock,
     setPinnedExpanded: setIsActionDockPinnedExpanded,
   });
+
+  const handleToggleHeaderSplitter = () => {
+    handleHeaderSplitterClick(handleToggleHeaderExpanded);
+  };
+
+  const handleToggleActionDock = () => {
+    handleActionDockSplitterClick(
+      isActionDockExpanded ? handleCollapseActionDock : handleExpandActionDock,
+    );
+  };
 
   const handleToggleAgentPicker = createAgentPickerToggleHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
@@ -2954,9 +2997,13 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         displayedMessageGroups: messageListGroups,
         expandedArtifacts,
         themeStyle,
+        layoutRef: sessionDockLayoutRef,
+        headerDockRef,
+        actionDockRef,
+        dockLayoutStyle: sessionDockLayoutStyle,
         workbenchRef: sessionWorkbenchRef,
         workbenchStyle: sessionWorkbenchStyle,
-        isHeaderExpanded,
+        isHeaderExpanded: isSessionHeaderExpanded,
         isEditingTitle,
         titleDraft,
         isSelectedSessionRunning,
@@ -2977,6 +3024,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         isRetryEditDisabled,
         isRetryDraftReplacePending,
         isActionDockExpanded,
+        isActionDockResizing,
         composerBlocked: snapshot.session.status !== "active" || operationRunning,
         isAgentPickerOpen,
         isSkillPickerOpen,
@@ -3041,8 +3089,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         toastTone: errorMessage ? "error" : "success",
         headerActions: auxiliaryHeaderActions,
         isAuxiliaryMode,
-        onToggleHeaderExpanded: handleToggleHeaderExpanded,
-        onToggleContextPaneHeaderExpanded: handleToggleContextPaneHeaderExpanded,
+        onToggleHeaderSplitter: handleToggleHeaderSplitter,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenTerminal: () => void openCompanionTerminal(),
         onOpenSessionFilesTerminal: () => void openCompanionSessionFilesTerminal(),
@@ -3093,7 +3140,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
@@ -3149,9 +3195,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onCancelSelectedSessionRun: cancelCompanionTurn,
           onSendSelectedSession: sendCompanionTurn,
         }),
-        onExpandActionDock: () => handleExpandActionDock({
-          focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: isSelectedSessionRunning }),
-        }),
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<ApprovalMode>({
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryApproval,
@@ -3173,6 +3216,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           onSelectedSessionChange: (value) => handleChangeReasoningEffort(value as ModelReasoningEffort),
         }),
         onStartContextRailResize: handleStartContextRailResize,
+        onStartActionDockResize: handleStartActionDockResize,
+        onToggleActionDock: handleToggleActionDock,
         onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,
         onOpenCompanionReview: (sessionId) => void getWithMateApi()?.openCompanionReviewWindow(sessionId),
@@ -3213,7 +3258,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
             showAuditLogButton={false}
             showTerminalButton
             showDeleteButton={false}
-            onToggleExpanded={handleToggleHeaderExpanded}
             onOpenAuditLog={() => setAuditLogsOpen(true)}
             onOpenTerminal={() => void openCompanionTerminal()}
             onTitleDraftChange={setTitleDraft}

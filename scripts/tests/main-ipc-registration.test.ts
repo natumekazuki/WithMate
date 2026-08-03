@@ -49,7 +49,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
-  WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL,
+  WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
@@ -142,7 +142,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
@@ -224,28 +224,61 @@ test("pick-image-file IPC は Character icon purpose を伝播し、不正な pu
   );
 });
 
-test("side pane 設定 IPC は列挙値だけを専用更新処理へ渡す", async () => {
+test("chat layout preference IPC は単一 target の列挙値だけを専用更新処理へ渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
-  const sidePaneUpdates: string[] = [];
+  const updates: unknown[] = [];
   const { deps } = createDeps({
-    updateSessionSidePane: (sidePane: "files" | "context" | "none") => {
-      sidePaneUpdates.push(sidePane);
-      return { sessionSidePane: sidePane };
+    updateChatLayoutPreference: (update: unknown) => {
+      updates.push(update);
+      return { chatLayoutPreference: update };
     },
   });
 
   registerMainIpcHandlers(ipcMain, deps);
 
   assert.deepEqual(
-    await handlers.get(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL)?.({}, "files"),
-    { sessionSidePane: "files" },
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "sidePane",
+      value: "files",
+    }),
+    { chatLayoutPreference: { target: "sidePane", value: "files" } },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "header",
+      value: "visible",
+    }),
+    { chatLayoutPreference: { target: "header", value: "visible" } },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "actionDock",
+      value: "expanded",
+    }),
+    { chatLayoutPreference: { target: "actionDock", value: "expanded" } },
   );
   await assert.rejects(
     () =>
-      handlers.get(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL)?.({}, "left") as Promise<unknown>,
-    /files、context、none/,
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "header",
+        value: "shown",
+      }) as Promise<unknown>,
+    /更新内容が不正/,
   );
-  assert.deepEqual(sidePaneUpdates, ["files"]);
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "actionDock",
+        value: "expanded",
+        sidePane: "context",
+      }) as Promise<unknown>,
+    /更新内容が不正/,
+  );
+  assert.deepEqual(updates, [
+    { target: "sidePane", value: "files" },
+    { target: "header", value: "visible" },
+    { target: "actionDock", value: "expanded" },
+  ]);
 });
 
 test("File Explorer IPC は owning Session window からだけ利用でき、Auxiliary ID を parent へ解決する", async () => {

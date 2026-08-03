@@ -1373,7 +1373,7 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
   );
 });
 
-test("SessionComposerExpanded は jump button を Hide の左に描画し、Send を設定グループの外へ配置する", () => {
+test("SessionComposerExpanded は Hide を描画せず、Send を設定グループの外へ配置する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       retryBanner: null,
@@ -1446,7 +1446,8 @@ test("SessionComposerExpanded は jump button を Hide の左に描画し、Send
     }),
   );
 
-  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Hide"));
+  assert.match(html, /末尾へ移動/);
+  assert.doesNotMatch(html, />Hide<\/button>/);
   assert.match(html, /composer-attachment-trigger-plus/);
   assert.match(html, /Attach<\/button>/);
   assert.doesNotMatch(html, />Session <span/);
@@ -1563,7 +1564,7 @@ test("SessionActionDockCompactRow は jump button を Send の左に描画する
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Send"));
 });
 
-test("SessionActionDockCompactRow は実行中の compact 表示に jump button と Cancel を描画する", () => {
+test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
       draft: "draft",

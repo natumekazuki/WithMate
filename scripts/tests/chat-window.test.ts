@@ -3,7 +3,7 @@ import test from "node:test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ChatWindowStatusScreen, ChatWorkbenchSplitter } from "../../src/chat/chat-window.js";
+import { ChatDockSplitter, ChatWindowStatusScreen } from "../../src/chat/chat-window.js";
 import { SessionActionDockCompactRow, SessionChatScreen } from "../../src/session-components.js";
 
 test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレンダリングする", () => {
@@ -15,50 +15,65 @@ test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレン�
   assert.doesNotMatch(html, /session-plain/);
 });
 
-test("ChatWorkbenchSplitter は resize handler がない場合に静的 splitter をレンダリングする", () => {
-  const html = renderToStaticMarkup(React.createElement(ChatWorkbenchSplitter));
+test("ChatDockSplitter は resize handler がない場合に静的 splitter をレンダリングする", () => {
+  const html = renderToStaticMarkup(React.createElement(ChatDockSplitter, { edge: "right" }));
 
-  assert.equal(html, '<div class="session-workbench-splitter is-static" aria-hidden="true"></div>');
+  assert.equal(html, '<div class="session-dock-splitter edge-right is-static" aria-hidden="true"></div>');
 });
 
-test("ChatWorkbenchSplitter は resize handler がある場合に操作可能 splitter をレンダリングする", () => {
+test("ChatDockSplitter は resize handler がある場合に操作可能 splitter をレンダリングする", () => {
   const html = renderToStaticMarkup(
-    React.createElement(ChatWorkbenchSplitter, {
+    React.createElement(ChatDockSplitter, {
+      edge: "right",
       isActive: true,
       onPointerDown() {},
     }),
   );
 
-  assert.match(html, /<button class="session-workbench-splitter is-active" type="button"/);
-  assert.match(html, /aria-label="会話と command pane の幅を調整"/);
-  assert.match(html, /title="左右の幅をドラッグで調整"/);
+  assert.match(html, /<button class="session-dock-splitter edge-right is-active" type="button"/);
+  assert.match(html, /aria-label="右ペインのサイズを調整"/);
+  assert.match(html, /title="右ペインのサイズをドラッグで調整"/);
 });
 
-test("ChatWorkbenchSplitter は右ペインの表示状態を切り替える affordance を示す", () => {
+test("ChatDockSplitter は各辺の表示状態を切り替える affordance を示す", () => {
   const expandedHtml = renderToStaticMarkup(
-    React.createElement(ChatWorkbenchSplitter, {
-      isRightPaneVisible: true,
+    React.createElement(ChatDockSplitter, {
+      edge: "right",
+      isPanelExpanded: true,
       onPointerDown() {},
-      onToggleRightPane() {},
+      onTogglePanel() {},
     }),
   );
   const collapsedHtml = renderToStaticMarkup(
-    React.createElement(ChatWorkbenchSplitter, {
-      isRightPaneVisible: false,
-      onToggleRightPane() {},
+    React.createElement(ChatDockSplitter, {
+      edge: "bottom",
+      isPanelExpanded: false,
+      onTogglePanel() {},
+    }),
+  );
+  const fixedHeaderHtml = renderToStaticMarkup(
+    React.createElement(ChatDockSplitter, {
+      edge: "top",
+      isPanelExpanded: true,
+      onTogglePanel() {},
     }),
   );
 
-  assert.match(expandedHtml, /aria-label="右ペインを非表示"/);
+  assert.match(expandedHtml, /aria-label="右ペインを折りたたむ"/);
   assert.match(expandedHtml, /aria-controls="session-right-pane"/);
   assert.match(expandedHtml, /aria-expanded="true"/);
-  assert.match(expandedHtml, /クリックで右ペインを非表示、広い画面ではドラッグで幅を調整/);
+  assert.match(expandedHtml, /クリックで右ペインを折りたたみ、ドラッグでサイズを調整/);
   assert.match(expandedHtml, />›<\/span>/);
 
-  assert.match(collapsedHtml, /class="session-workbench-splitter is-collapsed"/);
-  assert.match(collapsedHtml, /aria-label="右ペインを表示"/);
+  assert.match(collapsedHtml, /class="session-dock-splitter edge-bottom is-toggle-only is-collapsed"/);
+  assert.match(collapsedHtml, /aria-label="ActionDockを展開"/);
+  assert.match(collapsedHtml, /aria-controls="session-action-dock"/);
   assert.match(collapsedHtml, /aria-expanded="false"/);
-  assert.match(collapsedHtml, />‹<\/span>/);
+  assert.match(collapsedHtml, />⌃<\/span>/);
+
+  assert.match(fixedHeaderHtml, /class="session-dock-splitter edge-top is-toggle-only"/);
+  assert.match(fixedHeaderHtml, /title="クリックでヘッダーを折りたたみ"/);
+  assert.doesNotMatch(fixedHeaderHtml, /ドラッグでサイズを調整/);
 });
 
 test("SessionChatScreen は左右ペインと chat を unmount せずにレイアウトから隠す", () => {
@@ -66,9 +81,13 @@ test("SessionChatScreen は左右ペインと chat を unmount せずにレイ�
     React.createElement(SessionChatScreen, {
       mode: "agent",
       header: null,
+      headerSplitter: React.createElement("button", { type: "button" }, "Header Toggle"),
+      isHeaderVisible: false,
       messageColumn: React.createElement("div", null, "Messages"),
       mainContent: React.createElement("div", null, "File Preview"),
       actionDock: React.createElement("div", null, "Composer"),
+      actionDockSplitter: React.createElement("button", { type: "button" }, "Dock Toggle"),
+      isActionDockExpanded: false,
       splitter: React.createElement("button", { type: "button" }, "Toggle"),
       rightPane: React.createElement("aside", null, "Latest Command"),
       isRightPaneVisible: false,
@@ -76,6 +95,8 @@ test("SessionChatScreen は左右ペインと chat を unmount せずにレイ�
   );
 
   assert.match(html, /class="session-main-grid"/);
+  assert.match(html, /id="session-header-dock"[^>]*class="session-header-dock-slot is-hidden"[^>]*aria-hidden="true"/);
+  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.match(html, /id="session-left-pane" class="session-left-pane-slot" hidden=""/);
   assert.match(html, /id="session-right-pane" class="session-right-pane-slot" hidden=""/);
   assert.match(html, /class="session-central-surface" hidden=""><div>Messages<\/div><\/div>/);
@@ -102,4 +123,5 @@ test("SessionActionDockCompactRow は preview 中の chat notice を表示する
 
   assert.match(html, /session-action-dock-compact-badge attention/);
   assert.match(html, />New messages<\/span>/);
+  assert.match(html, /<button class="session-action-dock-compact-preview"[^>]*>/);
 });

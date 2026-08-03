@@ -217,7 +217,7 @@ describe("SettingsCatalogService", () => {
     );
   });
 
-  it("待機中の通常 settings 更新は並行して保存された right pane 表示状態を巻き戻さない", async () => {
+  it("待機中の通常 settings 更新は並行して保存された chat layout を巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
     const storage = new AppSettingsStorage(dbPath);
@@ -281,21 +281,27 @@ describe("SettingsCatalogService", () => {
         launchAtLoginEnabled: true,
       });
       await auxiliarySessionsRequested.promise;
-      storage.updateSessionSidePane("context");
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
       resumeAuxiliarySessions.resolve();
 
       const updated = await updating;
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.equal(updated.sessionSidePane, "context");
-      assert.equal(storage.getSettings().sessionSidePane, "context");
+      assert.deepEqual(updated.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "context",
+      });
+      assert.deepEqual(storage.getSettings().chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
-  it("通常 settings 保存後の待機中に更新された right pane 表示状態を最新の projection へ反映する", async () => {
+  it("通常 settings 保存後の待機中に更新された chat layout を最新の projection へ反映する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
     const storage = new AppSettingsStorage(dbPath);
@@ -370,23 +376,29 @@ describe("SettingsCatalogService", () => {
         },
       });
       await sessionReplacementStarted.promise;
-      storage.updateSessionSidePane("files");
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
       resumeSessionReplacement.resolve();
 
       const updated = await updating;
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.equal(updated.sessionSidePane, "files");
+      assert.deepEqual(updated.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "files",
+      });
       assert.ok(broadcastSettings);
-      assert.equal(broadcastSettings.sessionSidePane, "files");
-      assert.equal(storage.getSettings().sessionSidePane, "files");
+      assert.deepEqual(broadcastSettings.chatLayoutPreference, updated.chatLayoutPreference);
+      assert.deepEqual(storage.getSettings().chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
-  it("通常 settings 更新の rollback は並行して保存された right pane 表示状態を巻き戻さない", async () => {
+  it("通常 settings 更新の rollback は並行して保存された chat layout を巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
     const storage = new AppSettingsStorage(dbPath);
@@ -462,12 +474,18 @@ describe("SettingsCatalogService", () => {
         },
       });
       await firstSessionReplacementStarted.promise;
-      storage.updateSessionSidePane("context");
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
       rejectFirstSessionReplacement.resolve();
 
       await assert.rejects(() => updating, /session replacement failed/);
       assert.equal(replaceCallCount, 2);
-      assert.equal(storage.getSettings().sessionSidePane, "context");
+      assert.deepEqual(storage.getSettings().chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "context",
+      });
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });

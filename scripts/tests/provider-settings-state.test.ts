@@ -22,6 +22,11 @@ describe("provider-settings-state", () => {
     assert.equal(DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 180);
     assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 180);
     assert.equal(settings.autoCollapseActionDockOnSend, true);
+    assert.deepEqual(settings.chatLayoutPreference, {
+      header: "hidden",
+      actionDock: "compact",
+      sidePane: "none",
+    });
     assert.equal(settings.sessionTurnNotificationEnabled, true);
     assert.equal(settings.sessionTurnNotificationResponsePreviewEnabled, false);
     assert.equal(settings.memoryFileQuotaBytes, MEMORY_FILE_QUOTA_DEFAULT_BYTES);
@@ -97,6 +102,23 @@ describe("provider-settings-state", () => {
   it("action dock auto close は normalize で boolean を保持し、未設定時は true に寄せる", () => {
     assert.equal(normalizeAppSettings({ autoCollapseActionDockOnSend: false }).autoCollapseActionDockOnSend, false);
     assert.equal(normalizeAppSettings({}).autoCollapseActionDockOnSend, true);
+  });
+
+  it("chat layout preference は項目ごとに canonical enum へ normalize する", () => {
+    assert.deepEqual(normalizeAppSettings({
+      chatLayoutPreference: { header: "visible", actionDock: "expanded", sidePane: "context" },
+    }).chatLayoutPreference, {
+      header: "visible",
+      actionDock: "expanded",
+      sidePane: "context",
+    });
+    assert.deepEqual(normalizeAppSettings({
+      chatLayoutPreference: { header: "invalid", actionDock: false, sidePane: "left" },
+    }).chatLayoutPreference, {
+      header: "hidden",
+      actionDock: "compact",
+      sidePane: "none",
+    });
   });
 
   it("launch at login は default false で boolean を保持する", () => {

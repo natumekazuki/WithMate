@@ -189,30 +189,37 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
-- wide desktop (`1920x1080` baseline) では Session 本体を「`header(必要時のみ) + side pane / work surface`」にする
-  - 通常時は work surface を最上端から `message list + Action Dock` に使い切る
-  - Agent では左に File Explorer、右に `title handle + context pane` を開けるが、左右を同時には表示しない
-  - title handle を押した時だけ、header が左端まで伸びた full-width strip として出る
-  - work surface: `message list または file / live Git Diff preview + Action Dock`
+- wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
+  - 上は full-width Header、下は full-width ActionDock、左は File Explorer、右は Context pane とする
+  - File Explorer と Context pane は左右を同時には表示しない
+  - Header、ActionDock、左右 pane は対応する splitter の click で切り替える。左右 pane と ActionDock は展開中の drag でサイズを調整する
+  - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
+  - Header、ActionDock、side pane の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
+  - title 編集などの強制表示は保存済み preference を変更しない
+  - 中央 surface の最小高を優先し、ActionDock の高さは layout 高の40%までとする
+  - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
-  - splitter の click で対応する pane を切り替える。Context pane の splitter は wide layout で drag による幅調整も受け付ける
+  - splitter の click で対応する pane を切り替える。wide layout では左右 splitter の drag による幅調整も受け付ける
   - pane を隠した時も splitter は再表示 affordance として残す
   - side pane の表示状態は `files | context | none` の単一値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
-  - side pane は Action Dock の手前で切らず、下端まで縦に伸ばす
-  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では Context pane の drag と各 splitter の click を使う
+  - side pane は Header と ActionDock の間で中央 surface と並ぶ
+  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では左右 pane の drag と各 splitter の click を使う
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Top Bar`
-  - default は right pane 上部の `title handle` だけを見せる
-  - title handle を押すと full-width header に切り替わり、`Rename / Audit Log / Terminal / Delete` を常時表示する
+  - default は hidden とする
+  - 上 splitter を押すと full-width header に切り替わり、`Rename / Audit Log / Terminal / Delete` を表示する
+  - Header は1行分の固定高とし、splitter の drag による高さ変更は行わない
   - `More` と `Close` は使わない
-  - title をもう一度押すと collapsed state へ戻れる
+  - title 編集中は effective state として表示を維持する
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
-  - wide では message list と同じ左列幅に揃える
-  - compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す
+  - full-width の下 dock として置く
+  - compact でも draft preview、添付数、run 状態、末尾移動、`Send / Cancel` を残す
+  - 開閉は下 splitter に集約し、dock 内に `Hide` や reopen hit area を置かない
+  - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - retry banner、skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する

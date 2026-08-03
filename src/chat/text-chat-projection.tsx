@@ -2,12 +2,11 @@ import { type CSSProperties, type KeyboardEvent, type ReactNode, type RefObject 
 
 import {
   ChatRightPaneShell,
-  ChatWorkbenchSplitter,
+  ChatDockSplitter,
   type ChatSelectOption,
   type ChatWindowProps,
 } from "./chat-window.js";
 import {
-  buildChatPageClassName,
   createHiddenControlsTextChatComposerProps,
   createStaticChatHeaderProps,
   createStaticTextChatCompactActionDockProps,
@@ -58,7 +57,7 @@ export type TextChatWindowProjectionInput = {
   headerWorkspaceActions?: ReactNode;
   headerSessionFilesActions?: ReactNode;
   isActionDockExpanded?: boolean;
-  onExpandActionDock?: () => void;
+  onToggleActionDock?: () => void;
   rightPaneHeaderTitle?: string;
   rightPaneAriaLabel?: string;
   rightPaneClassName?: string;
@@ -101,7 +100,7 @@ export function buildTextChatWindowProps({
   headerWorkspaceActions,
   headerSessionFilesActions,
   isActionDockExpanded = true,
-  onExpandActionDock,
+  onToggleActionDock,
   rightPaneHeaderTitle = pageTitle,
   rightPaneAriaLabel = "補助情報",
   rightPaneClassName,
@@ -111,7 +110,7 @@ export function buildTextChatWindowProps({
 
   return {
     mode,
-    className: buildChatPageClassName({ isHeaderExpanded }),
+    className: "",
     style: themeStyle,
     isHeaderExpanded,
     headerProps: createStaticChatHeaderProps({
@@ -120,7 +119,6 @@ export function buildTextChatWindowProps({
       isRunning,
       workspaceActions: headerWorkspaceActions,
       sessionFilesActions: headerSessionFilesActions,
-      onToggleExpanded: onToggleHeaderExpanded,
     }),
     messageColumnProps: createStaticTextConversationMessageColumnProps({
       sessionId,
@@ -165,17 +163,28 @@ export function buildTextChatWindowProps({
       isRunning,
       pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText,
-      onExpand: onExpandActionDock,
+      onExpand: onToggleActionDock,
       onSendOrCancel: onSubmit,
     }),
-    splitter: <ChatWorkbenchSplitter />,
+    headerSplitter: (
+      <ChatDockSplitter
+        edge="top"
+        isPanelExpanded={isHeaderExpanded}
+        onTogglePanel={onToggleHeaderExpanded}
+      />
+    ),
+    actionDockSplitter: (
+      <ChatDockSplitter
+        edge="bottom"
+        isPanelExpanded={isActionDockExpanded}
+        onTogglePanel={onToggleActionDock}
+      />
+    ),
+    splitter: <ChatDockSplitter edge="right" />,
     rightPane: (
       <ChatRightPaneShell
-        isHeaderExpanded={isHeaderExpanded}
-        headerHandleTitle={rightPaneHeaderTitle}
         ariaLabel={rightPaneAriaLabel}
         className={rightPaneClassName}
-        onToggleHeaderExpanded={onToggleHeaderExpanded}
       />
     ),
   };

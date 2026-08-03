@@ -57,8 +57,8 @@ import type {
   CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
-import type { SessionSidePane } from "../src/session-side-pane.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
@@ -157,7 +157,7 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateSessionSidePane(sidePane: SessionSidePane): Awaitable<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -394,7 +394,7 @@ export function createMainIpcRegistrationDeps(
     exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
-    updateSessionSidePane: args.settings.updateSessionSidePane,
+    updateChatLayoutPreference: args.settings.updateChatLayoutPreference,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     installMemoryV6CliShim: args.settings.installMemoryV6CliShim,

@@ -182,7 +182,6 @@ function createProjectionInput(
     toastMessage: "",
     toastTone: "success",
     onToggleHeaderExpanded: noop,
-    onToggleContextPaneHeaderExpanded: noop,
     onOpenAuditLog: noop,
     onOpenTerminal: noop,
     onOpenSessionFilesTerminal: noop,
@@ -231,7 +230,6 @@ function createProjectionInput(
     onDraftCompositionStart: noop,
     onDraftCompositionEnd: noop,
     onSendOrCancel: noop,
-    onExpandActionDock: noop,
     onChangeApprovalMode: noop,
     onChangeCodexSandboxMode: noop,
     onChangeModel: noop,
@@ -393,12 +391,10 @@ test("buildCompanionChatWindowProps は Auxiliary mode の header action slot �
   assert.equal(props.compactActionDockProps.modeLabel, "Auxiliary");
 });
 
-test("buildCompanionChatWindowProps は Companion right pane props を共通 pane に渡す", () => {
-  const onToggleContextPaneHeaderExpanded = () => {};
+test("buildCompanionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onCycleContextPaneTab = () => {};
   const onOpenCompanionReview = () => {};
   const props = buildCompanionChatWindowProps(createProjectionInput({
-    onToggleContextPaneHeaderExpanded,
     onCycleContextPaneTab,
     onOpenCompanionReview,
   }));
@@ -409,7 +405,7 @@ test("buildCompanionChatWindowProps は Companion right pane props を共通 pan
 
   assert.equal(paneProps.contextEmptyText, "context usage はまだありません。");
   assert.equal(paneProps.latestCommandEmptyText, undefined);
-  assert.equal(paneProps.onToggleHeaderExpanded, onToggleContextPaneHeaderExpanded);
+  assert.equal("onToggleHeaderExpanded" in paneProps, false);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
 });
@@ -421,13 +417,13 @@ test("buildCompanionChatWindowProps は right pane visibility と toggle を共�
     onToggleContextRailVisibility,
   }));
   const splitter = props.splitter as React.ReactElement<{
-    isRightPaneVisible: boolean;
-    onToggleRightPane: () => void;
+    isPanelExpanded: boolean;
+    onTogglePanel: () => void;
   }>;
 
   assert.equal(props.isRightPaneVisible, false);
-  assert.equal(splitter.props.isRightPaneVisible, false);
-  assert.equal(splitter.props.onToggleRightPane, onToggleContextRailVisibility);
+  assert.equal(splitter.props.isPanelExpanded, false);
+  assert.equal(splitter.props.onTogglePanel, onToggleContextRailVisibility);
 });
 
 test("buildCompanionChatWindowProps は header action callbacks と Merge disabled state を維持する", () => {
@@ -464,7 +460,7 @@ test("buildCompanionChatWindowProps は header action callbacks と Merge disabl
 
 test("buildCompanionChatWindowProps は composer と compact dock の live props を維持する", () => {
   const onCollapseActionDock = () => {};
-  const onExpandActionDock = () => {};
+  const onToggleActionDock = () => {};
   const onJumpToMessageListBottom = () => {};
   const onSendOrCancel = () => {};
   const props = buildCompanionChatWindowProps(createProjectionInput({
@@ -478,7 +474,7 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
     actionDockCompactPreview: "Companion preview",
     attachmentCount: 3,
     onCollapseActionDock,
-    onExpandActionDock,
+    onToggleActionDock,
     onJumpToMessageListBottom,
     onSendOrCancel,
   }));
@@ -492,13 +488,13 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
   assert.equal(props.composerProps.selectedModel, "gpt-companion");
   assert.equal(props.composerProps.selectedReasoningEffort, "medium");
   assert.equal(props.composerProps.sendButtonTitle, "Companion stop");
-  assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal("onCollapse" in props.composerProps, false);
   assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Companion preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 3);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Companion が応答を生成中...");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
   assert.equal(props.compactActionDockProps.sendButtonTitle, "Companion stop");
-  assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
+  assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
   assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
 });

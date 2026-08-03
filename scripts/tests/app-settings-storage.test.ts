@@ -32,8 +32,8 @@ describe("AppSettingsStorage", () => {
       legacyDatabase.close();
 
       const migratedStorage = new AppSettingsStorage(dbPath);
-      assert.equal(migratedStorage.getSettings().sessionSidePane, "context");
-      migratedStorage.updateSessionSidePane("files");
+      assert.equal(migratedStorage.getSettings().chatLayoutPreference.sidePane, "context");
+      migratedStorage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
       migratedStorage.close();
 
       const staleLegacyDatabase = new DatabaseSync(dbPath);
@@ -43,7 +43,7 @@ describe("AppSettingsStorage", () => {
       staleLegacyDatabase.close();
 
       const reopenedStorage = new AppSettingsStorage(dbPath);
-      assert.equal(reopenedStorage.getSettings().sessionSidePane, "files");
+      assert.equal(reopenedStorage.getSettings().chatLayoutPreference.sidePane, "files");
       reopenedStorage.close();
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -128,7 +128,7 @@ describe("AppSettingsStorage", () => {
 
     try {
       const storage = new AppSettingsStorage(dbPath);
-      storage.updateSessionSidePane("context");
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
       const updated = storage.updateSettings({
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
@@ -136,7 +136,11 @@ describe("AppSettingsStorage", () => {
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
-        sessionSidePane: "context",
+        chatLayoutPreference: {
+          header: "visible",
+          actionDock: "expanded",
+          sidePane: "context",
+        },
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,
@@ -214,35 +218,89 @@ describe("AppSettingsStorage", () => {
     }
   });
 
-  it("right pane 表示状態だけを更新し、他の app settings と再読込結果を維持する", async () => {
+  it("chat layout の対象1項目だけを更新し、他の app settings と再読込結果を維持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
     try {
       const storage = new AppSettingsStorage(dbPath);
-      assert.equal(storage.getSettings().sessionSidePane, "none");
+      assert.deepEqual(storage.getSettings().chatLayoutPreference, {
+        header: "hidden",
+        actionDock: "compact",
+        sidePane: "none",
+      });
 
       storage.updateSettings({
         ...createDefaultAppSettings(),
         memoryGenerationEnabled: false,
       });
-      const updated = storage.updateSessionSidePane("files");
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      const updated = storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
       storage.close();
 
       const reopened = new AppSettingsStorage(dbPath);
       const loaded = reopened.getSettings();
       reopened.close();
 
-      assert.equal(updated.sessionSidePane, "files");
+      assert.deepEqual(updated.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "files",
+      });
       assert.equal(updated.memoryGenerationEnabled, false);
-      assert.equal(loaded.sessionSidePane, "files");
+      assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
       assert.equal(loaded.memoryGenerationEnabled, false);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
   });
 
-  it("通常の settings 更新は先に保存された right pane 表示状態を stale snapshot で巻き戻さない", async () => {
+  it("chat layout 専用更新は指定された storage key だけを UPSERT する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+    const storage = new AppSettingsStorage(dbPath);
+    const directDatabase = new DatabaseSync(dbPath);
+
+    try {
+      directDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("sentinel-action-dock", "session_action_dock_presentation");
+      directDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("sentinel-side-pane", "session_side_pane");
+
+      const updated = storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      const rows = directDatabase
+        .prepare(`
+          SELECT setting_key, setting_value
+          FROM app_settings
+          WHERE setting_key IN (?, ?, ?)
+          ORDER BY setting_key
+        `)
+        .all("session_header_visibility", "session_action_dock_presentation", "session_side_pane") as Array<{
+          setting_key: string;
+          setting_value: string;
+        }>;
+
+      assert.deepEqual(rows.map((row) => ({ ...row })), [
+        { setting_key: "session_action_dock_presentation", setting_value: "sentinel-action-dock" },
+        { setting_key: "session_header_visibility", setting_value: "visible" },
+        { setting_key: "session_side_pane", setting_value: "sentinel-side-pane" },
+      ]);
+      assert.deepEqual(updated.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "compact",
+        sidePane: "none",
+      });
+    } finally {
+      directDatabase.close();
+      storage.close();
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("通常の settings 更新は先に保存された chat layout を stale snapshot で巻き戻さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
 
@@ -250,7 +308,9 @@ describe("AppSettingsStorage", () => {
       const storage = new AppSettingsStorage(dbPath);
       const staleSettings = storage.getSettings();
 
-      storage.updateSessionSidePane("context");
+      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
+      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
       const updated = storage.updateSettings({
         ...staleSettings,
         launchAtLoginEnabled: true,
@@ -262,8 +322,12 @@ describe("AppSettingsStorage", () => {
       reopened.close();
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.equal(updated.sessionSidePane, "context");
-      assert.equal(loaded.sessionSidePane, "context");
+      assert.deepEqual(updated.chatLayoutPreference, {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "context",
+      });
+      assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
     }
@@ -282,7 +346,11 @@ describe("AppSettingsStorage", () => {
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
-        sessionSidePane: "context",
+        chatLayoutPreference: {
+          header: "visible",
+          actionDock: "expanded",
+          sidePane: "context",
+        },
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,
           "dock.status.preparing": ["準備中"],
@@ -341,7 +409,7 @@ describe("AppSettingsStorage", () => {
           triggerIntervalMinutes: 90,
         },
       });
-      storage.updateSessionSidePane("files");
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
 
       const reset = storage.resetSettings();
       storage.close();

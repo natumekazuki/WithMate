@@ -623,7 +623,6 @@ export type SessionHeaderProps = {
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
   actions?: ReactNode;
-  onToggleExpanded: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -647,7 +646,6 @@ export function SessionHeader({
   workspaceActions,
   sessionFilesActions,
   actions,
-  onToggleExpanded,
   onOpenAuditLog,
   onOpenTerminal,
   onTitleDraftChange,
@@ -661,9 +659,9 @@ export function SessionHeader({
     <header className="session-window-bar session-top-bar rise-1">
       <div className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}>
         {!isEditingTitle ? (
-          <button className="session-title-shell session-title-shell-toggle" type="button" onClick={onToggleExpanded}>
+          <div className="session-title-shell">
             <span className="session-window-title session-title-accent">{taskTitle}</span>
-          </button>
+          </div>
         ) : (
           <>
             <label className="session-title-editor">
@@ -753,21 +751,30 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
 
 export const SESSION_RIGHT_PANE_ID = "session-right-pane";
 export const SESSION_LEFT_PANE_ID = "session-left-pane";
+export const SESSION_HEADER_DOCK_ID = "session-header-dock";
+export const SESSION_ACTION_DOCK_ID = "session-action-dock";
 
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
   className?: string;
   style?: CSSProperties;
   header: ReactNode;
+  headerSplitter: ReactNode;
+  isHeaderVisible: boolean;
   messageColumn: ReactNode;
   mainContent?: ReactNode;
   actionDock: ReactNode;
+  actionDockSplitter: ReactNode;
+  isActionDockExpanded: boolean;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
   rightPane: ReactNode;
   splitter: ReactNode;
   isRightPaneVisible?: boolean;
   isLeftPaneVisible?: boolean;
+  layoutRef?: RefObject<HTMLDivElement | null>;
+  headerDockRef?: RefObject<HTMLDivElement | null>;
+  actionDockRef?: RefObject<HTMLDivElement | null>;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -778,22 +785,45 @@ export function SessionChatScreen({
   className = "",
   style,
   header,
+  headerSplitter,
+  isHeaderVisible,
   messageColumn,
   mainContent,
   actionDock,
+  actionDockSplitter,
+  isActionDockExpanded,
   leftPane = null,
   leftSplitter = null,
   rightPane,
   splitter,
   isRightPaneVisible = true,
   isLeftPaneVisible = false,
+  layoutRef,
+  headerDockRef,
+  actionDockRef,
   workbenchRef,
   workbenchStyle,
   modals,
 }: SessionChatScreenProps) {
   return (
-    <div className={`page-shell session-page${className ? ` ${className}` : ""}`} style={style} data-session-mode={mode}>
-      {header}
+    <div
+      ref={layoutRef}
+      className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
+        isActionDockExpanded ? " is-action-dock-expanded" : ""
+      }${className ? ` ${className}` : ""}`}
+      style={style}
+      data-session-mode={mode}
+    >
+      <div
+        id={SESSION_HEADER_DOCK_ID}
+        ref={headerDockRef}
+        className={`session-header-dock-slot${isHeaderVisible ? "" : " is-hidden"}`}
+        aria-hidden={!isHeaderVisible}
+      >
+        {header}
+      </div>
+
+      {headerSplitter}
 
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
@@ -817,7 +847,6 @@ export function SessionChatScreen({
                 <div className="session-central-surface" hidden={mainContent === undefined}>
                   {mainContent}
                 </div>
-                {actionDock}
               </div>
 
               {splitter}
@@ -832,6 +861,15 @@ export function SessionChatScreen({
           </div>
         </section>
       </section>
+
+      {actionDockSplitter}
+      <div
+        id={SESSION_ACTION_DOCK_ID}
+        ref={actionDockRef}
+        className={`session-action-dock-slot${isActionDockExpanded ? " is-expanded" : " is-compact"}`}
+      >
+        {actionDock}
+      </div>
 
       {modals}
     </div>
@@ -1445,8 +1483,6 @@ export function SessionAuditLogModal({
 }
 
 export type SessionContextPaneProps = {
-  taskTitle: string;
-  isHeaderExpanded: boolean;
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: ContextPaneProjection;
@@ -1465,7 +1501,6 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
   latestCommandEmptyText?: string;
-  onToggleHeaderExpanded: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -1558,8 +1593,6 @@ export class SessionPaneErrorBoundary extends Component<
 }
 
 export function SessionContextPane({
-  taskTitle,
-  isHeaderExpanded,
   activeContextPaneTab,
   availableContextPaneTabs,
   contextPaneProjection,
@@ -1578,7 +1611,6 @@ export function SessionContextPane({
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
   latestCommandEmptyText = "",
-  onToggleHeaderExpanded,
   onCycleContextPaneTab,
   onOpenCompanionReview,
 }: SessionContextPaneProps) {
@@ -1660,8 +1692,7 @@ export function SessionContextPane({
   }, [contentScrollKey]);
 
   return (
-    <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
-      {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
+    <aside className="session-context-pane session-context-pane-header-expanded">
       <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
         <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
@@ -3188,7 +3219,6 @@ export type SessionComposerExpandedProps = {
   selectedCustomAgentLabel: string;
   selectedCustomAgentTitle: string;
   additionalDirectoryCount: number;
-  canCollapseActionDock: boolean;
   showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
   isSkillListLoading: boolean;
@@ -3224,7 +3254,6 @@ export type SessionComposerExpandedProps = {
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
-  onCollapse: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
   onSelectSkill: (skillId: string) => void;
@@ -3264,7 +3293,6 @@ export function SessionComposerExpanded({
   selectedCustomAgentLabel,
   selectedCustomAgentTitle,
   additionalDirectoryCount,
-  canCollapseActionDock,
   showJumpToBottom,
   isCustomAgentListLoading,
   isSkillListLoading,
@@ -3300,7 +3328,6 @@ export function SessionComposerExpanded({
   onToggleSkillPicker,
   onAddAdditionalDirectory,
   onToggleAdditionalDirectoryList,
-  onCollapse,
   onJumpToBottom,
   onSelectCustomAgent,
   onSelectSkill,
@@ -3355,7 +3382,6 @@ export function SessionComposerExpanded({
     showSkillPicker ||
     showAdditionalDirectoryControls ||
     showJumpToBottom ||
-    canCollapseActionDock ||
     !!modeLabel ||
     !!chatNotice ||
     isRunning;
@@ -3485,11 +3511,6 @@ export function SessionComposerExpanded({
                 Cancel
               </button>
             </>
-          ) : null}
-          {canCollapseActionDock ? (
-            <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
-              Hide
-            </button>
           ) : null}
         </div>
       ) : null}

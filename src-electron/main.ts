@@ -167,7 +167,7 @@ import {
   resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
-import type { SessionSidePane } from "../src/session-side-pane.js";
+import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -1320,7 +1320,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
-                updateSessionSidePane,
+                updateChatLayoutPreference,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
@@ -1779,8 +1779,8 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return savedSettings;
 }
 
-function updateSessionSidePane(sidePane: SessionSidePane): AppSettings {
-  return requireAppSettingsStorage().updateSessionSidePane(sidePane);
+function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSettings {
+  return requireAppSettingsStorage().updateChatLayoutPreference(update);
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
