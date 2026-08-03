@@ -38,6 +38,10 @@ function isWindowsAbsolutePath(targetPath: string): boolean {
   return /^[a-zA-Z]:[\\/]/.test(targetPath) || /^\\\\[^\\]+\\[^\\]+/.test(targetPath);
 }
 
+function normalizeLeadingSlashWindowsAbsolutePath(targetPath: string): string {
+  return /^\/[a-zA-Z]:[\\/]/.test(targetPath) ? targetPath.slice(1) : targetPath;
+}
+
 function isWindowsFileUrl(url: URL): boolean {
   const hostname = url.hostname;
   if (hostname && hostname !== "localhost") {
@@ -154,10 +158,12 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     throw new Error("開く対象の path が空だよ。");
   }
 
-  if (path.isAbsolute(decodedTarget) || isWindowsAbsolutePath(decodedTarget)) {
+  const localTarget = normalizeLeadingSlashWindowsAbsolutePath(decodedTarget);
+
+  if (path.isAbsolute(localTarget) || isWindowsAbsolutePath(localTarget)) {
     return {
       type: "local-path",
-      targetPath: decodedTarget,
+      targetPath: localTarget,
     };
   }
 
@@ -166,18 +172,18 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     if (isWindowsAbsolutePath(baseDirectory)) {
       return {
         type: "local-path",
-        targetPath: path.win32.resolve(baseDirectory, decodedTarget),
+        targetPath: path.win32.resolve(baseDirectory, localTarget),
       };
     }
     return {
       type: "local-path",
-      targetPath: path.resolve(baseDirectory, decodedTarget),
+      targetPath: path.resolve(baseDirectory, localTarget),
     };
   }
 
   return {
     type: "local-path",
-    targetPath: decodedTarget,
+    targetPath: localTarget,
   };
 }
 
@@ -231,6 +237,56 @@ function projectUnsupportedLocalPathType(targetPath: string): OpenPathResult {
   };
 }
 
+type InspectedLocalPath =
+  | {
+      targetPath: string;
+      targetStat: LocalPathStat;
+    }
+  | {
+      result: OpenPathResult;
+    };
+
+function resolveTextLocationFallbackPath(targetPath: string): string | null {
+  const match = /^(.*):[1-9]\d*:[1-9]\d*$/.exec(targetPath)
+    ?? /^(.*):[1-9]\d*$/.exec(targetPath);
+  const fallbackPath = match?.[1] ?? "";
+  return fallbackPath ? fallbackPath : null;
+}
+
+async function inspectLocalPath(
+  targetPath: string,
+  statTarget: OpenLocalPathDeps["statTarget"],
+): Promise<InspectedLocalPath> {
+  try {
+    return {
+      targetPath,
+      targetStat: await statTarget(targetPath),
+    };
+  } catch (error) {
+    if (!isMissingLocalPathError(error)) {
+      return { result: projectLocalPathStatError(targetPath, error) };
+    }
+
+    const fallbackPath = resolveTextLocationFallbackPath(targetPath);
+    if (!fallbackPath) {
+      return { result: projectLocalPathStatError(targetPath, error) };
+    }
+
+    try {
+      return {
+        targetPath: fallbackPath,
+        targetStat: await statTarget(fallbackPath),
+      };
+    } catch (fallbackError) {
+      return {
+        result: isMissingLocalPathError(fallbackError)
+          ? projectLocalPathStatError(targetPath, error)
+          : projectLocalPathStatError(fallbackPath, fallbackError),
+      };
+    }
+  }
+}
+
 async function openExistingLocalPathWithDefaultApp(
   targetPath: string,
   openWithDefaultApp: OpenLocalPathDeps["openWithDefaultApp"],
@@ -254,53 +310,49 @@ export async function openLocalPathWithDefaultApp(
   targetPath: string,
   deps: OpenLocalPathDeps,
 ): Promise<OpenPathResult> {
-  let targetStat: LocalPathStat;
-  try {
-    targetStat = await deps.statTarget(targetPath);
-  } catch (error) {
-    return projectLocalPathStatError(targetPath, error);
+  const inspected = await inspectLocalPath(targetPath, deps.statTarget);
+  if ("result" in inspected) {
+    return inspected.result;
   }
 
-  if (!targetStat.isFile() && !targetStat.isDirectory()) {
-    return projectUnsupportedLocalPathType(targetPath);
+  if (!inspected.targetStat.isFile() && !inspected.targetStat.isDirectory()) {
+    return projectUnsupportedLocalPathType(inspected.targetPath);
   }
 
-  return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
+  return openExistingLocalPathWithDefaultApp(inspected.targetPath, deps.openWithDefaultApp);
 }
 
 export async function revealLocalPathInFileManager(
   targetPath: string,
   deps: RevealLocalPathDeps,
 ): Promise<OpenPathResult> {
-  let targetStat: LocalPathStat;
-  try {
-    targetStat = await deps.statTarget(targetPath);
-  } catch (error) {
-    return projectLocalPathStatError(targetPath, error);
+  const inspected = await inspectLocalPath(targetPath, deps.statTarget);
+  if ("result" in inspected) {
+    return inspected.result;
   }
 
-  if (targetStat.isFile()) {
+  if (inspected.targetStat.isFile()) {
     try {
-      deps.revealInFileManager(targetPath);
+      deps.revealInFileManager(inspected.targetPath);
       return {
         status: "revealed",
         targetType: "local-path",
-        target: targetPath,
+        target: inspected.targetPath,
         message: "The file was revealed in the file manager.",
       };
     } catch (error) {
       return {
         status: "failed",
         targetType: "local-path",
-        target: targetPath,
+        target: inspected.targetPath,
         message: `The file could not be revealed: ${describeLocalPathError(error)}`,
       };
     }
   }
 
-  if (targetStat.isDirectory()) {
-    return openExistingLocalPathWithDefaultApp(targetPath, deps.openWithDefaultApp);
+  if (inspected.targetStat.isDirectory()) {
+    return openExistingLocalPathWithDefaultApp(inspected.targetPath, deps.openWithDefaultApp);
   }
 
-  return projectUnsupportedLocalPathType(targetPath);
+  return projectUnsupportedLocalPathType(inspected.targetPath);
 }
