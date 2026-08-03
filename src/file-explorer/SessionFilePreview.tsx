@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
@@ -51,7 +52,13 @@ import { clampFindMatchIndex } from "../find-text-matches.js";
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
-  "listSessionFileRoots" | "inspectSessionFile" | "readSessionFileChunk" | "openSessionFile" | "openPath"
+  | "listSessionFileRoots"
+  | "inspectSessionFile"
+  | "readSessionFileChunk"
+  | "openSessionFile"
+  | "openPath"
+  | "copySessionFilePreviewImage"
+  | "showSessionFilePreviewImageContextMenu"
 >;
 
 type SessionFilePreviewProps = {
@@ -92,6 +99,32 @@ function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;
+}
+
+function resolveVisibleImageCopyPoint(
+  image: HTMLImageElement,
+  scrollport: HTMLElement,
+): { x: number; y: number } | null {
+  const rect = image.getBoundingClientRect();
+  const scrollportRect = scrollport.getBoundingClientRect();
+  const left = Math.max(0, rect.left, scrollportRect.left);
+  const top = Math.max(0, rect.top, scrollportRect.top);
+  const right = Math.min(window.innerWidth, rect.right, scrollportRect.right);
+  const bottom = Math.min(window.innerHeight, rect.bottom, scrollportRect.bottom);
+  if (
+    !Number.isFinite(left) ||
+    !Number.isFinite(top) ||
+    !Number.isFinite(right) ||
+    !Number.isFinite(bottom) ||
+    right <= left ||
+    bottom <= top
+  ) {
+    return null;
+  }
+  return {
+    x: Math.floor((left + right) / 2),
+    y: Math.floor((top + bottom) / 2),
+  };
 }
 
 async function readWholeResource(
@@ -266,6 +299,8 @@ export function SessionFilePreview({
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const imageScrollRef = useRef<HTMLDivElement | null>(null);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
@@ -561,6 +596,57 @@ export function SessionFilePreview({
     }
   }, [api, request]);
 
+  const copyPreviewImage = useCallback(async () => {
+    if (!api || !imageRef.current || !imageScrollRef.current) {
+      return;
+    }
+    const point = resolveVisibleImageCopyPoint(imageRef.current, imageScrollRef.current);
+    if (!point) {
+      setFeedback("The image is not currently visible.");
+      return;
+    }
+    const revision = loadRevisionRef.current;
+    try {
+      const result = await api.copySessionFilePreviewImage({
+        sessionId: request.sessionId,
+        point,
+      });
+      if (loadRevisionRef.current === revision) {
+        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+      }
+    } catch {
+      if (loadRevisionRef.current === revision) {
+        setFeedback("Image could not be copied.");
+      }
+    }
+  }, [api, request.sessionId]);
+
+  const showPreviewImageContextMenu = useCallback(async (
+    event: ReactMouseEvent<HTMLImageElement>,
+  ) => {
+    event.preventDefault();
+    if (!api) {
+      return;
+    }
+    const revision = loadRevisionRef.current;
+    try {
+      const result = await api.showSessionFilePreviewImageContextMenu({
+        sessionId: request.sessionId,
+        point: {
+          x: Math.max(0, Math.round(event.clientX)),
+          y: Math.max(0, Math.round(event.clientY)),
+        },
+      });
+      if (loadRevisionRef.current === revision && result.status !== "dismissed") {
+        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+      }
+    } catch {
+      if (loadRevisionRef.current === revision) {
+        setFeedback("Image context menu could not be opened.");
+      }
+    }
+  }, [api, request.sessionId]);
+
   const handleOpenMarkdownPath = useCallback((target: string) => {
     if (!api) {
       return;
@@ -692,12 +778,15 @@ export function SessionFilePreview({
             </div>
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
-            <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
-              <button type="button" onClick={() => setImageZoom((current) => Math.max(10, (typeof current === "number" ? current : 100) - 10))}>−</button>
-              <button type="button" onClick={() => setImageZoom(100)}>{typeof imageZoom === "number" ? `${imageZoom}%` : "100%"}</button>
-              <button type="button" onClick={() => setImageZoom((current) => Math.min(800, (typeof current === "number" ? current : 100) + 10))}>＋</button>
-              <button type="button" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
-            </div>
+            <>
+              <button type="button" disabled={!imageObjectUrl} onClick={() => void copyPreviewImage()}>Copy Image</button>
+              <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
+                <button type="button" onClick={() => setImageZoom((current) => Math.max(10, (typeof current === "number" ? current : 100) - 10))}>−</button>
+                <button type="button" onClick={() => setImageZoom(100)}>{typeof imageZoom === "number" ? `${imageZoom}%` : "100%"}</button>
+                <button type="button" onClick={() => setImageZoom((current) => Math.min(800, (typeof current === "number" ? current : 100) + 10))}>＋</button>
+                <button type="button" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
+              </div>
+            </>
           ) : null}
           {onOpenDiff && diffScopes.length > 0 ? diffScopes.map((scope) => (
             <button
@@ -798,12 +887,14 @@ export function SessionFilePreview({
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
-        <div className="session-file-image-scroll">
+        <div ref={imageScrollRef} className="session-file-image-scroll">
           {imageObjectUrl ? (
             <img
+              ref={imageRef}
               className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
               src={imageObjectUrl}
               alt={descriptor.name}
+              onContextMenu={(event) => void showPreviewImageContextMenu(event)}
               style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
             />
           ) : null}

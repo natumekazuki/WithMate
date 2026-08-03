@@ -114,6 +114,7 @@ import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
+import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
 import { WorkspaceGitChangesService } from "./workspace-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
@@ -239,6 +240,9 @@ const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
+const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -1290,6 +1294,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 savePastedSessionFile,
                 openSessionFilesDirectory,
                 openSessionFilesTerminal,
+                copySessionFilePreviewImage: (event, request) =>
+                  sessionFilePreviewImageCopyService.copyImage(event.sender, request.point),
+                showSessionFilePreviewImageContextMenu: (event, request) =>
+                  sessionFilePreviewImageCopyService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    event.sender,
+                    request.point,
+                  ),
                 openPathTarget,
                 openAppLogFolder: () => openDirectory(appLogsPath),
                 openCrashDumpFolder: () => openDirectory(crashDumpsPath),
