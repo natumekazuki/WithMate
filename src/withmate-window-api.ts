@@ -87,9 +87,10 @@ import type {
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
 } from "./file-explorer/file-explorer-contract.js";
 
 export type WithMateWindowNavigationApi = {
@@ -132,8 +133,8 @@ export type WithMateWindowSessionApi = {
   showSessionFilePreviewImageContextMenu(
     request: SessionFilePreviewImageActionRequest,
   ): Promise<SessionFilePreviewImageContextMenuResult>;
-  listWorkspaceChanges(sessionId: string): Promise<WorkspaceChangesResult>;
-  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Promise<WorkspaceFileDiffResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;

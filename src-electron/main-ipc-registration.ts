@@ -79,9 +79,10 @@ import type {
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -135,8 +136,8 @@ import {
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
-  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
-  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -340,8 +341,8 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
-  listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
-  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -544,8 +545,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "openSessionFile"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
-  | "listWorkspaceChanges"
-  | "getWorkspaceFileDiff"
+  | "listFileRootChanges"
+  | "getFileRootDiff"
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
@@ -1137,19 +1138,34 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.showSessionFilePreviewImageContextMenu(event, request);
   });
-  ipcMain.handle(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, async (event, sessionId: string) => {
-    if (typeof sessionId !== "string" || !sessionId) {
-      throw new TypeError("Session ID が不正だよ。");
+  ipcMain.handle(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, async (event, request: FileRootChangesRequest) => {
+    if (
+      !request
+      || typeof request.sessionId !== "string"
+      || !request.sessionId
+      || typeof request.rootId !== "string"
+      || !request.rootId
+    ) {
+      throw new TypeError("File root changes request が不正だよ。");
     }
-    await assertSessionFileExplorerSender(event, sessionId, deps);
-    return deps.listWorkspaceChanges(sessionId);
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.listFileRootChanges(request);
   });
-  ipcMain.handle(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL, async (event, request: WorkspaceFileDiffRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+  ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
+    if (
+      !request
+      || typeof request.sessionId !== "string"
+      || !request.sessionId
+      || typeof request.rootId !== "string"
+      || !request.rootId
+      || typeof request.relativePath !== "string"
+      || !request.relativePath
+      || (request.scope !== "working-tree" && request.scope !== "staged")
+    ) {
       throw new TypeError("Git Diff request が不正だよ。");
     }
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
-    return deps.getWorkspaceFileDiff(request);
+    return deps.getFileRootDiff(request);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
     if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {

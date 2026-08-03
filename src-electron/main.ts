@@ -115,7 +115,7 @@ import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
-import { WorkspaceGitChangesService } from "./workspace-git-changes-service.js";
+import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
   appendSessionFilesDirectoryForSessionId,
@@ -1369,8 +1369,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
                 readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
-                listWorkspaceChanges: (sessionId) => createWorkspaceGitChangesService().listChanges(sessionId),
-                getWorkspaceFileDiff: (request) => createWorkspaceGitChangesService().getFileDiff(request),
+                listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
+                getFileRootDiff: (request) => createFileRootGitChangesService().getFileDiff(request),
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -2968,11 +2968,11 @@ function createSessionFileExplorerService(): SessionFileExplorerService {
   });
 }
 
-function createWorkspaceGitChangesService(): WorkspaceGitChangesService {
-  return new WorkspaceGitChangesService({
-    getWorkspaceContext: async (sessionId) => {
-      const context = await getSessionFileExplorerContext(sessionId);
-      return context ? { workspacePath: context.workspacePath } : null;
+function createFileRootGitChangesService(): FileRootGitChangesService {
+  return new FileRootGitChangesService({
+    resolveRootContext: async (request) => {
+      const root = await createSessionFileExplorerService().resolveRoot(request.sessionId, request.rootId);
+      return root ? { rootPath: root.absolutePath } : null;
     },
   });
 }

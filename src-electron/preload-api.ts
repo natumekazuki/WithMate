@@ -72,8 +72,8 @@ import {
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
-  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
-  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -315,11 +315,11 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     showSessionFilePreviewImageContextMenu(request) {
       return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, request);
     },
-    listWorkspaceChanges(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, sessionId);
+    listFileRootChanges(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, request);
     },
-    getWorkspaceFileDiff(request) {
-      return ipcRenderer.invoke(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL, request);
+    getFileRootDiff(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, request);
     },
     getSessionMessageArtifact(sessionId, messageIndex) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);

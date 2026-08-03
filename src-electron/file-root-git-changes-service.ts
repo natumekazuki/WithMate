@@ -15,19 +15,20 @@ import os from "node:os";
 import path from "node:path";
 
 import type {
-  WorkspaceChangeEntry,
-  WorkspaceChangeKind,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
+  FileRootGitChangeEntry,
+  FileRootGitChangeKind,
 } from "../src/file-explorer/file-explorer-contract.js";
 
-export type WorkspaceGitContext = {
-  workspacePath: string;
+export type FileRootGitContext = {
+  rootPath: string;
 };
 
-export type WorkspaceGitChangesServiceDeps = {
-  getWorkspaceContext(sessionId: string): Promise<WorkspaceGitContext | null>;
+export type FileRootGitChangesServiceDeps = {
+  resolveRootContext(request: FileRootChangesRequest): Promise<FileRootGitContext | null>;
   runGit?: (
     workspacePath: string,
     args: string[],
@@ -212,7 +213,7 @@ let workspaceGitCleanupTail: Promise<void> = Promise.resolve();
 
 class WorkspaceGitOperationTimeoutError extends Error {
   constructor() {
-    super("Workspace Git preview timed out before the operation completed.");
+    super("File root Git preview timed out before the operation completed.");
   }
 }
 
@@ -251,11 +252,11 @@ function runWorkspaceGitOperationWithAdmission<T>(
     );
     if (supersededIndex >= 0) {
       pendingWorkspaceGitOperations.splice(supersededIndex, 1)[0]?.reject(
-        new Error("Workspace Git preview was superseded by a newer request."),
+        new Error("File root Git preview was superseded by a newer request."),
       );
     }
     if (pendingWorkspaceGitOperations.length >= MAX_PENDING_WORKSPACE_GIT_OPERATIONS) {
-      reject(new Error("Too many Workspace Git previews are already waiting."));
+      reject(new Error("Too many file root Git previews are already waiting."));
       return;
     }
     const abortController = new AbortController();
@@ -429,7 +430,7 @@ function normalizeGitRelativePath(value: string): string {
   return segments.join("/");
 }
 
-function changeKind(status: string, fallback: WorkspaceChangeKind = "modified"): WorkspaceChangeKind {
+function changeKind(status: string, fallback: FileRootGitChangeKind = "modified"): FileRootGitChangeKind {
   if (status === "R" || status === "C") {
     return "renamed";
   }
@@ -459,9 +460,9 @@ function toWorkspaceRelativePath(repositoryRelativePath: string, workspacePrefix
   return normalizeGitRelativePath(normalizedPath.slice(normalizedPrefix.length));
 }
 
-export function parseGitPorcelainV1Z(output: Buffer, workspacePrefix = ""): WorkspaceChangeEntry[] {
+export function parseGitPorcelainV1Z(output: Buffer, workspacePrefix = ""): FileRootGitChangeEntry[] {
   const fields = output.toString("utf8").split("\0");
-  const entries: WorkspaceChangeEntry[] = [];
+  const entries: FileRootGitChangeEntry[] = [];
   for (let index = 0; index < fields.length; index += 1) {
     const field = fields[index];
     if (!field) {
@@ -497,8 +498,8 @@ export function parseGitPorcelainV1Z(output: Buffer, workspacePrefix = ""): Work
       continue;
     }
 
-    const scopes: WorkspaceChangeEntry["scopes"] = [];
-    const kinds: WorkspaceChangeEntry["kinds"] = {};
+    const scopes: FileRootGitChangeEntry["scopes"] = [];
+    const kinds: FileRootGitChangeEntry["kinds"] = {};
     if (x !== " " && x !== "?") {
       scopes.push("staged");
       kinds.staged = !currentRelativePath
@@ -531,7 +532,7 @@ type WorkspaceGitFailure = {
 };
 
 type WorkspaceGitOperationFailure = WorkspaceGitFailure | {
-  status: "workspace-not-found";
+  status: "root-not-found";
   message: string;
 };
 
@@ -581,13 +582,13 @@ class OperationIdentityChangedError extends Error {
 
 class WorkspaceNotGitRepositoryError extends Error {
   constructor() {
-    super("Workspace is not a Git repository.");
+    super("File root is not a Git repository.");
   }
 }
 
 class WorkspaceGitCleanupError extends Error {
   constructor(messages: string[]) {
-    super(`Workspace Git preview cleanup failed: ${messages.join("; ")}`);
+    super(`File root Git preview cleanup failed: ${messages.join("; ")}`);
   }
 }
 
@@ -720,9 +721,9 @@ function parseActiveGitFilterDrivers(output: Buffer): string[] {
   return [...drivers];
 }
 
-export class WorkspaceGitChangesService {
-  readonly #getWorkspaceContext: WorkspaceGitChangesServiceDeps["getWorkspaceContext"];
-  readonly #runGit: NonNullable<WorkspaceGitChangesServiceDeps["runGit"]>;
+export class FileRootGitChangesService {
+  readonly #resolveRootContext: FileRootGitChangesServiceDeps["resolveRootContext"];
+  readonly #runGit: NonNullable<FileRootGitChangesServiceDeps["runGit"]>;
   readonly #resolveGitExecutablePath: () => Promise<string>;
   readonly #gitProcessEnv: NodeJS.ProcessEnv;
   readonly #gitConfigReadEnv: NodeJS.ProcessEnv;
@@ -732,8 +733,8 @@ export class WorkspaceGitChangesService {
   readonly #closeDirectoryLease: (fileHandle: FileHandle) => Promise<void>;
   #gitExecutablePath: Promise<string> | null = null;
 
-  constructor(deps: WorkspaceGitChangesServiceDeps) {
-    this.#getWorkspaceContext = deps.getWorkspaceContext;
+  constructor(deps: FileRootGitChangesServiceDeps) {
+    this.#resolveRootContext = deps.resolveRootContext;
     this.#runGit = deps.runGit ?? runGitProcess;
     this.#resolveGitExecutablePath = deps.resolveGitExecutablePath
       ?? (deps.runGit ? async () => "git" : getDefaultGitExecutablePath);
@@ -1361,7 +1362,7 @@ export class WorkspaceGitChangesService {
 
   async #acquireDirectoryLease(identity: DirectoryIdentity): Promise<DirectoryLease> {
     if (process.platform !== "win32") {
-      throw new Error("Secure Workspace Git preview is not available on this platform.");
+      throw new Error("Secure file root Git preview is not available on this platform.");
     }
     const fileName = `.withmate-git-preview-${randomUUID()}.tmp`;
     const filePath = path.join(identity.realPath, fileName);
@@ -1437,7 +1438,7 @@ export class WorkspaceGitChangesService {
   async #readWorkspacePrefix(operation: WorkspaceGitOperation): Promise<string> {
     const prefixResult = await this.#runIdentityBoundGit(operation, ["rev-parse", "--show-prefix"]);
     if (prefixResult.exitCode !== 0) {
-      throw new Error(prefixResult.stderr || "Git Workspace prefix could not be resolved.");
+      throw new Error(prefixResult.stderr || "Git file root prefix could not be resolved.");
     }
     const prefix = prefixResult.stdout.toString("utf8").replace(/\r?\n$/, "");
     const prefixedDirectory = await captureDirectoryIdentity(
@@ -1449,7 +1450,7 @@ export class WorkspaceGitChangesService {
     return prefix;
   }
 
-  async #listChangesInOperation(operation: WorkspaceGitOperation): Promise<WorkspaceChangeEntry[]> {
+  async #listChangesInOperation(operation: WorkspaceGitOperation): Promise<FileRootGitChangeEntry[]> {
     const workspacePrefix = await this.#readWorkspacePrefix(operation);
     const isolatedContext = await this.#prepareIsolatedGit(operation, workspacePrefix);
     await this.#assertNoActiveExternalFilters(operation, isolatedContext.lockRepositoryRelativePath);
@@ -1470,22 +1471,22 @@ export class WorkspaceGitChangesService {
   }
 
   async #resolveOperation(
-    sessionId: string,
+    request: FileRootChangesRequest,
     signal: AbortSignal,
   ): Promise<WorkspaceGitOperation | WorkspaceGitOperationFailure> {
     throwIfAborted(signal);
-    const context = await this.#getWorkspaceContext(sessionId);
+    const context = await this.#resolveRootContext(request);
     throwIfAborted(signal);
     if (!context) {
-      return { status: "workspace-not-found", message: "Workspace could not be resolved for this session." };
+      return { status: "root-not-found", message: "File root could not be resolved for this session." };
     }
     try {
-      return await this.#openOperation(context.workspacePath, signal);
+      return await this.#openOperation(context.rootPath, signal);
     } catch (error) {
       if (error instanceof WorkspaceGitCleanupError) {
         throw error;
       }
-      const message = error instanceof Error ? error.message : "Workspace directory was not found.";
+      const message = error instanceof Error ? error.message : "File root directory was not found.";
       if (error instanceof WorkspaceNotGitRepositoryError) {
         return { status: "not-git", message };
       }
@@ -1493,29 +1494,29 @@ export class WorkspaceGitChangesService {
         return { status: "failed", message };
       }
       try {
-        const workspaceStat = await stat(context.workspacePath);
+        const workspaceStat = await stat(context.rootPath);
         if (!workspaceStat.isDirectory()) {
-          return { status: "workspace-not-found", message: "Workspace directory was not found." };
+          return { status: "root-not-found", message: "File root directory was not found." };
         }
       } catch {
-        return { status: "workspace-not-found", message: "Workspace directory was not found." };
+        return { status: "root-not-found", message: "File root directory was not found." };
       }
       return failedStatus(message);
     }
   }
 
-  async #listChangesRequest(sessionId: string, signal: AbortSignal): Promise<WorkspaceChangesResult> {
+  async #listChangesRequest(request: FileRootChangesRequest, signal: AbortSignal): Promise<FileRootChangesResult> {
     const pendingCleanupError = await this.#cleanupPendingResources();
     if (pendingCleanupError) {
       return failedStatus(pendingCleanupError.message);
     }
     throwIfAborted(signal);
-    const operation = await this.#resolveOperation(sessionId, signal);
+    const operation = await this.#resolveOperation(request, signal);
     if (!("workspacePath" in operation)) {
       throwIfAborted(signal);
       return operation;
     }
-    let result: WorkspaceChangesResult;
+    let result: FileRootChangesResult;
     try {
       const entries = await this.#listChangesInOperation(operation);
       await this.#assertOperationIdentity(operation);
@@ -1531,12 +1532,12 @@ export class WorkspaceGitChangesService {
     return result;
   }
 
-  async listChanges(sessionId: string): Promise<WorkspaceChangesResult> {
+  async listChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult> {
     try {
       return await runWorkspaceGitOperationWithAdmission(
-        `${sessionId}:list`,
+        `${request.sessionId}:${request.rootId}:list`,
         this.#operationTimeoutMs,
-        (signal) => this.#listChangesRequest(sessionId, signal),
+        (signal) => this.#listChangesRequest(request, signal),
       );
     } catch (error) {
       return failedStatus(error instanceof Error ? error.message : "Git status failed.");
@@ -1544,21 +1545,21 @@ export class WorkspaceGitChangesService {
   }
 
   async #getFileDiffRequest(
-    request: WorkspaceFileDiffRequest,
+    request: FileRootFileDiffRequest,
     relativePath: string,
     signal: AbortSignal,
-  ): Promise<WorkspaceFileDiffResult> {
+  ): Promise<FileRootFileDiffResult> {
     const pendingCleanupError = await this.#cleanupPendingResources();
     if (pendingCleanupError) {
       return failedStatus(pendingCleanupError.message);
     }
     throwIfAborted(signal);
-    const operation = await this.#resolveOperation(request.sessionId, signal);
+    const operation = await this.#resolveOperation(request, signal);
     if (!("workspacePath" in operation)) {
       throwIfAborted(signal);
       return operation;
     }
-    let response: WorkspaceFileDiffResult;
+    let response: FileRootFileDiffResult;
     try {
       const entries = await this.#listChangesInOperation(operation);
       const change = entries.find((entry) => entry.relativePath === relativePath);
@@ -1611,14 +1612,14 @@ export class WorkspaceGitChangesService {
     return response;
   }
 
-  async getFileDiff(request: WorkspaceFileDiffRequest): Promise<WorkspaceFileDiffResult> {
+  async getFileDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult> {
     const relativePath = normalizeGitRelativePath(request.relativePath);
     if (request.scope !== "working-tree" && request.scope !== "staged") {
       return { status: "failed", message: "Unknown Git change scope." };
     }
     try {
       return await runWorkspaceGitOperationWithAdmission(
-        `${request.sessionId}:diff`,
+        `${request.sessionId}:${request.rootId}:diff`,
         this.#operationTimeoutMs,
         (signal) => this.#getFileDiffRequest(request, relativePath, signal),
       );

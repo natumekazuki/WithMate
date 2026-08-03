@@ -18,7 +18,7 @@ import type {
   SessionFileDescriptor,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangeScope,
+  FileRootGitChangeScope,
 } from "./file-explorer-contract.js";
 import {
   calculateImageFitZoom,
@@ -73,9 +73,9 @@ type SessionFilePreviewProps = {
   request: SessionFileResourceRequest;
   onClose: () => void;
   onCopyText: (text: string) => void;
-  diffScopes?: WorkspaceChangeScope[];
-  onOpenDiff?: (scope: WorkspaceChangeScope) => Promise<string | null>;
-  diffLoadingScope?: WorkspaceChangeScope | null;
+  diffScopes?: FileRootGitChangeScope[];
+  onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
+  diffLoadingScope?: FileRootGitChangeScope | null;
   diffAvailabilityMessage?: string;
   chatNotice?: string;
 };
@@ -974,7 +974,7 @@ export function SessionFilePreview({
     });
   }, [api, encoding, markdownImageQueue, request, roots]);
 
-  const openDiff = useCallback(async (scope: WorkspaceChangeScope) => {
+  const openDiff = useCallback(async (scope: FileRootGitChangeScope) => {
     if (!onOpenDiff) {
       return;
     }

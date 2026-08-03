@@ -4469,6 +4469,30 @@ button:disabled {
   width: 100%;
 }
 
+.workspace-changes-root-header {
+  display: grid;
+  gap: 2px;
+  padding: 8px 5px 5px;
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  color: var(--ink);
+}
+
+.workspace-change-virtual-row:first-child .workspace-changes-root-header {
+  border-top: 0;
+}
+
+.workspace-changes-root-header strong,
+.workspace-changes-root-header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-changes-root-header span {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
 .workspace-changes-group-header {
   padding: 4px 5px;
   color: var(--muted);
@@ -4486,6 +4510,10 @@ button:disabled {
 }
 
 .workspace-changes-message {
+  color: var(--danger, #fca5a5);
+}
+
+.workspace-change-virtual-row > .workspace-changes-root-error {
   color: var(--danger, #fca5a5);
 }
 
