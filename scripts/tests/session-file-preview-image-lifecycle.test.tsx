@@ -14,6 +14,18 @@ import type {
 
 type PreviewApi = NonNullable<React.ComponentProps<typeof SessionFilePreview>["api"]>;
 
+const DEFAULT_IMAGE_COPY_API: Pick<
+  PreviewApi,
+  "copySessionFilePreviewImage" | "showSessionFilePreviewImageContextMenu"
+> = {
+  async copySessionFilePreviewImage() {
+    return { status: "copied" };
+  },
+  async showSessionFilePreviewImageContextMenu() {
+    return { status: "dismissed" };
+  },
+};
+
 const MARKDOWN_REQUEST: SessionFileResourceRequest = {
   sessionId: "session-1",
   rootId: "workspace",
@@ -110,6 +122,7 @@ function createPreviewApi(
 ): { api: PreviewApi; getImageInspectCount: () => number } {
   let imageInspectCount = 0;
   const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
     async listSessionFileRoots() {
       return [{
         id: "workspace",
@@ -282,6 +295,7 @@ test("inspection prefix より後ろで binary と判明した Markdown は rich
     revision: "binary-markdown-r1",
   };
   const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
     async listSessionFileRoots() {
       return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
     },
@@ -352,6 +366,7 @@ test("寸法情報のないSVGは初回だけFitで表示する", async () => {
     revision: "svg-r1",
   };
   const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
     async listSessionFileRoots() {
       return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
     },
@@ -382,6 +397,103 @@ test("寸法情報のないSVGは初回だけFitで表示する", async () => {
     assert.ok(container);
     root = await renderPreview(api, container, request);
     await waitFor(() => container.querySelector(".session-file-image.is-fit") !== null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    URL.createObjectURL = originalCreateObjectUrl;
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("単体画像previewはbuttonと右クリックから現在の画像座標をcopy境界へ渡す", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  URL.createObjectURL = () => "blob:copy-image";
+  URL.revokeObjectURL = () => undefined;
+  const baseApi = createPreviewApi(async () => IMAGE_DESCRIPTOR).api;
+  const copyRequests: unknown[] = [];
+  const contextMenuRequests: unknown[] = [];
+  const api: PreviewApi = {
+    ...baseApi,
+    async copySessionFilePreviewImage(request) {
+      copyRequests.push(request);
+      return { status: "copied" };
+    },
+    async showSessionFilePreviewImageContextMenu(request) {
+      contextMenuRequests.push(request);
+      return { status: "copied" };
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, {
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "docs/image.png",
+    });
+    await waitFor(() => container.querySelector<HTMLImageElement>(".session-file-image") !== null);
+    const image = container.querySelector<HTMLImageElement>(".session-file-image");
+    const scrollport = container.querySelector<HTMLDivElement>(".session-file-image-scroll");
+    assert.ok(image);
+    assert.ok(scrollport);
+    image.getBoundingClientRect = () => ({
+      x: 20,
+      y: 30,
+      left: 20,
+      top: 30,
+      right: 220,
+      bottom: 230,
+      width: 200,
+      height: 200,
+      toJSON() {},
+    });
+    scrollport.getBoundingClientRect = () => ({
+      x: 40,
+      y: 50,
+      left: 40,
+      top: 50,
+      right: 100,
+      bottom: 110,
+      width: 60,
+      height: 60,
+      toJSON() {},
+    });
+    const copyButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Copy Image");
+    assert.ok(copyButton);
+
+    await act(async () => copyButton.click());
+    await waitFor(() => copyRequests.length === 1);
+    assert.deepEqual(copyRequests, [{
+      sessionId: "session-1",
+      point: { x: 70, y: 80 },
+    }]);
+    assert.match(container.textContent ?? "", /Image copied\./);
+
+    const contextMenuEvent = new dom.window.MouseEvent("contextmenu", {
+      bubbles: true,
+      cancelable: true,
+      clientX: 44,
+      clientY: 55,
+    });
+    await act(async () => image.dispatchEvent(contextMenuEvent));
+    await waitFor(() => contextMenuRequests.length === 1);
+    assert.equal(contextMenuEvent.defaultPrevented, true);
+    assert.deepEqual(contextMenuRequests, [{
+      sessionId: "session-1",
+      point: { x: 44, y: 55 },
+    }]);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -466,6 +578,7 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
   const openResult = deferred<Awaited<ReturnType<PreviewApi["openSessionFile"]>>>();
   const diffResult = deferred<string | null>();
   const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
     async listSessionFileRoots() {
       return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
     },
@@ -558,6 +671,7 @@ test("操作feedbackと後着するGit Diff利用不可理由を両方表示す�
   const baseApi = createPreviewApi(async () => IMAGE_DESCRIPTOR).api;
   let openCount = 0;
   const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
     ...baseApi,
     async openSessionFile() {
       openCount += 1;
