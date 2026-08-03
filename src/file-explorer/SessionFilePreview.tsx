@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
@@ -82,6 +83,14 @@ type SessionFilePreviewProps = {
 type LoadedFile = {
   descriptor: SessionFileDescriptor;
   bytes: Uint8Array;
+};
+
+type ImagePanSession = {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  scrollLeft: number;
+  scrollTop: number;
 };
 
 type FileLoadState =
@@ -440,8 +449,11 @@ export function SessionFilePreview({
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const imagePanSessionRef = useRef<ImagePanSession | null>(null);
+  const [isImagePanning, setIsImagePanning] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const imageScrollRef = useRef<HTMLDivElement | null>(null);
+  const imageCanvasRef = useRef<HTMLDivElement | null>(null);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
@@ -524,6 +536,8 @@ export function SessionFilePreview({
     setEncoding("auto");
     setMarkdownMode("preview");
     setImageZoom(100);
+    imagePanSessionRef.current = null;
+    setIsImagePanning(false);
     setImageObjectUrl("");
     setFeedback("");
     setFindOpen(false);
@@ -654,13 +668,62 @@ export function SessionFilePreview({
     return () => URL.revokeObjectURL(objectUrl);
   }, [loaded]);
 
-  const updateImageFitZoom = useCallback(() => {
-    const viewport = imageScrollRef.current;
-    const image = imageRef.current;
-    if (!viewport || !image) {
+  const startImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0 ||
+      (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth &&
+        event.currentTarget.scrollHeight <= event.currentTarget.clientHeight)
+    ) {
       return;
     }
-    const styles = window.getComputedStyle(viewport);
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    imagePanSessionRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scrollLeft: event.currentTarget.scrollLeft,
+      scrollTop: event.currentTarget.scrollTop,
+    };
+    setIsImagePanning(true);
+  }, []);
+
+  const moveImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = imagePanSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.scrollLeft = session.scrollLeft - (event.clientX - session.clientX);
+    event.currentTarget.scrollTop = session.scrollTop - (event.clientY - session.clientY);
+  }, []);
+
+  const stopImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (imagePanSessionRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+    imagePanSessionRef.current = null;
+    setIsImagePanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const handleImagePanCaptureLoss = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (imagePanSessionRef.current?.pointerId === event.pointerId) {
+      imagePanSessionRef.current = null;
+      setIsImagePanning(false);
+    }
+  }, []);
+
+  const updateImageFitZoom = useCallback(() => {
+    const viewport = imageScrollRef.current;
+    const canvas = imageCanvasRef.current;
+    const image = imageRef.current;
+    if (!viewport || !canvas || !image) {
+      return;
+    }
+    const styles = window.getComputedStyle(canvas);
     const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
       + (Number.parseFloat(styles.paddingRight) || 0);
     const verticalPadding = (Number.parseFloat(styles.paddingTop) || 0)
@@ -1073,18 +1136,32 @@ export function SessionFilePreview({
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
-        <div ref={imageScrollRef} className="session-file-image-scroll">
-          {imageObjectUrl ? (
-            <img
-              ref={imageRef}
-              className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
-              src={imageObjectUrl}
-              alt={descriptor.name}
-              onContextMenu={(event) => void showPreviewImageContextMenu(event)}
-              onLoad={updateImageFitZoom}
-              style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
-            />
-          ) : null}
+        <div
+          ref={imageScrollRef}
+          className={`session-file-image-scroll${isImagePanning ? " is-panning" : ""}`}
+          onPointerDown={startImagePan}
+          onPointerMove={moveImagePan}
+          onPointerUp={stopImagePan}
+          onPointerCancel={stopImagePan}
+          onLostPointerCapture={handleImagePanCaptureLoss}
+        >
+          <div
+            ref={imageCanvasRef}
+            className={`session-file-image-canvas${imageZoom === "fit" ? " is-fit" : ""}`}
+          >
+            {imageObjectUrl ? (
+              <img
+                ref={imageRef}
+                className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
+                src={imageObjectUrl}
+                alt={descriptor.name}
+                draggable={false}
+                onContextMenu={(event) => void showPreviewImageContextMenu(event)}
+                onLoad={updateImageFitZoom}
+                style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
+              />
+            ) : null}
+          </div>
         </div>
       ) : null}
       {feedback || diffAvailabilityMessage ? (

@@ -204,6 +204,22 @@ async function renderPreview(
   return root;
 }
 
+function dispatchPointerEvent(
+  dom: JSDOM,
+  target: Element,
+  type: string,
+  input: { pointerId: number; button?: number; clientX?: number; clientY?: number },
+): void {
+  const event = new dom.window.MouseEvent(type, {
+    bubbles: true,
+    button: input.button ?? 0,
+    clientX: input.clientX ?? 0,
+    clientY: input.clientY ?? 0,
+  });
+  Object.defineProperty(event, "pointerId", { value: input.pointerId });
+  target.dispatchEvent(event);
+}
+
 test("encoding 切替は表示済みの同一 local image を現行 generation へ再登録する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -397,6 +413,91 @@ test("寸法情報のないSVGは初回だけFitで表示する", async () => {
     assert.ok(container);
     root = await renderPreview(api, container, request);
     await waitFor(() => container.querySelector(".session-file-image.is-fit") !== null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    URL.createObjectURL = originalCreateObjectUrl;
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("拡大画像を主ポインターでドラッグするとスクロール位置を移動し、終了後は停止する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  URL.createObjectURL = () => "blob:pannable-image";
+  URL.revokeObjectURL = () => undefined;
+  const { api } = createPreviewApi(async () => IMAGE_DESCRIPTOR);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, IMAGE_DESCRIPTOR);
+    await waitFor(() => container.querySelector(".session-file-image-scroll") !== null);
+    const scrollSurface = container.querySelector<HTMLDivElement>(".session-file-image-scroll");
+    const image = container.querySelector<HTMLImageElement>(".session-file-image");
+    assert.ok(scrollSurface);
+    assert.ok(image);
+    assert.equal(image.draggable, false);
+
+    Object.defineProperties(scrollSurface, {
+      clientWidth: { configurable: true, value: 400 },
+      clientHeight: { configurable: true, value: 300 },
+      scrollWidth: { configurable: true, value: 800 },
+      scrollHeight: { configurable: true, value: 600 },
+    });
+    let capturedPointerId: number | null = null;
+    scrollSurface.setPointerCapture = (pointerId) => {
+      capturedPointerId = pointerId;
+    };
+    scrollSurface.hasPointerCapture = (pointerId) => capturedPointerId === pointerId;
+    scrollSurface.releasePointerCapture = (pointerId) => {
+      if (capturedPointerId === pointerId) {
+        capturedPointerId = null;
+      }
+    };
+    scrollSurface.scrollLeft = 120;
+    scrollSurface.scrollTop = 90;
+
+    await act(async () => {
+      dispatchPointerEvent(dom, scrollSurface, "pointerdown", {
+        pointerId: 7,
+        clientX: 200,
+        clientY: 160,
+      });
+      dispatchPointerEvent(dom, scrollSurface, "pointermove", {
+        pointerId: 7,
+        clientX: 150,
+        clientY: 120,
+      });
+    });
+
+    assert.equal(scrollSurface.scrollLeft, 170);
+    assert.equal(scrollSurface.scrollTop, 130);
+    assert.equal(capturedPointerId, 7);
+    assert.ok(scrollSurface.classList.contains("is-panning"));
+
+    await act(async () => {
+      dispatchPointerEvent(dom, scrollSurface, "pointerup", { pointerId: 7 });
+      dispatchPointerEvent(dom, scrollSurface, "pointermove", {
+        pointerId: 7,
+        clientX: 100,
+        clientY: 80,
+      });
+    });
+
+    assert.equal(scrollSurface.scrollLeft, 170);
+    assert.equal(scrollSurface.scrollTop, 130);
+    assert.equal(capturedPointerId, null);
+    assert.ok(!scrollSurface.classList.contains("is-panning"));
   } finally {
     if (root) {
       await act(async () => root?.unmount());
