@@ -400,6 +400,44 @@ test("MessageRichText は local / data / external Markdown image を既定表示
   assert.match(html, /src="https:\/\/cdn\.example\.test\/image\.png"/);
 });
 
+test("MessageRichText は直接 image を表示しながら load 完了後に loading 表示を消す", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: "![cached](data:image/png;base64,AAAA)",
+      }));
+    });
+
+    const image = container.querySelector("img");
+    assert.ok(image);
+    assert.equal(image.hidden, false);
+    assert.notEqual(container.querySelector(".message-image-loading"), null);
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+
+    assert.equal(container.querySelector(".message-image-loading"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("MessageRichText は chat context の相対 Markdown image を環境依存URLとして読み込まない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, { text: "![relative](images/sample.png)" }),
