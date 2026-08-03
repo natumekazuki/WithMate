@@ -373,7 +373,15 @@ test("FileRootGitChangesService は同じSessionのrootIdごとに認可済みdi
     for (const rootPath of [workspacePath, additionalPath]) {
       await writeFile(path.join(rootPath, "shared.txt"), "base\n");
       assert.equal((await runGitForTest(rootPath, ["add", "shared.txt"])).exitCode, 0);
-      assert.equal((await runGitForTest(rootPath, ["commit", "-m", "base"])).exitCode, 0);
+      assert.equal((await runGitForTest(rootPath, [
+        "-c",
+        "user.name=WithMate Test",
+        "-c",
+        "user.email=withmate@example.invalid",
+        "commit",
+        "-m",
+        "base",
+      ])).exitCode, 0);
     }
     await writeFile(path.join(workspacePath, "shared.txt"), "workspace\n");
     await writeFile(path.join(additionalPath, "shared.txt"), "additional\n");
