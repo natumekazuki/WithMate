@@ -4145,6 +4145,11 @@ button:disabled {
   grid-area: content;
   min-width: 0;
   min-height: 0;
+}
+
+.session-file-text-scroll,
+.session-file-markdown-scroll,
+.session-file-image-scroll {
   overflow: auto;
 }
 
@@ -4181,14 +4186,16 @@ button:disabled {
   color: #bfdbfe;
 }
 
-.session-file-text-line mark {
+.session-file-text-line mark,
+.session-live-diff-split-row mark {
   border-radius: 2px;
   background: #fde68a;
   color: #1f2937;
   padding: 0;
 }
 
-.session-file-text-line mark.is-current {
+.session-file-text-line mark.is-current,
+.session-live-diff-split-row mark.is-current {
   background: #fb923c;
   box-shadow: 0 0 0 1px color-mix(in srgb, #fb923c 64%, #ffffff);
   color: #111827;
@@ -4213,13 +4220,127 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.session-live-diff-split {
+  grid-area: content;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: rgba(8, 12, 20, 0.92);
+}
+
+.session-live-diff-split-header,
+.session-live-diff-split-row.change {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr) 56px minmax(0, 1fr);
+}
+
+.session-live-diff-split-header {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: color-mix(in srgb, var(--character-sub-soft) 24%, rgba(15, 23, 42, 0.9));
+}
+
+.session-live-diff-split-header span,
+.session-live-diff-split-header strong {
+  min-width: 0;
+  padding: 6px 10px;
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+}
+
+.session-live-diff-split-header strong {
+  color: var(--ink);
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.session-live-diff-split-scroll {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.session-live-diff-split-rows {
+  position: relative;
+  min-width: 100%;
+}
+
+.session-live-diff-split-row {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  min-height: 25px;
+  box-sizing: border-box;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.05);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.session-live-diff-split-row > code {
+  display: block;
+  min-width: 0;
+  padding: 3px 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.session-live-diff-split-row.metadata {
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.44);
+}
+
+.session-live-diff-split-row.hunk {
+  color: #bfdbfe;
+  background: rgba(96, 165, 250, 0.13);
+}
+
+.session-live-diff-split-row.note {
+  color: #fcd34d;
+  background: rgba(120, 53, 15, 0.12);
+}
+
+.session-live-diff-split-row.is-current {
+  box-shadow: inset 3px 0 0 #fb923c;
+}
+
+.session-live-diff-line-number,
+.session-live-diff-code {
+  display: block;
+  min-width: 0;
+  padding: 3px 10px;
+  border-right: 1px solid rgba(148, 163, 184, 0.12);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.session-live-diff-line-number {
+  color: var(--muted);
+  background: rgba(8, 12, 20, 0.96);
+  text-align: right;
+  user-select: none;
+}
+
+.session-live-diff-split-row.add .session-live-diff-code.right,
+.session-live-diff-split-row.modify .session-live-diff-code.right {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.session-live-diff-split-row.delete .session-live-diff-code.left,
+.session-live-diff-split-row.modify .session-live-diff-code.left {
+  background: rgba(248, 113, 113, 0.12);
+}
+
 .session-file-markdown-scroll {
-  padding: 18px clamp(16px, 4vw, 52px) 40px;
+  padding: 18px 10px 40px;
 }
 
 .session-file-markdown {
-  max-width: 920px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .session-file-markdown a,
@@ -4281,9 +4402,9 @@ button:disabled {
 }
 
 .session-file-image-scroll {
-  display: block;
-  padding: 18px;
-  text-align: center;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
   background-image:
     linear-gradient(45deg, rgba(148, 163, 184, 0.07) 25%, transparent 25%),
     linear-gradient(-45deg, rgba(148, 163, 184, 0.07) 25%, transparent 25%),
@@ -4293,10 +4414,31 @@ button:disabled {
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
 }
 
+.session-file-image-scroll.is-panning {
+  cursor: grabbing;
+}
+
+.session-file-image-canvas {
+  display: grid;
+  place-items: safe center;
+  width: max-content;
+  min-width: 100%;
+  min-height: 100%;
+  box-sizing: border-box;
+  padding: 18px;
+}
+
+.session-file-image-canvas.is-fit {
+  width: 100%;
+  height: 100%;
+}
+
 .session-file-image {
-  display: inline-block;
+  display: block;
   max-width: none;
   height: auto;
+  -webkit-user-drag: none;
+  margin-inline: auto;
 }
 
 .session-file-image.is-fit {
@@ -7184,26 +7326,81 @@ button:disabled {
   margin-bottom: 10px;
 }
 
-.composer-attachment-button-group,
-.composer-session-file-toolbar {
+.composer-attachment-menu-shell {
+  position: relative;
   display: inline-flex;
-  align-items: stretch;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  overflow: hidden;
 }
 
-.composer-attachment-button-group .drawer-toggle,
-.composer-session-file-toolbar .drawer-toggle {
-  border-radius: 0;
-  box-shadow: none;
+.composer-attachment-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.composer-attachment-trigger-plus {
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.composer-attachment-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  width: min(348px, calc(100vw - 32px));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 14px;
+  background: rgba(12, 17, 25, 0.98);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+}
+
+.composer-attachment-menu-title,
+.composer-attachment-menu-section-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-attachment-menu-title {
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.composer-attachment-menu-section {
+  display: grid;
+  gap: 6px;
+}
+
+.composer-attachment-menu-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.composer-attachment-menu-item {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
 }
 
-.composer-attachment-button-group .drawer-toggle + .drawer-toggle,
-.composer-session-file-toolbar .drawer-toggle + .drawer-toggle {
-  border-left: 1px solid rgba(203, 213, 225, 0.12);
+.composer-attachment-menu-item:hover,
+.composer-attachment-menu-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--character-main-soft) 28%, rgba(255, 255, 255, 0.08));
 }
 
 .composer-skill-button {
@@ -10252,6 +10449,16 @@ button:disabled {
   .diff-pane-head-inner,
   .diff-pane-row {
     grid-template-columns: 56px minmax(0, 1fr);
+  }
+
+  .session-live-diff-split-header,
+  .session-live-diff-split-row.change {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .session-live-diff-split-header > :nth-child(n + 3),
+  .session-live-diff-split-row.change > :nth-child(n + 3) {
+    border-top: 1px solid rgba(148, 163, 184, 0.12);
   }
 }
 

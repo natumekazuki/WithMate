@@ -375,16 +375,12 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
   );
 
   useEffect(() => {
+    if (!resolveImageSource) {
+      return;
+    }
+
     let active = true;
     let ownedObjectUrl: string | null = null;
-    if (!resolveImageSource) {
-      const directSource = isDirectMarkdownImageSource(source);
-      setResolvedSource(directSource ? source : "");
-      setLoadStatus(directSource ? "loading" : "error");
-      return () => {
-        active = false;
-      };
-    }
 
     setResolvedSource("");
     setLoadStatus("resolving");
@@ -436,7 +432,6 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
           alt={alt ?? ""}
           title={title}
           loading="lazy"
-          hidden={loadStatus !== "ready"}
           onLoad={() => setLoadStatus("ready")}
           onError={() => setLoadStatus("error")}
         />
@@ -521,6 +516,7 @@ function createMarkdownComponents(
       const source = typeof src === "string" ? src.trim() : "";
       return source ? (
         <MarkdownImage
+          key={`${options?.resolveImageSource ? "resolved" : "direct"}:${source}`}
           source={source}
           alt={alt}
           title={title}

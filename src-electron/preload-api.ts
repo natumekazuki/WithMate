@@ -70,6 +70,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
   WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -306,6 +308,12 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     openSessionFile(request) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_CHANNEL, request);
+    },
+    copySessionFilePreviewImage(request) {
+      return ipcRenderer.invoke(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, request);
+    },
+    showSessionFilePreviewImageContextMenu(request) {
+      return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, request);
     },
     listWorkspaceChanges(sessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, sessionId);

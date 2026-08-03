@@ -235,10 +235,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - Text、Markdown、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer の Preview を既定とし、Source へ切り替えられる
-  - image は 100% を既定とし、Zoom と Fit を受け付ける
+  - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
   - Ctrl+F は active な chat / Text / Markdown / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、live Git Diff の選択コピーは chat と同じ floating Copy を使う
   - file と live Git Diff は Back to Chat で閉じる。run、approval、elicitation の状態は preview 中も確認できる
 - live Git Diff と chat artifact Diff は別機能とする。既存 chat artifact の `Open Diff` は snapshot を inline modal / Diff Window に開く従来経路を維持し、File Explorer の Changes や中央 live Git Diff へ接続しない
+- 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
   - viewport bottom gap が 80px 以下のときは末尾追従を許可する
@@ -288,8 +289,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
-- composer 上の添付 toolbar (`File / Folder / Image`)
-- `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
+- composer 上の添付 toolbar
+  - `Attach` button から単一の attachment popover を開く
+  - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
+  - popover の `Session files` section は session local files を扱う `Copy / File / Folder / Image` を1行にまとめる
+  - `Skill` は別カテゴリの単独 button として区別する
 - 添付 toolbar は Agent / Companion の作業 chat 用であり、メイトークでは表示しない
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる

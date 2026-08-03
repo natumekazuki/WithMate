@@ -14,6 +14,9 @@ export const WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL = "withmate:list-session-di
 export const WITHMATE_INSPECT_SESSION_FILE_CHANNEL = "withmate:inspect-session-file";
 export const WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL = "withmate:read-session-file-chunk";
 export const WITHMATE_OPEN_SESSION_FILE_CHANNEL = "withmate:open-session-file";
+export const WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL = "withmate:copy-session-file-preview-image";
+export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
+  "withmate:show-session-file-preview-image-context-menu";
 export const WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL = "withmate:list-workspace-changes";
 export const WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL = "withmate:get-workspace-file-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";

@@ -259,6 +259,15 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-file",
     args: [{ ...fileRequest, reveal: true }],
   });
+  const imageActionRequest = { sessionId: "session-1", point: { x: 120, y: 240 } };
+  assert.deepEqual(await api.copySessionFilePreviewImage(imageActionRequest), {
+    channel: "withmate:copy-session-file-preview-image",
+    args: [imageActionRequest],
+  });
+  assert.deepEqual(await api.showSessionFilePreviewImageContextMenu(imageActionRequest), {
+    channel: "withmate:show-session-file-preview-image-context-menu",
+    args: [imageActionRequest],
+  });
   assert.deepEqual(await api.listWorkspaceChanges("session-1"), {
     channel: "withmate:list-workspace-changes",
     args: ["session-1"],
@@ -300,6 +309,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelSessionRun",
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
+    "copySessionFilePreviewImage",
     "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
@@ -409,6 +419,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchMemoryV6Entries",
     "setMateAvatar",
     "setDefaultCharacter",
+    "showSessionFilePreviewImageContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",

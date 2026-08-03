@@ -26,6 +26,24 @@ export type SessionFileResourceRequest = {
   relativePath: string;
 };
 
+export type SessionFilePreviewImagePoint = {
+  x: number;
+  y: number;
+};
+
+export type SessionFilePreviewImageActionRequest = {
+  sessionId: string;
+  point: SessionFilePreviewImagePoint;
+};
+
+export type SessionFilePreviewImageCopyResult =
+  | { status: "copied" }
+  | { status: "failed"; message: string };
+
+export type SessionFilePreviewImageContextMenuResult =
+  | SessionFilePreviewImageCopyResult
+  | { status: "dismissed" };
+
 export type SessionDirectoryRequest = SessionFileResourceRequest;
 
 export type SessionFileOpenRequest = SessionFileResourceRequest & {

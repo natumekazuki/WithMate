@@ -8,6 +8,7 @@ import {
   clampSessionVerticalDockHeight,
   measureSessionVerticalDockLayoutBounds,
   useChatLayoutPresentation,
+  useSessionMessageListFollowing,
   useSessionSidePanes,
   useSessionVerticalDockResize,
 } from "../../src/session-chat-layout-hooks.js";
@@ -180,6 +181,103 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+test("useSessionMessageListFollowing は非表示から復帰した chat を末尾追従へ戻す", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  let root: Root | null = null;
+  let scrollToBottomCount = 0;
+
+  function Harness({ enabled, scrollSignature }: { enabled: boolean; scrollSignature: string }) {
+    const {
+      messageListRef,
+      isMessageListFollowing,
+      handleMessageListScroll,
+    } = useSessionMessageListFollowing({
+      ownerKey: "session-1",
+      scrollSignature,
+      enabled,
+    });
+
+    return React.createElement(
+      "div",
+      {
+        ref: messageListRef,
+        onScroll: handleMessageListScroll,
+        hidden: !enabled,
+        "data-testid": "message-list",
+      },
+      React.createElement("div", {
+        className: "message-list-bottom-anchor",
+        ref: (element: HTMLDivElement | null) => {
+          if (element) {
+            element.scrollIntoView = () => {
+              scrollToBottomCount += 1;
+            };
+          }
+        },
+      }),
+      React.createElement("output", { "data-testid": "following" }, String(isMessageListFollowing)),
+    );
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness, { enabled: true, scrollSignature: "initial" }));
+    });
+
+    const messageList = dom.window.document.querySelector<HTMLElement>("[data-testid=\"message-list\"]");
+    const following = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"following\"]");
+    assert.ok(messageList);
+    assert.ok(following);
+    assert.equal(scrollToBottomCount, 1);
+
+    Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 1_000 });
+    Object.defineProperty(messageList, "clientHeight", { configurable: true, value: 200 });
+    await act(async () => {
+      messageList.scrollTop = 300;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "false");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: false, scrollSignature: "preview-update" }));
+    });
+    assert.equal(scrollToBottomCount, 1);
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "preview-update" }));
+    });
+    assert.equal(scrollToBottomCount, 1);
+    assert.equal(following.textContent, "true");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
   }
 });
 

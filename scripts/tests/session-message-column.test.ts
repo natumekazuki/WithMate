@@ -243,6 +243,7 @@ type MountedSessionMessageColumn = {
   root: Root;
   rerender: (callbacks: {
     getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+    isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
     messages?: Message[];
@@ -261,6 +262,7 @@ async function mountSessionMessageColumn(options: {
   onQuoteMessageText?: (text: string) => void;
   expandedArtifacts?: Record<string, boolean>;
   getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+  isContentActive?: boolean;
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
@@ -406,6 +408,7 @@ async function mountSessionMessageColumn(options: {
   const defaultGetChangedFilesEmptyText = () => "変更ファイルはありません";
   const renderMessageColumn = async (callbacks: {
     getChangedFilesEmptyText?: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
+    isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
     messages?: Message[];
@@ -434,6 +437,7 @@ async function mountSessionMessageColumn(options: {
           pendingMessageText: callbacks.pendingMessageText ?? options.pendingMessageText,
           pendingMessageGroupId: callbacks.pendingMessageGroupId ?? options.pendingMessageGroupId,
           isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
+          isContentActive: callbacks.isContentActive ?? options.isContentActive ?? true,
           onMessageListScroll() {},
           onToggleArtifact() {},
           onOpenDiff() {},
@@ -949,6 +953,36 @@ test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従�
   }
 });
 
+test("SessionMessageColumn は非表示から復帰したとき仮想リストの末尾へ移動する", async () => {
+  const mounted = await mountSessionMessageColumn({
+    messages: createMessages(100),
+  });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+
+    await mounted.rerender({
+      isContentActive: false,
+      isMessageListFollowing: false,
+    });
+    messageList.scrollTop = 0;
+
+    await mounted.rerender({
+      isContentActive: true,
+      isMessageListFollowing: false,
+    });
+
+    assert.equal(
+      messageList.scrollTop,
+      messageList.scrollHeight - messageList.clientHeight,
+    );
+    assert.match(mounted.container.textContent ?? "", /message 100(?:\D|$)/);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
 test("StableSessionMessageColumn は callback の再生成だけでは既存 message を再描画しない", async () => {
   let messageTextReadCount = 0;
   const message = {
@@ -1414,6 +1448,10 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 
   assert.match(html, /末尾へ移動/);
   assert.doesNotMatch(html, />Hide<\/button>/);
+  assert.match(html, /composer-attachment-trigger-plus/);
+  assert.match(html, /Attach<\/button>/);
+  assert.doesNotMatch(html, />Session <span/);
+  assert.doesNotMatch(html, /Attach Copy|Session File|Session Folder|Session Image/);
   const composerInputRowHtml = html.match(
     /<div class="composer-input-row"><div class="composer-box">(?<content>[\s\S]*?)<\/div><\/div><div class="composer-control-row">/,
   );
@@ -1502,7 +1540,7 @@ test("SessionComposerExpanded は実行中の progress と Cancel を上部 tool
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /composer-toolbar-cancel-button/);
-  assert.ok(html.indexOf("File") < html.indexOf("処理を実行中"));
+  assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
   assert.ok(html.indexOf("処理を実行中") < html.indexOf("Cancel"));
   assert.doesNotMatch(html, />Send<\/button>/);
 });
