@@ -2310,6 +2310,7 @@ export function SessionMessageColumn({
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
+  const wasContentActiveRef = useRef(isContentActive);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
@@ -2575,10 +2576,13 @@ export function SessionMessageColumn({
   ]);
 
   useLayoutEffect(() => {
-    if (isMessageListFollowing) {
+    const wasContentActive = wasContentActiveRef.current;
+    wasContentActiveRef.current = isContentActive;
+
+    if (isContentActive && (!wasContentActive || isMessageListFollowing)) {
       messageVirtualizer.scrollToEnd();
     }
-  }, [isMessageListFollowing, messageVirtualizer]);
+  }, [isContentActive, isMessageListFollowing, messageVirtualizer]);
 
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
