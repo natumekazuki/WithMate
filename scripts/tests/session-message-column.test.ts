@@ -1447,6 +1447,10 @@ test("SessionComposerExpanded は jump button を Hide の左に描画し、Send
   );
 
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Hide"));
+  assert.match(html, /composer-attachment-trigger-plus/);
+  assert.match(html, /Attach<\/button>/);
+  assert.doesNotMatch(html, />Session <span/);
+  assert.doesNotMatch(html, /Attach Copy|Session File|Session Folder|Session Image/);
   const composerInputRowHtml = html.match(
     /<div class="composer-input-row"><div class="composer-box">(?<content>[\s\S]*?)<\/div><\/div><div class="composer-control-row">/,
   );
@@ -1535,7 +1539,7 @@ test("SessionComposerExpanded は実行中の progress と Cancel を上部 tool
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
   assert.match(html, /composer-toolbar-cancel-button/);
-  assert.ok(html.indexOf("File") < html.indexOf("処理を実行中"));
+  assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
   assert.ok(html.indexOf("処理を実行中") < html.indexOf("Cancel"));
   assert.doesNotMatch(html, />Send<\/button>/);
 });

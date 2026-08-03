@@ -244,7 +244,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
-      showCustomAgentPicker: !isCharacterAuthoringSession,
+      showCustomAgentPicker: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showSkillPicker: !isCharacterAuthoringSession,
       isAgentPickerOpen: input.isAgentPickerOpen,
       isSkillPickerOpen: input.isSkillPickerOpen,

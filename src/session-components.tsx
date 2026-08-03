@@ -45,6 +45,7 @@ import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
+import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
 import {
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
@@ -3320,6 +3321,13 @@ export function SessionComposerExpanded({
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const skillListRef = useRef<HTMLDivElement | null>(null);
+  const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!showAttachmentControls || isRunning || composerBlocked) {
+      setIsAttachmentMenuOpen(false);
+    }
+  }, [composerBlocked, isRunning, showAttachmentControls]);
 
   useEffect(() => {
     if (!isAgentPickerOpen) {
@@ -3362,64 +3370,41 @@ export function SessionComposerExpanded({
             <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
           ) : null}
           {showAttachmentControls ? (
-            <div className="composer-attachment-button-group" role="group" aria-label="添付">
-              <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>
-                File
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={onPickFolder} disabled={isRunning || composerBlocked}>
-                Folder
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={onPickImage} disabled={isRunning || composerBlocked}>
-                Image
-              </button>
-            </div>
-          ) : null}
-          {showAttachmentControls ? (
-            <div className="composer-session-file-toolbar">
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onAddToSessionFiles}
-                disabled={isRunning || composerBlocked}
-                title="Copy file into session files and insert a reference"
-              >
-                Attach Copy
-              </button>
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onPickSessionFiles}
-                disabled={isRunning || composerBlocked}
-                title="Pick files already in the session files directory and insert references"
-              >
-                Session File
-              </button>
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onPickSessionFolder}
-                disabled={isRunning || composerBlocked}
-                title="Pick a folder already in the session files directory and insert a reference"
-              >
-                Session Folder
-              </button>
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onPickSessionImage}
-                disabled={isRunning || composerBlocked}
-                title="Pick an image already in the session files directory and insert a reference"
-              >
-                Session Image
-              </button>
-            </div>
+            <ComposerAttachmentMenu
+              disabled={isRunning || composerBlocked}
+              isOpen={isAttachmentMenuOpen}
+              onOpenChange={(isOpen) => {
+                if (isOpen) {
+                  if (isAgentPickerOpen) {
+                    onToggleAgentPicker();
+                  }
+                  if (isSkillPickerOpen) {
+                    onToggleSkillPicker();
+                  }
+                  if (isAdditionalDirectoryListOpen) {
+                    onToggleAdditionalDirectoryList();
+                  }
+                }
+                setIsAttachmentMenuOpen(isOpen);
+              }}
+              onPickFile={onPickFile}
+              onPickFolder={onPickFolder}
+              onPickImage={onPickImage}
+              onAddToSessionFiles={onAddToSessionFiles}
+              onPickSessionFiles={onPickSessionFiles}
+              onPickSessionFolder={onPickSessionFolder}
+              onPickSessionImage={onPickSessionImage}
+            />
           ) : null}
           {showCustomAgentPicker ? (
             <div className="composer-agent-toolbar">
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
                 type="button"
-                onClick={onToggleAgentPicker}
+                onClick={() => {
+                  setIsAttachmentMenuOpen(false);
+                  onToggleAgentPicker();
+                }}
                 disabled={!canSelectCustomAgent || isRunning || composerBlocked}
                 aria-expanded={isAgentPickerOpen}
                 aria-haspopup="listbox"
@@ -3435,7 +3420,10 @@ export function SessionComposerExpanded({
             <button
               className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
               type="button"
-              onClick={onToggleSkillPicker}
+              onClick={() => {
+                setIsAttachmentMenuOpen(false);
+                onToggleSkillPicker();
+              }}
               disabled={isRunning || composerBlocked}
               aria-expanded={isSkillPickerOpen}
               aria-haspopup="listbox"
@@ -3449,7 +3437,10 @@ export function SessionComposerExpanded({
               <button
                 className="drawer-toggle compact secondary composer-skill-button"
                 type="button"
-                onClick={onAddAdditionalDirectory}
+                onClick={() => {
+                  setIsAttachmentMenuOpen(false);
+                  onAddAdditionalDirectory();
+                }}
                 disabled={isRunning || composerBlocked}
               >
                 Add Directory
@@ -3457,7 +3448,10 @@ export function SessionComposerExpanded({
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
                 type="button"
-                onClick={onToggleAdditionalDirectoryList}
+                onClick={() => {
+                  setIsAttachmentMenuOpen(false);
+                  onToggleAdditionalDirectoryList();
+                }}
                 disabled={additionalDirectoryCount === 0}
                 aria-expanded={isAdditionalDirectoryListOpen}
               >

@@ -282,8 +282,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
-- composer 上の添付 toolbar (`File / Folder / Image`)
-- `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
+- composer 上の添付 toolbar
+  - `Attach` button から単一の attachment popover を開く
+  - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
+  - popover の `Session files` section は session local files を扱う `Copy / File / Folder / Image` を1行にまとめる
+  - `Skill` は別カテゴリの単独 button として区別する
 - 添付 toolbar は Agent / Companion の作業 chat 用であり、メイトークでは表示しない
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる

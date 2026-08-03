@@ -7218,26 +7218,81 @@ button:disabled {
   margin-bottom: 10px;
 }
 
-.composer-attachment-button-group,
-.composer-session-file-toolbar {
+.composer-attachment-menu-shell {
+  position: relative;
   display: inline-flex;
-  align-items: stretch;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  overflow: hidden;
 }
 
-.composer-attachment-button-group .drawer-toggle,
-.composer-session-file-toolbar .drawer-toggle {
-  border-radius: 0;
-  box-shadow: none;
+.composer-attachment-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.composer-attachment-trigger-plus {
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.composer-attachment-menu {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 8px);
+  z-index: 30;
+  display: grid;
+  width: min(348px, calc(100vw - 32px));
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 14px;
+  background: rgba(12, 17, 25, 0.98);
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.32);
+}
+
+.composer-attachment-menu-title,
+.composer-attachment-menu-section-label {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.composer-attachment-menu-title {
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.composer-attachment-menu-section {
+  display: grid;
+  gap: 6px;
+}
+
+.composer-attachment-menu-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 4px;
+}
+
+.composer-attachment-menu-item {
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
   background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
 }
 
-.composer-attachment-button-group .drawer-toggle + .drawer-toggle,
-.composer-session-file-toolbar .drawer-toggle + .drawer-toggle {
-  border-left: 1px solid rgba(203, 213, 225, 0.12);
+.composer-attachment-menu-item:hover,
+.composer-attachment-menu-item:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--character-main-soft) 28%, rgba(255, 255, 255, 0.08));
 }
 
 .composer-skill-button {

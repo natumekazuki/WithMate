@@ -377,6 +377,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, "Agent running");
   assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.composerProps.canSelectCustomAgent, true);
+  assert.equal(props.composerProps.showCustomAgentPicker, true);
   assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
   assert.equal(props.composerProps.additionalDirectoryCount, 1);
   assert.equal(props.composerProps.showJumpToBottom, true);
@@ -397,6 +398,13 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
   assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});
+
+test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput());
+
+  assert.equal(props.composerProps.canSelectCustomAgent, false);
+  assert.equal(props.composerProps.showCustomAgentPicker, false);
 });
 
 test("buildAgentSessionChatWindowProps は selected session running boolean を composer dock に渡す", () => {
