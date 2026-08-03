@@ -673,7 +673,6 @@ export function SessionFilePreview({
         </button>
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? request.relativePath.split("/").at(-1)}</strong>
-          <span title={request.relativePath}>{request.relativePath}</span>
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
