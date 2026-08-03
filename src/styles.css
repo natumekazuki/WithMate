@@ -4209,9 +4209,10 @@ button:disabled {
 }
 
 .session-file-image {
-  display: inline-block;
+  display: block;
   max-width: none;
   height: auto;
+  margin-inline: auto;
 }
 
 .session-file-image.is-fit {

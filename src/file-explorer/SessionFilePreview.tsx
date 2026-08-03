@@ -19,6 +19,7 @@ import type {
   WorkspaceChangeScope,
 } from "./file-explorer-contract.js";
 import {
+  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   formatFileByteLength,
@@ -79,6 +80,9 @@ type FileLoadState =
   | { status: "error"; message: string };
 
 const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
+const IMAGE_ZOOM_MIN = 10;
+const IMAGE_ZOOM_MAX = 800;
+const IMAGE_ZOOM_STEP = 10;
 
 const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -258,6 +262,7 @@ export function SessionFilePreview({
   const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
   const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
   const [imageZoom, setImageZoom] = useState<"fit" | number>(100);
+  const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
@@ -266,6 +271,8 @@ export function SessionFilePreview({
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const imageScrollRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
@@ -472,10 +479,46 @@ export function SessionFilePreview({
       return;
     }
     setImageZoom(loaded.descriptor.kind === "svg" && shouldInitiallyFitSvg(loaded.bytes) ? "fit" : 100);
+    setImageFitZoom(100);
     const objectUrl = URL.createObjectURL(new Blob([copyBytesToArrayBuffer(loaded.bytes)], { type: loaded.descriptor.mimeType }));
     setImageObjectUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [loaded]);
+
+  const updateImageFitZoom = useCallback(() => {
+    const viewport = imageScrollRef.current;
+    const image = imageRef.current;
+    if (!viewport || !image) {
+      return;
+    }
+    const styles = window.getComputedStyle(viewport);
+    const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
+      + (Number.parseFloat(styles.paddingRight) || 0);
+    const verticalPadding = (Number.parseFloat(styles.paddingTop) || 0)
+      + (Number.parseFloat(styles.paddingBottom) || 0);
+    setImageFitZoom(calculateImageFitZoom(
+      viewport.clientWidth - horizontalPadding,
+      viewport.clientHeight - verticalPadding,
+      image.naturalWidth,
+      image.naturalHeight,
+    ));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!imageObjectUrl) {
+      return;
+    }
+    updateImageFitZoom();
+    if (typeof ResizeObserver === "undefined" || !imageScrollRef.current) {
+      return;
+    }
+    const observer = new ResizeObserver(updateImageFitZoom);
+    observer.observe(imageScrollRef.current);
+    return () => observer.disconnect();
+  }, [imageObjectUrl, updateImageFitZoom]);
+
+  const effectiveImageZoom = typeof imageZoom === "number" ? imageZoom : imageFitZoom;
+  const imageZoomLabel = `${effectiveImageZoom}%`;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -692,10 +735,20 @@ export function SessionFilePreview({
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
             <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
-              <button type="button" onClick={() => setImageZoom((current) => Math.max(10, (typeof current === "number" ? current : 100) - 10))}>−</button>
-              <button type="button" onClick={() => setImageZoom(100)}>{typeof imageZoom === "number" ? `${imageZoom}%` : "100%"}</button>
-              <button type="button" onClick={() => setImageZoom((current) => Math.min(800, (typeof current === "number" ? current : 100) + 10))}>＋</button>
-              <button type="button" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
+              <button
+                type="button"
+                aria-label="Zoom image out"
+                disabled={effectiveImageZoom <= IMAGE_ZOOM_MIN}
+                onClick={() => setImageZoom(Math.max(IMAGE_ZOOM_MIN, effectiveImageZoom - IMAGE_ZOOM_STEP))}
+              >−</button>
+              <button type="button" aria-label="Reset image zoom to 100%" onClick={() => setImageZoom(100)}>{imageZoomLabel}</button>
+              <button
+                type="button"
+                aria-label="Zoom image in"
+                disabled={effectiveImageZoom >= IMAGE_ZOOM_MAX}
+                onClick={() => setImageZoom(Math.min(IMAGE_ZOOM_MAX, effectiveImageZoom + IMAGE_ZOOM_STEP))}
+              >＋</button>
+              <button type="button" aria-label="Fit image to preview" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
             </div>
           ) : null}
           {onOpenDiff && diffScopes.length > 0 ? diffScopes.map((scope) => (
@@ -797,12 +850,14 @@ export function SessionFilePreview({
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
-        <div className="session-file-image-scroll">
+        <div ref={imageScrollRef} className="session-file-image-scroll">
           {imageObjectUrl ? (
             <img
+              ref={imageRef}
               className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
               src={imageObjectUrl}
               alt={descriptor.name}
+              onLoad={updateImageFitZoom}
               style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
             />
           ) : null}

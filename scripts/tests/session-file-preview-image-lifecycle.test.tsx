@@ -393,6 +393,63 @@ test("寸法情報のないSVGは初回だけFitで表示する", async () => {
   }
 });
 
+test("Fitは実効倍率を表示しZoom Inの基準にする", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const originalCreateObjectUrl = URL.createObjectURL;
+  const originalRevokeObjectUrl = URL.revokeObjectURL;
+  URL.createObjectURL = () => "blob:fit-image";
+  URL.revokeObjectURL = () => undefined;
+  const { api } = createPreviewApi(async () => IMAGE_DESCRIPTOR);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, IMAGE_DESCRIPTOR);
+    await waitFor(() => container.querySelector<HTMLImageElement>(".session-file-image") !== null);
+    const viewport = container.querySelector<HTMLElement>(".session-file-image-scroll");
+    const image = container.querySelector<HTMLImageElement>(".session-file-image");
+    assert.ok(viewport);
+    assert.ok(image);
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 450 },
+    });
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 1600 },
+      naturalHeight: { configurable: true, value: 900 },
+    });
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+      container.querySelector<HTMLButtonElement>("button[aria-label='Fit image to preview']")?.click();
+    });
+    assert.equal(
+      container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
+      "50%",
+    );
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button[aria-label='Zoom image in']")?.click();
+    });
+    assert.equal(
+      container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
+      "60%",
+    );
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    URL.createObjectURL = originalCreateObjectUrl;
+    URL.revokeObjectURL = originalRevokeObjectUrl;
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("file切替後に完了したOpenとOpen Diffの結果を新しいpreviewへ表示しない", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
