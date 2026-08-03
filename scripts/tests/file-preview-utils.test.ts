@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   PreviewByteAccumulator,
@@ -13,6 +14,12 @@ import {
   shouldInitiallyFitSvg,
 } from "../../src/file-explorer/file-preview-utils.js";
 import { detectSessionFileEncoding } from "../../src/file-explorer/file-content-detection.js";
+
+test("calculateImageFitZoom は画像を拡大せずviewport内に収める倍率を返す", () => {
+  assert.equal(calculateImageFitZoom(800, 450, 1600, 900), 50);
+  assert.equal(calculateImageFitZoom(800, 600, 400, 300), 100);
+  assert.equal(calculateImageFitZoom(0, 600, 400, 300), 100);
+});
 
 test("decodeSessionFileBytes は Auto と手動指定で UTF-8 / Shift_JIS / UTF-16 を decode する", () => {
   assert.equal(decodeSessionFileBytes(new TextEncoder().encode("hello"), "auto", "utf-8"), "hello");
