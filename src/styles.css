@@ -4129,12 +4129,13 @@ button:disabled {
 }
 
 .session-file-markdown-scroll {
-  padding: 18px clamp(16px, 4vw, 52px) 40px;
+  padding: 18px 10px 40px;
 }
 
 .session-file-markdown {
-  max-width: 920px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
 }
 
 .session-file-markdown a,
