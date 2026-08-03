@@ -65,8 +65,11 @@ import type {
   CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import {
+  isChatLayoutPreferenceUpdate,
+  type ChatLayoutPreferenceUpdate,
+} from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
-import { isSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
@@ -205,7 +208,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL,
+  WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -303,7 +306,7 @@ export type MainIpcRegistrationDeps = {
   cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateSessionSidePane(sidePane: SessionSidePane): Awaitable<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -453,7 +456,7 @@ type MainIpcSettingsDeps = Pick<
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
-  | "updateSessionSidePane"
+  | "updateChatLayoutPreference"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
   | "installMemoryV6CliShim"
@@ -938,11 +941,11 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
-  ipcMain.handle(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL, (_event, sidePane) => {
-    if (!isSessionSidePane(sidePane)) {
-      throw new TypeError("side pane は files、context、none のいずれかで指定してね。");
+  ipcMain.handle(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL, (_event, update) => {
+    if (!isChatLayoutPreferenceUpdate(update)) {
+      throw new TypeError("chat layout preference の更新内容が不正です。");
     }
-    return deps.updateSessionSidePane(sidePane);
+    return deps.updateChatLayoutPreference(update);
   });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());

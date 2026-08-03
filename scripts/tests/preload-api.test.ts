@@ -283,9 +283,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:cancel-auxiliary-session-run",
     args: ["aux-1"],
   });
-  assert.deepEqual(await api.updateSessionSidePane("files"), {
-    channel: "withmate:update-session-side-pane",
-    args: ["files"],
+  assert.deepEqual(await api.updateChatLayoutPreference({ target: "sidePane", value: "files" }), {
+    channel: "withmate:update-chat-layout-preference",
+    args: [{ target: "sidePane", value: "files" }],
   });
 });
 
@@ -427,7 +427,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
     "updateAppSettings",
-    "updateSessionSidePane",
+    "updateChatLayoutPreference",
     "updateAuxiliarySession",
     "updateCharacterDefinition",
     "updateCharacterMetadata",

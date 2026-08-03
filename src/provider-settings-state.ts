@@ -11,7 +11,11 @@ import {
   normalizeUserMicrocopyCatalog,
   type MicrocopyCatalog,
 } from "./microcopy-state.js";
-import { normalizeSessionSidePane, type SessionSidePane } from "./session-side-pane.js";
+import {
+  DEFAULT_CHAT_LAYOUT_PREFERENCE,
+  normalizeChatLayoutPreference,
+  type ChatLayoutPreference,
+} from "./chat/chat-layout-preference.js";
 
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
@@ -19,7 +23,7 @@ export type AppSettings = {
   sessionTurnNotificationEnabled: boolean;
   sessionTurnNotificationResponsePreviewEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
-  sessionSidePane: SessionSidePane;
+  chatLayoutPreference: ChatLayoutPreference;
   memoryFileQuotaBytes: number;
   userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
@@ -99,7 +103,7 @@ export function createDefaultAppSettings(): AppSettings {
     sessionTurnNotificationEnabled: true,
     sessionTurnNotificationResponsePreviewEnabled: false,
     autoCollapseActionDockOnSend: true,
-    sessionSidePane: "none",
+    chatLayoutPreference: { ...DEFAULT_CHAT_LAYOUT_PREFERENCE },
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
@@ -325,7 +329,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         : false,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
-    sessionSidePane: normalizeSessionSidePane(candidate.sessionSidePane),
+    chatLayoutPreference: normalizeChatLayoutPreference(candidate.chatLayoutPreference),
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),

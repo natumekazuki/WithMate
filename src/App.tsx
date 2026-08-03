@@ -137,10 +137,12 @@ import {
   resolveComposerPreviewDisplay,
 } from "./composer-preview-config.js";
 import {
+  useChatLayoutPresentation,
   useSessionSidePanes,
   useSessionMessageListFollowing,
+  useSessionVerticalDockResize,
 } from "./session-chat-layout-hooks.js";
-import { persistSessionSidePane } from "./session-side-pane-preference.js";
+import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
 import type { SessionSidePane } from "./session-side-pane.js";
 import { SessionFileExplorerPane } from "./file-explorer/SessionFileExplorerPane.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
@@ -497,8 +499,23 @@ export default function AgentSessionWindowApp() {
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
-  const [isHeaderExpanded, setIsHeaderExpanded] = useState(false);
-  const [isActionDockPinnedExpanded, setIsActionDockPinnedExpanded] = useState(false);
+  const handleHeaderPreferenceChange = useCallback((value: "hidden" | "visible") => {
+    void persistChatLayoutPreference(withmateApi, { target: "header", value });
+  }, [withmateApi]);
+  const handleActionDockPreferenceChange = useCallback((value: "compact" | "expanded") => {
+    void persistChatLayoutPreference(withmateApi, { target: "actionDock", value });
+  }, [withmateApi]);
+  const {
+    isHeaderExpanded,
+    setIsHeaderExpanded,
+    isActionDockPinnedExpanded,
+    setIsActionDockPinnedExpanded,
+  } = useChatLayoutPresentation({
+    initialHeader: isAppSettingsLoaded ? appSettings.chatLayoutPreference.header : null,
+    initialActionDock: isAppSettingsLoaded ? appSettings.chatLayoutPreference.actionDock : null,
+    onHeaderChange: handleHeaderPreferenceChange,
+    onActionDockChange: handleActionDockPreferenceChange,
+  });
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
@@ -596,7 +613,7 @@ export default function AgentSessionWindowApp() {
   );
   const selectedSessionId = selectedSession?.id ?? null;
   const handleSidePaneChange = useCallback((sidePane: SessionSidePane) => {
-    void persistSessionSidePane(withmateApi, sidePane);
+    void persistChatLayoutPreference(withmateApi, { target: "sidePane", value: sidePane });
   }, [withmateApi]);
   useEffect(() => {
     let active = true;
@@ -651,7 +668,7 @@ export default function AgentSessionWindowApp() {
     handleToggleFilesPaneVisibility,
   } = useSessionSidePanes({
     ownerKey: selectedSessionId,
-    initialSidePane: isAppSettingsLoaded ? appSettings.sessionSidePane : null,
+    initialSidePane: isAppSettingsLoaded ? appSettings.chatLayoutPreference.sidePane : null,
     onSidePaneChange: handleSidePaneChange,
   });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
@@ -1364,8 +1381,6 @@ export default function AgentSessionWindowApp() {
     setIsRetryDraftReplacePending(false);
     setApprovalActionRequestId(null);
     setElicitationActionRequestId(null);
-    setIsHeaderExpanded(false);
-    setIsActionDockPinnedExpanded(false);
   }, [selectedSession?.provider, selectedSessionId]);
 
   useEffect(() => {
@@ -1863,6 +1878,20 @@ export default function AgentSessionWindowApp() {
     [displayedSession],
   );
   const isSessionHeaderExpanded = isHeaderExpanded || isEditingTitle;
+  const {
+    sessionDockLayoutRef,
+    headerDockRef,
+    actionDockRef,
+    sessionDockLayoutStyle,
+    isActionDockResizing,
+    handleStartActionDockResize,
+    handleHeaderSplitterClick,
+    handleActionDockSplitterClick,
+  } = useSessionVerticalDockResize({
+    ownerKey: selectedSessionId,
+    isHeaderExpanded: isSessionHeaderExpanded,
+    isActionDockExpanded,
+  });
   const actionDockCompactPreview = useMemo(
     () =>
       buildActionDockCompactPreview(draft, selectedSessionRunState === "running", {
@@ -2260,7 +2289,7 @@ export default function AgentSessionWindowApp() {
     getTitle: () => selectedSession?.taskTitle,
     canStart: () => !!selectedSession && !isSelectedSessionReadOnly && selectedSessionRunState !== "running",
     setTitleDraft,
-    setHeaderExpanded: setIsHeaderExpanded,
+    setHeaderExpanded: () => {},
     setEditingTitle: setIsEditingTitle,
   });
 
@@ -2513,6 +2542,16 @@ export default function AgentSessionWindowApp() {
     canCollapse: canCollapseActionDock,
     setPinnedExpanded: setIsActionDockPinnedExpanded,
   });
+
+  const handleToggleHeaderSplitter = () => {
+    handleHeaderSplitterClick(handleToggleHeaderExpanded);
+  };
+
+  const handleToggleActionDock = () => {
+    handleActionDockSplitterClick(
+      isActionDockExpanded ? handleCollapseActionDock : handleExpandActionDock,
+    );
+  };
 
   const handleToggleAgentPicker = createAgentPickerToggleHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
@@ -3292,6 +3331,10 @@ export default function AgentSessionWindowApp() {
         displayedMessageGroups: messageListGroups,
         expandedArtifacts,
         sessionThemeStyle,
+        sessionDockLayoutRef,
+        headerDockRef,
+        actionDockRef,
+        sessionDockLayoutStyle,
         sessionWorkbenchRef,
         sessionWorkbenchStyle,
         isSessionHeaderExpanded,
@@ -3351,6 +3394,7 @@ export default function AgentSessionWindowApp() {
         chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,
+        isActionDockResizing,
         isContextRailResizing,
         isFilesPaneResizing,
         isContextRailVisible,
@@ -3382,7 +3426,7 @@ export default function AgentSessionWindowApp() {
         auditLogsLoading,
         auditLogsTotal,
         auditLogsErrorMessage,
-        onToggleHeaderExpanded: handleToggleHeaderExpanded,
+        onToggleHeaderSplitter: handleToggleHeaderSplitter,
         headerActions: auxiliaryHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
@@ -3432,7 +3476,6 @@ export default function AgentSessionWindowApp() {
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onCollapseActionDock: handleCollapseActionDock,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
@@ -3504,9 +3547,6 @@ export default function AgentSessionWindowApp() {
           onCancelSelectedSessionRun: handleCancelRun,
           onSendSelectedSession: handleSend,
         }),
-        onExpandActionDock: () => handleExpandActionDock({
-          focusComposer: shouldFocusComposerForActionDockExpand({ isRunning: renderedIsRunning }),
-        }),
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryApproval,
@@ -3529,6 +3569,8 @@ export default function AgentSessionWindowApp() {
         }),
         onStartContextRailResize: handleStartContextRailResize,
         onStartFilesPaneResize: handleStartFilesPaneResize,
+        onStartActionDockResize: handleStartActionDockResize,
+        onToggleActionDock: handleToggleActionDock,
         onToggleContextRailVisibility: handleToggleContextRailVisibility,
         onToggleFilesPaneVisibility: handleToggleFilesPaneVisibility,
         onCycleContextPaneTab: handleCycleContextPaneTab,

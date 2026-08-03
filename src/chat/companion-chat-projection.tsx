@@ -45,6 +45,10 @@ export type CompanionChatProjectionInput = {
   displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
   expandedArtifacts: Record<string, boolean>;
   themeStyle: CSSProperties | undefined;
+  layoutRef: RefObject<HTMLDivElement | null>;
+  headerDockRef: RefObject<HTMLDivElement | null>;
+  actionDockRef: RefObject<HTMLDivElement | null>;
+  dockLayoutStyle: CSSProperties;
   workbenchRef: RefObject<HTMLDivElement | null>;
   workbenchStyle: CSSProperties | undefined;
   isHeaderExpanded: boolean;
@@ -68,6 +72,7 @@ export type CompanionChatProjectionInput = {
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
   isActionDockExpanded: boolean;
+  isActionDockResizing: boolean;
   composerBlocked: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
@@ -128,8 +133,7 @@ export type CompanionChatProjectionInput = {
   auditLogsErrorMessage: string | null;
   toastMessage: string;
   toastTone: "error" | "success";
-  onToggleHeaderExpanded: () => void;
-  onToggleContextPaneHeaderExpanded: () => void;
+  onToggleHeaderSplitter: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onOpenSessionFilesTerminal: () => void;
@@ -166,7 +170,6 @@ export type CompanionChatProjectionInput = {
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
-  onCollapseActionDock: () => void;
   onJumpToMessageListBottom: () => void;
   onSelectCustomAgent: SessionComposerExpandedProps["onSelectCustomAgent"];
   onSelectSkill: SessionComposerExpandedProps["onSelectSkill"];
@@ -180,12 +183,13 @@ export type CompanionChatProjectionInput = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
-  onExpandActionDock: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
+  onStartActionDockResize: PointerEventHandler<HTMLButtonElement>;
+  onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
@@ -208,7 +212,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     isAuxiliaryMode: input.isAuxiliaryMode,
     canDeleteSession: false,
     canViewAuditLog: true,
-    onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
     onOpenSessionFilesExplorer: input.onOpenSessionFilesExplorer,
@@ -262,7 +265,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       selectedCustomAgentLabel: input.selectedCustomAgentLabel,
       selectedCustomAgentTitle: input.selectedCustomAgentTitle,
       additionalDirectoryCount: (input.session.allowedAdditionalDirectories ?? []).length,
-      canCollapseActionDock: input.canCollapseActionDock,
       isMessageListFollowing: input.isMessageListFollowing,
       isCustomAgentListLoading: input.isCustomAgentListLoading,
       isSkillListLoading: input.isSkillListLoading,
@@ -299,8 +301,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onToggleSkillPicker: input.onToggleSkillPicker,
       onAddAdditionalDirectory: input.onAddAdditionalDirectory,
       onToggleAdditionalDirectoryList: input.onToggleAdditionalDirectoryList,
-      onCollapseActionDock: input.onCollapseActionDock,
-      onExpandActionDock: input.onExpandActionDock,
+      onExpandActionDock: input.onToggleActionDock,
       onJumpToBottom: input.onJumpToMessageListBottom,
       onSelectCustomAgent: input.onSelectCustomAgent,
       onSelectSkill: input.onSelectSkill,
@@ -361,8 +362,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     },
   });
   const rightPaneProps = buildLiveSessionCommonContextPaneProps({
-    taskTitle: input.session.taskTitle,
-    isHeaderExpanded: input.isHeaderExpanded,
     activeContextPaneTab: input.activeContextPaneTab,
     availableContextPaneTabs: input.availableContextPaneTabs,
     contextPaneProjection: input.contextPaneProjection,
@@ -380,7 +379,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: "context usage はまだありません。",
-    onToggleHeaderExpanded: input.onToggleContextPaneHeaderExpanded,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
@@ -388,13 +386,28 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
   return buildLiveSessionWindowShellProps({
     mode: "companion",
     baseClassName: "theme-accent",
-    style: input.themeStyle,
+    style: { ...input.themeStyle, ...input.dockLayoutStyle },
+    layoutRef: input.layoutRef,
+    headerDockRef: input.headerDockRef,
+    actionDockRef: input.actionDockRef,
     isHeaderExpanded: input.isHeaderExpanded,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
     isActionDockExpanded: input.isActionDockExpanded,
+    headerSplitterProps: {
+      isPanelExpanded: input.isHeaderExpanded,
+      canCollapse: !input.isEditingTitle,
+      onTogglePanel: input.onToggleHeaderSplitter,
+    },
+    actionDockSplitterProps: {
+      isActive: input.isActionDockResizing,
+      isPanelExpanded: input.isActionDockExpanded,
+      canCollapse: input.canCollapseActionDock,
+      onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
+      onTogglePanel: input.onToggleActionDock,
+    },
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
     splitterProps: chatBodyProps.splitterProps,

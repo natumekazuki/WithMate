@@ -127,7 +127,6 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
     canViewAuxiliaryAuditLog: true,
     canDeleteSession: true,
     canViewAuditLog: true,
-    onToggleExpanded: noop,
     onOpenAuditLog: noop,
     onOpenTerminal: noop,
     onOpenSessionFilesExplorer,

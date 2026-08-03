@@ -91,7 +91,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       getAppSettings: () =>
         ({ providers: {}, codingProviderSettings: {}, memoryExtractionProviderSettings: {}, characterReflectionProviderSettings: {} }) as never,
       updateAppSettings: (settings) => settings,
-      updateSessionSidePane: () => ({}) as never,
+      updateChatLayoutPreference: () => ({}) as never,
       getAppDatabaseDiagnostics: () => ({}) as never,
       getMemoryV6Diagnostics: () => ({}) as never,
       installMemoryV6CliShim: () => ({}) as never,

@@ -213,9 +213,9 @@ test("Home は app settings 初期取得と購読更新を helper に通す", as
   assert.doesNotMatch(homeSource, /withmateApi\.getAppSettings\(\),/);
 });
 
-test("side pane 切替は全体 app settings を broadcast しない", async () => {
+test("chat layout preference 切替は全体 app settings を broadcast しない", async () => {
   const mainSource = await readFile(new URL("../../src-electron/main.ts", import.meta.url), "utf8");
-  const functionStart = mainSource.indexOf("function updateSessionSidePane");
+  const functionStart = mainSource.indexOf("function updateChatLayoutPreference");
   const functionEnd = mainSource.indexOf("\n}", functionStart);
   const functionSource = mainSource.slice(functionStart, functionEnd);
 

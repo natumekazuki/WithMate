@@ -88,10 +88,25 @@ describe("approval mode helpers", () => {
   });
 
   it("session side pane は初期値を none とし、列挙値だけを受け入れる", () => {
-    assert.equal(createDefaultAppSettings().sessionSidePane, "none");
-    assert.equal(normalizeAppSettings({ sessionSidePane: "files" }).sessionSidePane, "files");
-    assert.equal(normalizeAppSettings({ sessionSidePane: "context" }).sessionSidePane, "context");
-    assert.equal(normalizeAppSettings({ sessionSidePane: true }).sessionSidePane, "none");
+    assert.deepEqual(createDefaultAppSettings().chatLayoutPreference, {
+      header: "hidden",
+      actionDock: "compact",
+      sidePane: "none",
+    });
+    assert.deepEqual(normalizeAppSettings({
+      chatLayoutPreference: { header: "visible", actionDock: "expanded", sidePane: "files" },
+    }).chatLayoutPreference, {
+      header: "visible",
+      actionDock: "expanded",
+      sidePane: "files",
+    });
+    assert.deepEqual(normalizeAppSettings({
+      chatLayoutPreference: { header: "shown", actionDock: "open", sidePane: true },
+    }).chatLayoutPreference, {
+      header: "hidden",
+      actionDock: "compact",
+      sidePane: "none",
+    });
   });
 });
 

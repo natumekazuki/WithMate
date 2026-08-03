@@ -9,6 +9,10 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { SessionSidePane } from "./session-side-pane.js";
+import type {
+  ChatActionDockMode,
+  ChatHeaderVisibility,
+} from "./chat/chat-layout-preference.js";
 
 const SESSION_CONTEXT_RAIL_DEFAULT_WIDTH = 420;
 const SESSION_CONTEXT_RAIL_MIN_WIDTH = 360;
@@ -18,6 +22,12 @@ const SESSION_SIDE_PANE_MAX_WIDTH_RATIO = 0.5;
 const SESSION_LAYOUT_VIEWPORT_BREAKPOINT = 1400;
 const SESSION_CONTEXT_RAIL_DRAG_THRESHOLD = 4;
 const SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS = 100;
+const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 64;
+const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 320;
+const SESSION_ACTION_DOCK_MIN_HEIGHT = 260;
+const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.4;
+const SESSION_CENTRAL_SURFACE_MIN_HEIGHT = 280;
+const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 24;
 
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
@@ -36,6 +46,273 @@ function clampSidePaneWidth(requestedWidth: number, workbenchWidth: number, minW
 
 function isNarrowSessionLayoutViewport(): boolean {
   return window.innerWidth < SESSION_LAYOUT_VIEWPORT_BREAKPOINT;
+}
+
+export function useChatLayoutPresentation(input: {
+  initialHeader: ChatHeaderVisibility | null;
+  initialActionDock: ChatActionDockMode | null;
+  onHeaderChange?: (value: ChatHeaderVisibility) => void;
+  onActionDockChange?: (value: ChatActionDockMode) => void;
+}) {
+  const initialHeaderExpanded = input.initialHeader === "visible";
+  const initialActionDockExpanded = input.initialActionDock === "expanded";
+  const [isHeaderExpanded, setHeaderExpandedState] = useState(initialHeaderExpanded);
+  const [isActionDockPinnedExpanded, setActionDockExpandedState] = useState(initialActionDockExpanded);
+  const headerExpandedRef = useRef(initialHeaderExpanded);
+  const actionDockExpandedRef = useRef(initialActionDockExpanded);
+  const headerInteractedRef = useRef(false);
+  const actionDockInteractedRef = useRef(false);
+  const headerInitializedRef = useRef(input.initialHeader !== null);
+  const actionDockInitializedRef = useRef(input.initialActionDock !== null);
+
+  useEffect(() => {
+    if (input.initialHeader === null || headerInitializedRef.current) {
+      return;
+    }
+    headerInitializedRef.current = true;
+    if (headerInteractedRef.current) {
+      return;
+    }
+    const expanded = input.initialHeader === "visible";
+    headerExpandedRef.current = expanded;
+    setHeaderExpandedState(expanded);
+  }, [input.initialHeader]);
+
+  useEffect(() => {
+    if (input.initialActionDock === null || actionDockInitializedRef.current) {
+      return;
+    }
+    actionDockInitializedRef.current = true;
+    if (actionDockInteractedRef.current) {
+      return;
+    }
+    const expanded = input.initialActionDock === "expanded";
+    actionDockExpandedRef.current = expanded;
+    setActionDockExpandedState(expanded);
+  }, [input.initialActionDock]);
+
+  const setIsHeaderExpanded = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(headerExpandedRef.current) : next;
+    headerInteractedRef.current = true;
+    if (headerExpandedRef.current === resolved) {
+      return;
+    }
+    headerExpandedRef.current = resolved;
+    setHeaderExpandedState(resolved);
+    input.onHeaderChange?.(resolved ? "visible" : "hidden");
+  }, [input.onHeaderChange]);
+
+  const setIsActionDockPinnedExpanded = useCallback((next: boolean | ((current: boolean) => boolean)) => {
+    const resolved = typeof next === "function" ? next(actionDockExpandedRef.current) : next;
+    actionDockInteractedRef.current = true;
+    if (actionDockExpandedRef.current === resolved) {
+      return;
+    }
+    actionDockExpandedRef.current = resolved;
+    setActionDockExpandedState(resolved);
+    input.onActionDockChange?.(resolved ? "expanded" : "compact");
+  }, [input.onActionDockChange]);
+
+  return {
+    isHeaderExpanded,
+    setIsHeaderExpanded,
+    isActionDockPinnedExpanded,
+    setIsActionDockPinnedExpanded,
+  };
+}
+
+type SessionVerticalDockLayoutBounds = {
+  top: number;
+  bottom: number;
+  height: number;
+};
+
+function readCssPixelValue(value: string): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function measureSessionVerticalDockLayoutBounds(layout: HTMLElement): SessionVerticalDockLayoutBounds {
+  const bounds = layout.getBoundingClientRect();
+  const styles = window.getComputedStyle(layout);
+  const contentTop = bounds.top
+    + readCssPixelValue(styles.borderTopWidth)
+    + readCssPixelValue(styles.paddingTop);
+  const contentBottom = bounds.bottom
+    - readCssPixelValue(styles.borderBottomWidth)
+    - readCssPixelValue(styles.paddingBottom);
+  return {
+    top: contentTop,
+    bottom: contentBottom,
+    height: Math.max(0, contentBottom - contentTop),
+  };
+}
+
+export function clampSessionVerticalDockHeight(input: {
+  requestedHeight: number;
+  layoutHeight: number;
+  minHeight: number;
+  maxHeightRatio: number;
+  oppositeDockHeight: number;
+}): number {
+  const ratioMax = input.layoutHeight * input.maxHeightRatio;
+  const centralSurfaceMax = input.layoutHeight
+    - input.oppositeDockHeight
+    - SESSION_CENTRAL_SURFACE_MIN_HEIGHT
+    - SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT;
+  const maxHeight = Math.max(0, Math.min(ratioMax, centralSurfaceMax));
+  const minHeight = Math.min(input.minHeight, maxHeight);
+  return Math.min(maxHeight, Math.max(minHeight, input.requestedHeight));
+}
+
+export function useSessionVerticalDockResize(input: {
+  ownerKey: string | null;
+  isHeaderExpanded: boolean;
+  isActionDockExpanded: boolean;
+}) {
+  const [actionDockHeight, setActionDockHeight] = useState(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
+  const [isActionDockResizing, setIsActionDockResizing] = useState(false);
+  const sessionDockLayoutRef = useRef<HTMLDivElement | null>(null);
+  const headerDockRef = useRef<HTMLDivElement | null>(null);
+  const actionDockRef = useRef<HTMLDivElement | null>(null);
+  const actionDockHeightRef = useRef(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
+  const pointerGestureRef = useRef({
+    pointerId: null as number | null,
+    startY: 0,
+    dragged: false,
+  });
+  const lastActionDockDragEndAtRef = useRef(0);
+
+  useEffect(() => {
+    actionDockHeightRef.current = actionDockHeight;
+  }, [actionDockHeight]);
+
+  const clampDockHeights = useCallback(() => {
+    const layout = sessionDockLayoutRef.current;
+    if (!layout) {
+      return;
+    }
+
+    const layoutHeight = measureSessionVerticalDockLayoutBounds(layout).height;
+    if (layoutHeight <= 0) {
+      return;
+    }
+    const visibleHeaderHeight = input.isHeaderExpanded ? SESSION_HEADER_DOCK_DEFAULT_HEIGHT : 0;
+    const nextActionDockHeight = clampSessionVerticalDockHeight({
+      requestedHeight: actionDockHeightRef.current,
+      layoutHeight,
+      minHeight: SESSION_ACTION_DOCK_MIN_HEIGHT,
+      maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
+      oppositeDockHeight: visibleHeaderHeight,
+    });
+    actionDockHeightRef.current = nextActionDockHeight;
+    setActionDockHeight((current) => current === nextActionDockHeight ? current : nextActionDockHeight);
+  }, [input.isActionDockExpanded, input.isHeaderExpanded]);
+
+  useLayoutEffect(() => {
+    clampDockHeights();
+    window.addEventListener("resize", clampDockHeights);
+    return () => window.removeEventListener("resize", clampDockHeights);
+  }, [clampDockHeights, input.ownerKey]);
+
+  useEffect(() => {
+    if (!isActionDockResizing) {
+      return;
+    }
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const gesture = pointerGestureRef.current;
+      if (gesture.pointerId !== event.pointerId) {
+        return;
+      }
+      const layout = sessionDockLayoutRef.current;
+      if (!layout) {
+        return;
+      }
+      if (!gesture.dragged) {
+        if (Math.abs(event.clientY - gesture.startY) < SESSION_CONTEXT_RAIL_DRAG_THRESHOLD) {
+          return;
+        }
+        gesture.dragged = true;
+      }
+
+      const bounds = measureSessionVerticalDockLayoutBounds(layout);
+      const oppositeHeight = input.isHeaderExpanded ? SESSION_HEADER_DOCK_DEFAULT_HEIGHT : 0;
+      const nextHeight = clampSessionVerticalDockHeight({
+        requestedHeight: bounds.bottom - event.clientY,
+        layoutHeight: bounds.height,
+        minHeight: SESSION_ACTION_DOCK_MIN_HEIGHT,
+        maxHeightRatio: SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO,
+        oppositeDockHeight: oppositeHeight,
+      });
+      actionDockHeightRef.current = nextHeight;
+      setActionDockHeight(nextHeight);
+    };
+
+    const handlePointerEnd = (event: PointerEvent) => {
+      const gesture = pointerGestureRef.current;
+      if (gesture.pointerId !== event.pointerId) {
+        return;
+      }
+      if (gesture.dragged) {
+        lastActionDockDragEndAtRef.current = Date.now();
+      }
+      pointerGestureRef.current = { pointerId: null, startY: 0, dragged: false };
+      setIsActionDockResizing(false);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerEnd);
+    window.addEventListener("pointercancel", handlePointerEnd);
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerEnd);
+      window.removeEventListener("pointercancel", handlePointerEnd);
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [input.isHeaderExpanded, isActionDockResizing]);
+
+  const handleStartActionDockResize = useCallback((event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!input.isActionDockExpanded || event.button !== 0 || !sessionDockLayoutRef.current) {
+      return;
+    }
+    event.preventDefault();
+    pointerGestureRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      dragged: false,
+    };
+    setIsActionDockResizing(true);
+  }, [input.isActionDockExpanded]);
+  const handleHeaderSplitterClick = useCallback((toggle: () => void) => {
+    toggle();
+  }, []);
+  const handleActionDockSplitterClick = useCallback((toggle: () => void) => {
+    if (Date.now() - lastActionDockDragEndAtRef.current >= SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS) {
+      toggle();
+    }
+  }, []);
+
+  const sessionDockLayoutStyle = useMemo(() => ({
+    ["--session-action-dock-height" as string]: `${actionDockHeight}px`,
+  }) as CSSProperties, [actionDockHeight]);
+
+  return {
+    sessionDockLayoutRef,
+    headerDockRef,
+    actionDockRef,
+    sessionDockLayoutStyle,
+    isActionDockResizing,
+    handleStartActionDockResize,
+    handleHeaderSplitterClick,
+    handleActionDockSplitterClick,
+  };
 }
 
 export type UseSessionMessageListFollowingArgs = {
