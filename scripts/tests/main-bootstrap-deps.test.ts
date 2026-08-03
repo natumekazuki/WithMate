@@ -57,6 +57,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         savePastedSessionFile: async () => "",
         openSessionFilesDirectory: async () => {},
         openSessionFilesTerminal: async () => {},
+        copySessionFilePreviewImage: async () => ({ status: "copied" }),
+        showSessionFilePreviewImageContextMenu: async () => ({ status: "dismissed" }),
         openPathTarget: async () => {},
         openAppLogFolder: async () => {},
         openCrashDumpFolder: async () => {},

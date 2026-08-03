@@ -70,6 +70,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async pickImageFile() {
         return null;
       },
+      copySessionFilePreviewImage: async () => ({ status: "copied" }),
+      showSessionFilePreviewImageContextMenu: async () => ({ status: "dismissed" }),
       async openPathTarget() {},
       async openAppLogFolder() {},
       async openCrashDumpFolder() {},

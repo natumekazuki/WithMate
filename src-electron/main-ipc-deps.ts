@@ -65,6 +65,9 @@ import type {
   SessionFileChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
@@ -126,6 +129,14 @@ export type MainIpcWindowDepsArgs = {
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
   openSessionFilesTerminal(sessionId: string): Promise<void>;
+  copySessionFilePreviewImage(
+    event: IpcMainInvokeEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageContextMenuResult>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -367,6 +378,8 @@ export function createMainIpcRegistrationDeps(
     savePastedSessionFile: args.window.savePastedSessionFile,
     openSessionFilesDirectory: args.window.openSessionFilesDirectory,
     openSessionFilesTerminal: args.window.openSessionFilesTerminal,
+    copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
+    showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
     openCrashDumpFolder: args.window.openCrashDumpFolder,

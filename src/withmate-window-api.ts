@@ -81,6 +81,9 @@ import type {
   SessionFileChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
@@ -123,6 +126,12 @@ export type WithMateWindowSessionApi = {
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
+  copySessionFilePreviewImage(
+    request: SessionFilePreviewImageActionRequest,
+  ): Promise<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    request: SessionFilePreviewImageActionRequest,
+  ): Promise<SessionFilePreviewImageContextMenuResult>;
   listWorkspaceChanges(sessionId: string): Promise<WorkspaceChangesResult>;
   getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Promise<WorkspaceFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
