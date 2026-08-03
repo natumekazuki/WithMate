@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   PreviewByteAccumulator,
-  projectWorkspaceFileDiffAvailability,
+  projectFileRootDiffAvailability,
   resolveAuthorizedMarkdownResource,
   resolveMarkdownImageTarget,
   resolveMarkdownLinkTarget,
@@ -13,6 +14,12 @@ import {
   shouldInitiallyFitSvg,
 } from "../../src/file-explorer/file-preview-utils.js";
 import { detectSessionFileEncoding } from "../../src/file-explorer/file-content-detection.js";
+
+test("calculateImageFitZoom は画像を拡大せずviewport内に収める倍率を返す", () => {
+  assert.equal(calculateImageFitZoom(800, 450, 1600, 900), 50);
+  assert.equal(calculateImageFitZoom(800, 600, 400, 300), 100);
+  assert.equal(calculateImageFitZoom(0, 600, 400, 300), 100);
+});
 
 test("decodeSessionFileBytes は Auto と手動指定で UTF-8 / Shift_JIS / UTF-16 を decode する", () => {
   assert.equal(decodeSessionFileBytes(new TextEncoder().encode("hello"), "auto", "utf-8"), "hello");
@@ -68,16 +75,16 @@ test("shouldInitiallyFitSvg は寸法情報のないSVGだけを初回Fitにす�
   assert.equal(shouldInitiallyFitSvg(encode("<svg width=\"100%\" height=\"100%\"></svg>")), true);
 });
 
-test("projectWorkspaceFileDiffAvailability は変更なしとGit失敗を区別する", () => {
-  assert.deepEqual(projectWorkspaceFileDiffAvailability({ status: "ok", entries: [] }, "src/App.tsx"), {
+test("projectFileRootDiffAvailability は変更なしとGit失敗を区別する", () => {
+  assert.deepEqual(projectFileRootDiffAvailability({ status: "ok", entries: [] }, "src/App.tsx"), {
     scopes: [],
     message: "",
   });
-  assert.deepEqual(projectWorkspaceFileDiffAvailability({ status: "not-git", message: "Not a Git repository." }, "src/App.tsx"), {
+  assert.deepEqual(projectFileRootDiffAvailability({ status: "not-git", message: "Not a Git repository." }, "src/App.tsx"), {
     scopes: [],
     message: "",
   });
-  assert.deepEqual(projectWorkspaceFileDiffAvailability({
+  assert.deepEqual(projectFileRootDiffAvailability({
     status: "ok",
     entries: [{
       relativePath: "src/App.tsx",

@@ -189,30 +189,37 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `Work Chat`
 - 空 session では初期 assistant メッセージを置かない
 - assistant / user message の markdown-like rich text 表示
-- wide desktop (`1920x1080` baseline) では Session 本体を「`header(必要時のみ) + side pane / work surface`」にする
-  - 通常時は work surface を最上端から `message list + Action Dock` に使い切る
-  - Agent では左に File Explorer、右に `title handle + context pane` を開けるが、左右を同時には表示しない
-  - title handle を押した時だけ、header が左端まで伸びた full-width strip として出る
-  - work surface: `message list または file / live Git Diff preview + Action Dock`
+- wide desktop (`1920x1080` baseline) では Session 本体を、中央の `message list または preview` と上下左右の dock に分ける
+  - 上は full-width Header、下は full-width ActionDock、左は File Explorer、右は Context pane とする
+  - File Explorer と Context pane は左右を同時には表示しない
+  - Header、ActionDock、左右 pane は対応する splitter の click で切り替える。左右 pane と ActionDock は展開中の drag でサイズを調整する
+  - ActionDock の高さと左右 pane の幅は Window local state とし、別 Window や再起動へ引き継がない
+  - Header、ActionDock、side pane の表示 preference は app 共通設定へ保存し、新しく開く Window の初期値にだけ使う。既存 Window は別 Window の変更へ追従しない
+  - title 編集などの強制表示は保存済み preference を変更しない
+  - 中央 surface の最小高を優先し、ActionDock の高さは layout 高の40%までとする
+  - work surface: `message list または file / live Git Diff preview`
   - context pane: `Latest Command`
-  - splitter の click で対応する pane を切り替える。Context pane の splitter は wide layout で drag による幅調整も受け付ける
+  - splitter の click で対応する pane を切り替える。wide layout では左右 splitter の drag による幅調整も受け付ける
   - pane を隠した時も splitter は再表示 affordance として残す
   - side pane の表示状態は `files | context | none` の単一値として app 共通設定へ保存し、初期値は `none` とする。新しく開く Window は利用可能な永続値を初期値として使う
   - 開いている Window の表示状態は renderer local state とし、別 Window での切り替えには追従させない
-  - side pane は Action Dock の手前で切らず、下端まで縦に伸ばす
-  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では Context pane の drag と各 splitter の click を使う
+  - side pane は Header と ActionDock の間で中央 surface と並ぶ
+  - viewport が `1400px` 未満の narrow width では active side pane と work surface を縦 stack にし、splitter の click 操作だけを維持する。`1400px` 以上では左右 pane の drag と各 splitter の click を使う
   - current minimum は split-screen を考慮し、`900px` 台の window 幅でも縦 stack のまま到達性を維持する
   - Full HD では文字サイズそのものより density を先に調整し、Session 専用の gap / padding / chip / button 高さをやや詰める
   - user bubble は assistant avatar 分の左 gutter を持たず、row 幅いっぱいを使えるようにする
 - `Top Bar`
-  - default は right pane 上部の `title handle` だけを見せる
-  - title handle を押すと full-width header に切り替わり、`Rename / Audit Log / Terminal / Delete` を常時表示する
+  - default は hidden とする
+  - 上 splitter を押すと full-width header に切り替わり、`Rename / Audit Log / Terminal / Delete` を表示する
+  - Header は1行分の固定高とし、splitter の drag による高さ変更は行わない
   - `More` と `Close` は使わない
-  - title をもう一度押すと collapsed state へ戻れる
+  - title 編集中は effective state として表示を維持する
 - `Action Dock`
   - compact / expanded の 2 状態を持つ
-  - wide では message list と同じ左列幅に揃える
-  - compact では draft preview 全体を reopen hit area にし、`Send / Cancel` だけを残す
+  - full-width の下 dock として置く
+  - compact でも draft preview、添付数、run 状態、末尾移動、`Send / Cancel` を残す
+  - 開閉は下 splitter に集約し、dock 内に `Hide` や reopen hit area を置かない
+  - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
   - retry banner、skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する
@@ -221,17 +228,18 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
   - 未作成の `Session Folder` は root の初回展開時に空ディレクトリとして作成する
   - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
-  - `Files | Changes` を切り替え、Changes は Workspace の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く
-  - Changes は user configuration から外部 command を実行しない。Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
+  - `Files | Changes` を切り替え、Changes は各 Git root の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く。非 Git root は表示しない。包含関係にある root は独立した scope とし、同じ file も各 root からの相対 path で表示する
+  - Changes は user configuration から外部 command を実行しない。root の認可と表示 scope は ADR 015、Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
   - File Explorer の user-visible 導線は Companion に追加しない
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける
   - Text、Markdown、raster image、SVG、unsupported binary metadata を表示する。Text と source は行番号、soft wrap、文字コード切替を持つ
   - Markdown は shared rich text renderer の Preview を既定とし、Source へ切り替えられる
-  - image は 100% を既定とし、Zoom と Fit を受け付ける
+  - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
   - Ctrl+F は active な chat / Text / Markdown / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、live Git Diff の選択コピーは chat と同じ floating Copy を使う
   - file と live Git Diff は Back to Chat で閉じる。run、approval、elicitation の状態は preview 中も確認できる
 - live Git Diff と chat artifact Diff は別機能とする。既存 chat artifact の `Open Diff` は snapshot を inline modal / Diff Window に開く従来経路を維持し、File Explorer の Changes や中央 live Git Diff へ接続しない
+- 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
   - viewport bottom gap が 80px 以下のときは末尾追従を許可する
@@ -281,8 +289,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
   - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
-- composer 上の添付 toolbar (`File / Folder / Image`)
-- `File / Folder / Image` は attachment group として並べ、`Skill` は別カテゴリの単独 button として区別する
+- composer 上の添付 toolbar
+  - `Attach` button から単一の attachment popover を開く
+  - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる
+  - popover の `Session files` section は session local files を扱う `Copy / File / Folder / Image` を1行にまとめる
+  - `Skill` は別カテゴリの単独 button として区別する
 - 添付 toolbar は Agent / Companion の作業 chat 用であり、メイトークでは表示しない
 - composer の attachment chip
   - basename を主表示にし、file / folder / image の kind と `ワークスペース内` / `ワークスペース外` を即判別できる

@@ -27,6 +27,7 @@ import type {
     SessionSummary,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
+import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
 import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
@@ -74,19 +75,22 @@ import type {
   CharacterAuthoringSessionStartResult,
   StartCharacterAuthoringSessionInput,
 } from "./character/character-authoring.js";
-import type { SessionSidePane } from "./session-side-pane.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
 } from "./file-explorer/file-explorer-contract.js";
 
 export type WithMateWindowNavigationApi = {
@@ -123,8 +127,14 @@ export type WithMateWindowSessionApi = {
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
-  listWorkspaceChanges(sessionId: string): Promise<WorkspaceChangesResult>;
-  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Promise<WorkspaceFileDiffResult>;
+  copySessionFilePreviewImage(
+    request: SessionFilePreviewImageActionRequest,
+  ): Promise<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    request: SessionFilePreviewImageActionRequest,
+  ): Promise<SessionFilePreviewImageContextMenuResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
@@ -220,7 +230,7 @@ export type WithMateWindowObservabilityApi = {
 export type WithMateWindowSettingsApi = {
   getAppSettings(): Promise<AppSettings>;
   updateAppSettings(settings: AppSettings): Promise<AppSettings>;
-  updateSessionSidePane(sidePane: SessionSidePane): Promise<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;

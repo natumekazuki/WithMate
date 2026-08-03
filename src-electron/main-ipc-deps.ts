@@ -57,20 +57,24 @@ import type {
   CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
-import type { SessionSidePane } from "../src/session-side-pane.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -126,6 +130,14 @@ export type MainIpcWindowDepsArgs = {
   savePastedSessionFile(request: SavePastedSessionFileRequest): Promise<string>;
   openSessionFilesDirectory(sessionId: string): Promise<void>;
   openSessionFilesTerminal(sessionId: string): Promise<void>;
+  copySessionFilePreviewImage(
+    event: IpcMainInvokeEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageContextMenuResult>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -146,7 +158,7 @@ export type MainIpcCatalogDepsArgs = {
 export type MainIpcSettingsDepsArgs = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateSessionSidePane(sidePane: SessionSidePane): Awaitable<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -210,8 +222,8 @@ export type MainIpcSessionQueryDepsArgs = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
-  listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
-  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -367,6 +379,8 @@ export function createMainIpcRegistrationDeps(
     savePastedSessionFile: args.window.savePastedSessionFile,
     openSessionFilesDirectory: args.window.openSessionFilesDirectory,
     openSessionFilesTerminal: args.window.openSessionFilesTerminal,
+    copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
+    showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
     openCrashDumpFolder: args.window.openCrashDumpFolder,
@@ -381,7 +395,7 @@ export function createMainIpcRegistrationDeps(
     exportModelCatalogToFile: args.catalog.exportModelCatalogToFile,
     getAppSettings: args.settings.getAppSettings,
     updateAppSettings: args.settings.updateAppSettings,
-    updateSessionSidePane: args.settings.updateSessionSidePane,
+    updateChatLayoutPreference: args.settings.updateChatLayoutPreference,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
     installMemoryV6CliShim: args.settings.installMemoryV6CliShim,
@@ -420,8 +434,8 @@ export function createMainIpcRegistrationDeps(
     inspectSessionFile: args.sessionQuery.inspectSessionFile,
     readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
     openSessionFile: args.sessionQuery.openSessionFile,
-    listWorkspaceChanges: args.sessionQuery.listWorkspaceChanges,
-    getWorkspaceFileDiff: args.sessionQuery.getWorkspaceFileDiff,
+    listFileRootChanges: args.sessionQuery.listFileRootChanges,
+    getFileRootDiff: args.sessionQuery.getFileRootDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,

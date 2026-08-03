@@ -41,8 +41,7 @@ type StaticChatHeaderProps = {
   taskTitle: string;
   titleDraft?: string;
   isRunning: boolean;
-  onToggleExpanded: () => void;
-} & Partial<Omit<ChatHeaderProps, "taskTitle" | "titleDraft" | "isRunning" | "onToggleExpanded">>;
+} & Partial<Omit<ChatHeaderProps, "taskTitle" | "titleDraft" | "isRunning">>;
 
 type IdleChatMessageColumnProps = Pick<
   ChatMessageColumnProps,
@@ -257,12 +256,11 @@ export type LiveSessionCompactActionDockProps = Omit<ChatCompactActionDockProps,
 
 export type LiveSessionComposerDockPropsInput = Omit<
   LiveSessionComposerProps,
-  "onCollapse" | "showJumpToBottom"
+  "showJumpToBottom"
 > & {
   actionDockCompactPreview: string;
   attachmentCount: number;
   isMessageListFollowing: boolean;
-  onCollapseActionDock: () => void;
   onExpandActionDock: () => void;
 };
 
@@ -306,7 +304,6 @@ export function buildLiveSessionComposerDockProps(
     actionDockCompactPreview,
     attachmentCount,
     isMessageListFollowing,
-    onCollapseActionDock,
     onExpandActionDock,
     ...composerInput
   } = input;
@@ -316,7 +313,6 @@ export function buildLiveSessionComposerDockProps(
     composer: {
       ...composerInput,
       showJumpToBottom,
-      onCollapse: onCollapseActionDock,
     },
     compactActionDock: {
       draft: input.draft,
@@ -340,31 +336,7 @@ export function buildLiveSessionComposerDockProps(
 export function buildLiveSessionContextPaneProps(
   input: LiveSessionContextPanePropsInput,
 ): SessionContextPaneProps {
-  return {
-    taskTitle: input.taskTitle,
-    isHeaderExpanded: input.isHeaderExpanded,
-    activeContextPaneTab: input.activeContextPaneTab,
-    availableContextPaneTabs: input.availableContextPaneTabs,
-    contextPaneProjection: input.contextPaneProjection,
-    latestCommandView: input.latestCommandView,
-    runningDetailsEntries: input.runningDetailsEntries,
-    liveRunReasoningText: input.liveRunReasoningText,
-    backgroundTasks: input.backgroundTasks,
-    companionGroupMonitorEntries: input.companionGroupMonitorEntries,
-    selectedSessionLiveRunErrorMessage: input.selectedSessionLiveRunErrorMessage,
-    isSelectedSessionRunning: input.isSelectedSessionRunning,
-    isCopilotSession: input.isCopilotSession,
-    selectedCopilotRemainingPercentLabel: input.selectedCopilotRemainingPercentLabel,
-    selectedCopilotRemainingRequestsLabel: input.selectedCopilotRemainingRequestsLabel,
-    selectedCopilotQuotaResetLabel: input.selectedCopilotQuotaResetLabel,
-    selectedSessionContextTelemetry: input.selectedSessionContextTelemetry,
-    selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
-    contextEmptyText: input.contextEmptyText,
-    latestCommandEmptyText: input.latestCommandEmptyText,
-    onToggleHeaderExpanded: input.onToggleHeaderExpanded,
-    onCycleContextPaneTab: input.onCycleContextPaneTab,
-    onOpenCompanionReview: input.onOpenCompanionReview,
-  };
+  return { ...input };
 }
 
 export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColumnProps): ChatMessageColumnProps {
@@ -430,15 +402,15 @@ export function buildLiveSessionSplitterProps(
   input: LiveSessionSplitterProps,
 ): {
   isActive: boolean;
-  isRightPaneVisible: boolean;
+  isPanelExpanded: boolean;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
-  onToggleRightPane: MouseEventHandler<HTMLButtonElement>;
+  onTogglePanel: MouseEventHandler<HTMLButtonElement>;
 } {
   return {
     isActive: input.isContextRailResizing,
-    isRightPaneVisible: input.isContextRailVisible,
+    isPanelExpanded: input.isContextRailVisible,
     onPointerDown: input.isContextRailVisible ? input.onStartContextRailResize : undefined,
-    onToggleRightPane: input.onToggleContextRailVisibility,
+    onTogglePanel: input.onToggleContextRailVisibility,
   };
 }
 
@@ -446,7 +418,6 @@ export function createStaticChatHeaderProps({
   taskTitle,
   titleDraft = taskTitle,
   isRunning,
-  onToggleExpanded,
   ...props
 }: StaticChatHeaderProps): ChatHeaderProps {
   return {
@@ -458,7 +429,6 @@ export function createStaticChatHeaderProps({
     showAuditLogButton: false,
     showTerminalButton: false,
     showDeleteButton: false,
-    onToggleExpanded,
     onOpenAuditLog: chatWindowNoop,
     onOpenTerminal: chatWindowNoop,
     onTitleDraftChange: chatWindowNoop,
@@ -560,7 +530,6 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     selectedCustomAgentLabel: "Agent",
     selectedCustomAgentTitle: "",
     additionalDirectoryCount: 0,
-    canCollapseActionDock: false,
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
     isSkillListLoading: false,
@@ -581,7 +550,6 @@ export function createHiddenControlsChatComposerProps(props: HiddenControlsChatC
     onToggleSkillPicker: chatWindowNoop,
     onAddAdditionalDirectory: chatWindowNoop,
     onToggleAdditionalDirectoryList: chatWindowNoop,
-    onCollapse: chatWindowNoop,
     onJumpToBottom: chatWindowNoop,
     onSelectCustomAgent: chatWindowNoop,
     onSelectSkill: chatWindowNoop,
@@ -664,16 +632,4 @@ export function createStaticTextChatCompactActionDockProps({
     onExpand,
     onSendOrCancel,
   });
-}
-
-export function buildChatPageClassName({
-  baseClassName = "",
-  isHeaderExpanded,
-}: {
-  baseClassName?: string;
-  isHeaderExpanded: boolean;
-}): string {
-  return [baseClassName, isHeaderExpanded ? "" : "session-page-header-collapsed"]
-    .filter((className) => className.length > 0)
-    .join(" ");
 }

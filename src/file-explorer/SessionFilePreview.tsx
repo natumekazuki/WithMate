@@ -6,6 +6,8 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
@@ -16,9 +18,10 @@ import type {
   SessionFileDescriptor,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangeScope,
+  FileRootGitChangeScope,
 } from "./file-explorer-contract.js";
 import {
+  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   formatFileByteLength,
@@ -48,10 +51,21 @@ import {
 } from "./rendered-text-search.js";
 import { PreviewResourceQueue } from "./preview-resource-queue.js";
 import { clampFindMatchIndex } from "../find-text-matches.js";
+import {
+  parseUnifiedDiff,
+  type UnifiedDiffContentRow,
+  type UnifiedDiffDisplayRow,
+} from "./unified-diff.js";
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
-  "listSessionFileRoots" | "inspectSessionFile" | "readSessionFileChunk" | "openSessionFile" | "openPath"
+  | "listSessionFileRoots"
+  | "inspectSessionFile"
+  | "readSessionFileChunk"
+  | "openSessionFile"
+  | "openPath"
+  | "copySessionFilePreviewImage"
+  | "showSessionFilePreviewImageContextMenu"
 >;
 
 type SessionFilePreviewProps = {
@@ -59,9 +73,9 @@ type SessionFilePreviewProps = {
   request: SessionFileResourceRequest;
   onClose: () => void;
   onCopyText: (text: string) => void;
-  diffScopes?: WorkspaceChangeScope[];
-  onOpenDiff?: (scope: WorkspaceChangeScope) => Promise<string | null>;
-  diffLoadingScope?: WorkspaceChangeScope | null;
+  diffScopes?: FileRootGitChangeScope[];
+  onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
+  diffLoadingScope?: FileRootGitChangeScope | null;
   diffAvailabilityMessage?: string;
   chatNotice?: string;
 };
@@ -69,6 +83,14 @@ type SessionFilePreviewProps = {
 type LoadedFile = {
   descriptor: SessionFileDescriptor;
   bytes: Uint8Array;
+};
+
+type ImagePanSession = {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  scrollLeft: number;
+  scrollTop: number;
 };
 
 type FileLoadState =
@@ -79,6 +101,9 @@ type FileLoadState =
   | { status: "error"; message: string };
 
 const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
+const IMAGE_ZOOM_MIN = 10;
+const IMAGE_ZOOM_MAX = 800;
+const IMAGE_ZOOM_STEP = 10;
 
 const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: string }> = [
   { value: "auto", label: "Auto" },
@@ -92,6 +117,32 @@ function copyBytesToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
   return copy.buffer;
+}
+
+function resolveVisibleImageCopyPoint(
+  image: HTMLImageElement,
+  scrollport: HTMLElement,
+): { x: number; y: number } | null {
+  const rect = image.getBoundingClientRect();
+  const scrollportRect = scrollport.getBoundingClientRect();
+  const left = Math.max(0, rect.left, scrollportRect.left);
+  const top = Math.max(0, rect.top, scrollportRect.top);
+  const right = Math.min(window.innerWidth, rect.right, scrollportRect.right);
+  const bottom = Math.min(window.innerHeight, rect.bottom, scrollportRect.bottom);
+  if (
+    !Number.isFinite(left) ||
+    !Number.isFinite(top) ||
+    !Number.isFinite(right) ||
+    !Number.isFinite(bottom) ||
+    right <= left ||
+    bottom <= top
+  ) {
+    return null;
+  }
+  return {
+    x: Math.floor((left + right) / 2),
+    y: Math.floor((top + bottom) / 2),
+  };
 }
 
 async function readWholeResource(
@@ -236,6 +287,137 @@ function VirtualizedTextContent({
   );
 }
 
+type VirtualizedSplitDiffContentProps = {
+  patch: string;
+  copyText: (text: string) => void;
+  matches: PreviewTextMatch[];
+  currentMatchIndex: number;
+};
+
+function rowContainsPatchLine(row: UnifiedDiffDisplayRow, patchLineIndex: number): boolean {
+  if (row.kind === "metadata" || row.kind === "hunk" || row.kind === "note") {
+    return row.patchLineIndex === patchLineIndex;
+  }
+  return row.leftPatchLineIndex === patchLineIndex || row.rightPatchLineIndex === patchLineIndex;
+}
+
+function VirtualizedSplitDiffContent({
+  patch,
+  copyText,
+  matches,
+  currentMatchIndex,
+}: VirtualizedSplitDiffContentProps) {
+  const parsed = useMemo(() => parseUnifiedDiff(patch), [patch]);
+  const matchesByLine = useMemo(() => {
+    const grouped = new Map<number, IndexedPreviewTextMatch[]>();
+    matches.forEach((match, matchIndex) => {
+      const lineMatches = grouped.get(match.lineIndex) ?? [];
+      lineMatches.push({ ...match, matchIndex });
+      grouped.set(match.lineIndex, lineMatches);
+    });
+    return grouped;
+  }, [matches]);
+  const activePatchLineIndex = matches[currentMatchIndex]?.lineIndex ?? null;
+  const activeRowIndex = useMemo(() => (
+    activePatchLineIndex === null
+      ? null
+      : parsed.rows.findIndex((row) => rowContainsPatchLine(row, activePatchLineIndex))
+  ), [activePatchLineIndex, parsed.rows]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: parsed.rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 25,
+    overscan: 24,
+    useFlushSync: false,
+  });
+
+  useEffect(() => {
+    if (activeRowIndex !== null && activeRowIndex >= 0) {
+      virtualizer.scrollToIndex(activeRowIndex, { align: "center" });
+    }
+  }, [activeRowIndex, virtualizer]);
+
+  const renderContentCell = (
+    row: UnifiedDiffContentRow,
+    side: "left" | "right",
+  ) => {
+    const patchLineIndex = side === "left" ? row.leftPatchLineIndex : row.rightPatchLineIndex;
+    const text = side === "left" ? row.leftText : row.rightText;
+    return (
+      <>
+        <span className="session-live-diff-line-number" aria-hidden="true">
+          {side === "left" ? row.leftNumber ?? "" : row.rightNumber ?? ""}
+        </span>
+        <code className={`session-live-diff-code ${side}`}>
+          {renderHighlightedLine(
+            text ?? "",
+            patchLineIndex === undefined ? [] : matchesByLine.get(patchLineIndex) ?? [],
+            currentMatchIndex,
+          )}
+        </code>
+      </>
+    );
+  };
+
+  return (
+    <div className="session-live-diff-split">
+      <div className="session-live-diff-split-header" aria-hidden="true">
+        <span />
+        <strong>Before</strong>
+        <span />
+        <strong>After</strong>
+      </div>
+      <SelectionCopySurface
+        className="session-live-diff-split-scroll"
+        onCopyText={copyText}
+        surfaceRef={scrollRef}
+      >
+        <div className="session-live-diff-split-rows" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const row = parsed.rows[virtualRow.index];
+            if (!row) {
+              return null;
+            }
+            const isActive = activeRowIndex === virtualRow.index;
+            if (row.kind === "metadata" || row.kind === "hunk" || row.kind === "note") {
+              return (
+                <div
+                  key={virtualRow.key}
+                  className={`session-live-diff-split-row ${row.kind}${isActive ? " is-current" : ""}`}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <code>
+                    {renderHighlightedLine(
+                      row.text,
+                      matchesByLine.get(row.patchLineIndex) ?? [],
+                      currentMatchIndex,
+                    )}
+                  </code>
+                </div>
+              );
+            }
+            return (
+              <div
+                key={virtualRow.key}
+                className={`session-live-diff-split-row change ${row.kind}${isActive ? " is-current" : ""}`}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {renderContentCell(row, "left")}
+                {renderContentCell(row, "right")}
+              </div>
+            );
+          })}
+        </div>
+      </SelectionCopySurface>
+    </div>
+  );
+}
+
 export function SessionFilePreview({
   api,
   request,
@@ -258,6 +440,7 @@ export function SessionFilePreview({
   const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
   const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
   const [imageZoom, setImageZoom] = useState<"fit" | number>(100);
+  const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
@@ -266,6 +449,11 @@ export function SessionFilePreview({
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const imagePanSessionRef = useRef<ImagePanSession | null>(null);
+  const [isImagePanning, setIsImagePanning] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const imageScrollRef = useRef<HTMLDivElement | null>(null);
+  const imageCanvasRef = useRef<HTMLDivElement | null>(null);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
@@ -348,6 +536,8 @@ export function SessionFilePreview({
     setEncoding("auto");
     setMarkdownMode("preview");
     setImageZoom(100);
+    imagePanSessionRef.current = null;
+    setIsImagePanning(false);
     setImageObjectUrl("");
     setFeedback("");
     setFindOpen(false);
@@ -472,10 +662,95 @@ export function SessionFilePreview({
       return;
     }
     setImageZoom(loaded.descriptor.kind === "svg" && shouldInitiallyFitSvg(loaded.bytes) ? "fit" : 100);
+    setImageFitZoom(100);
     const objectUrl = URL.createObjectURL(new Blob([copyBytesToArrayBuffer(loaded.bytes)], { type: loaded.descriptor.mimeType }));
     setImageObjectUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [loaded]);
+
+  const startImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (
+      event.button !== 0 ||
+      (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth &&
+        event.currentTarget.scrollHeight <= event.currentTarget.clientHeight)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    imagePanSessionRef.current = {
+      pointerId: event.pointerId,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      scrollLeft: event.currentTarget.scrollLeft,
+      scrollTop: event.currentTarget.scrollTop,
+    };
+    setIsImagePanning(true);
+  }, []);
+
+  const moveImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const session = imagePanSessionRef.current;
+    if (!session || session.pointerId !== event.pointerId) {
+      return;
+    }
+    event.preventDefault();
+    event.currentTarget.scrollLeft = session.scrollLeft - (event.clientX - session.clientX);
+    event.currentTarget.scrollTop = session.scrollTop - (event.clientY - session.clientY);
+  }, []);
+
+  const stopImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (imagePanSessionRef.current?.pointerId !== event.pointerId) {
+      return;
+    }
+    imagePanSessionRef.current = null;
+    setIsImagePanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const handleImagePanCaptureLoss = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (imagePanSessionRef.current?.pointerId === event.pointerId) {
+      imagePanSessionRef.current = null;
+      setIsImagePanning(false);
+    }
+  }, []);
+
+  const updateImageFitZoom = useCallback(() => {
+    const viewport = imageScrollRef.current;
+    const canvas = imageCanvasRef.current;
+    const image = imageRef.current;
+    if (!viewport || !canvas || !image) {
+      return;
+    }
+    const styles = window.getComputedStyle(canvas);
+    const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
+      + (Number.parseFloat(styles.paddingRight) || 0);
+    const verticalPadding = (Number.parseFloat(styles.paddingTop) || 0)
+      + (Number.parseFloat(styles.paddingBottom) || 0);
+    setImageFitZoom(calculateImageFitZoom(
+      viewport.clientWidth - horizontalPadding,
+      viewport.clientHeight - verticalPadding,
+      image.naturalWidth,
+      image.naturalHeight,
+    ));
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!imageObjectUrl) {
+      return;
+    }
+    updateImageFitZoom();
+    if (typeof ResizeObserver === "undefined" || !imageScrollRef.current) {
+      return;
+    }
+    const observer = new ResizeObserver(updateImageFitZoom);
+    observer.observe(imageScrollRef.current);
+    return () => observer.disconnect();
+  }, [imageObjectUrl, updateImageFitZoom]);
+
+  const effectiveImageZoom = typeof imageZoom === "number" ? imageZoom : imageFitZoom;
+  const imageZoomLabel = `${effectiveImageZoom}%`;
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -560,6 +835,57 @@ export function SessionFilePreview({
       }
     }
   }, [api, request]);
+
+  const copyPreviewImage = useCallback(async () => {
+    if (!api || !imageRef.current || !imageScrollRef.current) {
+      return;
+    }
+    const point = resolveVisibleImageCopyPoint(imageRef.current, imageScrollRef.current);
+    if (!point) {
+      setFeedback("The image is not currently visible.");
+      return;
+    }
+    const revision = loadRevisionRef.current;
+    try {
+      const result = await api.copySessionFilePreviewImage({
+        sessionId: request.sessionId,
+        point,
+      });
+      if (loadRevisionRef.current === revision) {
+        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+      }
+    } catch {
+      if (loadRevisionRef.current === revision) {
+        setFeedback("Image could not be copied.");
+      }
+    }
+  }, [api, request.sessionId]);
+
+  const showPreviewImageContextMenu = useCallback(async (
+    event: ReactMouseEvent<HTMLImageElement>,
+  ) => {
+    event.preventDefault();
+    if (!api) {
+      return;
+    }
+    const revision = loadRevisionRef.current;
+    try {
+      const result = await api.showSessionFilePreviewImageContextMenu({
+        sessionId: request.sessionId,
+        point: {
+          x: Math.max(0, Math.round(event.clientX)),
+          y: Math.max(0, Math.round(event.clientY)),
+        },
+      });
+      if (loadRevisionRef.current === revision && result.status !== "dismissed") {
+        setFeedback(result.status === "copied" ? "Image copied." : result.message);
+      }
+    } catch {
+      if (loadRevisionRef.current === revision) {
+        setFeedback("Image context menu could not be opened.");
+      }
+    }
+  }, [api, request.sessionId]);
 
   const handleOpenMarkdownPath = useCallback((target: string) => {
     if (!api) {
@@ -648,7 +974,7 @@ export function SessionFilePreview({
     });
   }, [api, encoding, markdownImageQueue, request, roots]);
 
-  const openDiff = useCallback(async (scope: WorkspaceChangeScope) => {
+  const openDiff = useCallback(async (scope: FileRootGitChangeScope) => {
     if (!onOpenDiff) {
       return;
     }
@@ -673,7 +999,6 @@ export function SessionFilePreview({
         </button>
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? request.relativePath.split("/").at(-1)}</strong>
-          <span title={request.relativePath}>{request.relativePath}</span>
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
@@ -692,12 +1017,25 @@ export function SessionFilePreview({
             </div>
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
-            <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
-              <button type="button" onClick={() => setImageZoom((current) => Math.max(10, (typeof current === "number" ? current : 100) - 10))}>−</button>
-              <button type="button" onClick={() => setImageZoom(100)}>{typeof imageZoom === "number" ? `${imageZoom}%` : "100%"}</button>
-              <button type="button" onClick={() => setImageZoom((current) => Math.min(800, (typeof current === "number" ? current : 100) + 10))}>＋</button>
-              <button type="button" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
-            </div>
+            <>
+              <button type="button" disabled={!imageObjectUrl} onClick={() => void copyPreviewImage()}>Copy Image</button>
+              <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
+                <button
+                  type="button"
+                  aria-label="Zoom image out"
+                  disabled={effectiveImageZoom <= IMAGE_ZOOM_MIN}
+                  onClick={() => setImageZoom(Math.max(IMAGE_ZOOM_MIN, effectiveImageZoom - IMAGE_ZOOM_STEP))}
+                >−</button>
+                <button type="button" aria-label="Reset image zoom to 100%" onClick={() => setImageZoom(100)}>{imageZoomLabel}</button>
+                <button
+                  type="button"
+                  aria-label="Zoom image in"
+                  disabled={effectiveImageZoom >= IMAGE_ZOOM_MAX}
+                  onClick={() => setImageZoom(Math.min(IMAGE_ZOOM_MAX, effectiveImageZoom + IMAGE_ZOOM_STEP))}
+                >＋</button>
+                <button type="button" aria-label="Fit image to preview" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
+              </div>
+            </>
           ) : null}
           {onOpenDiff && diffScopes.length > 0 ? diffScopes.map((scope) => (
             <button
@@ -798,15 +1136,32 @@ export function SessionFilePreview({
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
-        <div className="session-file-image-scroll">
-          {imageObjectUrl ? (
-            <img
-              className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
-              src={imageObjectUrl}
-              alt={descriptor.name}
-              style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
-            />
-          ) : null}
+        <div
+          ref={imageScrollRef}
+          className={`session-file-image-scroll${isImagePanning ? " is-panning" : ""}`}
+          onPointerDown={startImagePan}
+          onPointerMove={moveImagePan}
+          onPointerUp={stopImagePan}
+          onPointerCancel={stopImagePan}
+          onLostPointerCapture={handleImagePanCaptureLoss}
+        >
+          <div
+            ref={imageCanvasRef}
+            className={`session-file-image-canvas${imageZoom === "fit" ? " is-fit" : ""}`}
+          >
+            {imageObjectUrl ? (
+              <img
+                ref={imageRef}
+                className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
+                src={imageObjectUrl}
+                alt={descriptor.name}
+                draggable={false}
+                onContextMenu={(event) => void showPreviewImageContextMenu(event)}
+                onLoad={updateImageFitZoom}
+                style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
+              />
+            ) : null}
+          </div>
         </div>
       ) : null}
       {feedback || diffAvailabilityMessage ? (
@@ -841,6 +1196,7 @@ export function SessionDiffPreview({
   reloadPending = false,
   chatNotice = "",
 }: SessionDiffPreviewProps) {
+  const [viewMode, setViewMode] = useState<"split" | "inline">("split");
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
@@ -921,6 +1277,22 @@ export function SessionDiffPreview({
         </button>
         <div className="session-file-preview-title"><strong>{title}</strong><span>Git Diff</span></div>
         <div className="session-file-preview-actions">
+          <div className="session-file-preview-segmented" role="group" aria-label="Git diff display mode">
+            <button
+              type="button"
+              className={viewMode === "split" ? "is-active" : ""}
+              onClick={() => setViewMode("split")}
+            >
+              Split
+            </button>
+            <button
+              type="button"
+              className={viewMode === "inline" ? "is-active" : ""}
+              onClick={() => setViewMode("inline")}
+            >
+              Inline
+            </button>
+          </div>
           <button type="button" onClick={() => setFindOpen(true)}>Find</button>
           {onReload ? (
             <button
@@ -943,13 +1315,22 @@ export function SessionDiffPreview({
         onNext={() => navigate(1)}
         onClose={() => setFindOpen(false)}
       />
-      <VirtualizedTextContent
-        text={patch}
-        copyText={onCopyText}
-        matches={matches}
-        currentMatchIndex={activeCurrentMatch}
-        variant="diff"
-      />
+      {viewMode === "split" ? (
+        <VirtualizedSplitDiffContent
+          patch={patch}
+          copyText={onCopyText}
+          matches={matches}
+          currentMatchIndex={activeCurrentMatch}
+        />
+      ) : (
+        <VirtualizedTextContent
+          text={patch}
+          copyText={onCopyText}
+          matches={matches}
+          currentMatchIndex={activeCurrentMatch}
+          variant="diff"
+        />
+      )}
       {feedback ? <p className="session-file-preview-feedback" role="alert">{feedback}</p> : null}
     </section>
   );

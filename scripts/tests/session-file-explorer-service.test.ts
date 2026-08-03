@@ -34,6 +34,9 @@ test("SessionFileExplorerService は roots を重複除去し directory を展�
 
     const roots = await service.listRoots("session-1");
     assert.deepEqual(roots.map((root) => root.kind), ["workspace", "session-folder", "additional"]);
+    assert.equal((await service.resolveRoot("session-1", "workspace"))?.absolutePath, path.resolve(workspacePath));
+    assert.equal((await service.resolveRoot("session-1", roots[2]?.id ?? ""))?.absolutePath, path.resolve(additionalPath));
+    assert.equal(await service.resolveRoot("session-1", "additional:stale"), null);
     const workspaceEntries = await service.listDirectory({
       sessionId: "session-1",
       rootId: "workspace",

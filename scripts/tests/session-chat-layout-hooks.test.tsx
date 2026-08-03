@@ -4,25 +4,282 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import { useSessionSidePanes } from "../../src/session-chat-layout-hooks.js";
+import {
+  clampSessionVerticalDockHeight,
+  measureSessionVerticalDockLayoutBounds,
+  useChatLayoutPresentation,
+  useSessionMessageListFollowing,
+  useSessionSidePanes,
+  useSessionVerticalDockResize,
+} from "../../src/session-chat-layout-hooks.js";
+import type { ChatActionDockMode, ChatHeaderVisibility } from "../../src/chat/chat-layout-preference.js";
 import type { SessionSidePane } from "../../src/session-side-pane.js";
+
+test("vertical dock height は比率上限と中央領域の最小高を優先する", () => {
+  assert.equal(clampSessionVerticalDockHeight({
+    requestedHeight: 600,
+    layoutHeight: 1000,
+    minHeight: 180,
+    maxHeightRatio: 0.4,
+    oppositeDockHeight: 64,
+  }), 400);
+  assert.equal(clampSessionVerticalDockHeight({
+    requestedHeight: 180,
+    layoutHeight: 420,
+    minHeight: 180,
+    maxHeightRatio: 0.4,
+    oppositeDockHeight: 64,
+  }), 52);
+});
+
+test("vertical dock layout は border-box から padding と border を除いた高さを使う", () => {
+  const previousWindow = globalThis.window;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"layout\"></div></body></html>");
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+
+  try {
+    const layout = dom.window.document.getElementById("layout") as HTMLElement;
+    layout.style.paddingTop = "10px";
+    layout.style.paddingBottom = "12px";
+    layout.style.borderTop = "1px solid transparent";
+    layout.style.borderBottom = "2px solid transparent";
+    layout.getBoundingClientRect = () => ({
+      x: 0,
+      y: 20,
+      top: 20,
+      right: 1000,
+      bottom: 620,
+      left: 0,
+      width: 1000,
+      height: 600,
+      toJSON: () => ({}),
+    });
+
+    const bounds = measureSessionVerticalDockLayoutBounds(layout);
+    assert.deepEqual(bounds, { top: 31, bottom: 606, height: 575 });
+    assert.equal(clampSessionVerticalDockHeight({
+      requestedHeight: 600,
+      layoutHeight: bounds.height,
+      minHeight: 180,
+      maxHeightRatio: 0.4,
+      oppositeDockHeight: 64,
+    }), 207);
+  } finally {
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+  }
+});
 
 function dispatchPointerEvent(
   dom: JSDOM,
   target: EventTarget,
   type: "pointerdown" | "pointermove" | "pointerup",
   clientX: number,
+  clientY = clientX,
 ): MouseEvent {
   const event = new dom.window.MouseEvent(type, {
     bubbles: true,
     button: 0,
     cancelable: true,
     clientX,
+    clientY,
   });
   Object.defineProperty(event, "pointerId", { configurable: true, value: 1 });
   target.dispatchEvent(event);
   return event;
 }
+
+test("ActionDock resize は固定 Header と中央領域の高さを残す", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  let root: Root | null = null;
+
+  function Harness() {
+    const {
+      sessionDockLayoutRef,
+      sessionDockLayoutStyle,
+      handleStartActionDockResize,
+    } = useSessionVerticalDockResize({
+      ownerKey: "session-1",
+      isHeaderExpanded: true,
+      isActionDockExpanded: true,
+    });
+    return React.createElement(
+      "div",
+      {
+        ref: sessionDockLayoutRef,
+        style: {
+          ...sessionDockLayoutStyle,
+          paddingTop: "10px",
+          paddingBottom: "12px",
+          borderTop: "1px solid transparent",
+          borderBottom: "2px solid transparent",
+        },
+        "data-testid": "layout",
+      },
+      React.createElement("button", {
+        type: "button",
+        onPointerDown: handleStartActionDockResize,
+        "data-testid": "splitter",
+      }),
+    );
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness));
+    });
+    const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
+    const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
+    assert.ok(layout);
+    assert.ok(splitter);
+    layout.getBoundingClientRect = () => ({
+      x: 0,
+      y: 20,
+      top: 20,
+      right: 1000,
+      bottom: 1020,
+      left: 0,
+      width: 1000,
+      height: 1000,
+      toJSON: () => ({}),
+    });
+
+    await act(async () => dom.window.dispatchEvent(new dom.window.Event("resize")));
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "320px");
+
+    await act(async () => dispatchPointerEvent(dom, splitter, "pointerdown", 0, 500));
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 31));
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "390px");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointermove", 0, 800));
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-height"), "260px");
+    await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 0, 800));
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    dom.window.close();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
+test("useSessionMessageListFollowing は非表示から復帰した chat を末尾追従へ戻す", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  let root: Root | null = null;
+  let scrollToBottomCount = 0;
+
+  function Harness({ enabled, scrollSignature }: { enabled: boolean; scrollSignature: string }) {
+    const {
+      messageListRef,
+      isMessageListFollowing,
+      handleMessageListScroll,
+    } = useSessionMessageListFollowing({
+      ownerKey: "session-1",
+      scrollSignature,
+      enabled,
+    });
+
+    return React.createElement(
+      "div",
+      {
+        ref: messageListRef,
+        onScroll: handleMessageListScroll,
+        hidden: !enabled,
+        "data-testid": "message-list",
+      },
+      React.createElement("div", {
+        className: "message-list-bottom-anchor",
+        ref: (element: HTMLDivElement | null) => {
+          if (element) {
+            element.scrollIntoView = () => {
+              scrollToBottomCount += 1;
+            };
+          }
+        },
+      }),
+      React.createElement("output", { "data-testid": "following" }, String(isMessageListFollowing)),
+    );
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness, { enabled: true, scrollSignature: "initial" }));
+    });
+
+    const messageList = dom.window.document.querySelector<HTMLElement>("[data-testid=\"message-list\"]");
+    const following = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"following\"]");
+    assert.ok(messageList);
+    assert.ok(following);
+    assert.equal(scrollToBottomCount, 1);
+
+    Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 1_000 });
+    Object.defineProperty(messageList, "clientHeight", { configurable: true, value: 200 });
+    await act(async () => {
+      messageList.scrollTop = 300;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "false");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: false, scrollSignature: "preview-update" }));
+    });
+    assert.equal(scrollToBottomCount, 1);
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "preview-update" }));
+    });
+    assert.equal(scrollToBottomCount, 1);
+    assert.equal(following.textContent, "true");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
+});
 
 test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右ペインを排他的に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
@@ -239,6 +496,109 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => dispatchPointerEvent(dom, dom.window, "pointerup", 200));
     assert.equal(workbench.style.getPropertyValue("--session-context-rail-width"), "800px");
     assert.deepEqual(sidePaneChanges, ["none", "context", "files", "context", "none", "context"]);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
+});
+
+test("useChatLayoutPresentation は項目ごとの先行操作を遅い初期設定で巻き戻さず、後続snapshotへ追従しない", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  let root: Root | null = null;
+  const headerChanges: ChatHeaderVisibility[] = [];
+  const actionDockChanges: ChatActionDockMode[] = [];
+
+  function Harness({
+    initialHeader,
+    initialActionDock,
+  }: {
+    initialHeader: ChatHeaderVisibility | null;
+    initialActionDock: ChatActionDockMode | null;
+  }) {
+    const state = useChatLayoutPresentation({
+      initialHeader,
+      initialActionDock,
+      onHeaderChange: (value) => headerChanges.push(value),
+      onActionDockChange: (value) => actionDockChanges.push(value),
+    });
+    return React.createElement(
+      "div",
+      null,
+      React.createElement("button", {
+        type: "button",
+        "data-testid": "header-toggle",
+        onClick: () => state.setIsHeaderExpanded((current) => !current),
+      }),
+      React.createElement("button", {
+        type: "button",
+        "data-testid": "dock-toggle",
+        onClick: () => state.setIsActionDockPinnedExpanded((current) => !current),
+      }),
+      React.createElement("output", { "data-testid": "header" }, state.isHeaderExpanded ? "visible" : "hidden"),
+      React.createElement(
+        "output",
+        { "data-testid": "dock" },
+        state.isActionDockPinnedExpanded ? "expanded" : "compact",
+      ),
+    );
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness, { initialHeader: null, initialActionDock: null }));
+    });
+    const headerToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"header-toggle\"]");
+    const dockToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"dock-toggle\"]");
+    const header = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"header\"]");
+    const dock = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"dock\"]");
+    assert.ok(headerToggle);
+    assert.ok(dockToggle);
+    assert.ok(header);
+    assert.ok(dock);
+
+    await act(async () => headerToggle.click());
+    assert.equal(header.textContent, "visible");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { initialHeader: "hidden", initialActionDock: "expanded" }));
+    });
+    assert.equal(header.textContent, "visible");
+    assert.equal(dock.textContent, "expanded");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { initialHeader: "hidden", initialActionDock: "compact" }));
+    });
+    assert.equal(header.textContent, "visible");
+    assert.equal(dock.textContent, "expanded");
+
+    await act(async () => dockToggle.click());
+    assert.equal(dock.textContent, "compact");
+    assert.deepEqual(headerChanges, ["visible"]);
+    assert.deepEqual(actionDockChanges, ["compact"]);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

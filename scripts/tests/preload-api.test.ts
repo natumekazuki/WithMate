@@ -259,17 +259,27 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-session-file",
     args: [{ ...fileRequest, reveal: true }],
   });
-  assert.deepEqual(await api.listWorkspaceChanges("session-1"), {
-    channel: "withmate:list-workspace-changes",
-    args: ["session-1"],
+  const imageActionRequest = { sessionId: "session-1", point: { x: 120, y: 240 } };
+  assert.deepEqual(await api.copySessionFilePreviewImage(imageActionRequest), {
+    channel: "withmate:copy-session-file-preview-image",
+    args: [imageActionRequest],
   });
-  assert.deepEqual(await api.getWorkspaceFileDiff({
+  assert.deepEqual(await api.showSessionFilePreviewImageContextMenu(imageActionRequest), {
+    channel: "withmate:show-session-file-preview-image-context-menu",
+    args: [imageActionRequest],
+  });
+  assert.deepEqual(await api.listFileRootChanges({ sessionId: "session-1", rootId: "workspace" }), {
+    channel: "withmate:list-file-root-changes",
+    args: [{ sessionId: "session-1", rootId: "workspace" }],
+  });
+  assert.deepEqual(await api.getFileRootDiff({
     sessionId: "session-1",
+    rootId: "workspace",
     relativePath: "src/App.tsx",
     scope: "working-tree",
   }), {
-    channel: "withmate:get-workspace-file-diff",
-    args: [{ sessionId: "session-1", relativePath: "src/App.tsx", scope: "working-tree" }],
+    channel: "withmate:get-file-root-diff",
+    args: [{ sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx", scope: "working-tree" }],
   });
   assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
     channel: "withmate:create-auxiliary-session",
@@ -283,9 +293,9 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:cancel-auxiliary-session-run",
     args: ["aux-1"],
   });
-  assert.deepEqual(await api.updateSessionSidePane("files"), {
-    channel: "withmate:update-session-side-pane",
-    args: ["files"],
+  assert.deepEqual(await api.updateChatLayoutPreference({ target: "sidePane", value: "files" }), {
+    channel: "withmate:update-chat-layout-preference",
+    args: [{ target: "sidePane", value: "files" }],
   });
 });
 
@@ -300,6 +310,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "cancelSessionRun",
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
+    "copySessionFilePreviewImage",
     "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
@@ -342,7 +353,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getSessionBackgroundActivity",
     "getSessionContextTelemetry",
     "getSessionMessageArtifact",
-    "getWorkspaceFileDiff",
+    "getFileRootDiff",
     "importModelCatalog",
     "importModelCatalogFile",
     "installMemoryV6CliShim",
@@ -361,7 +372,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCustomAgents",
     "listSessionSkills",
     "listSessionSummaries",
-    "listWorkspaceChanges",
+    "listFileRootChanges",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
     "mergeCompanionSelectedFiles",
@@ -409,6 +420,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchMemoryV6Entries",
     "setMateAvatar",
     "setDefaultCharacter",
+    "showSessionFilePreviewImageContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
@@ -427,7 +439,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
     "updateAppSettings",
-    "updateSessionSidePane",
+    "updateChatLayoutPreference",
     "updateAuxiliarySession",
     "updateCharacterDefinition",
     "updateCharacterMetadata",

@@ -39,6 +39,10 @@ export type AgentSessionChatProjectionInput = {
   displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
+  sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
+  headerDockRef: RefObject<HTMLDivElement | null>;
+  actionDockRef: RefObject<HTMLDivElement | null>;
+  sessionDockLayoutStyle: CSSProperties;
   sessionWorkbenchRef: RefObject<HTMLDivElement | null>;
   sessionWorkbenchStyle: CSSProperties | undefined;
   isSessionHeaderExpanded: boolean;
@@ -94,6 +98,7 @@ export type AgentSessionChatProjectionInput = {
   chatNotice?: string;
   attachmentCount: number;
   isActionDockExpanded: boolean;
+  isActionDockResizing: boolean;
   isContextRailResizing: boolean;
   isFilesPaneResizing: boolean;
   isContextRailVisible: boolean;
@@ -124,7 +129,7 @@ export type AgentSessionChatProjectionInput = {
   auditLogsLoading: boolean;
   auditLogsTotal: number;
   auditLogsErrorMessage: string | null;
-  onToggleHeaderExpanded: () => void;
+  onToggleHeaderSplitter: () => void;
   onOpenAuditLog: () => void;
   onOpenSessionTerminal: () => void;
   onOpenSessionFilesTerminal: () => void;
@@ -163,7 +168,6 @@ export type AgentSessionChatProjectionInput = {
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
-  onCollapseActionDock: () => void;
   onJumpToMessageListBottom: () => void;
   onSelectCustomAgent: SessionComposerExpandedProps["onSelectCustomAgent"];
   onSelectSkill: SessionComposerExpandedProps["onSelectSkill"];
@@ -177,13 +181,14 @@ export type AgentSessionChatProjectionInput = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
-  onExpandActionDock: () => void;
   onChangeApprovalMode: SessionComposerExpandedProps["onChangeApprovalMode"];
   onChangeCodexSandboxMode: SessionComposerExpandedProps["onChangeCodexSandboxMode"];
   onChangeModel: SessionComposerExpandedProps["onChangeModel"];
   onChangeReasoningEffort: SessionComposerExpandedProps["onChangeReasoningEffort"];
   onStartContextRailResize: PointerEventHandler<HTMLButtonElement>;
   onStartFilesPaneResize: PointerEventHandler<HTMLButtonElement>;
+  onStartActionDockResize: PointerEventHandler<HTMLButtonElement>;
+  onToggleActionDock: () => void;
   onToggleContextRailVisibility: () => void;
   onToggleFilesPaneVisibility: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
@@ -210,7 +215,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     canViewAuxiliaryAuditLog: true,
     canDeleteSession: true,
     canViewAuditLog: true,
-    onToggleExpanded: input.onToggleHeaderExpanded,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenSessionTerminal,
     onOpenSessionFilesExplorer: input.onOpenSessionFilesExplorer,
@@ -244,7 +248,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
       composerBlocked: input.composerBlocked,
       canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
-      showCustomAgentPicker: !isCharacterAuthoringSession,
+      showCustomAgentPicker: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showSkillPicker: !isCharacterAuthoringSession,
       isAgentPickerOpen: input.isAgentPickerOpen,
       isSkillPickerOpen: input.isSkillPickerOpen,
@@ -255,7 +259,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
           : "Agent",
       selectedCustomAgentTitle: input.selectedCustomAgentTitle,
       additionalDirectoryCount: input.selectedSession.allowedAdditionalDirectories.length,
-      canCollapseActionDock: input.canCollapseActionDock,
       isMessageListFollowing: input.isMessageListFollowing,
       isCustomAgentListLoading: input.isCustomAgentListLoading,
       isSkillListLoading: input.isSkillListLoading,
@@ -293,8 +296,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onToggleSkillPicker: input.onToggleSkillPicker,
       onAddAdditionalDirectory: input.onAddAdditionalDirectory,
       onToggleAdditionalDirectoryList: input.onToggleAdditionalDirectoryList,
-      onCollapseActionDock: input.onCollapseActionDock,
-      onExpandActionDock: input.onExpandActionDock,
+      onExpandActionDock: input.onToggleActionDock,
       onJumpToBottom: input.onJumpToMessageListBottom,
       onSelectCustomAgent: input.onSelectCustomAgent,
       onSelectSkill: input.onSelectSkill,
@@ -356,8 +358,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     },
   });
   const rightPaneProps = buildLiveSessionCommonContextPaneProps({
-    taskTitle: input.selectedSession.taskTitle,
-    isHeaderExpanded: input.isSessionHeaderExpanded,
     activeContextPaneTab: input.activeContextPaneTab,
     availableContextPaneTabs: input.availableContextPaneTabs,
     contextPaneProjection: input.contextPaneProjection,
@@ -376,14 +376,16 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: input.selectedContextEmptyText,
     latestCommandEmptyText: input.latestCommandEmptyText,
-    onToggleHeaderExpanded: input.onToggleHeaderExpanded,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
   return buildLiveSessionWindowShellProps({
     mode: "agent",
-    style: input.sessionThemeStyle,
+    style: { ...input.sessionThemeStyle, ...input.sessionDockLayoutStyle },
+    layoutRef: input.sessionDockLayoutRef,
+    headerDockRef: input.headerDockRef,
+    actionDockRef: input.actionDockRef,
     isHeaderExpanded: input.isSessionHeaderExpanded,
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,
@@ -395,16 +397,27 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     },
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
+    headerSplitterProps: {
+      isPanelExpanded: input.isSessionHeaderExpanded,
+      canCollapse: !input.isEditingTitle,
+      onTogglePanel: input.onToggleHeaderSplitter,
+    },
+    actionDockSplitterProps: {
+      isActive: input.isActionDockResizing,
+      isPanelExpanded: input.isActionDockExpanded,
+      canCollapse: input.canCollapseActionDock,
+      onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
+      onTogglePanel: input.onToggleActionDock,
+    },
     composerProps: chatBodyProps.composerProps,
     compactActionDockProps: chatBodyProps.compactActionDockProps,
     splitterProps: chatBodyProps.splitterProps,
     leftPane: input.leftPane,
     leftSplitterProps: {
-      side: "left",
       isActive: input.isFilesPaneResizing,
-      isRightPaneVisible: input.isFilesPaneVisible,
+      isPanelExpanded: input.isFilesPaneVisible,
       onPointerDown: input.isFilesPaneVisible ? input.onStartFilesPaneResize : undefined,
-      onToggleRightPane: input.onToggleFilesPaneVisibility,
+      onTogglePanel: input.onToggleFilesPaneVisibility,
       ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
       title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
     },

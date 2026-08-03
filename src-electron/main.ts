@@ -114,7 +114,8 @@ import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
-import { WorkspaceGitChangesService } from "./workspace-git-changes-service.js";
+import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
+import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
   appendSessionFilesDirectoryForSessionId,
@@ -166,7 +167,7 @@ import {
   resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
-import type { SessionSidePane } from "../src/session-side-pane.js";
+import type { ChatLayoutPreferenceUpdate } from "../src/chat/chat-layout-preference.js";
 import { discoverSessionSkills } from "./skill-discovery.js";
 import { discoverSessionCustomAgents } from "./custom-agent-discovery.js";
 import { HOME_WINDOW_DEFAULT_BOUNDS, SESSION_WINDOW_DEFAULT_BOUNDS } from "./window-defaults.js";
@@ -239,6 +240,9 @@ const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
+const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -1290,6 +1294,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 savePastedSessionFile,
                 openSessionFilesDirectory,
                 openSessionFilesTerminal,
+                copySessionFilePreviewImage: (event, request) =>
+                  sessionFilePreviewImageCopyService.copyImage(event.sender, request.point),
+                showSessionFilePreviewImageContextMenu: (event, request) =>
+                  sessionFilePreviewImageCopyService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    event.sender,
+                    request.point,
+                  ),
                 openPathTarget,
                 openAppLogFolder: () => openDirectory(appLogsPath),
                 openCrashDumpFolder: () => openDirectory(crashDumpsPath),
@@ -1308,7 +1320,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               settings: {
                 getAppSettings: () => requireSettingsCatalogService().getAppSettings(),
                 updateAppSettings: (settings) => requireSettingsCatalogService().updateAppSettings(settings),
-                updateSessionSidePane,
+                updateChatLayoutPreference,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
                 installMemoryV6CliShim,
@@ -1357,8 +1369,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
                 readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
-                listWorkspaceChanges: (sessionId) => createWorkspaceGitChangesService().listChanges(sessionId),
-                getWorkspaceFileDiff: (request) => createWorkspaceGitChangesService().getFileDiff(request),
+                listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
+                getFileRootDiff: (request) => createFileRootGitChangesService().getFileDiff(request),
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -1767,8 +1779,8 @@ async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   return savedSettings;
 }
 
-function updateSessionSidePane(sidePane: SessionSidePane): AppSettings {
-  return requireAppSettingsStorage().updateSessionSidePane(sidePane);
+function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSettings {
+  return requireAppSettingsStorage().updateChatLayoutPreference(update);
 }
 
 async function resetAppSettings(): Promise<AppSettings> {
@@ -2956,11 +2968,11 @@ function createSessionFileExplorerService(): SessionFileExplorerService {
   });
 }
 
-function createWorkspaceGitChangesService(): WorkspaceGitChangesService {
-  return new WorkspaceGitChangesService({
-    getWorkspaceContext: async (sessionId) => {
-      const context = await getSessionFileExplorerContext(sessionId);
-      return context ? { workspacePath: context.workspacePath } : null;
+function createFileRootGitChangesService(): FileRootGitChangesService {
+  return new FileRootGitChangesService({
+    resolveRootContext: async (request) => {
+      const root = await createSessionFileExplorerService().resolveRoot(request.sessionId, request.rootId);
+      return root ? { rootPath: root.absolutePath } : null;
     },
   });
 }

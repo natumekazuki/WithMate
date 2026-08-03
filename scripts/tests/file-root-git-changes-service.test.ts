@@ -19,9 +19,9 @@ import test from "node:test";
 
 import {
   parseGitPorcelainV1Z,
-  WorkspaceGitChangesService,
-} from "../../src-electron/workspace-git-changes-service.js";
-import type { WorkspaceChangesResult } from "../../src/file-explorer/file-explorer-contract.js";
+  FileRootGitChangesService,
+} from "../../src-electron/file-root-git-changes-service.js";
+import type { FileRootChangesResult } from "../../src/file-explorer/file-explorer-contract.js";
 
 const EXPECTED_GIT_GLOBAL_ARGS = ["--no-optional-locks", "--no-pager", "-c", "core.fsmonitor=false"];
 
@@ -121,7 +121,7 @@ test("parseGitPorcelainV1Z は nested Workspace の path を Workspace-relative 
   ]);
 });
 
-test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 環境を使う", async () => {
+test("FileRootGitChangesService は隔離した status / diff と非継承 Git 環境を使う", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-changes-"));
   const workspacePath = path.join(repositoryPath, "src");
   const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv }> = [];
@@ -138,8 +138,8 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
     await writeFile(path.join(workspacePath, "a.ts"), "new\n");
     await writeFile(path.join(workspacePath, "new.ts"), "untracked\n");
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       processEnv: {
         ...process.env,
         GIT_DIR: "redirected-dir",
@@ -180,13 +180,13 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
       },
     });
 
-    const changes = await service.listChanges("session-1");
+    const changes = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(changes.status, "ok", JSON.stringify(changes));
     if (changes.status === "ok") {
       assert.ok(changes.entries.some((entry) => entry.relativePath === "a.ts"));
       assert.ok(changes.entries.some((entry) => entry.relativePath === "new.ts"));
     }
-    const diff = await service.getFileDiff({ sessionId: "session-1", relativePath: "a.ts", scope: "working-tree" });
+    const diff = await service.getFileDiff({ sessionId: "session-1", rootId: "workspace", relativePath: "a.ts", scope: "working-tree" });
     assert.equal(diff.status, "ok");
     if (diff.status === "ok") {
       assert.match(diff.patch, /-old/);
@@ -228,7 +228,7 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
     ]);
     await assert.rejects(() => access(path.join(repositoryPath, "trace.txt")));
     await assert.rejects(
-      () => service.getFileDiff({ sessionId: "session-1", relativePath: "../escape", scope: "working-tree" }),
+      () => service.getFileDiff({ sessionId: "session-1", rootId: "workspace", relativePath: "../escape", scope: "working-tree" }),
       /invalid segment/,
     );
   } finally {
@@ -236,7 +236,7 @@ test("WorkspaceGitChangesService は隔離した status / diff と非継承 Git 
   }
 });
 
-test("WorkspaceGitChangesService は Git boolean の有効な基数・単位表記を保持し範囲外値を拒否する", async () => {
+test("FileRootGitChangesService は Git boolean の有効な基数・単位表記を保持し範囲外値を拒否する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-config-bool-"));
   try {
     await initializeRepository(repositoryPath);
@@ -247,10 +247,10 @@ test("WorkspaceGitChangesService は Git boolean の有効な基数・単位表�
       `${"0".repeat(128)}1`,
       process.platform === "win32" ? "2147483648" : "9223372036854775808",
     ];
-    const results: WorkspaceChangesResult[] = [];
+    const results: FileRootChangesResult[] = [];
     for (const configValue of configValues) {
-      const service = new WorkspaceGitChangesService({
-        getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+      const service = new FileRootGitChangesService({
+        resolveRootContext: async () => ({ rootPath: repositoryPath }),
         runGit: async (workingDirectoryPath, args, options) => {
           if (args.includes("--get-regexp")) {
             return {
@@ -262,7 +262,7 @@ test("WorkspaceGitChangesService は Git boolean の有効な基数・単位表�
           return runGitForTest(workingDirectoryPath, args, options);
         },
       });
-      results.push(await service.listChanges("session-1"));
+      results.push(await service.listChanges({ sessionId: "session-1", rootId: "workspace" }));
     }
 
     assert.equal(results[0]?.status, "ok", JSON.stringify(results[0]));
@@ -277,7 +277,7 @@ test("WorkspaceGitChangesService は Git boolean の有効な基数・単位表�
   }
 });
 
-test("WorkspaceGitChangesService は Workspace 内の git command を起動候補にしない", async () => {
+test("FileRootGitChangesService は Workspace 内の git command を起動候補にしない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-decoy-"));
   const markerPath = path.join(repositoryPath, "decoy-ran.txt");
   try {
@@ -287,25 +287,25 @@ test("WorkspaceGitChangesService は Workspace 内の git command を起動候�
       `@echo off\r\necho ran>"${markerPath}"\r\nexit /b 17\r\n`,
     );
     await writeFile(path.join(repositoryPath, "tracked.txt"), "changed\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
 
-    assert.equal((await service.listChanges("session-1")).status, "ok");
+    assert.equal((await service.listChanges({ sessionId: "session-1", rootId: "workspace" })).status, "ok");
     await assert.rejects(() => access(markerPath));
   } finally {
     await rm(repositoryPath, { recursive: true, force: true });
   }
 });
 
-test("WorkspaceGitChangesService は Git executable resolver を最初のoperationまで起動しない", async () => {
+test("FileRootGitChangesService は Git executable resolver を最初のoperationまで起動しない", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-lazy-resolver-"));
   const unhandledReasons: unknown[] = [];
   const handleUnhandledRejection = (reason: unknown) => unhandledReasons.push(reason);
   process.on("unhandledRejection", handleUnhandledRejection);
   try {
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       resolveGitExecutablePath: async () => {
         throw new Error("resolver initialization failed");
       },
@@ -313,7 +313,7 @@ test("WorkspaceGitChangesService は Git executable resolver を最初のoperati
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(unhandledReasons, []);
 
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.deepEqual(result, { status: "failed", message: "resolver initialization failed" });
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.deepEqual(unhandledReasons, []);
@@ -323,11 +323,11 @@ test("WorkspaceGitChangesService は Git executable resolver を最初のoperati
   }
 });
 
-test("WorkspaceGitChangesService はGit localeを固定して non-Git Workspaceを分類する", async () => {
+test("FileRootGitChangesService はGit localeを固定して non-Git rootを分類する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-localized-not-repo-"));
   try {
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       processEnv: { ...process.env, LANG: "ja_JP.UTF-8", LC_ALL: "ja_JP.UTF-8" },
       runGit: async (_workingDirectoryPath, _args, options) => {
         assert.equal(options.env.LANG, "C");
@@ -339,31 +339,103 @@ test("WorkspaceGitChangesService はGit localeを固定して non-Git Workspace�
         };
       },
     });
-    assert.deepEqual(await service.listChanges("session-1"), {
+    assert.deepEqual(await service.listChanges({ sessionId: "session-1", rootId: "workspace" }), {
       status: "not-git",
-      message: "Workspace is not a Git repository.",
+      message: "File root is not a Git repository.",
     });
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
   }
 });
 
-test("WorkspaceGitChangesService は実際のnon-Git directoryをnot-gitで返す", async () => {
+test("FileRootGitChangesService は実際のnon-Git directoryをnot-gitで返す", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-not-repo-"));
   try {
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
     });
-    assert.deepEqual(await service.listChanges("session-1"), {
+    assert.deepEqual(await service.listChanges({ sessionId: "session-1", rootId: "workspace" }), {
       status: "not-git",
-      message: "Workspace is not a Git repository.",
+      message: "File root is not a Git repository.",
     });
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
   }
 });
 
-test("WorkspaceGitChangesService は nested Workspace のisolated statusをrepository全体へ広げない", async () => {
+test("FileRootGitChangesService は同じSessionのrootIdごとに認可済みdirectoryとdiffを分離する", async () => {
+  const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-file-roots-"));
+  const workspacePath = path.join(parentPath, "workspace");
+  const additionalPath = path.join(parentPath, "additional");
+  try {
+    await initializeRepository(workspacePath);
+    await initializeRepository(additionalPath);
+    for (const rootPath of [workspacePath, additionalPath]) {
+      await writeFile(path.join(rootPath, "shared.txt"), "base\n");
+      assert.equal((await runGitForTest(rootPath, ["add", "shared.txt"])).exitCode, 0);
+      assert.equal((await runGitForTest(rootPath, [
+        "-c",
+        "user.name=WithMate Test",
+        "-c",
+        "user.email=withmate@example.invalid",
+        "commit",
+        "-m",
+        "base",
+      ])).exitCode, 0);
+    }
+    await writeFile(path.join(workspacePath, "shared.txt"), "workspace\n");
+    await writeFile(path.join(additionalPath, "shared.txt"), "additional\n");
+
+    const resolvedRootIds: string[] = [];
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async (request) => {
+        resolvedRootIds.push(request.rootId);
+        return request.rootId === "workspace"
+          ? { rootPath: workspacePath }
+          : request.rootId === "additional:shared"
+            ? { rootPath: additionalPath }
+            : null;
+      },
+    });
+
+    const workspaceChanges = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
+    const additionalChanges = await service.listChanges({ sessionId: "session-1", rootId: "additional:shared" });
+    assert.equal(workspaceChanges.status, "ok");
+    assert.equal(additionalChanges.status, "ok");
+    const workspaceDiff = await service.getFileDiff({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "shared.txt",
+      scope: "working-tree",
+    });
+    const additionalDiff = await service.getFileDiff({
+      sessionId: "session-1",
+      rootId: "additional:shared",
+      relativePath: "shared.txt",
+      scope: "working-tree",
+    });
+    assert.equal(workspaceDiff.status, "ok");
+    assert.equal(additionalDiff.status, "ok");
+    if (workspaceDiff.status === "ok" && additionalDiff.status === "ok") {
+      assert.match(workspaceDiff.patch, /\+workspace/);
+      assert.match(additionalDiff.patch, /\+additional/);
+    }
+    assert.deepEqual(resolvedRootIds, [
+      "workspace",
+      "additional:shared",
+      "workspace",
+      "additional:shared",
+    ]);
+    assert.deepEqual(await service.listChanges({ sessionId: "session-1", rootId: "stale" }), {
+      status: "root-not-found",
+      message: "File root could not be resolved for this session.",
+    });
+  } finally {
+    await rm(parentPath, { recursive: true, force: true });
+  }
+});
+
+test("FileRootGitChangesService は nested Workspace のisolated statusをrepository全体へ広げない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-nested-scope-"));
   const workspacePath = path.join(repositoryPath, "src");
   let isolatedStatusOutput = "";
@@ -380,8 +452,8 @@ test("WorkspaceGitChangesService は nested Workspace のisolated statusをrepos
     ])).exitCode, 0);
     await writeFile(path.join(workspacePath, "inside.txt"), "changed\n");
     await writeFile(path.join(repositoryPath, "outside.txt"), "outside changed\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       runGit: async (workingDirectoryPath, args, options) => {
         const result = await runGitForTest(workingDirectoryPath, args, options);
         if (args.includes("status") && args.some((arg) => arg.startsWith("--git-dir="))) {
@@ -392,7 +464,7 @@ test("WorkspaceGitChangesService は nested Workspace のisolated statusをrepos
       },
     });
 
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(result.status, "ok");
     if (result.status === "ok") {
       assert.deepEqual(result.entries.map((entry) => entry.relativePath), ["inside.txt"]);
@@ -404,7 +476,7 @@ test("WorkspaceGitChangesService は nested Workspace のisolated statusをrepos
   }
 });
 
-test("WorkspaceGitChangesService は先頭空白を含むnested Workspace prefixを保持する", async () => {
+test("FileRootGitChangesService は先頭空白を含むnested Workspace prefixを保持する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-space-prefix-"));
   const workspacePath = path.join(repositoryPath, " workspace");
   try {
@@ -417,11 +489,11 @@ test("WorkspaceGitChangesService は先頭空白を含むnested Workspace prefix
       "commit", "--quiet", "-m", "space prefix",
     ])).exitCode, 0);
     await writeFile(path.join(workspacePath, "inside.txt"), "changed\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
     });
 
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(result.status, "ok", JSON.stringify(result));
     if (result.status === "ok") {
       assert.deepEqual(result.entries.map((entry) => entry.relativePath), ["inside.txt"]);
@@ -431,7 +503,7 @@ test("WorkspaceGitChangesService は先頭空白を含むnested Workspace prefix
   }
 });
 
-test("WorkspaceGitChangesService はextended index flagsとintent-to-add semanticsを保つ", async () => {
+test("FileRootGitChangesService はextended index flagsとintent-to-add semanticsを保つ", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-index-flags-"));
   try {
     await initializeRepository(repositoryPath);
@@ -450,10 +522,10 @@ test("WorkspaceGitChangesService はextended index flagsとintent-to-add semanti
     await writeFile(path.join(repositoryPath, "tracked.txt"), "normal change\n");
     assert.equal((await runGitForTest(repositoryPath, ["add", "-N", "intent.txt"])).exitCode, 0);
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
-    const changes = await service.listChanges("session-1");
+    const changes = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(changes.status, "ok", JSON.stringify(changes));
     if (changes.status === "ok") {
       assert.equal(changes.entries.some((entry) => entry.relativePath === "assume.txt"), false);
@@ -465,11 +537,13 @@ test("WorkspaceGitChangesService はextended index flagsとintent-to-add semanti
     }
     assert.equal((await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "intent.txt",
       scope: "staged",
     })).status, "not-changed");
     const intentDiff = await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "intent.txt",
       scope: "working-tree",
     });
@@ -482,7 +556,7 @@ test("WorkspaceGitChangesService はextended index flagsとintent-to-add semanti
   }
 });
 
-test("WorkspaceGitChangesService は空fileのstaged renameをintent-to-addへ誤分類しない", async () => {
+test("FileRootGitChangesService は空fileのstaged renameをintent-to-addへ誤分類しない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-empty-rename-"));
   try {
     await initializeRepository(repositoryPath);
@@ -495,10 +569,10 @@ test("WorkspaceGitChangesService は空fileのstaged renameをintent-to-addへ�
     await rename(path.join(repositoryPath, "old.txt"), path.join(repositoryPath, "new.txt"));
     assert.equal((await runGitForTest(repositoryPath, ["add", "-A"])).exitCode, 0);
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
-    const changes = await service.listChanges("session-1");
+    const changes = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(changes.status, "ok", JSON.stringify(changes));
     if (changes.status === "ok") {
       assert.deepEqual(changes.entries, [{
@@ -510,6 +584,7 @@ test("WorkspaceGitChangesService は空fileのstaged renameをintent-to-addへ�
     }
     const diff = await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "new.txt",
       scope: "staged",
     });
@@ -523,7 +598,7 @@ test("WorkspaceGitChangesService は空fileのstaged renameをintent-to-addへ�
   }
 });
 
-test("WorkspaceGitChangesService は削除済みintent-to-addをworking tree deletionとして返す", async () => {
+test("FileRootGitChangesService は削除済みintent-to-addをworking tree deletionとして返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-deleted-intent-"));
   try {
     await initializeRepository(repositoryPath);
@@ -532,10 +607,10 @@ test("WorkspaceGitChangesService は削除済みintent-to-addをworking tree del
     assert.equal((await runGitForTest(repositoryPath, ["add", "-N", "intent.txt"])).exitCode, 0);
     await unlink(intentPath);
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
-    const changes = await service.listChanges("session-1");
+    const changes = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(changes.status, "ok", JSON.stringify(changes));
     if (changes.status === "ok") {
       assert.deepEqual(changes.entries, [{
@@ -550,7 +625,7 @@ test("WorkspaceGitChangesService は削除済みintent-to-addをworking tree del
   }
 });
 
-test("WorkspaceGitChangesService は削除・移動済みsymlink intent-to-addのmodeを保持する", async () => {
+test("FileRootGitChangesService は削除・移動済みsymlink intent-to-addのmodeを保持する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-deleted-symlink-intent-"));
   try {
     await initializeRepository(repositoryPath);
@@ -575,8 +650,8 @@ test("WorkspaceGitChangesService は削除・移動済みsymlink intent-to-add�
       path.join(repositoryPath, "moved-link-target.txt"),
     );
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
     for (const relativePath of relativePaths) {
       const nativeDiff = await runGitForTest(repositoryPath, [
@@ -593,6 +668,7 @@ test("WorkspaceGitChangesService は削除・移動済みsymlink intent-to-add�
 
       const diff = await service.getFileDiff({
         sessionId: "session-1",
+        rootId: "workspace",
         relativePath,
         scope: "working-tree",
       });
@@ -606,15 +682,15 @@ test("WorkspaceGitChangesService は削除・移動済みsymlink intent-to-add�
   }
 });
 
-test("WorkspaceGitChangesService はactive/pending operation数をprocess全体で制限する", async () => {
+test("FileRootGitChangesService はactive/pending operation数をprocess全体で制限する", async () => {
   let activeContextRequests = 0;
   let maximumActiveContextRequests = 0;
   let releaseActiveRequests!: () => void;
   const activeGate = new Promise<void>((resolve) => {
     releaseActiveRequests = resolve;
   });
-  const service = new WorkspaceGitChangesService({
-    getWorkspaceContext: async () => {
+  const createService = () => new FileRootGitChangesService({
+    resolveRootContext: async () => {
       activeContextRequests += 1;
       maximumActiveContextRequests = Math.max(maximumActiveContextRequests, activeContextRequests);
       await activeGate;
@@ -622,32 +698,35 @@ test("WorkspaceGitChangesService はactive/pending operation数をprocess全体�
       return null;
     },
   });
-  const operations = Array.from({ length: 19 }, (_, index) => service.listChanges(`session-${index}`));
+  const operations = Array.from({ length: 19 }, (_, index) => createService().listChanges({
+    sessionId: "session-1",
+    rootId: `root-${index}`,
+  }));
   await new Promise<void>((resolve) => setImmediate(resolve));
 
   assert.equal(maximumActiveContextRequests, 2);
   assert.deepEqual(await operations[18], {
     status: "failed",
-    message: "Too many Workspace Git previews are already waiting.",
+    message: "Too many file root Git previews are already waiting.",
   });
   releaseActiveRequests();
   const results = await Promise.all(operations.slice(0, 18));
-  assert.ok(results.every((result) => result.status === "workspace-not-found"));
+  assert.ok(results.every((result) => result.status === "root-not-found"));
   assert.equal(maximumActiveContextRequests, 2);
 });
 
-test("WorkspaceGitChangesService は同じ file の staged / working-tree diff を隔離 index から分けて返す", async () => {
+test("FileRootGitChangesService は同じ file の staged / working-tree diff を隔離 index から分けて返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-two-scopes-"));
   try {
     await initializeRepository(repositoryPath);
     await writeFile(path.join(repositoryPath, "tracked.txt"), "staged\n");
     assert.equal((await runGitForTest(repositoryPath, ["add", "tracked.txt"])).exitCode, 0);
     await writeFile(path.join(repositoryPath, "tracked.txt"), "working\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
 
-    const changes = await service.listChanges("session-1");
+    const changes = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(changes.status, "ok");
     if (changes.status === "ok") {
       const entry = changes.entries.find((candidate) => candidate.relativePath === "tracked.txt");
@@ -655,6 +734,7 @@ test("WorkspaceGitChangesService は同じ file の staged / working-tree diff �
     }
     const staged = await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "tracked.txt",
       scope: "staged",
     });
@@ -666,6 +746,7 @@ test("WorkspaceGitChangesService は同じ file の staged / working-tree diff �
     }
     const workingTree = await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "tracked.txt",
       scope: "working-tree",
     });
@@ -679,7 +760,7 @@ test("WorkspaceGitChangesService は同じ file の staged / working-tree diff �
   }
 });
 
-test("WorkspaceGitChangesService は lease 中の canonical Workspace 差し替えを成立させない", async () => {
+test("FileRootGitChangesService は lease 中の canonical Workspace 差し替えを成立させない", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-identity-"));
   const workspacePath = path.join(parentPath, "workspace");
   const movedPath = path.join(parentPath, "workspace-moved");
@@ -687,8 +768,8 @@ test("WorkspaceGitChangesService は lease 中の canonical Workspace 差し替�
   try {
     await initializeRepository(workspacePath);
     await writeFile(path.join(workspacePath, "only-a.txt"), "a\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       runGit: async (workingDirectoryPath, args, options) => {
         if (args.includes("status")) {
           try {
@@ -700,7 +781,7 @@ test("WorkspaceGitChangesService は lease 中の canonical Workspace 差し替�
         return runGitForTest(workingDirectoryPath, args, options);
       },
     });
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(result.status, "ok");
     assert.equal(renameBlocked, true);
     if (result.status === "ok") {
@@ -711,12 +792,12 @@ test("WorkspaceGitChangesService は lease 中の canonical Workspace 差し替�
   }
 });
 
-test("WorkspaceGitChangesService は隔離 status process failure を failed result として返す", async () => {
+test("FileRootGitChangesService は隔離 status process failure を failed result として返す", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-process-failure-"));
   try {
     await initializeRepository(workspacePath);
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       runGit: async (workingDirectoryPath, args, options) => {
         if (args.includes("status")) {
           return { exitCode: 2, stdout: Buffer.alloc(0), stderr: "status exploded" };
@@ -724,7 +805,7 @@ test("WorkspaceGitChangesService は隔離 status process failure を failed res
         return runGitForTest(workingDirectoryPath, args, options);
       },
     });
-    assert.deepEqual(await service.listChanges("session-1"), {
+    assert.deepEqual(await service.listChanges({ sessionId: "session-1", rootId: "workspace" }), {
       status: "failed",
       message: "status exploded",
     });
@@ -733,7 +814,7 @@ test("WorkspaceGitChangesService は隔離 status process failure を failed res
   }
 });
 
-test("WorkspaceGitChangesService はoperation deadline後にchild settlementを待ってresourceを解放する", async () => {
+test("FileRootGitChangesService はoperation deadline後にchild settlementを待ってresourceを解放する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-operation-timeout-"));
   let isolatedRootPath = "";
   let abortObserved = false;
@@ -741,8 +822,8 @@ test("WorkspaceGitChangesService はoperation deadline後にchild settlementを�
   try {
     await initializeRepository(workspacePath);
     await writeFile(path.join(workspacePath, "tracked.txt"), "changed\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       operationTimeoutMs: 5_000,
       runGit: async (workingDirectoryPath, args, options) => {
         if (args.includes("status")) {
@@ -763,7 +844,7 @@ test("WorkspaceGitChangesService はoperation deadline後にchild settlementを�
       },
     });
     const startedAt = Date.now();
-    const result = await runWithReferencedEventLoopHandle(() => service.listChanges("session-1"));
+    const result = await runWithReferencedEventLoopHandle(() => service.listChanges({ sessionId: "session-1", rootId: "workspace" }));
 
     assert.equal(result.status, "failed");
     if (result.status === "failed") {
@@ -780,15 +861,15 @@ test("WorkspaceGitChangesService はoperation deadline後にchild settlementを�
   }
 });
 
-test("WorkspaceGitChangesService はtimeout後のcleanup failureを優先して次のinstanceで再試行する", async () => {
+test("FileRootGitChangesService はtimeout後のcleanup failureを優先して次のinstanceで再試行する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-timeout-cleanup-"));
   let allowCleanup = false;
   let retainedDirectoryPath = "";
   try {
     await initializeRepository(workspacePath);
     await writeFile(path.join(workspacePath, "tracked.txt"), "changed\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       operationTimeoutMs: 5_000,
       cleanupRetryDelayMs: 0,
       removeTemporaryDirectory: async (directoryPath) => {
@@ -809,7 +890,7 @@ test("WorkspaceGitChangesService はtimeout後のcleanup failureを優先して�
         return runGitForTest(workingDirectoryPath, args, options);
       },
     });
-    const result = await runWithReferencedEventLoopHandle(() => service.listChanges("session-1"));
+    const result = await runWithReferencedEventLoopHandle(() => service.listChanges({ sessionId: "session-1", rootId: "workspace" }));
 
     assert.equal(result.status, "failed");
     if (result.status === "failed") {
@@ -820,11 +901,11 @@ test("WorkspaceGitChangesService はtimeout後のcleanup failureを優先して�
     await access(retainedDirectoryPath);
 
     allowCleanup = true;
-    const nextRequestService = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const nextRequestService = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       cleanupRetryDelayMs: 0,
     });
-    assert.equal((await nextRequestService.listChanges("session-1")).status, "ok");
+    assert.equal((await nextRequestService.listChanges({ sessionId: "session-1", rootId: "workspace" })).status, "ok");
     await assert.rejects(() => access(retainedDirectoryPath));
   } finally {
     if (retainedDirectoryPath) {
@@ -834,7 +915,7 @@ test("WorkspaceGitChangesService はtimeout後のcleanup failureを優先して�
   }
 });
 
-test("WorkspaceGitChangesService はtemp cleanup failureをtyped failureにして次のoperationで再試行する", async () => {
+test("FileRootGitChangesService はtemp cleanup failureをtyped failureにして次のoperationで再試行する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-temp-cleanup-"));
   let allowCleanup = false;
   let cleanupAttempts = 0;
@@ -850,12 +931,12 @@ test("WorkspaceGitChangesService はtemp cleanup failureをtyped failureにし�
       }
       await rm(directoryPath, { recursive: true, force: true });
     };
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       cleanupRetryDelayMs: 0,
       removeTemporaryDirectory,
     });
-    const firstResult = await service.listChanges("session-1");
+    const firstResult = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(firstResult.status, "failed");
     if (firstResult.status === "failed") {
       assert.match(firstResult.message, /cleanup failed/);
@@ -865,12 +946,12 @@ test("WorkspaceGitChangesService はtemp cleanup failureをtyped failureにし�
     await access(retainedDirectoryPath);
 
     allowCleanup = true;
-    const nextRequestService = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const nextRequestService = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       cleanupRetryDelayMs: 0,
       removeTemporaryDirectory,
     });
-    assert.equal((await nextRequestService.listChanges("session-1")).status, "ok");
+    assert.equal((await nextRequestService.listChanges({ sessionId: "session-1", rootId: "workspace" })).status, "ok");
     await assert.rejects(() => access(retainedDirectoryPath));
   } finally {
     if (retainedDirectoryPath) {
@@ -880,7 +961,7 @@ test("WorkspaceGitChangesService はtemp cleanup failureをtyped failureにし�
   }
 });
 
-test("WorkspaceGitChangesService はlease close failureをtyped failureにして次のoperationで再試行する", async () => {
+test("FileRootGitChangesService はlease close failureをtyped failureにして次のoperationで再試行する", async () => {
   const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-lease-cleanup-"));
   let allowClose = false;
   let closeAttempts = 0;
@@ -894,12 +975,12 @@ test("WorkspaceGitChangesService はlease close failureをtyped failureにして
       }
       await fileHandle.close();
     };
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       cleanupRetryDelayMs: 0,
       closeDirectoryLease,
     });
-    const firstResult = await service.listChanges("session-1");
+    const firstResult = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(firstResult.status, "failed");
     if (firstResult.status === "failed") {
       assert.match(firstResult.message, /cleanup failed/);
@@ -908,19 +989,19 @@ test("WorkspaceGitChangesService はlease close failureをtyped failureにして
     assert.ok(closeAttempts >= 3);
 
     allowClose = true;
-    const nextRequestService = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const nextRequestService = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       cleanupRetryDelayMs: 0,
       closeDirectoryLease,
     });
-    assert.equal((await nextRequestService.listChanges("session-1")).status, "ok");
+    assert.equal((await nextRequestService.listChanges({ sessionId: "session-1", rootId: "workspace" })).status, "ok");
     assert.equal((await readdir(workspacePath)).some((name) => name.startsWith(".withmate-git-preview-")), false);
   } finally {
     await rm(workspacePath, { recursive: true, force: true });
   }
 });
 
-test("WorkspaceGitChangesService は active clean filter を実行せず typed failure を返す", async () => {
+test("FileRootGitChangesService は active clean filter を実行せず typed failure を返す", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-filter-"));
   const markerPath = path.join(repositoryPath, "filter-ran.txt");
   const filterScriptPath = path.join(repositoryPath, "filter-script.cjs");
@@ -947,10 +1028,10 @@ test("WorkspaceGitChangesService は active clean filter を実行せず typed f
     assert.equal((await runGitForTest(repositoryPath, ["config", "filter.marker.required", "true"])).exitCode, 0);
     await writeFile(path.join(repositoryPath, "tracked.txt"), "changed\n");
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
 
     assert.deepEqual(result, {
       status: "failed",
@@ -962,7 +1043,7 @@ test("WorkspaceGitChangesService は active clean filter を実行せず typed f
   }
 });
 
-test("WorkspaceGitChangesService は populated submodule の status / diff で clean filter を実行しない", async () => {
+test("FileRootGitChangesService は populated submodule の status / diff で clean filter を実行しない", async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-submodule-filter-"));
   const repositoryPath = path.join(tempRoot, "repository");
   const submoduleSourcePath = path.join(tempRoot, "submodule-source");
@@ -1027,14 +1108,15 @@ test("WorkspaceGitChangesService は populated submodule の status / diff で c
     assert.equal((await runGitForTest(submodulePath, ["config", "filter.marker.required", "true"])).exitCode, 0);
     await writeFile(path.join(submodulePath, "tracked.txt"), "changed\n");
 
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
     });
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
 
     assert.equal(result.status, "ok", JSON.stringify(result));
     const diff = await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "modules/child",
       scope: "working-tree",
     });
@@ -1049,7 +1131,7 @@ test("WorkspaceGitChangesService は populated submodule の status / diff で c
   }
 });
 
-test("WorkspaceGitChangesService は filter preflight 後に追加された command も実行しない", async () => {
+test("FileRootGitChangesService は filter preflight 後に追加された command も実行しない", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-filter-race-"));
   const markerPath = path.join(repositoryPath, "filter-race-ran.txt");
   const filterScriptPath = path.join(repositoryPath, "filter-race-script.cjs");
@@ -1062,8 +1144,8 @@ test("WorkspaceGitChangesService は filter preflight 後に追加された comm
     );
     await writeFile(path.join(repositoryPath, "tracked.txt"), "changed\n");
     const command = `"${process.execPath.replaceAll("\\", "/")}" "${filterScriptPath.replaceAll("\\", "/")}" "${markerPath.replaceAll("\\", "/")}"`;
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath: repositoryPath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
       runGit: async (workingDirectoryPath, args, options) => {
         if (args.includes("status") && !filterInstalled) {
           filterInstalled = true;
@@ -1075,7 +1157,7 @@ test("WorkspaceGitChangesService は filter preflight 後に追加された comm
       },
     });
 
-    assert.equal((await service.listChanges("session-1")).status, "ok");
+    assert.equal((await service.listChanges({ sessionId: "session-1", rootId: "workspace" })).status, "ok");
     assert.equal(filterInstalled, true);
     await assert.rejects(() => access(markerPath));
   } finally {
@@ -1083,7 +1165,7 @@ test("WorkspaceGitChangesService は filter preflight 後に追加された comm
   }
 });
 
-test("WorkspaceGitChangesService は canonical root の A-B-A 差し替えで別 repository の diff を返さない", async () => {
+test("FileRootGitChangesService は canonical root の A-B-A 差し替えで別 repository の diff を返さない", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-canonical-aba-"));
   const workspacePath = path.join(parentPath, "workspace");
   const secondRepositoryPath = path.join(parentPath, "second-repository");
@@ -1094,8 +1176,8 @@ test("WorkspaceGitChangesService は canonical root の A-B-A 差し替えで別
     await initializeRepository(secondRepositoryPath);
     await writeFile(path.join(workspacePath, "tracked.txt"), "VISIBLE_A\n");
     await writeFile(path.join(secondRepositoryPath, "tracked.txt"), "SECRET_B\n");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       runGit: async (workingDirectoryPath, args, options) => {
         if (args.includes("diff")) {
           try {
@@ -1111,6 +1193,7 @@ test("WorkspaceGitChangesService は canonical root の A-B-A 差し替えで別
 
     const result = await service.getFileDiff({
       sessionId: "session-1",
+      rootId: "workspace",
       relativePath: "tracked.txt",
       scope: "working-tree",
     });
@@ -1125,7 +1208,7 @@ test("WorkspaceGitChangesService は canonical root の A-B-A 差し替えで別
   }
 });
 
-test("WorkspaceGitChangesService は Workspace junction の ABA 差し替え中も認可済み repository を読む", async () => {
+test("FileRootGitChangesService は Workspace junction の ABA 差し替え中も認可済み repository を読む", async () => {
   const parentPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-junction-aba-"));
   const firstTargetPath = path.join(parentPath, "first-target");
   const secondTargetPath = path.join(parentPath, "second-target");
@@ -1137,8 +1220,8 @@ test("WorkspaceGitChangesService は Workspace junction の ABA 差し替え中�
     await writeFile(path.join(firstTargetPath, "only-a.txt"), "a\n");
     await writeFile(path.join(secondTargetPath, "only-b.txt"), "b\n");
     await symlink(firstTargetPath, workspacePath, "junction");
-    const service = new WorkspaceGitChangesService({
-      getWorkspaceContext: async () => ({ workspacePath }),
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: workspacePath }),
       runGit: async (boundWorkspacePath, args, options) => {
         if (!args.includes("status")) {
           return runGitForTest(boundWorkspacePath, args, options);
@@ -1154,7 +1237,7 @@ test("WorkspaceGitChangesService は Workspace junction の ABA 差し替え中�
       },
     });
 
-    const result = await service.listChanges("session-1");
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
     assert.equal(result.status, "ok");
     if (result.status === "ok") {
       assert.ok(result.entries.some((entry) => entry.relativePath === "only-a.txt"));

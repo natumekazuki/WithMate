@@ -4,7 +4,6 @@ import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import {
-  buildChatPageClassName,
   buildLiveSessionContextPaneProps,
   buildLiveSessionChatBodyProps,
   buildLiveSessionCompactActionDockProps,
@@ -55,22 +54,6 @@ test("createSessionFilesActions は共通の session files action group を描�
   assert.match(html, /title="Open session files directory">Explorer<\/button>/);
   assert.match(html, /title="Open terminal in session files directory">Terminal<\/button>/);
   assert.match(html, /class="drawer-toggle compact secondary"/);
-});
-
-test("buildChatPageClassName は header collapse class を共通形式で組み立てる", () => {
-  assert.equal(buildChatPageClassName({ isHeaderExpanded: true }), "");
-  assert.equal(
-    buildChatPageClassName({ isHeaderExpanded: false }),
-    "session-page-header-collapsed",
-  );
-  assert.equal(
-    buildChatPageClassName({ baseClassName: "theme-accent", isHeaderExpanded: true }),
-    "theme-accent",
-  );
-  assert.equal(
-    buildChatPageClassName({ baseClassName: "theme-accent", isHeaderExpanded: false }),
-    "theme-accent session-page-header-collapsed",
-  );
 });
 
 test("resolveAuxiliaryModeLabel は Auxiliary mode だけ label を返す", () => {
@@ -499,7 +482,6 @@ test("createStaticChatHeaderProps は操作を隠す header 既定値を補う",
   const headerProps = createStaticChatHeaderProps({
     taskTitle: "メイトーク",
     isRunning: false,
-    onToggleExpanded: noop,
   });
 
   assert.equal(headerProps.taskTitle, "メイトーク");
@@ -702,10 +684,9 @@ test("staticTextChatRuntimeComposerCapabilityDefaults は runtime controls だ�
 
 test("buildLiveSessionComposerDockProps は composer と compact dock の共通 props を対応付ける", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
-  const onCollapseActionDock = () => {};
-  const onExpandActionDock = () => {};
   const onJumpToBottom = () => {};
   const onSendOrCancel = () => {};
+  const onExpandActionDock = () => {};
   const props = buildLiveSessionComposerDockProps({
     retryBanner: null,
     isRunning: true,
@@ -759,7 +740,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     onToggleSkillPicker: () => {},
     onAddAdditionalDirectory: () => {},
     onToggleAdditionalDirectoryList: () => {},
-    onCollapseActionDock,
     onExpandActionDock,
     onJumpToBottom,
     onSelectCustomAgent: () => {},
@@ -781,7 +761,7 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
 
   assert.equal(props.composer.showJumpToBottom, true);
   assert.equal(props.composer.chatNotice, "New messages");
-  assert.equal(props.composer.onCollapse, onCollapseActionDock);
+  assert.equal("onCollapse" in props.composer, false);
   assert.equal(props.compactActionDock.draft, "draft");
   assert.equal(props.compactActionDock.actionDockCompactPreview, "preview");
   assert.equal(props.compactActionDock.attachmentCount, 1);
@@ -805,16 +785,15 @@ test("buildLiveSessionSplitterProps は context rail resize state を反映す�
   });
 
   assert.equal(splitterProps.isActive, true);
-  assert.equal(splitterProps.isRightPaneVisible, true);
+  assert.equal(splitterProps.isPanelExpanded, true);
   assert.equal(splitterProps.onPointerDown, onPointerDown);
-  assert.equal(splitterProps.onToggleRightPane, onToggle);
+  assert.equal(splitterProps.onTogglePanel, onToggle);
 });
 
 test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む shell を組み立てる", () => {
   const headerProps = createStaticChatHeaderProps({
     taskTitle: "agent session",
     isRunning: false,
-    onToggleExpanded: noop,
   });
   const messageColumnProps = createIdleChatMessageColumnProps({
     sessionId: "session-id",
@@ -889,9 +868,9 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     compactActionDockProps,
     splitterProps: {
       isActive: false,
-      isRightPaneVisible: true,
+      isPanelExpanded: true,
       onPointerDown: noop,
-      onToggleRightPane: noop,
+      onTogglePanel: noop,
     },
     isRightPaneVisible: true,
     rightPaneProps,
@@ -909,9 +888,9 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
     compactActionDockProps,
     splitterProps: {
       isActive: false,
-      isRightPaneVisible: true,
+      isPanelExpanded: true,
       onPointerDown: noop,
-      onToggleRightPane: noop,
+      onTogglePanel: noop,
     },
     isRightPaneVisible: true,
     rightPaneProps,
@@ -926,8 +905,8 @@ test("buildLiveSessionWindowShellProps は mode と auxiliary class を含む sh
   assert.equal(agentProps.mode, "agent");
   assert.equal(agentProps.messageColumnProps.isContentActive, false);
   assert.equal(companionProps.messageColumnProps.isContentActive, true);
-  assert.equal(agentProps.className, "session-page-header-collapsed");
-  assert.equal(companionProps.className, "theme-accent session-page-header-collapsed auxiliary-session-mode");
+  assert.equal(agentProps.className, "");
+  assert.equal(companionProps.className, "theme-accent auxiliary-session-mode");
   assert.equal(rightPane.props.children.props.taskTitle, "Right pane");
   assert.equal(rightPane.type, companionProps.rightPane.type);
 });
@@ -1042,7 +1021,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       isSendDisabled: true,
       showJumpToBottom: true,
       sendButtonTitle: "Send",
-      onExpand: () => {},
       onJumpToBottom: () => {},
       onSendOrCancel,
     },
@@ -1060,7 +1038,7 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
   assert.equal(bodyProps.composerProps.showAdditionalDirectoryControls, true);
   assert.equal(bodyProps.compactActionDockProps.onSendOrCancel, onSendOrCancel);
   assert.equal(bodyProps.splitterProps.isActive, true);
-  assert.equal(bodyProps.splitterProps.isRightPaneVisible, true);
+  assert.equal(bodyProps.splitterProps.isPanelExpanded, true);
   assert.equal(bodyProps.splitterProps.onPointerDown, onPointerDown);
 });
 

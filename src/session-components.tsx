@@ -45,6 +45,7 @@ import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
+import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
 import {
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
@@ -622,7 +623,6 @@ export type SessionHeaderProps = {
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
   actions?: ReactNode;
-  onToggleExpanded: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -646,7 +646,6 @@ export function SessionHeader({
   workspaceActions,
   sessionFilesActions,
   actions,
-  onToggleExpanded,
   onOpenAuditLog,
   onOpenTerminal,
   onTitleDraftChange,
@@ -660,9 +659,9 @@ export function SessionHeader({
     <header className="session-window-bar session-top-bar rise-1">
       <div className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}>
         {!isEditingTitle ? (
-          <button className="session-title-shell session-title-shell-toggle" type="button" onClick={onToggleExpanded}>
+          <div className="session-title-shell">
             <span className="session-window-title session-title-accent">{taskTitle}</span>
-          </button>
+          </div>
         ) : (
           <>
             <label className="session-title-editor">
@@ -752,21 +751,30 @@ export function SessionHeaderHandle({ taskTitle, onClick }: SessionHeaderHandleP
 
 export const SESSION_RIGHT_PANE_ID = "session-right-pane";
 export const SESSION_LEFT_PANE_ID = "session-left-pane";
+export const SESSION_HEADER_DOCK_ID = "session-header-dock";
+export const SESSION_ACTION_DOCK_ID = "session-action-dock";
 
 export type SessionChatScreenProps = {
   mode: ChatWindowModeKind;
   className?: string;
   style?: CSSProperties;
   header: ReactNode;
+  headerSplitter: ReactNode;
+  isHeaderVisible: boolean;
   messageColumn: ReactNode;
   mainContent?: ReactNode;
   actionDock: ReactNode;
+  actionDockSplitter: ReactNode;
+  isActionDockExpanded: boolean;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
   rightPane: ReactNode;
   splitter: ReactNode;
   isRightPaneVisible?: boolean;
   isLeftPaneVisible?: boolean;
+  layoutRef?: RefObject<HTMLDivElement | null>;
+  headerDockRef?: RefObject<HTMLDivElement | null>;
+  actionDockRef?: RefObject<HTMLDivElement | null>;
   workbenchRef?: RefObject<HTMLDivElement | null>;
   workbenchStyle?: CSSProperties;
   modals?: ReactNode;
@@ -777,22 +785,45 @@ export function SessionChatScreen({
   className = "",
   style,
   header,
+  headerSplitter,
+  isHeaderVisible,
   messageColumn,
   mainContent,
   actionDock,
+  actionDockSplitter,
+  isActionDockExpanded,
   leftPane = null,
   leftSplitter = null,
   rightPane,
   splitter,
   isRightPaneVisible = true,
   isLeftPaneVisible = false,
+  layoutRef,
+  headerDockRef,
+  actionDockRef,
   workbenchRef,
   workbenchStyle,
   modals,
 }: SessionChatScreenProps) {
   return (
-    <div className={`page-shell session-page${className ? ` ${className}` : ""}`} style={style} data-session-mode={mode}>
-      {header}
+    <div
+      ref={layoutRef}
+      className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
+        isActionDockExpanded ? " is-action-dock-expanded" : ""
+      }${className ? ` ${className}` : ""}`}
+      style={style}
+      data-session-mode={mode}
+    >
+      <div
+        id={SESSION_HEADER_DOCK_ID}
+        ref={headerDockRef}
+        className={`session-header-dock-slot${isHeaderVisible ? "" : " is-hidden"}`}
+        aria-hidden={!isHeaderVisible}
+      >
+        {header}
+      </div>
+
+      {headerSplitter}
 
       <section className="content-grid session-content-grid">
         <section className="chat-panel session-work-surface rise-3">
@@ -816,7 +847,6 @@ export function SessionChatScreen({
                 <div className="session-central-surface" hidden={mainContent === undefined}>
                   {mainContent}
                 </div>
-                {actionDock}
               </div>
 
               {splitter}
@@ -831,6 +861,15 @@ export function SessionChatScreen({
           </div>
         </section>
       </section>
+
+      {actionDockSplitter}
+      <div
+        id={SESSION_ACTION_DOCK_ID}
+        ref={actionDockRef}
+        className={`session-action-dock-slot${isActionDockExpanded ? " is-expanded" : " is-compact"}`}
+      >
+        {actionDock}
+      </div>
 
       {modals}
     </div>
@@ -1444,8 +1483,6 @@ export function SessionAuditLogModal({
 }
 
 export type SessionContextPaneProps = {
-  taskTitle: string;
-  isHeaderExpanded: boolean;
   activeContextPaneTab: ContextPaneTabKey;
   availableContextPaneTabs: ContextPaneTabKey[];
   contextPaneProjection: ContextPaneProjection;
@@ -1464,7 +1501,6 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
   latestCommandEmptyText?: string;
-  onToggleHeaderExpanded: () => void;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
@@ -1557,8 +1593,6 @@ export class SessionPaneErrorBoundary extends Component<
 }
 
 export function SessionContextPane({
-  taskTitle,
-  isHeaderExpanded,
   activeContextPaneTab,
   availableContextPaneTabs,
   contextPaneProjection,
@@ -1577,7 +1611,6 @@ export function SessionContextPane({
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
   latestCommandEmptyText = "",
-  onToggleHeaderExpanded,
   onCycleContextPaneTab,
   onOpenCompanionReview,
 }: SessionContextPaneProps) {
@@ -1659,8 +1692,7 @@ export function SessionContextPane({
   }, [contentScrollKey]);
 
   return (
-    <aside className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}`}>
-      {!isHeaderExpanded ? <SessionHeaderHandle taskTitle={taskTitle} onClick={onToggleHeaderExpanded} /> : null}
+    <aside className="session-context-pane session-context-pane-header-expanded">
       <section className={`command-monitor-shell ${activeContextPaneTab}`} aria-label="右ペイン">
         <div className="command-monitor-head">
           <div className="command-monitor-switcher" aria-label="右ペイン表示切り替え">
@@ -2310,6 +2342,7 @@ export function SessionMessageColumn({
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
+  const wasContentActiveRef = useRef(isContentActive);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
@@ -2575,10 +2608,13 @@ export function SessionMessageColumn({
   ]);
 
   useLayoutEffect(() => {
-    if (isMessageListFollowing) {
+    const wasContentActive = wasContentActiveRef.current;
+    wasContentActiveRef.current = isContentActive;
+
+    if (isContentActive && (!wasContentActive || isMessageListFollowing)) {
       messageVirtualizer.scrollToEnd();
     }
-  }, [isMessageListFollowing, messageVirtualizer]);
+  }, [isContentActive, isMessageListFollowing, messageVirtualizer]);
 
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
@@ -3183,7 +3219,6 @@ export type SessionComposerExpandedProps = {
   selectedCustomAgentLabel: string;
   selectedCustomAgentTitle: string;
   additionalDirectoryCount: number;
-  canCollapseActionDock: boolean;
   showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
   isSkillListLoading: boolean;
@@ -3219,7 +3254,6 @@ export type SessionComposerExpandedProps = {
   onToggleSkillPicker: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
-  onCollapse: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
   onSelectSkill: (skillId: string) => void;
@@ -3259,7 +3293,6 @@ export function SessionComposerExpanded({
   selectedCustomAgentLabel,
   selectedCustomAgentTitle,
   additionalDirectoryCount,
-  canCollapseActionDock,
   showJumpToBottom,
   isCustomAgentListLoading,
   isSkillListLoading,
@@ -3295,7 +3328,6 @@ export function SessionComposerExpanded({
   onToggleSkillPicker,
   onAddAdditionalDirectory,
   onToggleAdditionalDirectoryList,
-  onCollapse,
   onJumpToBottom,
   onSelectCustomAgent,
   onSelectSkill,
@@ -3316,6 +3348,13 @@ export function SessionComposerExpanded({
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const skillListRef = useRef<HTMLDivElement | null>(null);
+  const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+
+  useEffect(() => {
+    if (!showAttachmentControls || isRunning || composerBlocked) {
+      setIsAttachmentMenuOpen(false);
+    }
+  }, [composerBlocked, isRunning, showAttachmentControls]);
 
   useEffect(() => {
     if (!isAgentPickerOpen) {
@@ -3343,7 +3382,6 @@ export function SessionComposerExpanded({
     showSkillPicker ||
     showAdditionalDirectoryControls ||
     showJumpToBottom ||
-    canCollapseActionDock ||
     !!modeLabel ||
     !!chatNotice ||
     isRunning;
@@ -3358,64 +3396,41 @@ export function SessionComposerExpanded({
             <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
           ) : null}
           {showAttachmentControls ? (
-            <div className="composer-attachment-button-group" role="group" aria-label="添付">
-              <button className="drawer-toggle compact secondary" type="button" onClick={onPickFile} disabled={isRunning || composerBlocked}>
-                File
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={onPickFolder} disabled={isRunning || composerBlocked}>
-                Folder
-              </button>
-              <button className="drawer-toggle compact secondary" type="button" onClick={onPickImage} disabled={isRunning || composerBlocked}>
-                Image
-              </button>
-            </div>
-          ) : null}
-          {showAttachmentControls ? (
-            <div className="composer-session-file-toolbar">
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onAddToSessionFiles}
-                disabled={isRunning || composerBlocked}
-                title="Copy file into session files and insert a reference"
-              >
-                Attach Copy
-              </button>
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onPickSessionFiles}
-                disabled={isRunning || composerBlocked}
-                title="Pick files already in the session files directory and insert references"
-              >
-                Session File
-              </button>
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onPickSessionFolder}
-                disabled={isRunning || composerBlocked}
-                title="Pick a folder already in the session files directory and insert a reference"
-              >
-                Session Folder
-              </button>
-              <button
-                className="drawer-toggle compact secondary composer-skill-button"
-                type="button"
-                onClick={onPickSessionImage}
-                disabled={isRunning || composerBlocked}
-                title="Pick an image already in the session files directory and insert a reference"
-              >
-                Session Image
-              </button>
-            </div>
+            <ComposerAttachmentMenu
+              disabled={isRunning || composerBlocked}
+              isOpen={isAttachmentMenuOpen}
+              onOpenChange={(isOpen) => {
+                if (isOpen) {
+                  if (isAgentPickerOpen) {
+                    onToggleAgentPicker();
+                  }
+                  if (isSkillPickerOpen) {
+                    onToggleSkillPicker();
+                  }
+                  if (isAdditionalDirectoryListOpen) {
+                    onToggleAdditionalDirectoryList();
+                  }
+                }
+                setIsAttachmentMenuOpen(isOpen);
+              }}
+              onPickFile={onPickFile}
+              onPickFolder={onPickFolder}
+              onPickImage={onPickImage}
+              onAddToSessionFiles={onAddToSessionFiles}
+              onPickSessionFiles={onPickSessionFiles}
+              onPickSessionFolder={onPickSessionFolder}
+              onPickSessionImage={onPickSessionImage}
+            />
           ) : null}
           {showCustomAgentPicker ? (
             <div className="composer-agent-toolbar">
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAgentPickerOpen ? " is-open" : ""}`}
                 type="button"
-                onClick={onToggleAgentPicker}
+                onClick={() => {
+                  setIsAttachmentMenuOpen(false);
+                  onToggleAgentPicker();
+                }}
                 disabled={!canSelectCustomAgent || isRunning || composerBlocked}
                 aria-expanded={isAgentPickerOpen}
                 aria-haspopup="listbox"
@@ -3431,7 +3446,10 @@ export function SessionComposerExpanded({
             <button
               className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
               type="button"
-              onClick={onToggleSkillPicker}
+              onClick={() => {
+                setIsAttachmentMenuOpen(false);
+                onToggleSkillPicker();
+              }}
               disabled={isRunning || composerBlocked}
               aria-expanded={isSkillPickerOpen}
               aria-haspopup="listbox"
@@ -3445,7 +3463,10 @@ export function SessionComposerExpanded({
               <button
                 className="drawer-toggle compact secondary composer-skill-button"
                 type="button"
-                onClick={onAddAdditionalDirectory}
+                onClick={() => {
+                  setIsAttachmentMenuOpen(false);
+                  onAddAdditionalDirectory();
+                }}
                 disabled={isRunning || composerBlocked}
               >
                 Add Directory
@@ -3453,7 +3474,10 @@ export function SessionComposerExpanded({
               <button
                 className={`drawer-toggle compact secondary composer-skill-button${isAdditionalDirectoryListOpen ? " is-open" : ""}`}
                 type="button"
-                onClick={onToggleAdditionalDirectoryList}
+                onClick={() => {
+                  setIsAttachmentMenuOpen(false);
+                  onToggleAdditionalDirectoryList();
+                }}
                 disabled={additionalDirectoryCount === 0}
                 aria-expanded={isAdditionalDirectoryListOpen}
               >
@@ -3487,11 +3511,6 @@ export function SessionComposerExpanded({
                 Cancel
               </button>
             </>
-          ) : null}
-          {canCollapseActionDock ? (
-            <button className="drawer-toggle compact secondary composer-hide-button" type="button" onClick={onCollapse}>
-              Hide
-            </button>
           ) : null}
         </div>
       ) : null}

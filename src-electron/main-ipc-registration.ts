@@ -65,20 +65,27 @@ import type {
   CompanionTargetWorkspaceStashResult,
 } from "../src/companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import {
+  isChatLayoutPreferenceUpdate,
+  type ChatLayoutPreferenceUpdate,
+} from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
-import { isSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
 import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
   SessionFileChunkResult,
   SessionFileDescriptor,
+  SessionFilePreviewImageActionRequest,
+  SessionFilePreviewImageContextMenuResult,
+  SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -130,8 +137,10 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
-  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
-  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -205,7 +214,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL,
+  WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
@@ -303,7 +312,7 @@ export type MainIpcRegistrationDeps = {
   cancelAuxiliarySessionRun?(auxiliarySessionId: string): Awaitable<void>;
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
-  updateSessionSidePane(sidePane: SessionSidePane): Awaitable<AppSettings>;
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -327,8 +336,16 @@ export type MainIpcRegistrationDeps = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
-  listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
-  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
+  copySessionFilePreviewImage(
+    event: IpcSenderEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageCopyResult>;
+  showSessionFilePreviewImageContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFilePreviewImageActionRequest,
+  ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -453,7 +470,7 @@ type MainIpcSettingsDeps = Pick<
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
-  | "updateSessionSidePane"
+  | "updateChatLayoutPreference"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
   | "installMemoryV6CliShim"
@@ -529,8 +546,10 @@ type MainIpcSessionQueryDeps = Pick<
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
-  | "listWorkspaceChanges"
-  | "getWorkspaceFileDiff"
+  | "copySessionFilePreviewImage"
+  | "showSessionFilePreviewImageContextMenu"
+  | "listFileRootChanges"
+  | "getFileRootDiff"
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
@@ -666,6 +685,32 @@ async function assertSessionFileExplorerSender(
     return;
   }
   throw new Error("File Explorer IPC is only available from the owning Session window.");
+}
+
+function parseSessionFilePreviewImageActionRequest(
+  input: unknown,
+): SessionFilePreviewImageActionRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Image copy request is invalid.");
+  }
+  const candidate = input as Partial<SessionFilePreviewImageActionRequest>;
+  const point = candidate.point;
+  if (
+    typeof candidate.sessionId !== "string" ||
+    !candidate.sessionId ||
+    !point ||
+    typeof point !== "object" ||
+    !Number.isSafeInteger(point.x) ||
+    point.x < 0 ||
+    !Number.isSafeInteger(point.y) ||
+    point.y < 0
+  ) {
+    throw new TypeError("Image copy request is invalid.");
+  }
+  return {
+    sessionId: candidate.sessionId,
+    point: { x: point.x, y: point.y },
+  };
 }
 
 type AuxiliaryOwnerWindowKind = "session" | "companion-review";
@@ -938,11 +983,11 @@ function registerCatalogHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCatal
 function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSettingsDeps): void {
   ipcMain.handle(WITHMATE_GET_APP_SETTINGS_CHANNEL, () => deps.getAppSettings());
   ipcMain.handle(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, (_event, settings) => deps.updateAppSettings(settings));
-  ipcMain.handle(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL, (_event, sidePane) => {
-    if (!isSessionSidePane(sidePane)) {
-      throw new TypeError("side pane は files、context、none のいずれかで指定してね。");
+  ipcMain.handle(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL, (_event, update) => {
+    if (!isChatLayoutPreferenceUpdate(update)) {
+      throw new TypeError("chat layout preference の更新内容が不正です。");
     }
-    return deps.updateSessionSidePane(sidePane);
+    return deps.updateChatLayoutPreference(update);
   });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
@@ -1086,19 +1131,44 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.openSessionFile(request);
   });
-  ipcMain.handle(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, async (event, sessionId: string) => {
-    if (typeof sessionId !== "string" || !sessionId) {
-      throw new TypeError("Session ID が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, sessionId, deps);
-    return deps.listWorkspaceChanges(sessionId);
+  ipcMain.handle(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFilePreviewImageActionRequest(input);
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.copySessionFilePreviewImage(event, request);
   });
-  ipcMain.handle(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL, async (event, request: WorkspaceFileDiffRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFilePreviewImageActionRequest(input);
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.showSessionFilePreviewImageContextMenu(event, request);
+  });
+  ipcMain.handle(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, async (event, request: FileRootChangesRequest) => {
+    if (
+      !request
+      || typeof request.sessionId !== "string"
+      || !request.sessionId
+      || typeof request.rootId !== "string"
+      || !request.rootId
+    ) {
+      throw new TypeError("File root changes request が不正だよ。");
+    }
+    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.listFileRootChanges(request);
+  });
+  ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
+    if (
+      !request
+      || typeof request.sessionId !== "string"
+      || !request.sessionId
+      || typeof request.rootId !== "string"
+      || !request.rootId
+      || typeof request.relativePath !== "string"
+      || !request.relativePath
+      || (request.scope !== "working-tree" && request.scope !== "staged")
+    ) {
       throw new TypeError("Git Diff request が不正だよ。");
     }
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
-    return deps.getWorkspaceFileDiff(request);
+    return deps.getFileRootDiff(request);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
     if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {

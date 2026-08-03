@@ -8,6 +8,8 @@ import {
 } from "react";
 
 import {
+  SESSION_ACTION_DOCK_ID,
+  SESSION_HEADER_DOCK_ID,
   SESSION_RIGHT_PANE_ID,
   SESSION_LEFT_PANE_ID,
   SessionActionDockCompactRow,
@@ -25,7 +27,10 @@ import {
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
-export type ChatWindowProps = Omit<ChatScreenProps, "header" | "messageColumn" | "actionDock"> & {
+export type ChatWindowProps = Omit<
+  ChatScreenProps,
+  "header" | "messageColumn" | "actionDock" | "isHeaderVisible"
+> & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
@@ -43,19 +48,17 @@ export type ChatWindowStatusScreenProps = {
 };
 
 export type ChatRightPaneShellProps = {
-  isHeaderExpanded: boolean;
-  headerHandleTitle: string;
   ariaLabel: string;
   className?: string;
-  onToggleHeaderExpanded: () => void;
 };
 
-export type ChatWorkbenchSplitterProps = {
-  side?: "left" | "right";
+export type ChatDockSplitterProps = {
+  edge: "top" | "right" | "bottom" | "left";
   isActive?: boolean;
-  isRightPaneVisible?: boolean;
+  isPanelExpanded?: boolean;
+  canCollapse?: boolean;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
-  onToggleRightPane?: MouseEventHandler<HTMLButtonElement>;
+  onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
   title?: string;
 };
@@ -119,15 +122,18 @@ export function ChatWindow({
   return (
     <SessionChatScreen
       {...screenProps}
-      header={isHeaderExpanded ? <SessionHeader {...headerProps} /> : null}
+      header={<SessionHeader {...headerProps} />}
+      isHeaderVisible={isHeaderExpanded}
+      isActionDockExpanded={isActionDockExpanded}
       messageColumn={<StableSessionMessageColumn {...messageColumnProps} />}
       actionDock={(
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-          {isActionDockExpanded ? (
+          <div className="session-action-dock-expanded-content" hidden={!isActionDockExpanded}>
             <SessionComposerExpanded {...composerProps} />
-          ) : (
+          </div>
+          <div hidden={isActionDockExpanded}>
             <SessionActionDockCompactRow {...compactActionDockProps} />
-          )}
+          </div>
         </div>
       )}
     />
@@ -148,55 +154,79 @@ export function ChatWindowStatusScreen({ message, className = "" }: ChatWindowSt
   );
 }
 
-export function ChatWorkbenchSplitter({
-  side = "right",
+export function ChatDockSplitter({
+  edge,
   isActive = false,
-  isRightPaneVisible = true,
+  isPanelExpanded = true,
+  canCollapse = true,
   onPointerDown,
-  onToggleRightPane,
+  onTogglePanel,
   ariaLabel,
   title,
-}: ChatWorkbenchSplitterProps) {
-  if (!onPointerDown && !onToggleRightPane) {
-    return <div className="session-workbench-splitter is-static" aria-hidden="true" />;
+}: ChatDockSplitterProps) {
+  const effectiveTogglePanel = isPanelExpanded && !canCollapse ? undefined : onTogglePanel;
+  if (!onPointerDown && !onTogglePanel) {
+    return <div className={`session-dock-splitter edge-${edge} is-static`} aria-hidden="true" />;
   }
 
-  const paneLabel = side === "left" ? "左ペイン" : "右ペイン";
+  const panelLabel = edge === "top"
+    ? "ヘッダー"
+    : edge === "bottom"
+      ? "ActionDock"
+      : edge === "left"
+        ? "左ペイン"
+        : "右ペイン";
   const resolvedAriaLabel = ariaLabel
     ?? (
-      onToggleRightPane
-        ? (isRightPaneVisible ? `${paneLabel}を非表示` : `${paneLabel}を表示`)
-        : "会話と command pane の幅を調整"
+      effectiveTogglePanel
+        ? (isPanelExpanded ? `${panelLabel}を折りたたむ` : `${panelLabel}を展開`)
+        : `${panelLabel}のサイズを調整`
     );
   const resolvedTitle = title
     ?? (
-      onToggleRightPane
+      effectiveTogglePanel
         ? (
-          isRightPaneVisible && onPointerDown
-            ? "クリックで右ペインを非表示、広い画面ではドラッグで幅を調整"
-            : "クリックで右ペインを表示"
+          isPanelExpanded
+            ? (
+              onPointerDown
+                ? `クリックで${panelLabel}を折りたたみ、ドラッグでサイズを調整`
+                : `クリックで${panelLabel}を折りたたみ`
+            )
+            : `クリックで${panelLabel}を展開`
         )
-        : "左右の幅をドラッグで調整"
+        : `${panelLabel}のサイズをドラッグで調整`
     );
+  const controlledId = edge === "top"
+    ? SESSION_HEADER_DOCK_ID
+    : edge === "bottom"
+      ? SESSION_ACTION_DOCK_ID
+      : edge === "left"
+        ? SESSION_LEFT_PANE_ID
+        : SESSION_RIGHT_PANE_ID;
+  const chevron = edge === "top"
+    ? (isPanelExpanded ? "⌃" : "⌄")
+    : edge === "bottom"
+      ? (isPanelExpanded ? "⌄" : "⌃")
+      : edge === "left"
+        ? (isPanelExpanded ? "‹" : "›")
+        : (isPanelExpanded ? "›" : "‹");
 
   return (
     <button
-      className={`session-workbench-splitter${isActive ? " is-active" : ""}${
-        isRightPaneVisible ? "" : " is-collapsed"
+      className={`session-dock-splitter edge-${edge}${!onPointerDown ? " is-toggle-only" : ""}${isActive ? " is-active" : ""}${
+        isPanelExpanded ? "" : " is-collapsed"
       }`}
       type="button"
-      onPointerDown={onPointerDown}
-      onClick={onToggleRightPane}
+      onPointerDown={isPanelExpanded ? onPointerDown : undefined}
+      onClick={effectiveTogglePanel}
       aria-label={resolvedAriaLabel}
-      aria-controls={onToggleRightPane ? (side === "left" ? SESSION_LEFT_PANE_ID : SESSION_RIGHT_PANE_ID) : undefined}
-      aria-expanded={onToggleRightPane ? isRightPaneVisible : undefined}
+      aria-controls={effectiveTogglePanel ? controlledId : undefined}
+      aria-expanded={effectiveTogglePanel ? isPanelExpanded : undefined}
       title={resolvedTitle}
     >
-      {onToggleRightPane ? (
-        <span className="session-workbench-splitter-chevron" aria-hidden="true">
-          {side === "left"
-            ? (isRightPaneVisible ? "‹" : "›")
-            : (isRightPaneVisible ? "›" : "‹")}
+      {effectiveTogglePanel ? (
+        <span className="session-dock-splitter-chevron" aria-hidden="true">
+          {chevron}
         </span>
       ) : null}
     </button>
@@ -204,20 +234,15 @@ export function ChatWorkbenchSplitter({
 }
 
 export function ChatRightPaneShell({
-  isHeaderExpanded,
-  headerHandleTitle,
   ariaLabel,
   className = "",
-  onToggleHeaderExpanded,
 }: ChatRightPaneShellProps) {
   return (
     <aside
-      className={`session-context-pane${isHeaderExpanded ? " session-context-pane-header-expanded" : ""}${
+      className={`session-context-pane session-context-pane-header-expanded${
         className ? ` ${className}` : ""
       }`}
       aria-label={ariaLabel}
-    >
-      {!isHeaderExpanded ? <ChatHeaderHandle taskTitle={headerHandleTitle} onClick={onToggleHeaderExpanded} /> : null}
-    </aside>
+    />
   );
 }

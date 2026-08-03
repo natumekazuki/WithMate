@@ -108,7 +108,7 @@ export type SessionFileExplorerServiceDeps = {
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
-type ResolvedRoot = SessionFileRoot & { absolutePath: string };
+export type ResolvedSessionFileRoot = SessionFileRoot & { absolutePath: string };
 
 type ResolvedTargetCandidate = {
   rootAbsolutePath: string;
@@ -134,7 +134,7 @@ function makeAdditionalRootId(absolutePath: string): string {
   return `additional:${createHash("sha256").update(pathKey(absolutePath)).digest("hex").slice(0, 16)}`;
 }
 
-function makeRoot(kind: SessionFileRootKind, absolutePath: string, id: string, label: string): ResolvedRoot {
+function makeRoot(kind: SessionFileRootKind, absolutePath: string, id: string, label: string): ResolvedSessionFileRoot {
   return {
     id,
     kind,
@@ -227,7 +227,7 @@ function detectResourceKind(filePath: string, bytes: Uint8Array): { kind: Sessio
 export class SessionFileExplorerService {
   constructor(private readonly deps: SessionFileExplorerServiceDeps) {}
 
-  private async resolveRoots(sessionId: string): Promise<ResolvedRoot[]> {
+  private async resolveRoots(sessionId: string): Promise<ResolvedSessionFileRoot[]> {
     const context = await this.deps.getSessionContext(sessionId);
     if (!context) {
       throw new Error("Session が見つからないよ。");
@@ -237,7 +237,7 @@ export class SessionFileExplorerService {
     const sessionFolderPath = resolveSessionFilesDirectory(this.deps.userDataPath, context.parentSessionId);
     const sessionFolder = makeRoot("session-folder", sessionFolderPath, "session-folder", "Session Folder");
     const seen = new Set([pathKey(workspace.absolutePath), pathKey(sessionFolder.absolutePath)]);
-    const additionalRoots: ResolvedRoot[] = [];
+    const additionalRoots: ResolvedSessionFileRoot[] = [];
     for (const directoryPath of context.allowedAdditionalDirectories) {
       const absolutePath = path.resolve(directoryPath);
       const key = pathKey(absolutePath);
@@ -254,11 +254,15 @@ export class SessionFileExplorerService {
     return (await this.resolveRoots(sessionId)).map(({ absolutePath: _absolutePath, ...root }) => root);
   }
 
+  async resolveRoot(sessionId: string, rootId: string): Promise<ResolvedSessionFileRoot | null> {
+    return (await this.resolveRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
+  }
+
   private async resolveTargetCandidate(
     request: SessionFileResourceRequest,
     allowRoot: boolean,
   ): Promise<ResolvedTargetCandidate> {
-    const root = (await this.resolveRoots(request.sessionId)).find((candidate) => candidate.id === request.rootId);
+    const root = await this.resolveRoot(request.sessionId, request.rootId);
     if (!root) {
       throw new Error("指定された file root は現在の Session で利用できないよ。");
     }

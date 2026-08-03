@@ -70,8 +70,10 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
-  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
-  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -145,7 +147,7 @@ import {
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
-  WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL,
+  WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
@@ -307,11 +309,17 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     openSessionFile(request) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_CHANNEL, request);
     },
-    listWorkspaceChanges(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL, sessionId);
+    copySessionFilePreviewImage(request) {
+      return ipcRenderer.invoke(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, request);
     },
-    getWorkspaceFileDiff(request) {
-      return ipcRenderer.invoke(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL, request);
+    showSessionFilePreviewImageContextMenu(request) {
+      return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, request);
+    },
+    listFileRootChanges(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, request);
+    },
+    getFileRootDiff(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, request);
     },
     getSessionMessageArtifact(sessionId, messageIndex) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);
@@ -570,8 +578,8 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     updateAppSettings(settings) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_APP_SETTINGS_CHANNEL, settings);
     },
-    updateSessionSidePane(sidePane) {
-      return ipcRenderer.invoke(WITHMATE_UPDATE_SESSION_SIDE_PANE_CHANNEL, sidePane);
+    updateChatLayoutPreference(update) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL, update);
     },
     getAppDatabaseDiagnostics() {
       return ipcRenderer.invoke(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL);

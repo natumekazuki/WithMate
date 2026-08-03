@@ -1,16 +1,18 @@
 import type { ComponentProps, ReactNode, RefObject } from "react";
-import { ChatWorkbenchSplitter, type ChatWindowProps } from "./chat-window.js";
+import { ChatDockSplitter, type ChatWindowProps } from "./chat-window.js";
 import {
   SessionContextPane,
   SessionPaneErrorBoundary,
   type SessionContextPaneProps,
 } from "../session-components.js";
-import { buildChatPageClassName } from "./chat-window-adapter.js";
 
 type LiveSessionWindowShellPropsInput = {
   mode: ChatWindowProps["mode"];
   style?: ChatWindowProps["style"];
   isHeaderExpanded: boolean;
+  layoutRef?: ChatWindowProps["layoutRef"];
+  headerDockRef?: ChatWindowProps["headerDockRef"];
+  actionDockRef?: ChatWindowProps["actionDockRef"];
   workbenchRef: RefObject<HTMLDivElement | null>;
   workbenchStyle?: ChatWindowProps["workbenchStyle"];
   headerProps: ChatWindowProps["headerProps"];
@@ -19,9 +21,11 @@ type LiveSessionWindowShellPropsInput = {
   isActionDockExpanded: boolean;
   composerProps: ChatWindowProps["composerProps"];
   compactActionDockProps: ChatWindowProps["compactActionDockProps"];
-  splitterProps: ComponentProps<typeof ChatWorkbenchSplitter>;
+  headerSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
+  actionDockSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
+  splitterProps: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   leftPane?: ReactNode;
-  leftSplitterProps?: ComponentProps<typeof ChatWorkbenchSplitter>;
+  leftSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
   isLeftPaneVisible?: boolean;
   isRightPaneVisible: boolean;
   rightPaneProps: SessionContextPaneProps;
@@ -35,11 +39,11 @@ export function buildLiveSessionWindowShellProps(
 ): ChatWindowProps {
   return {
     mode: input.mode,
-    className: `${buildChatPageClassName({
-      baseClassName: input.baseClassName,
-      isHeaderExpanded: input.isHeaderExpanded,
-    })}${input.isAuxiliaryMode ? " auxiliary-session-mode" : ""}`,
+    className: `${input.baseClassName ?? ""}${input.isAuxiliaryMode ? " auxiliary-session-mode" : ""}`,
     style: input.style,
+    layoutRef: input.layoutRef,
+    headerDockRef: input.headerDockRef,
+    actionDockRef: input.actionDockRef,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
     isHeaderExpanded: input.isHeaderExpanded,
@@ -52,9 +56,11 @@ export function buildLiveSessionWindowShellProps(
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: input.composerProps,
     compactActionDockProps: input.compactActionDockProps,
-    splitter: <ChatWorkbenchSplitter {...input.splitterProps} />,
+    headerSplitter: <ChatDockSplitter edge="top" {...input.headerSplitterProps} />,
+    actionDockSplitter: <ChatDockSplitter edge="bottom" {...input.actionDockSplitterProps} />,
+    splitter: <ChatDockSplitter edge="right" {...input.splitterProps} />,
     leftPane: input.leftPane,
-    leftSplitter: input.leftSplitterProps ? <ChatWorkbenchSplitter {...input.leftSplitterProps} /> : null,
+    leftSplitter: input.leftSplitterProps ? <ChatDockSplitter edge="left" {...input.leftSplitterProps} /> : null,
     isLeftPaneVisible: input.isLeftPaneVisible ?? false,
     isRightPaneVisible: input.isRightPaneVisible,
     rightPane: (

@@ -223,7 +223,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onDraftCompositionStart: noop,
     onDraftCompositionEnd: noop,
     onSendOrCancel: noop,
-    onExpandActionDock: noop,
     onChangeApprovalMode: noop,
     onChangeCodexSandboxMode: noop,
     onChangeModel: noop,
@@ -281,7 +280,7 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操�
   assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
 });
 
-test("buildAgentSessionChatWindowProps は right pane props を共通 pane に渡す", () => {
+test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onToggleHeaderExpanded = () => {};
   const onCycleContextPaneTab = () => {};
   const onOpenCompanionReview = () => {};
@@ -299,7 +298,7 @@ test("buildAgentSessionChatWindowProps は right pane props を共通 pane に�
 
   assert.equal(paneProps.contextEmptyText, "Agent context empty");
   assert.equal(paneProps.latestCommandEmptyText, "Agent latest command empty");
-  assert.equal(paneProps.onToggleHeaderExpanded, onToggleHeaderExpanded);
+  assert.equal("onToggleHeaderExpanded" in paneProps, false);
   assert.equal(paneProps.onCycleContextPaneTab, onCycleContextPaneTab);
   assert.equal(paneProps.onOpenCompanionReview, onOpenCompanionReview);
 });
@@ -311,13 +310,13 @@ test("buildAgentSessionChatWindowProps は right pane visibility と toggle を�
     onToggleContextRailVisibility,
   }));
   const splitter = props.splitter as React.ReactElement<{
-    isRightPaneVisible: boolean;
-    onToggleRightPane: () => void;
+    isPanelExpanded: boolean;
+    onTogglePanel: () => void;
   }>;
 
   assert.equal(props.isRightPaneVisible, false);
-  assert.equal(splitter.props.isRightPaneVisible, false);
-  assert.equal(splitter.props.onToggleRightPane, onToggleContextRailVisibility);
+  assert.equal(splitter.props.isPanelExpanded, false);
+  assert.equal(splitter.props.onTogglePanel, onToggleContextRailVisibility);
 });
 
 test("buildAgentSessionChatWindowProps は header action callbacks を維持する", () => {
@@ -346,7 +345,7 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
 
 test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {
   const onCollapseActionDock = () => {};
-  const onExpandActionDock = () => {};
+  const onToggleActionDock = () => {};
   const onJumpToMessageListBottom = () => {};
   const onSendOrCancel = () => {};
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
@@ -368,7 +367,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
     chatNotice: "New messages",
     attachmentCount: 2,
     onCollapseActionDock,
-    onExpandActionDock,
+    onToggleActionDock,
     onJumpToMessageListBottom,
     onSendOrCancel,
   }));
@@ -377,6 +376,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.pendingRunIndicatorAnnouncement, "Agent running");
   assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.composerProps.canSelectCustomAgent, true);
+  assert.equal(props.composerProps.showCustomAgentPicker, true);
   assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
   assert.equal(props.composerProps.additionalDirectoryCount, 1);
   assert.equal(props.composerProps.showJumpToBottom, true);
@@ -385,7 +385,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.selectedModel, "gpt-agent");
   assert.equal(props.composerProps.selectedReasoningEffort, "medium");
   assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
-  assert.equal(props.composerProps.onCollapse, onCollapseActionDock);
+  assert.equal("onCollapse" in props.composerProps, false);
   assert.equal(props.composerProps.chatNotice, "New messages");
   assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 2);
@@ -394,9 +394,16 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
   assert.equal(props.compactActionDockProps.sendButtonTitle, "Agent stop");
-  assert.equal(props.compactActionDockProps.onExpand, onExpandActionDock);
+  assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
   assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});
+
+test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput());
+
+  assert.equal(props.composerProps.canSelectCustomAgent, false);
+  assert.equal(props.composerProps.showCustomAgentPicker, false);
 });
 
 test("buildAgentSessionChatWindowProps は selected session running boolean を composer dock に渡す", () => {

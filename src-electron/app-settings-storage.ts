@@ -1,5 +1,10 @@
 import type { DatabaseSync } from "node:sqlite";
 
+import {
+  isChatActionDockMode,
+  isChatHeaderVisibility,
+  type ChatLayoutPreferenceUpdate,
+} from "../src/chat/chat-layout-preference.js";
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { isSessionSidePane, type SessionSidePane } from "../src/session-side-pane.js";
 import { CREATE_APP_SETTINGS_TABLE_SQL } from "./database-schema-v1.js";
@@ -12,6 +17,8 @@ const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const SESSION_HEADER_VISIBILITY_KEY = "session_header_visibility";
+const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
 const SESSION_SIDE_PANE_KEY = "session_side_pane";
 const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
@@ -110,6 +117,24 @@ export class AppSettingsStorage {
         VALUES (?, ?, ?)
         ON CONFLICT(setting_key) DO NOTHING
       `)
+      .run(SESSION_HEADER_VISIBILITY_KEY, DEFAULT_APP_SETTINGS.chatLayoutPreference.header, updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(
+        SESSION_ACTION_DOCK_PRESENTATION_KEY,
+        DEFAULT_APP_SETTINGS.chatLayoutPreference.actionDock,
+        updatedAt,
+      );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
       .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(DEFAULT_APP_SETTINGS.memoryFileQuotaBytes), updatedAt);
     this.db
       .prepare(`
@@ -187,8 +212,20 @@ export class AppSettingsStorage {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
         continue;
       }
+      if (row.setting_key === SESSION_HEADER_VISIBILITY_KEY) {
+        settings.chatLayoutPreference.header = isChatHeaderVisibility(row.setting_value)
+          ? row.setting_value
+          : "hidden";
+        continue;
+      }
+      if (row.setting_key === SESSION_ACTION_DOCK_PRESENTATION_KEY) {
+        settings.chatLayoutPreference.actionDock = isChatActionDockMode(row.setting_value)
+          ? row.setting_value
+          : "compact";
+        continue;
+      }
       if (row.setting_key === SESSION_SIDE_PANE_KEY) {
-        settings.sessionSidePane = isSessionSidePane(row.setting_value) ? row.setting_value : "none";
+        settings.chatLayoutPreference.sidePane = isSessionSidePane(row.setting_value) ? row.setting_value : "none";
         continue;
       }
       if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
@@ -256,7 +293,7 @@ export class AppSettingsStorage {
     const normalized = normalizeAppSettings(nextSettings);
     const updatedAt = new Date().toISOString();
 
-    // Side pane selection has its own write path so stale full-settings snapshots cannot overwrite it.
+    // Chat layout preferences have their own write path so stale full-settings snapshots cannot overwrite them.
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.db
@@ -382,7 +419,16 @@ export class AppSettingsStorage {
     return this.getSettings();
   }
 
-  updateSessionSidePane(sidePane: SessionSidePane): AppSettings {
+  updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSettings {
+    const [settingKey, settingValue] = (() => {
+      if (update.target === "header") {
+        return [SESSION_HEADER_VISIBILITY_KEY, update.value] as const;
+      }
+      if (update.target === "actionDock") {
+        return [SESSION_ACTION_DOCK_PRESENTATION_KEY, update.value] as const;
+      }
+      return [SESSION_SIDE_PANE_KEY, update.value] as const;
+    })();
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -391,7 +437,7 @@ export class AppSettingsStorage {
           setting_value = excluded.setting_value,
           updated_at = excluded.updated_at
       `)
-      .run(SESSION_SIDE_PANE_KEY, sidePane, new Date().toISOString());
+      .run(settingKey, settingValue, new Date().toISOString());
     return this.getSettings();
   }
 
