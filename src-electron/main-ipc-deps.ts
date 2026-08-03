@@ -71,9 +71,10 @@ import type {
   SessionFileOpenRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceFileDiffRequest,
-  WorkspaceFileDiffResult,
+  FileRootChangesRequest,
+  FileRootChangesResult,
+  FileRootFileDiffRequest,
+  FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
@@ -221,8 +222,8 @@ export type MainIpcSessionQueryDepsArgs = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
-  listWorkspaceChanges(sessionId: string): Awaitable<WorkspaceChangesResult>;
-  getWorkspaceFileDiff(request: WorkspaceFileDiffRequest): Awaitable<WorkspaceFileDiffResult>;
+  listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
+  getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
@@ -433,8 +434,8 @@ export function createMainIpcRegistrationDeps(
     inspectSessionFile: args.sessionQuery.inspectSessionFile,
     readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
     openSessionFile: args.sessionQuery.openSessionFile,
-    listWorkspaceChanges: args.sessionQuery.listWorkspaceChanges,
-    getWorkspaceFileDiff: args.sessionQuery.getWorkspaceFileDiff,
+    listFileRootChanges: args.sessionQuery.listFileRootChanges,
+    getFileRootDiff: args.sessionQuery.getFileRootDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
     getDiffPreview: args.sessionQuery.getDiffPreview,
     previewComposerInput: args.sessionQuery.previewComposerInput,

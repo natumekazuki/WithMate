@@ -37,8 +37,8 @@ import {
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
-  WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL,
-  WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
@@ -137,10 +137,10 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
@@ -288,6 +288,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   let currentWindow = ownerWindow;
   const directoryRequests: unknown[] = [];
   const openRequests: unknown[] = [];
+  const changesRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
   const { deps } = createDeps({
     resolveEventWindow: () => currentWindow,
@@ -302,8 +303,11 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
       openRequests.push(request);
       return { status: "opened", targetType: "local-path", target: "C:/repo/src/App.tsx" };
     },
-    listWorkspaceChanges: async () => ({ status: "ok", entries: [] }),
-    getWorkspaceFileDiff: async (request: unknown) => {
+    listFileRootChanges: async (request: unknown) => {
+      changesRequests.push(request);
+      return { status: "ok", entries: [] };
+    },
+    getFileRootDiff: async (request: unknown) => {
       diffRequests.push(request);
       return { status: "not-changed", message: "none" };
     },
@@ -324,15 +328,32 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     target: "C:/repo/src/App.tsx",
   });
   assert.deepEqual(openRequests, [openRequest]);
-  assert.deepEqual(await handlers.get(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL)?.({}, "aux-1"), {
+  const changesRequest = { sessionId: "aux-1", rootId: "workspace" };
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest), {
     status: "ok",
     entries: [],
   });
-  const diffRequest = { sessionId: "aux-1", relativePath: "src/App.tsx", scope: "working-tree" };
-  assert.deepEqual(await handlers.get(WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL)?.({}, diffRequest), {
+  assert.deepEqual(changesRequests, [changesRequest]);
+  const diffRequest = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "src/App.tsx",
+    scope: "working-tree",
+  };
+  assert.deepEqual(await handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, diffRequest), {
     status: "not-changed",
     message: "none",
   });
+  assert.deepEqual(diffRequests, [diffRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, { sessionId: "aux-1", rootId: "" }) as Promise<unknown>,
+    /File root changes request/,
+  );
+  assert.deepEqual(changesRequests, [changesRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, { ...diffRequest, scope: "unknown" }) as Promise<unknown>,
+    /Git Diff request/,
+  );
   assert.deepEqual(diffRequests, [diffRequest]);
 
   currentWindow = otherWindow;
@@ -341,9 +362,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   await assert.rejects(
-    () => handlers.get(WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest) as Promise<unknown>,
     /owning Session window/,
   );
+  assert.deepEqual(changesRequests, [changesRequest]);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
     /owning Session window/,

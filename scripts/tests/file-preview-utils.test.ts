@@ -6,7 +6,7 @@ import {
   decodeSessionFileBytes,
   findPreviewTextMatches,
   PreviewByteAccumulator,
-  projectWorkspaceFileDiffAvailability,
+  projectFileRootDiffAvailability,
   resolveAuthorizedMarkdownResource,
   resolveMarkdownImageTarget,
   resolveMarkdownLinkTarget,
@@ -75,16 +75,16 @@ test("shouldInitiallyFitSvg は寸法情報のないSVGだけを初回Fitにす�
   assert.equal(shouldInitiallyFitSvg(encode("<svg width=\"100%\" height=\"100%\"></svg>")), true);
 });
 
-test("projectWorkspaceFileDiffAvailability は変更なしとGit失敗を区別する", () => {
-  assert.deepEqual(projectWorkspaceFileDiffAvailability({ status: "ok", entries: [] }, "src/App.tsx"), {
+test("projectFileRootDiffAvailability は変更なしとGit失敗を区別する", () => {
+  assert.deepEqual(projectFileRootDiffAvailability({ status: "ok", entries: [] }, "src/App.tsx"), {
     scopes: [],
     message: "",
   });
-  assert.deepEqual(projectWorkspaceFileDiffAvailability({ status: "not-git", message: "Not a Git repository." }, "src/App.tsx"), {
+  assert.deepEqual(projectFileRootDiffAvailability({ status: "not-git", message: "Not a Git repository." }, "src/App.tsx"), {
     scopes: [],
     message: "",
   });
-  assert.deepEqual(projectWorkspaceFileDiffAvailability({
+  assert.deepEqual(projectFileRootDiffAvailability({
     status: "ok",
     entries: [{
       relativePath: "src/App.tsx",

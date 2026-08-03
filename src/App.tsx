@@ -146,12 +146,13 @@ import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
 import type { SessionSidePane } from "./session-side-pane.js";
 import { SessionFileExplorerPane } from "./file-explorer/SessionFileExplorerPane.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
-import { WorkspaceChangesPane } from "./file-explorer/WorkspaceChangesPane.js";
+import { FileRootChangesPane } from "./file-explorer/FileRootChangesPane.js";
 import type {
+  FileRootFileDiffRequest,
+  FileRootGitChangeScope,
   SessionFileResourceRequest,
-  WorkspaceChangeScope,
 } from "./file-explorer/file-explorer-contract.js";
-import { projectWorkspaceFileDiffAvailability } from "./file-explorer/file-preview-utils.js";
+import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
   acknowledgePreviewChatMessageCount,
   beginPreviewChatActivity,
@@ -456,17 +457,18 @@ export default function AgentSessionWindowApp() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileResourceRequest | null>(null);
-  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<WorkspaceChangeScope[]>([]);
+  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
   const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
-  const [workspaceDiffPreview, setWorkspaceDiffPreview] = useState<{
+  const [fileRootDiffPreview, setFileRootDiffPreview] = useState<{
     sessionId: string;
+    rootId: string;
     relativePath: string;
-    scope: WorkspaceChangeScope;
+    scope: FileRootGitChangeScope;
     generation: number;
     patch: string;
   } | null>(null);
-  const [workspaceDiffLoadingScope, setWorkspaceDiffLoadingScope] = useState<WorkspaceChangeScope | null>(null);
+  const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
   const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
   const [inlinePathFeedback, setInlinePathFeedback] = useState("");
   const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
@@ -539,7 +541,7 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const auxiliaryLoadRevisionRef = useRef(0);
   const mainComposerCaretRef = useRef(0);
-  const workspaceDiffRequestRevisionRef = useRef(0);
+  const fileRootDiffRequestRevisionRef = useRef(0);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -673,16 +675,16 @@ export default function AgentSessionWindowApp() {
   });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
   const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
-  const isCentralPreviewActive = selectedFilePreview !== null || workspaceDiffPreview !== null;
+  const isCentralPreviewActive = selectedFilePreview !== null || fileRootDiffPreview !== null;
   const beginCentralPreviewIfNeeded = useCallback(() => {
     if (!isCentralPreviewActive && activeRunSessionId) {
       setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
     }
   }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
   const closeCentralPreview = useCallback(() => {
-    workspaceDiffRequestRevisionRef.current += 1;
-    setWorkspaceDiffLoadingScope(null);
-    setWorkspaceDiffPreview(null);
+    fileRootDiffRequestRevisionRef.current += 1;
+    setFileRootDiffLoadingScope(null);
+    setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
     setPreviewChatActivity(endPreviewChatActivity());
@@ -702,12 +704,12 @@ export default function AgentSessionWindowApp() {
     ));
   }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
   useEffect(() => {
-    workspaceDiffRequestRevisionRef.current += 1;
+    fileRootDiffRequestRevisionRef.current += 1;
     setSelectedFilePreview((current) => current?.sessionId === activeRunSessionId ? current : null);
     setSelectedFileDiffScopes([]);
     setSelectedFileDiffAvailabilityMessage("");
-    setWorkspaceDiffPreview(null);
-    setWorkspaceDiffLoadingScope(null);
+    setFileRootDiffPreview(null);
+    setFileRootDiffLoadingScope(null);
   }, [activeRunSessionId]);
   useEffect(() => {
     let active = true;
@@ -716,18 +718,20 @@ export default function AgentSessionWindowApp() {
     if (
       !withmateApi ||
       !activeRunSessionId ||
-      !selectedFilePreview ||
-      selectedFilePreview.rootId !== "workspace"
+      !selectedFilePreview
     ) {
       return () => {
         active = false;
       };
     }
-    void withmateApi.listWorkspaceChanges(activeRunSessionId).then((result) => {
+    void withmateApi.listFileRootChanges({
+      sessionId: activeRunSessionId,
+      rootId: selectedFilePreview.rootId,
+    }).then((result) => {
       if (!active) {
         return;
       }
-      const availability = projectWorkspaceFileDiffAvailability(result, selectedFilePreview.relativePath);
+      const availability = projectFileRootDiffAvailability(result, selectedFilePreview.relativePath);
       setSelectedFileDiffScopes(availability.scopes);
       setSelectedFileDiffAvailabilityMessage(availability.message);
     }).catch(() => {
@@ -740,45 +744,32 @@ export default function AgentSessionWindowApp() {
       active = false;
     };
   }, [activeRunSessionId, selectedFilePreview, withmateApi]);
-  const handleOpenWorkspaceFile = useCallback((relativePath: string) => {
-    if (!activeRunSessionId) {
-      return;
-    }
-    workspaceDiffRequestRevisionRef.current += 1;
+  const handleOpenFileRootFile = useCallback((request: SessionFileResourceRequest) => {
+    fileRootDiffRequestRevisionRef.current += 1;
     beginCentralPreviewIfNeeded();
-    setWorkspaceDiffLoadingScope(null);
-    setWorkspaceDiffPreview(null);
+    setFileRootDiffLoadingScope(null);
+    setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
-    setSelectedFilePreview({
-      sessionId: activeRunSessionId,
-      rootId: "workspace",
-      relativePath,
-    });
-  }, [activeRunSessionId, beginCentralPreviewIfNeeded]);
-  const handleShowWorkspaceDiff = useCallback((
-    relativePath: string,
-    scope: WorkspaceChangeScope,
-  ): Promise<string | null> => {
-    if (!withmateApi || !activeRunSessionId) {
+    setSelectedFilePreview(request);
+  }, [beginCentralPreviewIfNeeded]);
+  const handleShowFileRootDiff = useCallback((request: FileRootFileDiffRequest): Promise<string | null> => {
+    if (!withmateApi || request.sessionId !== activeRunSessionId) {
       return Promise.resolve("Git diff is not available for this session.");
     }
-    const revision = workspaceDiffRequestRevisionRef.current + 1;
-    workspaceDiffRequestRevisionRef.current = revision;
-    setWorkspaceDiffLoadingScope(scope);
-    return withmateApi.getWorkspaceFileDiff({
-      sessionId: activeRunSessionId,
-      relativePath,
-      scope,
-    }).then((result) => {
-      if (workspaceDiffRequestRevisionRef.current !== revision) {
+    const revision = fileRootDiffRequestRevisionRef.current + 1;
+    fileRootDiffRequestRevisionRef.current = revision;
+    setFileRootDiffLoadingScope(request.scope);
+    return withmateApi.getFileRootDiff(request).then((result) => {
+      if (fileRootDiffRequestRevisionRef.current !== revision) {
         return null;
       }
       if (result.status !== "ok") {
         return result.message;
       }
       beginCentralPreviewIfNeeded();
-      setWorkspaceDiffPreview({
-        sessionId: activeRunSessionId,
+      setFileRootDiffPreview({
+        sessionId: request.sessionId,
+        rootId: request.rootId,
         relativePath: result.relativePath,
         scope: result.scope,
         generation: revision,
@@ -786,26 +777,29 @@ export default function AgentSessionWindowApp() {
       });
       return null;
     }).catch((error) => (
-      workspaceDiffRequestRevisionRef.current === revision
+      fileRootDiffRequestRevisionRef.current === revision
         ? error instanceof Error ? error.message : "Git diff failed."
         : null
     )).finally(() => {
-      if (workspaceDiffRequestRevisionRef.current === revision) {
-        setWorkspaceDiffLoadingScope(null);
+      if (fileRootDiffRequestRevisionRef.current === revision) {
+        setFileRootDiffLoadingScope(null);
       }
     });
   }, [activeRunSessionId, beginCentralPreviewIfNeeded, withmateApi]);
-  const handleOpenSelectedFileDiff = useCallback(async (scope: WorkspaceChangeScope): Promise<string | null> => {
-    if (!withmateApi || !activeRunSessionId || !selectedFilePreview || selectedFilePreview.rootId !== "workspace") {
-      return "Git Diff is available for Workspace files only.";
+  const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitChangeScope): Promise<string | null> => {
+    if (!withmateApi || !activeRunSessionId || !selectedFilePreview) {
+      return "Git Diff is not available for this file.";
     }
-    const revision = workspaceDiffRequestRevisionRef.current + 1;
-    workspaceDiffRequestRevisionRef.current = revision;
+    const revision = fileRootDiffRequestRevisionRef.current + 1;
+    fileRootDiffRequestRevisionRef.current = revision;
     const request = { ...selectedFilePreview };
-    setWorkspaceDiffLoadingScope(scope);
+    setFileRootDiffLoadingScope(scope);
     try {
-      const status = await withmateApi.listWorkspaceChanges(activeRunSessionId);
-      if (workspaceDiffRequestRevisionRef.current !== revision) {
+      const status = await withmateApi.listFileRootChanges({
+        sessionId: activeRunSessionId,
+        rootId: request.rootId,
+      });
+      if (fileRootDiffRequestRevisionRef.current !== revision) {
         return null;
       }
       if (status.status !== "ok") {
@@ -821,19 +815,21 @@ export default function AgentSessionWindowApp() {
       if (!change.scopes.includes(scope)) {
         return "This file is no longer changed in the selected Git scope.";
       }
-      const result = await withmateApi.getWorkspaceFileDiff({
+      const result = await withmateApi.getFileRootDiff({
         sessionId: activeRunSessionId,
+        rootId: request.rootId,
         relativePath: request.relativePath,
         scope,
       });
-      if (workspaceDiffRequestRevisionRef.current !== revision) {
+      if (fileRootDiffRequestRevisionRef.current !== revision) {
         return null;
       }
       if (result.status !== "ok") {
         return result.message;
       }
-      setWorkspaceDiffPreview({
+      setFileRootDiffPreview({
         sessionId: activeRunSessionId,
+        rootId: request.rootId,
         relativePath: result.relativePath,
         scope: result.scope,
         generation: revision,
@@ -841,36 +837,38 @@ export default function AgentSessionWindowApp() {
       });
       return null;
     } catch (error) {
-      return workspaceDiffRequestRevisionRef.current === revision
+      return fileRootDiffRequestRevisionRef.current === revision
         ? error instanceof Error ? error.message : "Git diff failed."
         : null;
     } finally {
-      if (workspaceDiffRequestRevisionRef.current === revision) {
-        setWorkspaceDiffLoadingScope(null);
+      if (fileRootDiffRequestRevisionRef.current === revision) {
+        setFileRootDiffLoadingScope(null);
       }
     }
   }, [activeRunSessionId, selectedFilePreview, withmateApi]);
-  const handleReloadWorkspaceDiff = useCallback(async (): Promise<string | null> => {
-    if (!withmateApi || !workspaceDiffPreview || workspaceDiffPreview.sessionId !== activeRunSessionId) {
+  const handleReloadFileRootDiff = useCallback(async (): Promise<string | null> => {
+    if (!withmateApi || !fileRootDiffPreview || fileRootDiffPreview.sessionId !== activeRunSessionId) {
       return "Git diff is no longer available for this session.";
     }
-    const revision = workspaceDiffRequestRevisionRef.current + 1;
-    workspaceDiffRequestRevisionRef.current = revision;
-    setWorkspaceDiffLoadingScope(workspaceDiffPreview.scope);
+    const revision = fileRootDiffRequestRevisionRef.current + 1;
+    fileRootDiffRequestRevisionRef.current = revision;
+    setFileRootDiffLoadingScope(fileRootDiffPreview.scope);
     try {
-      const result = await withmateApi.getWorkspaceFileDiff({
-        sessionId: workspaceDiffPreview.sessionId,
-        relativePath: workspaceDiffPreview.relativePath,
-        scope: workspaceDiffPreview.scope,
+      const result = await withmateApi.getFileRootDiff({
+        sessionId: fileRootDiffPreview.sessionId,
+        rootId: fileRootDiffPreview.rootId,
+        relativePath: fileRootDiffPreview.relativePath,
+        scope: fileRootDiffPreview.scope,
       });
-      if (workspaceDiffRequestRevisionRef.current !== revision) {
+      if (fileRootDiffRequestRevisionRef.current !== revision) {
         return null;
       }
       if (result.status !== "ok") {
         return result.message;
       }
-      setWorkspaceDiffPreview({
-        sessionId: workspaceDiffPreview.sessionId,
+      setFileRootDiffPreview({
+        sessionId: fileRootDiffPreview.sessionId,
+        rootId: fileRootDiffPreview.rootId,
         relativePath: result.relativePath,
         scope: result.scope,
         generation: revision,
@@ -878,15 +876,15 @@ export default function AgentSessionWindowApp() {
       });
       return null;
     } catch (error) {
-      return workspaceDiffRequestRevisionRef.current === revision
+      return fileRootDiffRequestRevisionRef.current === revision
         ? error instanceof Error ? error.message : "Git diff failed."
         : null;
     } finally {
-      if (workspaceDiffRequestRevisionRef.current === revision) {
-        setWorkspaceDiffLoadingScope(null);
+      if (fileRootDiffRequestRevisionRef.current === revision) {
+        setFileRootDiffLoadingScope(null);
       }
     }
-  }, [activeRunSessionId, withmateApi, workspaceDiffPreview]);
+  }, [activeRunSessionId, withmateApi, fileRootDiffPreview]);
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
@@ -3259,20 +3257,21 @@ export default function AgentSessionWindowApp() {
       activeTab={fileExplorerTab}
       onActiveTabChange={setFileExplorerTab}
       onOpenFile={(request) => {
-        workspaceDiffRequestRevisionRef.current += 1;
+        fileRootDiffRequestRevisionRef.current += 1;
         beginCentralPreviewIfNeeded();
-        setWorkspaceDiffLoadingScope(null);
-        setWorkspaceDiffPreview(null);
+        setFileRootDiffLoadingScope(null);
+        setFileRootDiffPreview(null);
         setSelectedFileDiffAvailabilityMessage("");
         setSelectedFilePreview(request);
       }}
       changesContent={(
-        <WorkspaceChangesPane
+        <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
           enabled={isFilesPaneVisible && fileExplorerTab === "changes"}
-          onOpenFile={handleOpenWorkspaceFile}
-          onOpenDiff={handleShowWorkspaceDiff}
+          rootsRevision={fileExplorerRootsRevision}
+          onOpenFile={handleOpenFileRootFile}
+          onOpenDiff={handleShowFileRootDiff}
         />
       )}
     />
@@ -3293,15 +3292,15 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New messages"
         : "";
-  const filePreviewContent = workspaceDiffPreview ? (
+  const filePreviewContent = fileRootDiffPreview ? (
     <SessionDiffPreview
-      title={`${workspaceDiffPreview.relativePath} · ${workspaceDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
-      previewRevision={workspaceDiffPreview.generation}
-      patch={workspaceDiffPreview.patch}
+      title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
+      previewRevision={fileRootDiffPreview.generation}
+      patch={fileRootDiffPreview.patch}
       onClose={closeCentralPreview}
       onCopyText={handleCopyMessageText}
-      onReload={handleReloadWorkspaceDiff}
-      reloadPending={workspaceDiffLoadingScope === workspaceDiffPreview.scope}
+      onReload={handleReloadFileRootDiff}
+      reloadPending={fileRootDiffLoadingScope === fileRootDiffPreview.scope}
       chatNotice={previewChatNotice}
     />
   ) : selectedFilePreview ? (
@@ -3313,7 +3312,7 @@ export default function AgentSessionWindowApp() {
       diffScopes={selectedFileDiffScopes}
       diffAvailabilityMessage={selectedFileDiffAvailabilityMessage}
       onOpenDiff={selectedFileDiffScopes.length > 0 ? handleOpenSelectedFileDiff : undefined}
-      diffLoadingScope={workspaceDiffLoadingScope}
+      diffLoadingScope={fileRootDiffLoadingScope}
       chatNotice={previewChatNotice}
     />
   ) : undefined;

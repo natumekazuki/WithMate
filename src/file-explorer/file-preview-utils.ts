@@ -1,8 +1,8 @@
 import type {
   SessionFileEncoding,
   SessionFileRoot,
-  WorkspaceChangesResult,
-  WorkspaceChangeScope,
+  FileRootChangesResult,
+  FileRootGitChangeScope,
 } from "./file-explorer-contract.js";
 import { findTextMatches } from "../find-text-matches.js";
 import { detectSessionFileEncoding } from "./file-content-detection.js";
@@ -91,10 +91,10 @@ export function calculateImageFitZoom(
   return Math.max(0.1, Math.round(scale * 1_000) / 10);
 }
 
-export function projectWorkspaceFileDiffAvailability(
-  result: WorkspaceChangesResult,
+export function projectFileRootDiffAvailability(
+  result: FileRootChangesResult,
   relativePath: string,
-): { scopes: WorkspaceChangeScope[]; message: string } {
+): { scopes: FileRootGitChangeScope[]; message: string } {
   if (result.status !== "ok") {
     return { scopes: [], message: "" };
   }

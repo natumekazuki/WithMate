@@ -228,8 +228,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
   - 未作成の `Session Folder` は root の初回展開時に空ディレクトリとして作成する
   - tree row は仮想化し、file 本文は選択時に 1 件だけ chunk read する
-  - `Files | Changes` を切り替え、Changes は Workspace の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く
-  - Changes は user configuration から外部 command を実行しない。Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
+  - `Files | Changes` を切り替え、Changes は各 Git root の Working Tree / Staged を 1 file 単位で中央 live Git Diff へ開く。非 Git root は表示しない。包含関係にある root は独立した scope とし、同じ file も各 root からの相対 path で表示する
+  - Changes は user configuration から外部 command を実行しない。root の認可と表示 scope は ADR 015、Git executable、directory identity、config / index の隔離境界は ADR 014 を正本とする。有効な clean / process filter が必要な repository では、他の操作 feedback がある場合も理由を表示して利用不可にする
   - File Explorer の user-visible 導線は Companion に追加しない
 - 中央 file preview
   - message list だけを置き換え、Action Dock は表示したまま入力、添付、送信を受け付ける

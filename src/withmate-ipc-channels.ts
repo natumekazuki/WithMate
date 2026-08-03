@@ -17,8 +17,8 @@ export const WITHMATE_OPEN_SESSION_FILE_CHANNEL = "withmate:open-session-file";
 export const WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL = "withmate:copy-session-file-preview-image";
 export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
   "withmate:show-session-file-preview-image-context-menu";
-export const WITHMATE_LIST_WORKSPACE_CHANGES_CHANNEL = "withmate:list-workspace-changes";
-export const WITHMATE_GET_WORKSPACE_FILE_DIFF_CHANNEL = "withmate:get-workspace-file-diff";
+export const WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL = "withmate:list-file-root-changes";
+export const WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL = "withmate:get-file-root-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";
 export const WITHMATE_GET_MODEL_CATALOG_CHANNEL = "withmate:get-model-catalog";
 export const WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL = "withmate:import-model-catalog";

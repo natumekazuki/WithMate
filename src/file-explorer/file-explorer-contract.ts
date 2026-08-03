@@ -75,26 +75,30 @@ export type SessionFileChunkResult = {
   revision: string;
 };
 
-export type WorkspaceChangeScope = "working-tree" | "staged";
-export type WorkspaceChangeKind = "added" | "modified" | "deleted" | "renamed" | "untracked";
+export type FileRootGitChangeScope = "working-tree" | "staged";
+export type FileRootGitChangeKind = "added" | "modified" | "deleted" | "renamed" | "untracked";
 
-export type WorkspaceChangeEntry = {
+export type FileRootGitChangeEntry = {
   relativePath: string;
   previousRelativePath: string | null;
-  kinds: Partial<Record<WorkspaceChangeScope, WorkspaceChangeKind>>;
-  scopes: WorkspaceChangeScope[];
+  kinds: Partial<Record<FileRootGitChangeScope, FileRootGitChangeKind>>;
+  scopes: FileRootGitChangeScope[];
 };
 
-export type WorkspaceChangesResult =
-  | { status: "ok"; entries: WorkspaceChangeEntry[] }
-  | { status: "not-git" | "workspace-not-found" | "failed"; message: string };
-
-export type WorkspaceFileDiffRequest = {
+export type FileRootChangesRequest = {
   sessionId: string;
-  relativePath: string;
-  scope: WorkspaceChangeScope;
+  rootId: string;
 };
 
-export type WorkspaceFileDiffResult =
-  | { status: "ok"; relativePath: string; scope: WorkspaceChangeScope; patch: string }
-  | { status: "untracked" | "not-changed" | "not-git" | "workspace-not-found" | "failed"; message: string };
+export type FileRootChangesResult =
+  | { status: "ok"; entries: FileRootGitChangeEntry[] }
+  | { status: "not-git" | "root-not-found" | "failed"; message: string };
+
+export type FileRootFileDiffRequest = FileRootChangesRequest & {
+  relativePath: string;
+  scope: FileRootGitChangeScope;
+};
+
+export type FileRootFileDiffResult =
+  | { status: "ok"; relativePath: string; scope: FileRootGitChangeScope; patch: string }
+  | { status: "untracked" | "not-changed" | "not-git" | "root-not-found" | "failed"; message: string };
