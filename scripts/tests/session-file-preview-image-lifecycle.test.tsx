@@ -682,3 +682,46 @@ test("Git Diff検索はReloadで一致件数が減っても現在位置を有効
     dom.window.close();
   }
 });
+
+test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(SessionDiffPreview, {
+        title: "same.txt · Working Tree",
+        previewRevision: 1,
+        patch: "@@ -1 +1 @@\n-old\n+new\n",
+        onClose() {},
+        onCopyText() {},
+      }));
+    });
+
+    assert.ok(container.querySelector(".session-live-diff-split"));
+    assert.equal(container.querySelector(".session-file-text-scroll"), null);
+    assert.equal(container.querySelector("button.is-active")?.textContent, "Split");
+
+    const inlineButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Inline");
+    assert.ok(inlineButton);
+    await act(async () => inlineButton.click());
+
+    assert.equal(container.querySelector(".session-live-diff-split"), null);
+    assert.ok(container.querySelector(".session-file-text-scroll"));
+    assert.equal(container.querySelector("button.is-active")?.textContent, "Inline");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});

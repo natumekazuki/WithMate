@@ -48,6 +48,11 @@ import {
 } from "./rendered-text-search.js";
 import { PreviewResourceQueue } from "./preview-resource-queue.js";
 import { clampFindMatchIndex } from "../find-text-matches.js";
+import {
+  parseUnifiedDiff,
+  type UnifiedDiffContentRow,
+  type UnifiedDiffDisplayRow,
+} from "./unified-diff.js";
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
@@ -233,6 +238,137 @@ function VirtualizedTextContent({
         })}
       </div>
     </SelectionCopySurface>
+  );
+}
+
+type VirtualizedSplitDiffContentProps = {
+  patch: string;
+  copyText: (text: string) => void;
+  matches: PreviewTextMatch[];
+  currentMatchIndex: number;
+};
+
+function rowContainsPatchLine(row: UnifiedDiffDisplayRow, patchLineIndex: number): boolean {
+  if (row.kind === "metadata" || row.kind === "hunk" || row.kind === "note") {
+    return row.patchLineIndex === patchLineIndex;
+  }
+  return row.leftPatchLineIndex === patchLineIndex || row.rightPatchLineIndex === patchLineIndex;
+}
+
+function VirtualizedSplitDiffContent({
+  patch,
+  copyText,
+  matches,
+  currentMatchIndex,
+}: VirtualizedSplitDiffContentProps) {
+  const parsed = useMemo(() => parseUnifiedDiff(patch), [patch]);
+  const matchesByLine = useMemo(() => {
+    const grouped = new Map<number, IndexedPreviewTextMatch[]>();
+    matches.forEach((match, matchIndex) => {
+      const lineMatches = grouped.get(match.lineIndex) ?? [];
+      lineMatches.push({ ...match, matchIndex });
+      grouped.set(match.lineIndex, lineMatches);
+    });
+    return grouped;
+  }, [matches]);
+  const activePatchLineIndex = matches[currentMatchIndex]?.lineIndex ?? null;
+  const activeRowIndex = useMemo(() => (
+    activePatchLineIndex === null
+      ? null
+      : parsed.rows.findIndex((row) => rowContainsPatchLine(row, activePatchLineIndex))
+  ), [activePatchLineIndex, parsed.rows]);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const virtualizer = useVirtualizer({
+    count: parsed.rows.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 25,
+    overscan: 24,
+    useFlushSync: false,
+  });
+
+  useEffect(() => {
+    if (activeRowIndex !== null && activeRowIndex >= 0) {
+      virtualizer.scrollToIndex(activeRowIndex, { align: "center" });
+    }
+  }, [activeRowIndex, virtualizer]);
+
+  const renderContentCell = (
+    row: UnifiedDiffContentRow,
+    side: "left" | "right",
+  ) => {
+    const patchLineIndex = side === "left" ? row.leftPatchLineIndex : row.rightPatchLineIndex;
+    const text = side === "left" ? row.leftText : row.rightText;
+    return (
+      <>
+        <span className="session-live-diff-line-number" aria-hidden="true">
+          {side === "left" ? row.leftNumber ?? "" : row.rightNumber ?? ""}
+        </span>
+        <code className={`session-live-diff-code ${side}`}>
+          {renderHighlightedLine(
+            text ?? "",
+            patchLineIndex === undefined ? [] : matchesByLine.get(patchLineIndex) ?? [],
+            currentMatchIndex,
+          )}
+        </code>
+      </>
+    );
+  };
+
+  return (
+    <div className="session-live-diff-split">
+      <div className="session-live-diff-split-header" aria-hidden="true">
+        <span />
+        <strong>Before</strong>
+        <span />
+        <strong>After</strong>
+      </div>
+      <SelectionCopySurface
+        className="session-live-diff-split-scroll"
+        onCopyText={copyText}
+        surfaceRef={scrollRef}
+      >
+        <div className="session-live-diff-split-rows" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((virtualRow) => {
+            const row = parsed.rows[virtualRow.index];
+            if (!row) {
+              return null;
+            }
+            const isActive = activeRowIndex === virtualRow.index;
+            if (row.kind === "metadata" || row.kind === "hunk" || row.kind === "note") {
+              return (
+                <div
+                  key={virtualRow.key}
+                  className={`session-live-diff-split-row ${row.kind}${isActive ? " is-current" : ""}`}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  <code>
+                    {renderHighlightedLine(
+                      row.text,
+                      matchesByLine.get(row.patchLineIndex) ?? [],
+                      currentMatchIndex,
+                    )}
+                  </code>
+                </div>
+              );
+            }
+            return (
+              <div
+                key={virtualRow.key}
+                className={`session-live-diff-split-row change ${row.kind}${isActive ? " is-current" : ""}`}
+                data-index={virtualRow.index}
+                ref={virtualizer.measureElement}
+                style={{ transform: `translateY(${virtualRow.start}px)` }}
+              >
+                {renderContentCell(row, "left")}
+                {renderContentCell(row, "right")}
+              </div>
+            );
+          })}
+        </div>
+      </SelectionCopySurface>
+    </div>
   );
 }
 
@@ -841,6 +977,7 @@ export function SessionDiffPreview({
   reloadPending = false,
   chatNotice = "",
 }: SessionDiffPreviewProps) {
+  const [viewMode, setViewMode] = useState<"split" | "inline">("split");
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [currentMatch, setCurrentMatch] = useState(0);
@@ -921,6 +1058,22 @@ export function SessionDiffPreview({
         </button>
         <div className="session-file-preview-title"><strong>{title}</strong><span>Git Diff</span></div>
         <div className="session-file-preview-actions">
+          <div className="session-file-preview-segmented" role="group" aria-label="Git diff display mode">
+            <button
+              type="button"
+              className={viewMode === "split" ? "is-active" : ""}
+              onClick={() => setViewMode("split")}
+            >
+              Split
+            </button>
+            <button
+              type="button"
+              className={viewMode === "inline" ? "is-active" : ""}
+              onClick={() => setViewMode("inline")}
+            >
+              Inline
+            </button>
+          </div>
           <button type="button" onClick={() => setFindOpen(true)}>Find</button>
           {onReload ? (
             <button
@@ -943,13 +1096,22 @@ export function SessionDiffPreview({
         onNext={() => navigate(1)}
         onClose={() => setFindOpen(false)}
       />
-      <VirtualizedTextContent
-        text={patch}
-        copyText={onCopyText}
-        matches={matches}
-        currentMatchIndex={activeCurrentMatch}
-        variant="diff"
-      />
+      {viewMode === "split" ? (
+        <VirtualizedSplitDiffContent
+          patch={patch}
+          copyText={onCopyText}
+          matches={matches}
+          currentMatchIndex={activeCurrentMatch}
+        />
+      ) : (
+        <VirtualizedTextContent
+          text={patch}
+          copyText={onCopyText}
+          matches={matches}
+          currentMatchIndex={activeCurrentMatch}
+          variant="diff"
+        />
+      )}
       {feedback ? <p className="session-file-preview-feedback" role="alert">{feedback}</p> : null}
     </section>
   );
