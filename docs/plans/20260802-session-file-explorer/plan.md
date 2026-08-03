@@ -68,7 +68,7 @@
 
 ### 共通ツールバー
 
-- 操作は左から、Back to Chat、file name / path、表示種別固有の control、Find、Reload の順に配置する。content copy は置かない。
+- 操作は左から、Back to Chat、file name / path、表示種別固有の control、Find、Reload の順に配置する。ファイル全体のtext copyは置かない。単体Image / SVG previewには表示種別固有の`Copy Image`を置く。
 - path は省略表示できるが、hover で全文を確認できる。狭い幅では file name / path を先に縮め、操作は折り返して到達性を維持する。
 
 ### プレビュー内の選択コピー
@@ -79,7 +79,7 @@
 - Ctrl+C は platform 標準の選択コピーとして維持する。
 - 行番号、diff の行番号 gutter、非表示の control text は選択結果へ含めない。
 - chat message の selection detection、floating position、clipboard failure handling を共有境界へ抽出し、preview と chat で同じ表示と操作感を使う。preview を `SessionMessageColumn` の内部実装へ直接依存させない。
-- Image と unsupported binary は選択コピーの対象外とする。
+- Image と unsupported binary は文字列の選択コピー対象外とする。単体Image / SVG previewはtoolbarの`Copy Image`と画像上のnative context menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像はこの操作の対象外とする。
 
 ### 共通検索
 

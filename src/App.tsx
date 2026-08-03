@@ -1328,6 +1328,7 @@ export default function AgentSessionWindowApp() {
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
     scrollSignature: messageListScrollSignature,
+    enabled: !isCentralPreviewActive,
   });
 
   useEffect(() => {

@@ -109,3 +109,16 @@ test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast�
     /\.session-file-markdown \.message-mermaid-error\s*{\s*color:\s*var\(--session-file-error\);\s*}/,
   );
 });
+
+test("Markdown preview は中央本文を固定幅にせずcontent領域を使う", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown-scroll\s*{\s*padding:\s*18px\s+10px\s+40px;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown\s*{\s*width:\s*100%;\s*max-width:\s*none;\s*margin:\s*0;\s*}/,
+  );
+});
