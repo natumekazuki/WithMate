@@ -9,7 +9,7 @@ import { ComposerAttachmentMenu } from "../../src/chat/composer-attachment-menu.
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-test("ComposerAttachmentMenu は単一popoverに添付操作を分類し、選択後に閉じる", async () => {
+test("ComposerAttachmentMenu は clipping 境界外の単一popoverで添付操作を完結する", async () => {
   const previousGlobals = {
     window: globalThis.window,
     document: globalThis.document,
@@ -67,11 +67,13 @@ test("ComposerAttachmentMenu は単一popoverに添付操作を分類し、選�
     await act(async () => {
       attachButton?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
     });
+    const menu = dom.window.document.querySelector<HTMLElement>("[role=\"menu\"]");
+    assert.equal(menu?.parentElement, dom.window.document.body);
     assert.deepEqual(
-      Array.from(container.querySelectorAll(".composer-attachment-menu-section-label")).map((item) => item.textContent),
+      Array.from(dom.window.document.querySelectorAll(".composer-attachment-menu-section-label")).map((item) => item.textContent),
       ["Attach", "Session files"],
     );
-    const menuItems = Array.from(container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]"));
+    const menuItems = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]"));
     assert.deepEqual(menuItems.map((item) => item.textContent), ["File", "Folder", "Image", "Copy", "File", "Folder", "Image"]);
     assert.equal(dom.window.document.activeElement, menuItems[0]);
 
@@ -83,20 +85,20 @@ test("ComposerAttachmentMenu は単一popoverに添付操作を分類し、選�
     await act(async () => {
       menuItems[1]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
-    assert.equal(container.querySelector("[role=\"menu\"]"), null);
+    assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);
     assert.equal(dom.window.document.activeElement, attachButton);
 
     await act(async () => attachButton?.click());
-    const copyButton = container.querySelector<HTMLButtonElement>("[aria-label=\"ファイルをSession Filesへコピーして添付\"]");
+    const copyButton = dom.window.document.querySelector<HTMLButtonElement>("[aria-label=\"ファイルをSession Filesへコピーして添付\"]");
     await act(async () => copyButton?.click());
     assert.equal(copiedToSessionFiles, 1);
-    assert.equal(container.querySelector("[role=\"menu\"]"), null);
+    assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);
 
     await act(async () => attachButton?.click());
     await act(async () => {
       dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
     });
-    assert.equal(container.querySelector("[role=\"menu\"]"), null);
+    assert.equal(dom.window.document.querySelector("[role=\"menu\"]"), null);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

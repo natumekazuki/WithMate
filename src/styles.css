@@ -7543,12 +7543,15 @@ button:disabled {
 }
 
 .composer-attachment-menu {
-  position: absolute;
-  left: 0;
-  bottom: calc(100% + 8px);
+  --ink: #edf2f7;
+  --muted: #98a2b3;
+  --character-main-soft: rgba(111, 140, 255, 0.14);
+  position: fixed;
   z-index: 30;
   display: grid;
   width: min(348px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
   gap: 10px;
   padding: 10px;
   border: 1px solid rgba(203, 213, 225, 0.18);
