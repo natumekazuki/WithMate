@@ -190,7 +190,7 @@ button:disabled {
 }
 
 .session-action-dock-slot.is-expanded > .session-action-dock {
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .session-action-dock-slot.is-expanded .session-action-dock-expanded-content,
@@ -209,9 +209,19 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.session-action-dock-slot.is-expanded .composer > :is(
+  .composer-path-match-list,
+  .composer-attachment-list,
+  .composer-additional-directory-list
+) {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .session-action-dock-slot.is-expanded .composer-input-row {
   flex: 1 1 auto;
-  min-height: 92px;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -224,6 +234,7 @@ button:disabled {
 .session-action-dock-slot.is-expanded .composer-box textarea {
   min-height: 0;
   height: 100%;
+  overflow-y: auto;
   resize: none;
 }
 

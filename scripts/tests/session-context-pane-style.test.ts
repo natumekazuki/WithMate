@@ -94,8 +94,10 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
   );
   assert.match(chatWindowSource, /className="session-action-dock-expanded-content"/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?resize:\s*none;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded > \.session-action-dock\s*{\s*overflow:\s*hidden;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :is\([\s\S]*?\.composer-path-match-list,[\s\S]*?\.composer-attachment-list,[\s\S]*?\.composer-additional-directory-list[\s\S]*?\)\s*{[\s\S]*?flex-shrink:\s*1;[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?overflow-y:\s*auto;[\s\S]*?resize:\s*none;/);
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
 });
