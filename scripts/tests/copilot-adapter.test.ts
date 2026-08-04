@@ -784,7 +784,7 @@ describe("CopilotAdapter env", () => {
     assert.equal("payload" in toProviderMetadataLogData(metadata[0]!), false);
   });
 
-  it("top-level assistant message は arrival 順に空行区切りで連結する", () => {
+  it("top-level assistant message は arrival 順に空行区切りで連結し、最後の非空 message を保持する", () => {
     const first = applyCopilotAssistantEvent([], "", {
       type: "assistant.message",
       data: {
@@ -799,8 +799,16 @@ describe("CopilotAdapter env", () => {
         parentToolCallId: null,
       },
     } as never);
+    const trailingEmpty = applyCopilotAssistantEvent(second.messages, second.draft, {
+      type: "assistant.message",
+      data: {
+        content: "  ",
+        parentToolCallId: null,
+      },
+    } as never);
 
-    assert.equal(second.assistantText, "最初の案内\n\n次の案内");
+    assert.equal(trailingEmpty.assistantText, "最初の案内\n\n次の案内");
+    assert.equal(trailingEmpty.lastNonEmptyAssistantMessageText, "次の案内");
   });
 
   it("delta のあとに同内容の final message が来ても二重化しない", () => {
@@ -835,6 +843,30 @@ describe("CopilotAdapter env", () => {
 
     assert.equal(next.assistantText, "本文");
     assert.deepEqual(next.messages, ["本文"]);
+  });
+
+  it("sub-agent の assistant message は本文へ混ぜない", () => {
+    const afterDelta = applyCopilotAssistantEvent(["本文"], "", {
+      type: "assistant.message_delta",
+      agentId: "subagent-1",
+      data: {
+        deltaContent: "sub-agent の途中経過",
+        parentToolCallId: null,
+      },
+    } as never);
+    const afterFinal = applyCopilotAssistantEvent(afterDelta.messages, afterDelta.draft, {
+      type: "assistant.message",
+      agentId: "subagent-1",
+      data: {
+        content: "sub-agent の完了報告",
+        parentToolCallId: null,
+      },
+    } as never);
+
+    assert.equal(afterFinal.assistantText, "本文");
+    assert.equal(afterFinal.lastNonEmptyAssistantMessageText, "本文");
+    assert.deepEqual(afterFinal.messages, ["本文"]);
+    assert.equal(afterFinal.draft, "");
   });
 
   it("session.idle で実行中の background task を掃除する", () => {

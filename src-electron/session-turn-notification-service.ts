@@ -75,16 +75,7 @@ function splitGraphemes(value: string): string[] {
   return Array.from(graphemeSegmenter.segment(value), ({ segment }) => segment);
 }
 
-function buildResponsePreview(session: Session): string | null {
-  let assistantText = "";
-  for (let index = session.messages.length - 1; index >= 0; index -= 1) {
-    const message = session.messages[index];
-    if (message?.role === "assistant") {
-      assistantText = message.text;
-      break;
-    }
-  }
-
+function buildResponsePreview(assistantText: string): string | null {
   if (assistantText.length > RESPONSE_PREVIEW_MAX_SOURCE_CODE_UNITS) {
     return null;
   }
@@ -154,13 +145,13 @@ export class SessionTurnNotificationService<TIcon> {
 
   constructor(private readonly deps: SessionTurnNotificationServiceDeps<TIcon>) {}
 
-  notifyTurnCompleted(session: Session): boolean {
+  notifyTurnCompleted(session: Session, lastNonEmptyAssistantMessageText = ""): boolean {
     const sessionId = session.id;
     if (!this.isEligible(sessionId)) {
       return false;
     }
 
-    const content = this.buildNotificationContent(session);
+    const content = this.buildNotificationContent(session, lastNonEmptyAssistantMessageText);
     const options: SessionTurnNotificationOptions<TIcon> = {
       id: this.buildNotificationId(sessionId),
       groupId: SessionTurnNotificationService.notificationGroupId,
@@ -229,7 +220,10 @@ export class SessionTurnNotificationService<TIcon> {
     this.closeTrackedNotification(sessionId, "dismiss-close-failed");
   }
 
-  private buildNotificationContent(session: Session): Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body"> {
+  private buildNotificationContent(
+    session: Session,
+    lastNonEmptyAssistantMessageText: string,
+  ): Pick<SessionTurnNotificationOptions<TIcon>, "title" | "body"> {
     const genericContent = {
       title: "WithMate",
       body: `「${session.taskTitle.trim() || "Session"}」のターンが完了しました`,
@@ -244,7 +238,7 @@ export class SessionTurnNotificationService<TIcon> {
     }
 
     try {
-      const preview = buildResponsePreview(session);
+      const preview = buildResponsePreview(lastNonEmptyAssistantMessageText);
       if (!preview) {
         return genericContent;
       }
