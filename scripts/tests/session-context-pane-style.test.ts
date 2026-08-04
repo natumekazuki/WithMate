@@ -57,7 +57,7 @@ test("左右ペイン非表示時は pane track を除き、splitter の再表�
 
   assert.match(
     stylesSource,
-    /\.session-main-grid\s*{[\s\S]*?grid-template-columns:\s*12px\s*minmax\(0,\s*1fr\)\s*12px;/,
+    /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?grid-template-columns:\s*12px\s*minmax\(0,\s*1fr\)\s*12px;/,
   );
   assert.match(
     stylesSource,
@@ -71,6 +71,64 @@ test("左右ペイン非表示時は pane track を除き、splitter の再表�
     stylesSource,
     /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-dock-splitter\.edge-left\.is-static,[\s\S]*?\.session-dock-splitter\.edge-right\.is-static\s*{\s*display:\s*none;\s*}/,
   );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-chat-layout\.layout-priority-side-pane,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-split"\s*"main"\s*"right-split"\s*"bottom-split"\s*"action-dock";/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.layout-priority-side-pane\.is-left-pane-visible,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"bottom-split"\s*"action-dock";/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.layout-priority-side-pane\.is-right-pane-visible,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
+  );
+});
+
+test("splitter が選んだ優先軸に応じて side pane または上下 dock を全長表示する", async () => {
+  const [componentSource, chatWindowSource, sessionProjectionSource, companionProjectionSource, stylesSource] = await Promise.all([
+    readFile("src/session-components.tsx", "utf8"),
+    readFile("src/chat/chat-window.tsx", "utf8"),
+    readFile("src/chat/session-chat-projection.tsx", "utf8"),
+    readFile("src/chat/companion-chat-projection.tsx", "utf8"),
+    readFile("src/styles.css", "utf8"),
+  ]);
+
+  assert.match(componentSource, /layout-priority-\$\{[\s\S]*?layoutPriority === "side-pane-first" \? "side-pane" : "dock"/);
+  assert.match(componentSource, /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/);
+  assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
+  assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?"left-split header right-split"[\s\S]*?"left-split action-dock right-split"/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?"header header header"[\s\S]*?"action-dock action-dock action-dock"/);
+  assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-header-dock-row-height\)[\s\S]*?minmax\(280px, 1fr\)[\s\S]*?var\(--session-action-dock-row-height\);/);
+  assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 326px\)/,
+  );
+  assert.match(chatWindowSource, /className="session-action-dock-expanded-content"/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?resize:\s*none;/);
+  assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
+  assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
+});
+
+test("splitter の枠は各 track に収まり、modal より背面に残る", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter-chevron\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?width:\s*12px;[\s\S]*?height:\s*24px;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter\.edge-top \.session-dock-splitter-chevron,\s*\.session-dock-splitter\.edge-bottom \.session-dock-splitter-chevron\s*{\s*width:\s*24px;\s*height:\s*12px;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.launch-modal,\s*\.diff-modal\s*{[\s\S]*?position:\s*fixed;[\s\S]*?z-index:\s*40;/,
+  );
 });
 
 test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
@@ -82,10 +140,12 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
     readFile("src/styles.css", "utf8"),
   ]);
 
-  assert.match(componentSource, /session-header-dock-slot[\s\S]*?session-content-grid[\s\S]*?session-action-dock-slot/);
-  assert.match(componentSource, /session-chat-layout[\s\S]*?is-header-visible[\s\S]*?is-action-dock-expanded/);
+  assert.match(componentSource, /layout-priority-\$\{[\s\S]*?layoutPriority === "side-pane-first" \? "side-pane" : "dock"/);
+  assert.match(componentSource, /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/);
   assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?"left-split header right-split"[\s\S]*?"left-split action-dock right-split"/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?"header header header"[\s\S]*?"action-dock action-dock action-dock"/);
   assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-header-dock-row-height\)[\s\S]*?minmax\(280px, 1fr\)[\s\S]*?var\(--session-action-dock-row-height\);/);
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
   assert.match(
@@ -94,8 +154,10 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
   );
   assert.match(chatWindowSource, /className="session-action-dock-expanded-content"/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?resize:\s*none;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded > \.session-action-dock\s*{\s*overflow:\s*hidden;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :is\([\s\S]*?\.composer-path-match-list,[\s\S]*?\.composer-attachment-list,[\s\S]*?\.composer-additional-directory-list[\s\S]*?\)\s*{[\s\S]*?flex-shrink:\s*1;[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
+  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?overflow-y:\s*auto;[\s\S]*?resize:\s*none;/);
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
 });

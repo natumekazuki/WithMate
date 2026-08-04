@@ -57,6 +57,7 @@ export type ChatDockSplitterProps = {
   isActive?: boolean;
   isPanelExpanded?: boolean;
   canCollapse?: boolean;
+  onActivate?: () => void;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;
   onTogglePanel?: MouseEventHandler<HTMLButtonElement>;
   ariaLabel?: string;
@@ -159,13 +160,14 @@ export function ChatDockSplitter({
   isActive = false,
   isPanelExpanded = true,
   canCollapse = true,
+  onActivate,
   onPointerDown,
   onTogglePanel,
   ariaLabel,
   title,
 }: ChatDockSplitterProps) {
   const effectiveTogglePanel = isPanelExpanded && !canCollapse ? undefined : onTogglePanel;
-  if (!onPointerDown && !onTogglePanel) {
+  if (!onPointerDown && !onTogglePanel && !onActivate) {
     return <div className={`session-dock-splitter edge-${edge} is-static`} aria-hidden="true" />;
   }
 
@@ -203,13 +205,26 @@ export function ChatDockSplitter({
       : edge === "left"
         ? SESSION_LEFT_PANE_ID
         : SESSION_RIGHT_PANE_ID;
-  const chevron = edge === "top"
-    ? (isPanelExpanded ? "⌃" : "⌄")
+  const chevronDirection = edge === "top"
+    ? (isPanelExpanded ? "up" : "down")
     : edge === "bottom"
-      ? (isPanelExpanded ? "⌄" : "⌃")
+      ? (isPanelExpanded ? "down" : "up")
       : edge === "left"
-        ? (isPanelExpanded ? "‹" : "›")
-        : (isPanelExpanded ? "›" : "‹");
+        ? (isPanelExpanded ? "left" : "right")
+        : (isPanelExpanded ? "right" : "left");
+  const handlePointerDown: PointerEventHandler<HTMLButtonElement> = (event) => {
+    if (event.button !== 0) {
+      return;
+    }
+    onActivate?.();
+    if (isPanelExpanded) {
+      onPointerDown?.(event);
+    }
+  };
+  const handleClick: MouseEventHandler<HTMLButtonElement> = (event) => {
+    onActivate?.();
+    effectiveTogglePanel?.(event);
+  };
 
   return (
     <button
@@ -217,16 +232,21 @@ export function ChatDockSplitter({
         isPanelExpanded ? "" : " is-collapsed"
       }`}
       type="button"
-      onPointerDown={isPanelExpanded ? onPointerDown : undefined}
-      onClick={effectiveTogglePanel}
+      onPointerDown={handlePointerDown}
+      onClick={handleClick}
       aria-label={resolvedAriaLabel}
       aria-controls={effectiveTogglePanel ? controlledId : undefined}
       aria-expanded={effectiveTogglePanel ? isPanelExpanded : undefined}
       title={resolvedTitle}
     >
       {effectiveTogglePanel ? (
-        <span className="session-dock-splitter-chevron" aria-hidden="true">
-          {chevron}
+        <span
+          className={`session-dock-splitter-chevron direction-${chevronDirection}`}
+          aria-hidden="true"
+        >
+          <svg viewBox="0 0 12 12" focusable="false">
+            <path d="M4 2.5 8 6 4 9.5" />
+          </svg>
         </span>
       ) : null}
     </button>

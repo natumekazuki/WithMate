@@ -92,13 +92,20 @@ describe("approval mode helpers", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
+      priority: "side-pane-first",
     });
     assert.deepEqual(normalizeAppSettings({
-      chatLayoutPreference: { header: "visible", actionDock: "expanded", sidePane: "files" },
+      chatLayoutPreference: {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "files",
+        priority: "dock-first",
+      },
     }).chatLayoutPreference, {
       header: "visible",
       actionDock: "expanded",
       sidePane: "files",
+      priority: "dock-first",
     });
     assert.deepEqual(normalizeAppSettings({
       chatLayoutPreference: { header: "shown", actionDock: "open", sidePane: true },
@@ -106,6 +113,7 @@ describe("approval mode helpers", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
+      priority: "side-pane-first",
     });
   });
 });

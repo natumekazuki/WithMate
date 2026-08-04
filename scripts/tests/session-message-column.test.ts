@@ -1464,7 +1464,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   );
 });
 
-test("SessionComposerExpanded は実行中の progress と Cancel を上部 toolbar に描画し、下段の送信ボタンを隠す", () => {
+test("SessionComposerExpanded は実行中の progress、jump button、Cancel を compact と同じ順で上部 toolbar に描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       retryBanner: null,
@@ -1482,7 +1482,7 @@ test("SessionComposerExpanded は実行中の progress と Cancel を上部 tool
       selectedCustomAgentTitle: "Agent",
       additionalDirectoryCount: 0,
       canCollapseActionDock: true,
-      showJumpToBottom: false,
+      showJumpToBottom: true,
       isCustomAgentListLoading: false,
       isSkillListLoading: false,
       customAgentItems: [],
@@ -1539,9 +1539,11 @@ test("SessionComposerExpanded は実行中の progress と Cancel を上部 tool
 
   assert.match(html, /composer-toolbar-progress/);
   assert.match(html, /処理を実行中/);
+  assert.match(html, /末尾へ移動/);
   assert.match(html, /composer-toolbar-cancel-button/);
   assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
-  assert.ok(html.indexOf("処理を実行中") < html.indexOf("Cancel"));
+  assert.ok(html.indexOf("処理を実行中") < html.indexOf("末尾へ移動"));
+  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Cancel"));
   assert.doesNotMatch(html, />Send<\/button>/);
 });
 
