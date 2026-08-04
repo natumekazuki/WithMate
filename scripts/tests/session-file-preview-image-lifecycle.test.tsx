@@ -355,7 +355,7 @@ test("inspection prefix より後ろで binary と判明した Markdown は rich
   }
 });
 
-test("寸法情報のないSVGは初回だけFitで表示する", async () => {
+test("寸法情報のあるSVGも初回はFitで表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -370,7 +370,9 @@ test("寸法情報のないSVGは初回だけFitで表示する", async () => {
     rootId: "workspace",
     relativePath: "assets/icon.svg",
   };
-  const bytes = new TextEncoder().encode("<svg xmlns=\"http://www.w3.org/2000/svg\"><path d=\"M0 0\"/></svg>");
+  const bytes = new TextEncoder().encode(
+    "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"320\" height=\"180\"><path d=\"M0 0\"/></svg>",
+  );
   const descriptor: SessionFileDescriptor = {
     ...request,
     name: "icon.svg",
@@ -606,7 +608,7 @@ test("単体画像previewはbuttonと右クリックから現在の画像座標�
   }
 });
 
-test("Fitは実効倍率を表示しZoom Inの基準にする", async () => {
+test("画像previewは初回Fitの実効倍率を表示しZoom Inの基準にする", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
     url: "http://localhost/",
@@ -638,8 +640,9 @@ test("Fitは実効倍率を表示しZoom Inの基準にする", async () => {
     });
     await act(async () => {
       image.dispatchEvent(new dom.window.Event("load"));
-      container.querySelector<HTMLButtonElement>("button[aria-label='Fit image to preview']")?.click();
     });
+    assert.ok(container.querySelector(".session-file-image.is-fit"));
+    assert.ok(container.querySelector("button[aria-label='Fit image to preview'].is-active"));
     assert.equal(
       container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
       "50%",

@@ -54,30 +54,6 @@ export class PreviewByteAccumulator {
   }
 }
 
-export function shouldInitiallyFitSvg(bytes: Uint8Array): boolean {
-  const source = new TextDecoder("utf-8").decode(bytes);
-  const openingTag = /<svg\b([^>]*)>/i.exec(source)?.[1] ?? "";
-  if (!openingTag) {
-    return true;
-  }
-  const attribute = (name: string) => new RegExp(`\\b${name}\\s*=\\s*["']([^"']+)["']`, "i")
-    .exec(openingTag)?.[1]?.trim() ?? "";
-  const isUsableLength = (value: string) => {
-    const match = /^([0-9]+(?:\.[0-9]+)?)(?:px|pt|pc|mm|cm|in)?$/i.exec(value);
-    return Boolean(match && Number(match[1]) > 0);
-  };
-  if (isUsableLength(attribute("width")) && isUsableLength(attribute("height"))) {
-    return false;
-  }
-  const viewBox = attribute("viewBox").split(/[\s,]+/).map(Number);
-  return !(
-    viewBox.length === 4
-    && viewBox.every(Number.isFinite)
-    && (viewBox[2] ?? 0) > 0
-    && (viewBox[3] ?? 0) > 0
-  );
-}
-
 export function calculateImageFitZoom(
   viewportWidth: number,
   viewportHeight: number,
