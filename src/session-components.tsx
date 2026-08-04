@@ -3485,6 +3485,14 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
+          {isRunning ? (
+            <div className="composer-toolbar-progress">
+              <PendingRunIndicator
+                announcement={pendingRunIndicatorAnnouncement}
+                text={pendingRunIndicatorText}
+              />
+            </div>
+          ) : null}
           {showJumpToBottom ? (
             <button
               className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -3495,13 +3503,6 @@ export function SessionComposerExpanded({
             </button>
           ) : null}
           {isRunning ? (
-            <>
-              <div className="composer-toolbar-progress">
-                <PendingRunIndicator
-                  announcement={pendingRunIndicatorAnnouncement}
-                  text={pendingRunIndicatorText}
-                />
-              </div>
               <button
                 className="drawer-toggle compact danger composer-toolbar-cancel-button"
                 type="button"
@@ -3510,7 +3511,6 @@ export function SessionComposerExpanded({
               >
                 Cancel
               </button>
-            </>
           ) : null}
         </div>
       ) : null}
