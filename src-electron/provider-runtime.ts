@@ -128,6 +128,7 @@ export type RunBackgroundStructuredPromptResult<TOutput = unknown> = {
 export type RunSessionTurnResult = {
   threadId: string | null;
   assistantText: string;
+  lastNonEmptyAssistantMessageText?: string;
   artifact?: MessageArtifact;
   logicalPrompt: AuditLogicalPrompt;
   transportPayload: AuditTransportPayload | null;

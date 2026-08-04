@@ -203,6 +203,7 @@ describe("SessionRuntimeService", () => {
     let composeSessionName = "";
     let runSessionName = "";
     let notifiedSession: Session | null = null;
+    let notifiedLastNonEmptyAssistantMessageText = "";
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
@@ -224,7 +225,8 @@ describe("SessionRuntimeService", () => {
         runSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
         return Promise.resolve(createPartialResult({
           threadId: "thread-1",
-          assistantText: "完了したよ。",
+          assistantText: "途中の案内\n\n完了したよ。",
+          lastNonEmptyAssistantMessageText: "完了したよ。",
         }));
       },
     };
@@ -279,8 +281,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
-      notifySessionTurnCompleted(completedSession) {
+      notifySessionTurnCompleted(completedSession, lastNonEmptyAssistantMessageText) {
         notifiedSession = completedSession;
+        notifiedLastNonEmptyAssistantMessageText = lastNonEmptyAssistantMessageText;
       },
       currentTimestampLabel,
     });
@@ -291,6 +294,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(runSessionName, "Fresh");
     assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
     assert.equal(notifiedSession, result);
+    assert.equal(notifiedLastNonEmptyAssistantMessageText, "完了したよ。");
   });
 
   it("character-authoring の valid から invalid への遷移は provider thread を破棄する", async () => {
