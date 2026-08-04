@@ -15,6 +15,7 @@ import {
 } from "./auxiliary-session-state.js";
 import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
+import type { OpenSessionWindowIdsState } from "./open-session-window-subscription.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "./memory-v6/provider-instruction-sample.js";
 import {
@@ -95,7 +96,11 @@ export default function HomeApp() {
   const sessions = sessionSummariesState.summaries;
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [activeAuxiliarySessions, setActiveAuxiliarySessions] = useState<AuxiliarySessionSummary[]>([]);
-  const [openSessionWindowIds, setOpenSessionWindowIds] = useState<string[]>([]);
+  const [openSessionWindowIdsState, setOpenSessionWindowIdsState] = useState<OpenSessionWindowIdsState>({
+    status: "loading",
+    sessionIds: [],
+  });
+  const openSessionWindowIds = openSessionWindowIdsState.sessionIds;
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
@@ -301,7 +306,7 @@ export default function HomeApp() {
 
   useHomeOpenWindowSubscriptions({
     getApi: getWithMateApi,
-    setOpenSessionWindowIds,
+    setOpenSessionWindowIdsState,
     setOpenCompanionReviewWindowIds,
   });
 
@@ -403,6 +408,8 @@ export default function HomeApp() {
     characterEntries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
+    openSessionWindowIds,
+    openSessionWindowIdsLoadStatus: openSessionWindowIdsState.status,
     sessionSummariesLoadStatus: sessionSummariesState.status,
     refreshCharacterEntries: async () => {
       const api = getWithMateApi();

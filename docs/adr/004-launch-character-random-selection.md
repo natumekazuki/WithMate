@@ -13,13 +13,15 @@ New Session ダイアログでは Character を固定選択できる。Character
 
 - New Session ダイアログの Character 一覧先頭に、ランダム選択を置く。
 - Agent と Companion のランダム開始は、active Character を共通の候補とする。
-- 通常 Session の最終利用順から Character ごとの直近位置を求め、最近使われた Character から順に `1, 2, 3, ...` の線形な重みを与える。履歴にない Character には、履歴にある候補より大きい同一の重みを与える。
+- 開いている通常 Session Window で使用中の Character は、未使用の active Character がある間は抽選候補から除外する。すべての active Character が使用中の場合は除外せず、重複を許容する。
+- 残った抽選候補について、通常 Session の最終利用順から Character ごとの直近位置を求め、最近使われた Character から順に `1, 2, 3, ...` の線形な重みを与える。履歴にない Character には、履歴にある候補より大きい同一の重みを与える。
 - Character 作成 Session は利用履歴に含めない。
-- 通常 Session の履歴が0件なら、active Character を均等に抽選する。active Character が0件なら、既存の neutral Character を使う。
+- 通常 Session の履歴が0件なら、残った抽選候補を均等に抽選する。active Character が0件なら、既存の neutral Character を使う。
 - 履歴の読み込み中または取得失敗時はランダム開始を拒否する。取得成功後の0件だけを均等抽選として扱う。
+- 開いている通常 Session Window 一覧の読み込み中または取得失敗時もランダム開始を拒否する。取得成功後の0件だけを「使用中なし」として扱う。
 - DB schema と Session summary API は変更しない。
 
-実装の正本は `src/home/home-launch-state.ts` と `src/home/home-launch-actions.ts`、観測可能な契約は `scripts/tests/home-launch-state.test.ts` と `scripts/tests/home-launch-actions.test.ts` に置く。
+実装の正本は `src/home/home-launch-state.ts`、`src/home/home-launch-actions.ts`、`src/open-session-window-subscription.ts`、観測可能な契約は `scripts/tests/home-launch-state.test.ts`、`scripts/tests/home-launch-actions.test.ts`、`scripts/tests/open-session-window-subscription.test.ts` に置く。
 
 ## Alternatives
 
@@ -53,5 +55,7 @@ provider ごとの実行設定は security boundary が異なるため、この�
 ### Negative
 
 - 抽選確率は利用回数ではなく、Character ごとの直近利用順だけで決まる。
+- Session Window の購読更新前に別の Home Window から同時に開始した場合は、同じ Character が選ばれる可能性が残る。
 - Session summary の読み込みに失敗している間は、固定 Character では開始できるが、ランダム選択では開始できない。
+- Session Window 一覧の初回取得に失敗している間も、固定 Character では開始できるが、ランダム選択では開始できない。
 - 複数の Home window 間で購読更新に短い遅延がある場合、その間は抽選時の重みが一致しない可能性がある。

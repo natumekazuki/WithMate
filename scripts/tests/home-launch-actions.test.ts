@@ -166,6 +166,8 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       characterEntries: createCharacterEntries(),
       selectedProviderId: "codex",
       sessions: [],
+      openSessionWindowIds: [],
+      openSessionWindowIdsLoadStatus: "loaded" as const,
       sessionSummariesLoadStatus: "loaded" as const,
       createSession: async () => createSessionSummary(),
       createCompanionSession: async () => createCompanionSession(),
@@ -277,6 +279,32 @@ describe("home-launch-actions", () => {
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
+  it("random選択では開いているSession WindowのCharacterを候補から外す", async () => {
+    let capturedCharacterId = "";
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft(),
+        characterSelectionMode: "random",
+      },
+      sessions: [createSessionSummary({
+        id: "open-mia",
+        characterId: "mia",
+        sessionKind: "character-authoring",
+      })],
+      openSessionWindowIds: ["open-mia"],
+      random: () => 0,
+      createSession: async (input) => {
+        capturedCharacterId = input.characterId;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(capturedCharacterId, "noa");
+    assert.deepEqual(harness.openedSessions, ["session-1"]);
+  });
+
   it("履歴の読み込み中はrandom選択のsessionを開始しない", async () => {
     let createCount = 0;
     const harness = createStartHomeLaunchHarness({
@@ -317,6 +345,69 @@ describe("home-launch-actions", () => {
     assert.equal(createCount, 0);
     assert.deepEqual(harness.feedback, ["Session 履歴を読み込めていないため、ランダム選択を開始できないよ。"]);
     assert.deepEqual(harness.startingStates, []);
+  });
+
+  it("open Session Window 一覧の読み込み中はrandom選択のsessionを開始しない", async () => {
+    let createCount = 0;
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft(),
+        characterSelectionMode: "random",
+      },
+      openSessionWindowIdsLoadStatus: "loading",
+      createSession: async () => {
+        createCount += 1;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(createCount, 0);
+    assert.deepEqual(harness.feedback, [
+      "開いている Session Window を確認してるよ。完了してからもう一度開始してね。",
+    ]);
+    assert.deepEqual(harness.startingStates, []);
+  });
+
+  it("open Session Window 一覧の取得失敗後はrandom選択のcompanionを開始しない", async () => {
+    let createCount = 0;
+    const harness = createStartHomeLaunchHarness({
+      draft: {
+        ...createReadyDraft("companion"),
+        characterSelectionMode: "random",
+      },
+      requestedMode: "companion",
+      openSessionWindowIdsLoadStatus: "error",
+      createCompanionSession: async () => {
+        createCount += 1;
+        return createCompanionSession();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(createCount, 0);
+    assert.deepEqual(harness.feedback, [
+      "開いている Session Window を確認できないため、ランダム選択を開始できないよ。",
+    ]);
+    assert.deepEqual(harness.startingStates, []);
+  });
+
+  it("open Session Window 一覧の取得失敗後でも固定Characterのsessionは開始できる", async () => {
+    let capturedCharacterId = "";
+    const harness = createStartHomeLaunchHarness({
+      openSessionWindowIdsLoadStatus: "error",
+      createSession: async (input) => {
+        capturedCharacterId = input.characterId;
+        return createSessionSummary();
+      },
+    });
+
+    await startHomeLaunch(harness.input);
+
+    assert.equal(capturedCharacterId, "mia");
+    assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
   it("履歴の読み込み失敗後でも固定Characterのsessionは開始できる", async () => {

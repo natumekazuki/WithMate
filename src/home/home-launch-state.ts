@@ -72,6 +72,7 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   selectedProviderId,
   characterEntries = [],
   sessions = [],
+  openSessionCharacterIds = [],
   random = Math.random,
 }: {
   draft: HomeLaunchDraft;
@@ -79,6 +80,7 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   selectedProviderId: string | null;
   characterEntries?: readonly CharacterCatalogEntry[];
   sessions?: readonly CharacterUsageSessionSource[];
+  openSessionCharacterIds?: readonly string[];
   random?: () => number;
 }): CreateCompanionSessionInput | null {
   const normalizedTitle = draft.title.trim();
@@ -86,7 +88,13 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
   if (!normalizedTitle || !workspace || !selectedProviderId) {
     return null;
   }
-  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
+  const characterSnapshot = buildLaunchCharacterSnapshot(
+    characterEntries,
+    draft,
+    sessions,
+    openSessionCharacterIds,
+    random,
+  );
 
   return {
     taskTitle: normalizedTitle,
@@ -185,6 +193,7 @@ export function buildCreateSessionRequestFromLaunchDraft({
   selectedProviderId,
   characterEntries = [],
   sessions = [],
+  openSessionCharacterIds = [],
   random = Math.random,
 }: {
   draft: HomeLaunchDraft;
@@ -192,13 +201,20 @@ export function buildCreateSessionRequestFromLaunchDraft({
   selectedProviderId: string | null;
   characterEntries?: readonly CharacterCatalogEntry[];
   sessions?: readonly CharacterUsageSessionSource[];
+  openSessionCharacterIds?: readonly string[];
   random?: () => number;
 }): CreateSessionRequest | null {
   const normalizedTitle = draft.title.trim();
   if (!normalizedTitle || !draft.workspace || !selectedProviderId) {
     return null;
   }
-  const characterSnapshot = buildLaunchCharacterSnapshot(characterEntries, draft, sessions, random);
+  const characterSnapshot = buildLaunchCharacterSnapshot(
+    characterEntries,
+    draft,
+    sessions,
+    openSessionCharacterIds,
+    random,
+  );
   const workspace = isSessionFolderLaunchWorkspace(draft.workspace)
     ? { kind: "session-folder" as const }
     : {
@@ -234,6 +250,7 @@ export function resolveLaunchCharacterId(
 export function selectWeightedRandomLaunchCharacterId(
   entries: readonly CharacterCatalogEntry[],
   sessionsByLastActiveDesc: readonly CharacterUsageSessionSource[],
+  openSessionCharacterIds: readonly string[] = [],
   random: () => number = Math.random,
 ): string {
   const activeEntries = entries.filter((entry) => entry.state === "active");
@@ -241,12 +258,15 @@ export function selectWeightedRandomLaunchCharacterId(
     return "";
   }
 
-  const activeCharacterIds = new Set(activeEntries.map((entry) => entry.id));
+  const openSessionCharacterIdSet = new Set(openSessionCharacterIds);
+  const unusedEntries = activeEntries.filter((entry) => !openSessionCharacterIdSet.has(entry.id));
+  const eligibleEntries = unusedEntries.length > 0 ? unusedEntries : activeEntries;
+  const eligibleCharacterIds = new Set(eligibleEntries.map((entry) => entry.id));
   const recencyRanks = new Map<string, number>();
   for (const session of sessionsByLastActiveDesc) {
     if (
       session.sessionKind !== "default" ||
-      !activeCharacterIds.has(session.characterId) ||
+      !eligibleCharacterIds.has(session.characterId) ||
       recencyRanks.has(session.characterId)
     ) {
       continue;
@@ -254,7 +274,7 @@ export function selectWeightedRandomLaunchCharacterId(
     recencyRanks.set(session.characterId, recencyRanks.size);
   }
 
-  const weightedEntries = activeEntries.map((entry) => ({
+  const weightedEntries = eligibleEntries.map((entry) => ({
     entry,
     weight: (recencyRanks.get(entry.id) ?? recencyRanks.size) + 1,
   }));
@@ -287,10 +307,11 @@ function buildLaunchCharacterSnapshot(
   entries: readonly CharacterCatalogEntry[],
   draft: Pick<HomeLaunchDraft, "characterId" | "characterSelectionMode">,
   sessions: readonly CharacterUsageSessionSource[],
+  openSessionCharacterIds: readonly string[],
   random: () => number,
 ): LaunchCharacterSnapshot {
   const characterId = draft.characterSelectionMode === "random"
-    ? selectWeightedRandomLaunchCharacterId(entries, sessions, random)
+    ? selectWeightedRandomLaunchCharacterId(entries, sessions, openSessionCharacterIds, random)
     : draft.characterId;
   const character = resolveLaunchCharacterEntry(entries, characterId);
   if (!character) {
