@@ -145,7 +145,7 @@ describe("SessionTurnNotificationService", () => {
     assert.match(harness.options[0]?.id ?? "", /^[0-9a-f]{64}$/);
   });
 
-  it("返答 preview が有効なら最後の assistant 本文を平文化して Session 名と表示する", () => {
+  it("返答 preview が有効なら turn 最後の top-level assistant message を平文化して表示する", () => {
     const harness = createHarness({
       isResponsePreviewEnabled: () => true,
     });
@@ -155,12 +155,18 @@ describe("SessionTurnNotificationService", () => {
         { role: "user", text: "続けて" },
         {
           role: "assistant",
-          text: "  うん、**40文字**でいける。\n[Session](https://example.com) を開いてね。  ",
+          text: "途中の案内\n\n  うん、**40文字**でいける。\n[Session](https://example.com) を開いてね。  ",
         },
       ],
     });
 
-    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(
+      harness.service.notifyTurnCompleted(
+        session,
+        "  うん、**40文字**でいける。\n[Session](https://example.com) を開いてね。  ",
+      ),
+      true,
+    );
     assert.deepEqual(harness.options[0], {
       id: harness.options[0]?.id,
       groupId: "WithMateSessions",
@@ -185,7 +191,7 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.service.notifyTurnCompleted(session, session.messages[0]?.text ?? ""), true);
     assert.equal(
       harness.options[0]?.body,
       "ABC prelinkpost A~~literal~~B prepost",
@@ -203,7 +209,7 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.service.notifyTurnCompleted(session, session.messages[0]?.text ?? ""), true);
     assert.equal(harness.options[0]?.body, "うん、まだ多い。通知なら40文字上限にする。…");
   });
 
@@ -219,11 +225,22 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.service.notifyTurnCompleted(session, session.messages[0]?.text ?? ""), true);
     assert.equal(harness.options[0]?.body, `${"あ".repeat(39)}${familyEmoji}…`);
   });
 
   it("返答 preview が空、または設定確認に失敗した場合は完了文へ安全に戻す", () => {
+    const missingSourceHarness = createHarness({
+      isResponsePreviewEnabled: () => true,
+    });
+    const aggregatedSession = createSession({
+      messages: [{ role: "assistant", text: "途中の案内\n\n最後の案内" }],
+    });
+
+    assert.equal(missingSourceHarness.service.notifyTurnCompleted(aggregatedSession), true);
+    assert.equal(missingSourceHarness.options[0]?.title, "WithMate");
+    assert.equal(missingSourceHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
+
     const emptyHarness = createHarness({
       isResponsePreviewEnabled: () => true,
     });
@@ -231,7 +248,7 @@ describe("SessionTurnNotificationService", () => {
       messages: [{ role: "assistant", text: " ** ** " }],
     });
 
-    assert.equal(emptyHarness.service.notifyTurnCompleted(emptySession), true);
+    assert.equal(emptyHarness.service.notifyTurnCompleted(emptySession, " ** ** "), true);
     assert.equal(emptyHarness.options[0]?.title, "WithMate");
     assert.equal(emptyHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
 
@@ -244,7 +261,10 @@ describe("SessionTurnNotificationService", () => {
       messages: [{ role: "assistant", text: "通知へ出せる本文" }],
     });
 
-    assert.equal(settingFailureHarness.service.notifyTurnCompleted(responseSession), true);
+    assert.equal(
+      settingFailureHarness.service.notifyTurnCompleted(responseSession, "通知へ出せる本文"),
+      true,
+    );
     assert.equal(settingFailureHarness.options[0]?.title, "WithMate");
     assert.equal(settingFailureHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
     assert.equal(settingFailureHarness.warnings[0]?.event, "preview-setting-check-failed");
@@ -273,7 +293,7 @@ describe("SessionTurnNotificationService", () => {
         messages: [{ role: "assistant", text }],
       });
 
-      assert.equal(harness.service.notifyTurnCompleted(session), true);
+      assert.equal(harness.service.notifyTurnCompleted(session, text), true);
       assert.equal(harness.options[0]?.title, "WithMate");
       assert.equal(harness.options[0]?.body, "「通知テスト」のターンが完了しました");
       assert.equal(harness.options[0]?.body.includes(secret), false);
@@ -289,7 +309,10 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(footnoteHarness.service.notifyTurnCompleted(footnoteSession), true);
+    assert.equal(
+      footnoteHarness.service.notifyTurnCompleted(footnoteSession, footnoteSession.messages[0]?.text ?? ""),
+      true,
+    );
     assert.equal(footnoteHarness.options[0]?.title, "通知テスト");
     assert.equal(footnoteHarness.options[0]?.body, "表示本文");
     assert.equal(footnoteHarness.options[0]?.body.includes(secret), false);
@@ -313,7 +336,10 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(mixedHarness.service.notifyTurnCompleted(mixedSession), true);
+    assert.equal(
+      mixedHarness.service.notifyTurnCompleted(mixedSession, mixedSession.messages[0]?.text ?? ""),
+      true,
+    );
     assert.equal(mixedHarness.options[0]?.title, "通知テスト");
     assert.equal(mixedHarness.options[0]?.body, "表示本文");
     assert.equal(mixedHarness.options[0]?.body.includes(secret), false);
@@ -330,7 +356,7 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(harness.service.notifyTurnCompleted(session), true);
+    assert.equal(harness.service.notifyTurnCompleted(session, session.messages[0]?.text ?? ""), true);
     assert.equal(harness.options[0]?.body, "before $x$ after const value = 1;");
   });
 
@@ -346,7 +372,10 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(withinLimitHarness.service.notifyTurnCompleted(withinLimitSession), true);
+    assert.equal(
+      withinLimitHarness.service.notifyTurnCompleted(withinLimitSession, withinLimitSession.messages[0]?.text ?? ""),
+      true,
+    );
     assert.equal(withinLimitHarness.options[0]?.title, "通知テスト");
     assert.equal(withinLimitHarness.options[0]?.body, `${prefix}…`);
 
@@ -360,7 +389,10 @@ describe("SessionTurnNotificationService", () => {
       }],
     });
 
-    assert.equal(overLimitHarness.service.notifyTurnCompleted(overLimitSession), true);
+    assert.equal(
+      overLimitHarness.service.notifyTurnCompleted(overLimitSession, overLimitSession.messages[0]?.text ?? ""),
+      true,
+    );
     assert.equal(overLimitHarness.options[0]?.title, "WithMate");
     assert.equal(overLimitHarness.options[0]?.body, "「通知テスト」のターンが完了しました");
   });

@@ -127,6 +127,7 @@ type CopilotTurnStreamState = {
   reasoningText: string;
   rawItems: CopilotStableRawItem[];
   assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
   assistantMessages: string[];
   assistantDraft: string;
   usage: AuditLogUsage | null;
@@ -288,6 +289,7 @@ function createCopilotTurnStreamState(): CopilotTurnStreamState {
     reasoningText: "",
     rawItems: [],
     assistantText: "",
+    lastNonEmptyAssistantMessageText: "",
     assistantMessages: [],
     assistantDraft: "",
     usage: null,
@@ -345,6 +347,7 @@ function applyCopilotTurnEvent(args: {
       state.assistantMessages = nextAssistantState.messages;
       state.assistantDraft = nextAssistantState.draft;
       state.assistantText = nextAssistantState.assistantText;
+      state.lastNonEmptyAssistantMessageText = nextAssistantState.lastNonEmptyAssistantMessageText;
       break;
     }
     case "assistant.usage":
@@ -813,14 +816,20 @@ function appendUniqueMessage(messages: string[], nextMessage: string): string[] 
   return [...messages, normalized];
 }
 
-function buildAssistantText(messages: string[], draft: string): string {
+function buildAssistantResponse(messages: string[], draft: string): {
+  assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
+} {
   const parts = [...messages];
   const normalizedDraft = draft.trim();
   if (normalizedDraft) {
     parts.push(normalizedDraft);
   }
 
-  return parts.join("\n\n");
+  return {
+    assistantText: parts.join("\n\n"),
+    lastNonEmptyAssistantMessageText: parts.at(-1) ?? "",
+  };
 }
 
 export function applyCopilotAssistantEvent(
@@ -829,12 +838,17 @@ export function applyCopilotAssistantEvent(
   event:
     | Extract<SessionEvent, { type: "assistant.message_delta" }>
     | Extract<SessionEvent, { type: "assistant.message" }>,
-): { messages: string[]; draft: string; assistantText: string } {
-  if (event.data.parentToolCallId) {
+): {
+  messages: string[];
+  draft: string;
+  assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
+} {
+  if (event.agentId || event.data.parentToolCallId) {
     return {
       messages,
       draft,
-      assistantText: buildAssistantText(messages, draft),
+      ...buildAssistantResponse(messages, draft),
     };
   }
 
@@ -843,7 +857,7 @@ export function applyCopilotAssistantEvent(
     return {
       messages,
       draft: nextDraft,
-      assistantText: buildAssistantText(messages, nextDraft),
+      ...buildAssistantResponse(messages, nextDraft),
     };
   }
 
@@ -852,7 +866,7 @@ export function applyCopilotAssistantEvent(
     return {
       messages,
       draft: "",
-      assistantText: buildAssistantText(messages, ""),
+      ...buildAssistantResponse(messages, ""),
     };
   }
 
@@ -864,7 +878,7 @@ export function applyCopilotAssistantEvent(
   return {
     messages: finalizedMessages,
     draft: "",
-    assistantText: buildAssistantText(finalizedMessages, ""),
+    ...buildAssistantResponse(finalizedMessages, ""),
   };
 }
 
@@ -2288,6 +2302,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     messageAttachments: NonNullable<MessageOptions["attachments"]>,
     threadId: string | null,
     assistantText: string,
+    lastNonEmptyAssistantMessageText: string,
     steps: Map<string, LiveRunStep>,
     usage: AuditLogUsage | null,
     rawItems: CopilotStableRawItem[],
@@ -2331,6 +2346,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText,
+      lastNonEmptyAssistantMessageText,
       artifact,
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
@@ -2473,6 +2489,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           messageAttachments,
           session.sessionId,
           streamState.assistantText,
+          streamState.lastNonEmptyAssistantMessageText,
           streamState.liveSteps,
           streamState.usage,
           streamState.rawItems,
@@ -2498,6 +2515,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         messageAttachments,
         session.sessionId,
         streamState.assistantText,
+        streamState.lastNonEmptyAssistantMessageText,
         streamState.liveSteps,
         streamState.usage,
         streamState.rawItems,
@@ -2522,6 +2540,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         messageAttachments,
         session.sessionId,
         streamState.assistantText,
+        streamState.lastNonEmptyAssistantMessageText,
         streamState.liveSteps,
         streamState.usage,
         streamState.rawItems,

@@ -14,6 +14,7 @@ import {
   buildCodexProviderMetadata,
   buildCodexThreadSettings,
   buildCodexStableRawItems,
+  collectCodexAssistantResponseFromEventsForTesting,
   collectCodexAssistantTextSnapshotsFromEventsForTesting,
   collectCodexAssistantTextFromEventsForTesting,
   collectCodexReasoningTextFromEventsForTesting,
@@ -788,6 +789,40 @@ describe("CodexAdapter thread settings", () => {
     ]);
 
     assert.deepEqual(snapshots, ["処理", "処理", "処理", "処理中", "処理中です。"]);
+  });
+
+  it("複数の top-level assistant message は連結本文と最後の非空 message を分けて保持する", () => {
+    const response = collectCodexAssistantResponseFromEventsForTesting([
+      {
+        type: "item.completed",
+        item: {
+          id: "message-1",
+          type: "agent_message",
+          text: "最初の案内",
+        },
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-2",
+          type: "agent_message",
+          text: "最後の案内",
+        },
+      } as never,
+      {
+        type: "item.completed",
+        item: {
+          id: "message-3",
+          type: "agent_message",
+          text: "   ",
+        },
+      } as never,
+    ]);
+
+    assert.deepEqual(response, {
+      assistantText: "最初の案内\n\n最後の案内",
+      lastNonEmptyAssistantMessageText: "最後の案内",
+    });
   });
 
   it("入れ子や配列の delta payload から assistant text を復元する", () => {
