@@ -236,6 +236,66 @@ test("FileRootGitChangesService は隔離した status / diff と非継承 Git �
   }
 });
 
+test("FileRootGitChangesService は global core.excludesFile を隔離 status に限定して反映する", async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-git-global-ignore-"));
+  const repositoryPath = path.join(tempRoot, "repository");
+  const homePath = path.join(tempRoot, "home");
+  const globalIgnorePath = path.join(homePath, "global-ignore");
+  const filterScriptPath = path.join(tempRoot, "global-filter.cjs");
+  const filterMarkerPath = path.join(tempRoot, "global-filter-ran.txt");
+  try {
+    await initializeRepository(repositoryPath);
+    await mkdir(homePath);
+    await writeFile(path.join(repositoryPath, ".gitattributes"), "visible.txt filter=marker\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", ".gitattributes"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "attributes",
+    ])).exitCode, 0);
+    await writeFile(
+      filterScriptPath,
+      "const fs = require('node:fs'); fs.writeFileSync(process.argv[2], 'ran'); process.stdin.pipe(process.stdout);\n",
+    );
+    const filterCommand = `"${process.execPath.replaceAll("\\", "/")}" "${filterScriptPath.replaceAll("\\", "/")}" "${filterMarkerPath.replaceAll("\\", "/")}"`;
+    await writeFile(globalIgnorePath, "global-only.txt\n");
+    await writeFile(
+      path.join(homePath, ".gitconfig"),
+      `[core]\n\texcludesFile = ${globalIgnorePath.replaceAll("\\", "/")}\n[filter "marker"]\n\tclean = ${filterCommand}\n`,
+    );
+    await writeFile(path.join(repositoryPath, "global-only.txt"), "ignored\n");
+    await writeFile(path.join(repositoryPath, "visible.txt"), "visible\n");
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      processEnv: {
+        ...process.env,
+        HOME: homePath,
+        USERPROFILE: homePath,
+      },
+    });
+
+    const result = await service.listChanges({ sessionId: "session-1", rootId: "workspace" });
+
+    assert.equal(result.status, "ok", JSON.stringify(result));
+    if (result.status === "ok") {
+      assert.equal(result.entries.some((entry) => entry.relativePath === "global-only.txt"), false);
+      assert.equal(result.entries.some((entry) => entry.relativePath === "visible.txt"), true);
+    }
+    assert.deepEqual(await service.getFileDiff({
+      sessionId: "session-1",
+      rootId: "workspace",
+      relativePath: "global-only.txt",
+      scope: "working-tree",
+    }), {
+      status: "not-changed",
+      message: "The selected file is not changed in this scope.",
+    });
+    await assert.rejects(() => access(filterMarkerPath));
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test("FileRootGitChangesService は Git boolean の有効な基数・単位表記を保持し範囲外値を拒否する", async () => {
   const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-config-bool-"));
   try {
