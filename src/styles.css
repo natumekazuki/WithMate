@@ -306,7 +306,7 @@ button:disabled {
 }
 
 .session-action-dock-slot.is-expanded > .session-action-dock {
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .session-action-dock-slot.is-expanded .session-action-dock-expanded-content,
@@ -325,9 +325,19 @@ button:disabled {
   flex: 0 0 auto;
 }
 
+.session-action-dock-slot.is-expanded .composer > :is(
+  .composer-path-match-list,
+  .composer-attachment-list,
+  .composer-additional-directory-list
+) {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .session-action-dock-slot.is-expanded .composer-input-row {
   flex: 1 1 auto;
-  min-height: 92px;
+  min-height: 0;
   overflow: hidden;
 }
 
@@ -340,6 +350,7 @@ button:disabled {
 .session-action-dock-slot.is-expanded .composer-box textarea {
   min-height: 0;
   height: 100%;
+  overflow-y: auto;
   resize: none;
 }
 
@@ -2065,6 +2076,7 @@ button:disabled {
 .diff-modal {
   position: fixed;
   inset: 0;
+  z-index: 40;
   display: grid;
   place-items: center;
   padding: 26px;
@@ -4960,24 +4972,46 @@ button:disabled {
   top: 50%;
   left: 50%;
   z-index: 1;
+  box-sizing: border-box;
   display: grid;
   place-items: center;
-  width: 18px;
-  height: 28px;
+  width: 12px;
+  height: 24px;
   border: 1px solid rgba(203, 213, 225, 0.18);
   border-radius: 999px;
   background: rgba(12, 17, 25, 0.96);
   color: var(--ink);
-  font-size: 1rem;
-  line-height: 1;
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
 
 .session-dock-splitter.edge-top .session-dock-splitter-chevron,
 .session-dock-splitter.edge-bottom .session-dock-splitter-chevron {
-  width: 28px;
-  height: 18px;
+  width: 24px;
+  height: 12px;
+}
+
+.session-dock-splitter-chevron svg {
+  width: 8px;
+  height: 8px;
+  overflow: visible;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.session-dock-splitter-chevron.direction-down svg {
+  transform: rotate(90deg);
+}
+
+.session-dock-splitter-chevron.direction-left svg {
+  transform: rotate(180deg);
+}
+
+.session-dock-splitter-chevron.direction-up svg {
+  transform: rotate(-90deg);
 }
 
 .session-dock-splitter:hover .session-dock-splitter-chevron,

@@ -65,13 +65,15 @@ test("ChatDockSplitter は各辺の表示状態を切り替える affordance を
   assert.match(expandedHtml, /aria-controls="session-right-pane"/);
   assert.match(expandedHtml, /aria-expanded="true"/);
   assert.match(expandedHtml, /クリックで右ペインを折りたたみ、ドラッグでサイズを調整/);
-  assert.match(expandedHtml, />›<\/span>/);
+  assert.match(expandedHtml, /session-dock-splitter-chevron direction-right/);
+  assert.match(expandedHtml, /<svg viewBox="0 0 12 12" focusable="false">/);
+  assert.match(expandedHtml, /<path d="M4 2.5 8 6 4 9.5"><\/path>/);
 
   assert.match(collapsedHtml, /class="session-dock-splitter edge-bottom is-toggle-only is-collapsed"/);
   assert.match(collapsedHtml, /aria-label="ActionDockを展開"/);
   assert.match(collapsedHtml, /aria-controls="session-action-dock"/);
   assert.match(collapsedHtml, /aria-expanded="false"/);
-  assert.match(collapsedHtml, />⌃<\/span>/);
+  assert.match(collapsedHtml, /session-dock-splitter-chevron direction-up/);
 
   assert.match(fixedHeaderHtml, /class="session-dock-splitter edge-top is-toggle-only"/);
   assert.match(fixedHeaderHtml, /title="クリックでヘッダーを折りたたみ"/);

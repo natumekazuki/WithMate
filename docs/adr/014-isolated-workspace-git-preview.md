@@ -20,6 +20,7 @@ Session File Explorer の Changes と live Git Diff は、Workspace の Git stat
 - 子 process の environment は大文字小文字を区別せず継承元の `GIT_*` をすべて除去する。status / diff の隔離 invocation では system / global config を無効化し、service が所有する値だけを追加する。typed result の判定に使う Git message は `C` localeへ固定する
 - repository identity の discovery では、canonical Workspace から filesystem root までの ancestor を command-local な `safe.directory` として列挙する。identity 確定後に元 repository を読む command は canonical repository top level だけを許可する。system / global config の `safe.directory` は変更しない
 - 通常の checkout と同じ built-in working tree semantics を保つため、identity と directory lease の確立後に effective config から `core.autocrlf`、`core.eol`、`core.filemode`、`core.symlinks`、`core.ignorecase`、`core.precomposeunicode` だけを read-only で取得する。値は固定された scalar domain へ正規化し、隔離 invocation へ command-local config として投影する。filter、hook、external diff、textconv、credential、alias、include など他の設定は投影しない
+- user global config の `core.excludesFile` は、固定した Git executable と `GIT_*` を除去した read-only config query で global scope からだけ解決し、その path を隔離 invocation の command-local config へ投影する。system config、repository local config、継承された `GIT_CONFIG_GLOBAL` から同名設定を取得せず、global config の他の値も投影しない
 - 操作中は Workspace、repository top level、Git directory、common directory の identity を保持する。Windows では各 directory 内に delete-on-close の一時 lease file を開き、親 directory の rename / replacement を操作完了まで成立させない
 - directory identity を保持できない platform では Changes / live Git Diff を typed failure とし、path 前後確認だけへ fallback しない
 - repository の HEAD と Workspace scope の index entry を、操作ごとの一時 Git directory へ投影する。`assume-unchanged`、`skip-worktree`、intent-to-add を含む index semantics も投影し、object content は認可済み common object directoryを alternate として参照する。intent-to-add は現在の working tree に対象 file が存在しない場合も、一時 work tree で extended flag を再現する
@@ -46,6 +47,7 @@ Session File Explorer の Changes と live Git Diff は、Workspace の Git stat
 - canonical root の差し替え中に別 repository の status や patch を返さない
 - staged と working tree の index semantics、および 1 file 単位の Git patch 表現を維持できる。nested Workspace では repository 全体を status 対象にしない
 - ownership が異なる repository でも global `safe.directory` を変更せず Changes を取得でき、一般的な改行・file mode 設定を持つ checkout では通常の Git status と同じ変更判定を維持できる
+- user global ignore の対象を通常の Git status と同じく Changes から除外しつつ、global filter や external command の設定は隔離できる
 - filter 事前確認と安全性を分離し、設定変更競合を前後チェックへ依存させない
 
 ### Negative
@@ -53,5 +55,6 @@ Session File Explorer の Changes と live Git Diff は、Workspace の Git stat
 - 操作ごとに一時 Git directory と Workspace scope の index projection を作るため、対象 index entry 数に比例する I/O が増える。file / diff content の hard reject 上限は設けないが、同時 operation と待機数は固定上限にする
 - Windows では短時間の hidden lease file 作成が Workspace watcher から観測される可能性がある。Changes と filter inspection からは除外する
 - allowlist 外の repository local config と、許可 domain 外の値は隔離 invocation に投影しない。特殊な built-in conversion 設定を持つ repository では typed failure または通常の Git CLI と異なる patch になる可能性がある
+- `core.excludesFile` が指す user global ignore file は Workspace 外でも Git status の読込対象になる。読込は operation deadline の対象だが、変更中の global ignore file と status の一貫した snapshot は保証しない
 - populated submodule 内だけに存在する未commit変更は Changes に表示しない。gitlink commit の staged / working tree change は表示する
 - directory identity を保持する実装がない platform では Changes / live Git Diff を利用できない。対応する場合は path 前後確認ではなく、open directory handle に Git の全読込を結び付ける必要がある
