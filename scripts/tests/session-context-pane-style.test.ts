@@ -73,6 +73,23 @@ test("左右ペイン非表示時は pane track を除き、splitter の再表�
   );
 });
 
+test("splitter の枠は各 track に収まり、modal より背面に残る", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter-chevron\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?width:\s*12px;[\s\S]*?height:\s*24px;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter\.edge-top \.session-dock-splitter-chevron,\s*\.session-dock-splitter\.edge-bottom \.session-dock-splitter-chevron\s*{\s*width:\s*24px;\s*height:\s*12px;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.launch-modal,\s*\.diff-modal\s*{[\s\S]*?position:\s*fixed;[\s\S]*?z-index:\s*40;/,
+  );
+});
+
 test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
   const [componentSource, chatWindowSource, sessionProjectionSource, companionProjectionSource, stylesSource] = await Promise.all([
     readFile("src/session-components.tsx", "utf8"),
