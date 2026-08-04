@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  DEFAULT_CHAT_LAYOUT_PREFERENCE,
   isChatLayoutPreferenceUpdate,
+  normalizeChatLayoutPreference,
   persistChatLayoutPreference,
   type ChatLayoutPreferenceUpdate,
 } from "../../src/chat/chat-layout-preference.js";
@@ -43,7 +45,17 @@ test("isChatLayoutPreferenceUpdate は target/value だけを持つ canonical up
   assert.equal(isChatLayoutPreferenceUpdate({ target: "header", value: "hidden" }), true);
   assert.equal(isChatLayoutPreferenceUpdate({ target: "actionDock", value: "expanded" }), true);
   assert.equal(isChatLayoutPreferenceUpdate({ target: "sidePane", value: "context" }), true);
+  assert.equal(isChatLayoutPreferenceUpdate({ target: "priority", value: "side-pane-first" }), true);
+  assert.equal(isChatLayoutPreferenceUpdate({ target: "priority", value: "dock-first" }), true);
   assert.equal(isChatLayoutPreferenceUpdate({ target: "header", value: "shown" }), false);
   assert.equal(isChatLayoutPreferenceUpdate({ target: "sidePane", value: "files", header: "visible" }), false);
   assert.equal(isChatLayoutPreferenceUpdate({ target: "sidePane" }), false);
+  assert.equal(isChatLayoutPreferenceUpdate({ target: "priority", value: "left-first" }), false);
+});
+
+test("chat layout priority は旧設定と不正値を side pane 優先へ正規化する", () => {
+  assert.equal(DEFAULT_CHAT_LAYOUT_PREFERENCE.priority, "side-pane-first");
+  assert.equal(normalizeChatLayoutPreference({}).priority, "side-pane-first");
+  assert.equal(normalizeChatLayoutPreference({ priority: "dock-first" }).priority, "dock-first");
+  assert.equal(normalizeChatLayoutPreference({ priority: "invalid" }).priority, "side-pane-first");
 });

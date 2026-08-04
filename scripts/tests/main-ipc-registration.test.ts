@@ -257,11 +257,26 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
     }),
     { chatLayoutPreference: { target: "actionDock", value: "expanded" } },
   );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+      target: "priority",
+      value: "dock-first",
+    }),
+    { chatLayoutPreference: { target: "priority", value: "dock-first" } },
+  );
   await assert.rejects(
     () =>
       handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
         target: "header",
         value: "shown",
+      }) as Promise<unknown>,
+    /更新内容が不正/,
+  );
+  await assert.rejects(
+    () =>
+      handlers.get(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL)?.({}, {
+        target: "priority",
+        value: "left-first",
       }) as Promise<unknown>,
     /更新内容が不正/,
   );
@@ -278,6 +293,7 @@ test("chat layout preference IPC は単一 target の列挙値だけを専用更
     { target: "sidePane", value: "files" },
     { target: "header", value: "visible" },
     { target: "actionDock", value: "expanded" },
+    { target: "priority", value: "dock-first" },
   ]);
 });
 

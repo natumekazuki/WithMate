@@ -3,6 +3,7 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   isChatActionDockMode,
   isChatHeaderVisibility,
+  isChatLayoutPriority,
   type ChatLayoutPreferenceUpdate,
 } from "../src/chat/chat-layout-preference.js";
 import { createDefaultAppSettings, normalizeAppSettings, type AppSettings } from "../src/provider-settings-state.js";
@@ -20,6 +21,7 @@ const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send
 const SESSION_HEADER_VISIBILITY_KEY = "session_header_visibility";
 const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
 const SESSION_SIDE_PANE_KEY = "session_side_pane";
+const SESSION_LAYOUT_PRIORITY_KEY = "session_layout_priority";
 const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
@@ -135,6 +137,13 @@ export class AppSettingsStorage {
         VALUES (?, ?, ?)
         ON CONFLICT(setting_key) DO NOTHING
       `)
+      .run(SESSION_LAYOUT_PRIORITY_KEY, DEFAULT_APP_SETTINGS.chatLayoutPreference.priority, updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
       .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(DEFAULT_APP_SETTINGS.memoryFileQuotaBytes), updatedAt);
     this.db
       .prepare(`
@@ -226,6 +235,12 @@ export class AppSettingsStorage {
       }
       if (row.setting_key === SESSION_SIDE_PANE_KEY) {
         settings.chatLayoutPreference.sidePane = isSessionSidePane(row.setting_value) ? row.setting_value : "none";
+        continue;
+      }
+      if (row.setting_key === SESSION_LAYOUT_PRIORITY_KEY) {
+        settings.chatLayoutPreference.priority = isChatLayoutPriority(row.setting_value)
+          ? row.setting_value
+          : "side-pane-first";
         continue;
       }
       if (row.setting_key === MEMORY_FILE_QUOTA_BYTES_KEY) {
@@ -427,7 +442,10 @@ export class AppSettingsStorage {
       if (update.target === "actionDock") {
         return [SESSION_ACTION_DOCK_PRESENTATION_KEY, update.value] as const;
       }
-      return [SESSION_SIDE_PANE_KEY, update.value] as const;
+      if (update.target === "sidePane") {
+        return [SESSION_SIDE_PANE_KEY, update.value] as const;
+      }
+      return [SESSION_LAYOUT_PRIORITY_KEY, update.value] as const;
     })();
     this.db
       .prepare(`

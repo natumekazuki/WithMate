@@ -507,17 +507,26 @@ export default function AgentSessionWindowApp() {
   const handleActionDockPreferenceChange = useCallback((value: "compact" | "expanded") => {
     void persistChatLayoutPreference(withmateApi, { target: "actionDock", value });
   }, [withmateApi]);
+  const handleLayoutPriorityPreferenceChange = useCallback((value: "side-pane-first" | "dock-first") => {
+    void persistChatLayoutPreference(withmateApi, { target: "priority", value });
+  }, [withmateApi]);
   const {
     isHeaderExpanded,
     setIsHeaderExpanded,
     isActionDockPinnedExpanded,
     setIsActionDockPinnedExpanded,
+    layoutPriority,
+    setLayoutPriority,
   } = useChatLayoutPresentation({
     initialHeader: isAppSettingsLoaded ? appSettings.chatLayoutPreference.header : null,
     initialActionDock: isAppSettingsLoaded ? appSettings.chatLayoutPreference.actionDock : null,
+    initialPriority: isAppSettingsLoaded ? appSettings.chatLayoutPreference.priority : null,
     onHeaderChange: handleHeaderPreferenceChange,
     onActionDockChange: handleActionDockPreferenceChange,
+    onPriorityChange: handleLayoutPriorityPreferenceChange,
   });
+  const handleActivateSidePanePriority = useCallback(() => setLayoutPriority("side-pane-first"), [setLayoutPriority]);
+  const handleActivateDockPriority = useCallback(() => setLayoutPriority("dock-first"), [setLayoutPriority]);
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
   const [isAuxiliaryActionPending, setIsAuxiliaryActionPending] = useState(false);
@@ -3337,6 +3346,9 @@ export default function AgentSessionWindowApp() {
         sessionDockLayoutStyle,
         sessionWorkbenchRef,
         sessionWorkbenchStyle,
+        layoutPriority,
+        onActivateSidePanePriority: handleActivateSidePanePriority,
+        onActivateDockPriority: handleActivateDockPriority,
         isSessionHeaderExpanded,
         isEditingTitle,
         titleDraft,
