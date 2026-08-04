@@ -5,6 +5,7 @@ import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
 import type { ModelCatalogProvider } from "../model-catalog.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
+import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
 import type { HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
@@ -28,6 +29,8 @@ type HomeLaunchHandlersContext = {
   characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
   sessions: readonly SessionSummary[];
+  openSessionWindowIds: readonly string[];
+  openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
   sessionSummariesLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setLaunchFeedback: (message: string) => void;
@@ -64,6 +67,8 @@ export function buildHomeLaunchHandlers({
   characterEntries,
   selectedLaunchProviderId,
   sessions,
+  openSessionWindowIds,
+  openSessionWindowIdsLoadStatus,
   sessionSummariesLoadStatus,
   refreshCharacterEntries,
   setLaunchFeedback,
@@ -124,6 +129,8 @@ export function buildHomeLaunchHandlers({
       selectedProviderId: selectedLaunchProviderId,
       characterEntries,
       sessions,
+      openSessionWindowIds,
+      openSessionWindowIdsLoadStatus,
       sessionSummariesLoadStatus,
       createSession,
       createCompanionSession,
