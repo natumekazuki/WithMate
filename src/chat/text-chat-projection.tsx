@@ -112,6 +112,7 @@ export function buildTextChatWindowProps({
     mode,
     className: "",
     style: themeStyle,
+    layoutPriority: "side-pane-first",
     isHeaderExpanded,
     headerProps: createStaticChatHeaderProps({
       taskTitle: pageTitle,

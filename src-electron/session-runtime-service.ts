@@ -87,7 +87,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
-  notifySessionTurnCompleted?: (session: Session) => Awaitable<void>;
+  notifySessionTurnCompleted?: (session: Session, lastNonEmptyAssistantMessageText: string) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   providerCancelGraceMs?: number;
   auditEnrichmentGraceMs?: number;
@@ -96,13 +96,14 @@ export type SessionRuntimeServiceDeps = {
 function notifySessionTurnCompletedBestEffort(
   notify: SessionRuntimeServiceDeps["notifySessionTurnCompleted"],
   session: Session,
+  lastNonEmptyAssistantMessageText: string,
 ): void {
   if (!notify) {
     return;
   }
 
   try {
-    void Promise.resolve(notify(session))
+    void Promise.resolve(notify(session, lastNonEmptyAssistantMessageText))
       .catch((error) => console.warn("Session turn completion notification failed", error));
   } catch (error) {
     console.warn("Session turn completion notification failed", error);
@@ -1125,7 +1126,11 @@ export class SessionRuntimeService {
       });
       activeRunningSession = storedCompletedSession;
       if (!runAbortController.signal.aborted) {
-        notifySessionTurnCompletedBestEffort(this.deps.notifySessionTurnCompleted, storedCompletedSession);
+        notifySessionTurnCompletedBestEffort(
+          this.deps.notifySessionTurnCompleted,
+          storedCompletedSession,
+          result.lastNonEmptyAssistantMessageText ?? "",
+        );
       }
 
       const completedAuditEntry = buildTerminalAuditEntry({

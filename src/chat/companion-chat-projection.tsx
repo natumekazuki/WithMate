@@ -51,6 +51,9 @@ export type CompanionChatProjectionInput = {
   dockLayoutStyle: CSSProperties;
   workbenchRef: RefObject<HTMLDivElement | null>;
   workbenchStyle: CSSProperties | undefined;
+  layoutPriority: ChatWindowProps["layoutPriority"];
+  onActivateSidePanePriority: () => void;
+  onActivateDockPriority: () => void;
   isHeaderExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
@@ -393,6 +396,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     isHeaderExpanded: input.isHeaderExpanded,
     workbenchRef: input.workbenchRef,
     workbenchStyle: input.workbenchStyle,
+    layoutPriority: input.layoutPriority,
+    onActivateSidePanePriority: input.onActivateSidePanePriority,
+    onActivateDockPriority: input.onActivateDockPriority,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
     isActionDockExpanded: input.isActionDockExpanded,

@@ -2004,8 +2004,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
         }
       },
-      notifySessionTurnCompleted: (session) => {
-        requireSessionTurnNotificationService().notifyTurnCompleted(session);
+      notifySessionTurnCompleted: (session, lastNonEmptyAssistantMessageText) => {
+        requireSessionTurnNotificationService().notifyTurnCompleted(session, lastNonEmptyAssistantMessageText);
       },
       currentTimestampLabel,
     });

@@ -26,7 +26,6 @@ import {
   findPreviewTextMatches,
   formatFileByteLength,
   PreviewByteAccumulator,
-  shouldInitiallyFitSvg,
   resolveMarkdownImageTarget,
   resolveMarkdownLinkTarget,
   SESSION_FILE_LARGE_WARNING_BYTES,
@@ -439,7 +438,7 @@ export function SessionFilePreview({
   const [loadState, setLoadState] = useState<FileLoadState>({ status: "inspecting" });
   const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
   const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
-  const [imageZoom, setImageZoom] = useState<"fit" | number>(100);
+  const [imageZoom, setImageZoom] = useState<"fit" | number>("fit");
   const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
@@ -535,7 +534,7 @@ export function SessionFilePreview({
     setLoadState({ status: "inspecting" });
     setEncoding("auto");
     setMarkdownMode("preview");
-    setImageZoom(100);
+    setImageZoom("fit");
     imagePanSessionRef.current = null;
     setIsImagePanning(false);
     setImageObjectUrl("");
@@ -661,7 +660,7 @@ export function SessionFilePreview({
       setImageObjectUrl("");
       return;
     }
-    setImageZoom(loaded.descriptor.kind === "svg" && shouldInitiallyFitSvg(loaded.bytes) ? "fit" : 100);
+    setImageZoom("fit");
     setImageFitZoom(100);
     const objectUrl = URL.createObjectURL(new Blob([copyBytesToArrayBuffer(loaded.bytes)], { type: loaded.descriptor.mimeType }));
     setImageObjectUrl(objectUrl);

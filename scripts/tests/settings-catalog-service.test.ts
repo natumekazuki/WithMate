@@ -284,6 +284,7 @@ describe("SettingsCatalogService", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       resumeAuxiliarySessions.resolve();
 
       const updated = await updating;
@@ -293,6 +294,7 @@ describe("SettingsCatalogService", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
+        priority: "dock-first",
       });
       assert.deepEqual(storage.getSettings().chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
@@ -379,6 +381,7 @@ describe("SettingsCatalogService", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       resumeSessionReplacement.resolve();
 
       const updated = await updating;
@@ -388,6 +391,7 @@ describe("SettingsCatalogService", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "files",
+        priority: "dock-first",
       });
       assert.ok(broadcastSettings);
       assert.deepEqual(broadcastSettings.chatLayoutPreference, updated.chatLayoutPreference);
@@ -477,6 +481,7 @@ describe("SettingsCatalogService", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       rejectFirstSessionReplacement.resolve();
 
       await assert.rejects(() => updating, /session replacement failed/);
@@ -485,6 +490,7 @@ describe("SettingsCatalogService", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
+        priority: "dock-first",
       });
     } finally {
       storage.close();

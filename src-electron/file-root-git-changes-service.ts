@@ -190,6 +190,14 @@ function parseWorkTreeConfigArgs(output: Buffer): string[] {
   });
 }
 
+function parseGlobalExcludesFileArgs(output: Buffer): string[] {
+  const values = output.toString("utf8").split("\0").filter(Boolean);
+  if (values.length !== 1) {
+    throw new Error("Git global core.excludesFile returned an unsupported result.");
+  }
+  return ["-c", `core.excludesFile=${values[0]}`];
+}
+
 type WorkspaceGitAdmissionJob = {
   supersessionKey: string;
   start(): Promise<void>;
@@ -822,6 +830,37 @@ export class FileRootGitChangesService {
     return parseWorkTreeConfigArgs(result.stdout);
   }
 
+  async #readGlobalExcludesFileArgs(operation: WorkspaceGitOperation): Promise<string[]> {
+    await this.#assertOperationIdentity(operation);
+    const executablePath = await this.#getGitExecutablePath();
+    let result: GitCommandResult;
+    try {
+      result = await this.#runGit(operation.workspaceIdentity.realPath, [
+        ...GIT_GLOBAL_ARGS,
+        "config",
+        "--global",
+        "--includes",
+        "--null",
+        "--path",
+        "--get",
+        "core.excludesFile",
+      ], {
+        executablePath,
+        env: this.#gitConfigReadEnv,
+        signal: operation.signal,
+      });
+    } finally {
+      await this.#assertOperationIdentity(operation);
+    }
+    if (result.exitCode === 1 && result.stdout.length === 0) {
+      return [];
+    }
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || "Git global core.excludesFile could not be resolved.");
+    }
+    return parseGlobalExcludesFileArgs(result.stdout);
+  }
+
   async #captureRepositoryIdentity(
     workspacePath: string,
     expectedWorkspaceIdentity: DirectoryIdentity,
@@ -1224,7 +1263,10 @@ export class FileRootGitChangesService {
       };
     }
     throwIfAborted(operation.signal);
-    operation.workTreeConfigArgs = await this.#readWorkTreeConfigArgs(operation);
+    operation.workTreeConfigArgs = [
+      ...await this.#readWorkTreeConfigArgs(operation),
+      ...await this.#readGlobalExcludesFileArgs(operation),
+    ];
     const rootPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-preview-"));
     operation.isolatedGitDirectoryPath = rootPath;
     const gitDirectoryPath = path.join(rootPath, "repository.git");

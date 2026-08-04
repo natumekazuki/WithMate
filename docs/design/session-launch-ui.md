@@ -133,8 +133,10 @@ React モックでは次の形がよい。
 - `Character` は card で切り替える
 - `Character` は portrait 付きカードで切り替える
 - Character一覧の先頭にランダム選択カードを置く。ランダム選択時は、通常Sessionの最終利用順を使い、最近使っていないactive Characterほど高い重みで抽選する
-- Character利用履歴がない場合はactive Characterを均等に抽選し、active Characterが0件なら既存のneutral fallbackを使う
+- ランダム選択時は、開いている通常Session Windowで使用中のCharacterを、他にactive Characterがある間は候補から除外する。すべて使用中の場合は重複を許容する
+- Character利用履歴がない場合は使用中を除いた抽選候補を均等に抽選し、active Characterが0件なら既存のneutral fallbackを使う
 - Session履歴の読み込み中または取得失敗時はランダム選択で開始せず、取得成功した0件と区別する
+- 開いている通常Session Window一覧の読み込み中または取得失敗時もランダム選択で開始せず、取得成功した0件と区別する
 - `Character` には検索入力があり、`name / description` の部分一致で絞り込める
 - launch dialog 内の character card も Home と同じ theme rule を使う
   - background = character `main`

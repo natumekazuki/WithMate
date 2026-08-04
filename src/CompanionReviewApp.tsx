@@ -473,19 +473,30 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       void persistChatLayoutPreference(withmateApi, { target: "actionDock", value });
     }
   }, [isMergeView, withmateApi]);
+  const handleLayoutPriorityPreferenceChange = useCallback((value: "side-pane-first" | "dock-first") => {
+    if (!isMergeView) {
+      void persistChatLayoutPreference(withmateApi, { target: "priority", value });
+    }
+  }, [isMergeView, withmateApi]);
   const {
     isHeaderExpanded,
     setIsHeaderExpanded,
     isActionDockPinnedExpanded,
     setIsActionDockPinnedExpanded,
+    layoutPriority,
+    setLayoutPriority,
   } = useChatLayoutPresentation({
     initialHeader: isMergeView
       ? "visible"
       : (isAppSettingsLoaded ? appSettings.chatLayoutPreference.header : null),
     initialActionDock: isAppSettingsLoaded ? appSettings.chatLayoutPreference.actionDock : null,
+    initialPriority: isAppSettingsLoaded ? appSettings.chatLayoutPreference.priority : null,
     onHeaderChange: handleHeaderPreferenceChange,
     onActionDockChange: handleActionDockPreferenceChange,
+    onPriorityChange: handleLayoutPriorityPreferenceChange,
   });
+  const handleActivateSidePanePriority = useCallback(() => setLayoutPriority("side-pane-first"), [setLayoutPriority]);
+  const handleActivateDockPriority = useCallback(() => setLayoutPriority("dock-first"), [setLayoutPriority]);
   const [mergeFileListPercent, setMergeFileListPercent] = useState(MERGE_FILE_LIST_DEFAULT_PERCENT);
   const [mergeStagePanePercent, setMergeStagePanePercent] = useState(MERGE_STAGE_DEFAULT_PERCENT);
   const [isMergePaneResizing, setIsMergePaneResizing] = useState(false);
@@ -3003,6 +3014,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         dockLayoutStyle: sessionDockLayoutStyle,
         workbenchRef: sessionWorkbenchRef,
         workbenchStyle: sessionWorkbenchStyle,
+        layoutPriority,
+        onActivateSidePanePriority: handleActivateSidePanePriority,
+        onActivateDockPriority: handleActivateDockPriority,
         isHeaderExpanded: isSessionHeaderExpanded,
         isEditingTitle,
         titleDraft,
