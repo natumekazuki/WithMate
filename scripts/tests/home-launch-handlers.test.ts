@@ -52,6 +52,8 @@ describe("home-launch-handlers", () => {
       characterEntries: [createCharacterEntry({ id: "old", name: "Old" })],
       selectedLaunchProviderId: "codex",
       sessions: [],
+      openSessionWindowIds: [],
+      openSessionWindowIdsLoadStatus: "loaded",
       sessionSummariesLoadStatus: "loaded",
       refreshCharacterEntries: async () => {
         refreshCount += 1;

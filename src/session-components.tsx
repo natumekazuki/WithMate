@@ -30,6 +30,7 @@ import {
 import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
+import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -766,6 +767,7 @@ export type SessionChatScreenProps = {
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
+  layoutPriority: ChatLayoutPriority;
   leftPane?: ReactNode;
   leftSplitter?: ReactNode;
   rightPane: ReactNode;
@@ -792,6 +794,7 @@ export function SessionChatScreen({
   actionDock,
   actionDockSplitter,
   isActionDockExpanded,
+  layoutPriority,
   leftPane = null,
   leftSplitter = null,
   rightPane,
@@ -805,13 +808,27 @@ export function SessionChatScreen({
   workbenchStyle,
   modals,
 }: SessionChatScreenProps) {
+  const setLayoutElementRefs = useCallback((node: HTMLDivElement | null) => {
+    if (layoutRef) {
+      layoutRef.current = node;
+    }
+    if (workbenchRef) {
+      workbenchRef.current = node;
+    }
+  }, [layoutRef, workbenchRef]);
+  const layoutStyle = useMemo(() => ({ ...style, ...workbenchStyle }), [style, workbenchStyle]);
+
   return (
     <div
-      ref={layoutRef}
-      className={`page-shell session-page session-chat-layout${isHeaderVisible ? " is-header-visible" : ""}${
+      ref={setLayoutElementRefs}
+      className={`page-shell session-page session-chat-layout layout-priority-${
+        layoutPriority === "side-pane-first" ? "side-pane" : "dock"
+      }${isHeaderVisible ? " is-header-visible" : ""}${
         isActionDockExpanded ? " is-action-dock-expanded" : ""
+      }${isLeftPaneVisible ? " is-left-pane-visible" : ""}${
+        isRightPaneVisible ? " is-right-pane-visible" : ""
       }${className ? ` ${className}` : ""}`}
-      style={style}
+      style={layoutStyle}
       data-session-mode={mode}
     >
       <div
@@ -825,44 +842,34 @@ export function SessionChatScreen({
 
       {headerSplitter}
 
-      <section className="content-grid session-content-grid">
-        <section className="chat-panel session-work-surface rise-3">
-          <div className="session-workbench" ref={workbenchRef} style={workbenchStyle}>
-            <div className={`session-main-grid${isLeftPaneVisible ? " session-main-grid-left-pane-visible" : ""}${
-              isRightPaneVisible ? " session-main-grid-right-pane-visible" : ""
-            }`}>
-              <div
-                id={SESSION_LEFT_PANE_ID}
-                className={`session-left-pane-slot${isLeftPaneVisible ? "" : " is-hidden"}`}
-                aria-hidden={!isLeftPaneVisible}
-                inert={!isLeftPaneVisible}
-              >
-                {leftPane}
-              </div>
+      <div
+        id={SESSION_LEFT_PANE_ID}
+        className={`session-left-pane-slot${isLeftPaneVisible ? "" : " is-hidden"}`}
+        aria-hidden={!isLeftPaneVisible}
+        inert={!isLeftPaneVisible}
+      >
+        {leftPane}
+      </div>
 
-              {leftSplitter}
-              <div className="session-message-stack">
-                <div className="session-central-surface" hidden={mainContent !== undefined}>
-                  {messageColumn}
-                </div>
-                <div className="session-central-surface" hidden={mainContent === undefined}>
-                  {mainContent}
-                </div>
-              </div>
-
-              {splitter}
-              <div
-                id={SESSION_RIGHT_PANE_ID}
-                className={`session-right-pane-slot${isRightPaneVisible ? "" : " is-hidden"}`}
-                aria-hidden={!isRightPaneVisible}
-                inert={!isRightPaneVisible}
-              >
-                {rightPane}
-              </div>
-            </div>
-          </div>
-        </section>
+      {leftSplitter}
+      <section className="chat-panel session-work-surface session-message-stack rise-3">
+        <div className="session-central-surface" hidden={mainContent !== undefined}>
+          {messageColumn}
+        </div>
+        <div className="session-central-surface" hidden={mainContent === undefined}>
+          {mainContent}
+        </div>
       </section>
+
+      {splitter}
+      <div
+        id={SESSION_RIGHT_PANE_ID}
+        className={`session-right-pane-slot${isRightPaneVisible ? "" : " is-hidden"}`}
+        aria-hidden={!isRightPaneVisible}
+        inert={!isRightPaneVisible}
+      >
+        {rightPane}
+      </div>
 
       {actionDockSplitter}
       <div
@@ -3487,6 +3494,14 @@ export function SessionComposerExpanded({
               </button>
             </div>
           ) : null}
+          {isRunning ? (
+            <div className="composer-toolbar-progress">
+              <PendingRunIndicator
+                announcement={pendingRunIndicatorAnnouncement}
+                text={pendingRunIndicatorText}
+              />
+            </div>
+          ) : null}
           {showJumpToBottom ? (
             <button
               className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -3497,13 +3512,6 @@ export function SessionComposerExpanded({
             </button>
           ) : null}
           {isRunning ? (
-            <>
-              <div className="composer-toolbar-progress">
-                <PendingRunIndicator
-                  announcement={pendingRunIndicatorAnnouncement}
-                  text={pendingRunIndicatorText}
-                />
-              </div>
               <button
                 className="drawer-toggle compact danger composer-toolbar-cancel-button"
                 type="button"
@@ -3512,7 +3520,6 @@ export function SessionComposerExpanded({
               >
                 Cancel
               </button>
-            </>
           ) : null}
         </div>
       ) : null}

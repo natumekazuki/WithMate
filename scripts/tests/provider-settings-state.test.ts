@@ -26,6 +26,7 @@ describe("provider-settings-state", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
+      priority: "side-pane-first",
     });
     assert.equal(settings.sessionTurnNotificationEnabled, true);
     assert.equal(settings.sessionTurnNotificationResponsePreviewEnabled, false);
@@ -106,11 +107,17 @@ describe("provider-settings-state", () => {
 
   it("chat layout preference は項目ごとに canonical enum へ normalize する", () => {
     assert.deepEqual(normalizeAppSettings({
-      chatLayoutPreference: { header: "visible", actionDock: "expanded", sidePane: "context" },
+      chatLayoutPreference: {
+        header: "visible",
+        actionDock: "expanded",
+        sidePane: "context",
+        priority: "dock-first",
+      },
     }).chatLayoutPreference, {
       header: "visible",
       actionDock: "expanded",
       sidePane: "context",
+      priority: "dock-first",
     });
     assert.deepEqual(normalizeAppSettings({
       chatLayoutPreference: { header: "invalid", actionDock: false, sidePane: "left" },
@@ -118,6 +125,7 @@ describe("provider-settings-state", () => {
       header: "hidden",
       actionDock: "compact",
       sidePane: "none",
+      priority: "side-pane-first",
     });
   });
 

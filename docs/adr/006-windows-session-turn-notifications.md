@@ -17,9 +17,9 @@ Session のターン完了まで時間がかかる場合、ユーザーは WithM
 - 返答冒頭の表示設定は完了通知とは別に設け、既定で無効とする。完了通知が無効な間は Settings 上で操作できないが、保存済みの選択値は維持する。
 - provider の成功結果を含む Session が永続化された直後を通知契機とする。失敗、キャンセル、setup failure では通知しない。
 - 対象 Session Window 自体が focus 中の場合だけ通知を抑止する。対象 Window が表示中でも、別アプリまたは別の WithMate Window が focus 中なら通知する。
-- 返答冒頭の表示が無効、最後の assistant 本文が空、または設定確認・preview 生成に失敗した場合、通知の title は `WithMate`、body は `「Session名」のターンが完了しました` とする。
-- 返答冒頭の表示が有効な場合、通知の title は Session 名、body は永続化済み Session の最後の assistant 本文から生成した preview とする。preview は Renderer と同じ GFM と数式構文を認識し、リンク先、参照定義、HTML、数式、Mermaid、画像など画面上の平文ではない内容を除外して、表示対象の text だけを使う。除外後に表示対象の text がなければ完了通知へ戻す。改行と連続空白は一つの空白へまとめる。40 grapheme を超える場合は、その範囲内にある最後の `。`、`！`、`？`、`!`、`?` で切り、文末がなければ40 graphemeで切る。後続がある場合だけ `…` を付ける。
-- 最後の assistant 本文が 2,048 UTF-16 code units を超える場合は Markdown を解析せず、完了通知へ戻す。Markdown の解析負荷は構文によって増えるため、40 grapheme の preview に必要な範囲より十分大きく、main process の同期処理を短く保てる固定上限とする。2,048 以下は preview 生成の対象とする。
+- 返答冒頭の表示が無効、provider turn で確定した top-level assistant response message に空白以外の本文がない、または設定確認・preview 生成に失敗した場合、通知の title は `WithMate`、body は `「Session名」のターンが完了しました` とする。
+- 返答冒頭の表示が有効な場合、通知の title は Session 名、body は provider turn で確定した top-level assistant response message のうち、最後の空白以外を含む message から生成した preview とする。末尾に空または空白だけの message が続いても、その直前の最後の非空 message を使う。Session timeline と Audit Log に保存する複数 response message の連結本文は preview source に使わない。preview は Renderer と同じ GFM と数式構文を認識し、リンク先、参照定義、HTML、数式、Mermaid、画像など画面上の平文ではない内容を除外して、表示対象の text だけを使う。除外後に表示対象の text がなければ完了通知へ戻す。改行と連続空白は一つの空白へまとめる。40 grapheme を超える場合は、その範囲内にある最後の `。`、`！`、`？`、`!`、`?` で切り、文末がなければ40 graphemeで切る。後続がある場合だけ `…` を付ける。
+- 最後の非空 top-level assistant response message が 2,048 UTF-16 code units を超える場合は Markdown を解析せず、完了通知へ戻す。Markdown の解析負荷は構文によって増えるため、40 grapheme の preview に必要な範囲より十分大きく、main process の同期処理を短く保てる固定上限とする。2,048 以下は preview 生成の対象とする。
 - Character icon は `nativeImage` で読み込める場合だけ通知へ渡す。未設定、相対 path、欠損、不正、非対応形式の場合は icon を省略し、Windows が選ぶアプリアイコンへフォールバックする。
 - Session ID から安定した Windows notification ID を生成する。同一 Session の未処理通知がある場合は閉じ、プロセス再起動をまたぐ場合も Windows の Tag と Group によって新しい完了通知へ置き換える。
 - Windows の system timeout 後も元の notification instance を Session 単位で保持する。同じ Session の新しい通知へ置き換える場合、または Session の単体削除、cutoff 一括削除、Sessions を含む DB 初期化が成功した場合は、その instance の `close()` を呼び、Action Center からの撤去を試みる。削除されなかった Session と、実行中のため一括削除から除外された Session の通知は閉じない。

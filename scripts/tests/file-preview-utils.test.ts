@@ -11,7 +11,6 @@ import {
   resolveMarkdownImageTarget,
   resolveMarkdownLinkTarget,
   resolveRelativeMarkdownResourcePath,
-  shouldInitiallyFitSvg,
 } from "../../src/file-explorer/file-preview-utils.js";
 import { detectSessionFileEncoding } from "../../src/file-explorer/file-content-detection.js";
 
@@ -65,14 +64,6 @@ test("PreviewByteAccumulator は破棄時に未完了世代の保持bytesを直�
 
   assert.equal(accumulator.retainedByteLength, 0);
   assert.throws(() => accumulator.append(Uint8Array.of(4)), /replaced/);
-});
-
-test("shouldInitiallyFitSvg は寸法情報のないSVGだけを初回Fitにする", () => {
-  const encode = (source: string) => new TextEncoder().encode(source);
-  assert.equal(shouldInitiallyFitSvg(encode("<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>")), true);
-  assert.equal(shouldInitiallyFitSvg(encode("<svg width=\"320\" height=\"180\"></svg>")), false);
-  assert.equal(shouldInitiallyFitSvg(encode("<svg viewBox=\"0 0 320 180\"></svg>")), false);
-  assert.equal(shouldInitiallyFitSvg(encode("<svg width=\"100%\" height=\"100%\"></svg>")), true);
 });
 
 test("projectFileRootDiffAvailability は変更なしとGit失敗を区別する", () => {

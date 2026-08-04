@@ -616,7 +616,10 @@ function toActivitySummary(items: CodexTurnItem[]): string[] {
   return summary.slice(0, 6);
 }
 
-function collectAssistantText(items: Iterable<CodexTurnItem>): string {
+function collectAssistantResponse(items: Iterable<CodexTurnItem>): {
+  assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
+} {
   const parts: string[] = [];
 
   for (const item of items) {
@@ -631,7 +634,10 @@ function collectAssistantText(items: Iterable<CodexTurnItem>): string {
     parts.push(item.text);
   }
 
-  return parts.join("\n\n");
+  return {
+    assistantText: parts.join("\n\n"),
+    lastNonEmptyAssistantMessageText: parts.at(-1) ?? "",
+  };
 }
 
 function stringifyUnknown(value: unknown): string | undefined {
@@ -1247,7 +1253,7 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
     case "item.completed": {
       state.items.set(event.item.id, event.item);
       if (event.item.type === "agent_message") {
-        const itemAssistantText = collectAssistantText(state.items.values());
+        const { assistantText: itemAssistantText } = collectAssistantResponse(state.items.values());
         if (itemAssistantText.trim().length > 0) {
           state.finalAssistantText = itemAssistantText;
         }
@@ -1273,6 +1279,23 @@ export function collectCodexAssistantTextFromEventsForTesting(events: ThreadEven
     applyCodexTurnEvent(state, event);
   }
   return getLiveAssistantText(state);
+}
+
+export function collectCodexAssistantResponseFromEventsForTesting(events: ThreadEvent[]): {
+  assistantText: string;
+  lastNonEmptyAssistantMessageText: string;
+} {
+  const state = createCodexTurnStreamState(null);
+  for (const event of events) {
+    applyCodexTurnEvent(state, event);
+  }
+  const response = collectAssistantResponse(state.items.values());
+  return response.assistantText.trim().length > 0
+    ? response
+    : {
+        assistantText: getLiveAssistantText(state),
+        lastNonEmptyAssistantMessageText: getLiveAssistantText(state),
+      };
 }
 
 export function collectCodexAssistantTextSnapshotsFromEventsForTesting(events: ThreadEvent[]): string[] {
@@ -1713,8 +1736,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
         data: toProviderMetadataLogData(metadata),
       });
     }
-    const itemAssistantText = collectAssistantText(finalItems);
+    const {
+      assistantText: itemAssistantText,
+      lastNonEmptyAssistantMessageText: itemLastNonEmptyAssistantMessageText,
+    } = collectAssistantResponse(finalItems);
     const finalAssistantText = itemAssistantText.trim().length > 0 ? itemAssistantText : streamedAssistantText;
+    const lastNonEmptyAssistantMessageText = itemLastNonEmptyAssistantMessageText.trim().length > 0
+      ? itemLastNonEmptyAssistantMessageText
+      : streamedAssistantText;
     const snapshotResult = await raceWithDeadline(
       this.captureAfterWorkspaceSnapshot(input, finalItems),
       this.options.snapshotDeadlineMs ?? DEFAULT_CODEX_SNAPSHOT_DEADLINE_MS,
@@ -1767,6 +1796,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
     return {
       threadId,
       assistantText: finalAssistantText,
+      lastNonEmptyAssistantMessageText,
       artifact,
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCodexTransportPayload(prompt),

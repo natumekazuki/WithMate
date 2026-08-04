@@ -140,6 +140,7 @@ describe("AppSettingsStorage", () => {
           header: "visible",
           actionDock: "expanded",
           sidePane: "context",
+          priority: "dock-first",
         },
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
@@ -228,6 +229,7 @@ describe("AppSettingsStorage", () => {
         header: "hidden",
         actionDock: "compact",
         sidePane: "none",
+        priority: "side-pane-first",
       });
 
       storage.updateSettings({
@@ -236,7 +238,8 @@ describe("AppSettingsStorage", () => {
       });
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
-      const updated = storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      const updated = storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       storage.close();
 
       const reopened = new AppSettingsStorage(dbPath);
@@ -247,6 +250,7 @@ describe("AppSettingsStorage", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "files",
+        priority: "dock-first",
       });
       assert.equal(updated.memoryGenerationEnabled, false);
       assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
@@ -269,16 +273,24 @@ describe("AppSettingsStorage", () => {
       directDatabase
         .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
         .run("sentinel-side-pane", "session_side_pane");
+      directDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("sentinel-priority", "session_layout_priority");
 
       const updated = storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       const rows = directDatabase
         .prepare(`
           SELECT setting_key, setting_value
           FROM app_settings
-          WHERE setting_key IN (?, ?, ?)
+          WHERE setting_key IN (?, ?, ?, ?)
           ORDER BY setting_key
         `)
-        .all("session_header_visibility", "session_action_dock_presentation", "session_side_pane") as Array<{
+        .all(
+          "session_header_visibility",
+          "session_action_dock_presentation",
+          "session_side_pane",
+          "session_layout_priority",
+        ) as Array<{
           setting_key: string;
           setting_value: string;
         }>;
@@ -286,12 +298,14 @@ describe("AppSettingsStorage", () => {
       assert.deepEqual(rows.map((row) => ({ ...row })), [
         { setting_key: "session_action_dock_presentation", setting_value: "sentinel-action-dock" },
         { setting_key: "session_header_visibility", setting_value: "visible" },
+        { setting_key: "session_layout_priority", setting_value: "sentinel-priority" },
         { setting_key: "session_side_pane", setting_value: "sentinel-side-pane" },
       ]);
       assert.deepEqual(updated.chatLayoutPreference, {
         header: "visible",
         actionDock: "compact",
         sidePane: "none",
+        priority: "side-pane-first",
       });
     } finally {
       directDatabase.close();
@@ -311,6 +325,7 @@ describe("AppSettingsStorage", () => {
       storage.updateChatLayoutPreference({ target: "header", value: "visible" });
       storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
+      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
       const updated = storage.updateSettings({
         ...staleSettings,
         launchAtLoginEnabled: true,
@@ -326,6 +341,7 @@ describe("AppSettingsStorage", () => {
         header: "visible",
         actionDock: "expanded",
         sidePane: "context",
+        priority: "dock-first",
       });
       assert.deepEqual(loaded.chatLayoutPreference, updated.chatLayoutPreference);
     } finally {
@@ -410,6 +426,7 @@ describe("AppSettingsStorage", () => {
         },
       });
       storage.updateChatLayoutPreference({ target: "sidePane", value: "files" });
+      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
 
       const reset = storage.resetSettings();
       storage.close();
