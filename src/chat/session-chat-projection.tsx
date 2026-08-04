@@ -45,6 +45,9 @@ export type AgentSessionChatProjectionInput = {
   sessionDockLayoutStyle: CSSProperties;
   sessionWorkbenchRef: RefObject<HTMLDivElement | null>;
   sessionWorkbenchStyle: CSSProperties | undefined;
+  layoutPriority: ChatWindowProps["layoutPriority"];
+  onActivateSidePanePriority: () => void;
+  onActivateDockPriority: () => void;
   isSessionHeaderExpanded: boolean;
   isEditingTitle: boolean;
   titleDraft: string;
@@ -389,6 +392,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     isHeaderExpanded: input.isSessionHeaderExpanded,
     workbenchRef: input.sessionWorkbenchRef,
     workbenchStyle: input.sessionWorkbenchStyle,
+    layoutPriority: input.layoutPriority,
+    onActivateSidePanePriority: input.onActivateSidePanePriority,
+    onActivateDockPriority: input.onActivateDockPriority,
     headerProps,
     messageColumnProps: {
       ...chatBodyProps.messageColumnProps,

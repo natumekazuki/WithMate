@@ -94,13 +94,13 @@ current UI では表示しない。legacy v1 では `character reflection cycle`
 ### Desktop Width
 
 - right pane の tab host を常設する
-- `Action Dock` は左右ペインの下に full-width で置く
+- `Action Dock` は layout priority に従い、上下 dock 優先では full-width、左右 pane 優先では左右 pane の間に置く
 - splitter で会話面と right pane の幅を調整できる
 
 ### Narrow Width
 
 - main split は縦 stack に戻す
-- right pane は message list の下、`Action Dock` の上へ置く
+- layout priority にかかわらず、right pane は message list の下、`Action Dock` の上で縦 stack にする
 - `Action Dock` は引き続き最下段に固定面として扱う
 
 ## Data Mapping

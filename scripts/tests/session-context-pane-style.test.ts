@@ -57,7 +57,7 @@ test("左右ペイン非表示時は pane track を除き、splitter の再表�
 
   assert.match(
     stylesSource,
-    /\.session-main-grid\s*{[\s\S]*?grid-template-columns:\s*12px\s*minmax\(0,\s*1fr\)\s*12px;/,
+    /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?grid-template-columns:\s*12px\s*minmax\(0,\s*1fr\)\s*12px;/,
   );
   assert.match(
     stylesSource,
@@ -71,9 +71,21 @@ test("左右ペイン非表示時は pane track を除き、splitter の再表�
     stylesSource,
     /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-dock-splitter\.edge-left\.is-static,[\s\S]*?\.session-dock-splitter\.edge-right\.is-static\s*{\s*display:\s*none;\s*}/,
   );
+  assert.match(
+    stylesSource,
+    /@media \(max-width:\s*1399\.98px\)\s*{[\s\S]*?\.session-chat-layout\.layout-priority-side-pane,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-split"\s*"main"\s*"right-split"\s*"bottom-split"\s*"action-dock";/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.layout-priority-side-pane\.is-left-pane-visible,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-pane"\s*"left-split"\s*"main"\s*"right-split"\s*"bottom-split"\s*"action-dock";/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.layout-priority-side-pane\.is-right-pane-visible,[\s\S]*?grid-template-areas:\s*"header"\s*"top-split"\s*"left-split"\s*"main"\s*"right-split"\s*"right-pane"\s*"bottom-split"\s*"action-dock";/,
+  );
 });
 
-test("Header と ActionDock は中央・左右ペインの外側に全幅 dock として配置する", async () => {
+test("splitter が選んだ優先軸に応じて side pane または上下 dock を全長表示する", async () => {
   const [componentSource, chatWindowSource, sessionProjectionSource, companionProjectionSource, stylesSource] = await Promise.all([
     readFile("src/session-components.tsx", "utf8"),
     readFile("src/chat/chat-window.tsx", "utf8"),
@@ -82,10 +94,12 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
     readFile("src/styles.css", "utf8"),
   ]);
 
-  assert.match(componentSource, /session-header-dock-slot[\s\S]*?session-content-grid[\s\S]*?session-action-dock-slot/);
-  assert.match(componentSource, /session-chat-layout[\s\S]*?is-header-visible[\s\S]*?is-action-dock-expanded/);
+  assert.match(componentSource, /layout-priority-\$\{[\s\S]*?layoutPriority === "side-pane-first" \? "side-pane" : "dock"/);
+  assert.match(componentSource, /session-chat-layout[\s\S]*?is-left-pane-visible[\s\S]*?is-right-pane-visible/);
   assert.match(componentSource, /session-header-dock-slot.*?is-hidden[\s\S]*?aria-hidden={!isHeaderVisible}/);
   assert.doesNotMatch(componentSource, /className="session-header-dock-slot"\s+hidden=/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?"left-split header right-split"[\s\S]*?"left-split action-dock right-split"/);
+  assert.match(stylesSource, /\.session-chat-layout\.layout-priority-dock\s*{[\s\S]*?"header header header"[\s\S]*?"action-dock action-dock action-dock"/);
   assert.match(stylesSource, /\.session-chat-layout\s*{[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-header-dock-row-height\)[\s\S]*?minmax\(280px, 1fr\)[\s\S]*?var\(--session-action-dock-row-height\);/);
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
   assert.match(
