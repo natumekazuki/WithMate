@@ -25,6 +25,7 @@ const SESSION_CONTEXT_RAIL_DRAG_THRESHOLD = 4;
 const SESSION_CONTEXT_RAIL_DRAG_CLICK_SUPPRESSION_MS = 100;
 const SESSION_HEADER_DOCK_DEFAULT_HEIGHT = 64;
 const SESSION_ACTION_DOCK_DEFAULT_HEIGHT = 320;
+const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 54;
 const SESSION_ACTION_DOCK_MIN_HEIGHT = 260;
 const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.4;
 const SESSION_CENTRAL_SURFACE_MIN_HEIGHT = 280;
@@ -233,6 +234,9 @@ export function useSessionVerticalDockResize(input: {
   isActionDockExpanded: boolean;
 }) {
   const [actionDockHeight, setActionDockHeight] = useState(SESSION_ACTION_DOCK_DEFAULT_HEIGHT);
+  const [actionDockCompactHeight, setActionDockCompactHeight] = useState(
+    SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT,
+  );
   const [isActionDockResizing, setIsActionDockResizing] = useState(false);
   const sessionDockLayoutRef = useRef<HTMLDivElement | null>(null);
   const headerDockRef = useRef<HTMLDivElement | null>(null);
@@ -276,6 +280,39 @@ export function useSessionVerticalDockResize(input: {
     window.addEventListener("resize", clampDockHeights);
     return () => window.removeEventListener("resize", clampDockHeights);
   }, [clampDockHeights, input.ownerKey]);
+
+  useLayoutEffect(() => {
+    if (input.isActionDockExpanded) {
+      return;
+    }
+
+    const actionDock = actionDockRef.current?.querySelector<HTMLElement>(".session-action-dock");
+    const compactContent = actionDock?.querySelector<HTMLElement>(".session-action-dock-compact-content");
+    const compactRow = actionDock?.querySelector<HTMLElement>(".session-action-dock-compact-row");
+    if (!actionDock || !compactContent || !compactRow) {
+      return;
+    }
+
+    const syncCompactHeight = () => {
+      const actionDockStyles = window.getComputedStyle(actionDock);
+      const compactContentHeight = compactContent.scrollHeight
+        + readCssPixelValue(actionDockStyles.borderTopWidth)
+        + readCssPixelValue(actionDockStyles.borderBottomWidth);
+      const nextHeight = Math.max(
+        SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT,
+        Math.ceil(compactContentHeight),
+      );
+      setActionDockCompactHeight((current) => current === nextHeight ? current : nextHeight);
+    };
+
+    syncCompactHeight();
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    const observer = new ResizeObserver(syncCompactHeight);
+    observer.observe(compactRow);
+    return () => observer.disconnect();
+  }, [input.isActionDockExpanded, input.ownerKey]);
 
   useEffect(() => {
     if (!isActionDockResizing) {
@@ -363,7 +400,8 @@ export function useSessionVerticalDockResize(input: {
 
   const sessionDockLayoutStyle = useMemo(() => ({
     ["--session-action-dock-height" as string]: `${actionDockHeight}px`,
-  }) as CSSProperties, [actionDockHeight]);
+    ["--session-action-dock-compact-height" as string]: `${actionDockCompactHeight}px`,
+  }) as CSSProperties, [actionDockCompactHeight, actionDockHeight]);
 
   return {
     sessionDockLayoutRef,

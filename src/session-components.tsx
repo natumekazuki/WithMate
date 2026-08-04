@@ -844,8 +844,9 @@ export function SessionChatScreen({
 
       <div
         id={SESSION_LEFT_PANE_ID}
-        className="session-left-pane-slot"
-        hidden={!isLeftPaneVisible}
+        className={`session-left-pane-slot${isLeftPaneVisible ? "" : " is-hidden"}`}
+        aria-hidden={!isLeftPaneVisible}
+        inert={!isLeftPaneVisible}
       >
         {leftPane}
       </div>
@@ -863,8 +864,9 @@ export function SessionChatScreen({
       {splitter}
       <div
         id={SESSION_RIGHT_PANE_ID}
-        className="session-right-pane-slot"
-        hidden={!isRightPaneVisible}
+        className={`session-right-pane-slot${isRightPaneVisible ? "" : " is-hidden"}`}
+        aria-hidden={!isRightPaneVisible}
+        inert={!isRightPaneVisible}
       >
         {rightPane}
       </div>

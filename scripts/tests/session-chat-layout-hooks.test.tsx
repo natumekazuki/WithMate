@@ -223,6 +223,95 @@ test("ActionDock resize は固定 Header と中央領域の高さを残す", asy
   }
 });
 
+test("ActionDock compact height は展開時の外枠高ではなく compact row から算出する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+
+  const previousScrollHeight = Object.getOwnPropertyDescriptor(dom.window.HTMLElement.prototype, "scrollHeight");
+  Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", {
+    configurable: true,
+    get() {
+      return (this as HTMLElement).classList.contains("session-action-dock") ? 320 : 40;
+    },
+  });
+
+  let root: Root | null = null;
+
+  function Harness() {
+    const {
+      actionDockRef,
+      sessionDockLayoutStyle,
+    } = useSessionVerticalDockResize({
+      ownerKey: "session-1",
+      isHeaderExpanded: true,
+      isActionDockExpanded: false,
+    });
+    return React.createElement(
+      "div",
+      { style: sessionDockLayoutStyle, "data-testid": "layout" },
+      React.createElement(
+        "div",
+        { ref: actionDockRef },
+        React.createElement(
+          "div",
+          {
+            className: "session-action-dock",
+            style: { borderTop: "1px solid transparent", borderBottom: "1px solid transparent" },
+          },
+          React.createElement(
+            "div",
+            {
+              className: "session-action-dock-compact-content",
+              style: { paddingTop: "6px", paddingBottom: "6px" },
+            },
+            React.createElement("div", { className: "session-action-dock-compact-row" }),
+          ),
+        ),
+      ),
+    );
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(Harness));
+    });
+    const layout = dom.window.document.querySelector<HTMLElement>("[data-testid=\"layout\"]");
+    assert.ok(layout);
+    assert.equal(layout.style.getPropertyValue("--session-action-dock-compact-height"), "54px");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    if (previousScrollHeight) {
+      Object.defineProperty(dom.window.HTMLElement.prototype, "scrollHeight", previousScrollHeight);
+    } else {
+      delete (dom.window.HTMLElement.prototype as Partial<HTMLElement>).scrollHeight;
+    }
+    dom.window.close();
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+  }
+});
+
 test("useSessionMessageListFollowing は非表示から復帰した chat を末尾追従へ戻す", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
