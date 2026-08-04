@@ -128,10 +128,22 @@ export function ChatWindow({
       messageColumn={<StableSessionMessageColumn {...messageColumnProps} />}
       actionDock={(
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
-          <div className="session-action-dock-expanded-content" hidden={!isActionDockExpanded}>
+          <div
+            className={`session-action-dock-content session-action-dock-expanded-content${
+              isActionDockExpanded ? " is-active" : ""
+            }`}
+            aria-hidden={!isActionDockExpanded}
+            inert={!isActionDockExpanded}
+          >
             <SessionComposerExpanded {...composerProps} />
           </div>
-          <div hidden={isActionDockExpanded}>
+          <div
+            className={`session-action-dock-content session-action-dock-compact-content${
+              isActionDockExpanded ? "" : " is-active"
+            }`}
+            aria-hidden={isActionDockExpanded}
+            inert={isActionDockExpanded}
+          >
             <SessionActionDockCompactRow {...compactActionDockProps} />
           </div>
         </div>

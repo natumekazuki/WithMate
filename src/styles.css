@@ -146,14 +146,17 @@ button:disabled {
 }
 
 .session-chat-layout {
+  --session-dock-motion-duration: 220ms;
+  --session-dock-motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
   --session-header-dock-row-height: 0px;
-  --session-action-dock-row-height: auto;
+  --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
   grid-template-rows:
     var(--session-header-dock-row-height)
     12px
     minmax(280px, 1fr)
     12px
     var(--session-action-dock-row-height);
+  transition: grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing);
 }
 
 .session-chat-layout.is-header-visible {
@@ -173,10 +176,20 @@ button:disabled {
 
 .session-header-dock-slot {
   height: 64px;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  transition:
+    opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+    transform var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+    visibility 0s linear 0s;
 }
 
 .session-header-dock-slot.is-hidden {
   visibility: hidden;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition-delay: 0s, 0s, var(--session-dock-motion-duration);
 }
 
 .session-header-dock-slot > .session-top-bar,
@@ -187,6 +200,11 @@ button:disabled {
 
 .session-action-dock-slot.is-expanded {
   height: 100%;
+}
+
+.session-chat-layout:has(> .session-dock-splitter.edge-bottom.is-active),
+.session-chat-layout:has(> .session-dock-splitter.edge-bottom.is-active) .session-action-dock-content {
+  transition-duration: 0ms;
 }
 
 .session-action-dock-slot.is-expanded > .session-action-dock {
@@ -3744,23 +3762,27 @@ button:disabled {
 
 .session-main-grid {
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) 12px;
+  --session-left-pane-track-width: 0px;
+  --session-right-pane-track-width: 0px;
+  grid-template-columns:
+    var(--session-left-pane-track-width)
+    12px
+    minmax(0, 1fr)
+    12px
+    var(--session-right-pane-track-width);
   gap: 12px;
   min-height: 0;
   min-width: 0;
   height: 100%;
+  transition: grid-template-columns var(--session-dock-motion-duration) var(--session-dock-motion-easing);
 }
 
 .session-main-grid.session-main-grid-left-pane-visible {
-  grid-template-columns: minmax(260px, var(--session-file-explorer-width, 320px)) 12px minmax(0, 1fr) 12px;
+  --session-left-pane-track-width: max(260px, var(--session-file-explorer-width, 320px));
 }
 
 .session-main-grid.session-main-grid-right-pane-visible {
-  grid-template-columns: 12px minmax(0, 1fr) 12px minmax(360px, var(--session-context-rail-width, 420px));
-}
-
-.session-main-grid.session-main-grid-left-pane-visible.session-main-grid-right-pane-visible {
-  grid-template-columns: minmax(260px, var(--session-file-explorer-width, 320px)) 12px minmax(0, 1fr) 12px minmax(360px, var(--session-context-rail-width, 420px));
+  --session-right-pane-track-width: max(360px, var(--session-context-rail-width, 420px));
 }
 
 .session-left-pane-slot,
@@ -3770,11 +3792,33 @@ button:disabled {
   min-height: 0;
   height: 100%;
   overflow: hidden;
+  opacity: 1;
+  transform: translateX(0);
+  visibility: visible;
+  transition:
+    opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+    transform var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+    visibility 0s linear 0s;
 }
 
-.session-left-pane-slot[hidden],
-.session-right-pane-slot[hidden] {
-  display: none;
+.session-left-pane-slot.is-hidden,
+.session-right-pane-slot.is-hidden {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition-delay: 0s, 0s, var(--session-dock-motion-duration);
+}
+
+.session-left-pane-slot.is-hidden {
+  transform: translateX(-12px);
+}
+
+.session-right-pane-slot.is-hidden {
+  transform: translateX(12px);
+}
+
+.session-main-grid:has(> .session-dock-splitter.is-active) {
+  transition-duration: 0ms;
 }
 
 .session-message-stack {
@@ -4645,12 +4689,47 @@ button:disabled {
 
 .session-action-dock {
   container: session-action-dock / inline-size;
+  position: relative;
   display: grid;
+  grid-template-rows: minmax(0, 1fr);
   gap: 10px;
-  padding: 10px 12px 12px;
+  padding: 0;
   border: 1px solid rgba(203, 213, 225, 0.12);
   border-radius: 18px;
   background: rgba(10, 14, 22, 0.94);
+}
+
+.session-action-dock-content {
+  position: absolute;
+  inset: 0;
+  grid-area: 1 / 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 12px 12px;
+  opacity: 0;
+  transform: translateY(10px);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+    transform var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+    visibility 0s linear var(--session-dock-motion-duration);
+}
+
+.session-action-dock-content.is-active {
+  position: relative;
+  inset: auto;
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 0s;
+}
+
+.session-action-dock-compact-content {
+  align-self: center;
+  padding: 6px 8px;
 }
 
 .session-page .session-action-dock {
@@ -4660,7 +4739,6 @@ button:disabled {
 
 .session-action-dock.compact {
   gap: 0;
-  padding: 6px 8px;
 }
 
 .session-action-dock-compact-row {
@@ -10398,6 +10476,24 @@ button:disabled {
     height: auto;
   }
 
+  .session-left-pane-slot,
+  .session-right-pane-slot {
+    height: min(42vh, 460px);
+    max-height: min(42vh, 460px);
+    transition:
+      max-height var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+      opacity var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+      transform var(--session-dock-motion-duration) var(--session-dock-motion-easing),
+      visibility 0s linear 0s;
+  }
+
+  .session-left-pane-slot.is-hidden,
+  .session-right-pane-slot.is-hidden {
+    max-height: 0;
+    transform: translateY(-10px);
+    transition-delay: 0s, 0s, 0s, var(--session-dock-motion-duration);
+  }
+
   .session-message-stack {
     min-height: min(62vh, 760px);
   }
@@ -10433,6 +10529,12 @@ button:disabled {
 
   .session-context-pane.session-context-pane-header-expanded {
     grid-template-rows: minmax(0, 1fr) auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-chat-layout {
+    --session-dock-motion-duration: 0ms;
   }
 }
 

@@ -76,7 +76,7 @@ test("ChatDockSplitter は各辺の表示状態を切り替える affordance を
   assert.doesNotMatch(fixedHeaderHtml, /ドラッグでサイズを調整/);
 });
 
-test("SessionChatScreen は左右ペインと chat を unmount せずにレイアウトから隠す", () => {
+test("SessionChatScreen は左右ペインを mounted のまま非表示・操作不可にする", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionChatScreen, {
       mode: "agent",
@@ -97,8 +97,8 @@ test("SessionChatScreen は左右ペインと chat を unmount せずにレイ�
   assert.match(html, /class="session-main-grid"/);
   assert.match(html, /id="session-header-dock"[^>]*class="session-header-dock-slot is-hidden"[^>]*aria-hidden="true"/);
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
-  assert.match(html, /id="session-left-pane" class="session-left-pane-slot" hidden=""/);
-  assert.match(html, /id="session-right-pane" class="session-right-pane-slot" hidden=""/);
+  assert.match(html, /id="session-left-pane" class="session-left-pane-slot is-hidden" aria-hidden="true" inert=""/);
+  assert.match(html, /id="session-right-pane" class="session-right-pane-slot is-hidden" aria-hidden="true" inert=""/);
   assert.match(html, /class="session-central-surface" hidden=""><div>Messages<\/div><\/div>/);
   assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
   assert.match(html, /<div>Composer<\/div>/);

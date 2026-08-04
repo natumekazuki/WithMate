@@ -52,16 +52,16 @@ test("Artifact result details は長い path と本文を折り返せる", async
   );
 });
 
-test("左右ペイン非表示時は pane track を除き、splitter の再表示操作を残す", async () => {
+test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉する", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
     stylesSource,
-    /\.session-main-grid\s*{[\s\S]*?grid-template-columns:\s*12px\s*minmax\(0,\s*1fr\)\s*12px;/,
+    /\.session-main-grid\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-left-pane-track-width\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-right-pane-track-width\);[\s\S]*?transition:\s*grid-template-columns\s+var\(--session-dock-motion-duration\)/,
   );
   assert.match(
     stylesSource,
-    /\.session-left-pane-slot\[hidden\],\s*\.session-right-pane-slot\[hidden\]\s*{\s*display:\s*none;\s*}/,
+    /\.session-left-pane-slot\.is-hidden,\s*\.session-right-pane-slot\.is-hidden\s*{[\s\S]*?visibility:\s*hidden;[\s\S]*?opacity:\s*0;[\s\S]*?pointer-events:\s*none;/,
   );
   assert.match(
     stylesSource,
@@ -92,12 +92,33 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
     stylesSource,
     /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 326px\)/,
   );
-  assert.match(chatWindowSource, /className="session-action-dock-expanded-content"/);
+  assert.match(chatWindowSource, /session-action-dock-content session-action-dock-expanded-content/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?resize:\s*none;/);
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
+});
+
+test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-motion で補間を止める", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\s*{[\s\S]*?--session-dock-motion-duration:\s*220ms;[\s\S]*?--session-dock-motion-easing:\s*cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?transition:\s*grid-template-rows\s+var\(--session-dock-motion-duration\)/,
+  );
+  assert.match(
+    stylesSource,
+    /--session-action-dock-row-height:\s*var\(--session-action-dock-compact-height,\s*54px\);/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout:has\(> \.session-dock-splitter\.edge-bottom\.is-active\)[\s\S]*?transition-duration:\s*0ms;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.session-chat-layout\s*{[\s\S]*?--session-dock-motion-duration:\s*0ms;/,
+  );
 });
 
 test("file preview は条件付き find / feedback の有無にかかわらず本文を固定 scroll row に置く", async () => {
