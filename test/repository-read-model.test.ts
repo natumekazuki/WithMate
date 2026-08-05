@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   createRepositoryReadOperations,
   REPOSITORY_PAGE_SQL,
+  REPOSITORY_RECOVERY_CANDIDATE_SQL,
   REPOSITORY_RUN_OUTPUT_ITEM_SQL,
   REPOSITORY_SESSION_PAGE_SQL,
   RepositoryReadError,
@@ -1248,6 +1249,148 @@ repositoryTest("recovery projection finds a creating Binding and preserves nulla
     }
   });
 });
+
+repositoryTest("runtime recovery candidates are bounded, stable, and preserve invalid owner tuples", () => {
+  withDatabase((database) => {
+    for (const [sessionId, createdAt] of [
+      ["candidate-session-a", 1],
+      ["candidate-session-b", 2],
+      ["candidate-session-c", 3],
+    ] as const) {
+      insertSession(database, sessionId, createdAt);
+      insertMessage(database, `${sessionId}-message`, sessionId, 1, "[]");
+    }
+    database.exec(`
+      BEGIN;
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) VALUES
+        ('candidate-run-a', 'candidate-session-a', 1, 'candidate-session-a-message',
+          'queued', '{}', 'none', 10, 10, 0),
+        ('candidate-run-b', 'candidate-session-b', 1, 'candidate-session-b-message',
+          'queued', '{}', 'unknown', 10, 11, 1),
+        ('candidate-run-c', 'candidate-session-c', 1, 'candidate-session-c-message',
+          'active', '{}', 'present', 12, 12, 2);
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES
+        ('candidate-attempt-a', 'candidate-run-a', 1, 'candidate-binding-a', 'initial', 'preparing', 10),
+        ('candidate-attempt-b', 'candidate-run-b', 1, NULL, 'initial', 'preparing', 11);
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+        binding_state, created_by_run_attempt_id, created_at
+      ) VALUES
+        ('candidate-binding-a', 'candidate-session-a', 1, 'provider', 'thread-a', 'persistent',
+          'active', 'candidate-attempt-a', 10),
+        ('candidate-binding-b', 'candidate-session-b', 1, 'foreign-provider', NULL, 'persistent',
+          'creating', 'candidate-attempt-b', 11);
+      INSERT INTO run_dispatches (run_attempt_id, dispatch_state, request_fingerprint, created_at)
+      VALUES
+        ('candidate-attempt-a', 'pending', '${"d".repeat(64)}', 10),
+        ('candidate-attempt-b', 'pending', '${"e".repeat(64)}', 11);
+      COMMIT;
+    `);
+
+    const operation = operationFor(database, "repository.recovery.candidates.page");
+    const first = operation({ limit: 1 }) as PageResult;
+    assert.deepEqual(
+      first.items.map((item) => item.runId),
+      ["candidate-run-a"],
+    );
+    assert.equal(typeof first.nextCursor, "string");
+    assert.deepEqual(first.items[0], {
+      runId: "candidate-run-a",
+      sessionId: "candidate-session-a",
+      workspaceKey: "workspace",
+      sessionProviderId: "provider",
+      runPhase: "queued",
+      runVersion: 0,
+      initiatingMessageId: "candidate-session-a-message",
+      runCreatedAt: 10,
+      runUpdatedAt: 10,
+      cancelRequestedAt: null,
+      externalSideEffectState: "none",
+      currentAttemptCount: 1,
+      attemptId: "candidate-attempt-a",
+      attemptOrdinal: 1,
+      attemptState: "preparing",
+      attemptProviderBindingId: "candidate-binding-a",
+      externalExecutionId: null,
+      bindingCandidateCount: 1,
+      bindingId: "candidate-binding-a",
+      bindingSessionId: "candidate-session-a",
+      bindingProviderId: "provider",
+      persistenceMode: "persistent",
+      bindingState: "active",
+      bindingCreatorAttemptId: "candidate-attempt-a",
+      bindingCreatorRunId: "candidate-run-a",
+      bindingCreatorSessionId: "candidate-session-a",
+      externalConversationId: "thread-a",
+      dispatchCount: 1,
+      dispatchState: "pending",
+      providerIdempotencyKey: null,
+    });
+
+    const second = operation({ limit: 2, cursor: first.nextCursor }) as PageResult;
+    assert.deepEqual(
+      second.items.map((item) => item.runId),
+      ["candidate-run-b", "candidate-run-c"],
+    );
+    assert.equal(second.items[0]?.bindingProviderId, "foreign-provider");
+    assert.equal(second.items[1]?.currentAttemptCount, 0);
+    assert.equal(second.items[1]?.attemptId, null);
+    assert.throws(
+      () => operation({ limit: 1, cursor: `${String(first.nextCursor)}x` }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "cursor_invalid",
+    );
+    assert.throws(
+      () => operation({ limit: 1, extra: true }),
+      (error: unknown) => error instanceof RepositoryReadError && error.code === "request_invalid",
+    );
+  });
+});
+
+repositoryTest("runtime recovery candidate SQL never materializes execution snapshots", () => {
+  assert.doesNotMatch(REPOSITORY_RECOVERY_CANDIDATE_SQL, /execution_snapshot_json|\br\.\*/u);
+});
+
+repositoryTest(
+  "runtime recovery candidates fail closed when a direct Binding has an extra creator-linked intent",
+  () => {
+    withDatabase((database) => {
+      insertSession(database, "candidate-owner", 1);
+      insertSession(database, "candidate-foreign", 2);
+      insertMessage(database, "candidate-owner-message", "candidate-owner", 1, "[]");
+      database.exec(`
+      BEGIN;
+      INSERT INTO runs (
+        id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+        external_side_effect_state, created_at, updated_at, version
+      ) VALUES ('candidate-owner-run', 'candidate-owner', 1, 'candidate-owner-message',
+        'queued', '{}', 'none', 10, 10, 0);
+      INSERT INTO run_attempts (
+        id, run_id, ordinal, provider_binding_id, attempt_reason, attempt_state, created_at
+      ) VALUES ('candidate-owner-attempt', 'candidate-owner-run', 1, 'candidate-direct-binding',
+        'initial', 'preparing', 10);
+      INSERT INTO provider_bindings (
+        id, session_id, ordinal, provider_id, external_conversation_id, persistence_mode,
+        binding_state, created_by_run_attempt_id, created_at
+      ) VALUES
+        ('candidate-direct-binding', 'candidate-owner', 1, 'provider', 'thread-direct', 'persistent',
+          'active', 'candidate-owner-attempt', 10),
+        ('candidate-extra-binding', 'candidate-foreign', 1, 'provider', NULL, 'persistent',
+          'creating', 'candidate-owner-attempt', 11);
+      INSERT INTO run_dispatches (run_attempt_id, dispatch_state, request_fingerprint, created_at)
+      VALUES ('candidate-owner-attempt', 'pending', '${"f".repeat(64)}', 10);
+      COMMIT;
+    `);
+      const page = operationFor(database, "repository.recovery.candidates.page")({ limit: 10 }) as PageResult;
+      assert.equal(page.items[0]?.bindingCandidateCount, 2);
+      assert.equal(page.items[0]?.bindingId, null);
+    });
+  },
+);
 
 repositoryTest("recovery projection hides Bindings outside the Run owner tuple", () => {
   for (const scenario of ["foreign_creator_session", "foreign_provider"] as const) {

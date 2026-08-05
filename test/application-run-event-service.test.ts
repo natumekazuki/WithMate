@@ -41,6 +41,54 @@ import type {
   RunTerminalCommand,
 } from "../src/shared/repository-write-model.js";
 
+test("recovered attempts ignore a stale sibling Turn and attach only to the exact execution", async () => {
+  const fixture = eventFixture();
+  const attempt = fixture.service.registerRecovered(dispatch(), fixture.control, "turn-1", 7);
+  assert.ok(attempt);
+  assert.deepEqual(await fixture.service.read({ sessionId: "session-1", runId: "run-1" }), {
+    sessionId: "session-1",
+    runId: "run-1",
+    runVersion: 7,
+    activity: "running",
+  });
+  assert.equal(await isSettled(attempt.attached.then(() => undefined)), false);
+
+  await fixture.service.accept("codex-1", turnStarted("other-turn"));
+  assert.equal(await isSettled(attempt.attached.then(() => undefined)), false);
+  assert.equal(fixture.terminals.length, 0);
+
+  await fixture.service.accept("codex-1", turnStarted("turn-1"));
+  assert.equal(await attempt.attached, true);
+  assert.equal(fixture.terminals.length, 0);
+});
+
+test("recovered attempts attach to the exact execution without resolving dispatch again", async () => {
+  const fixture = eventFixture();
+  const attempt = fixture.service.registerRecovered(dispatch(), fixture.control, "turn-1", 7);
+  assert.ok(attempt);
+
+  await fixture.service.accept("codex-1", turnStarted("turn-1"));
+
+  assert.equal(await attempt.attached, true);
+  assert.equal(fixture.resolutions.length, 0);
+  assert.equal(fixture.terminals.length, 0);
+});
+
+test("an exact recovered terminal event completes the persisted attempt without a new dispatch", async () => {
+  const fixture = eventFixture();
+  const attempt = fixture.service.registerRecovered(dispatch(), fixture.control, "turn-1", 7);
+  assert.ok(attempt);
+
+  await fixture.service.accept("codex-1", terminalEvent());
+
+  await attempt.done;
+  assert.equal(await attempt.attached, false);
+  assert.equal(fixture.resolutions.length, 0);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.providerExecution?.externalExecutionId, "turn-1");
+  assert.equal(fixture.terminals[0]?.outcome.kind, "completed");
+});
+
 test("pending interactions stay provisional until durable acceptance and activity priority is computed", async () => {
   const fixture = eventFixture();
   const attempt = fixture.service.register(dispatch(), fixture.control);

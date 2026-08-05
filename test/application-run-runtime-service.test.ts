@@ -7,6 +7,7 @@ import test from "node:test";
 import { ALLOWED_ADDITIONAL_DIRECTORIES_LIMITS } from "../src/shared/allowed-additional-directories.js";
 import { APPLICATION_RUN_PAYLOAD_LIMITS } from "../src/shared/application-run-payload-limits.js";
 import type { TextContentBlock } from "../src/shared/message-content.js";
+import type { RecoveryCandidate } from "../src/shared/repository-read-model.js";
 import type { RepositoryCommandResult, RunExecutionSnapshot } from "../src/shared/repository-write-model.js";
 import { resolveWorkspaceIdentity } from "../src/shared/workspace-path.js";
 import type {
@@ -14,9 +15,14 @@ import type {
   CodexAdapterEvent,
   CodexAdapterCapabilityPreflightInput,
   CodexAdapterCapabilityPreflightResult,
+  CodexAdapterInterruptAcknowledgement,
   CodexAdapterMutationResult,
+  CodexAdapterReadResult,
+  CodexAdapterReadThreadSnapshot,
   CodexAdapterThreadSnapshot,
   CodexAdapterTurnSnapshot,
+  CodexInterruptTurnInput,
+  CodexReadThreadInput,
   CodexResumeThreadInput,
   CodexStartThreadInput,
   CodexStartTurnInput,
@@ -42,6 +48,504 @@ import {
 } from "../src/main/runtime-codex-provider.js";
 
 const TEST_WORKSPACE = resolveWorkspaceIdentity(workspacePath())!;
+
+test("startup recovery does not start a Provider runtime when no candidate exists", async () => {
+  const adapter = new FakeAdapter();
+  const factory = runtimeFactory(adapter);
+  const fixture = runtimeFixture({
+    factory,
+    reads: runtimeReadsWithCandidates([]),
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(factory.starts, 0);
+  assert.equal(adapter.startInputs.length, 0);
+  assert.equal(adapter.resumeInputs.length, 0);
+  assert.equal(adapter.turnInputs.length, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery re-drives only an exact persistent pending Dispatch once", async () => {
+  const adapter = new FakeAdapter({ resumeResult: acceptedThread("thread-1") });
+  let dispatched = false;
+  const reads = {
+    ...runtimeReads(() => recoveryProjection()),
+    async recoveryCandidatesPage() {
+      return { items: [recoveryCandidate()] };
+    },
+    async recoveryGet(input: Parameters<ApplicationRunRuntimeReadPort["recoveryGet"]>[0]) {
+      return {
+        ...recoveryProjection({ bindingState: "active", externalConversationId: "thread-1" }),
+        runId: input.runId,
+        sessionId: input.sessionId,
+        workspaceKey: input.workspaceKey,
+        runPhase: dispatched ? ("active" as const) : ("queued" as const),
+        attemptState: dispatched ? "active" : "preparing",
+        dispatchState: dispatched ? ("accepted" as const) : ("pending" as const),
+        externalExecutionId: dispatched ? "turn-1" : null,
+      };
+    },
+  } satisfies ApplicationRunRuntimeReadPort;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads,
+    dispatchReady: {
+      async ready(dispatch, control) {
+        await control.adapter.startTurn({
+          threadId: dispatch.threadId,
+          contentBlocks: dispatch.contentBlocks,
+        });
+        dispatched = true;
+      },
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(adapter.startInputs.length, 0);
+  assert.equal(adapter.resumeInputs.length, 1);
+  assert.equal(adapter.turnInputs.length, 1);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery terminalizes uncertain local ownership without Provider mutations", async () => {
+  const candidates = [
+    recoveryCandidate({
+      attemptProviderBindingId: null,
+      bindingState: "creating",
+      externalConversationId: null,
+    }),
+    recoveryCandidate({
+      attemptProviderBindingId: null,
+      bindingState: "creating",
+      persistenceMode: "ephemeral",
+      externalConversationId: null,
+    }),
+    recoveryCandidate({
+      runPhase: "starting",
+      dispatchState: "ambiguous",
+      externalSideEffectState: "unknown",
+    }),
+    recoveryCandidate({
+      runPhase: "active",
+      attemptState: "active",
+      dispatchState: "accepted",
+      externalSideEffectState: "present",
+      externalExecutionId: "turn-1",
+      persistenceMode: "ephemeral",
+    }),
+  ];
+
+  for (const candidate of candidates) {
+    const adapter = new FakeAdapter();
+    const fixture = runtimeFixture({
+      factory: runtimeFactory(adapter),
+      reads: runtimeReadsWithCandidates([candidate]),
+    });
+
+    await fixture.owner.recoverStartup();
+
+    assert.equal(fixture.terminals.length, 1);
+    assert.equal(fixture.terminals[0]?.outcome.kind, "interrupted");
+    if (candidate.bindingState === "creating") {
+      assert.equal(fixture.terminals[0]?.preDispatchResolution.kind, "binding_creation_ambiguous");
+    }
+    assert.equal(adapter.startInputs.length, 0);
+    assert.equal(adapter.resumeInputs.length, 0);
+    assert.equal(adapter.turnInputs.length, 0);
+    await fixture.owner.shutdown();
+  }
+});
+
+test("startup recovery reattaches an exact active persistent Turn before resuming its Thread", async () => {
+  const order: string[] = [];
+  const adapter = new FakeAdapter({ resumeResult: acceptedActiveThread("thread-1") });
+  const originalResume = adapter.resumeThread.bind(adapter);
+  adapter.resumeThread = async (input) => {
+    order.push("resume");
+    return originalResume(input);
+  };
+  let registered = 0;
+  const events: ApplicationRunProviderEventPort = {
+    accept() {},
+    registerRecovered(_dispatch, _control, externalExecutionId, runVersion) {
+      order.push("register");
+      registered += 1;
+      assert.equal(externalExecutionId, "turn-1");
+      assert.equal(runVersion, 4);
+      return { attached: Promise.resolve(true), async fail() {}, done: new Promise<void>(() => {}) };
+    },
+    releaseGeneration() {},
+  };
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate()]),
+    events,
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.deepEqual(order, ["register", "resume"]);
+  assert.equal(registered, 1);
+  assert.deepEqual(adapter.readInputs, [{ threadId: "thread-1", includeTurns: true }]);
+  assert.equal(adapter.resumeInputs.length, 1);
+  assert.equal(adapter.turnInputs.length, 0);
+  assert.equal(fixture.terminals.length, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery terminalizes when an active Turn becomes idle before resume", async () => {
+  const adapter = new FakeAdapter({ resumeResult: acceptedThread("thread-1") });
+  let failures = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate()]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        return {
+          attached: new Promise<boolean>(() => {}),
+          async fail() {
+            failures += 1;
+          },
+          done: new Promise<void>(() => {}),
+        };
+      },
+      releaseGeneration() {},
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(failures, 1);
+  assert.equal(adapter.closeCalls, 0);
+  assert.equal(adapter.turnInputs.length, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery retires a generation whose Thread resume result is ambiguous", async () => {
+  const adapter = new FakeAdapter({
+    resumeResult: { kind: "ambiguous", effect: "unknown", code: "timeout" },
+  });
+  let failures = 0;
+  let released = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate()]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        return {
+          attached: new Promise<boolean>(() => {}),
+          async fail() {
+            failures += 1;
+          },
+          done: new Promise<void>(() => {}),
+        };
+      },
+      releaseGeneration() {
+        released += 1;
+      },
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(failures, 1);
+  assert.equal(adapter.closeCalls, 1);
+  assert.equal(released, 1);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery bounds an active resume that never emits the exact Turn", async () => {
+  const adapter = new FakeAdapter({ resumeResult: acceptedActiveThread("thread-1") });
+  let failures = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate()]),
+    limits: { recoveryAttachTimeoutMs: 10 },
+    events: {
+      accept() {},
+      registerRecovered() {
+        return {
+          attached: new Promise<boolean>(() => {}),
+          async fail() {
+            failures += 1;
+          },
+          done: new Promise<void>(() => {}),
+        };
+      },
+      releaseGeneration() {},
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(failures, 1);
+  assert.equal(adapter.closeCalls, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery terminalizes contradictory active evidence without retiring a healthy Provider generation", async () => {
+  const adapter = new FakeAdapter({
+    readResult: {
+      kind: "accepted",
+      effect: "none",
+      value: {
+        threadId: "thread-1",
+        status: "active",
+        cliVersion: "0.145.0",
+        turns: [{ turnId: "other-turn", status: "in_progress", itemCount: 0 }],
+      },
+    },
+  });
+  let registered = 0;
+  let released = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate()]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        registered += 1;
+        return null;
+      },
+      releaseGeneration() {
+        released += 1;
+      },
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(registered, 0);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(adapter.resumeInputs.length, 0);
+  assert.equal(adapter.closeCalls, 0);
+  assert.equal(released, 0);
+  await fixture.owner.shutdown();
+});
+
+test("one contradictory recovery candidate does not retire an already attached sibling Run", async () => {
+  const attached = acceptedRecoveryCandidate();
+  const contradictory = acceptedRecoveryCandidate({
+    runId: "run-2",
+    sessionId: "session-2",
+    initiatingMessageId: "message-2",
+    runCreatedAt: 2,
+    runUpdatedAt: 2,
+    attemptId: "attempt-2",
+    attemptProviderBindingId: "binding-2",
+    bindingId: "binding-2",
+    bindingSessionId: "session-2",
+    bindingCreatorAttemptId: "attempt-2",
+    bindingCreatorRunId: "run-2",
+    bindingCreatorSessionId: "session-2",
+    externalConversationId: "thread-2",
+    externalExecutionId: "turn-2",
+  });
+  const adapter = new FakeAdapter({ resumeResult: acceptedActiveThread("thread-1") });
+  adapter.readThread = async (input) => {
+    adapter.readInputs.push(input);
+    return input.threadId === "thread-1"
+      ? {
+          kind: "accepted",
+          effect: "none",
+          value: {
+            threadId: "thread-1",
+            status: "active",
+            cliVersion: "0.145.0",
+            turns: [{ turnId: "turn-1", status: "in_progress", itemCount: 0 }],
+          },
+        }
+      : {
+          kind: "accepted",
+          effect: "none",
+          value: {
+            threadId: "thread-2",
+            status: "active",
+            cliVersion: "0.145.0",
+            turns: [{ turnId: "other-turn", status: "in_progress", itemCount: 0 }],
+          },
+        };
+  };
+  let registered = 0;
+  let released = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([attached, contradictory]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        registered += 1;
+        return { attached: Promise.resolve(true), async fail() {}, done: new Promise<void>(() => {}) };
+      },
+      releaseGeneration() {
+        released += 1;
+      },
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(registered, 1);
+  assert.equal(fixture.terminals.length, 1);
+  assert.equal(fixture.terminals[0]?.runId, "run-2");
+  assert.equal(adapter.closeCalls, 0);
+  assert.equal(released, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery resumes cancellation only after exact active Turn attachment", async () => {
+  const adapter = new FakeAdapter({ resumeResult: acceptedActiveThread("thread-1") });
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate({ runPhase: "canceling", cancelRequestedAt: 3 })]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        return { attached: Promise.resolve(true), async fail() {}, done: new Promise<void>(() => {}) };
+      },
+      releaseGeneration() {},
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.deepEqual(adapter.interruptInputs, [{ threadId: "thread-1", turnId: "turn-1" }]);
+  assert.equal(adapter.turnInputs.length, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery does not interrupt when the exact Turn terminal settles before resume", async () => {
+  const adapter = new FakeAdapter({ resumeResult: acceptedActiveThread("thread-1") });
+  let failures = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate({ runPhase: "canceling", cancelRequestedAt: 3 })]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        return {
+          attached: Promise.resolve(true),
+          async fail() {
+            failures += 1;
+          },
+          done: Promise.resolve(),
+        };
+      },
+      releaseGeneration() {},
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(adapter.interruptInputs.length, 0);
+  assert.equal(failures, 0);
+  assert.equal(adapter.closeCalls, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery terminalizes only the candidate when cancel redrive proves no effect", async () => {
+  const adapter = new FakeAdapter({
+    resumeResult: acceptedActiveThread("thread-1"),
+    interruptResult: { kind: "not_sent", effect: "none", code: "capability_unavailable" },
+  });
+  let failures = 0;
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate({ runPhase: "canceling", cancelRequestedAt: 3 })]),
+    events: {
+      accept() {},
+      registerRecovered() {
+        return {
+          attached: Promise.resolve(true),
+          async fail() {
+            failures += 1;
+          },
+          done: new Promise<void>(() => {}),
+        };
+      },
+      releaseGeneration() {},
+    },
+  });
+
+  await fixture.owner.recoverStartup();
+
+  assert.equal(failures, 1);
+  assert.equal(adapter.closeCalls, 0);
+  await fixture.owner.shutdown();
+});
+
+test("startup recovery rejects a candidate whose exact tuple changed before Provider I/O", async () => {
+  const adapter = new FakeAdapter({ resumeResult: acceptedActiveThread("thread-1") });
+  const candidate = acceptedRecoveryCandidate();
+  const reads = runtimeReadsWithCandidates([candidate]);
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: {
+      ...reads,
+      async recoveryGet(input) {
+        return {
+          ...(await reads.recoveryGet(input)),
+          externalExecutionId: "other-turn",
+        };
+      },
+    },
+  });
+
+  await assert.rejects(() => fixture.owner.recoverStartup(), /changed before Provider reconciliation/);
+  assert.equal(adapter.readInputs.length, 0);
+  assert.equal(adapter.resumeInputs.length, 0);
+  await fixture.owner.shutdown();
+});
+
+test("shutdown aborts and joins the in-flight startup recovery page", async () => {
+  let entered = false;
+  let pageAborted = false;
+  const reads = {
+    ...runtimeReads(() => recoveryProjection()),
+    recoveryCandidatesPage(
+      _input: Parameters<NonNullable<ApplicationRunRuntimeReadPort["recoveryCandidatesPage"]>>[0],
+      options?: Parameters<NonNullable<ApplicationRunRuntimeReadPort["recoveryCandidatesPage"]>>[1],
+    ) {
+      entered = true;
+      return new Promise<never>((_resolve, reject) => {
+        options?.signal?.addEventListener(
+          "abort",
+          () => {
+            pageAborted = true;
+            reject(new Error("candidate page aborted"));
+          },
+          { once: true },
+        );
+      });
+    },
+  } satisfies ApplicationRunRuntimeReadPort;
+  const fixture = runtimeFixture({ reads });
+  const recovery = fixture.owner.recoverStartup().catch((error: unknown) => error);
+  await waitFor(() => entered);
+
+  await fixture.owner.shutdown();
+
+  assert.equal(pageAborted, true);
+  assert.match(String(await recovery), /candidate page aborted/);
+});
+
+test("startup recovery rejects invalid identity evidence before any Provider mutation", async () => {
+  const adapter = new FakeAdapter();
+  const fixture = runtimeFixture({
+    factory: runtimeFactory(adapter),
+    reads: runtimeReadsWithCandidates([acceptedRecoveryCandidate({ bindingCreatorSessionId: "foreign-session" })]),
+  });
+
+  await assert.rejects(() => fixture.owner.recoverStartup(), /candidate is invalid/);
+  assert.equal(adapter.readInputs.length, 0);
+  assert.equal(adapter.resumeInputs.length, 0);
+  assert.equal(adapter.turnInputs.length, 0);
+  await fixture.owner.shutdown();
+});
 
 test("capability preflight starts and reuses a warm runtime without Thread or Turn mutations", async () => {
   const adapter = new FakeAdapter();
@@ -2019,7 +2523,11 @@ test("Codex runtime starts an observed 0.146 App Server and lets decoded protoco
 type RuntimeFixtureOptions = Readonly<{
   factory?: ReturnType<typeof runtimeFactory> | ApplicationRunProviderRuntimeFactory;
   reads?: ApplicationRunRuntimeReadPort;
-  limits?: Readonly<{ maxLiveRuns?: number; maxTrackedBindings?: number }>;
+  limits?: Readonly<{
+    maxLiveRuns?: number;
+    maxTrackedBindings?: number;
+    recoveryAttachTimeoutMs?: number;
+  }>;
   bindingResolutionUnknownOnce?: boolean;
   bindingResolutionUnknownCount?: number;
   bindingResolutionUnavailable?(): boolean;
@@ -2234,6 +2742,108 @@ function recoveryProjection(
   };
 }
 
+function recoveryCandidate(overrides: Partial<RecoveryCandidate> = {}): RecoveryCandidate {
+  return {
+    runId: "run-1",
+    sessionId: "session-1",
+    workspaceKey: TEST_WORKSPACE.workspaceKey,
+    sessionProviderId: "codex",
+    runPhase: "queued",
+    runVersion: 1,
+    initiatingMessageId: "message-1",
+    runCreatedAt: 1,
+    runUpdatedAt: 1,
+    cancelRequestedAt: null,
+    externalSideEffectState: "none",
+    currentAttemptCount: 1,
+    attemptId: "attempt-1",
+    attemptOrdinal: 1,
+    attemptState: "preparing",
+    attemptProviderBindingId: "binding-1",
+    externalExecutionId: null,
+    bindingCandidateCount: 1,
+    bindingId: "binding-1",
+    bindingSessionId: "session-1",
+    bindingProviderId: "codex",
+    persistenceMode: "persistent",
+    bindingState: "active",
+    bindingCreatorAttemptId: "attempt-1",
+    bindingCreatorRunId: "run-1",
+    bindingCreatorSessionId: "session-1",
+    externalConversationId: "thread-1",
+    dispatchCount: 1,
+    dispatchState: "pending",
+    providerIdempotencyKey: null,
+    ...overrides,
+  };
+}
+
+function acceptedRecoveryCandidate(overrides: Partial<RecoveryCandidate> = {}): RecoveryCandidate {
+  return recoveryCandidate({
+    runPhase: "active",
+    runVersion: 4,
+    externalSideEffectState: "present",
+    attemptState: "active",
+    externalExecutionId: "turn-1",
+    dispatchState: "accepted",
+    ...overrides,
+  });
+}
+
+function runtimeReadsWithCandidates(candidates: readonly RecoveryCandidate[]): ApplicationRunRuntimeReadPort {
+  const base = runtimeReads(() => recoveryProjection());
+  return {
+    ...base,
+    async recoveryCandidatesPage() {
+      return { items: candidates };
+    },
+    async recoveryGet(input) {
+      const candidate = candidates.find(
+        (item) =>
+          item.sessionId === input.sessionId && item.workspaceKey === input.workspaceKey && item.runId === input.runId,
+      );
+      if (candidate === undefined) return base.recoveryGet(input);
+      return {
+        runId: candidate.runId,
+        sessionId: candidate.sessionId,
+        workspaceKey: candidate.workspaceKey,
+        runPhase: candidate.runPhase,
+        runUpdatedAt: candidate.runUpdatedAt,
+        attemptId: candidate.attemptId,
+        attemptOrdinal: candidate.attemptOrdinal,
+        attemptState: candidate.attemptState,
+        externalExecutionId: candidate.externalExecutionId,
+        bindingId: candidate.bindingId,
+        providerId: candidate.bindingProviderId,
+        persistenceMode: candidate.persistenceMode,
+        bindingState: candidate.bindingState,
+        externalConversationId: candidate.externalConversationId,
+        dispatchState: candidate.dispatchState,
+        providerIdempotencyKey: candidate.providerIdempotencyKey,
+      };
+    },
+    async runGet(input) {
+      const projection = await base.runGet(input);
+      const candidate = candidates.find(
+        (item) =>
+          item.sessionId === input.sessionId && item.workspaceKey === input.workspaceKey && item.runId === input.runId,
+      );
+      if (candidate === undefined) return projection;
+      return {
+        ...projection,
+        run: {
+          ...projection.run,
+          phase: candidate.runPhase,
+          version: candidate.runVersion,
+          externalSideEffectState: candidate.externalSideEffectState,
+          updatedAt: candidate.runUpdatedAt,
+          ...(candidate.cancelRequestedAt === null ? {} : { cancelRequestedAt: candidate.cancelRequestedAt }),
+        },
+      };
+    },
+  };
+}
+
 function executionSnapshot(
   providerId = "codex",
   modelSelection: "explicit" | "inherited" = "explicit",
@@ -2346,7 +2956,9 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
   readonly preflightInputs: CodexAdapterCapabilityPreflightInput[] = [];
   readonly startInputs: CodexStartThreadInput[] = [];
   readonly resumeInputs: CodexResumeThreadInput[] = [];
+  readonly readInputs: CodexReadThreadInput[] = [];
   readonly turnInputs: CodexStartTurnInput[] = [];
+  readonly interruptInputs: CodexInterruptTurnInput[] = [];
   eventWaits = 0;
   eventWaitsBeforeFirstMutation = 0;
   closeCalls = 0;
@@ -2356,6 +2968,8 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
   #eventReject: ((error: Error) => void) | undefined;
   readonly #startResult: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
   readonly #resumeResult: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
+  readonly #readResult: CodexAdapterReadResult<CodexAdapterReadThreadSnapshot>;
+  readonly #interruptResult: CodexAdapterMutationResult<CodexAdapterInterruptAcknowledgement>;
   readonly #preflightResult: CodexAdapterCapabilityPreflightResult;
   readonly #startOperation:
     ((signal: AbortSignal | undefined) => Promise<CodexAdapterMutationResult<CodexAdapterThreadSnapshot>>) | undefined;
@@ -2367,6 +2981,8 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
     options: Readonly<{
       startResult?: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
       resumeResult?: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
+      readResult?: CodexAdapterReadResult<CodexAdapterReadThreadSnapshot>;
+      interruptResult?: CodexAdapterMutationResult<CodexAdapterInterruptAcknowledgement>;
       preflightResult?: CodexAdapterCapabilityPreflightResult;
       startOperation?(signal: AbortSignal | undefined): Promise<CodexAdapterMutationResult<CodexAdapterThreadSnapshot>>;
       nextEventThrows?: boolean;
@@ -2376,6 +2992,25 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
   ) {
     this.#startResult = options.startResult ?? acceptedThread("thread-1");
     this.#resumeResult = options.resumeResult ?? acceptedThread("thread-existing");
+    this.#readResult =
+      options.readResult ??
+      ({
+        kind: "accepted",
+        effect: "none",
+        value: {
+          threadId: "thread-1",
+          status: "active",
+          cliVersion: "0.145.0",
+          turns: [{ turnId: "turn-1", status: "in_progress", itemCount: 0 }],
+        },
+      } as const);
+    this.#interruptResult =
+      options.interruptResult ??
+      ({
+        kind: "accepted",
+        effect: "present",
+        value: { threadId: "thread-1", turnId: "turn-1", terminal: false },
+      } as const);
     this.#preflightResult = options.preflightResult ?? { kind: "supported", effect: "none" };
     this.#startOperation = options.startOperation;
     this.#nextEventThrows = options.nextEventThrows === true;
@@ -2400,6 +3035,11 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
     return this.#resumeResult;
   }
 
+  async readThread(input: CodexReadThreadInput) {
+    this.readInputs.push(input);
+    return this.#readResult;
+  }
+
   async startTurn(input: CodexStartTurnInput): Promise<CodexAdapterMutationResult<CodexAdapterTurnSnapshot>> {
     this.#recordMutationReadiness();
     this.turnInputs.push(input);
@@ -2412,6 +3052,12 @@ class FakeAdapter implements ApplicationRunProviderAdapterPort {
         status: "in_progress",
       },
     };
+  }
+
+  async interruptTurn(input: CodexInterruptTurnInput) {
+    this.#recordMutationReadiness();
+    this.interruptInputs.push(input);
+    return this.#interruptResult;
   }
 
   nextEvent(): Promise<CodexAdapterEvent> {
@@ -2460,6 +3106,21 @@ function acceptedThread(threadId: string): CodexAdapterMutationResult<CodexAdapt
     value: {
       threadId,
       status: "idle",
+      model: "gpt-5.6",
+      modelProvider: "openai",
+      cliVersion: "0.145.0",
+      reasoningEffort: "high",
+    },
+  };
+}
+
+function acceptedActiveThread(threadId: string): CodexAdapterMutationResult<CodexAdapterThreadSnapshot> {
+  return {
+    kind: "accepted",
+    effect: "present",
+    value: {
+      threadId,
+      status: "active",
       model: "gpt-5.6",
       modelProvider: "openai",
       cliVersion: "0.145.0",

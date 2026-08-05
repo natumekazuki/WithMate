@@ -8,7 +8,12 @@ import {
   type TextContentBlock,
 } from "../shared/message-content.js";
 import type { ApplicationOperationOptions } from "../shared/application-service-model.js";
-import type { RecoveryProjection, RunDetail, SessionDetail } from "../shared/repository-read-model.js";
+import type {
+  RecoveryCandidate,
+  RecoveryProjection,
+  RunDetail,
+  SessionDetail,
+} from "../shared/repository-read-model.js";
 import type {
   ProviderBindingResolutionCommand,
   ProviderBindingResolutionResult,
@@ -26,10 +31,13 @@ import type {
   CodexAdapterInteractionResponse,
   CodexAdapterInteractionResponseResult,
   CodexAdapterMutationResult,
+  CodexAdapterReadResult,
+  CodexAdapterReadThreadSnapshot,
   CodexAdapterSteerAcknowledgement,
   CodexAdapterThreadSnapshot,
   CodexAdapterTurnSnapshot,
   CodexInterruptTurnInput,
+  CodexReadThreadInput,
   CodexResumeThreadInput,
   CodexStartThreadInput,
   CodexStartTurnInput,
@@ -53,6 +61,7 @@ import { RepositoryReadClient } from "./repository-read-client.js";
 import { RepositoryWriteClient } from "./repository-write-client.js";
 import type { ProviderDefinitionRegistry } from "./providers/provider-definition.js";
 import { defaultProviderDefinitionRegistry } from "./providers/provider-registry.js";
+import { classifyApplicationRunRecovery } from "./application-run-recovery-classifier.js";
 
 export const APPLICATION_RUN_RUNTIME_LIMITS = Object.freeze({
   maxLiveRuns: 128,
@@ -60,7 +69,10 @@ export const APPLICATION_RUN_RUNTIME_LIMITS = Object.freeze({
   maxSnapshotBytes: APPLICATION_RUN_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes,
   chunkBytes: 256 * 1024,
   persistenceRetryDelayMs: 25,
+  recoveryAttachTimeoutMs: 10_000,
 } as const);
+
+const REPOSITORY_RECOVERY_PAGE_LIMIT = 25;
 
 export type ApplicationRunProviderInteractionResponseReservation = Readonly<{
   token: object;
@@ -93,6 +105,10 @@ export interface ApplicationRunProviderAdapterPort {
     input: CodexResumeThreadInput,
     options?: ApplicationOperationOptions,
   ): Promise<CodexAdapterMutationResult<CodexAdapterThreadSnapshot>>;
+  readThread?(
+    input: CodexReadThreadInput,
+    options?: ApplicationOperationOptions,
+  ): Promise<CodexAdapterReadResult<CodexAdapterReadThreadSnapshot>>;
   startTurn(
     input: CodexStartTurnInput,
     options?: ApplicationOperationOptions,
@@ -177,6 +193,16 @@ export interface ApplicationRunDispatchReadyPort {
 export interface ApplicationRunProviderEventPort {
   accept(generationId: string, event: CodexAdapterEvent): void | Promise<void>;
   retryRun?(runId: string): Promise<boolean>;
+  registerRecovered?(
+    dispatch: ApplicationRunPreparedDispatch,
+    control: ApplicationRunDispatchControl,
+    externalExecutionId: string,
+    runVersion: number,
+  ): Readonly<{
+    attached: Promise<boolean>;
+    fail(errorSummary: string): Promise<void>;
+    done: Promise<void>;
+  }> | null;
   prepareGenerationRelease?(
     generationId: string,
     reason: Readonly<
@@ -194,7 +220,8 @@ export interface ApplicationRunProviderEventPort {
 export type ApplicationRunRuntimeReadPort = Pick<
   RepositoryReadClient,
   "sessionGet" | "sessionDirectoriesChunk" | "runGet" | "runSnapshotChunk" | "messageContentChunk" | "recoveryGet"
->;
+> &
+  Partial<Pick<RepositoryReadClient, "recoveryCandidatesPage">>;
 
 export interface ApplicationRunRuntimeWritePort {
   resolveProviderBinding(
@@ -218,6 +245,7 @@ export type ApplicationRunRuntimeServiceOptions = Readonly<{
   limits?: Readonly<{
     maxLiveRuns?: number;
     maxTrackedBindings?: number;
+    recoveryAttachTimeoutMs?: number;
   }>;
 }>;
 
@@ -289,6 +317,7 @@ export class ApplicationRunRuntimeService
   readonly #persistenceRetryable: () => boolean;
   readonly #maxLiveRuns: number;
   readonly #maxTrackedBindings: number;
+  readonly #recoveryAttachTimeoutMs: number;
   readonly #work = new Map<string, Promise<void>>();
   readonly #pendingContextReads = new Map<string, ApplicationRunAdmissionRecord>();
   readonly #pendingBindingResolutions = new Map<string, PendingBindingResolution>();
@@ -305,6 +334,7 @@ export class ApplicationRunRuntimeService
   #nextGeneration = 1;
   #closing = false;
   #shutdownPromise: Promise<void> | undefined;
+  #recoveryPromise: Promise<void> | undefined;
   #rejectedHandoffCount = 0;
 
   constructor(options: ApplicationRunRuntimeServiceOptions) {
@@ -318,6 +348,9 @@ export class ApplicationRunRuntimeService
     this.#maxLiveRuns = positiveLimit(options.limits?.maxLiveRuns ?? APPLICATION_RUN_RUNTIME_LIMITS.maxLiveRuns);
     this.#maxTrackedBindings = positiveLimit(
       options.limits?.maxTrackedBindings ?? APPLICATION_RUN_RUNTIME_LIMITS.maxTrackedBindings,
+    );
+    this.#recoveryAttachTimeoutMs = positiveLimit(
+      options.limits?.recoveryAttachTimeoutMs ?? APPLICATION_RUN_RUNTIME_LIMITS.recoveryAttachTimeoutMs,
     );
   }
 
@@ -417,6 +450,283 @@ export class ApplicationRunRuntimeService
     });
   }
 
+  recoverStartup(): Promise<void> {
+    this.#recoveryPromise ??= this.#recoverStartup();
+    return this.#recoveryPromise;
+  }
+
+  async #recoverStartup(): Promise<void> {
+    const readCandidates = this.#reads.recoveryCandidatesPage;
+    if (readCandidates === undefined) throw new TypeError("Runtime recovery candidate reader is unavailable.");
+    let cursor: string | undefined;
+    do {
+      if (this.#closing) throw new Error("Runtime recovery was canceled during shutdown.");
+      const page = await readCandidates.call(
+        this.#reads,
+        {
+          ...(cursor === undefined ? {} : { cursor }),
+          limit: REPOSITORY_RECOVERY_PAGE_LIMIT,
+        },
+        { signal: this.#lifecycleAbort.signal },
+      );
+      if (this.#closing) throw new Error("Runtime recovery was canceled during shutdown.");
+      for (const item of page.items) {
+        if (this.#closing) throw new Error("Runtime recovery was canceled during shutdown.");
+        if ("omitted" in item) throw new TypeError("Runtime recovery candidate projection was omitted.");
+        await this.#recoverCandidate(item);
+      }
+      cursor = page.nextCursor;
+    } while (cursor !== undefined);
+  }
+
+  async #recoverCandidate(candidate: RecoveryCandidate): Promise<void> {
+    const action = classifyApplicationRunRecovery(candidate);
+    switch (action.kind) {
+      case "safe_pending_dispatch": {
+        const admission = recoveryAdmission(candidate);
+        this.#handoff(admission, false);
+        await this.#waitForRecoveredPendingOwnership(candidate);
+        return;
+      }
+      case "binding_creation_ambiguous":
+        await this.#terminalizeRecoveryCandidate(candidate, "binding_creation_ambiguous");
+        return;
+      case "dispatch_ambiguous":
+        await this.#terminalizeRecoveryCandidate(candidate, "dispatch_ambiguous");
+        return;
+      case "ephemeral_owner_lost":
+        await this.#terminalizeRecoveryCandidate(
+          candidate,
+          candidate.dispatchState === "pending"
+            ? "dispatch_not_sent"
+            : candidate.dispatchState === "ambiguous" || candidate.dispatchState === "dispatching"
+              ? "dispatch_ambiguous"
+              : "not_applicable",
+        );
+        return;
+      case "local_terminalization":
+        await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+        return;
+      case "persistent_execution_reconcile":
+        await this.#recoverPersistentExecution(candidate);
+        return;
+      case "diagnostic_invalid":
+        throw new TypeError(`Runtime recovery candidate is invalid: ${action.reason}.`);
+    }
+  }
+
+  async #waitForRecoveredPendingOwnership(candidate: RecoveryCandidate): Promise<void> {
+    while (!this.#closing) {
+      const projection = await this.#reads.runGet({
+        sessionId: candidate.sessionId,
+        workspaceKey: candidate.workspaceKey,
+        runId: candidate.runId,
+      });
+      if (isTerminalRuntimePhase(projection.run.phase)) return;
+      const recovery = await this.#reads.recoveryGet({
+        sessionId: candidate.sessionId,
+        workspaceKey: candidate.workspaceKey,
+        runId: candidate.runId,
+      });
+      if (
+        recovery.attemptId === candidate.attemptId &&
+        recovery.bindingId === candidate.bindingId &&
+        recovery.dispatchState === "accepted" &&
+        recovery.externalExecutionId !== null
+      ) {
+        return;
+      }
+      if (!(await waitForRetry(this.#lifecycleAbort.signal))) break;
+    }
+    throw new Error("Runtime recovery did not establish pending Dispatch ownership.");
+  }
+
+  async #terminalizeRecoveryCandidate(
+    candidate: RecoveryCandidate,
+    preDispatchResolution: RunTerminalCommand["preDispatchResolution"]["kind"],
+  ): Promise<void> {
+    if (candidate.attemptId === null) throw new TypeError("Runtime recovery Attempt identity is unavailable.");
+    const acceptedExecution =
+      candidate.dispatchState === "accepted" &&
+      candidate.bindingId !== null &&
+      candidate.externalConversationId !== null &&
+      candidate.externalExecutionId !== null;
+    const identity = terminalIdentity(candidate.runId);
+    const command: RunTerminalCommand = {
+      sessionId: candidate.sessionId,
+      workspaceKey: candidate.workspaceKey,
+      runId: candidate.runId,
+      attemptId: candidate.attemptId,
+      terminalEvent: identity,
+      providerExecution: acceptedExecution
+        ? {
+            attemptId: candidate.attemptId,
+            bindingId: candidate.bindingId as string,
+            externalConversationId: candidate.externalConversationId as string,
+            externalExecutionId: candidate.externalExecutionId as string,
+          }
+        : null,
+      preDispatchResolution: { kind: preDispatchResolution },
+      cancelCorrelation: { kind: "none" },
+      outcome: {
+        kind: "interrupted",
+        failureOrigin: "process",
+        providerErrorCode: null,
+        errorSummary: "Run ownership was lost when the previous runtime host ended.",
+      },
+      outputs: [],
+      childResult: null,
+    };
+    if (!(await this.#confirmRunTerminal(command))) {
+      throw new Error("Runtime recovery terminal persistence could not be confirmed.");
+    }
+  }
+
+  async #recoverPersistentExecution(candidate: RecoveryCandidate): Promise<void> {
+    if (
+      candidate.attemptId === null ||
+      candidate.bindingId === null ||
+      candidate.externalConversationId === null ||
+      candidate.externalExecutionId === null
+    ) {
+      throw new TypeError("Runtime recovery execution correlation is incomplete.");
+    }
+    const admission = recoveryAdmission(candidate);
+    const context = await this.#readContext(admission);
+    if (!isExactPersistentRecoveryContext(candidate, context)) {
+      throw new TypeError("Runtime recovery candidate changed before Provider reconciliation.");
+    }
+    if (!this.#runtimeFactory.supports(candidate.sessionProviderId)) {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      return;
+    }
+    let runtime: RuntimeState;
+    try {
+      runtime = await this.#getRuntime(candidate.sessionProviderId);
+    } catch {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      return;
+    }
+    const readThread = runtime.runtime.adapter.readThread;
+    if (readThread === undefined) {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      return;
+    }
+    let observed: CodexAdapterReadResult<CodexAdapterReadThreadSnapshot>;
+    try {
+      observed = await readThread.call(
+        runtime.runtime.adapter,
+        { threadId: candidate.externalConversationId, includeTurns: true },
+        { signal: this.#lifecycleAbort.signal },
+      );
+    } catch {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      await this.#retireRuntime(runtime, { kind: "event_consumer_failure" });
+      return;
+    }
+    if (observed.kind === "connection_failure") {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      await this.#retireRuntime(runtime, { kind: "event_consumer_failure" });
+      return;
+    }
+    if (!isExactActiveRecoverySnapshot(observed, candidate.externalConversationId, candidate.externalExecutionId)) {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      return;
+    }
+    const binding = this.#registerBinding(context, runtime, candidate.externalConversationId);
+    if (binding === undefined) throw new RangeError("Runtime recovery Binding capacity was reached.");
+    const prepared = recoveredPreparedDispatch(context, binding);
+    const control = this.#dispatchControl(context, binding, runtime);
+    const recovered = this.#events.registerRecovered?.(
+      prepared,
+      control,
+      candidate.externalExecutionId,
+      candidate.runVersion,
+    );
+    if (recovered === undefined || recovered === null) {
+      await this.#terminalizeRecoveryCandidate(candidate, "not_applicable");
+      return;
+    }
+    let resumed: CodexAdapterMutationResult<CodexAdapterThreadSnapshot>;
+    try {
+      const compiled = this.#providers.compileSnapshot(context.snapshot);
+      resumed = await runtime.runtime.adapter.resumeThread(
+        { threadId: candidate.externalConversationId, ...compiled.resumeThread },
+        { signal: this.#lifecycleAbort.signal },
+      );
+    } catch {
+      await recovered.fail("Persistent Provider execution could not be resumed.");
+      await this.#retireRuntime(runtime, { kind: "event_consumer_failure" });
+      return;
+    }
+    if (resumed.kind === "connection_failure" || resumed.kind === "ambiguous") {
+      await recovered.fail("Persistent Provider execution could not be resumed.");
+      await this.#retireRuntime(runtime, { kind: "event_consumer_failure" });
+      return;
+    }
+    if (
+      resumed.kind !== "accepted" ||
+      resumed.value.threadId !== candidate.externalConversationId ||
+      resumed.value.status !== "active"
+    ) {
+      await recovered.fail("Persistent Provider execution could not be resumed.");
+      return;
+    }
+    const attachment = await this.#waitForRecoveryAttachment(recovered);
+    if (attachment.kind === "aborted") throw new Error("Runtime recovery was canceled during shutdown.");
+    if (attachment.kind === "done") return;
+    if (!attachment.attached) {
+      await recovered.fail("Provider execution owner correlation changed during resume.");
+      return;
+    }
+    if (candidate.runPhase === "canceling") {
+      const interrupt = runtime.runtime.adapter.interruptTurn;
+      if (interrupt === undefined) {
+        await recovered.fail("Recovered Provider cancellation could not be resumed.");
+        return;
+      }
+      let interrupted: CodexAdapterMutationResult<CodexAdapterInterruptAcknowledgement>;
+      try {
+        interrupted = await interrupt.call(
+          runtime.runtime.adapter,
+          { threadId: candidate.externalConversationId, turnId: candidate.externalExecutionId },
+          { signal: this.#lifecycleAbort.signal },
+        );
+      } catch {
+        interrupted = { kind: "ambiguous", effect: "unknown", code: "invalid_response" };
+      }
+      if (interrupted.kind === "not_sent" || interrupted.kind === "rejected") {
+        await recovered.fail("Recovered Provider cancellation was not accepted.");
+      }
+    }
+  }
+
+  async #waitForRecoveryAttachment(
+    recovered: NonNullable<ReturnType<NonNullable<ApplicationRunProviderEventPort["registerRecovered"]>>>,
+  ): Promise<Readonly<{ kind: "attached"; attached: boolean } | { kind: "done" } | { kind: "aborted" }>> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let onAbort: (() => void) | undefined;
+    const deadline = new Promise<Readonly<{ kind: "attached"; attached: false }>>((resolve) => {
+      timer = setTimeout(() => resolve({ kind: "attached", attached: false }), this.#recoveryAttachTimeoutMs);
+    });
+    const aborted = new Promise<Readonly<{ kind: "aborted" }>>((resolve) => {
+      onAbort = () => resolve({ kind: "aborted" });
+      this.#lifecycleAbort.signal.addEventListener("abort", onAbort, { once: true });
+      if (this.#lifecycleAbort.signal.aborted) onAbort();
+    });
+    try {
+      return await Promise.race([
+        recovered.done.then(() => ({ kind: "done" as const })),
+        recovered.attached.then((attached) => ({ kind: "attached" as const, attached })),
+        deadline,
+        aborted,
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (onAbort !== undefined) this.#lifecycleAbort.signal.removeEventListener("abort", onAbort);
+    }
+  }
+
   shutdown(): Promise<void> {
     if (this.#shutdownPromise === undefined) {
       const attempt = this.#shutdown().catch((error: unknown) => {
@@ -431,6 +741,8 @@ export class ApplicationRunRuntimeService
   async #shutdown(): Promise<void> {
     this.#closing = true;
     this.#lifecycleAbort.abort();
+    const recovery = this.#recoveryPromise;
+    if (recovery !== undefined) await recovery.catch(() => undefined);
     const runtimes = new Set<RuntimeState>();
     if (this.#runtime !== undefined) runtimes.add(this.#runtime);
     const starting = this.#runtimeStart;
@@ -807,6 +1119,31 @@ export class ApplicationRunRuntimeService
     } catch {
       // Dispatch owns failure classification after its durable begin Gate.
     }
+  }
+
+  #dispatchControl(
+    context: RuntimeExecutionContext,
+    binding: BindingOwner,
+    runtime: RuntimeState,
+  ): ApplicationRunDispatchControl {
+    return Object.freeze({
+      adapter: runtime.runtime.adapter,
+      signal: this.#lifecycleAbort.signal,
+      isCurrent: () =>
+        !this.#closing &&
+        !runtime.failed &&
+        this.#runtime === runtime &&
+        this.#bindings.get(binding.bindingId) === binding,
+      terminalize: (failure) =>
+        this.#terminalize(
+          context,
+          failure.preDispatchResolution,
+          failure.outcomeKind,
+          failure.failureOrigin,
+          failure.errorSummary,
+          failure.providerErrorCode,
+        ),
+    });
   }
 
   #registerBinding(
@@ -1300,6 +1637,102 @@ export function createApplicationRunRuntimeService(
     persistenceRetryable: () => worker.state === "ready",
     ...options,
   });
+}
+
+export function repairApplicationRunStartupState(
+  worker: PersistenceWorkerClient,
+  options: ApplicationOperationOptions = {},
+) {
+  return new RepositoryWriteClient(worker).repairStartupState({}, options);
+}
+
+function recoveryAdmission(candidate: RecoveryCandidate): ApplicationRunAdmissionRecord {
+  if (
+    candidate.attemptId === null ||
+    candidate.bindingId === null ||
+    candidate.bindingState === null ||
+    candidate.dispatchState === null
+  ) {
+    throw new TypeError("Runtime recovery admission tuple is incomplete.");
+  }
+  return Object.freeze({
+    sessionId: candidate.sessionId,
+    messageId: candidate.initiatingMessageId,
+    runId: candidate.runId,
+    attemptId: candidate.attemptId,
+    bindingId: candidate.bindingId,
+    runPhase: candidate.runPhase,
+    bindingState: candidate.bindingState,
+    dispatchState: candidate.dispatchState,
+    admittedAt: candidate.runCreatedAt,
+  });
+}
+
+function recoveredPreparedDispatch(
+  context: RuntimeExecutionContext,
+  binding: BindingOwner,
+): ApplicationRunPreparedDispatch {
+  return Object.freeze({
+    admission: context.admission,
+    workspaceKey: context.session.workspaceKey,
+    providerId: context.session.providerId,
+    threadId: binding.threadId,
+    generationId: binding.generationId,
+    persistenceMode: "persistent",
+    ephemeralOwnerToken: null,
+    executionSnapshot: context.snapshot,
+    contentBlocks: context.contentBlocks,
+  });
+}
+
+function isExactActiveRecoverySnapshot(
+  result: CodexAdapterReadResult<CodexAdapterReadThreadSnapshot>,
+  expectedThreadId: string,
+  expectedTurnId: string,
+): boolean {
+  if (result.kind !== "accepted" || result.value.threadId !== expectedThreadId || result.value.status !== "active") {
+    return false;
+  }
+  const activeTurns = result.value.turns.filter((turn) => turn.status === "in_progress");
+  return activeTurns.length === 1 && activeTurns[0]?.turnId === expectedTurnId;
+}
+
+function isExactPersistentRecoveryContext(candidate: RecoveryCandidate, context: RuntimeExecutionContext): boolean {
+  const { recovery, run, session } = context;
+  return (
+    session.id === candidate.sessionId &&
+    session.workspaceKey === candidate.workspaceKey &&
+    session.providerId === candidate.sessionProviderId &&
+    session.lifecycleStatus === "active" &&
+    run.id === candidate.runId &&
+    run.sessionId === candidate.sessionId &&
+    run.initiatingMessageId === candidate.initiatingMessageId &&
+    run.phase === candidate.runPhase &&
+    run.version === candidate.runVersion &&
+    run.updatedAt === candidate.runUpdatedAt &&
+    (run.cancelRequestedAt ?? null) === candidate.cancelRequestedAt &&
+    run.externalSideEffectState === candidate.externalSideEffectState &&
+    recovery.runId === candidate.runId &&
+    recovery.sessionId === candidate.sessionId &&
+    recovery.workspaceKey === candidate.workspaceKey &&
+    recovery.runPhase === candidate.runPhase &&
+    recovery.runUpdatedAt === candidate.runUpdatedAt &&
+    recovery.attemptId === candidate.attemptId &&
+    recovery.attemptOrdinal === candidate.attemptOrdinal &&
+    recovery.attemptState === candidate.attemptState &&
+    recovery.externalExecutionId === candidate.externalExecutionId &&
+    recovery.bindingId === candidate.bindingId &&
+    recovery.providerId === candidate.bindingProviderId &&
+    recovery.persistenceMode === "persistent" &&
+    recovery.bindingState === candidate.bindingState &&
+    recovery.externalConversationId === candidate.externalConversationId &&
+    recovery.dispatchState === candidate.dispatchState &&
+    recovery.providerIdempotencyKey === candidate.providerIdempotencyKey
+  );
+}
+
+function isTerminalRuntimePhase(phase: string): boolean {
+  return phase === "completed" || phase === "failed" || phase === "canceled" || phase === "interrupted";
 }
 
 function isSafeRuntimeCandidate(context: RuntimeExecutionContext): boolean {

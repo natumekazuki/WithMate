@@ -7,6 +7,7 @@ import {
   type MessageListItem,
   type LocalRepositoryListItem,
   type Page,
+  type RecoveryCandidate,
   type RecoveryProjection,
   type RunDetail,
   type RunAdmissionReplayProbeRequest,
@@ -237,5 +238,12 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<RecoveryProjection> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.recoveryGet, "read", input, options);
+  }
+
+  recoveryCandidatesPage(
+    input: Readonly<{ cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<Page<RecoveryCandidate>> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.recoveryCandidatesPage, "read", input, options);
   }
 }

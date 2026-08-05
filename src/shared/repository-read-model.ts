@@ -37,6 +37,7 @@ export const REPOSITORY_READ_OPERATIONS = {
   childResultsPage: "repository.child-results.page",
   sessionDeletionStatusGet: "repository.session-deletion.status.get",
   sessionDeletionCleanupPage: "repository.session-deletion.cleanup.page",
+  recoveryCandidatesPage: "repository.recovery.candidates.page",
   recoveryGet: "repository.recovery.get",
 } as const;
 
@@ -55,6 +56,7 @@ export const REPOSITORY_READ_LIMITS = {
   runInputDeliveries: { default: 100, max: 200 },
   childResults: { default: 100, max: 200 },
   sessionDeletionItems: { default: 100, max: 200 },
+  recoveryCandidates: { default: 25, max: 100 },
 } as const;
 
 export type PageOmission = Readonly<{
@@ -335,6 +337,39 @@ export type RecoveryProjection = Readonly<{
   persistenceMode: "persistent" | "ephemeral" | null;
   bindingState: "creating" | "active" | "invalidated" | "superseded" | null;
   externalConversationId: string | null;
+  dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted" | null;
+  providerIdempotencyKey: string | null;
+}>;
+
+export type RecoveryCandidate = Readonly<{
+  runId: string;
+  sessionId: string;
+  workspaceKey: string;
+  sessionProviderId: string;
+  runPhase: "queued" | "starting" | "active" | "canceling" | "finalizing";
+  runVersion: number;
+  initiatingMessageId: string;
+  runCreatedAt: number;
+  runUpdatedAt: number;
+  cancelRequestedAt: number | null;
+  externalSideEffectState: "none" | "present" | "unknown";
+  currentAttemptCount: number;
+  attemptId: string | null;
+  attemptOrdinal: number | null;
+  attemptState: "preparing" | "active" | null;
+  attemptProviderBindingId: string | null;
+  externalExecutionId: string | null;
+  bindingCandidateCount: number;
+  bindingId: string | null;
+  bindingSessionId: string | null;
+  bindingProviderId: string | null;
+  persistenceMode: "persistent" | "ephemeral" | null;
+  bindingState: "creating" | "active" | "invalidated" | "superseded" | null;
+  bindingCreatorAttemptId: string | null;
+  bindingCreatorRunId: string | null;
+  bindingCreatorSessionId: string | null;
+  externalConversationId: string | null;
+  dispatchCount: number;
   dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted" | null;
   providerIdempotencyKey: string | null;
 }>;

@@ -713,6 +713,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       expiredIdempotencyRecords: 0,
       invalidatedBindings: 0,
       abortedDispatches: 0,
+      ambiguousDispatches: 0,
       settledInputDeliveries: 0,
       settledInteractionResponses: 0,
       availableChildResults: 0,

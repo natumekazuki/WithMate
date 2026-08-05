@@ -27,10 +27,12 @@ import { startRuntimeHost, type RuntimeHostDependencies } from "../src/main/runt
 import { dispatchRuntimeApplicationOperation } from "../src/main/runtime-host/runtime-application-dispatch.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import {
+  closeStartupRunRuntimeOwner,
   RuntimeApplicationShutdownPendingError,
   type OwnedRuntimeApplication,
   type RuntimeApplication,
 } from "../src/main/runtime-application.js";
+import { ApplicationRunRuntimeShutdownPendingError } from "../src/main/application-run-runtime-service.js";
 import { PERSISTENCE_PROTOCOL_VERSION } from "../src/shared/persistence-protocol.js";
 import {
   APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
@@ -269,6 +271,49 @@ for (const failureMode of ["timeout", "abort", "startup_failure", "crash"] as co
     await replacementClaim.release();
   });
 }
+
+test("runtime host retains its claim while startup retries the same Run runtime cleanup owner", async (context) => {
+  const fixtureRoot = await mkdtemp(path.join(os.tmpdir(), "withmate-runtime-host-startup-run-cleanup-"));
+  context.after(() => rm(fixtureRoot, { recursive: true, force: true }));
+  const identity = await resolveRuntimeOwnerIdentity({ applicationDataRoot: fixtureRoot });
+  let releaseSecondClose!: () => void;
+  const secondCloseGate = new Promise<void>((resolve) => {
+    releaseSecondClose = resolve;
+  });
+  let shutdownCalls = 0;
+  const startupRunRuntime = {
+    async shutdown() {
+      shutdownCalls += 1;
+      if (shutdownCalls === 1) {
+        throw new ApplicationRunRuntimeShutdownPendingError("Startup Run runtime cleanup is still pending.");
+      }
+      await secondCloseGate;
+    },
+  };
+  const dependencies: RuntimeHostDependencies = {
+    async resolveIdentity() {
+      return identity;
+    },
+    acquireClaim: acquireRuntimeOwnerClaim,
+    createListener: createRuntimeEndpointListener,
+    async startApplication() {
+      await closeStartupRunRuntimeOwner(startupRunRuntime);
+      throw new Error("Startup recovery failed.");
+    },
+  };
+
+  const startup = startRuntimeHost({ dependencies });
+  await waitFor(() => shutdownCalls >= 2);
+  const overlappingClaim = await acquireRuntimeOwnerClaim(identity);
+  if (overlappingClaim.status === "acquired") await overlappingClaim.release();
+  assert.equal(overlappingClaim.status, "busy");
+
+  releaseSecondClose();
+  await assert.rejects(startup, /Startup recovery failed/u);
+  assert.equal(shutdownCalls, 2);
+  const replacementClaim = await acquireRuntimeOwnerClaimEventually(identity);
+  await replacementClaim.release();
+});
 
 test("ready Persistence Worker publishes its fatal lifecycle only after the Worker exits", async (context) => {
   const worker = new DelayedTerminationWorker();
