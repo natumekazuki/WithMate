@@ -2171,6 +2171,53 @@ repositoryTest("binding.resolve rejects ambiguous creation so run.terminal owns 
   });
 });
 
+repositoryTest("ephemeral creating Binding converges locally through ambiguous creation terminalization", () => {
+  withDatabase((database) => {
+    const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+    const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+    const terminal = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runTerminal, () => 300);
+    assert.equal(
+      (create(sessionCreateCommand("018f1f4e-7f0a-7000-8000-000000000151", "session-1")) as CommandResult).ok,
+      true,
+    );
+    assert.equal(
+      (admit(normalRunAdmissionCommand("018f1f4e-7f0a-7000-8000-000000000152", "run-1", "create")) as CommandResult).ok,
+      true,
+    );
+    database.prepare("UPDATE provider_bindings SET persistence_mode = 'ephemeral' WHERE id = 'binding-run-1'").run();
+
+    const command = preparingRunTerminalCommand("binding_creation_ambiguous", "interrupted");
+    const first = terminal(command) as CommandResult;
+    const replay = terminal(command) as CommandResult;
+
+    assert.equal(first.ok && !first.replayed, true);
+    assert.equal(replay.ok && replay.replayed, true);
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            `
+            SELECT persistence_mode, binding_state, invalidation_reason, dispatch_state, phase
+            FROM provider_bindings b
+            JOIN run_attempts a ON a.id = b.created_by_run_attempt_id
+            JOIN run_dispatches d ON d.run_attempt_id = a.id
+            JOIN runs r ON r.id = a.run_id
+          `,
+          )
+          .get(),
+      },
+      {
+        persistence_mode: "ephemeral",
+        binding_state: "invalidated",
+        invalidation_reason: "conversation_start_ambiguous",
+        dispatch_state: "aborted",
+        phase: "interrupted",
+      },
+    );
+    assert.equal(count(database, "run_events"), 1);
+  });
+});
+
 repositoryTest("pending Dispatch cannot start after its Run begins canceling", () => {
   withDatabase((database) => {
     const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
@@ -5396,6 +5443,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         expiredIdempotencyRecords: 1,
         invalidatedBindings: 1,
         abortedDispatches: 1,
+        ambiguousDispatches: 1,
         settledInputDeliveries: 2,
         settledInteractionResponses: 0,
         availableChildResults: 1,
@@ -5423,6 +5471,17 @@ repositoryTest("startup repair converges local state and reports provider reconc
           .get(),
       },
       { dispatch_state: "aborted", resolved_at: 100 },
+    );
+    assert.deepEqual(
+      {
+        ...database
+          .prepare(
+            "SELECT dispatch_state, resolved_at FROM run_dispatches WHERE run_attempt_id = 'repair-dispatching-attempt'",
+          )
+          .get(),
+        ...database.prepare("SELECT external_side_effect_state FROM runs WHERE id = 'repair-dispatching-run'").get(),
+      },
+      { dispatch_state: "ambiguous", resolved_at: 100, external_side_effect_state: "unknown" },
     );
     assert.deepEqual(
       {
@@ -5528,6 +5587,7 @@ repositoryTest("startup repair converges local state and reports provider reconc
         expiredIdempotencyRecords: 0,
         invalidatedBindings: 0,
         abortedDispatches: 0,
+        ambiguousDispatches: 0,
         settledInputDeliveries: 0,
         settledInteractionResponses: 0,
         availableChildResults: 0,
@@ -7775,7 +7835,7 @@ function insertStartupRepairFixture(database: DatabaseSync): void {
       ('repair-child-run-2', 'repair-child', 2, 'repair-child-message-2', 'completed', '{}', 'present', 2, 21, 21, 0),
       ('repair-safe-run', 'repair-safe', 1, 'repair-safe-message', 'queued', '{}', 'none', 1, NULL, 2, 0),
       ('repair-creating-run', 'repair-creating', 1, 'repair-creating-message', 'queued', '{}', 'unknown', 1, NULL, 2, 0),
-      ('repair-dispatching-run', 'repair-dispatching', 1, 'repair-dispatching-message', 'starting', '{}', 'unknown', 1, NULL, 2, 0),
+      ('repair-dispatching-run', 'repair-dispatching', 1, 'repair-dispatching-message', 'starting', '{}', 'none', 1, NULL, 2, 0),
       ('repair-ephemeral-run', 'repair-ephemeral', 1, 'repair-ephemeral-message', 'queued', '{}', 'none', 1, NULL, 2, 0),
       ('repair-diagnostic-run', 'repair-diagnostic', 1, 'repair-diagnostic-message', 'queued', '{}', 'none', 1, NULL, 2, 0);
     INSERT INTO provider_bindings (

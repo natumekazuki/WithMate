@@ -115,6 +115,63 @@ export const REPOSITORY_RUN_OUTPUT_ITEM_SQL = `
   WHERE o.id = ? AND o.run_id = ? AND r.session_id = ? AND s.workspace_key = ?
 `;
 
+export const REPOSITORY_RECOVERY_CANDIDATE_SQL = `
+  WITH page_runs AS MATERIALIZED (
+    SELECT r.id, r.session_id, r.initiating_message_id, r.phase, r.external_side_effect_state,
+           r.cancel_requested_at, r.created_at, r.updated_at, r.version,
+           s.workspace_key, s.provider_id AS session_provider_id
+    FROM runs r
+    JOIN sessions s ON s.id = r.session_id
+    WHERE r.phase IN ('queued', 'starting', 'active', 'canceling', 'finalizing')
+      AND (? IS NULL OR r.created_at > ? OR (r.created_at = ? AND r.id > ?))
+    ORDER BY r.created_at ASC, r.id ASC
+    LIMIT ?
+  ), current_attempts AS MATERIALIZED (
+    SELECT a.* FROM run_attempts a
+    JOIN page_runs r ON r.id = a.run_id
+    WHERE a.attempt_state IN ('preparing', 'active')
+  ), binding_candidates AS MATERIALIZED (
+    SELECT a.id AS attempt_id, b.id AS binding_id
+    FROM current_attempts a
+    JOIN provider_bindings b ON b.id = a.provider_binding_id
+    UNION
+    SELECT a.id AS attempt_id, b.id AS binding_id
+    FROM current_attempts a
+    JOIN provider_bindings b ON b.created_by_run_attempt_id = a.id AND b.binding_state = 'creating'
+  )
+  SELECT r.id AS run_id, r.session_id, r.workspace_key, r.session_provider_id,
+         r.phase AS run_phase, r.version AS run_version, r.initiating_message_id,
+         r.created_at AS run_created_at,
+         r.updated_at AS run_updated_at, r.cancel_requested_at, r.external_side_effect_state,
+         (SELECT COUNT(*) FROM current_attempts ca WHERE ca.run_id = r.id) AS current_attempt_count,
+         a.id AS attempt_id, a.ordinal AS attempt_ordinal, a.attempt_state,
+         a.provider_binding_id AS attempt_provider_binding_id, a.external_execution_id,
+         (SELECT COUNT(*) FROM binding_candidates bc WHERE bc.attempt_id = a.id) AS binding_candidate_count,
+         b.id AS binding_id, b.session_id AS binding_session_id,
+         b.provider_id AS binding_provider_id, b.persistence_mode, b.binding_state,
+         b.created_by_run_attempt_id AS binding_creator_attempt_id,
+         creator_a.run_id AS binding_creator_run_id,
+         creator_r.session_id AS binding_creator_session_id,
+         b.external_conversation_id,
+         CASE WHEN a.id IS NULL THEN 0
+              ELSE (SELECT COUNT(*) FROM run_dispatches rd WHERE rd.run_attempt_id = a.id)
+         END AS dispatch_count,
+         d.dispatch_state, d.provider_idempotency_key
+  FROM page_runs r
+  LEFT JOIN current_attempts a ON a.run_id = r.id
+    AND (SELECT COUNT(*) FROM current_attempts ca WHERE ca.run_id = r.id) = 1
+  LEFT JOIN provider_bindings b ON b.id = (
+    SELECT bc.binding_id FROM binding_candidates bc
+    WHERE bc.attempt_id = a.id
+      AND (SELECT COUNT(*) FROM binding_candidates all_bc WHERE all_bc.attempt_id = a.id) = 1
+    LIMIT 1
+  )
+  LEFT JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+  LEFT JOIN runs creator_r ON creator_r.id = creator_a.run_id
+  LEFT JOIN run_dispatches d ON d.run_attempt_id = a.id
+  ORDER BY r.created_at ASC, r.id ASC
+`;
+
 const SESSION_PAGE_COLUMNS = `
   SELECT id, title, workspace_key, workspace_path, local_repository_key, repository_name,
          default_character_id, lifecycle_status,
@@ -264,6 +321,10 @@ export function createRepositoryReadOperations(
       read((payload) => ({ result: sessionDeletionCleanupPage(database, payload) })),
     ],
     [REPOSITORY_READ_OPERATIONS.recoveryGet, read((payload) => ({ result: recoveryGet(database, payload) }))],
+    [
+      REPOSITORY_READ_OPERATIONS.recoveryCandidatesPage,
+      read((payload) => ({ result: recoveryCandidatesPage(database, payload) })),
+    ],
   ]);
 }
 
@@ -1432,6 +1493,79 @@ function recoveryGet(database: DatabaseSync, payload: Readonly<Record<string, un
     .get(scope.runId, scope.sessionId, scope.workspaceKey) as Record<string, unknown> | undefined;
   if (row === undefined) throw notFound();
   return snakeToCamelWithNulls(row);
+}
+
+type RecoveryCandidateRow = Readonly<{
+  run_id: string;
+  session_id: string;
+  workspace_key: string;
+  session_provider_id: string;
+  run_phase: "queued" | "starting" | "active" | "canceling" | "finalizing";
+  run_version: number;
+  initiating_message_id: string;
+  run_created_at: number;
+  run_updated_at: number;
+  cancel_requested_at: number | null;
+  external_side_effect_state: "none" | "present" | "unknown";
+  current_attempt_count: number;
+  attempt_id: string | null;
+  attempt_ordinal: number | null;
+  attempt_state: "preparing" | "active" | null;
+  attempt_provider_binding_id: string | null;
+  external_execution_id: string | null;
+  binding_candidate_count: number;
+  binding_id: string | null;
+  binding_session_id: string | null;
+  binding_provider_id: string | null;
+  persistence_mode: "persistent" | "ephemeral" | null;
+  binding_state: "creating" | "active" | "invalidated" | "superseded" | null;
+  binding_creator_attempt_id: string | null;
+  binding_creator_run_id: string | null;
+  binding_creator_session_id: string | null;
+  external_conversation_id: string | null;
+  dispatch_count: number;
+  dispatch_state: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted" | null;
+  provider_idempotency_key: string | null;
+}>;
+
+function recoveryCandidatesPage(database: DatabaseSync, payload: Readonly<Record<string, unknown>>): unknown {
+  assertExactKeys(payload, ["cursor", "limit"]);
+  const limit = readLimit(payload.limit, REPOSITORY_READ_LIMITS.recoveryCandidates);
+  const cursorScope = scopeDigest({ collection: "runtime_recovery_candidates" });
+  const cursor = decodeCursor(payload.cursor, "recovery_candidates", cursorScope, 2);
+  if (
+    cursor !== undefined &&
+    (!Number.isSafeInteger(cursor[0]) || (cursor[0] as number) < 0 || typeof cursor[1] !== "string")
+  ) {
+    throw invalidCursor();
+  }
+  const afterCreatedAt = cursor?.[0] as number | undefined;
+  const afterRunId = cursor?.[1] as string | undefined;
+  const rows = database
+    .prepare(REPOSITORY_RECOVERY_CANDIDATE_SQL)
+    .all(
+      afterCreatedAt ?? null,
+      afterCreatedAt ?? null,
+      afterCreatedAt ?? null,
+      afterRunId ?? null,
+      limit + 1,
+    ) as unknown as readonly RecoveryCandidateRow[];
+  const page = splitPage(rows, limit);
+  return budgetPage(
+    page,
+    (row) => snakeToCamelWithNulls(row),
+    (budgeted) => ({
+      items: budgeted.items,
+      ...(budgeted.hasMore && budgeted.lastRow !== undefined
+        ? {
+            nextCursor: encodeCursor("recovery_candidates", cursorScope, [
+              budgeted.lastRow.run_created_at,
+              budgeted.lastRow.run_id,
+            ]),
+          }
+        : {}),
+    }),
+  );
 }
 
 function readSessionScope(payload: Readonly<Record<string, unknown>>, keys: readonly string[]) {

@@ -99,6 +99,18 @@ export interface ApplicationRunAttemptEventPort {
     dispatch: ApplicationRunPreparedDispatch,
     control: ApplicationRunDispatchControl,
   ): ApplicationRunAttemptHandle | null;
+  registerRecovered?(
+    dispatch: ApplicationRunPreparedDispatch,
+    control: ApplicationRunDispatchControl,
+    externalExecutionId: string,
+    runVersion: number,
+  ): ApplicationRunRecoveredAttemptHandle | null;
+}
+
+export interface ApplicationRunRecoveredAttemptHandle {
+  readonly attached: Promise<boolean>;
+  fail(errorSummary: string): Promise<void>;
+  readonly done: Promise<void>;
 }
 
 export interface ApplicationRunProviderGenerationPort {
@@ -257,6 +269,11 @@ type AttemptState = {
   interactionResponses: Map<string, InteractionResponseWork>;
   interactionResponseFailClosed: boolean;
   interruptTurnStarted: boolean;
+  recoveryAttach: Readonly<{
+    attached: Promise<boolean>;
+    resolve: (value: boolean) => void;
+    settled: { value: boolean };
+  }> | null;
   chain: Promise<void>;
 };
 
@@ -328,6 +345,63 @@ export class ApplicationRunEventService
     dispatch: ApplicationRunPreparedDispatch,
     control: ApplicationRunDispatchControl,
   ): ApplicationRunAttemptHandle | null {
+    const state = this.#createAttemptState(dispatch, control);
+    if (state === null) return null;
+    return Object.freeze({
+      settleStartTurn: (result: ApplicationRunStartTurnResult) =>
+        this.#enqueue(state, () => this.#settleStartTurn(state, result)),
+      done: state.done,
+    });
+  }
+
+  registerRecovered(
+    dispatch: ApplicationRunPreparedDispatch,
+    control: ApplicationRunDispatchControl,
+    externalExecutionId: string,
+    runVersion: number,
+  ): ApplicationRunRecoveredAttemptHandle | null {
+    if (externalExecutionId.length === 0 || !Number.isSafeInteger(runVersion) || runVersion < 0) return null;
+    const state = this.#createAttemptState(dispatch, control);
+    if (state === null) return null;
+    let resolveAttached!: (value: boolean) => void;
+    const attached = new Promise<boolean>((resolve) => {
+      resolveAttached = resolve;
+    });
+    const settled = { value: false };
+    state.recoveryAttach = {
+      attached,
+      settled,
+      resolve: (value) => {
+        if (settled.value) return;
+        settled.value = true;
+        resolveAttached(value);
+      },
+    };
+    state.phase = "accepted";
+    state.turnId = externalExecutionId;
+    state.runVersion = runVersion;
+    state.activity = "running";
+    state.interactions.activate(externalExecutionId);
+    return Object.freeze({
+      attached,
+      fail: (errorSummary: string) =>
+        this.#enqueue(state, async () => {
+          state.recoveryAttach?.resolve(false);
+          await this.#terminalize(state, {
+            kind: "interrupted",
+            failureOrigin: "transport",
+            providerErrorCode: null,
+            errorSummary,
+          });
+        }),
+      done: state.done,
+    });
+  }
+
+  #createAttemptState(
+    dispatch: ApplicationRunPreparedDispatch,
+    control: ApplicationRunDispatchControl,
+  ): AttemptState | null {
     if (this.#attemptsByRun.size >= this.#maxTrackedAttempts) return null;
     const ownerKey = providerOwnerKey(dispatch.generationId, dispatch.threadId);
     if (this.#attemptsByRun.has(dispatch.admission.runId) || this.#attemptsByOwner.has(ownerKey)) return null;
@@ -380,15 +454,12 @@ export class ApplicationRunEventService
       interactionResponses: new Map(),
       interactionResponseFailClosed: false,
       interruptTurnStarted: false,
+      recoveryAttach: null,
       chain: Promise.resolve(),
     };
     this.#attemptsByRun.set(dispatch.admission.runId, state);
     this.#attemptsByOwner.set(ownerKey, state);
-    return Object.freeze({
-      settleStartTurn: (result: ApplicationRunStartTurnResult) =>
-        this.#enqueue(state, () => this.#settleStartTurn(state, result)),
-      done,
-    });
+    return state;
   }
 
   #preflightCancel(
@@ -1933,6 +2004,19 @@ export class ApplicationRunEventService
 
   async #acceptAttemptEvent(state: AttemptState, event: CodexAdapterEvent): Promise<void> {
     if (state.phase === "closed" || state.terminalCommand !== null) return;
+    if (state.recoveryAttach !== null) {
+      const correlation = eventCorrelation(event);
+      if (event.kind === "connection_failure") {
+        state.recoveryAttach.resolve(false);
+      } else if (correlation.turnId !== null) {
+        if (correlation.turnId !== state.turnId) {
+          return;
+        }
+        if (event.kind === "turn_started") {
+          state.recoveryAttach.resolve(true);
+        }
+      }
+    }
     if (event.kind === "interaction_pending") {
       state.interactions.pending(event.handle, event.owner, event.snapshot);
       return;
@@ -2488,6 +2572,7 @@ export class ApplicationRunEventService
 
   #close(state: AttemptState): void {
     if (state.phase === "closed") return;
+    const recoveryAttach = state.recoveryAttach;
     state.phase = "closed";
     state.activity = null;
     state.interactions.close();
@@ -2498,6 +2583,7 @@ export class ApplicationRunEventService
     state.terminalCommand = null;
     state.releaseReason = null;
     state.startTurnResult = null;
+    state.recoveryAttach = null;
     if (state.cancelWork !== null) {
       if (state.cancelWork.settlementHandle !== null) {
         clearImmediate(state.cancelWork.settlementHandle);
@@ -2528,6 +2614,7 @@ export class ApplicationRunEventService
     }
     if (this.#attemptsByOwner.get(state.ownerKey) === state) this.#attemptsByOwner.delete(state.ownerKey);
     state.resolveDone();
+    recoveryAttach?.resolve(false);
   }
 }
 

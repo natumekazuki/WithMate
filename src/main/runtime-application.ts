@@ -36,6 +36,7 @@ import { createApplicationRunOutputOperations } from "./application-run-output-s
 import {
   ApplicationRunRuntimeShutdownPendingError,
   createApplicationRunRuntimeService,
+  repairApplicationRunStartupState,
 } from "./application-run-runtime-service.js";
 import { createApplicationSessionOperations } from "./application-session-service.js";
 import { createApplicationSessionMessageOperations } from "./application-session-message-service.js";
@@ -76,6 +77,18 @@ export class RuntimeApplicationShutdownPendingError extends Error {
   }
 }
 
+export async function closeStartupRunRuntimeOwner(runRuntime: Readonly<{ shutdown(): Promise<void> }>): Promise<void> {
+  while (true) {
+    try {
+      await runRuntime.shutdown();
+      return;
+    } catch (error) {
+      if (!(error instanceof ApplicationRunRuntimeShutdownPendingError)) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+    }
+  }
+}
+
 export async function startRuntimeApplication(
   identity: RuntimeOwnerIdentity,
   control: RuntimeApplicationControl = {},
@@ -98,15 +111,34 @@ export async function startRuntimeApplication(
     ...(deadlineAt === undefined ? {} : { startupTimeoutMs: remainingTimeout(deadlineAt) }),
   });
   await client.start({ ...(control.signal === undefined ? {} : { signal: control.signal }) });
+  let runRuntime: ReturnType<typeof createApplicationRunRuntimeService> | undefined;
   try {
     await runControlled(sessionFiles.assertStorageOwner(), deadlineAt, control.signal);
+    const repair = await runControlled(
+      repairApplicationRunStartupState(client, {
+        ...(deadlineAt === undefined ? {} : { timeoutMs: remainingTimeout(deadlineAt) }),
+        ...(control.signal === undefined ? {} : { signal: control.signal }),
+      }),
+      deadlineAt,
+      control.signal,
+    );
+    if (!repair.ok) throw new Error("Runtime startup repair was rejected.");
+    if (
+      repair.value.inspection.diagnosticIdempotencyRecords !== 0 ||
+      repair.value.inspection.diagnosticInteractionResponses !== 0 ||
+      repair.value.inspection.diagnosticChildResults !== 0
+    ) {
+      throw new Error("Runtime startup repair found an inconsistent durable repository state.");
+    }
     const access = new LocalRuntimeAccessValidator();
     const runEvents = createApplicationRunEventService(client);
     const runDispatch = createApplicationRunDispatchService(client, runEvents);
-    const runRuntime = createApplicationRunRuntimeService(client, new CodexApplicationRunRuntimeFactory(), {
+    runRuntime = createApplicationRunRuntimeService(client, new CodexApplicationRunRuntimeFactory(), {
       dispatchReady: runDispatch,
       events: runEvents,
     });
+    await runControlled(runRuntime.recoverStartup(), deadlineAt, control.signal);
+    const ownedRunRuntime = runRuntime;
     let shutdownPromise: Promise<Readonly<{ checkpoint: "completed" | "failed" }>> | undefined;
     return {
       operations: createApplicationSessionOperations(client, { access, sessionFiles, snapshotAuthorization }),
@@ -115,8 +147,8 @@ export async function startRuntimeApplication(
       runOperations: createApplicationRunOperations(client, {
         access,
         snapshotAuthorization,
-        handoff: runRuntime,
-        providerCapabilityPreflight: runRuntime,
+        handoff: ownedRunRuntime,
+        providerCapabilityPreflight: ownedRunRuntime,
         inputOwner: runEvents,
         cancelOwner: runEvents.cancelOwner,
         liveActivity: runEvents,
@@ -130,7 +162,7 @@ export async function startRuntimeApplication(
         if (shutdownPromise === undefined) {
           const attempt = (async () => {
             try {
-              await runRuntime.shutdown();
+              await ownedRunRuntime.shutdown();
             } catch (error) {
               if (error instanceof ApplicationRunRuntimeShutdownPendingError) {
                 throw new RuntimeApplicationShutdownPendingError({ cause: error });
@@ -148,7 +180,24 @@ export async function startRuntimeApplication(
       },
     };
   } catch (error) {
-    await client.shutdown(remainingTimeout(deadlineAt), control.signal).catch(() => undefined);
+    const cleanupErrors: unknown[] = [];
+    if (runRuntime !== undefined) {
+      try {
+        await closeStartupRunRuntimeOwner(runRuntime);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length === 0) {
+      try {
+        await client.shutdown(remainingTimeout(deadlineAt), control.signal);
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError);
+      }
+    }
+    if (cleanupErrors.length > 0) {
+      throw new AggregateError([error, ...cleanupErrors], "Runtime Application startup and cleanup both failed.");
+    }
     throw error;
   }
 }

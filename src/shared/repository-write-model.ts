@@ -511,6 +511,7 @@ export type StartupRepairResult = Readonly<{
     expiredIdempotencyRecords: number;
     invalidatedBindings: number;
     abortedDispatches: number;
+    ambiguousDispatches: number;
     settledInputDeliveries: number;
     settledInteractionResponses: number;
     availableChildResults: number;

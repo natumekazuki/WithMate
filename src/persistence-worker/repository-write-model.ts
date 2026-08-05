@@ -563,6 +563,54 @@ function repairStartupState(
       )
       .run(now).changes,
   );
+  const ambiguousDispatches = Number(
+    database
+      .prepare(
+        `
+      UPDATE run_dispatches
+      SET dispatch_state = 'ambiguous', resolved_at = ?
+      WHERE dispatch_state = 'dispatching' AND run_attempt_id IN (
+        SELECT a.id
+        FROM run_attempts a
+        JOIN runs r ON r.id = a.run_id
+        JOIN sessions s ON s.id = r.session_id
+        JOIN provider_bindings b ON b.id = a.provider_binding_id
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+        JOIN runs creator_r ON creator_r.id = creator_a.run_id AND creator_r.session_id = r.session_id
+        WHERE r.phase IN ('starting', 'canceling')
+          AND a.attempt_state = 'preparing'
+          AND b.binding_state = 'active'
+          AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+      )
+    `,
+      )
+      .run(now).changes,
+  );
+  database
+    .prepare(
+      `
+      UPDATE runs
+      SET external_side_effect_state = 'unknown', updated_at = MAX(updated_at, ?), version = version + 1
+      WHERE external_side_effect_state = 'none' AND id IN (
+        SELECT a.run_id
+        FROM run_dispatches d
+        JOIN run_attempts a ON a.id = d.run_attempt_id
+        JOIN runs r ON r.id = a.run_id
+        JOIN sessions s ON s.id = r.session_id
+        JOIN provider_bindings b ON b.id = a.provider_binding_id
+          AND b.session_id = r.session_id AND b.provider_id = s.provider_id
+        JOIN run_attempts creator_a ON creator_a.id = b.created_by_run_attempt_id
+        JOIN runs creator_r ON creator_r.id = creator_a.run_id AND creator_r.session_id = r.session_id
+        WHERE d.dispatch_state = 'ambiguous'
+          AND r.phase IN ('starting', 'canceling')
+          AND a.attempt_state = 'preparing'
+          AND b.binding_state = 'active'
+          AND (b.persistence_mode = 'persistent' OR b.created_by_run_attempt_id = a.id)
+      )
+    `,
+    )
+    .run(now);
   const abortedInputDeliveries = Number(
     database
       .prepare(
@@ -701,6 +749,7 @@ function repairStartupState(
         expiredIdempotencyRecords,
         invalidatedBindings,
         abortedDispatches,
+        ambiguousDispatches,
         settledInputDeliveries: abortedInputDeliveries + ambiguousInputDeliveries,
         settledInteractionResponses,
         availableChildResults,

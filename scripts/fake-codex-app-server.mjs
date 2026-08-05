@@ -16,6 +16,10 @@ const interruptNaturalCompletionMarker = optionalEnvironment("WITHMATE_FAKE_CODE
 const interactionMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERACTION_MARKER");
 const interactionResolvedFirstMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERACTION_RESOLVED_FIRST_MARKER");
 const interactionResolveFile = optionalEnvironment("WITHMATE_FAKE_CODEX_INTERACTION_RESOLVE_FILE");
+const recoveryStatePath = optionalEnvironment("WITHMATE_FAKE_CODEX_RECOVERY_STATE");
+const threadStartHoldFile = optionalEnvironment("WITHMATE_FAKE_CODEX_THREAD_START_HOLD_FILE");
+const turnStartHoldMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_TURN_START_HOLD_MARKER");
+const resumeHoldMarker = optionalEnvironment("WITHMATE_FAKE_CODEX_RESUME_HOLD_MARKER");
 const safeLog = optionalEnvironment("WITHMATE_FAKE_CODEX_SAFE_LOG") === "1";
 const model = "gpt-5.4";
 let threadSequence = 0;
@@ -24,6 +28,8 @@ let closing = false;
 const activeTurns = new Map();
 const threads = new Map();
 const pendingInteractions = new Map();
+
+loadRecoveryState();
 
 log("process.started", { pid: process.pid });
 
@@ -109,6 +115,9 @@ async function handleMessage(message) {
     case "thread/resume":
       await handleThreadResume(message);
       return;
+    case "thread/read":
+      handleThreadRead(message);
+      return;
     case "turn/start":
       await handleTurnStart(message);
       return;
@@ -125,11 +134,16 @@ async function handleMessage(message) {
 
 async function handleThreadStart(message) {
   const params = record(message.params);
+  if (threadStartHoldFile !== undefined && fs.existsSync(threadStartHoldFile)) {
+    log("thread.start_blocked", {});
+    await new Promise(() => {});
+  }
   threadSequence += 1;
   const threadId = `fake-thread-${process.pid}-${threadSequence}`;
   const cwd = requiredString(params.cwd);
   const approvalPolicy = approvalPolicyValue(params.approvalPolicy);
   threads.set(threadId, { cwd, approvalPolicy });
+  persistRecoveryState();
   log("thread.started", { threadId });
   respond(
     message.id,
@@ -154,16 +168,51 @@ async function handleThreadResume(message) {
   threads.set(threadId, { cwd, approvalPolicy });
   log("thread.resumed", { threadId });
   respond(message.id, threadOperation(threadId, cwd, requestedModel, sandbox, false, approvalPolicy));
+  const recovered = activeTurns.get(threadId);
+  if (recovered !== undefined) {
+    const recoveredTurn = turn(recovered.turnId, "inProgress", []);
+    setImmediate(() => {
+      notify("turn/started", { threadId, turn: recoveredTurn });
+      if (resumeHoldMarker === undefined || !recovered.prompt.includes(resumeHoldMarker)) {
+        completeTurn(threadId, recovered.turnId, recovered.prompt);
+      }
+    });
+  }
+}
+
+function handleThreadRead(message) {
+  const params = record(message.params);
+  if (
+    Object.keys(params).length !== 2 ||
+    !Object.hasOwn(params, "threadId") ||
+    !Object.hasOwn(params, "includeTurns") ||
+    params.includeTurns !== true
+  ) {
+    throw new Error("Invalid thread/read request.");
+  }
+  const threadId = requiredString(params.threadId);
+  const thread = threads.get(threadId);
+  if (thread === undefined) {
+    write({ id: message.id, error: { code: -32_001, message: "Thread not found" } });
+    return;
+  }
+  log("thread.read", { threadId, includeTurns: true });
+  respond(message.id, { thread: threadView(threadId, thread.cwd, false) });
 }
 
 async function handleTurnStart(message) {
   const params = record(message.params);
   const threadId = requiredString(params.threadId);
   const prompt = extractPrompt(params.input);
+  if (turnStartHoldMarker !== undefined && prompt.includes(turnStartHoldMarker)) {
+    log("turn.start_blocked", { threadId, prompt });
+    await new Promise(() => {});
+  }
   turnSequence += 1;
   const turnId = `fake-turn-${process.pid}-${turnSequence}`;
   const inProgressTurn = turn(turnId, "inProgress", []);
   activeTurns.set(threadId, { turnId, prompt });
+  persistRecoveryState();
   log("turn.started", { threadId, turnId, prompt });
   respond(message.id, { turn: inProgressTurn });
 
@@ -214,6 +263,13 @@ async function handleTurnStart(message) {
     return;
   }
 
+  setImmediate(() => {
+    notify("turn/started", { threadId, turn: inProgressTurn });
+    completeTurn(threadId, turnId, prompt);
+  });
+}
+
+function completeTurn(threadId, turnId, prompt) {
   const item = {
     type: "agentMessage",
     id: `fake-item-${process.pid}-${turnSequence}`,
@@ -221,14 +277,12 @@ async function handleTurnStart(message) {
     phase: "final_answer",
     memoryCitation: null,
   };
-  setImmediate(() => {
-    notify("turn/started", { threadId, turn: inProgressTurn });
-    notify("item/started", { threadId, turnId, item, startedAtMs: Date.now() });
-    notify("item/completed", { threadId, turnId, item, completedAtMs: Date.now() });
-    notify("turn/completed", { threadId, turn: turn(turnId, "completed", [item]) });
-    activeTurns.delete(threadId);
-    log("turn.completed", { threadId, turnId, prompt });
-  });
+  notify("item/started", { threadId, turnId, item, startedAtMs: Date.now() });
+  notify("item/completed", { threadId, turnId, item, completedAtMs: Date.now() });
+  notify("turn/completed", { threadId, turn: turn(turnId, "completed", [item]) });
+  activeTurns.delete(threadId);
+  persistRecoveryState();
+  log("turn.completed", { threadId, turnId, prompt });
 }
 
 async function handleTurnSteer(message) {
@@ -305,6 +359,7 @@ async function handleTurnInterrupt(message) {
     notify("item/completed", { threadId, turnId, item, completedAtMs: Date.now() });
     notify("turn/completed", { threadId, turn: turn(turnId, "completed", [item]) });
     activeTurns.delete(threadId);
+    persistRecoveryState();
     releaseTurnInteractions(threadId, turnId);
     log("turn.completed", { threadId, turnId, prompt: active.prompt });
     return;
@@ -312,6 +367,7 @@ async function handleTurnInterrupt(message) {
 
   notify("turn/completed", { threadId, turn: turn(turnId, "interrupted", []) });
   activeTurns.delete(threadId);
+  persistRecoveryState();
   releaseTurnInteractions(threadId, turnId);
   log("turn.interrupted", { threadId, turnId, prompt: active.prompt });
 }
@@ -349,29 +405,7 @@ function releaseTurnInteractions(threadId, turnId) {
 
 function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral, approvalPolicy) {
   return {
-    thread: {
-      id: threadId,
-      sessionId: `fake-session-${threadId}`,
-      forkedFromId: null,
-      parentThreadId: null,
-      preview: "",
-      ephemeral,
-      modelProvider: "openai",
-      createdAt: 1,
-      updatedAt: 1,
-      recencyAt: null,
-      status: { type: "idle" },
-      path: null,
-      cwd,
-      cliVersion: "0.145.0",
-      source: "appServer",
-      threadSource: null,
-      agentNickname: null,
-      agentRole: null,
-      gitInfo: null,
-      name: null,
-      turns: [],
-    },
+    thread: threadView(threadId, cwd, ephemeral),
     model: requestedModel,
     modelProvider: "openai",
     serviceTier: null,
@@ -382,6 +416,68 @@ function threadOperation(threadId, cwd, requestedModel, sandboxMode, ephemeral, 
     sandbox: sandbox(sandboxMode),
     reasoningEffort: "medium",
   };
+}
+
+function threadView(threadId, cwd, ephemeral) {
+  const active = activeTurns.get(threadId);
+  return {
+    id: threadId,
+    sessionId: `fake-session-${threadId}`,
+    forkedFromId: null,
+    parentThreadId: null,
+    preview: "",
+    ephemeral,
+    modelProvider: "openai",
+    createdAt: 1,
+    updatedAt: 1,
+    recencyAt: null,
+    status: active === undefined ? { type: "idle" } : { type: "active", activeFlags: [] },
+    path: null,
+    cwd,
+    cliVersion: "0.145.0",
+    source: "appServer",
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    turns: active === undefined ? [] : [turn(active.turnId, "inProgress", [])],
+  };
+}
+
+function loadRecoveryState() {
+  if (recoveryStatePath === undefined || !fs.existsSync(recoveryStatePath)) return;
+  const state = JSON.parse(fs.readFileSync(recoveryStatePath, "utf8"));
+  if (state === null || typeof state !== "object" || Array.isArray(state)) throw new Error("Invalid recovery state.");
+  threadSequence = Number.isSafeInteger(state.threadSequence) ? state.threadSequence : 0;
+  turnSequence = Number.isSafeInteger(state.turnSequence) ? state.turnSequence : 0;
+  for (const entry of Array.isArray(state.threads) ? state.threads : []) {
+    const value = record(entry);
+    threads.set(requiredString(value.threadId), {
+      cwd: requiredString(value.cwd),
+      approvalPolicy: approvalPolicyValue(value.approvalPolicy),
+    });
+  }
+  for (const entry of Array.isArray(state.activeTurns) ? state.activeTurns : []) {
+    const value = record(entry);
+    activeTurns.set(requiredString(value.threadId), {
+      turnId: requiredString(value.turnId),
+      prompt: requiredString(value.prompt),
+    });
+  }
+}
+
+function persistRecoveryState() {
+  if (recoveryStatePath === undefined) return;
+  const state = {
+    threadSequence,
+    turnSequence,
+    threads: [...threads].map(([threadId, value]) => ({ threadId, ...value })),
+    activeTurns: [...activeTurns].map(([threadId, value]) => ({ threadId, ...value })),
+  };
+  const temporaryPath = `${recoveryStatePath}.${process.pid}.tmp`;
+  fs.writeFileSync(temporaryPath, JSON.stringify(state), "utf8");
+  fs.renameSync(temporaryPath, recoveryStatePath);
 }
 
 function sandbox(mode) {
