@@ -180,6 +180,7 @@ function renderSessionMessageColumn(options: {
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
+  messageViewMode?: SessionMessageColumnProps["messageViewMode"];
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
@@ -211,6 +212,7 @@ function renderSessionMessageColumn(options: {
       },
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
+      messageViewMode: options.messageViewMode,
     }),
   );
 }
@@ -251,6 +253,7 @@ type MountedSessionMessageColumn = {
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
     pendingMessageText?: string;
+    messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   }) => Promise<void>;
   resizeMessageRow: (index: number, height: number) => Promise<void>;
   cleanup: () => Promise<void>;
@@ -268,6 +271,7 @@ async function mountSessionMessageColumn(options: {
   messageGroups?: SessionMessageColumnProps["messageGroups"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
+  messageViewMode?: SessionMessageColumnProps["messageViewMode"];
 }): Promise<MountedSessionMessageColumn> {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -416,6 +420,7 @@ async function mountSessionMessageColumn(options: {
     onQuoteMessageText?: (text: string) => void;
     pendingMessageGroupId?: string | null;
     pendingMessageText?: string;
+    messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   }) => {
     await act(async () => {
       root.render(
@@ -447,6 +452,7 @@ async function mountSessionMessageColumn(options: {
           getChangedFilesEmptyText: callbacks.getChangedFilesEmptyText ?? defaultGetChangedFilesEmptyText,
           onCopyMessageText: callbacks.onCopyMessageText,
           onQuoteMessageText: callbacks.onQuoteMessageText,
+          messageViewMode: callbacks.messageViewMode ?? options.messageViewMode,
         }),
       );
     });
@@ -719,6 +725,63 @@ test("SessionMessageColumn の検索は表示文字列とpendingを同じ順序�
     });
     assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
     assert.equal(highlights.get("withmate-find-current")?.ranges.length, 1);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn の Source 検索は link URL を含む元 Markdown を対象にする", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+
+    constructor(...ranges: Range[]) {
+      assert.equal(ranges.length, 0);
+    }
+
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
+  }
+
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "assistant", text: "[label](https://example.test/source-path)" }],
+    messageViewMode: "source",
+  });
+
+  try {
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", {
+      configurable: true,
+      value: { highlights },
+    });
+    Object.defineProperty(mounted.dom.window, "Highlight", {
+      configurable: true,
+      value: TestHighlight,
+    });
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "example.test/source-path");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+
+    assert.equal(mounted.container.querySelector(".session-content-find-count")?.textContent, "1/1");
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "example.test/source-path");
   } finally {
     await mounted.cleanup();
   }
@@ -1222,8 +1285,17 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
 
     await selectText(assistantBody, "assistant result", createRect({ left: 100, top: 100, width: 60, height: 20 }));
     assert.ok(container.querySelector(".message-response-actions"));
-    await clearSelection();
+    await mounted.rerender({
+      messageViewMode: "source",
+      onCopyMessageText: (text) => copiedTexts.push(text),
+      onQuoteMessageText: (text) => quotedTexts.push(text),
+    });
     assert.equal(container.querySelector(".message-response-actions"), null);
+    assert.equal(
+      container.querySelector("[data-message-text-actions='true']")?.textContent,
+      "assistant result text",
+    );
+    await clearSelection();
   } finally {
     mounted.cleanup();
   }
@@ -1250,6 +1322,25 @@ test("SessionMessageColumn は Auxiliary transcript group を message list 内�
     html.indexOf("auxiliary-message-group-label") < html.indexOf("aux prompt"),
     "Auxiliary group label は対象 transcript の先頭 message より前に描画する",
   );
+});
+
+test("SessionMessageColumn の Source は通常 message と pending の元 Markdown を表示する", () => {
+  const messageSource = "> quote\n- [label](https://example.test/path)\n- `code`";
+  const pendingSource = "pending  line\n\nnext";
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "assistant", text: messageSource }],
+    isRunning: true,
+    pendingMessageText: pendingSource,
+    messageViewMode: "source",
+  });
+  const dom = new JSDOM(html);
+  const sources = [
+    dom.window.document.querySelector("[data-message-body='true'] > .message-body"),
+    dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body"),
+  ];
+
+  assert.deepEqual(sources.map((element) => element?.textContent), [messageSource, pendingSource]);
+  assert.equal(dom.window.document.querySelector("[data-message-body='true'] a"), null);
 });
 
 test("SessionMessageColumn は pending と live approval\/elicitation を message window の末尾で維持する", () => {
@@ -1384,6 +1475,8 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       canSelectCustomAgent: true,
       showCustomAgentPicker: true,
       showSkillPicker: true,
+      showMessageViewModeControls: true,
+      messageViewMode: "source",
       isAgentPickerOpen: false,
       isSkillPickerOpen: false,
       isAdditionalDirectoryListOpen: false,
@@ -1443,6 +1536,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
       onChangeReasoningEffort() {},
+      onMessageViewModeChange() {},
     }),
   );
 
@@ -1450,6 +1544,12 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   assert.doesNotMatch(html, />Hide<\/button>/);
   assert.match(html, /composer-attachment-trigger-plus/);
   assert.match(html, /Attach<\/button>/);
+  assert.match(html, /role="group" aria-label="Message display mode"/);
+  assert.match(html, /aria-pressed="false">Preview<\/button>/);
+  assert.match(html, /aria-pressed="true">Source<\/button>/);
+  assert.ok(html.indexOf("Add Directory") < html.indexOf("Preview"));
+  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
+  assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
   assert.doesNotMatch(html, />Session <span/);
   assert.doesNotMatch(html, /Attach Copy|Session File|Session Folder|Session Image/);
   const composerInputRowHtml = html.match(
@@ -1464,7 +1564,7 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
   );
 });
 
-test("SessionComposerExpanded は実行中の progress、jump button、Cancel を compact と同じ順で上部 toolbar に描画する", () => {
+test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       retryBanner: null,
@@ -1475,6 +1575,8 @@ test("SessionComposerExpanded は実行中の progress、jump button、Cancel �
       canSelectCustomAgent: true,
       showCustomAgentPicker: true,
       showSkillPicker: true,
+      showMessageViewModeControls: true,
+      messageViewMode: "preview",
       isAgentPickerOpen: false,
       isSkillPickerOpen: false,
       isAdditionalDirectoryListOpen: false,
@@ -1534,6 +1636,7 @@ test("SessionComposerExpanded は実行中の progress、jump button、Cancel �
       onChangeCodexSandboxMode() {},
       onChangeModel() {},
       onChangeReasoningEffort() {},
+      onMessageViewModeChange() {},
     }),
   );
 
@@ -1542,8 +1645,10 @@ test("SessionComposerExpanded は実行中の progress、jump button、Cancel �
   assert.match(html, /末尾へ移動/);
   assert.match(html, /composer-toolbar-cancel-button/);
   assert.ok(html.indexOf("Attach") < html.indexOf("処理を実行中"));
-  assert.ok(html.indexOf("処理を実行中") < html.indexOf("末尾へ移動"));
-  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Cancel"));
+  assert.ok(html.indexOf("処理を実行中") < html.indexOf("Cancel"));
+  assert.ok(html.indexOf("Cancel") < html.indexOf("末尾へ移動"));
+  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
+  assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
   assert.doesNotMatch(html, />Send<\/button>/);
 });
 

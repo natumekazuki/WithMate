@@ -5,8 +5,65 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ChatDockSplitter, ChatWindowStatusScreen } from "../../src/chat/chat-window.js";
+import { ChatDockSplitter, ChatWindow, ChatWindowStatusScreen, type ChatWindowProps } from "../../src/chat/chat-window.js";
+import {
+  createHiddenControlsTextChatComposerProps,
+  createStaticChatHeaderProps,
+  createStaticTextChatCompactActionDockProps,
+  createStaticTextConversationMessageColumnProps,
+} from "../../src/chat/chat-window-adapter.js";
 import { SessionActionDockCompactRow, SessionChatScreen } from "../../src/session-components.js";
+
+const noop = () => {};
+
+function createChatWindowProps(
+  overrides: Partial<ChatWindowProps["messageColumnProps"]> = {},
+): ChatWindowProps {
+  const draft = "";
+  return {
+    mode: "agent",
+    headerSplitter: null,
+    actionDockSplitter: null,
+    layoutPriority: "dock-first",
+    rightPane: null,
+    splitter: null,
+    isHeaderExpanded: true,
+    headerProps: createStaticChatHeaderProps({ taskTitle: "Test chat", isRunning: false }),
+    messageColumnProps: createStaticTextConversationMessageColumnProps({
+      sessionId: "chat-1",
+      characterId: "character-1",
+      characterName: "Character",
+      characterIconPath: "",
+      messages: [{ role: "mate", text: "[label](https://example.test/source)" }],
+      messageListRef: React.createRef<HTMLDivElement>(),
+      isRunning: false,
+      onQuoteMessageText: noop,
+      ...overrides,
+    }),
+    isActionDockExpanded: true,
+    composerProps: createHiddenControlsTextChatComposerProps({
+      draft,
+      isRunning: false,
+      feedback: "",
+      composerTextareaRef: React.createRef<HTMLTextAreaElement>(),
+      modelOptions: [{ value: "gpt-test", label: "GPT Test" }],
+      selectedModel: "gpt-test",
+      selectedModelFallbackLabel: "GPT Test",
+      reasoningOptions: [{ value: "low", label: "low" }],
+      selectedReasoningEffort: "low",
+      onDraftChange: noop,
+      onDraftKeyDown: noop,
+      onSendOrCancel: noop,
+      onChangeModel: noop,
+      onChangeReasoningEffort: noop,
+    }),
+    compactActionDockProps: createStaticTextChatCompactActionDockProps({
+      draft,
+      isRunning: false,
+      onSendOrCancel: noop,
+    }),
+  };
+}
 
 test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレンダリングする", () => {
   const html = renderToStaticMarkup(React.createElement(ChatWindowStatusScreen, { message: "準備しています。" }));
@@ -15,6 +72,76 @@ test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレン�
   assert.match(html, /<section class="session-work-surface chat-panel" aria-live="polite">/);
   assert.match(html, /<p class="session-message-empty">準備しています。<\/p>/);
   assert.doesNotMatch(html, /session-plain/);
+});
+
+test("ChatWindow は Quote 対応 chat の表示 mode を message column と ActionDock で共有する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  class TestResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(ChatWindow, createChatWindowProps({
+        messages: [],
+        isRunning: true,
+        pendingMessageText: "[label](https://example.test/source)",
+      })));
+    });
+    const sourceButton = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(
+      ".composer-message-view-mode-button",
+    )).find((button) => button.textContent === "Source");
+    assert.ok(sourceButton);
+    assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+
+    await act(async () => sourceButton.click());
+
+    const source = dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body");
+    assert.equal(source?.textContent, "[label](https://example.test/source)");
+    assert.equal(dom.window.document.querySelector("[data-pending-message-body='true'] a"), null);
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
+});
+
+test("ChatWindow は Quote 非対応 chat に表示 mode controls を出さない", () => {
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, createChatWindowProps({
+    onQuoteMessageText: undefined,
+  })));
+
+  assert.doesNotMatch(html, /Message display mode/);
+  assert.doesNotMatch(html, />Source<\/button>/);
 });
 
 test("ChatDockSplitter は resize handler がない場合に静的 splitter をレンダリングする", () => {

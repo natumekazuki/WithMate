@@ -9,10 +9,13 @@ import { getWithMateApi } from "./renderer-withmate-api.js";
 import { toLocalFileUrl } from "./local-file-url.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 
+export type MessageViewMode = "preview" | "source";
+
 type MessageRichTextProps = {
   text: string;
   className?: string;
   forceFullRender?: boolean;
+  displayMode?: MessageViewMode;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: (target: string) => Promise<string | null>;
 };
@@ -532,7 +535,7 @@ function createMarkdownComponents(
   };
 }
 
-function MessageRichTextComponent({
+function MessageMarkdownPreview({
   text,
   className = "message-body",
   forceFullRender = false,
@@ -591,6 +594,22 @@ function MessageRichTextComponent({
       </ReactMarkdown>
     </div>
   );
+}
+
+function MessageRichTextComponent({
+  displayMode = "preview",
+  ...props
+}: MessageRichTextProps) {
+  if (displayMode === "source") {
+    const className = props.className ?? "message-body";
+    return (
+      <pre className={`${className} rich-text message-source-text`.trim()}>
+        {props.text}
+      </pre>
+    );
+  }
+
+  return <MessageMarkdownPreview {...props} />;
 }
 
 export const MessageRichText = memo(MessageRichTextComponent);
