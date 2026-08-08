@@ -9,6 +9,7 @@ import type {
   SessionFileDescriptor,
   SessionFileResourceRequest,
 } from "../../src/file-explorer/file-explorer-contract.js";
+import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -97,6 +98,26 @@ function installDomGlobals(dom: JSDOM): () => void {
   };
 }
 
+function installElementSize(dom: JSDOM): () => void {
+  const prototype = dom.window.HTMLElement.prototype;
+  const previousOffsetWidth = Object.getOwnPropertyDescriptor(prototype, "offsetWidth");
+  const previousOffsetHeight = Object.getOwnPropertyDescriptor(prototype, "offsetHeight");
+  Object.defineProperty(prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  Object.defineProperty(prototype, "offsetHeight", { configurable: true, get: () => 600 });
+  return () => {
+    if (previousOffsetWidth) {
+      Object.defineProperty(prototype, "offsetWidth", previousOffsetWidth);
+    } else {
+      Reflect.deleteProperty(prototype, "offsetWidth");
+    }
+    if (previousOffsetHeight) {
+      Object.defineProperty(prototype, "offsetHeight", previousOffsetHeight);
+    } else {
+      Reflect.deleteProperty(prototype, "offsetHeight");
+    }
+  };
+}
+
 function copyArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
@@ -161,6 +182,50 @@ function createPreviewApi(
     },
   };
   return { api, getImageInspectCount: () => imageInspectCount };
+}
+
+function createTextPreviewApi(
+  request: SessionFileResourceRequest,
+  name: string,
+  raw: string,
+  revision: string,
+): PreviewApi {
+  const bytes = new TextEncoder().encode(raw);
+  return {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
+    },
+    async inspectSessionFile() {
+      return {
+        ...request,
+        name,
+        kind: "text",
+        byteLength: bytes.byteLength,
+        modifiedAt: "2026-08-09T00:00:00.000Z",
+        mimeType: "text/plain",
+        suggestedEncoding: "utf-8",
+        revision,
+      };
+    },
+    async readSessionFileChunk(chunkRequest) {
+      const chunk = bytes.slice(chunkRequest.offset, chunkRequest.offset + chunkRequest.length);
+      return {
+        data: copyArrayBuffer(chunk),
+        offset: chunkRequest.offset,
+        nextOffset: chunkRequest.offset + chunk.byteLength,
+        totalBytes: bytes.byteLength,
+        done: chunkRequest.offset + chunk.byteLength >= bytes.byteLength,
+        revision: chunkRequest.expectedRevision,
+      };
+    },
+    async openSessionFile() {
+      return { status: "opened", targetType: "local-path", target: request.relativePath };
+    },
+    async openPath(target) {
+      return { status: "opened", targetType: "local-path", target };
+    },
+  };
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -346,6 +411,123 @@ test("inspection prefix より後ろで binary と判明した Markdown は rich
     await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
     assert.equal(container.querySelector(".session-file-markdown"), null);
     assert.match(container.textContent ?? "", /Preview is not available for this binary file/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("JSON preview は Formatted と原文を保持した Raw を切り替える", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "config/settings.json",
+  };
+  const raw = "{\"markup\":\"<img src=x onerror=alert(1)>\",\"enabled\":true}";
+  const api = createTextPreviewApi(request, "settings.json", raw, "json-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => {
+      const formatted = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Formatted");
+      return formatted?.disabled === false;
+    });
+    const formattedButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Formatted");
+    const rawButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Raw");
+    assert.ok(formattedButton?.classList.contains("is-active"));
+    assert.ok(rawButton);
+    assert.equal(container.querySelector("img[src='x']"), null);
+    assert.match(container.textContent ?? "", /<img src=x onerror=alert\(1\)>/);
+
+    await act(async () => rawButton.click());
+    await waitFor(() => rawButton.classList.contains("is-active"));
+    const displayedLines = Array.from(container.querySelectorAll(".session-file-text-line code"))
+      .map((element) => element.textContent ?? "");
+    assert.deepEqual(displayedLines, [raw]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    restoreElementSize();
+    dom.window.close();
+  }
+});
+
+test("不正な YAML preview は parse error を示して Raw へ fallback する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "config/settings.yaml",
+  };
+  const raw = "root: [";
+  const api = createTextPreviewApi(request, "settings.yaml", raw, "yaml-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("Formatted preview is unavailable") ?? false);
+    const formattedButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Formatted");
+    const rawButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Raw");
+    assert.equal(formattedButton?.disabled, true);
+    assert.ok(rawButton?.classList.contains("is-active"));
+    assert.match(container.textContent ?? "", /root: \[/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    restoreElementSize();
+    dom.window.close();
+  }
+});
+
+test("上限を超える JSON preview はformatせず既存Raw表示へ戻す", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "large.json",
+  };
+  const raw = `{"value":"${"a".repeat(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}"}`;
+  const api = createTextPreviewApi(request, "large.json", raw, "large-json-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("Formatted preview is skipped") ?? false);
+    assert.equal(container.querySelector("[aria-label='Structured text display mode']"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
@@ -55,6 +56,16 @@ import {
   type UnifiedDiffContentRow,
   type UnifiedDiffDisplayRow,
 } from "./unified-diff.js";
+import {
+  canProjectStructuredText,
+  highlightRawStructuredText,
+  projectStructuredText,
+  resolveStructuredTextFormat,
+  STRUCTURED_TEXT_PREVIEW_MAX_BYTES,
+  type PreviewSyntaxToken,
+  type StructuredTextFormat,
+  type StructuredTextProjection,
+} from "./structured-text-preview.js";
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
@@ -98,6 +109,22 @@ type FileLoadState =
   | { status: "loading"; descriptor: SessionFileDescriptor; loadedBytes: number }
   | { status: "ready"; loaded: LoadedFile | null; descriptor: SessionFileDescriptor }
   | { status: "error"; message: string };
+
+type StructuredTextProjectionState =
+  | { status: "idle" | "loading" }
+  | {
+    status: "ready";
+    sourceText: string;
+    format: StructuredTextFormat;
+    projection: StructuredTextProjection;
+  }
+  | {
+    status: "error";
+    sourceText: string;
+    format: StructuredTextFormat;
+    message: string;
+    rawTokens: PreviewSyntaxToken[][] | null;
+  };
 
 const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
 const IMAGE_ZOOM_MIN = 10;
@@ -183,6 +210,7 @@ type VirtualizedTextContentProps = {
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
   variant?: "text" | "diff";
+  syntaxTokens?: PreviewSyntaxToken[][] | null;
 };
 
 type IndexedPreviewTextMatch = PreviewTextMatch & { matchIndex: number };
@@ -217,12 +245,73 @@ function renderHighlightedLine(
   return content;
 }
 
+function syntaxTokenStyle(token: PreviewSyntaxToken, includeColor: boolean): CSSProperties {
+  return {
+    ...(includeColor && token.color ? { color: token.color } : {}),
+    ...(token.fontStyle && (token.fontStyle & 1) !== 0 ? { fontStyle: "italic" } : {}),
+    ...(token.fontStyle && (token.fontStyle & 2) !== 0 ? { fontWeight: 700 } : {}),
+    ...(token.fontStyle && (token.fontStyle & 4) !== 0 ? { textDecoration: "underline" } : {}),
+  };
+}
+
+function renderSyntaxHighlightedLine(
+  line: string,
+  tokens: PreviewSyntaxToken[],
+  matches: IndexedPreviewTextMatch[],
+  currentMatchIndex: number,
+): ReactNode {
+  if (tokens.map((token) => token.content).join("") !== line) {
+    return renderHighlightedLine(line, matches, currentMatchIndex);
+  }
+  const content: ReactNode[] = [];
+  let lineOffset = 0;
+  let key = 0;
+  for (const token of tokens) {
+    const tokenStart = lineOffset;
+    const tokenEnd = tokenStart + token.content.length;
+    const boundaries = new Set([tokenStart, tokenEnd]);
+    for (const match of matches) {
+      if (match.endOffset > tokenStart && match.startOffset < tokenEnd) {
+        boundaries.add(Math.max(tokenStart, match.startOffset));
+        boundaries.add(Math.min(tokenEnd, match.endOffset));
+      }
+    }
+    const sortedBoundaries = [...boundaries].sort((left, right) => left - right);
+    for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
+      const start = sortedBoundaries[index] ?? tokenStart;
+      const end = sortedBoundaries[index + 1] ?? tokenEnd;
+      if (end <= start) {
+        continue;
+      }
+      const text = token.content.slice(start - tokenStart, end - tokenStart);
+      const match = matches.find((candidate) => candidate.startOffset <= start && candidate.endOffset >= end);
+      if (match) {
+        content.push(
+          <mark
+            key={key}
+            className={match.matchIndex === currentMatchIndex ? "is-current" : undefined}
+            style={syntaxTokenStyle(token, false)}
+          >
+            {text}
+          </mark>,
+        );
+      } else {
+        content.push(<span key={key} style={syntaxTokenStyle(token, true)}>{text}</span>);
+      }
+      key += 1;
+    }
+    lineOffset = tokenEnd;
+  }
+  return content.length > 0 ? content : " ";
+}
+
 function VirtualizedTextContent({
   text,
   copyText,
   matches,
   currentMatchIndex,
   variant = "text",
+  syntaxTokens = null,
 }: VirtualizedTextContentProps) {
   const lines = useMemo(() => splitPreviewLines(text), [text]);
   const matchesByLine = useMemo(() => {
@@ -277,7 +366,16 @@ function VirtualizedTextContent({
               style={{ transform: `translateY(${virtualLine.start}px)` }}
             >
               <span className="session-file-line-number" aria-hidden="true">{virtualLine.index + 1}</span>
-              <code>{renderHighlightedLine(line, matchesByLine.get(virtualLine.index) ?? [], currentMatchIndex)}</code>
+              <code>
+                {syntaxTokens?.[virtualLine.index]
+                  ? renderSyntaxHighlightedLine(
+                    line,
+                    syntaxTokens[virtualLine.index] ?? [],
+                    matchesByLine.get(virtualLine.index) ?? [],
+                    currentMatchIndex,
+                  )
+                  : renderHighlightedLine(line, matchesByLine.get(virtualLine.index) ?? [], currentMatchIndex)}
+              </code>
             </div>
           );
         })}
@@ -438,6 +536,10 @@ export function SessionFilePreview({
   const [loadState, setLoadState] = useState<FileLoadState>({ status: "inspecting" });
   const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
   const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
+  const [structuredTextMode, setStructuredTextMode] = useState<"formatted" | "raw">("formatted");
+  const [structuredTextProjection, setStructuredTextProjection] = useState<StructuredTextProjectionState>({
+    status: "idle",
+  });
   const [imageZoom, setImageZoom] = useState<"fit" | number>("fit");
   const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
@@ -534,6 +636,8 @@ export function SessionFilePreview({
     setLoadState({ status: "inspecting" });
     setEncoding("auto");
     setMarkdownMode("preview");
+    setStructuredTextMode("formatted");
+    setStructuredTextProjection({ status: "idle" });
     setImageZoom("fit");
     imagePanSessionRef.current = null;
     setIsImagePanning(false);
@@ -592,7 +696,79 @@ export function SessionFilePreview({
     }
     return decodeSessionFileBytes(loaded.bytes, encoding, loaded.descriptor.suggestedEncoding);
   }, [encoding, loaded]);
-  const textLines = useMemo(() => splitPreviewLines(decodedText), [decodedText]);
+  const structuredTextFormat = previewKind === "text" && descriptor
+    ? resolveStructuredTextFormat(descriptor.name)
+    : null;
+  const structuredTextEligible = Boolean(
+    loaded &&
+    structuredTextFormat &&
+    canProjectStructuredText(loaded.bytes.byteLength),
+  );
+
+  useEffect(() => {
+    if (!structuredTextFormat || !structuredTextEligible) {
+      setStructuredTextProjection({ status: "idle" });
+      return;
+    }
+    let current = true;
+    setStructuredTextMode("formatted");
+    setStructuredTextProjection({ status: "loading" });
+    void projectStructuredText(decodedText, structuredTextFormat).then((projection) => {
+      if (current) {
+        setStructuredTextProjection({
+          status: "ready",
+          sourceText: decodedText,
+          format: structuredTextFormat,
+          projection,
+        });
+      }
+    }).catch(async (error) => {
+      const message = error instanceof Error
+        ? error.message.split(/\r?\n/, 1)[0] ?? "Structured text could not be formatted."
+        : "Structured text could not be formatted.";
+      let rawTokens: PreviewSyntaxToken[][] | null = null;
+      try {
+        rawTokens = await highlightRawStructuredText(decodedText, structuredTextFormat);
+      } catch {
+        rawTokens = null;
+      }
+      if (current) {
+        setStructuredTextMode("raw");
+        setStructuredTextProjection({
+          status: "error",
+          sourceText: decodedText,
+          format: structuredTextFormat,
+          message,
+          rawTokens,
+        });
+      }
+    });
+    return () => {
+      current = false;
+    };
+  }, [decodedText, structuredTextEligible, structuredTextFormat]);
+
+  const currentStructuredTextProjection = structuredTextProjection.status === "ready" &&
+    structuredTextProjection.sourceText === decodedText &&
+    structuredTextProjection.format === structuredTextFormat
+    ? structuredTextProjection.projection
+    : null;
+  const currentStructuredTextError = structuredTextProjection.status === "error" &&
+    structuredTextProjection.sourceText === decodedText &&
+    structuredTextProjection.format === structuredTextFormat
+    ? structuredTextProjection
+    : null;
+  const displayedText = currentStructuredTextProjection && structuredTextMode === "formatted"
+    ? currentStructuredTextProjection.formattedText
+    : decodedText;
+  const displayedSyntaxTokens = currentStructuredTextProjection
+    ? structuredTextMode === "formatted"
+      ? currentStructuredTextProjection.formattedTokens
+      : currentStructuredTextProjection.rawTokens
+    : currentStructuredTextError
+      ? currentStructuredTextError.rawTokens
+      : null;
+  const textLines = useMemo(() => splitPreviewLines(displayedText), [displayedText]);
   const findMatches = useMemo(
     () => findPreviewTextMatches(textLines, findQuery),
     [findQuery, textLines],
@@ -990,6 +1166,13 @@ export function SessionFilePreview({
     }
   }, [onOpenDiff]);
 
+  const structuredTextFeedback = currentStructuredTextError
+    ? `Formatted preview is unavailable: ${currentStructuredTextError.message} Showing raw content.`
+    : loaded && structuredTextFormat && loaded.bytes.byteLength > STRUCTURED_TEXT_PREVIEW_MAX_BYTES
+      ? `Formatted preview is skipped for files larger than ${formatFileByteLength(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}.`
+      : "";
+  const previewFeedback = [feedback, diffAvailabilityMessage, structuredTextFeedback].filter(Boolean);
+
   return (
     <section className="session-file-preview" aria-label="File preview">
       <header className="session-file-preview-header">
@@ -1013,6 +1196,21 @@ export function SessionFilePreview({
             <div className="session-file-preview-segmented" role="group" aria-label="Markdown display mode">
               <button type="button" className={markdownMode === "preview" ? "is-active" : ""} onClick={() => setMarkdownMode("preview")}>Preview</button>
               <button type="button" className={markdownMode === "source" ? "is-active" : ""} onClick={() => setMarkdownMode("source")}>Source</button>
+            </div>
+          ) : null}
+          {structuredTextFormat && structuredTextEligible ? (
+            <div className="session-file-preview-segmented" role="group" aria-label="Structured text display mode">
+              <button
+                type="button"
+                className={structuredTextMode === "formatted" ? "is-active" : ""}
+                disabled={!currentStructuredTextProjection}
+                onClick={() => setStructuredTextMode("formatted")}
+              >Formatted</button>
+              <button
+                type="button"
+                className={structuredTextMode === "raw" ? "is-active" : ""}
+                onClick={() => setStructuredTextMode("raw")}
+              >Raw</button>
             </div>
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
@@ -1105,10 +1303,11 @@ export function SessionFilePreview({
 
       {loadState.status === "ready" && loaded && previewKind === "text" ? (
         <VirtualizedTextContent
-          text={decodedText}
+          text={displayedText}
           copyText={onCopyText}
           matches={findMatches}
           currentMatchIndex={activeCurrentMatch}
+          syntaxTokens={displayedSyntaxTokens}
         />
       ) : null}
       {loadState.status === "ready" && loaded && previewKind === "markdown" ? (
@@ -1163,11 +1362,14 @@ export function SessionFilePreview({
           </div>
         </div>
       ) : null}
-      {feedback || diffAvailabilityMessage ? (
+      {previewFeedback.length > 0 ? (
         <p className="session-file-preview-feedback" role="alert">
-          {feedback}
-          {feedback && diffAvailabilityMessage ? <br /> : null}
-          {diffAvailabilityMessage}
+          {previewFeedback.map((message, index) => (
+            <span key={message}>
+              {index > 0 ? <br /> : null}
+              {message}
+            </span>
+          ))}
         </p>
       ) : null}
     </section>

@@ -82,6 +82,28 @@ test("MessageRichText は **bold** を strong として render する", () => {
   assert.match(html, /<strong class="message-inline-strong">message<\/strong>/);
 });
 
+test("MessageRichText の Source は元 Markdown を変換せず plain text で描画する", () => {
+  const source = [
+    "[link label](https://example.test/path)",
+    "`inline code`",
+    "> quoted line",
+    "- list item",
+    "",
+    "second paragraph",
+  ].join("\n");
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: source,
+      displayMode: "source",
+    }),
+  );
+  const dom = new JSDOM(html);
+  const sourceElement = dom.window.document.body.firstElementChild;
+
+  assert.equal(sourceElement?.textContent, source);
+  assert.equal(sourceElement?.querySelector("a, code, blockquote, ul"), null);
+});
+
 test("MessageRichText は inline code と link を優先しつつ bold を併用できる", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -131,6 +153,50 @@ test("MessageRichText は local/file href の encode を保持して render す�
   assert.match(html, /<a href="docs\/%E4%BB%95%E6%A7%98\.md">unicode<\/a>/);
   assert.match(html, /<a href="file:\/\/\/C:\/tmp\/a%20b\.txt">file<\/a>/);
   assert.match(html, /<a href="C:\/tmp\/a%20b\.txt">windows<\/a>/);
+});
+
+test("MessageRichText は backslash 形式の Windows absolute path を既定ナビゲーションせず開く", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  const opened: string[] = [];
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        text: String.raw`[file](C:\workspace\session-files\report.txt)`,
+        forceFullRender: true,
+        onOpenPath: (target) => opened.push(target),
+      }));
+    });
+
+    const anchor = container.querySelector("a");
+    assert.ok(anchor);
+    assert.equal(anchor.getAttribute("href"), "C:%5Cworkspace%5Csession-files%5Creport.txt");
+
+    const clickEvent = new dom.window.MouseEvent("click", {
+      bubbles: true,
+      button: 0,
+      cancelable: true,
+    });
+    const dispatchResult = anchor.dispatchEvent(clickEvent);
+
+    assert.equal(dispatchResult, false);
+    assert.equal(clickEvent.defaultPrevented, true);
+    assert.deepEqual(opened, ["C:%5Cworkspace%5Csession-files%5Creport.txt"]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
 });
 
 test("MessageRichText は unsafe href を render しない", () => {
@@ -454,14 +520,18 @@ test("MessageRichText は protocol-relative link を HTTPS に正規化する", 
   assert.match(html, /href="https:\/\/example\.test\/docs"/);
 });
 
-test("MessageRichText は Windows absolute image path を file URL に変換する", () => {
+test("MessageRichText は slash / backslash 形式の Windows absolute image path を file URL に変換する", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
-      text: "![local](C:/workspace/image%20folder/sample.png)",
+      text: [
+        "![slash](C:/workspace/image%20folder/sample.png)",
+        String.raw`![backslash](C:\workspace\image-folder\sample.png)`,
+      ].join("\n"),
     }),
   );
 
   assert.match(html, /src="file:\/\/\/C:\/workspace\/image%20folder\/sample\.png"/);
+  assert.match(html, /src="file:\/\/\/C:\/workspace\/image-folder\/sample\.png"/);
 });
 
 test("MessageRichText は先頭空白付き Markdown 行でも停止せずに render できる", { timeout: 2_000 }, () => {

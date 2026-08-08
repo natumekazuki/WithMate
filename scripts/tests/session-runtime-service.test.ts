@@ -31,6 +31,7 @@ import {
   isRetryableStaleThreadSessionError,
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
+import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -1862,11 +1863,23 @@ describe("SessionRuntimeService", () => {
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     const seenThreadIds: string[] = [];
+    const timingContexts: Array<ConversationTimingContext | undefined> = [];
+    const fixedObservedAt = new Date("2026-08-04T12:32:00.000Z");
+    const timingContext: ConversationTimingContext = {
+      observedAt: "2026-08-04T21:32:00.000+09:00",
+      observedDayOfWeek: "tuesday",
+      currentSession: null,
+      sameCharacterOtherSession: null,
+      sameCharacterSharedWork: null,
+    };
     let attempt = 0;
     let notificationCount = 0;
+    let timingResolutionCount = 0;
+    let currentDateCount = 0;
 
     const adapter: ProviderCodingAdapter = {
-      composePrompt() {
+      composePrompt(input) {
+        timingContexts.push(input.conversationTimingContext);
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -1883,6 +1896,7 @@ describe("SessionRuntimeService", () => {
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
+        timingContexts.push(input.conversationTimingContext);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
         }
@@ -1923,6 +1937,11 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
+      resolveConversationTimingContext(_session, observedAt) {
+        timingResolutionCount += 1;
+        assert.equal(observedAt, fixedObservedAt);
+        return timingContext;
+      },
       createAuditLog(input) {
         return createAuditLogBase(input);
       },
@@ -1953,6 +1972,10 @@ describe("SessionRuntimeService", () => {
         notificationCount += 1;
       },
       currentTimestampLabel,
+      currentDate() {
+        currentDateCount += 1;
+        return fixedObservedAt;
+      },
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
@@ -1969,6 +1992,11 @@ describe("SessionRuntimeService", () => {
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(notificationCount, 1);
+    assert.equal(currentDateCount, 1);
+    assert.equal(timingResolutionCount, 1);
+    assert.deepEqual(timingContexts, [timingContext, timingContext, timingContext]);
+    assert.equal(timingContexts[0], timingContexts[1]);
+    assert.equal(timingContexts[1], timingContexts[2]);
   });
 
   it("stale retry 後の running audit log は前回 progress の断片を引き継がない", async () => {

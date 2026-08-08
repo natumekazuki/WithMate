@@ -38,6 +38,7 @@ import { SessionStorageV3 } from "./session-storage-v3.js";
 import { SessionStorageV6 } from "./session-storage-v6.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
+import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
 
 type ClosableStore = {
   close(): void;
@@ -73,7 +74,9 @@ export type AuditLogStorageRead = AwaitableStorageMethods<
   | "getSessionAuditLogDetail"
   | "getSessionAuditLogDetailSection"
   | "getSessionAuditLogOperationDetail"
-> & Pick<AuditLogStorage, "close">;
+> & Pick<AuditLogStorage, "close"> & {
+  getConversationTimingSnapshot?(sessionId: string, observedAt: string): Awaitable<ConversationTimingStorageSnapshot>;
+};
 export type AuditLogStorageWrite = AwaitableStorageMethods<
   AuditLogStorage,
   "createAuditLog" | "updateAuditLog" | "clearAuditLogs"

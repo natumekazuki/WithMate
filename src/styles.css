@@ -4681,8 +4681,7 @@ button:disabled {
   border-top: 0;
 }
 
-.workspace-changes-root-header strong,
-.workspace-changes-root-header span {
+.workspace-changes-root-header strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4691,6 +4690,7 @@ button:disabled {
 .workspace-changes-root-header span {
   color: var(--muted);
   font-size: 0.7rem;
+  overflow-wrap: anywhere;
 }
 
 .workspace-changes-group-header {
@@ -4732,8 +4732,43 @@ button:disabled {
   cursor: pointer;
 }
 
+.workspace-change-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding-top: 5px;
+  padding-right: 6px;
+  padding-bottom: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-change-directory-row:hover,
 .workspace-change-row:hover {
   background: color-mix(in srgb, var(--character-sub-soft) 24%, rgba(15, 23, 42, 0.54));
+}
+
+.workspace-change-directory-icon {
+  flex: 0 0 16px;
+  color: var(--muted);
+  text-align: center;
+  transition: transform 120ms ease;
+}
+
+.workspace-change-directory-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
+.workspace-change-directory-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
 }
 
 .workspace-change-kind {
@@ -5761,6 +5796,14 @@ button:disabled {
 .message-body.rich-text {
   display: grid;
   gap: 8px;
+}
+
+.message-source-text {
+  display: block;
+  white-space: pre-wrap;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 0.9em;
+  line-height: 1.6;
 }
 
 .message-paragraph {
@@ -7628,6 +7671,45 @@ button:disabled {
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.composer-toolbar-view-actions {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.composer-message-view-mode {
+  display: inline-flex;
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.composer-message-view-mode-button {
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer-message-view-mode-button[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--character-main-soft) 42%, rgba(255, 255, 255, 0.08));
+  color: var(--ink);
+}
+
+.composer-message-view-mode-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
+  outline-offset: 2px;
 }
 
 .composer-toolbar-progress {

@@ -32,6 +32,10 @@
   "dependencies": {
     "@github/copilot-sdk": "^1.0.6",
     "@openai/codex-sdk": "^0.145.0",
+    "@shikijs/core": "^4.4.2",
+    "@shikijs/engine-javascript": "^4.4.2",
+    "@shikijs/langs": "^4.4.2",
+    "@shikijs/themes": "^4.4.2",
     "@tanstack/react-virtual": "^3.14.6",
     "ignore": "^7.0.5",
     "mdast-util-gfm": "^3.1.0",
@@ -40,6 +44,7 @@
     "mermaid": "^11.16.0",
     "micromark-extension-gfm": "^3.0.0",
     "micromark-extension-math": "^3.1.0",
+    "prettier": "^3.9.6",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",

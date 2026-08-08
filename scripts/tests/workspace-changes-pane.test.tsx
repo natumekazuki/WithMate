@@ -74,13 +74,13 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
   const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
 
   const entries: FileRootGitChangeEntry[] = Array.from({ length: 400 }, (_, index) => ({
-    relativePath: index === 0 ? "src/shared.ts" : `src/file-${index}.ts`,
+    relativePath: index === 0 ? "src/00-shared.ts" : `src/file-${index}.ts`,
     previousRelativePath: null,
     scopes: ["working-tree"],
     kinds: { "working-tree": "modified", staged: null },
   }));
   const additionalEntries: FileRootGitChangeEntry[] = [{
-    relativePath: "app/src/shared.ts",
+    relativePath: "app/src/00-shared.ts",
     previousRelativePath: null,
     scopes: ["working-tree"],
     kinds: { "working-tree": "modified" },
@@ -140,11 +140,26 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     assert.ok(rows.length > 0, dom.window.document.body.innerHTML);
     assert.ok(rows.length < entries.length, `mounted ${rows.length} rows for ${entries.length} entries`);
     assert.ok(rows.every((row) => row.dataset.index !== undefined));
+    const rootPath = dom.window.document.querySelector<HTMLElement>(".workspace-changes-root-header[title='C:/repo'] span");
+    assert.equal(rootPath?.textContent, "C:/repo");
+
+    const appDirectory = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-directory-row")]
+      .find((button) => button.title === "app");
+    assert.ok(appDirectory);
+    assert.equal(appDirectory.getAttribute("aria-expanded"), "true");
+    await act(async () => appDirectory.click());
+    assert.equal(
+      [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
+        .some((button) => button.title === "app/src/00-shared.ts"),
+      false,
+    );
+    assert.equal(appDirectory.getAttribute("aria-expanded"), "false");
+    await act(async () => appDirectory.click());
 
     const additionalChange = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
-      .find((button) => button.title === "app/src/shared.ts");
+      .find((button) => button.title === "app/src/00-shared.ts");
     const workspaceChange = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
-      .find((button) => button.title === "src/shared.ts");
+      .find((button) => button.title === "src/00-shared.ts");
     assert.ok(additionalChange);
     assert.ok(workspaceChange);
     await act(async () => {
@@ -156,8 +171,8 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       await Promise.resolve();
     });
     assert.deepEqual(diffRequests.map(({ rootId, relativePath }) => ({ rootId, relativePath })), [
-      { rootId: "additional:repo", relativePath: "app/src/shared.ts" },
-      { rootId: "workspace", relativePath: "src/shared.ts" },
+      { rootId: "additional:repo", relativePath: "app/src/00-shared.ts" },
+      { rootId: "workspace", relativePath: "src/00-shared.ts" },
     ]);
 
     let rejectStaleRequest: ((reason?: unknown) => void) | null = null;
