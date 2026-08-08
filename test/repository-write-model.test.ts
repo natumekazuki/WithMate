@@ -374,6 +374,68 @@ repositoryTest("session transitions enforce expected state and reject archive wh
   });
 });
 
+repositoryTest("every non-terminal Run phase keeps start, retry, archive, close, and delete Session-scoped", () => {
+  for (const [phaseIndex, phase] of ["queued", "starting", "active", "canceling", "finalizing"].entries()) {
+    withDatabase((database) => {
+      const create = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionCreate, () => 100);
+      const admit = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runAdmit, () => 200);
+      const retry = operationFor(database, REPOSITORY_WRITE_OPERATIONS.runRetry, () => 300);
+      const transition = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionTransition, () => 400);
+      const remove = operationFor(database, REPOSITORY_WRITE_OPERATIONS.sessionDeleteSubtree, () => 500);
+      const key = (operationIndex: number) =>
+        `018f1f4e-7f0a-7000-8000-${(0x9000 + phaseIndex * 16 + operationIndex).toString(16).padStart(12, "0")}`;
+
+      assert.equal((create(sessionCreateCommand(key(0), "session-1")) as CommandResult).ok, true);
+      assert.equal((admit(normalRunAdmissionCommand(key(1), "run-source", "create")) as CommandResult).ok, true);
+      makeRunRetryable(database, "run-source", "attempt-run-source", "binding-run-source", 250);
+      database.prepare("INSERT INTO messages VALUES ('message-busy', 'session-1', 2, 'user', '[]', 260)").run();
+      database
+        .prepare(
+          `
+          INSERT INTO runs (
+            id, session_id, ordinal, initiating_message_id, phase, execution_snapshot_json,
+            cancel_requested_at, external_side_effect_state, created_at, started_at, updated_at, version
+          ) VALUES ('run-busy', 'session-1', 2, 'message-busy', ?, '{}', ?, 'present', 260, 261, 261, 0)
+        `,
+        )
+        .run(phase, phase === "canceling" ? 262 : null);
+
+      const freshStart = admit(normalRunAdmissionCommand(key(2), "run-fresh", "create")) as CommandResult;
+      assert.equal(!freshStart.ok && freshStart.error.code, "session_busy", phase);
+      const freshRetry = retry(retryRunAdmissionCommand(key(3), "run-retry", "run-source", "reuse")) as CommandResult;
+      assert.equal(!freshRetry.ok && freshRetry.error.code, "session_busy", phase);
+
+      for (const [operationIndex, targetLifecycleStatus] of ["archived", "closed"].entries()) {
+        const result = transition({
+          sessionId: "session-1",
+          idempotencyKey: key(4 + operationIndex),
+          expectedLifecycleStatus: "active",
+          targetLifecycleStatus,
+        }) as CommandResult;
+        assert.equal(!result.ok && result.error.code, "session_busy", `${phase}:${targetLifecycleStatus}`);
+      }
+      const deletion = remove({
+        deletionId: key(6),
+        sessionId: "session-1",
+        workspaceKey: TEST_WORKSPACE.workspaceKey,
+      }) as CommandResult;
+      assert.equal(!deletion.ok && deletion.error.code, "session_busy", phase);
+
+      assert.equal(readLifecycle(database, "session-1"), "active");
+      assert.equal(count(database, "runs"), 2);
+      assert.equal(count(database, "messages"), 2);
+      assert.equal(count(database, "session_deletion_manifests"), 0);
+
+      database
+        .prepare("UPDATE runs SET phase = 'completed', terminal_at = 600, updated_at = 600 WHERE id = 'run-busy'")
+        .run();
+      const successor = admit(normalRunAdmissionCommand(key(7), "run-successor", "create")) as CommandResult;
+      assert.equal(successor.ok, true, phase);
+      assert.equal(count(database, "runs"), 3);
+    });
+  }
+});
+
 repositoryTest("expired transition keys are scrubbed before a cross-Session conflict", () => {
   withDatabase((database) => {
     let now = 100;
