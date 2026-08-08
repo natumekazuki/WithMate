@@ -140,7 +140,16 @@ test("Session Run projection rejects every forbidden field and invalid phase tup
     success(runPage([{ ...runItem(), version: 1 }])),
     success(runPage([{ ...runItem(), liveActivity: null }])),
     success(runPage([runItem({ phase: "active", terminalAt: undefined, finalAssistantMessageId: "message-2" })])),
-    success(runPage([runItem({ phase: "completed", cancellation: { requestedAt: 1 } })])),
+    success(runPage([runItem({ phase: "canceling", terminalAt: undefined })])),
+    success(
+      runPage([
+        runItem({
+          phase: "canceling",
+          terminalAt: undefined,
+          cancellation: { requestedAt: 1, acknowledgedAt: 2 },
+        }),
+      ]),
+    ),
     success(runPage([runItem({ phase: "failed", failure: undefined })])),
     success(runPage([runItem({ phase: "active", terminalAt: undefined, failure: { origin: "provider" } })])),
     success(runPage([runItem({ runId: "run-2", ordinal: 2 }), runItem({ ordinal: 1 })])),
@@ -148,6 +157,14 @@ test("Session Run projection rejects every forbidden field and invalid phase tup
     success({ ...runPage(), nextCursor: "cursor-1" }),
     success(runPage([{ ...runItem({ phase: "failed" }), failure: { origin: "provider", raw: true } }])),
     success(runPage([{ ...runItem({ phase: "canceled" }), cancellation: { requestedAt: 1, raw: true } }])),
+    success(runPage([runItem({ phase: "canceled", cancellation: { requestedAt: 1 } })])),
+    success(
+      runPage([runItem({ phase: "canceled", terminalAt: 3, cancellation: { requestedAt: 2, acknowledgedAt: 1 } })]),
+    ),
+    success(
+      runPage([runItem({ phase: "canceled", terminalAt: 3, cancellation: { requestedAt: 2, acknowledgedAt: 4 } })]),
+    ),
+    success(runPage([runItem({ phase: "completed", terminalAt: 3, cancellation: { requestedAt: 4 } })])),
     {
       overallStatus: "failure",
       error: { kind: "domain", code: "not_found", message: "missing", retryable: false, workspaceKey: "secret" },
@@ -309,10 +326,20 @@ function runItems() {
       cancellation: { requestedAt: 4 },
     }),
     runItem({ runId: "run-5", ordinal: 5, phase: "finalizing", terminalAt: undefined }),
-    runItem({ runId: "run-6", ordinal: 6, finalAssistantMessageId: undefined }),
+    runItem({
+      runId: "run-6",
+      ordinal: 6,
+      finalAssistantMessageId: undefined,
+      cancellation: { requestedAt: 2 },
+    }),
     runItem({ runId: "run-7", ordinal: 7, phase: "failed", failure: { origin: "provider", summary: "failed" } }),
     runItem({ runId: "run-8", ordinal: 8, phase: "interrupted", failure: { origin: "transport" } }),
-    runItem({ runId: "run-9", ordinal: 9, phase: "canceled", cancellation: { requestedAt: 8 } }),
+    runItem({
+      runId: "run-9",
+      ordinal: 9,
+      phase: "canceled",
+      cancellation: { requestedAt: 2, acknowledgedAt: 3 },
+    }),
   ];
 }
 

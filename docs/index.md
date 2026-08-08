@@ -6,30 +6,34 @@ WithMate は完全に 0 ベースで作り直す。
 
 ## Documents
 
-| Document | Purpose |
-| --- | --- |
-| `docs/feature-inventory.md` | 現行機能の棚卸しと、新バージョンへ残すかどうかの初期判断 |
-| `docs/unresolved-issues.md` | GitHub Issues と Notion Issue DB から拾った未完了項目 |
-| `docs/issue-triage.md` | GitHub / Notion Issue を新バージョンへ引き継ぐか捨てるかの判断記録 |
-| `docs/plans/20260712-withmate-rebuild-roadmap/plan.md` | ゼロベース再構築の全体checkpoint、依存関係、完了Gate |
-| `docs/plans/20260712-cp1-runtime-persistence/plan.md` | CP1 Runtime / Persistence Foundationのslice、依存関係、完了Gate |
-| `docs/development/source-comment-guidelines.md` | 新実装のソースコメント、JSDoc、TODO / FIXME / HACKの記載規約 |
-| `docs/design/provider-integration.md` | CLI 優先、Provider 接続、会話履歴、実行状態の設計基準 |
-| `docs/design/codex-app-server-adapter-contract.md` | Codex App Server の Thread / Turn / item、assistant 分類、interaction、復旧の Adapter 契約 |
-| `docs/design/session-run-message-contract.md` | Session / Run / Message / RunEvent の責務、状態遷移、不変条件 |
-| `docs/design/multi-agent-orchestration.md` | Multi-Agent の親子 Session、待機、並行実行、結果配送、Auxiliary との境界 |
-| `docs/design/multi-agent-persistence.md` | Session / Message / Run、Run output、親子 relation / Delegation / result delivery、ProviderBinding / RunAttempt / RunDispatch、IdempotencyRecord、RunEvent、RunInputDelivery の table、制約、transaction、修復規則 |
-| `docs/design/sqlite-schema-lifecycle.md` | 新DBの初期DDL適用、database識別、schema version管理、現行schema間migrationの境界 |
-| `docs/design/persistence-worker-lifecycle.md` | Persistence Workerのownership、FIFO、protocol、timeout / cancel、shutdown、crash、payload chunk契約 |
-| `docs/design/persistence-worker-repository.md` | Persistence Workerのtyped read surface、scope再検証、cursor、bounded query、BLOB分離契約 |
-| `docs/design/persistence-worker-repository-write.md` | Persistence Workerのtyped write command、transaction、domain error、idempotency契約 |
-| `schema/sqlite/v1.sql` | WithMate新実装のSQLite schema version 1 table / index / trigger完全DDL |
-| `schema/sqlite/manifest-v1.json` | schema version、application ID、table / index / trigger集合の機械可読manifest |
-| `docs/investigations/codex-app-server/capability-matrix.md` | Codex App Server の capability と WithMate への対応方針 |
-| `docs/investigations/codex-app-server/validation-plan.md` | Codex App Server の検証計画 |
-| `docs/investigations/codex-app-server/validation-results.md` | Codex App Server の schema、基本通信、persistent Thread復旧の実測結果 |
-| `docs/investigations/github-copilot-acp/validation-plan.md` | GitHub Copilot ACP の別環境検証計画 |
-| `docs/investigations/github-copilot-acp/validation-results.md` | GitHub Copilot ACP の検証結果記録 |
+| Document                                                                | Purpose                                                                                                                                                                                                            |
+| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `docs/feature-inventory.md`                                             | 現行機能の棚卸しと、新バージョンへ残すかどうかの初期判断                                                                                                                                                           |
+| `docs/unresolved-issues.md`                                             | GitHub Issues と Notion Issue DB から拾った未完了項目                                                                                                                                                              |
+| `docs/issue-triage.md`                                                  | GitHub / Notion Issue を新バージョンへ引き継ぐか捨てるかの判断記録                                                                                                                                                 |
+| `docs/plans/20260712-withmate-rebuild-roadmap/plan.md`                  | ゼロベース再構築の全体checkpoint、依存関係、完了Gate                                                                                                                                                               |
+| `docs/plans/20260712-cp1-runtime-persistence/plan.md`                   | CP1 Runtime / Persistence Foundationのslice、依存関係、完了Gate                                                                                                                                                    |
+| `docs/development/source-comment-guidelines.md`                         | 新実装のソースコメント、JSDoc、TODO / FIXME / HACKの記載規約                                                                                                                                                       |
+| `docs/design/provider-integration.md`                                   | CLI 優先、Provider 接続、会話履歴、実行状態の設計基準                                                                                                                                                              |
+| `docs/design/codex-app-server-adapter-contract.md`                      | Codex App Server の Thread / Turn / item、assistant 分類、interaction、復旧の Adapter 契約                                                                                                                         |
+| `docs/design/session-run-message-contract.md`                           | Session / Run / Message / RunEvent の責務、状態遷移、不変条件                                                                                                                                                      |
+| `docs/adr/015-provider-owned-settings-and-live-interaction-contract.md` | Provider 固有設定、Session ごとの Provider 固定、live interaction の versioned contract を選んだ理由                                                                                                               |
+| `docs/design/multi-agent-orchestration.md`                              | Multi-Agent の親子 Session、待機、並行実行、結果配送、Auxiliary との境界                                                                                                                                           |
+| `docs/design/multi-agent-persistence.md`                                | Session / Message / Run、Run output、親子 relation / Delegation / result delivery、ProviderBinding / RunAttempt / RunDispatch、IdempotencyRecord、RunEvent、RunInputDelivery の table、制約、transaction、修復規則 |
+| `docs/design/sqlite-schema-lifecycle.md`                                | 新DBの初期DDL適用、database識別、schema version管理、現行schema間migrationの境界                                                                                                                                   |
+| `docs/design/persistence-worker-lifecycle.md`                           | Persistence Workerのownership、FIFO、protocol、timeout / cancel、shutdown、crash、payload chunk契約                                                                                                                |
+| `docs/design/persistence-worker-repository.md`                          | Persistence Workerのtyped read surface、scope再検証、cursor、bounded query、BLOB分離契約                                                                                                                           |
+| `docs/design/persistence-worker-repository-write.md`                    | Persistence Workerのtyped write command、transaction、domain error、idempotency契約                                                                                                                                |
+| `schema/sqlite/v1.sql`                                                  | WithMate新実装のSQLite schema version 1 table / index / trigger完全DDL                                                                                                                                             |
+| `schema/sqlite/manifest-v1.json`                                        | schema version、application ID、table / index / trigger集合の機械可読manifest                                                                                                                                      |
+| `docs/investigations/codex-app-server/capability-matrix.md`             | Codex App Server の capability と WithMate への対応方針                                                                                                                                                            |
+| `docs/investigations/codex-app-server/validation-plan.md`               | Codex App Server の検証計画                                                                                                                                                                                        |
+| `docs/investigations/codex-app-server/validation-results.md`            | Codex App Serverのschema、基本通信、persistent Thread復旧、interrupt、steer、assistant phaseの実測結果                                                                                                             |
+| `docs/investigations/codex-app-server/runtime-contract-probe.mjs`       | CAS-009 / 010 / 016とdaemon supportを隔離条件で再実測するsanitized probe                                                                                                                                           |
+| `docs/investigations/codex-app-server/interaction-contract-probe.mjs`   | Codex interaction の順序、公開projection、bounded resource、process tree cleanupを検証するsanitized probe                                                                                                          |
+| `schema/providers/codex/interaction-v1.schema.json`                     | Codex interaction snapshot / response v1 の機械可読public schema                                                                                                                                                   |
+| `docs/investigations/github-copilot-acp/validation-plan.md`             | GitHub Copilot ACP の別環境検証計画                                                                                                                                                                                |
+| `docs/investigations/github-copilot-acp/validation-results.md`          | GitHub Copilot ACP の検証結果記録                                                                                                                                                                                  |
 
 ## Current Policy
 

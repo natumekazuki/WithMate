@@ -1,18 +1,40 @@
-import { exitCodeForCliApplicationResponse, projectCliReadApplicationResponse } from "./application-response.js";
+import {
+  exitCodeForCliApplicationResponse,
+  projectCliReadApplicationResponse,
+  projectCliWriteApplicationResponse,
+} from "./application-response.js";
 import {
   CLI_EXIT_CODES,
   CLI_RUN_LIMITS,
   CLI_SCHEMA_VERSION,
   CLI_SESSION_LIMITS,
   type CliExitCode,
+  type CliRunAdmissionValue,
+  type CliRunCancelValue,
   type CliRunEventsValue,
   type CliRunFollowValue,
+  type CliRunInputValue,
+  type CliRunInteraction,
+  type CliRunInteractionsValue,
   type CliRunOperation,
   type CliRunOperationOutput,
+  type CliRunRespondInteractionValue,
   type CliRunStatusValue,
   type CliRuntimeFailureOutput,
   type CliValidatedRunCommand,
 } from "./contract.js";
+import {
+  isApplicationRunCancelDomainErrorCode,
+  isApplicationRunRespondInteractionDomainErrorCode,
+  isApplicationRunSendInputDomainErrorCode,
+} from "../shared/application-run-model.js";
+import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionCollectionWireBytes,
+  applicationRunInteractionWireItemBytes,
+} from "../shared/application-run-interaction-limits.js";
+import { defaultProviderDefinitionRegistry } from "../main/providers/provider-registry.js";
+import { snapshotCliRunAcknowledgedCancellation, snapshotCliRunRequestCancellation } from "./run-cancellation.js";
 import { isRunOutputCommand, projectCliRunOutputOperationOutput } from "./run-output-payload.js";
 
 export type CliRunOperationProjectionResult =
@@ -25,11 +47,18 @@ export function projectCliRunOperationOutput(
 ): CliRunOperationProjectionResult {
   if (isRunOutputCommand(command)) return projectCliRunOutputOperationOutput(command, applicationResponse);
   try {
-    const projected = projectCliReadApplicationResponse(
-      applicationResponse,
-      (value) => projectRunValue(command, value),
-      CLI_RUN_LIMITS.eventsMaxItems,
-    );
+    const projected =
+      isCommandFor(command, "start") ||
+      isCommandFor(command, "retry") ||
+      isCommandFor(command, "send-input") ||
+      isCommandFor(command, "cancel") ||
+      isCommandFor(command, "respond-interaction")
+        ? projectCliWriteApplicationResponse(applicationResponse, (value) => projectRunValue(command, value))
+        : projectCliReadApplicationResponse(
+            applicationResponse,
+            (value) => projectRunValue(command, value),
+            isCommandFor(command, "interactions") ? 1 : CLI_RUN_LIMITS.eventsMaxItems,
+          );
     validateRunResponse(command, projected);
     const output = {
       schemaVersion: CLI_SCHEMA_VERSION,
@@ -58,14 +87,280 @@ export function projectCliRunOperationOutput(
 }
 
 function projectRunValue(command: CliValidatedRunCommand, value: unknown): unknown {
+  if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
+    return projectAdmission(value, command);
+  }
+  if (isCommandFor(command, "send-input")) return projectInput(value, command.sessionId, command.runId);
+  if (isCommandFor(command, "cancel")) {
+    const status = projectStatus(value, command.sessionId, command.runId);
+    if (!["canceling", "completed", "failed", "canceled", "interrupted"].includes(status.phase)) malformed();
+    return status as CliRunCancelValue;
+  }
+  if (isCommandFor(command, "respond-interaction")) {
+    return projectRespondInteraction(value, command.sessionId, command.runId, command.response.interactionId);
+  }
   if (isCommandFor(command, "status")) return projectStatus(value, command.sessionId, command.runId);
+  if (isCommandFor(command, "interactions")) {
+    return projectInteractions(value, command.sessionId, command.runId);
+  }
   if (isCommandFor(command, "events")) return projectEvents(value, command.sessionId, command.runId, command.limit);
   if (isCommandFor(command, "follow")) return projectFollow(value, command.sessionId, command.runId, command.limit);
   malformed();
 }
 
+function projectRespondInteraction(
+  value: unknown,
+  expectedSessionId: string,
+  expectedRunId: string,
+  expectedInteractionId: string,
+): CliRunRespondInteractionValue {
+  const result = exactRecord(value, [
+    "sessionId",
+    "runId",
+    "interactionId",
+    "admittedAt",
+    "effectCertainty",
+    "writeAttemptedAt",
+    "settledAt",
+    "resolutionCode",
+  ]);
+  const sessionId = boundedString(result.sessionId);
+  const runId = boundedString(result.runId);
+  const interactionId = boundedString(result.interactionId);
+  const admittedAt = nonNegativeInteger(result.admittedAt);
+  if (sessionId !== expectedSessionId || runId !== expectedRunId || interactionId !== expectedInteractionId)
+    malformed();
+  const effectCertainty = enumValue(result.effectCertainty, [
+    "admitted",
+    "write_attempted",
+    "resolved",
+    "ambiguous",
+    "not_sent",
+  ] as const);
+  if (effectCertainty === "admitted") {
+    if (result.writeAttemptedAt !== null || result.settledAt !== null || result.resolutionCode !== null) malformed();
+    return {
+      sessionId,
+      runId,
+      interactionId,
+      admittedAt,
+      effectCertainty,
+      writeAttemptedAt: null,
+      settledAt: null,
+      resolutionCode: null,
+    };
+  }
+  if (effectCertainty === "write_attempted") {
+    const writeAttemptedAt = nonNegativeInteger(result.writeAttemptedAt);
+    if (writeAttemptedAt < admittedAt || result.settledAt !== null || result.resolutionCode !== null) malformed();
+    return {
+      sessionId,
+      runId,
+      interactionId,
+      admittedAt,
+      effectCertainty,
+      writeAttemptedAt,
+      settledAt: null,
+      resolutionCode: null,
+    };
+  }
+  const settledAt = nonNegativeInteger(result.settledAt);
+  const writeAttemptedAt = result.writeAttemptedAt === null ? null : nonNegativeInteger(result.writeAttemptedAt);
+  if (
+    settledAt < admittedAt ||
+    (writeAttemptedAt !== null && (writeAttemptedAt < admittedAt || settledAt < writeAttemptedAt))
+  ) {
+    malformed();
+  }
+  if (effectCertainty === "resolved") {
+    if (writeAttemptedAt === null || result.resolutionCode !== "provider_resolved") malformed();
+    return {
+      sessionId,
+      runId,
+      interactionId,
+      admittedAt,
+      effectCertainty,
+      writeAttemptedAt,
+      settledAt,
+      resolutionCode: "provider_resolved",
+    };
+  }
+  if (effectCertainty === "ambiguous") {
+    if (writeAttemptedAt === null) malformed();
+    const resolutionCode = enumValue(result.resolutionCode, ["transport_unknown", "process_unknown"] as const);
+    return {
+      sessionId,
+      runId,
+      interactionId,
+      admittedAt,
+      effectCertainty,
+      writeAttemptedAt,
+      settledAt,
+      resolutionCode,
+    };
+  }
+  if (writeAttemptedAt === null) {
+    const resolutionCode = enumValue(result.resolutionCode, ["owner_lost_before_write", "adapter_rejected"] as const);
+    return {
+      sessionId,
+      runId,
+      interactionId,
+      admittedAt,
+      effectCertainty,
+      writeAttemptedAt,
+      settledAt,
+      resolutionCode,
+    };
+  }
+  const resolutionCode = enumValue(result.resolutionCode, ["transport_not_sent", "adapter_rejected"] as const);
+  return { sessionId, runId, interactionId, admittedAt, effectCertainty, writeAttemptedAt, settledAt, resolutionCode };
+}
+
+function projectInteractions(
+  value: unknown,
+  expectedSessionId: string,
+  expectedRunId: string,
+): CliRunInteractionsValue {
+  const result = exactRecord(value, ["sessionId", "runId", "runVersion", "interactions"]);
+  const sessionId = boundedString(result.sessionId);
+  const runId = boundedString(result.runId);
+  if (sessionId !== expectedSessionId || runId !== expectedRunId) malformed();
+  const interactionIds = new Set<string>();
+  let providerId: string | undefined;
+  let definitionVersion: string | undefined;
+  let itemWireBytes = 0;
+  const interactions = snapshotInteractionArray(result.interactions, CLI_RUN_LIMITS.interactionsMaxItems).map(
+    (value): CliRunInteraction => {
+      const interaction = canonicalInteractionSnapshot(value);
+      if (interactionIds.has(interaction.interactionId)) malformed();
+      providerId ??= interaction.providerId;
+      definitionVersion ??= interaction.definitionVersion;
+      if (providerId !== interaction.providerId || definitionVersion !== interaction.definitionVersion) malformed();
+      interactionIds.add(interaction.interactionId);
+      itemWireBytes += applicationRunInteractionWireItemBytes(interaction);
+      return interaction;
+    },
+  );
+  if (
+    applicationRunInteractionCollectionWireBytes(itemWireBytes, interactions.length) >
+    APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes
+  ) {
+    malformed();
+  }
+  return { sessionId, runId, runVersion: nonNegativeInteger(result.runVersion), interactions };
+}
+
+function canonicalInteractionSnapshot(value: unknown): CliRunInteraction {
+  try {
+    return defaultProviderDefinitionRegistry.canonicalizeInteractionSnapshot(value);
+  } catch {
+    malformed();
+  }
+}
+
+function snapshotInteractionArray(value: unknown, maxLength: number): readonly unknown[] {
+  if (!Array.isArray(value) || value.length > maxLength) malformed();
+  const length = value.length;
+  const ownKeys = Reflect.ownKeys(value);
+  if (
+    ownKeys.length !== length + 1 ||
+    ownKeys.some((key, index) => key !== (index === length ? "length" : String(index)))
+  ) {
+    malformed();
+  }
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  return Array.from({ length }, (_unused, index) => {
+    const descriptor = descriptors[String(index)];
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) malformed();
+    return descriptor.value;
+  });
+}
+
+function projectInput(value: unknown, expectedSessionId: string, expectedRunId: string): CliRunInputValue {
+  let input = record(value);
+  const deliveryState = enumValue(input.deliveryState, [
+    "pending",
+    "accepted",
+    "rejected",
+    "ambiguous",
+    "aborted",
+  ] as const);
+  input = exactRecord(
+    input,
+    deliveryState === "pending" || deliveryState === "accepted"
+      ? ["sessionId", "runId", "messageId", "deliveryState"]
+      : ["sessionId", "runId", "messageId", "deliveryState", "resolutionCode"],
+  );
+  const sessionId = boundedString(input.sessionId);
+  const runId = boundedString(input.runId);
+  const messageId = boundedString(input.messageId);
+  if (sessionId !== expectedSessionId || runId !== expectedRunId) malformed();
+  if (deliveryState === "pending" || deliveryState === "accepted") {
+    return { sessionId, runId, messageId, deliveryState };
+  }
+  if (deliveryState === "rejected") {
+    return {
+      sessionId,
+      runId,
+      messageId,
+      deliveryState,
+      resolutionCode: enumValue(input.resolutionCode, ["provider_rejected", "delivery_not_sent"] as const),
+    };
+  }
+  if (deliveryState === "ambiguous") {
+    return {
+      sessionId,
+      runId,
+      messageId,
+      deliveryState,
+      resolutionCode: enumValue(input.resolutionCode, ["transport_unknown", "process_unknown"] as const),
+    };
+  }
+  if (input.resolutionCode !== "run_terminal_not_sent") malformed();
+  return { sessionId, runId, messageId, deliveryState, resolutionCode: "run_terminal_not_sent" };
+}
+
+function projectAdmission(value: unknown, command: CliValidatedRunCommand): CliRunAdmissionValue {
+  const admission = exactRecord(
+    value,
+    isCommandFor(command, "retry") ? ["sessionId", "runId", "retryOfRunId", "phase"] : ["sessionId", "runId", "phase"],
+  );
+  const sessionId = boundedString(admission.sessionId);
+  const runId = boundedString(admission.runId);
+  const phase = enumValue(admission.phase, [
+    "queued",
+    "starting",
+    "active",
+    "canceling",
+    "finalizing",
+    "completed",
+    "failed",
+    "canceled",
+    "interrupted",
+  ]);
+  if (sessionId !== command.sessionId) malformed();
+  if (isCommandFor(command, "retry")) {
+    const retryOfRunId = boundedString(admission.retryOfRunId);
+    if (retryOfRunId !== command.retryOfRunId) malformed();
+    return { sessionId, runId, retryOfRunId, phase };
+  }
+  return { sessionId, runId, phase };
+}
+
 function projectStatus(value: unknown, expectedSessionId: string, expectedRunId: string): CliRunStatusValue {
-  const status = record(value);
+  const status = allowedRecord(value, [
+    "sessionId",
+    "runId",
+    "retryOfRunId",
+    "phase",
+    "liveActivity",
+    "createdAt",
+    "startedAt",
+    "updatedAt",
+    "terminalAt",
+    "failure",
+    "cancellation",
+  ]);
   const sessionId = boundedString(status.sessionId);
   const runId = boundedString(status.runId);
   if (sessionId !== expectedSessionId || runId !== expectedRunId) malformed();
@@ -102,45 +397,56 @@ function projectStatus(value: unknown, expectedSessionId: string, expectedRunId:
       requireAbsent(status, ["failure", "cancellation", "terminalAt"]);
       return { ...base, phase, liveActivity };
     }
-    case "canceling":
+    case "canceling": {
       if (status.liveActivity !== null) malformed();
       requireAbsent(status, ["failure", "terminalAt"]);
+      if (status.cancellation === undefined) malformed();
       return {
         ...base,
         phase,
         liveActivity: null,
-        ...(status.cancellation === undefined ? {} : { cancellation: projectCancellation(status.cancellation) }),
+        cancellation: snapshotCliRunRequestCancellation(status.cancellation),
       };
+    }
     case "completed":
       if (status.liveActivity !== null) malformed();
-      requireAbsent(status, ["failure", "cancellation"]);
-      return { ...base, phase, liveActivity: null, terminalAt: nonNegativeInteger(status.terminalAt) };
+      requireAbsent(status, ["failure"]);
+      return terminalStatusWithRequestOnlyCancellation(base, status, phase);
     case "failed":
-    case "interrupted":
+    case "interrupted": {
       if (status.liveActivity !== null) malformed();
+      const failedTerminalAt = nonNegativeInteger(status.terminalAt);
+      const failedCancellation = optionalRequestOnlyCancellation(status.cancellation, failedTerminalAt);
       return {
         ...base,
         phase,
         liveActivity: null,
-        terminalAt: nonNegativeInteger(status.terminalAt),
+        terminalAt: failedTerminalAt,
         failure: projectFailure(status.failure),
-        ...(status.cancellation === undefined ? {} : { cancellation: projectCancellation(status.cancellation) }),
+        ...(failedCancellation === undefined ? {} : { cancellation: failedCancellation }),
       };
-    case "canceled":
+    }
+    case "canceled": {
       if (status.liveActivity !== null) malformed();
       requireAbsent(status, ["failure"]);
+      const terminalAt = nonNegativeInteger(status.terminalAt);
+      if (status.cancellation === undefined) {
+        return { ...base, phase, liveActivity: null, terminalAt };
+      }
+      const cancellation = snapshotCliRunAcknowledgedCancellation(status.cancellation, terminalAt);
       return {
         ...base,
         phase,
         liveActivity: null,
-        terminalAt: nonNegativeInteger(status.terminalAt),
-        ...(status.cancellation === undefined ? {} : { cancellation: projectCancellation(status.cancellation) }),
+        terminalAt,
+        cancellation,
       };
+    }
   }
 }
 
 function projectFailure(value: unknown) {
-  const failure = record(value);
+  const failure = allowedRecord(value, ["origin", "summary"]);
   return {
     origin: enumValue(failure.origin, [
       "provider",
@@ -156,14 +462,35 @@ function projectFailure(value: unknown) {
   };
 }
 
-function projectCancellation(value: unknown) {
-  const cancellation = record(value);
+function terminalStatusWithRequestOnlyCancellation(
+  base: Readonly<{
+    sessionId: string;
+    runId: string;
+    retryOfRunId?: string;
+    createdAt: number;
+    startedAt?: number;
+    updatedAt: number;
+  }>,
+  status: Readonly<Record<string, unknown>>,
+  phase: "completed",
+): CliRunStatusValue {
+  const terminalAt = nonNegativeInteger(status.terminalAt);
+  const cancellation = optionalRequestOnlyCancellation(status.cancellation, terminalAt);
   return {
-    requestedAt: nonNegativeInteger(cancellation.requestedAt),
-    ...(cancellation.acknowledgedAt === undefined
-      ? {}
-      : { acknowledgedAt: nonNegativeInteger(cancellation.acknowledgedAt) }),
-  };
+    ...base,
+    phase,
+    liveActivity: null,
+    terminalAt,
+    ...(cancellation === undefined ? {} : { cancellation }),
+  } as CliRunStatusValue;
+}
+
+function optionalRequestOnlyCancellation(
+  value: unknown,
+  terminalAt: number,
+): Readonly<{ requestedAt: number; acknowledgedAt?: never }> | undefined {
+  if (value === undefined) return undefined;
+  return snapshotCliRunRequestCancellation(value, terminalAt);
 }
 
 function projectEvents(
@@ -222,10 +549,61 @@ function projectFollow(
 
 function validateRunResponse(
   command: CliValidatedRunCommand,
-  response: Readonly<{ overallStatus: string; value?: unknown; issues?: readonly unknown[] }>,
+  response: Readonly<{
+    overallStatus: string;
+    value?: unknown;
+    issues?: readonly unknown[];
+    error?: unknown;
+    persistence: unknown;
+  }>,
 ): void {
-  if (response.overallStatus === "failure") return;
+  if (response.overallStatus === "failure") {
+    if (
+      isCommandFor(command, "send-input") &&
+      record(response.error).kind === "domain" &&
+      !isApplicationRunSendInputDomainErrorCode(record(response.error).code)
+    ) {
+      malformed();
+    }
+    if (
+      isCommandFor(command, "cancel") &&
+      record(response.error).kind === "domain" &&
+      !isApplicationRunCancelDomainErrorCode(record(response.error).code)
+    ) {
+      malformed();
+    }
+    if (
+      isCommandFor(command, "respond-interaction") &&
+      record(response.error).kind === "domain" &&
+      !isApplicationRunRespondInteractionDomainErrorCode(record(response.error).code)
+    ) {
+      malformed();
+    }
+    validateRunCapacityError(command, response.error);
+    return;
+  }
+  if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
+    const persistence = record(response.persistence);
+    if (persistence.replayed === false && record(response.value).phase !== "queued") malformed();
+    return;
+  }
+  if (isCommandFor(command, "send-input")) {
+    if (response.overallStatus === "partial_success") malformed();
+    return;
+  }
+  if (isCommandFor(command, "cancel")) {
+    if (response.overallStatus === "partial_success") malformed();
+    return;
+  }
   if (isCommandFor(command, "status")) {
+    if (response.overallStatus === "partial_success") malformed();
+    return;
+  }
+  if (isCommandFor(command, "interactions")) {
+    if (response.overallStatus === "partial_success") malformed();
+    return;
+  }
+  if (isCommandFor(command, "respond-interaction")) {
     if (response.overallStatus === "partial_success") malformed();
     return;
   }
@@ -255,6 +633,21 @@ function validateRunResponse(
   if (value.reason === "events" && items.length === 0 && response.overallStatus !== "partial_success") malformed();
 }
 
+function validateRunCapacityError(command: CliValidatedRunCommand, value: unknown): void {
+  const error = record(value);
+  if (error.kind !== "domain" || error.code !== "capacity_exceeded") return;
+  const details = record(error.details);
+  if (isCommandFor(command, "start") || isCommandFor(command, "retry")) {
+    if (details.scope !== "application" && details.scope !== "provider") malformed();
+    return;
+  }
+  if (isCommandFor(command, "send-input")) {
+    if (details.scope === "application") return;
+    if (details.scope === "run" && details.runId === command.runId) return;
+  }
+  malformed();
+}
+
 function validateCursorProgress(inputCursor: string | undefined, nextCursor: string, consumedCount: number): void {
   if (consumedCount > 0 && nextCursor === inputCursor) malformed();
   if (consumedCount === 0 && inputCursor !== undefined && nextCursor !== inputCursor) malformed();
@@ -266,7 +659,7 @@ function requireNullLiveOnly(status: Readonly<Record<string, unknown>>): void {
 }
 
 function requireAbsent(value: Readonly<Record<string, unknown>>, keys: readonly string[]): void {
-  if (keys.some((key) => value[key] !== undefined)) malformed();
+  if (keys.some((key) => Object.hasOwn(value, key))) malformed();
 }
 
 function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown[] {
@@ -284,7 +677,35 @@ function snapshotDenseArray(value: unknown, maxLength: number): readonly unknown
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   if (typeof value !== "object" || value === null || Array.isArray(value)) malformed();
-  return value as Readonly<Record<string, unknown>>;
+  const prototype = Object.getPrototypeOf(value) as unknown;
+  if (prototype !== Object.prototype && prototype !== null) malformed();
+  const entries: [string, unknown][] = [];
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string") malformed();
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !descriptor.enumerable || !("value" in descriptor)) malformed();
+    entries.push([key, descriptor.value]);
+  }
+  return Object.fromEntries(entries);
+}
+
+function exactRecord(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> {
+  const candidate = record(value);
+  const ownKeys = Reflect.ownKeys(candidate);
+  if (
+    ownKeys.length !== keys.length ||
+    ownKeys.some((key) => typeof key !== "string" || !keys.includes(key)) ||
+    keys.some((key) => !Object.hasOwn(candidate, key))
+  ) {
+    malformed();
+  }
+  return candidate;
+}
+
+function allowedRecord(value: unknown, keys: readonly string[]): Readonly<Record<string, unknown>> {
+  const candidate = record(value);
+  if (Object.keys(candidate).some((key) => !keys.includes(key))) malformed();
+  return candidate;
 }
 
 function boundedString(value: unknown, maxLength: number = CLI_SESSION_LIMITS.maxIdentifierLength): string {

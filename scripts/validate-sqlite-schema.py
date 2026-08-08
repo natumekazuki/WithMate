@@ -167,6 +167,19 @@ def validate_connection(
     assert actual_schema_definition_sha256 == manifest["schemaDefinitionSha256"]
     assert unique_constraint_autoindexes == []
 
+    run_input_capacity_plan = connection.execute(
+        """
+        EXPLAIN QUERY PLAN
+        SELECT COUNT(*)
+        FROM run_input_deliveries
+        WHERE delivery_state IN ('pending', 'dispatching')
+        """
+    ).fetchall()
+    assert any(
+        "run_input_deliveries_unresolved_state_idx" in str(row[3])
+        for row in run_input_capacity_plan
+    ), run_input_capacity_plan
+
     connection.execute("CREATE INDEX schema_drift_probe_idx ON sessions(created_at)")
     assert schema_definition_sha256(connection) != manifest["schemaDefinitionSha256"]
     connection.execute("DROP INDEX schema_drift_probe_idx")
@@ -184,6 +197,65 @@ def validate_connection(
           execution_snapshot_json, external_side_effect_state,
           created_at, updated_at, version
         ) VALUES ('run-a', 'session-a', 1, 'message-a', 'queued', '{}', 'none', 1, 1, 0)
+        """
+    )
+    connection.commit()
+
+    expect_integrity_error(
+        connection,
+        "UPDATE runs SET phase = 'active', cancel_requested_at = 2 WHERE id = 'run-a'",
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE runs SET phase = 'canceling' WHERE id = 'run-a'",
+        (),
+    )
+    connection.execute(
+        "UPDATE runs SET phase = 'canceling', cancel_requested_at = 2 WHERE id = 'run-a'"
+    )
+    connection.commit()
+    expect_integrity_error(
+        connection,
+        """
+        UPDATE runs SET phase = 'canceled', cancel_acknowledged_at = NULL, terminal_at = 4
+        WHERE id = 'run-a'
+        """,
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        """
+        UPDATE runs SET phase = 'completed', cancel_acknowledged_at = 3, terminal_at = 4
+        WHERE id = 'run-a'
+        """,
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        "UPDATE runs SET cancel_acknowledged_at = 1 WHERE id = 'run-a'",
+        (),
+    )
+    expect_integrity_error(
+        connection,
+        """
+        UPDATE runs SET phase = 'canceled', cancel_acknowledged_at = 5, terminal_at = 4
+        WHERE id = 'run-a'
+        """,
+        (),
+    )
+    connection.execute(
+        """
+        UPDATE runs SET phase = 'completed', cancel_acknowledged_at = NULL, terminal_at = 4
+        WHERE id = 'run-a'
+        """
+    )
+    connection.commit()
+    connection.execute(
+        """
+        UPDATE runs SET phase = 'queued', cancel_requested_at = NULL,
+          cancel_acknowledged_at = NULL, terminal_at = NULL
+        WHERE id = 'run-a'
         """
     )
     connection.commit()
@@ -495,10 +567,11 @@ def validate_connection(
         "duplicateUniqueAutoindexCheck": "ok",
         "foreignKeyCheck": "ok",
         "quickCheck": quick_check,
-        "constraintRejectionChecks": 19,
+        "constraintRejectionChecks": 25,
         "canonicalUuidAcceptanceCheck": "ok",
         "appWideIdempotencyNamespaceCheck": "ok",
         "sessionTreeAggregateLimitCheck": "ok",
+        "runInputCapacityQueryPlanCheck": "ok",
         "storedPayloadAtomicityCheck": "ok",
         "deferredForeignKeyCycleCheck": "ok",
     }

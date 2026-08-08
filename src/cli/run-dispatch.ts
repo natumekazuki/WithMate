@@ -42,8 +42,69 @@ export async function dispatchCliRunCommand<TAuthorizationContext>(
       ...(dependencies.signal === undefined ? {} : { signal: dependencies.signal }),
     };
     let response: unknown;
-    if (isCommandFor(command, "status")) {
+    if (isCommandFor(command, "start")) {
+      response = await dependencies.operations.start(
+        {
+          context,
+          sessionId: command.sessionId,
+          idempotencyKey: command.idempotencyKey,
+          contentBlocks: command.contentBlocks,
+          providerSettings: command.providerSettings,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "retry")) {
+      response = await dependencies.operations.retry(
+        {
+          context,
+          sessionId: command.sessionId,
+          retryOfRunId: command.retryOfRunId,
+          idempotencyKey: command.idempotencyKey,
+          ...(command.providerSettingsOverride === undefined
+            ? {}
+            : { providerSettingsOverride: command.providerSettingsOverride }),
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "send-input")) {
+      response = await dependencies.operations.sendInput(
+        {
+          context,
+          sessionId: command.sessionId,
+          runId: command.runId,
+          idempotencyKey: command.idempotencyKey,
+          contentBlocks: command.contentBlocks,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "cancel")) {
+      response = await dependencies.operations.cancel(
+        {
+          context,
+          sessionId: command.sessionId,
+          runId: command.runId,
+          idempotencyKey: command.idempotencyKey,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "respond-interaction")) {
+      response = await dependencies.operations.respondInteraction(
+        {
+          context,
+          sessionId: command.sessionId,
+          runId: command.runId,
+          idempotencyKey: command.idempotencyKey,
+          response: command.response,
+        },
+        options,
+      );
+    } else if (isCommandFor(command, "status")) {
       response = await dependencies.operations.status(
+        { context, sessionId: command.sessionId, runId: command.runId },
+        options,
+      );
+    } else if (isCommandFor(command, "interactions")) {
+      response = await dependencies.operations.interactions(
         { context, sessionId: command.sessionId, runId: command.runId },
         options,
       );

@@ -8,6 +8,7 @@ import {
 } from "../shared/session-metadata.js";
 import { MAX_SESSION_TREE_SIZE } from "../shared/session-limits.js";
 import { APPLICATION_SESSION_MESSAGE_LIMITS } from "../shared/application-session-message-model.js";
+import { isApplicationDomainFailurePersistenceStatus } from "../shared/application-service-model.js";
 import { snapshotMessageContentBlocks } from "../shared/message-content.js";
 import {
   CLI_EXIT_CODES,
@@ -34,6 +35,7 @@ import {
   type CliValidatedCommand,
   type CliValidatedSessionCommand,
 } from "./contract.js";
+import { snapshotCliRunAcknowledgedCancellation, snapshotCliRunRequestCancellation } from "./run-cancellation.js";
 
 export type CliOperationProjectionResult =
   | Readonly<{ ok: true; output: CliOperationOutput; exitCode: CliExitCode }>
@@ -69,6 +71,7 @@ const BASE_DOMAIN_CODES = [
   "not_found",
   "reference_invalid",
   "lifecycle_conflict",
+  "provider_capability_unavailable",
   "session_busy",
   "insufficient_disk_space",
   "idempotency_conflict",
@@ -129,6 +132,29 @@ export function projectCliReadApplicationResponse<TValue>(
   maxIssues: number,
 ): CliApplicationResponse<TValue, "read"> {
   return projectCliScopedReadApplicationResponse(value, projectValue, maxIssues, BASE_DOMAIN_CODES);
+}
+
+export function projectCliWriteApplicationResponse<TValue>(
+  value: unknown,
+  projectValue: (value: unknown) => TValue,
+): CliApplicationResponse<TValue, "write"> {
+  const response = exactRecord(value, ["overallStatus", "value", "error", "persistence"]);
+  if (response.overallStatus === "success") {
+    requireAbsent(response, ["error"]);
+    const persistence = projectPersistenceStatus(response.persistence);
+    if (persistence.status !== "committed") malformed();
+    return {
+      overallStatus: "success",
+      value: projectValue(response.value),
+      persistence,
+    };
+  }
+  if (response.overallStatus !== "failure") malformed();
+  requireAbsent(response, ["value"]);
+  const error = projectApplicationError(response.error, BASE_DOMAIN_CODES);
+  const persistence = projectPersistenceStatus(response.persistence);
+  if (!failureCombinationIsValid("write", false, error, persistence)) malformed();
+  return { overallStatus: "failure", error, persistence } as CliApplicationResponse<TValue, "write">;
 }
 
 export function projectCliRunOutputReadApplicationResponse<TValue>(
@@ -218,7 +244,9 @@ function runOutputExportFailureCombinationIsValid(
   if (publication.status === "published") return false;
   const definitelyUnpublished = publication.status === "not_published" && publication.temporaryCleanup === "complete";
   if (persistence.status === "not_attempted") {
-    return definitelyUnpublished && failureCombinationIsValid("read", false, error, persistence);
+    return (
+      error.kind !== "domain" && definitelyUnpublished && failureCombinationIsValid("read", false, error, persistence)
+    );
   }
   if (persistence.status === "rejected") {
     if (error.kind !== "domain") return false;
@@ -243,7 +271,9 @@ function runOutputExportFailureCombinationIsValid(
   );
 }
 
-export function exitCodeForCliApplicationResponse(response: CliApplicationResponse<unknown, "read">): CliExitCode {
+export function exitCodeForCliApplicationResponse(
+  response: CliApplicationResponse<unknown, "read" | "write">,
+): CliExitCode {
   return exitCodeForApplicationResponse(response);
 }
 
@@ -702,39 +732,58 @@ function projectRunsValue(value: unknown, command: CommandFor<"runs">, allowOmis
       case "finalizing":
         requireAbsent(item, ["finalAssistantMessageId", "failure", "cancellation", "terminalAt"]);
         return { ...base, phase };
-      case "canceling":
+      case "canceling": {
         requireAbsent(item, ["finalAssistantMessageId", "failure", "terminalAt"]);
+        if (item.cancellation === undefined) malformed();
         return {
           ...base,
           phase,
-          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+          cancellation: snapshotCliRunRequestCancellation(item.cancellation),
         };
-      case "completed":
-        requireAbsent(item, ["failure", "cancellation"]);
+      }
+      case "completed": {
+        requireAbsent(item, ["failure"]);
+        const terminalAt = nonNegativeInteger(item.terminalAt);
+        const cancellation =
+          item.cancellation === undefined
+            ? undefined
+            : snapshotCliRunRequestCancellation(item.cancellation, terminalAt);
         return {
           ...base,
           phase,
           ...(finalAssistantMessageId === undefined ? {} : { finalAssistantMessageId }),
-          terminalAt: nonNegativeInteger(item.terminalAt),
+          terminalAt,
+          ...(cancellation === undefined ? {} : { cancellation }),
         };
+      }
       case "failed":
-      case "interrupted":
+      case "interrupted": {
         requireAbsent(item, ["finalAssistantMessageId"]);
+        const terminalAt = nonNegativeInteger(item.terminalAt);
+        const cancellation =
+          item.cancellation === undefined
+            ? undefined
+            : snapshotCliRunRequestCancellation(item.cancellation, terminalAt);
         return {
           ...base,
           phase,
-          terminalAt: nonNegativeInteger(item.terminalAt),
+          terminalAt,
           failure: projectRunFailure(item.failure),
-          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+          ...(cancellation === undefined ? {} : { cancellation }),
         };
-      case "canceled":
+      }
+      case "canceled": {
         requireAbsent(item, ["finalAssistantMessageId", "failure"]);
+        const terminalAt = nonNegativeInteger(item.terminalAt);
         return {
           ...base,
           phase,
-          terminalAt: nonNegativeInteger(item.terminalAt),
-          ...(item.cancellation === undefined ? {} : { cancellation: projectRunCancellation(item.cancellation) }),
+          terminalAt,
+          ...(item.cancellation === undefined
+            ? {}
+            : { cancellation: snapshotCliRunAcknowledgedCancellation(item.cancellation, terminalAt) }),
         };
+      }
     }
   });
   return { sessionId, items, ...(nextCursor === undefined ? {} : { nextCursor }) };
@@ -754,16 +803,6 @@ function projectRunFailure(value: unknown) {
     ...(failure.summary === undefined
       ? {}
       : { summary: boundedString(failure.summary, CLI_SESSION_RUN_LIMITS.maxSummaryLength) }),
-  };
-}
-
-function projectRunCancellation(value: unknown) {
-  const cancellation = exactRecord(value, ["requestedAt", "acknowledgedAt"]);
-  return {
-    requestedAt: nonNegativeInteger(cancellation.requestedAt),
-    ...(cancellation.acknowledgedAt === undefined
-      ? {}
-      : { acknowledgedAt: nonNegativeInteger(cancellation.acknowledgedAt) }),
   };
 }
 
@@ -845,14 +884,20 @@ function projectPersistenceStatus(value: unknown): CliPersistenceStatus {
     case "not_attempted":
     case "read":
     case "rejected":
+      requireAbsent(persistence, ["replayed", "reconciliation"]);
       if (persistence.effect !== "none") malformed();
       return { status: persistence.status, effect: "none" };
     case "committed":
+      requireAbsent(persistence, ["reconciliation"]);
       if (persistence.effect !== "none" || typeof persistence.replayed !== "boolean") malformed();
       return { status: "committed", effect: "none", replayed: persistence.replayed };
     case "failed":
-      if (persistence.effect === "none") return { status: "failed", effect: "none" };
+      if (persistence.effect === "none") {
+        requireAbsent(persistence, ["replayed", "reconciliation"]);
+        return { status: "failed", effect: "none" };
+      }
       if (persistence.effect === "unknown" && persistence.reconciliation === "exact_request_required") {
+        requireAbsent(persistence, ["replayed"]);
         return { status: "failed", effect: "unknown", reconciliation: "exact_request_required" };
       }
       malformed();
@@ -986,12 +1031,14 @@ function projectDomainError(
       details: { format: "binary", supportedAction: "export" },
     };
   }
+  if (Object.hasOwn(error, "details")) malformed();
   const code = enumValue(error.code, [
     "request_invalid",
     "cursor_invalid",
     "not_found",
     "reference_invalid",
     "lifecycle_conflict",
+    "provider_capability_unavailable",
     "session_busy",
     "insufficient_disk_space",
     "idempotency_conflict",
@@ -1009,15 +1056,40 @@ function projectCapacityDetails(
   value: unknown,
 ): Extract<CliApplicationError, Readonly<{ code: "capacity_exceeded" }>>["details"] {
   const details = record(value);
-  const current = nonNegativeInteger(details.current);
-  const limit = nonNegativeInteger(details.limit);
   if (details.scope === "root" || details.scope === "session_tree") {
-    return { scope: details.scope, rootSessionId: boundedString(details.rootSessionId), current, limit };
+    const capacity = exactRecord(value, ["scope", "rootSessionId", "current", "limit"]);
+    return {
+      scope: details.scope,
+      rootSessionId: boundedString(capacity.rootSessionId),
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
+  }
+  if (details.scope === "run") {
+    const capacity = exactRecord(value, ["scope", "runId", "current", "limit"]);
+    return {
+      scope: "run",
+      runId: boundedString(capacity.runId),
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
   }
   if (details.scope === "provider") {
-    return { scope: "provider", providerId: boundedString(details.providerId), current, limit };
+    const capacity = exactRecord(value, ["scope", "current", "limit"]);
+    return {
+      scope: "provider",
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
   }
-  if (details.scope === "application") return { scope: "application", current, limit };
+  if (details.scope === "application") {
+    const capacity = exactRecord(value, ["scope", "current", "limit"]);
+    return {
+      scope: "application",
+      current: nonNegativeInteger(capacity.current),
+      limit: nonNegativeInteger(capacity.limit),
+    };
+  }
   malformed();
 }
 
@@ -1178,7 +1250,7 @@ function failureCombinationIsValid(
     case "operation":
       return persistence.status === "not_attempted";
     case "domain":
-      return persistence.status === "rejected";
+      return isApplicationDomainFailurePersistenceStatus(persistence.status);
     case "persistence":
       return (
         persistence.status === "failed" &&

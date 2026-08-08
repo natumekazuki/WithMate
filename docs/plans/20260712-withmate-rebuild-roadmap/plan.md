@@ -3,7 +3,7 @@
 - 作成日: 2026-07-12
 - plan tier: repo plan
 - 状態: active
-- 現在地: CP2 Application Service / CLI Control Plane完了。CP3 Codex Single-Session Vertical Slice着手前
+- 現在地: CP3 Codex Single-Session Vertical Slice完了。Run start / retry、supplemental input、active cancel、live interaction、Codex Provider接続、terminal収束、restart recoveryのprocess E2Eを通過
 - questions status: 質問なし
 
 ## Task Brief
@@ -34,17 +34,17 @@ Risks: subsystemごとの先行実装、外部Provider検証待ち、GUI先行�
 
 ## Checkpoint一覧
 
-| CP | 名称 | 状態 | 主な到達点 | 依存 |
-| --- | --- | --- | --- | --- |
-| CP0 | Scope / Design / Schema Foundation | 完了 | 初期scope、Provider方針、Session / Run / Message、Multi-Agent、14 table、schema v1 DDL | なし |
-| CP1 | Runtime / Persistence Foundation | 完了 | project scaffold、Persistence Worker、bootstrap、repository API、write ownership | CP0 |
-| CP2 | Application Service / CLI Control Plane | 完了 | Session / Message / Run履歴、Run観測・output、error envelope、CLI基本操作 | CP1 |
-| CP3 | Codex Single-Session Vertical Slice | 未着手 | CodexでRun開始・追加指示・完了・復旧までE2E | CP2 |
-| CP4 | Character / Memory / Prompt Layer | 未着手 | Character snapshot、prompt composition、Memory target / CLI境界 | CP3 |
-| CP5 | Multi-Agent / Auxiliary Orchestration | 未着手 | child delegation、wait / collect、Auxiliary、capacity、復旧 | CP3、CP4 |
-| CP6 | Copilot / Model Catalog | 未着手 | Copilot ACP Adapter、model / capability取得、fallback | CP3、別環境検証 |
-| CP7 | GUI Core | 未着手 | Home、Session、Character、Monitor、必要最小Settings | CP3〜CP5。Copilot UIはCP6 |
-| CP8 | Hardening / Packaging / Release Readiness | 未着手 | performance、privacy、recovery、packaging、clean-install smoke | CP6、CP7 |
+| CP  | 名称                                      | 状態   | 主な到達点                                                                             | 依存                      |
+| --- | ----------------------------------------- | ------ | -------------------------------------------------------------------------------------- | ------------------------- |
+| CP0 | Scope / Design / Schema Foundation        | 完了   | 初期scope、Provider方針、Session / Run / Message、Multi-Agent、14 table、schema v1 DDL | なし                      |
+| CP1 | Runtime / Persistence Foundation          | 完了   | project scaffold、Persistence Worker、bootstrap、repository API、write ownership       | CP0                       |
+| CP2 | Application Service / CLI Control Plane   | 完了   | Session / Message / Run履歴、Run観測・output、error envelope、CLI基本操作              | CP1                       |
+| CP3 | Codex Single-Session Vertical Slice       | 完了   | Run start / retry、追加指示、active cancel、live interaction、再起動復旧のprocess E2E  | CP2                       |
+| CP4 | Character / Memory / Prompt Layer         | 未着手 | Character snapshot、prompt composition、Memory target / CLI境界                        | CP3                       |
+| CP5 | Multi-Agent / Auxiliary Orchestration     | 未着手 | child delegation、wait / collect、Auxiliary、capacity、復旧                            | CP3、CP4                  |
+| CP6 | Copilot / Model Catalog                   | 未着手 | Copilot ACP Adapter、model / capability取得、fallback                                  | CP3、別環境検証           |
+| CP7 | GUI Core                                  | 未着手 | Home、Session、Character、Monitor、必要最小Settings                                    | CP3〜CP5。Copilot UIはCP6 |
+| CP8 | Hardening / Packaging / Release Readiness | 未着手 | performance、privacy、recovery、packaging、clean-install smoke                         | CP6、CP7                  |
 
 ## CP0: Scope / Design / Schema Foundation
 
@@ -129,7 +129,7 @@ Codex App Serverを使い、1 Sessionの作成、実行、途中経過、完了�
 - final MessageとRunOutputの分離
 - model、reasoning、approval、sandbox、workspace設定
 - interrupt、steer、approval / elicitation runtime検証
-- daemon client-only切断を含む残りのrecovery mapping
+- runtime host client-only切断、response loss、process crashを含むrecovery mapping
 
 ### Gate
 

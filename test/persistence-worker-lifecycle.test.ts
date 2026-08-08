@@ -5,6 +5,10 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
+import {
+  createApplicationRunRuntimeService,
+  type ApplicationRunProviderRuntimeFactory,
+} from "../src/main/application-run-runtime-service.js";
 import { PersistenceClientError, PersistenceWorkerClient } from "../src/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../src/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../src/main/repository-write-client.js";
@@ -52,6 +56,70 @@ workerTest("worker starts once, serves requests, checkpoints, and closes gracefu
     assert.deepEqual(await shutdown, { checkpoint: "completed" });
     assert.equal(client.state, "closed");
     assert.deepEqual(await client.shutdown(), { checkpoint: "completed" });
+  });
+});
+
+workerTest("runtime pre-dispatch failure closes its durable Run owner through the production Worker", async () => {
+  await withTempDirectory(async (directory) => {
+    const client = new PersistenceWorkerClient({
+      workerUrl,
+      databasePath: path.join(directory, "runtime-pre-dispatch-failure.sqlite3"),
+      legacyDatabasePaths: [],
+      workerOptions,
+    });
+    await client.start();
+    const writes = new RepositoryWriteClient(client);
+    const reads = new RepositoryReadClient(client);
+    const created = await writes.createSession(
+      productionSessionCreate("Unsupported runtime Provider", "018f1f4e-7f0a-7000-8000-000000000382"),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) assert.fail("Session creation failed");
+    const admitted = await writes.admitNormalRun(
+      productionRunAdmission(
+        created.value.sessionId,
+        "caller-id-is-not-part-of-command",
+        "018f1f4e-7f0a-7000-8000-000000000383",
+      ),
+    );
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) assert.fail("Run admission failed");
+
+    const runtimeFactory: ApplicationRunProviderRuntimeFactory = {
+      supports() {
+        return false;
+      },
+      async start() {
+        assert.fail("Unsupported Provider must fail before runtime startup");
+      },
+    };
+    const runtime = createApplicationRunRuntimeService(client, runtimeFactory, {
+      dispatchReady: {
+        ready() {
+          assert.fail("Unsupported Provider must not become dispatch-ready");
+        },
+      },
+    });
+    runtime.handoff(admitted.value);
+    await waitFor(() => runtime.diagnostics().liveRunCount === 0);
+
+    const terminal = await reads.runGet({
+      sessionId: created.value.sessionId,
+      runId: admitted.value.runId,
+      workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+    });
+    assert.equal(terminal.run.phase, "failed");
+    const next = await writes.admitNormalRun(
+      productionRunAdmission(
+        created.value.sessionId,
+        "caller-id-is-not-part-of-command",
+        "018f1f4e-7f0a-7000-8000-000000000384",
+      ),
+    );
+    assert.equal(next.ok, true);
+
+    await runtime.shutdown();
+    await client.shutdown();
   });
 });
 
@@ -220,6 +288,65 @@ workerTest("Session create response loss replays the committed Repository-issued
   });
 });
 
+workerTest("Run admission response loss replays Repository-issued identities after Worker restart", async () => {
+  await withTempDirectory(async (directory) => {
+    const databasePath = path.join(directory, "run-identity-response-loss.sqlite3");
+    const options = { workerUrl, databasePath, legacyDatabasePaths: [], workerOptions } as const;
+    const firstClient = new PersistenceWorkerClient(options);
+    await firstClient.start();
+    const firstRepository = new RepositoryWriteClient(firstClient);
+    const created = await firstRepository.createSession(
+      productionSessionCreate("Run response loss", "018f1f4e-7f0a-7000-8000-000000000396"),
+    );
+    assert.equal(created.ok, true);
+    if (!created.ok) assert.fail("Session creation failed");
+    const command = productionRunAdmission(
+      created.value.sessionId,
+      "caller-id-is-not-part-of-command",
+      "018f1f4e-7f0a-7000-8000-000000000397",
+    );
+    const blocker = new DatabaseSync(databasePath);
+    blocker.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
+    try {
+      await assert.rejects(firstRepository.admitNormalRun(command, { timeoutMs: 10 }), (error: unknown) =>
+        isClientError(error, "request_timeout", "unknown"),
+      );
+    } finally {
+      blocker.exec("COMMIT;");
+      blocker.close();
+    }
+    await firstClient.shutdown();
+
+    const replayClient = new PersistenceWorkerClient(options);
+    await replayClient.start();
+    const replay = await new RepositoryWriteClient(replayClient).admitNormalRun(command);
+    assert.equal(replay.ok && replay.replayed, true);
+    if (!replay.ok) assert.fail("Run replay failed");
+    assert.match(replay.value.messageId, /^message_[0-9a-f-]{36}$/u);
+    assert.match(replay.value.runId, /^run_[0-9a-f-]{36}$/u);
+    assert.match(replay.value.attemptId, /^attempt_[0-9a-f-]{36}$/u);
+    assert.match(replay.value.bindingId, /^binding_[0-9a-f-]{36}$/u);
+    assert.equal(replay.value.runPhase, "queued");
+    await replayClient.shutdown();
+
+    const database = new DatabaseSync(databasePath);
+    try {
+      assert.equal((database.prepare("SELECT COUNT(*) AS count FROM runs").get() as { count: number }).count, 1);
+      assert.equal((database.prepare("SELECT COUNT(*) AS count FROM messages").get() as { count: number }).count, 1);
+      assert.equal(
+        (
+          database
+            .prepare("SELECT response_ref_id FROM idempotency_records WHERE idempotency_key = ?")
+            .get(command.idempotencyKey) as { response_ref_id: string }
+        ).response_ref_id,
+        replay.value.runId,
+      );
+    } finally {
+      database.close();
+    }
+  });
+});
+
 workerTest("production Worker applies configured Run capacity", async () => {
   await withTempDirectory(async (directory) => {
     const client = new PersistenceWorkerClient({
@@ -300,20 +427,17 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     assert.equal(created.ok, true);
     if (!created.ok) assert.fail("Session creation failed");
     const rootSessionId = created.value.sessionId;
-    assert.equal(
-      (
-        await repository.admitNormalRun(
-          productionRunAdmission(rootSessionId, "run-worker-integration", "018f1f4e-7f0a-7000-8000-000000000322"),
-        )
-      ).ok,
-      true,
+    const admitted = await repository.admitNormalRun(
+      productionRunAdmission(rootSessionId, "run-worker-integration", "018f1f4e-7f0a-7000-8000-000000000322"),
     );
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) assert.fail("Run admission failed");
     const scope = {
       sessionId: rootSessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
-      runId: "run-worker-integration",
-      attemptId: "attempt-run-worker-integration",
-      bindingId: "binding-run-worker-integration",
+      runId: admitted.value.runId,
+      attemptId: admitted.value.attemptId,
+      bindingId: admitted.value.bindingId,
     } as const;
     const recoveryRepository = new RepositoryReadClient(client);
     const creatingProjection = await recoveryRepository.recoveryGet({
@@ -341,7 +465,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       (
         await repository.beginRunDispatch({
           ...scope,
-          providerRequest: { prompt: "hello" },
+          providerRequest: productionRunProviderRequest(),
           ephemeralOwnerToken: null,
         })
       ).ok,
@@ -357,38 +481,71 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       ).ok,
       true,
     );
+    const interactionCommand = {
+      ...scope,
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000327",
+      ephemeralOwnerToken: null,
+      externalConversationId: "conversation-worker-integration",
+      externalExecutionId: "execution-worker-integration",
+      providerId: "provider",
+      definitionVersion: "test-provider-v1",
+      interactionKind: "command_approval",
+      interactionId: "interaction-worker-integration",
+      semanticAction: "accept" as const,
+      canonicalResponseJson:
+        '{"decision":"accept","interactionId":"interaction-worker-integration","kind":"command_approval"}',
+    };
+    const interaction = await repository.admitRunInteractionResponse(interactionCommand);
+    assert.equal(interaction.ok && interaction.value.effectCertainty, "admitted");
+    if (!interaction.ok) assert.fail("Interaction response admission failed");
+    const interactionScope = {
+      responseRefId: interaction.value.responseRefId,
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      runId: scope.runId,
+      interactionId: interactionCommand.interactionId,
+    };
+    assert.equal((await repository.markRunInteractionResponseWriteAttempt(interactionScope)).ok, true);
+    const interactionProbeRequest = {
+      sessionId: scope.sessionId,
+      runId: scope.runId,
+      idempotencyKey: interactionCommand.idempotencyKey,
+      interactionKind: interactionCommand.interactionKind,
+      interactionId: interactionCommand.interactionId,
+      canonicalResponseJson: interactionCommand.canonicalResponseJson,
+    };
+    assert.equal((await recoveryRepository.runInteractionResponseReplayProbe(interactionProbeRequest)).kind, "replay");
     assert.equal(
       (
-        await repository.admitRunInput({
-          sessionId: scope.sessionId,
-          workspaceKey: scope.workspaceKey,
-          idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000326",
-          runId: scope.runId,
-          attemptId: scope.attemptId,
-          ephemeralOwnerToken: null,
-          message: {
-            id: "message-worker-input-dispatching",
-            contentBlocks: [{ type: "text", text: "continue" }],
-          },
+        await repository.settleRunInteractionResponse({
+          ...interactionScope,
+          outcome: { effectCertainty: "resolved", resolutionCode: "provider_resolved" },
         })
       ).ok,
       true,
     );
+    const inputAdmission = await repository.admitRunInput({
+      sessionId: scope.sessionId,
+      workspaceKey: scope.workspaceKey,
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000326",
+      runId: scope.runId,
+      attemptId: scope.attemptId,
+      ephemeralOwnerToken: null,
+      contentBlocks: [{ type: "text", text: "continue" }],
+    });
+    assert.equal(inputAdmission.ok, true);
+    if (!inputAdmission.ok) assert.fail("Run input admission failed");
     assert.equal(
       (
         await repository.beginRunInput({
           ...scope,
-          messageId: "message-worker-input-dispatching",
+          messageId: inputAdmission.value.messageId,
           ephemeralOwnerToken: null,
         })
       ).ok,
       true,
     );
-    const childCommand = productionChildStart(
-      rootSessionId,
-      "run-worker-integration",
-      "018f1f4e-7f0a-7000-8000-000000000323",
-    );
+    const childCommand = productionChildStart(rootSessionId, scope.runId, "018f1f4e-7f0a-7000-8000-000000000323");
     const child = await repository.startChild(childCommand);
     assert.equal(child.ok, true);
     if (!child.ok) assert.fail("Child creation failed");
@@ -443,6 +600,12 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       sessionId: scope.sessionId,
       workspaceKey: scope.workspaceKey,
       runId: scope.runId,
+      providerExecution: {
+        attemptId: scope.attemptId,
+        bindingId: scope.bindingId,
+        externalConversationId: "conversation-worker-integration",
+        externalExecutionId: "execution-worker-integration",
+      },
       item: {
         id: "output-worker-stored",
         category: "operation",
@@ -480,7 +643,14 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       runId: scope.runId,
       attemptId: scope.attemptId,
       terminalEvent: { id: "event-worker-terminal", dedupeKey: "provider-event-worker-terminal" },
+      providerExecution: {
+        attemptId: scope.attemptId,
+        bindingId: scope.bindingId,
+        externalConversationId: "conversation-worker-integration",
+        externalExecutionId: "execution-worker-integration",
+      },
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: {
@@ -525,6 +695,13 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
     const resumedClient = new PersistenceWorkerClient(options);
     await resumedClient.start();
     const resumedRepository = new RepositoryWriteClient(resumedClient);
+    const resumedInteractionProbe = await new RepositoryReadClient(resumedClient).runInteractionResponseReplayProbe(
+      interactionProbeRequest,
+    );
+    assert.equal(
+      resumedInteractionProbe.kind === "replay" && resumedInteractionProbe.value.effectCertainty,
+      "resolved",
+    );
     const resumedInputDeliveries = await new RepositoryReadClient(resumedClient).runInputDeliveriesPage({
       sessionId: scope.sessionId,
       runId: scope.runId,
@@ -536,7 +713,9 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       expiredIdempotencyRecords: 0,
       invalidatedBindings: 0,
       abortedDispatches: 0,
+      ambiguousDispatches: 0,
       settledInputDeliveries: 0,
+      settledInteractionResponses: 0,
       availableChildResults: 0,
       repairedDelegations: 0,
       storedOutputPayloads: 0,
@@ -548,7 +727,14 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       runId: "run-worker-child",
       attemptId: "attempt-worker-child",
       terminalEvent: { id: "event-worker-child-terminal", dedupeKey: "provider-event-worker-child-terminal" },
+      providerExecution: {
+        attemptId: "attempt-worker-child",
+        bindingId: "binding-worker-child",
+        externalConversationId: "conversation-worker-child",
+        externalExecutionId: "execution-worker-child",
+      },
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: {
@@ -566,7 +752,7 @@ workerTest("production Worker transports Run output, terminal, pending resolutio
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
       idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000324",
       deliveryId: "delivery-worker-child",
-      collectingParentRunId: "run-worker-integration",
+      collectingParentRunId: scope.runId,
       eventId: "event-worker-child-collected",
     });
     assert.equal(collected.ok && collected.value.finalAssistantMessageId, "message-worker-child-final");
@@ -714,20 +900,17 @@ workerTest("timed-out Dispatch begin converges without granting a second Provide
     assert.equal(created.ok, true);
     if (!created.ok) assert.fail("Session creation failed");
     const sessionId = created.value.sessionId;
-    assert.equal(
-      (
-        await repository.admitNormalRun(
-          productionRunAdmission(sessionId, "run-dispatch-timeout", "018f1f4e-7f0a-7000-8000-000000000352"),
-        )
-      ).ok,
-      true,
+    const admitted = await repository.admitNormalRun(
+      productionRunAdmission(sessionId, "run-dispatch-timeout", "018f1f4e-7f0a-7000-8000-000000000352"),
     );
+    assert.equal(admitted.ok, true);
+    if (!admitted.ok) assert.fail("Run admission failed");
     const scope = {
       sessionId,
       workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
-      runId: "run-dispatch-timeout",
-      attemptId: "attempt-run-dispatch-timeout",
-      bindingId: "binding-run-dispatch-timeout",
+      runId: admitted.value.runId,
+      attemptId: admitted.value.attemptId,
+      bindingId: admitted.value.bindingId,
     } as const;
     assert.equal(
       (
@@ -747,7 +930,7 @@ workerTest("timed-out Dispatch begin converges without granting a second Provide
     blocker.exec("PRAGMA busy_timeout = 5000; BEGIN IMMEDIATE;");
     const command = {
       ...scope,
-      providerRequest: { prompt: "hello" },
+      providerRequest: productionRunProviderRequest(),
       ephemeralOwnerToken: null,
     } as const;
     try {
@@ -911,6 +1094,7 @@ workerTest("worker crash rejects every in-flight write with unknown effect", asy
   const crash = client.request("test.crash", "maintenance", {});
   await assert.rejects(crash, (error: unknown) => isClientError(error, "worker_crashed", "unknown"));
   await assert.rejects(delayedWrite, (error: unknown) => isClientError(error, "worker_crashed", "unknown"));
+  assert.equal((await client.fatalError).persistenceError.code, "worker_crashed");
   assert.equal(client.state, "failed");
 });
 
@@ -1356,27 +1540,51 @@ function productionSessionCreate(title: string, idempotencyKey: string) {
   } as const;
 }
 
-function productionRunAdmission(sessionId: string, runId: string, idempotencyKey: string) {
+function productionRunAdmission(sessionId: string, _runId: string, idempotencyKey: string) {
   return {
     sessionId,
     workspaceKey: PRODUCTION_TEST_WORKSPACE.workspaceKey,
     idempotencyKey,
-    message: { id: `message-${runId}`, contentBlocks: [{ type: "text", text: "hello" }] },
+    message: { contentBlocks: [{ type: "text", text: "hello" }] },
     run: {
-      id: runId,
       executionSnapshot: {
         providerId: "provider",
-        model: "test-model",
-        reasoning: { effort: "medium" },
-        approval: { mode: "on-request" },
-        sandbox: { mode: "workspace-write" },
-        workspace: { key: PRODUCTION_TEST_WORKSPACE.workspaceKey },
+        definitionVersion: "test-provider-v1",
+        modelSelection: "explicit",
+        settings: {
+          model: "test-model",
+          reasoningEffort: "medium",
+          approvalPolicy: "never",
+          sandbox: { mode: "workspace-write", networkAccess: false },
+        },
+        workspace: {
+          key: PRODUCTION_TEST_WORKSPACE.workspaceKey,
+          path: PRODUCTION_TEST_WORKSPACE.workspacePath,
+          allowedAdditionalDirectories: [],
+        },
         character: null,
       },
     },
-    attemptId: `attempt-${runId}`,
-    bindingIntent: { kind: "create" as const, bindingId: `binding-${runId}`, persistenceMode: "persistent" as const },
-    dispatch: { providerRequest: { prompt: "hello" }, providerIdempotencyKey: null },
+    dispatch: { providerRequest: productionRunProviderRequest(), providerIdempotencyKey: null },
+  } as const;
+}
+
+function productionRunProviderRequest() {
+  return {
+    providerId: "provider",
+    definitionVersion: "test-provider-v1",
+    contentBlocks: [{ type: "text", text: "hello" }],
+    startTurn: {
+      model: "test-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        mode: "workspace-write",
+        networkAccess: false,
+        writableRoots: [PRODUCTION_TEST_WORKSPACE.workspacePath],
+      },
+      workspacePath: PRODUCTION_TEST_WORKSPACE.workspacePath,
+    },
   } as const;
 }
 
@@ -1411,10 +1619,14 @@ function productionChildStart(parentSessionId: string, parentRunId: string, idem
       id: "run-worker-child",
       executionSnapshot: {
         providerId: "provider",
-        model: "test-model",
-        reasoning: { effort: "medium" },
-        approval: { mode: "on-request" },
-        sandbox: { mode: "workspace-write" },
+        definitionVersion: "test-provider-v1",
+        modelSelection: "explicit",
+        settings: {
+          model: "test-model",
+          reasoningEffort: "medium",
+          approvalPolicy: "on-request",
+          sandbox: { mode: "workspace-write", networkAccess: false },
+        },
         workspace: { key: PRODUCTION_TEST_WORKSPACE.workspaceKey },
         character: { id: "character" },
       },

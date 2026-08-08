@@ -3,7 +3,15 @@ import test from "node:test";
 
 import * as publicApi from "../src/main/index.js";
 import type { ApplicationRunOperations } from "../src/main/index.js";
-import type { ApplicationRunFollowResult, ApplicationRunStatus } from "../src/shared/application-run-model.js";
+import type {
+  ApplicationRunAdmissionResult,
+  ApplicationRunCancelResult,
+  ApplicationRunFollowResult,
+  ApplicationRunInteractionsResult,
+  ApplicationRunRespondInteractionResult,
+  ApplicationRunSendInputResult,
+  ApplicationRunStatus,
+} from "../src/shared/application-run-model.js";
 
 type Authorization = Readonly<{ principalId: string }>;
 type Equal<TLeft, TRight> = (<T>() => T extends TLeft ? 1 : 2) extends <T>() => T extends TRight ? 1 : 2 ? true : false;
@@ -11,6 +19,138 @@ type Assert<TValue extends true> = TValue;
 
 type StatusRequest = Parameters<ApplicationRunOperations<Authorization>["status"]>[0];
 type StatusValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["status"]>>;
+type StartRequest = Parameters<ApplicationRunOperations<Authorization>["start"]>[0];
+type RetryRequest = Parameters<ApplicationRunOperations<Authorization>["retry"]>[0];
+type SendInputRequest = Parameters<ApplicationRunOperations<Authorization>["sendInput"]>[0];
+type CancelRequest = Parameters<ApplicationRunOperations<Authorization>["cancel"]>[0];
+type InteractionsRequest = Parameters<ApplicationRunOperations<Authorization>["interactions"]>[0];
+type RespondInteractionRequest = Parameters<ApplicationRunOperations<Authorization>["respondInteraction"]>[0];
+type StartValue = Awaited<ReturnType<ApplicationRunOperations<Authorization>["start"]>>;
+type _StartOwnsOnlyPublicInputs = Assert<
+  Equal<keyof StartRequest, "context" | "sessionId" | "idempotencyKey" | "contentBlocks" | "providerSettings">
+>;
+type _RetryOwnsOnlyPublicInputs = Assert<
+  Equal<keyof RetryRequest, "context" | "sessionId" | "retryOfRunId" | "idempotencyKey" | "providerSettingsOverride">
+>;
+type _SendInputOwnsOnlyPublicInputs = Assert<
+  Equal<keyof SendInputRequest, "context" | "sessionId" | "runId" | "idempotencyKey" | "contentBlocks">
+>;
+type _SendInputCannotSupplyInternalIdentity = Assert<
+  Equal<
+    Extract<
+      keyof SendInputRequest,
+      "messageId" | "attemptId" | "bindingId" | "providerId" | "threadId" | "turnId" | "generationId" | "ownerToken"
+    >,
+    never
+  >
+>;
+type _CancelOwnsOnlyPublicInputs = Assert<
+  Equal<keyof CancelRequest, "context" | "sessionId" | "runId" | "idempotencyKey">
+>;
+type _CancelCannotSupplyInternalIdentity = Assert<
+  Equal<
+    Extract<
+      keyof CancelRequest,
+      "attemptId" | "bindingId" | "providerId" | "threadId" | "turnId" | "generationId" | "ownerToken"
+    >,
+    never
+  >
+>;
+type _InteractionsOwnOnlyPublicReadScope = Assert<Equal<keyof InteractionsRequest, "context" | "sessionId" | "runId">>;
+type _RespondInteractionOwnsOnlyPublicInputs = Assert<
+  Equal<keyof RespondInteractionRequest, "context" | "sessionId" | "runId" | "idempotencyKey" | "response">
+>;
+type _RespondInteractionResultOwnsOnlyPublicProjection = Assert<
+  Equal<
+    keyof ApplicationRunRespondInteractionResult,
+    | "sessionId"
+    | "runId"
+    | "interactionId"
+    | "admittedAt"
+    | "effectCertainty"
+    | "writeAttemptedAt"
+    | "settledAt"
+    | "resolutionCode"
+  >
+>;
+type _RespondInteractionCannotExposePrivateCorrelation = Assert<
+  Equal<
+    Extract<
+      keyof ApplicationRunRespondInteractionResult,
+      | "responseRefId"
+      | "providerId"
+      | "definitionVersion"
+      | "interactionKind"
+      | "semanticAction"
+      | "attemptId"
+      | "bindingId"
+      | "threadId"
+      | "turnId"
+    >,
+    never
+  >
+>;
+type _InteractionResultOwnsOnlyPublicProjection = Assert<
+  Equal<keyof ApplicationRunInteractionsResult, "sessionId" | "runId" | "runVersion" | "interactions">
+>;
+type _InteractionCannotExposePrivateCorrelation = Assert<
+  Equal<
+    Extract<
+      keyof ApplicationRunInteractionsResult["interactions"][number],
+      | "handle"
+      | "connectionGeneration"
+      | "threadId"
+      | "turnId"
+      | "itemId"
+      | "attemptId"
+      | "bindingId"
+      | "workspaceKey"
+      | "workspacePath"
+      | "rawPayload"
+    >,
+    never
+  >
+>;
+type _CancelResultUsesStatusPhases = Assert<
+  Equal<ApplicationRunCancelResult["phase"], "canceling" | "completed" | "failed" | "canceled" | "interrupted">
+>;
+type _CancelingRequiresRequestTimestamp = Assert<
+  Equal<
+    Extract<ApplicationRunCancelResult, Readonly<{ phase: "canceling" }>>["cancellation"],
+    Readonly<{ requestedAt: number; acknowledgedAt?: never }>
+  >
+>;
+type _CanceledAcknowledgmentIsPaired = Assert<
+  Equal<
+    NonNullable<Extract<ApplicationRunCancelResult, Readonly<{ phase: "canceled" }>>["cancellation"]>,
+    Readonly<{ requestedAt: number; acknowledgedAt: number }>
+  >
+>;
+type _PendingInputUsesOptionalNeverResolution = Assert<
+  Equal<
+    keyof Extract<ApplicationRunSendInputResult, Readonly<{ deliveryState: "pending" }>>,
+    "sessionId" | "runId" | "messageId" | "deliveryState" | "resolutionCode"
+  >
+>;
+type _RejectedInputUsesBoundedResolution = Assert<
+  Equal<
+    Extract<ApplicationRunSendInputResult, Readonly<{ deliveryState: "rejected" }>>["resolutionCode"],
+    "provider_rejected" | "delivery_not_sent"
+  >
+>;
+type _StartCannotSupplyScopeOrInternalIdentity = Assert<
+  Equal<
+    Extract<
+      keyof StartRequest,
+      "providerId" | "workspaceKey" | "workspacePath" | "attemptId" | "bindingId" | "threadId" | "turnId"
+    >,
+    never
+  >
+>;
+type _AdmissionResultCannotExposeInternalIdentity = Assert<
+  Equal<keyof ApplicationRunAdmissionResult, "sessionId" | "runId" | "retryOfRunId" | "phase">
+>;
+type _StartUsesWriteEnvelope = Assert<Equal<StartValue["overallStatus"], "success" | "partial_success" | "failure">>;
 type _StatusRequestOwnsRunScope = Assert<
   Equal<Pick<StatusRequest, "sessionId" | "runId">, Readonly<{ sessionId: string; runId: string }>>
 >;
@@ -41,6 +181,26 @@ test("public Run API is type-only and keeps phase-specific status contracts", ()
   const compileTimeAssertions = null as
     | _StatusRequestOwnsRunScope
     | _StatusResponseUsesApplicationEnvelope
+    | _StartOwnsOnlyPublicInputs
+    | _RetryOwnsOnlyPublicInputs
+    | _SendInputOwnsOnlyPublicInputs
+    | _SendInputCannotSupplyInternalIdentity
+    | _CancelOwnsOnlyPublicInputs
+    | _CancelCannotSupplyInternalIdentity
+    | _InteractionsOwnOnlyPublicReadScope
+    | _RespondInteractionOwnsOnlyPublicInputs
+    | _RespondInteractionResultOwnsOnlyPublicProjection
+    | _RespondInteractionCannotExposePrivateCorrelation
+    | _InteractionResultOwnsOnlyPublicProjection
+    | _InteractionCannotExposePrivateCorrelation
+    | _CancelResultUsesStatusPhases
+    | _CancelingRequiresRequestTimestamp
+    | _CanceledAcknowledgmentIsPaired
+    | _PendingInputUsesOptionalNeverResolution
+    | _RejectedInputUsesBoundedResolution
+    | _StartCannotSupplyScopeOrInternalIdentity
+    | _AdmissionResultCannotExposeInternalIdentity
+    | _StartUsesWriteEnvelope
     | _ActiveAllowsLiveActivity
     | _CompletedRequiresTerminalTime
     | _DeadlineCannotCarryTerminalStatus

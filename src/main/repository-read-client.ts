@@ -7,11 +7,20 @@ import {
   type MessageListItem,
   type LocalRepositoryListItem,
   type Page,
+  type RecoveryCandidate,
   type RecoveryProjection,
   type RunDetail,
+  type RunAdmissionReplayProbeRequest,
+  type RunAdmissionReplayProbeResult,
   type RunEventPage,
   type RunHistoryListItem,
   type RunInputDeliveryRecoveryItem,
+  type RunCancelReplayProbeRequest,
+  type RunCancelReplayProbeResult,
+  type RunInputReplayProbeRequest,
+  type RunInputReplayProbeResult,
+  type RunInteractionResponseReplayProbeRequest,
+  type RunInteractionResponseReplayProbeResult,
   type RunOutputListItem,
   type RunOutputItemDetail,
   type RunOutputPayloadChunkRequest,
@@ -168,6 +177,31 @@ export class RepositoryReadClient {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputDeliveriesPage, "read", input, options);
   }
 
+  runInputReplayProbe(input: RunInputReplayProbeRequest, options?: RequestOptions): Promise<RunInputReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runInputReplayProbe, "read", input, options);
+  }
+
+  runAdmissionReplayProbe(
+    input: RunAdmissionReplayProbeRequest,
+    options?: RequestOptions,
+  ): Promise<RunAdmissionReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runAdmissionReplayProbe, "read", input, options);
+  }
+
+  runInteractionResponseReplayProbe(
+    input: RunInteractionResponseReplayProbeRequest,
+    options?: RequestOptions,
+  ): Promise<RunInteractionResponseReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runInteractionResponseReplayProbe, "read", input, options);
+  }
+
+  runCancelReplayProbe(
+    input: RunCancelReplayProbeRequest,
+    options?: RequestOptions,
+  ): Promise<RunCancelReplayProbeResult> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.runCancelReplayProbe, "read", input, options);
+  }
+
   payloadChunk(input: RunOutputPayloadChunkRequest, options?: RequestOptions): Promise<RunOutputPayloadChunkResult> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.payloadChunk, "read", input, options);
   }
@@ -204,5 +238,12 @@ export class RepositoryReadClient {
     options?: RequestOptions,
   ): Promise<RecoveryProjection> {
     return this.worker.request(REPOSITORY_READ_OPERATIONS.recoveryGet, "read", input, options);
+  }
+
+  recoveryCandidatesPage(
+    input: Readonly<{ cursor?: string; limit?: number }>,
+    options?: RequestOptions,
+  ): Promise<Page<RecoveryCandidate>> {
+    return this.worker.request(REPOSITORY_READ_OPERATIONS.recoveryCandidatesPage, "read", input, options);
   }
 }

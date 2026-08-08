@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import { PersistenceWorkerClient } from "../dist/main/persistence-worker-client.js";
 import { RepositoryReadClient } from "../dist/main/repository-read-client.js";
 import { RepositoryWriteClient } from "../dist/main/repository-write-client.js";
+import { cleanupControlledRuntimeHost, startControlledRuntimeHost } from "./runtime-host-smoke-support.mjs";
 
 const root = process.cwd();
 const entryPath = path.join(root, "dist", "cli", "entry.js");
@@ -21,15 +22,6 @@ const runAdmitKey = "018f1f4e-7f0a-7000-8000-000000000502";
 const wrongScopeSessionCreateKey = "018f1f4e-7f0a-7000-8000-000000000503";
 const interruptedRunAdmitKey = "018f1f4e-7f0a-7000-8000-000000000504";
 const noFinalRunAdmitKey = "018f1f4e-7f0a-7000-8000-000000000505";
-const runId = "run-smoke-1";
-const attemptId = "attempt-run-smoke-1";
-const interruptedRunId = "run-smoke-interrupted-1";
-const interruptedAttemptId = "attempt-run-smoke-interrupted-1";
-const interruptedMessageId = "message-run-smoke-interrupted-1";
-const noFinalRunId = "run-smoke-no-final-1";
-const noFinalAttemptId = "attempt-run-smoke-no-final-1";
-const noFinalMessageId = "message-run-smoke-no-final-1";
-const userMessageId = "message-run-smoke-1";
 const assistantMessageId = "message-run-smoke-2";
 const userMessageBlocks = [{ type: "text", text: "observe me" }];
 const assistantMessageText = "a".repeat(70 * 1024);
@@ -46,6 +38,19 @@ const timedOutExportPath = path.join(tempDirectory, "timed-out-output.bin");
 
 fs.mkdirSync(workspacePath, { recursive: true });
 
+let runtimeHost;
+let runId;
+let attemptId;
+let bindingId;
+let userMessageId;
+let interruptedRunId;
+let interruptedAttemptId;
+let interruptedBindingId;
+let interruptedMessageId;
+let noFinalRunId;
+let noFinalAttemptId;
+let noFinalBindingId;
+let noFinalMessageId;
 try {
   const runHelp = invoke(["run", "--help"], environment);
   assert.equal(runHelp.status, 0);
@@ -63,6 +68,8 @@ try {
   assert.equal(invalidMessage.status, 20);
   assert.equal(parseJsonOutput(invalidMessage).kind, "usage_failure");
   assert.equal(fs.existsSync(path.dirname(databasePath)), false, "Run help or parse failure started persistence");
+
+  runtimeHost = await startControlledRuntimeHost(appDataRoot);
 
   const created = runJson(
     [
@@ -106,6 +113,9 @@ try {
     0,
   );
   const wrongScopeSessionId = wrongScopeCreated.applicationResponse.value.sessionId;
+  const initialShutdown = await runtimeHost.stop();
+  assert.equal(initialShutdown.checkpoint, "completed");
+  runtimeHost = undefined;
   const worker = new PersistenceWorkerClient({ databasePath, legacyDatabasePaths: [] });
   await worker.start();
   try {
@@ -117,30 +127,21 @@ try {
       sessionId,
       workspaceKey,
       idempotencyKey: runAdmitKey,
-      message: { id: userMessageId, contentBlocks: userMessageBlocks },
+      message: { contentBlocks: userMessageBlocks },
       run: {
-        id: runId,
-        executionSnapshot: {
-          providerId: "codex",
-          model: "smoke-model",
-          reasoning: { effort: "medium" },
-          approval: { mode: "on-request" },
-          sandbox: { mode: "workspace-write" },
-          workspace: { key: workspaceKey },
-          character: null,
-        },
+        executionSnapshot: runExecutionSnapshot(workspaceKey),
       },
-      attemptId,
-      bindingIntent: { kind: "create", bindingId: "binding-run-smoke-1", persistenceMode: "persistent" },
-      dispatch: { providerRequest: { prompt: "observe me" }, providerIdempotencyKey: null },
+      dispatch: { providerRequest: runProviderRequest(userMessageBlocks), providerIdempotencyKey: null },
     });
     assert.equal(admission.ok, true);
+    if (!admission.ok) throw new Error("Normal Run admission failed.");
+    ({ runId, attemptId, bindingId, messageId: userMessageId } = admission.value);
     const binding = await writes.resolveProviderBinding({
       sessionId,
       workspaceKey,
       runId,
       attemptId,
-      bindingId: "binding-run-smoke-1",
+      bindingId,
       resolution: {
         kind: "active",
         externalConversationId: "conversation-run-smoke-1",
@@ -153,8 +154,8 @@ try {
       workspaceKey,
       runId,
       attemptId,
-      bindingId: "binding-run-smoke-1",
-      providerRequest: { prompt: "observe me" },
+      bindingId,
+      providerRequest: runProviderRequest(userMessageBlocks),
       ephemeralOwnerToken: null,
     });
     assert.equal(dispatch.ok, true);
@@ -163,15 +164,22 @@ try {
       workspaceKey,
       runId,
       attemptId,
-      bindingId: "binding-run-smoke-1",
+      bindingId,
       ephemeralOwnerToken: null,
       outcome: { kind: "accepted", externalExecutionId: "execution-run-smoke-1" },
     });
     assert.equal(dispatchResolution.ok, true);
+    const providerExecution = {
+      attemptId,
+      bindingId,
+      externalConversationId: "conversation-run-smoke-1",
+      externalExecutionId: "execution-run-smoke-1",
+    };
     const appended = await writes.appendRunOutput({
       sessionId,
       workspaceKey,
       runId,
+      providerExecution,
       item: {
         id: outputItemId,
         category: "diagnostic",
@@ -194,6 +202,7 @@ try {
       sessionId,
       workspaceKey,
       runId,
+      providerExecution,
       item: {
         id: binaryOutputItemId,
         category: "diagnostic",
@@ -218,7 +227,9 @@ try {
       runId,
       attemptId,
       terminalEvent: { id: "event-run-smoke-terminal", dedupeKey: "run-smoke-terminal" },
+      providerExecution,
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "completed",
         finalAssistantMessage: { id: assistantMessageId, contentBlocks: assistantMessageBlocks },
@@ -232,31 +243,30 @@ try {
       sessionId,
       workspaceKey,
       idempotencyKey: interruptedRunAdmitKey,
-      message: { id: interruptedMessageId, contentBlocks: [{ type: "text", text: "interrupt me" }] },
+      message: { contentBlocks: [{ type: "text", text: "interrupt me" }] },
       run: {
-        id: interruptedRunId,
-        executionSnapshot: {
-          providerId: "codex",
-          model: "smoke-model",
-          reasoning: { effort: "medium" },
-          approval: { mode: "on-request" },
-          sandbox: { mode: "workspace-write" },
-          workspace: { key: workspaceKey },
-          character: null,
-        },
+        executionSnapshot: runExecutionSnapshot(workspaceKey),
       },
-      attemptId: interruptedAttemptId,
-      bindingIntent: { kind: "reuse", bindingId: "binding-run-smoke-1" },
-      dispatch: { providerRequest: { prompt: "interrupt me" }, providerIdempotencyKey: null },
+      dispatch: {
+        providerRequest: runProviderRequest([{ type: "text", text: "interrupt me" }]),
+        providerIdempotencyKey: null,
+      },
     });
     assert.equal(interruptedAdmission.ok, true);
+    if (!interruptedAdmission.ok) throw new Error("Interrupted Run admission failed.");
+    ({
+      runId: interruptedRunId,
+      attemptId: interruptedAttemptId,
+      bindingId: interruptedBindingId,
+      messageId: interruptedMessageId,
+    } = interruptedAdmission.value);
     const interruptedDispatch = await writes.beginRunDispatch({
       sessionId,
       workspaceKey,
       runId: interruptedRunId,
       attemptId: interruptedAttemptId,
-      bindingId: "binding-run-smoke-1",
-      providerRequest: { prompt: "interrupt me" },
+      bindingId: interruptedBindingId,
+      providerRequest: runProviderRequest([{ type: "text", text: "interrupt me" }]),
       ephemeralOwnerToken: null,
     });
     assert.equal(interruptedDispatch.ok, true);
@@ -265,11 +275,17 @@ try {
       workspaceKey,
       runId: interruptedRunId,
       attemptId: interruptedAttemptId,
-      bindingId: "binding-run-smoke-1",
+      bindingId: interruptedBindingId,
       ephemeralOwnerToken: null,
       outcome: { kind: "accepted", externalExecutionId: "execution-run-smoke-interrupted-1" },
     });
     assert.equal(interruptedDispatchResolution.ok, true);
+    const interruptedProviderExecution = {
+      attemptId: interruptedAttemptId,
+      bindingId: interruptedBindingId,
+      externalConversationId: "conversation-run-smoke-1",
+      externalExecutionId: "execution-run-smoke-interrupted-1",
+    };
     const interruptedTerminal = await writes.completeRun({
       sessionId,
       workspaceKey,
@@ -279,7 +295,9 @@ try {
         id: "event-run-smoke-interrupted-terminal",
         dedupeKey: "run-smoke-interrupted-terminal",
       },
+      providerExecution: interruptedProviderExecution,
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: {
         kind: "interrupted",
         failureOrigin: "transport",
@@ -295,31 +313,30 @@ try {
       sessionId,
       workspaceKey,
       idempotencyKey: noFinalRunAdmitKey,
-      message: { id: noFinalMessageId, contentBlocks: [{ type: "text", text: "complete without a reply" }] },
+      message: { contentBlocks: [{ type: "text", text: "complete without a reply" }] },
       run: {
-        id: noFinalRunId,
-        executionSnapshot: {
-          providerId: "codex",
-          model: "smoke-model",
-          reasoning: { effort: "medium" },
-          approval: { mode: "on-request" },
-          sandbox: { mode: "workspace-write" },
-          workspace: { key: workspaceKey },
-          character: null,
-        },
+        executionSnapshot: runExecutionSnapshot(workspaceKey),
       },
-      attemptId: noFinalAttemptId,
-      bindingIntent: { kind: "reuse", bindingId: "binding-run-smoke-1" },
-      dispatch: { providerRequest: { prompt: "complete without a reply" }, providerIdempotencyKey: null },
+      dispatch: {
+        providerRequest: runProviderRequest([{ type: "text", text: "complete without a reply" }]),
+        providerIdempotencyKey: null,
+      },
     });
     assert.equal(noFinalAdmission.ok, true);
+    if (!noFinalAdmission.ok) throw new Error("No-final-message Run admission failed.");
+    ({
+      runId: noFinalRunId,
+      attemptId: noFinalAttemptId,
+      bindingId: noFinalBindingId,
+      messageId: noFinalMessageId,
+    } = noFinalAdmission.value);
     const noFinalDispatch = await writes.beginRunDispatch({
       sessionId,
       workspaceKey,
       runId: noFinalRunId,
       attemptId: noFinalAttemptId,
-      bindingId: "binding-run-smoke-1",
-      providerRequest: { prompt: "complete without a reply" },
+      bindingId: noFinalBindingId,
+      providerRequest: runProviderRequest([{ type: "text", text: "complete without a reply" }]),
       ephemeralOwnerToken: null,
     });
     assert.equal(noFinalDispatch.ok, true);
@@ -328,18 +345,26 @@ try {
       workspaceKey,
       runId: noFinalRunId,
       attemptId: noFinalAttemptId,
-      bindingId: "binding-run-smoke-1",
+      bindingId: noFinalBindingId,
       ephemeralOwnerToken: null,
       outcome: { kind: "accepted", externalExecutionId: "execution-run-smoke-no-final-1" },
     });
     assert.equal(noFinalDispatchResolution.ok, true);
+    const noFinalProviderExecution = {
+      attemptId: noFinalAttemptId,
+      bindingId: noFinalBindingId,
+      externalConversationId: "conversation-run-smoke-1",
+      externalExecutionId: "execution-run-smoke-no-final-1",
+    };
     const noFinalTerminal = await writes.completeRun({
       sessionId,
       workspaceKey,
       runId: noFinalRunId,
       attemptId: noFinalAttemptId,
       terminalEvent: { id: "event-run-smoke-no-final-terminal", dedupeKey: "run-smoke-no-final-terminal" },
+      providerExecution: noFinalProviderExecution,
       preDispatchResolution: { kind: "not_applicable" },
+      cancelCorrelation: { kind: "none" },
       outcome: { kind: "completed", finalAssistantMessage: null },
       outputs: [],
       childResult: null,
@@ -349,6 +374,8 @@ try {
     const shutdown = await worker.shutdown();
     assert.equal(shutdown.checkpoint, "completed");
   }
+
+  runtimeHost = await startControlledRuntimeHost(appDataRoot);
 
   const firstRunPage = runJson(["session", "runs", "--session-id", sessionId, "--limit", "1"], environment, 0);
   assert.equal(firstRunPage.applicationResponse.value.items.length, 1);
@@ -701,8 +728,15 @@ try {
   const missing = runJson(["run", "status", "--session-id", sessionId, "--run-id", "missing-run"], environment, 22);
   assert.equal(missing.applicationResponse.error.code, "not_found");
 
+  const finalShutdown = await runtimeHost.stop();
+  assert.equal(finalShutdown.checkpoint, "completed");
+  runtimeHost = undefined;
   for (const suffix of ["-wal", "-shm", "-journal"]) {
-    assert.equal(fs.existsSync(`${databasePath}${suffix}`), false, `SQLite sidecar remained after Run CLI: ${suffix}`);
+    assert.equal(
+      fs.existsSync(`${databasePath}${suffix}`),
+      false,
+      `SQLite sidecar remained after graceful runtime host shutdown: ${suffix}`,
+    );
   }
 
   console.log(
@@ -727,11 +761,49 @@ try {
       sessionMessageControlPlane: "verified",
       sessionRunHistoryControlPlane: "verified",
       exportNoClobber: "verified",
+      runtimeHostCheckpoint: "completed",
       sqliteSidecars: "none",
     }),
   );
 } finally {
-  fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  await cleanupControlledRuntimeHost(runtimeHost, () =>
+    fs.rmSync(tempDirectory, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+  );
+}
+
+function runExecutionSnapshot(workspaceKey) {
+  return {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    modelSelection: "explicit",
+    settings: {
+      model: "smoke-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+    workspace: { key: workspaceKey, path: workspacePath, allowedAdditionalDirectories: [] },
+    character: null,
+  };
+}
+
+function runProviderRequest(contentBlocks) {
+  return {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    contentBlocks,
+    startTurn: {
+      model: "smoke-model",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandboxPolicy: {
+        mode: "workspace-write",
+        networkAccess: false,
+        writableRoots: [workspacePath],
+      },
+      workspacePath,
+    },
+  };
 }
 
 function runJson(args, childEnvironment, expectedStatus) {

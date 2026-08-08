@@ -14,10 +14,10 @@ Codex と GitHub Copilot は SDK をアプリケーションへ直接組み込�
 
 新実装で対応する Provider は次の 2 つに限定する。
 
-| Provider | 接続先 | Transport | Protocol |
-| --- | --- | --- | --- |
-| Codex | `codex app-server` | stdio の JSONL を第一候補とする | Codex App Server protocol |
-| GitHub Copilot | `copilot --acp --stdio` | stdio の NDJSON を第一候補とする | Agent Client Protocol (ACP) |
+| Provider       | 接続先                  | Transport                         | Protocol                    |
+| -------------- | ----------------------- | --------------------------------- | --------------------------- |
+| Codex          | `codex app-server`      | runtime hostが所有するstdio JSONL | Codex App Server protocol   |
+| GitHub Copilot | `copilot --acp --stdio` | stdio の NDJSON を第一候補とする  | Agent Client Protocol (ACP) |
 
 Cursor その他の Provider は今回の再実装対象に含めない。
 
@@ -32,15 +32,13 @@ Cursor その他の Provider は今回の再実装対象に含めない。
 - GUI 固有の layout や一時的な表示状態は CLI 対応の対象外としてよい。
 
 ```text
-Codex App Server / GitHub Copilot ACP
-                  ↓
-            Provider Adapter
-                  ↓
-      WithMate Application Service
-                  ↓
-       Runtime / Persistence / Event
-            ┌─────┴─────┐
-           CLI         GUI
+Long-lived WithMate Runtime Host
+├─ Provider Adapter ── Codex App Server / GitHub Copilot ACP
+├─ Application Service
+├─ Persistence Worker
+└─ Live State
+        ↑ local IPC
+      CLI / GUI
 ```
 
 ### 2. Provider CLI を別 process に分離する
@@ -49,6 +47,15 @@ Codex App Server / GitHub Copilot ACP
 - process 起動、終了監視、標準入出力、標準エラー、timeout、protocol version、CLI version の記録は共通 infrastructure 候補とする。
 - wire protocol の message 型と lifecycle は Provider ごとに異なるため、Codex App Server と ACP を 1 つの汎用 protocol 型へ統合しない。
 - SDK 内部の非公開または SDK による互換処理を前提とする JSON-RPC へ直接依存しない。
+
+Provider process、Persistence Worker、live Run、assistant draft、pending interactionは、CLIやWindowから独立した長寿命WithMate runtime hostが所有する。runtime hostは1 current OS user / 1 application data rootにつき1つとし、operational CLIとGUIは同じApplication Serviceへclientとして接続する。
+
+- Codexはruntime hostが`codex app-server --stdio` childを直接所有する。Codex managed daemon、WebSocket、experimental APIを初期構成の必須依存にしない。
+- Codex executableは`WITHMATE_CODEX_EXECUTABLE`で指定したabsolute native executableだけを使う。PATH検索、npm shim、shell commandへfallbackせず、設定不備はProvider runtimeを必要としたRunのpre-dispatch failureとして扱う。選択理由はADR 013を正本とする。
+- CLIはWindows named pipeまたはUnix domain socketのOS-local IPCを使い、version handshake後にboundedなrequest / responseを交換する。TCP listenerやProvider protocolをpublic CLIへ公開しない。
+- CLI connection終了はRun cancel、runtime host shutdown、Provider disconnectへ変換しない。cancelは明示operationだけが行う。
+- runtime host不在時はsingle-owner起動を調停し、readyとprotocol versionを確認する。one-shot Persistence WorkerやProvider直接接続へfallbackしない。
+- owner、起動、IPC、recoveryの判断理由は`docs/adr/013-runtime-host-and-run-mutation-control-plane.md`を正本とする。
 
 ### 3. GitHub Copilot は ACP で接続する
 
@@ -93,13 +100,27 @@ Session
 
 ### 6. Provider 共通の Run phase / live activity は WithMate が管理する
 
-Provider は実際の処理状態と Provider 固有 event を所有する。WithMate はそれらを永続化する共通Run phaseと、Main processでメモリ管理するlive activity / live interaction、terminal outcomeへ変換し、CLI / GUIへ提供する。
+Providerは実際の処理状態とProvider固有eventを所有する。WithMateはそれらを永続化する共通Run phaseと、runtime hostでメモリ管理するlive activity / live interaction、terminal outcomeへ変換し、CLI / GUIへ提供する。
 
 - phase は `queued`、`starting`、`active`、`canceling`、`finalizing` と terminal phase を表す。
 - live activity はactive Runの`running`、`waiting_approval`、`waiting_input`を表し、DBへ保存しない。
-- approval / elicitationのrequest本体はlive activityへ埋め込まず、request IDごとのlive interactionとしてMain processのメモリで管理する。
+- approval / user input / MCP elicitationのrequest本体はlive activityへ埋め込まず、WithMate発行のopaque IDごとのlive interactionとしてruntime hostのメモリで管理する。Provider request IDはAdapter内部相関に限定する。Provider設定とinteractionのversion境界、dynamic response validation、上限超過時のfail-closed projectionはADR 015、Codex初期interactionの機械可読なpublic shapeは`schema/providers/codex/interaction-v1.schema.json`を正本とする。
 
 状態遷移、terminal outcome、retry / recovery の契約は `docs/design/session-run-message-contract.md` で定める。Provider の terminal event、WithMate process の crash、persistence failure を同一の失敗として扱わない。
+
+runtime hostは、Provider mutation responseとAdapter eventをRunAttemptごとの直列処理へ合流させる。accepted Dispatchを永続化した後だけoutput、live activity、terminal eventを同じThread / TurnのRunへ適用する。mutation responseより先に、Adapterが同じpending mutationへ一意に相関したTurn開始またはterminal eventを観測した場合、その証拠をaccepted responseとしてEvent Serviceへ渡せる。responseまで受理有無が不明で、この証拠もない場合は自動再送せず、response後に届いた同一Thread / Turnのeventで新しい外部executionを一意に証明できた場合だけacceptedへ知識補正する。Dispatch resolutionの永続化結果が不明な間に届いた同じThread / Turnのeventはbounded bufferへ保持し、frozen resolution commandのexact confirmation後に同じAttempt queueで再生する。
+
+RunOutputへ変換するeventはThreadとTurnの完全一致を要求する。Turnを持たないProvider metadataやdiagnosticはgeneration-scopedの診断に留め、現在のactive Turnで相関を補完しない。Dispatch begin、Provider送信前のrejected resolution、output、Dispatch resolution、terminal commandの永続化結果が不明な場合は、identityとcommandを固定したpersistence-only ownerを保持する。runtime hostは同じcommandのexact retryを自動継続し、generation解放、後続Provider eventの無視、または同じpublic requestの再実行へ依存しない。Provider mutationは再送しない。Provider送信前のbeginでresponseを失った場合も、同じcommandの再実行またはread-backで`dispatching`を確認したownerは未送信としてpre-dispatch terminalへ収束させ、Providerへ送らない。
+
+accepted Dispatch resolutionはProvider executionを受理した証拠なので、永続化結果が不明な間もownerをgeneration解放で捨てない。terminal commandは、先行する未確認RunOutputを同じidentityとcommandで確定してから送る。これらのlive ownerはruntime全体で同じ128 Runの上限へ数え、Dispatch beginの未確認ownerだけで上限を迂回しない。上限到達時も既存owner自身のexact retryは新しい枠として数えず、別Runのhandoffだけを拒否する。
+
+Provider connectionのcloseは、Adapter、transport、process ownership、native handleの各層でin-flight dedupeと完了結果を分ける。失敗したPromiseや`closed`状態を成功結果としてcacheせず、同じownerを保持して後続closeで再駆動する。processまたはnative handleのpartial acquisitionもstructured cleanup ownerとしてtransportへ渡し、startup failure後のcloseで同じownerを回収する。startup後にschema不一致などでAdapterを公開できない場合も、factoryがtransport cleanupを所有し、cleanup成功前のsuccessor spawnを拒否する。shutdownでcloseが未解決ならruntime hostのsingle-owner claimを解放しない。
+
+runtime factoryは、設定不備とcapability不一致を決定的なstartup failure、processまたはtransportの開始失敗をinterruptionとして型付きで返す。Codex executableはcurrent OSの形式を検証し、WindowsではPE、LinuxではELF、macOSではthin / fat Mach-Oだけを設定値として受理する。wrong-OSまたは破損したartifactをprocess起動失敗へ持ち越さない。Applicationはstartup failureの種別をADR 005のpre-dispatch outcomeへ変換する。
+
+Adapterのcloseは新しいProvider eventの受信を止めるが、close開始前に正規化済みのevent queueを破棄しない。runtime hostはAdapterから取得したeventをEvent Serviceの受理完了までexact ownerとして保持し、受理失敗時は同じeventから再開する。Event ServiceもoperationのrejectだけではAttemptとfrozen commandを破棄しない。runtime hostはclose後も残queueをEvent Serviceへ受け渡し、drain完了後にだけgenerationを解放する。これにより、Provider terminal eventとfinal Messageの確定をprocess interruptionへ置き換えない。
+
+Adapterがredaction判定を完了していない本文は保存せず、RunOutputの`omitted_redaction`へ写像する。Provider terminal outcomeとassistant contentの検証失敗は別に扱い、content failureはbounded diagnostic outputとして記録しても、Providerが報告したcompleted / failed / interruptedを別outcomeへ置き換えない。
 
 ## Provider 共通境界
 
@@ -110,8 +131,8 @@ Provider Adapter が WithMate へ公開する最小操作候補:
 - message を送信して Run を開始する
 - 実行中の Run へ追加指示を送る
 - Run を cancel する
-- approval request へ回答する
-- elicitation request へ回答する
+- pending interactionのbounded snapshotを取得する
+- kind-discriminated responseでpending interactionへ回答する
 - Provider capability、model、protocol version を取得する
 - 外部会話を終了または解放する
 
@@ -120,8 +141,7 @@ Provider Adapter が WithMate へ公開する最小 event 候補:
 - Run 開始
 - assistant message の途中出力
 - tool / command 実行の開始、更新、終了
-- approval request
-- elicitation request
+- Provider固有kindを保ったpending interaction request
 - Run の正常完了、失敗、cancel、中断
 - Provider process または transport の異常
 - 未対応の Provider event
@@ -130,7 +150,20 @@ Provider Adapter が WithMate へ公開する最小 event 候補:
 
 ## CLI 境界
 
-CLI contract の詳細は後続 design で確定する。現時点では次を固定する。
+CLIのversion付きJSON envelope、exit code、projectionはADR 006 / 011を維持する。Run mutationのpublic operation名は次で固定し、Provider method名を公開しない。
+
+- `withmate run start`
+- `withmate run retry`
+- `withmate run send-input`
+- `withmate run cancel`
+- `withmate run interactions`
+- `withmate run respond-interaction`
+
+operational CLIはruntime hostへlocal IPCで接続する。help、version、argv parseだけはhostを起動しない。connection closeやSIGINTはclient lifecycleだけを中断し、`run cancel`へ暗黙変換しない。
+
+Session作成は`withmate session create --provider <providerId>`でProviderを固定する。definition versionはSessionへ固定せず、各Runが完全な`providerId + definitionVersion + settings` envelopeをsnapshotする。Run start / retryの`--provider-settings-json <json>`は同じSession Providerに属する登録済みdefinitionだけを受理し、partial mergeやRun単位のProvider切替は行わない。retryでoverrideを省略した場合はsource Runのversioned envelopeを継承し、後続versionへ暗黙upgradeしない。詳細はADR 015を正本とする。
+
+共通CLI contractとして次を維持する。
 
 - machine-readable な結果は stdout へ JSON で出力する。
 - human-readable な diagnostic は stderr へ出力する。
@@ -158,18 +191,21 @@ CLI contract の詳細は後続 design で確定する。現時点では次を�
 - ephemeral Thread は `thread/read(includeTurns=true)` を利用できない。transport の smoke test と、永続履歴・resume の検証を分ける。
 - completed persistent ThreadはApp Server process再起動後に履歴をread / resumeできる。
 - stdio App Server processをactive Turn中に終了すると、再起動後は同じTurnが`interrupted`となる。切断前の未確定assistant deltaはProvider履歴から復元できない。streaming deltaを永続化しない方針に従い、crash時の未確定draft消失を許容し、復旧時に推測でpartial outputを生成しない。
-- model catalog は `model/list` から取得できる。version / account による差分を前提に起動時または明示 refresh で取得する。
+- model catalog は `model/list`、Provider featureは`modelProvider/capabilities/read`から取得できる。version / account による差分を前提に、起動時または明示refreshでvisible / hidden両catalogとcapabilityを取得する。
+- `codex-cli 0.144.6`では、`turn/interrupt`の空response後にThread idleと`turn/completed(interrupted)`が届く。user cancelはterminal eventとの相関後に確定する。
+- `turn/steer`はactive Turn ID不一致とactive Turn不在を拒否し、一致時は同じTurnへsupplemental user Messageを反映する。
+- `gpt-5.6-luna` / `high`の3 Turnでexplicit agentMessage phaseの`commentary`と`final_answer`を実測した。stable schemaが許可する`null`はphase unknownとしてfallbackし、受信時点でfinalと断定しない。
+- `codex-cli 0.145.0`でもWindowsのmanaged daemon lifecycleはUnix限定として拒否された。CLI helpにはexperimental WebSocket endpointが存在するが、初期CP3はWithMate runtime hostがstdio App Server childを所有し、CLI client-only切断をWithMate local IPC境界へ置く。
+- `codex-cli 0.145.0`ではcommand / file approvalのaccept / decline、turn scopeのpermission approval、`request_user_input`を実測した。MCPはdirect callとephemeral Thread上のLuna Turnで完全round tripを実測した。model Turnでは同じ`mcpServer/elicitation/request`で届くMCP tool approvalとserver formをmetadataの`codex_approval_kind`で分離し、tool approvalの`serverRequest/resolved`より後に届くformだけを次段として扱う。stable protocolの`_meta`に加え、live probeで観測した`meta` aliasを同じschema-evidenced inputとして受理する。各requestの解決、fixture response、MCP item terminal、Turn terminalを確認し、`serverRequest/resolved`だけをinteraction round trip完了とみなさない。
 
 詳細は `docs/investigations/codex-app-server/capability-matrix.md` と `docs/investigations/codex-app-server/validation-results.md` を参照する。
 
 ## 未決事項
 
-- CLI client の終了後も Run を継続する常駐 process / daemon を採用するか。
 - Provider を変更する linked Session へ、どの context を引き継ぐか。
 - 将来 1 つの Session に複数 active Run を許可する場合、branch / merge contract をどう定義するか。
 - Provider 側 conversation history と WithMate message の欠落・重複をどう照合するか。
-- 常駐daemonを残したclient-only切断時にactive Turnへ再接続し、terminal eventを継続受信できるか。
-- Codex App Server と ACP で共通化できる approval / elicitation contract の範囲。
+- Provider間でapproval / sandboxの意味を共通enumへ揃えない。各Provider definitionが設定UI、validation、interaction kindを所有し、共通層はADR 015のversioned envelopeとgeneric interaction操作だけを維持する。
 - ACP で Session list、resume、steering、cancel、並行実行をどこまで利用できるか。
 - Copilot ACP で Provider model catalog を取得できない場合の fallback。
 
@@ -182,6 +218,7 @@ CLI contract の詳細は後続 design で確定する。現時点では次を�
 - `docs/issue-triage.md`
 - `docs/design/session-run-message-contract.md`
 - `docs/design/codex-app-server-adapter-contract.md`
+- `docs/adr/013-runtime-host-and-run-mutation-control-plane.md`
 - `docs/investigations/codex-app-server/capability-matrix.md`
 - `docs/investigations/codex-app-server/validation-plan.md`
 - `docs/investigations/codex-app-server/validation-results.md`

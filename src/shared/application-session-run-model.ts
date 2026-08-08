@@ -5,7 +5,8 @@ import type {
   ApplicationSessionOperationContext,
 } from "./application-service-model.js";
 import type {
-  ApplicationRunCancellationSummary,
+  ApplicationRunCancellationAcknowledgementSummary,
+  ApplicationRunCancellationRequestSummary,
   ApplicationRunFailureSummary,
   ApplicationRunPhase,
 } from "./application-run-model.js";
@@ -44,7 +45,7 @@ type ApplicationSessionRunCancelingItem = ApplicationSessionRunItemBase &
     phase: "canceling";
     terminalAt?: never;
     failure?: never;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation: ApplicationRunCancellationRequestSummary;
     finalAssistantMessageId?: never;
   }>;
 
@@ -53,7 +54,7 @@ type ApplicationSessionRunCompletedItem = ApplicationSessionRunItemBase &
     phase: "completed";
     terminalAt: number;
     failure?: never;
-    cancellation?: never;
+    cancellation?: ApplicationRunCancellationRequestSummary;
   }>;
 
 type ApplicationSessionRunFailedItem = ApplicationSessionRunItemBase &
@@ -61,7 +62,7 @@ type ApplicationSessionRunFailedItem = ApplicationSessionRunItemBase &
     phase: "failed" | "interrupted";
     terminalAt: number;
     failure: ApplicationRunFailureSummary;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation?: ApplicationRunCancellationRequestSummary;
     finalAssistantMessageId?: never;
   }>;
 
@@ -70,7 +71,7 @@ type ApplicationSessionRunCanceledItem = ApplicationSessionRunItemBase &
     phase: "canceled";
     terminalAt: number;
     failure?: never;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation?: ApplicationRunCancellationAcknowledgementSummary;
     finalAssistantMessageId?: never;
   }>;
 

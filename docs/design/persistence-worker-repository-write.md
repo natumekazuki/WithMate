@@ -33,7 +33,7 @@ malformed command、scope不一致、state conflict、busy、capacity、idempote
 
 idempotency keyはcallerが生成するcanonical lowercase UUIDとする。Workerはkeyを除き、field順を固定したsemantic command projectionからSHA-256 fingerprintを生成する。受信JSONのproperty順やcaller提供fingerprintを信用しない。
 
-同じkey / scope / operation / fingerprintのcompleted recordはresponse referenceの存在と所属を再検証して同じ意味のresponseを返す。Run admissionのexact replayは、responseが参照するRun、Attempt、Dispatch、BindingのSession / Provider tuple、create intentのpersistence mode、ephemeral Bindingの作成元Attemptを再検証する。異なる使用は`idempotency_conflict`、`in_progress`は`idempotency_in_progress`、期限切れtombstoneは`idempotency_expired`とする。reference欠落または所有権不一致では成功を捏造せず`reference_invalid`を返す。
+同じkey / scope / operation / fingerprintのcompleted recordはresponse referenceの存在と所属を再検証して同じ意味のresponseを返す。Run admissionのexact replayは、responseが参照するRun、Attempt、Dispatch、BindingのSession / Provider tupleとBindingのpersistence modeを再検証し、現在のdurable Run / Binding / Dispatch outcomeを返す。異なる使用は`idempotency_conflict`、`in_progress`は`idempotency_in_progress`、期限切れtombstoneは`idempotency_expired`とする。reference欠落または所有権不一致では成功を捏造せず`reference_invalid`を返す。
 
 completed recordの保持期間はWorker所有の30日とする。期限はcaller入力にせずcommit時刻から計算する。期限到達済みrecordを観測したwrite transactionはfingerprint照合結果にかかわらずresponse referenceとenvelopeを先に消去して`expired`へ進め、Session明示削除までkey tombstoneを保持する。異なるfingerprintへの応答はscrub後も`idempotency_conflict`とする。response envelopeは16 KiB以下とし、Message本文、child結果、payload、raw Provider responseを保存しない。
 
@@ -50,7 +50,7 @@ completed recordの保持期間はWorker所有の30日とする。期限はcalle
 
 `repository.session.create`はRepositoryがSession IDを発行し、active Session、allocator更新、self-scopeのcompleted IdempotencyRecordを同じtransactionで作成する。generated IDはcommandとfingerprintに含めない。exact retryはIdempotencyRecord、response reference、Session rowの組を再検証してcommit済みIDを返す。明示削除後の同一create requestは新しいincarnationとして別IDを発行する。詳細な発行境界はADR 010を正本とする。
 
-ProviderBindingはSession作成時に作成しない。追加許可directoryはdenseな文字列配列かつabsolute pathだけを受理し、Worker境界で字句正規化して重複・包含される子pathを除外した値をfingerprintと保存に使用する。symlink / junctionを含む実在path検証はRun admission前のMain processが担う。
+ProviderBindingはSession作成時に作成しない。追加許可directoryはdenseな文字列配列かつabsolute pathだけを受理し、Worker境界で字句正規化して重複・包含される子pathを除外した値をfingerprintと保存に使用する。symlink / junctionを含む実在path検証はRun admission前のruntime host内Application boundaryが担う。process ownershipはADR 013を正本とする。
 
 `repository.session.transition`はexpected lifecycleを必須とし、次だけを許可する。
 
@@ -65,12 +65,11 @@ archive / closeはnon-terminal Runがない場合だけ許可する。unarchive�
 
 `repository.run.admit`はS6-Bの最初の縦切りとして、通常Runの新規user Message、`queued` Run、最初の`preparing` Attempt、`pending` Dispatch、必要な`creating` Binding intent、Run参照のcompleted IdempotencyRecordを1 transactionで作成する。Sessionはworkspaceが一致する`active`状態で、non-terminal Runを持たないことを同じtransaction内で再検証する。
 
-Binding intentは次のどちらかをcallerが明示し、WorkerがDB状態と照合する。
+Message、Run、Attempt、および必要なBindingのidentityはRepositoryがtransaction内で発行する。Bindingは、同じSession / Providerに唯一存在する`active && persistent` Bindingを再利用し、open Bindingがなければ`creating`として発行する。複数候補、未収束のcreating Binding、invalidated / superseded Binding、ephemeral Bindingを再利用根拠にせず、callerからidentityやBinding intentを受け取らない。
 
-- `reuse`: 指定Bindingが同じSession / Providerの`active && persistent` Bindingであることを要求し、Attemptへ設定する。ephemeral Bindingの同一process内再利用は、Workerがlive ownershipを証明できるcommandを導入するまで許可しない。
-- `create`: Sessionにopen Bindingがないことを要求し、Attemptは`provider_binding_id=null`、Bindingは同Attemptを作成元とする`creating`で追加する。
+Message本文、execution snapshot、Provider requestはdenseかつexactなJSON値として検証し、object key順を正規化してからencodeする。execution snapshotは`providerId`、`definitionVersion`、`modelSelection`、Provider definitionがcanonicalizeした`settings`、`workspace`、`character`を必須とし、Provider、canonical Workspace key / path、normalized additional directoriesを同じSession設定と一致させる。Provider固有fieldの意味とwire compileはProvider definitionが所有し、Workerへ重複実装しない。WorkerはProvider requestの`providerId + definitionVersion`とMessage本文がsnapshot / admission commandに一致すること、JSON値とbyte上限を検証する。通常startは`modelSelection=explicit`だけを受理し、retryの`inherited` envelopeは元RunのProvider envelopeと一致する場合だけ受理する。retryでも元Runが参照するMessage本文との同じ組を検証する。snapshotとProvider requestの上限は、Sessionが受理するworkspace path / additional directories、Message上限、実行設定、JSON escapeと構造overheadの組から共有定数で導出し、個別境界で合法な組を狭めない。Provider request本文は保存せず、Workerが生成したSHA-256だけをDispatchへ保存する。commandのsemantic fingerprintもcaller提供hashを信用せず、正規化済みMessage / snapshotとWorker生成Dispatch fingerprintから生成し、Repositoryが発行するidentityとBinding選択を含めない。
 
-Message本文、execution snapshot、Provider requestはdenseなJSON値として検証し、object key順を正規化してからencodeする。execution snapshotは`providerId`、`model`、`reasoning`、`approval`、`sandbox`、`workspace`、`character`を必須とし、ProviderはSession設定と一致させる。Provider request本文は保存せず、Workerが生成したSHA-256だけをDispatchへ保存する。commandのsemantic fingerprintもcaller提供hashを信用せず、正規化済みMessage / snapshot、Worker生成Dispatch fingerprint、ID、Binding intentから生成する。
+ApplicationはProvider live preflightの前に`repository.run.admission-replay.probe`でcanonical admission commandをread-only確認する。probeとwriteは同じcanonical preparation、fingerprint、durable replay decoderを共有する。exact replay、conflict、in-progress、expiry、reference不整合はlive Providerへ依存せず判定し、probe自体はIdempotencyRecordを更新しない。recordが存在しない場合だけlive preflightへ進み、preflight失敗後の二度目のprobeで同時commitを回収する。最終authorityは従来どおりwrite transactionが持つ。
 
 Worker repositoryは通常Run、Auxiliary、child Runで共有するapp全体とProvider別のnon-terminal Run上限を構築時optionとして所有する。defaultはそれぞれ4で、low-resource profileは2を渡す。admission transaction内で現在数を集計し、上限到達時はretryableな`capacity_exceeded`としてRun追加前に拒否する。
 
@@ -78,7 +77,7 @@ Worker repositoryは通常Run、Auxiliary、child Runで共有するapp全体と
 
 `repository.run.retry`は、同じSessionに属するterminal Runを直接の`retry_of_run_id`として受け取り、元Runのuser Messageを複製せず新しいRunから参照する。retryのretryでもrootへ畳み込まず、callerが指定した直前のRunとのchainを保持する。
 
-retryは通常Run admissionと同じactive Session、app全体 / Provider別capacity、Binding intent、completed IdempotencyRecordの条件を使う。新しい`queued` Run、`preparing` Attempt、`pending` Dispatch、必要な`creating` Binding intent、Session activity更新を1 transactionで確定し、失敗時は元Messageと元Runを変更しない。詳細なinput / resultは`src/shared/repository-write-model.ts`、実行可能な契約は`test/repository-write-model.test.ts`を正本とする。
+retryは通常Run admissionと同じactive Session、app全体 / Provider別capacity、Repository所有のidentity発行とBinding選択、completed IdempotencyRecordの条件を使う。新しい`queued` Run、`preparing` Attempt、`pending` Dispatch、必要な`creating` Binding intent、Session activity更新を1 transactionで確定し、失敗時は元Messageと元Runを変更しない。詳細なinput / resultは`src/shared/repository-write-model.ts`、実行可能な契約は`test/repository-write-model.test.ts`を正本とする。
 
 ## Initial child admission
 
@@ -102,7 +101,7 @@ ephemeral Bindingのactive化ではcanonical UUIDのlive ownership tokenを要�
 
 `repository.dispatch.begin`はProvider request本文をcanonical JSONへ変換し、admission時に保存したfingerprintと一致することを確認する。初回送信ではRunが`queued` / `starting`、Attemptが`preparing`、Bindingが同じSession / Providerの`active`、Dispatchが`pending`であることを共通Gateとしてtransaction内で再検証し、Dispatchを`dispatching`へ進める。`queued` Runは同じtransactionで`starting`へ進める。`canceling`は初回送信Gateから除外し、すでに`dispatching`であるbegin replayとresolutionだけで許可する。
 
-初回commit成功時だけresultの`sendAllowed=true`を返し、Application Serviceはそのresponseを受けた後だけProvider I/Oへ進む。response loss後に同じbeginを再実行して`dispatching`を観測した場合は`replayed=true`かつ`sendAllowed=false`を返し、`pending`へ戻したりProvider requestを再送したりしない。Provider request fingerprint不一致は`idempotency_conflict`とする。
+初回commit成功時だけresultの`sendAllowed=true`を返し、Application Serviceはそのresponseを受けた後だけProvider I/Oへ進む。response loss後に同じbeginを再実行して`dispatching`を観測した場合は`replayed=true`かつ`sendAllowed=false`を返し、`pending`へ戻したりProvider requestを再送したりしない。Application Serviceはこの未確認beginのidentityとcommandを固定して保持し、同じcommandの再実行またはread-backで`dispatching`を確認した場合は、Provider未送信のpre-dispatch failureとしてRunを収束させる。Provider request fingerprint不一致は`idempotency_conflict`とする。
 
 `repository.dispatch.resolve`は`dispatching`から次のterminal outcomeだけを許可する。
 
@@ -110,7 +109,7 @@ ephemeral Bindingのactive化ではcanonical UUIDのlive ownership tokenを要�
 - `rejected`: Dispatchだけを`rejected`へ進め、Runのexternal side effectを変更しない。
 - `ambiguous`: Dispatchを`ambiguous`へ進め、Runの既存`present`を維持し、それ以外のexternal side effectを`unknown`へ進める。AttemptとRunの失敗・retry判断は後続policy commandの責務とし、このtransitionでは推測しない。
 
-terminal Dispatchを`pending` / `dispatching`へ戻さず、異なるterminal outcomeへの変更も原則拒否する。例外として、`ambiguous`は自動再送不可のterminal stateである一方、Provider native idempotencyまたは状態照会が同じ外部実行IDを一意に証明し、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ`accepted`へ知識補正できる。補正は新しいProvider requestを送らず、Attempt / Dispatch / Run相関を1 transactionで確定する。recovery policyはこの照会を終える前にAttempt / Runをterminal化しない。同じoutcomeと外部実行IDの再通知だけをexact replayとして返す。resolution resultはDispatch terminal state、外部実行ID、確定時刻に限定し、後続で変化するRun phaseやAttempt stateを複製しない。このためRun / Attemptがterminalへ進んだ後も、元Dispatchのexact replayを同じ意味で返せる。
+terminal Dispatchを`pending` / `dispatching`へ戻さず、異なるterminal outcomeへの変更も原則拒否する。例外として、`ambiguous`は自動再送不可のterminal stateである一方、Provider native idempotencyまたは状態照会が同じ外部実行IDを一意に証明し、Attemptがまだ`preparing`、Runが`starting` / `canceling`である間だけ`accepted`へ知識補正できる。補正は新しいProvider requestを送らず、Attempt / Dispatch / Run相関を1 transactionで確定する。同じruntime connection generationで照会可能な間は、この照会を終える前にAttempt / Runをterminal化しない。generation喪失により同じ外部実行との相関を継続できない場合は、後述の`dispatch_ambiguous`で不確実性を保持したまま`interrupted`へ収束させる。同じoutcomeと外部実行IDの再通知だけをexact replayとして返す。resolution resultはDispatch terminal state、外部実行ID、確定時刻に限定し、後続で変化するRun phaseやAttempt stateを複製しない。このためRun / Attemptがterminalへ進んだ後も、元Dispatchのexact replayを同じ意味で返せる。
 
 ephemeral Bindingで初回beginする場合は、同じWorker generationに登録済みのlive ownership tokenを必須とする。`dispatching`または`ambiguous`までdurable commitした後のresolutionは新しいProvider送信を許可しないため、Worker再起動後もSession、Provider、Run、Attempt、Bindingのscope tupleを再検証して確定できる。tokenを明示したresolutionは、現在のlive ownerと一致する場合だけ受理する。supplemental inputも、admissionとbeginにはlive ownerを要求し、`dispatching`後のresolutionには同じ権限分離を適用する。
 
@@ -118,15 +117,21 @@ ephemeral Bindingで初回beginする場合は、同じWorker generationに登�
 
 terminal outcomeの確定はdetail payloadの保存より優先し、payload保存の成否でProvider outcomeを変更しない。payload準備とquotaの非局所契約は`docs/design/multi-agent-persistence.md`、現在の型・validation・replay契約は`src/shared/repository-write-model.ts`、`src/persistence-worker/repository-write-model.ts`、`test/repository-write-model.test.ts`を正本とする。
 
+Provider eventからRunOutputを追加するcommandは、Session / workspace / Runに加え、Attempt / Binding / 外部conversation / 外部executionの相関を明示する。Application Serviceは元eventのThreadとTurnがactive executionへ完全一致する場合だけcommandを構築し、Turnを持たないmetadataやdiagnosticを現在のexecutionへ補完しない。Workerはactive Attempt、accepted Dispatch、active Bindingと照合してから新規outputを受理する。同じoutput identityのexact replayはterminal後も同じ相関を再検証して返すが、別Run、別Binding、別conversation、別executionのoutputを取り込まない。
+
+Application Serviceのoutput件数上限は、永続化成功responseを受けた件数ではなく、最初のwrite前に予約したdistinct output identityの件数で判定する。write結果が不明なidentityは枠とfrozen commandを保持し、同じidentityのexact retryだけを許可する。先行identityの確定前に後続identityをcommitせず、永続ordinalを受信順から逆転させない。Provider terminal eventを受けても未確認outputを捨てず、同じidentityとcommandで確定してからterminal commandを送る。eventまたはoutput予約の上限を超えた場合は、terminal outcomeと同じtransactionにboundedな`runtime_resource_limit` diagnosticを追加し、保存欠落を正常な全量保存として扱わない。
+
 ## Run terminal
 
 Run / Attempt、final Message、terminal RunEvent、Session activityを一つの短いtransactionで確定する。child RunではDelegation workflowとChild Delivery availabilityも同じtransactionの所有範囲に含める。RunEventは専用recordへの参照だけを保持し、状態や本文を複製しない。現在の更新対象とexact replay条件はsourceとtestを正本とする。
 
-Application ServiceがProvider送信前にRunをcancelまたは中断する場合、`preDispatchResolution`で証明できる境界を明示する。外部会話作成requestが未送信なら`creating` Bindingをinvalidated、作成結果が不明なら同じ収束に加えてRunのexternal side effectを`unknown`へ進める。active Bindingへの実行requestが未送信なら`pending` Dispatchをabortedとし、persistent Bindingは維持する。ephemeral Bindingはterminal Runから再利用できないためinvalidatedとする。これらはRun terminal、terminal event、child resultと同じtransactionで確定する。terminal処理はBindingとRunのSession一致、およびBinding ProviderとSession Providerの一致を更新前に検証する。ephemeral Bindingは作成元Attemptから参照された場合だけinvalidatedし、live ownershipを解放する。
+accepted Dispatchからのterminal commandは、outputと同じProvider execution相関を要求する。pre-dispatch failureまたはrejected Dispatchではこの相関を指定せず、WorkerがAttempt / Dispatch状態から外部execution未成立を確認する。これにより、遅延した別Turnのterminal eventや別Bindingの外部IDでRunを終了できない。
+
+Application ServiceがProvider送信前にRunをcancelまたは中断する場合、`preDispatchResolution`で証明できる境界を明示する。外部会話作成requestが未送信なら`creating` Bindingをinvalidated、作成結果が不明なら同じ収束に加えてRunのexternal side effectを`unknown`へ進める。active Bindingへの実行requestが未送信なら`pending` Dispatchをabortedとし、persistent Bindingは維持する。generationを確定的に失い、同じ外部実行との相関を継続できない`ambiguous` Dispatchは、`dispatch_ambiguous`で送信成否とexternal side effectの不確実性を保持したままRunを`interrupted`へ進める。ephemeral Bindingはterminal Runから再利用できないためinvalidatedとする。これらはRun terminal、terminal event、child resultと同じtransactionで確定する。terminal処理はBindingとRunのSession一致、およびBinding ProviderとSession Providerの一致を更新前に検証する。ephemeral Bindingは作成元Attemptから参照された場合だけinvalidatedし、live ownershipを解放する。
 
 Run terminal transactionは、同じAttemptの未解決supplemental inputもBinding失効前に収束させる。未送信の`pending` Deliveryは`aborted(run_terminal_not_sent)`、送信intentをcommit済みの`dispatching` Deliveryは`ambiguous(process_unknown)`へ進める。startup repairも、旧状態としてterminal Runに残った同じ組合せを単調に収束させる。
 
-`dispatching`または`ambiguous` Dispatchは未送信として処理せず、`preDispatchResolution=not_applicable`でも拒否する。`ambiguous`はProvider照合による`accepted`への知識補正をRun / Attemptの終端より先に確定する。exact replay fingerprintはcanonical JSONから生成するためobject key順には依存せず、意味が異なる再実行は拒否する。caller証明を含む判断理由は`docs/adr/005-pre-dispatch-run-terminal-resolution.md`を正本とする。
+`dispatching`または`ambiguous` Dispatchは未送信として処理せず、`preDispatchResolution=not_applicable`でも拒否する。同じgenerationで照合可能な`ambiguous`は、`accepted`への知識補正をRun / Attemptの終端より先に確定する。照合不能となった`ambiguous`だけは、`preDispatchResolution=dispatch_ambiguous`、`outcome=interrupted`、`providerExecution=null`の組で受理し、Dispatch stateとside effect certaintyを後退させない。terminal response lossでは同じfrozen commandだけを再試行し、commit後にSessionとcapacityを解放する。exact replay fingerprintはcanonical JSONから生成するためobject key順には依存せず、意味が異なる再実行は拒否する。caller証明を含む判断理由は`docs/adr/005-pre-dispatch-run-terminal-resolution.md`と`docs/adr/013-runtime-host-and-run-mutation-control-plane.md`を正本とする。
 
 ## Child result collection
 

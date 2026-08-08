@@ -1,6 +1,17 @@
 import { MAX_PERSISTENCE_RESPONSE_BYTES } from "./persistence-protocol.js";
 import type { LocalRepositoryMetadata } from "./session-metadata.js";
-import type { RunOutputCategory } from "./repository-write-model.js";
+import type {
+  NormalRunAdmissionResult,
+  RepositoryCommandError,
+  RepositoryJsonValue,
+  RetryRunAdmissionResult,
+  RunExecutionSnapshot,
+  RunCancelAdmissionResult,
+  RunInputAdmissionResult,
+  RunInteractionResponseResult,
+  RunOutputCategory,
+} from "./repository-write-model.js";
+import type { TextContentBlock } from "./message-content.js";
 
 export const REPOSITORY_READ_OPERATIONS = {
   sessionsPage: "repository.sessions.page",
@@ -18,10 +29,15 @@ export const REPOSITORY_READ_OPERATIONS = {
   runOutputGet: "repository.run.output.get",
   runOutputPayloadMetadata: "repository.run.output.payload-metadata",
   runInputDeliveriesPage: "repository.run.input-deliveries.page",
+  runAdmissionReplayProbe: "repository.run.admission-replay.probe",
+  runInputReplayProbe: "repository.run.input-replay.probe",
+  runInteractionResponseReplayProbe: "repository.run.interaction-response-replay.probe",
+  runCancelReplayProbe: "repository.run.cancel-replay.probe",
   payloadChunk: "payload.read_chunk",
   childResultsPage: "repository.child-results.page",
   sessionDeletionStatusGet: "repository.session-deletion.status.get",
   sessionDeletionCleanupPage: "repository.session-deletion.cleanup.page",
+  recoveryCandidatesPage: "repository.recovery.candidates.page",
   recoveryGet: "repository.recovery.get",
 } as const;
 
@@ -40,6 +56,7 @@ export const REPOSITORY_READ_LIMITS = {
   runInputDeliveries: { default: 100, max: 200 },
   childResults: { default: 100, max: 200 },
   sessionDeletionItems: { default: 100, max: 200 },
+  recoveryCandidates: { default: 25, max: 100 },
 } as const;
 
 export type PageOmission = Readonly<{
@@ -202,6 +219,72 @@ export type RunInputDeliveryRecoveryItem = Readonly<{
   dispatchingAt: number | null;
 }>;
 
+export type RunInputReplayProbeRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  contentBlocks: readonly TextContentBlock[];
+}>;
+
+export type RunInputReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: RunInputAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
+export type RunAdmissionReplayProbeRequest =
+  | Readonly<{
+      sessionId: string;
+      workspaceKey: string;
+      idempotencyKey: string;
+      message: Readonly<{ contentBlocks: readonly TextContentBlock[] }>;
+      run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
+      dispatch: Readonly<{
+        providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
+        providerIdempotencyKey: string | null;
+      }>;
+    }>
+  | Readonly<{
+      sessionId: string;
+      workspaceKey: string;
+      idempotencyKey: string;
+      retryOfRunId: string;
+      run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
+      dispatch: Readonly<{
+        providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
+        providerIdempotencyKey: string | null;
+      }>;
+    }>;
+
+export type RunAdmissionReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: NormalRunAdmissionResult | RetryRunAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
+export type RunInteractionResponseReplayProbeRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  interactionKind: string;
+  interactionId: string;
+  canonicalResponseJson: string;
+}>;
+
+export type RunInteractionResponseReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: RunInteractionResponseResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
+export type RunCancelReplayProbeRequest = Readonly<{
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+}>;
+
+export type RunCancelReplayProbeResult =
+  | Readonly<{ kind: "absent" }>
+  | Readonly<{ kind: "replay"; value: RunCancelAdmissionResult }>
+  | Readonly<{ kind: "failure"; error: RepositoryCommandError }>;
+
 export type ChildResultListItem = Readonly<{
   id: string;
   delegationId: string;
@@ -254,6 +337,39 @@ export type RecoveryProjection = Readonly<{
   persistenceMode: "persistent" | "ephemeral" | null;
   bindingState: "creating" | "active" | "invalidated" | "superseded" | null;
   externalConversationId: string | null;
+  dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted" | null;
+  providerIdempotencyKey: string | null;
+}>;
+
+export type RecoveryCandidate = Readonly<{
+  runId: string;
+  sessionId: string;
+  workspaceKey: string;
+  sessionProviderId: string;
+  runPhase: "queued" | "starting" | "active" | "canceling" | "finalizing";
+  runVersion: number;
+  initiatingMessageId: string;
+  runCreatedAt: number;
+  runUpdatedAt: number;
+  cancelRequestedAt: number | null;
+  externalSideEffectState: "none" | "present" | "unknown";
+  currentAttemptCount: number;
+  attemptId: string | null;
+  attemptOrdinal: number | null;
+  attemptState: "preparing" | "active" | null;
+  attemptProviderBindingId: string | null;
+  externalExecutionId: string | null;
+  bindingCandidateCount: number;
+  bindingId: string | null;
+  bindingSessionId: string | null;
+  bindingProviderId: string | null;
+  persistenceMode: "persistent" | "ephemeral" | null;
+  bindingState: "creating" | "active" | "invalidated" | "superseded" | null;
+  bindingCreatorAttemptId: string | null;
+  bindingCreatorRunId: string | null;
+  bindingCreatorSessionId: string | null;
+  externalConversationId: string | null;
+  dispatchCount: number;
   dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted" | null;
   providerIdempotencyKey: string | null;
 }>;
