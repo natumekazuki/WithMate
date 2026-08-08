@@ -310,8 +310,20 @@ test(
 
     assert.equal(client.peerPrincipalId, identity.principalId);
     assert.equal(server.peerPrincipalId, identity.principalId);
-    assertWindowsEndpointSddlPrincipal(server.endpointSecurity.daclSddl, identity.principalId);
-    assertWindowsEndpointSddlPrincipal(client.endpointSecurity.daclSddl, identity.principalId);
+    assert.doesNotThrow(() =>
+      validateWindowsKernelObjectSecuritySddl(
+        server.endpointSecurity.daclSddl,
+        identity.principalId,
+        identity.principalId,
+      ),
+    );
+    assert.doesNotThrow(() =>
+      validateWindowsKernelObjectSecuritySddl(
+        client.endpointSecurity.daclSddl,
+        identity.principalId,
+        identity.principalId,
+      ),
+    );
     assert.doesNotMatch(server.endpointSecurity.daclSddl, /;;;(?:WD|AN|AU|BU)\)/u);
 
     await client.write(Buffer.from("client"));
@@ -510,30 +522,6 @@ function isClosedIpcChannel(error: unknown): boolean {
     "code" in error &&
     (error as Readonly<{ code?: unknown }>).code === "ERR_IPC_CHANNEL_CLOSED"
   );
-}
-
-function assertWindowsEndpointSddlPrincipal(sddl: string, principalSid: string): void {
-  const owner = /^O:([^:()]+)D:P/u.exec(sddl)?.[1];
-  assert.equal(owner === undefined ? undefined : normalizeWindowsSddlSidForTest(owner), principalSid);
-
-  const trustees = [...sddl.matchAll(/\([^)]*;;;([^;)]+)\)/gu)].map((match) =>
-    normalizeWindowsSddlSidForTest(match[1] ?? ""),
-  );
-  assert.ok(trustees.includes(principalSid));
-  assert.ok(trustees.includes("S-1-5-18"));
-}
-
-function normalizeWindowsSddlSidForTest(sid: string): string {
-  switch (sid) {
-    case "SY":
-      return "S-1-5-18";
-    case "LS":
-      return "S-1-5-19";
-    case "NS":
-      return "S-1-5-20";
-    default:
-      return sid;
-  }
 }
 
 function listenNetServer(server: Server, address: string): Promise<void> {
