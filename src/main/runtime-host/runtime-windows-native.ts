@@ -604,9 +604,14 @@ function readTokenSid(tokenHandle: NativeHandle): string {
   }
   const sidPointer = koffi.decode(tokenUser, "void *") as NativeHandle;
   if (isInvalidHandle(sidPointer)) throw new Error("Runtime process token identity is invalid.");
+  return convertSidPointerToString(sidPointer, "Runtime process token identity could not be converted.");
+}
+
+function convertSidPointerToString(sidPointer: NativeHandle, failureMessage: string): string {
+  const native = loadWindowsNativeApi();
   const sidString = [null] as [NativeHandle];
   if (!native.convertSidToStringSid(sidPointer, sidString) || isInvalidHandle(sidString[0])) {
-    throw windowsFailure("Runtime process token identity could not be converted.", native.getLastError());
+    throw windowsFailure(failureMessage, native.getLastError());
   }
   try {
     const decoded = koffi.decode(sidString[0], "char16_t", -1) as unknown;
@@ -648,20 +653,25 @@ function withSecureAttributes<T>(
 function inspectSecureKernelObjectSecurity(handle: NativeHandle, principalSid: string): string {
   const native = loadWindowsNativeApi();
   const descriptor = [null] as [NativeHandle];
+  const ownerSid = [null] as [NativeHandle];
   const result = native.getSecurityInfo(
     handle,
     SE_KERNEL_OBJECT,
     OWNER_AND_DACL_SECURITY_INFORMATION,
-    null,
+    ownerSid,
     null,
     null,
     null,
     descriptor,
   ) as number;
-  if (result !== 0 || isInvalidHandle(descriptor[0])) {
+  if (result !== 0 || isInvalidHandle(descriptor[0]) || isInvalidHandle(ownerSid[0])) {
     throw windowsFailure("Runtime endpoint ACL could not be inspected.", result);
   }
   try {
+    const inspectedOwnerSid = convertSidPointerToString(
+      ownerSid[0],
+      "Runtime endpoint owner identity could not be converted.",
+    );
     const sddlPointer = [null] as [NativeHandle];
     const characters = [0];
     if (
@@ -679,7 +689,7 @@ function inspectSecureKernelObjectSecurity(handle: NativeHandle, principalSid: s
     try {
       const sddl = koffi.decode(sddlPointer[0], "char16_t", -1) as unknown;
       if (typeof sddl !== "string") throw new Error("Runtime endpoint ACL is invalid.");
-      validateWindowsKernelObjectSecuritySddl(sddl, principalSid);
+      validateWindowsKernelObjectSecuritySddl(sddl, principalSid, inspectedOwnerSid);
       return sddl;
     } finally {
       native.localFree(sddlPointer[0]);
@@ -689,7 +699,11 @@ function inspectSecureKernelObjectSecurity(handle: NativeHandle, principalSid: s
   }
 }
 
-export function validateWindowsKernelObjectSecuritySddl(sddl: string, principalSid: string): void {
+export function validateWindowsKernelObjectSecuritySddl(
+  sddl: string,
+  principalSid: string,
+  inspectedOwnerSid?: string,
+): void {
   const accessEntries = sddl.match(/\([^)]*\)/gu) ?? [];
   const expectedTrustees = new Set([principalSid, "S-1-5-18"]);
   const normalizedEntries = accessEntries.map((entry) => {
@@ -708,8 +722,9 @@ export function validateWindowsKernelObjectSecuritySddl(sddl: string, principalS
     return normalizeWindowsSddlSid(trustee as string);
   });
   const owner = /^O:([^:()]+)D:/u.exec(sddl)?.[1];
+  const effectiveOwnerSid = inspectedOwnerSid ?? (owner === undefined ? undefined : normalizeWindowsSddlSid(owner));
   let failureReason: string | undefined;
-  if (owner === undefined || normalizeWindowsSddlSid(owner) !== principalSid) {
+  if (owner === undefined || effectiveOwnerSid !== principalSid) {
     failureReason = "owner-mismatch";
   } else if (!sddl.startsWith(`O:${owner}D:P`)) {
     failureReason = "dacl-not-protected";

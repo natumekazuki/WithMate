@@ -141,6 +141,26 @@ test("Windows kernel object security requires owner and exact protected allow-al
       validateWindowsKernelObjectSecuritySddl(`O:${alias}D:P(A;;FA;;;SY)(A;;FA;;;${alias})`, principalSid),
     );
   }
+  assert.doesNotThrow(() =>
+    validateWindowsKernelObjectSecuritySddl(`O:serialized-ownerD:P(A;;FA;;;SY)(A;;FA;;;${sid})`, sid, sid),
+  );
+  assert.throws(
+    () =>
+      validateWindowsKernelObjectSecuritySddl(
+        `O:serialized-ownerD:P(A;;FA;;;SY)(A;;FA;;;${sid})`,
+        sid,
+        "S-1-5-21-2000",
+      ),
+    /reason: owner-mismatch/u,
+  );
+  for (const [sddl, reason] of [
+    [`O:serialized-ownerD:(A;;FA;;;SY)(A;;FA;;;${sid})`, "dacl-not-protected"],
+    [`O:serialized-ownerD:P(A;;FA;;;SY)`, "ace-count"],
+    [`O:serialized-ownerD:P(A;CI;FA;;;SY)(A;;FA;;;${sid})`, "ace-shape"],
+    [`O:serialized-ownerD:P(A;;FA;;;SY)(A;;FA;;;BA)`, "trustee-set"],
+  ] as const) {
+    assert.throws(() => validateWindowsKernelObjectSecuritySddl(sddl, sid, sid), new RegExp(`reason: ${reason}`, "u"));
+  }
   for (const [sddl, reason] of [
     [`D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, "owner-mismatch"],
     [`O:${sid}D:(A;;FA;;;SY)(A;;FA;;;${sid})`, "dacl-not-protected"],
