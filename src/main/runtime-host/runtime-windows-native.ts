@@ -703,14 +703,25 @@ export function validateWindowsKernelObjectSecuritySddl(sddl: string, principalS
     }
     return normalizedTrustee;
   });
-  if (
-    !sddl.startsWith(`O:${principalSid}D:P`) ||
-    accessEntries.length !== 2 ||
-    normalizedEntries.some((entry) => entry === undefined) ||
+  let failureReason: string | undefined;
+  if (!sddl.startsWith(`O:${principalSid}`)) {
+    failureReason = "owner-mismatch";
+  } else if (!sddl.startsWith(`O:${principalSid}D:P`)) {
+    failureReason = "dacl-not-protected";
+  } else if (accessEntries.length !== 2) {
+    failureReason = "ace-count";
+  } else if (normalizedEntries.some((entry) => entry === undefined)) {
+    failureReason = "ace-shape";
+  } else if (
     new Set(normalizedEntries).size !== expectedTrustees.size ||
     [...expectedTrustees].some((trustee) => !normalizedEntries.includes(trustee))
   ) {
-    throw new Error("Runtime endpoint ACL is not restricted to the current user and SYSTEM.");
+    failureReason = "trustee-set";
+  }
+  if (failureReason !== undefined) {
+    throw new Error(
+      `Runtime endpoint ACL is not restricted to the current user and SYSTEM (reason: ${failureReason}).`,
+    );
   }
 }
 

@@ -132,16 +132,19 @@ test("runtime connection registry releases a disconnected pre-accept connection 
 test("Windows kernel object security requires owner and exact protected allow-all ACEs", () => {
   const sid = "S-1-5-21-1000";
   assert.doesNotThrow(() => validateWindowsKernelObjectSecuritySddl(`O:${sid}D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, sid));
-  for (const sddl of [
-    `D:P(A;;FA;;;SY)(A;;FA;;;${sid})`,
-    `O:${sid}D:P(D;;FA;;;SY)(A;;FA;;;${sid})`,
-    `O:${sid}D:P(A;CI;FA;;;SY)(A;;FA;;;${sid})`,
-    `O:${sid}D:P(A;;GR;;;SY)(A;;FA;;;${sid})`,
-    `O:S-1-5-21-2000D:P(A;;FA;;;SY)(A;;FA;;;${sid})`,
-  ]) {
+  for (const [sddl, reason] of [
+    [`D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, "owner-mismatch"],
+    [`O:${sid}D:(A;;FA;;;SY)(A;;FA;;;${sid})`, "dacl-not-protected"],
+    [`O:${sid}D:P(A;;FA;;;SY)`, "ace-count"],
+    [`O:${sid}D:P(D;;FA;;;SY)(A;;FA;;;${sid})`, "ace-shape"],
+    [`O:${sid}D:P(A;CI;FA;;;SY)(A;;FA;;;${sid})`, "ace-shape"],
+    [`O:${sid}D:P(A;;GR;;;SY)(A;;FA;;;${sid})`, "ace-shape"],
+    [`O:${sid}D:P(A;;FA;;;SY)(A;;FA;;;SY)`, "trustee-set"],
+    [`O:S-1-5-21-2000D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, "owner-mismatch"],
+  ] as const) {
     assert.throws(
       () => validateWindowsKernelObjectSecuritySddl(sddl, sid),
-      /not restricted to the current user and SYSTEM/u,
+      new RegExp(`not restricted to the current user and SYSTEM \\(reason: ${reason}\\)`, "u"),
     );
   }
 });
