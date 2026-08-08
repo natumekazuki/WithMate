@@ -12,7 +12,7 @@ Codex SDK の streaming API は terminal event を返した後も、transport �
 ## Decision
 
 - provider SDK が定義する terminal event を turn outcome の正本とし、stream EOF は transport cleanup として扱う
-- Codex では最初の `turn.completed`、`turn.failed`、fatal `error` を terminal event とし、それ以降の event は outcome に混ぜない
+- Codex では最初の `turn.completed` または `turn.failed` を terminal event とする。`error` event の分類は [ADR 018](018-codex-stream-error-classification.md) で更新する
 - terminal event 後の iterator close は bounded grace 内で行い、超過時は adapter-owned `AbortController` で SDK child process の停止を促す
 - EOF が terminal event より先に到達した場合は protocol failure とし、取得済み partial result を保持する
 - user cancel は composer / Character / Session / Audit を含む setup 全体で監視し、依存処理が停止しても bounded grace 後に呼び出しを収束させる

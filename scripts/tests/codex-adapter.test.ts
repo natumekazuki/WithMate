@@ -318,6 +318,109 @@ describe("CodexAdapter thread settings", () => {
     }
   });
 
+  it("再接続通知の後に turn.completed を受けた場合は成功へ収束する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-reconnect-completed-"));
+    const reconnectMessage =
+      "Reconnecting... 2/5 (stream disconnected before completion: WebSocket protocol error)";
+    const progressErrors: string[] = [];
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-reconnect-completed",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                { type: "error", message: reconnectMessage },
+                {
+                  type: "item.completed",
+                  item: { id: "message-1", type: "agent_message", text: "recovered" },
+                },
+                { type: "turn.completed", usage: null },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      const result = await adapter.runSessionTurn(
+        createCodexRunSessionTurnInput(workspacePath),
+        (state) => progressErrors.push(state.errorMessage),
+      );
+
+      assert.equal(result.threadId, "thread-reconnect-completed");
+      assert.equal(result.assistantText, "recovered");
+      assert.deepEqual(progressErrors.filter(Boolean), [reconnectMessage]);
+      assert.equal(progressErrors.at(-1), "");
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("再接続通知の後に turn.failed を受けた場合は最終エラーを返す", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-reconnect-failed-"));
+    const reconnectMessage =
+      "Reconnecting... 2/5 (stream disconnected before completion: WebSocket protocol error)";
+    const finalErrorMessage = "stream disconnected before completion after 5 retries";
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-reconnect-failed",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                { type: "error", message: reconnectMessage },
+                { type: "turn.failed", error: { message: finalErrorMessage } },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+
+      await assert.rejects(
+        () => adapter.runSessionTurn(createCodexRunSessionTurnInput(workspacePath)),
+        (error) => {
+          assert.equal(error instanceof ProviderTurnError, true);
+          assert.equal((error as Error).message, finalErrorMessage);
+          return true;
+        },
+      );
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
   it("terminal event のない EOF は成功扱いにしない", async () => {
     const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-no-terminal-"));
     const adapter = new CodexAdapter() as unknown as {

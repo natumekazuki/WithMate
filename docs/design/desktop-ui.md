@@ -224,7 +224,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
-  - retry banner、skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する
+  - skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する
@@ -276,7 +276,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - pending bubble の実行中 indicator copy は Mate ごとに `session copy` で差し替えられる
 - default fallback は bland な一般化表現を使い、Mate copy が未設定でも過剰にキャラ化しない
 - `assistantText` 未着でも right pane の `Latest Command` があれば raw command を表示し、command 未到着の局面では empty state と pending bubble の run indicator で待機を示す
-- `Latest Command` の waiting / empty copy、retry banner title、`Changed Files` empty copy も Mate ごとに差し替えられる
+- `Latest Command` の waiting / empty copy、recovery action title、`Changed Files` empty copy も Mate ごとに差し替えられる
 - pending bubble の実行中 indicator は本文と同居できる先頭 status row とし、screen reader には bubble 全体ではなく状態変化だけを最小限に通知して再アナウンス過多を避ける
 - explicit な `aria-live` は pending bubble の status change に寄せ、retry draft conflict、message follow banner、composer feedback は visible text を正本にして常時 live 通知しない
 - `command_execution` は通常 paragraph ではなく shell command と即判別できる専用の monospace block で表示する
@@ -322,22 +322,18 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - `runState === "running"` では `Cancel` 主体の既存 UX を維持し、送信不可説明を主表示しない
 - `Details` 展開後の artifact block 背景は `main / sub` の薄い accent を持つ
 - `Ctrl+Enter` / `Cmd+Enter` 送信
-- `interrupted` 時の再送導線
-  - `runState === "running"` 中は retry banner を出さず、既存 pending / `Cancel` を維持する
-  - `runState === "interrupted"` + `lastUserMessage` ありで interruption banner を出し、failed copy に寄せない
-  - `runState === "error"` + `lastUserMessage` ありで failed banner を出す
-  - `runState === "idle"` でも最新 terminal Audit Log `phase === "canceled"` + `lastUserMessage` ありなら canceled banner を出す
-  - `lastUserMessage` がない session では retry 不能のため banner を出さない
-  - 状態識別は badge / title / CTA を主役にし、状態別 body 段落は置かない
-  - retry banner 共通で `Details` / `Hide` toggle を持たせ、badge / title / CTA / draft conflict notice は常時表示に残す
-  - details の default は `canceled` が collapsed、failed / `interrupted` が expanded
-  - 折りたたみ対象は `停止地点` / `前回の依頼` と、その短い summary / fallback を中心にする
-  - details 開閉 state は renderer local state で持ち、session 切替または retry banner identity（kind / `lastUserMessage` / canceled 判定に使う terminal Audit Log entry）変化時だけ default へ reset する
-  - 同一 retry banner 上の draft 編集や軽微な再描画では details 開閉 state を保持する
+- terminal state 後の再送導線
+  - `runState === "running"` 中は recovery action surface を出さず、既存 pending / `Cancel` を維持する
+  - `runState === "interrupted"` + `lastUserMessage` ありで interruption copy、`runState === "error"` + `lastUserMessage` ありで failed copy を出す
+  - `runState === "idle"` でも最新 terminal Audit Log `phase === "canceled"` + `lastUserMessage` ありなら canceled copy を出す
+  - `lastUserMessage` がない session では retry 不能のため surface を出さない
+  - canonical owner は共通 chat layout の message stack とし、中央 chat / file preview の直下、Action Dock の直上へ置く。詳細は [ADR 019](../adr/019-chat-recovery-action-surface.md) を参照する
+  - 状態 badge、title、CTA、必要時の draft conflict notice だけを表示し、`停止地点`、`前回の依頼`、`Details`、`Hide` は置かない
+  - Action Dock の expanded / compact state は変更せず、file preview 中も同じ位置へ表示する
+  - 狭い Window では title と CTA を縦に折り返し、中央 preview や dock を横へ押し出さない
   - retry CTA は `同じ依頼を再送` と `編集して再送`
     - `同じ依頼を再送`: 既存 resend 経路で即時再送し、draft は書き換えない
     - `編集して再送`: `lastUserMessage.text` を draft へ戻して textarea へ focus し、自動送信しない
-  - 停止地点サマリは live step / artifact / Audit Log operations から 1 行だけ拾い、取れないときは `停止地点は復元できませんでした。` / `エラー箇所は復元できませんでした。` / `停止位置は記録されていません。` の短い fallback を使う
   - draft が非空のまま `編集して再送` を押したときは silent overwrite をせず、composer 内で `今の下書きは残しています。` と短く示したうえで明示的な置換導線を出す
 - inline `Diff Viewer` overlay
 - `Open In Window` による `Diff Window` popout

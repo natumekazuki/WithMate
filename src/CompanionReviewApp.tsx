@@ -113,12 +113,9 @@ import {
 import { openCompanionInlinePath } from "./chat/companion-inline-path.js";
 import { COMPANION_PENDING_MESSAGE_TEXT } from "./chat/pending-run-indicator.js";
 import {
-  applyRetryDetailsReset,
   applyRetryDraftRestoreCommand,
-  buildRetryStopSummary,
   createCancelRetryDraftReplaceHandler,
   createRetryDraftReplaceConfirmationHandler,
-  createRetryDetailsToggleHandler,
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
@@ -512,7 +509,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
-  const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [activeAuxiliarySession, setActiveAuxiliarySession] = useState<AuxiliarySession | null>(null);
   const [closedAuxiliarySessions, setClosedAuxiliarySessions] = useState<AuxiliarySession[]>([]);
@@ -1303,14 +1299,12 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return null;
     }
 
-    const stopSummary = buildRetryStopSummary(kind, selectedSessionLiveRun, latestTerminalAuditLog, lastAssistantMessage);
     switch (kind) {
       case "interrupted":
         return {
           kind,
           badge: "中断",
           title: "前回の依頼は中断されたままです",
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       case "failed":
@@ -1318,7 +1312,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           kind,
           badge: "失敗",
           title: "前回の依頼は完了できませんでした",
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       case "canceled":
@@ -1326,7 +1319,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           kind,
           badge: "停止",
           title: "この依頼は途中で停止しました",
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       default:
@@ -1376,7 +1368,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       isSkillPickerOpen,
       isAdditionalDirectoryListOpen,
       isRetryDraftReplacePending,
-      !!retryBanner,
       companionComposerSendability.shouldShowFeedback,
     ],
   });
@@ -1399,32 +1390,11 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     isHeaderExpanded: isSessionHeaderExpanded,
     isActionDockExpanded,
   });
-  const retryBannerIdentity = useMemo(() => {
-    if (!retryBanner || !snapshot || !lastUserMessage) {
-      return null;
-    }
-
-    const lastUserMessageIdentity = `${
-      snapshot.session.messages.filter((message) => message.role === "user").length
-    }:${lastUserMessage.text}`;
-    const canceledAuditLogIdentity =
-      retryBanner.kind === "canceled" && latestTerminalAuditLog
-        ? `${latestTerminalAuditLog.id}:${latestTerminalAuditLog.phase}:${latestTerminalAuditLog.createdAt}`
-        : "";
-
-    return [retryBanner.kind, lastUserMessageIdentity, canceledAuditLogIdentity].join("\u001f");
-  }, [lastUserMessage, latestTerminalAuditLog, retryBanner, snapshot]);
   useEffect(() => {
     if (!composerText.trim() || !retryBanner) {
       setIsRetryDraftReplacePending(false);
     }
   }, [composerText, retryBanner]);
-  useLayoutEffect(() => {
-    applyRetryDetailsReset({
-      retryBanner,
-      setRetryDetailsOpen: setIsRetryDetailsOpen,
-    });
-  }, [retryBanner?.kind, retryBannerIdentity, snapshot?.session.id]);
   const actionDockCompactPreview = useMemo(
     () =>
       buildActionDockCompactPreview(activeComposerText, isSelectedSessionRunning, {
@@ -2813,10 +2783,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     setRetryDraftReplacePending: setIsRetryDraftReplacePending,
   });
 
-  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
-    setRetryDetailsOpen: setIsRetryDetailsOpen,
-  });
-
   async function handleResolveCompanionLiveApproval(
     request: LiveApprovalRequest,
     decision: "approve" | "deny",
@@ -3033,7 +2999,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner,
-        isRetryDetailsOpen,
         isRetryActionDisabled,
         isRetryEditDisabled,
         isRetryDraftReplacePending,
@@ -3138,7 +3103,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         ).then(showOpenPathFeedback),
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
-        onToggleRetryDetails: handleToggleRetryDetails,
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,

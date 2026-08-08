@@ -764,6 +764,7 @@ export type SessionChatScreenProps = {
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
   mainContent?: ReactNode;
+  recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
@@ -791,6 +792,7 @@ export function SessionChatScreen({
   isHeaderVisible,
   messageColumn,
   mainContent,
+  recoveryActions = null,
   actionDock,
   actionDockSplitter,
   isActionDockExpanded,
@@ -859,6 +861,11 @@ export function SessionChatScreen({
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}
         </div>
+        {recoveryActions ? (
+          <div className="session-recovery-actions-slot">
+            {recoveryActions}
+          </div>
+        ) : null}
       </section>
 
       {splitter}
@@ -1976,53 +1983,41 @@ export type SessionRetryBannerProps = {
     kind: "interrupted" | "failed" | "canceled";
     badge: string;
     title: string;
-    stopSummary: string;
     lastRequestText: string;
   } | null;
-  isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
-  onToggleDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
   onCancelRetryDraftReplace: () => void;
-  onOpenPath: (path: string) => void;
 };
 
 export function SessionRetryBanner({
   retryBanner,
-  isRetryDetailsOpen,
   isRetryActionDisabled,
   isRetryEditDisabled,
   isRetryDraftReplacePending,
-  onToggleDetails,
   onResendLastMessage,
   onEditLastMessage,
   onConfirmRetryDraftReplace,
   onCancelRetryDraftReplace,
-  onOpenPath,
 }: SessionRetryBannerProps) {
   if (!retryBanner) {
     return null;
   }
 
   return (
-    <div className={`resume-banner retry-banner ${retryBanner.kind}`}>
+    <section
+      className={`resume-banner retry-banner ${retryBanner.kind}`}
+      aria-label="完了できなかった依頼の操作"
+    >
       <div className="resume-banner-head">
         <div className="resume-banner-copy">
           <span className={`resume-banner-badge ${retryBanner.kind}`}>{retryBanner.badge}</span>
           <p className="resume-banner-title">{retryBanner.title}</p>
         </div>
-        <button
-          className="artifact-toggle resume-banner-details-toggle"
-          type="button"
-          onClick={onToggleDetails}
-          aria-expanded={isRetryDetailsOpen}
-        >
-          {isRetryDetailsOpen ? "Hide" : "Details"}
-        </button>
       </div>
       <div className="resume-banner-actions">
         <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>
@@ -2050,19 +2045,7 @@ export function SessionRetryBanner({
           </div>
         </div>
       ) : null}
-      {isRetryDetailsOpen ? (
-        <div className="resume-banner-details">
-          <p className="resume-banner-summary">
-            <strong>停止地点</strong>
-            <span>{retryBanner.stopSummary}</span>
-          </p>
-          <div className="resume-banner-request">
-            <span>前回の依頼</span>
-            <MessageRichText text={retryBanner.lastRequestText} onOpenPath={onOpenPath} />
-          </div>
-        </div>
-      ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -3234,7 +3217,6 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
-  retryBanner: ReactNode;
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
@@ -3311,7 +3293,6 @@ export type SessionComposerExpandedProps = {
 };
 
 export function SessionComposerExpanded({
-  retryBanner,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
@@ -3429,7 +3410,6 @@ export function SessionComposerExpanded({
 
   return (
     <div className="composer">
-      {retryBanner}
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
           {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}

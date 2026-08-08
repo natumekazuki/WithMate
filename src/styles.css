@@ -3894,10 +3894,15 @@ button:disabled {
 
 .session-message-stack {
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 0;
   min-height: 0;
   min-width: 0;
+}
+
+.session-recovery-actions-slot {
+  min-width: 0;
+  padding: 0 12px 12px;
 }
 
 .session-message-column {
@@ -7379,7 +7384,6 @@ button:disabled {
 .resume-banner {
   display: grid;
   gap: 10px;
-  margin-bottom: 12px;
   padding: 14px 16px;
   border: 1px solid rgba(201, 106, 42, 0.18);
   border-radius: 18px;
@@ -7397,7 +7401,9 @@ button:disabled {
 }
 
 .retry-banner {
-  gap: 14px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px 20px;
 }
 
 .resume-banner-head {
@@ -7411,11 +7417,6 @@ button:disabled {
 .resume-banner-copy {
   display: grid;
   gap: 8px;
-}
-
-.resume-banner-details {
-  display: grid;
-  gap: 12px;
 }
 
 .resume-banner-badge {
@@ -7471,35 +7472,11 @@ button:disabled {
   line-height: 1.6;
 }
 
-.resume-banner-summary {
-  display: grid;
-  gap: 6px;
-  margin: 0;
-  padding: 12px 14px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.48);
-}
-
-.session-page .resume-banner-summary {
-  background: rgba(15, 23, 42, 0.44);
-}
-
-.resume-banner-summary strong,
-.resume-banner-request > span {
-  font-size: 0.76rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
 .resume-banner-actions,
 .resume-banner-conflict-actions {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-}
-
-.resume-banner-details-toggle {
-  flex: 0 0 auto;
 }
 
 .resume-banner-actions .drawer-toggle.secondary,
@@ -7510,6 +7487,7 @@ button:disabled {
 }
 
 .resume-banner-conflict {
+  grid-column: 1 / -1;
   display: grid;
   gap: 10px;
   padding: 12px 14px;
@@ -7520,23 +7498,6 @@ button:disabled {
 
 .session-page .resume-banner-conflict {
   background: rgba(15, 23, 42, 0.22);
-}
-
-.resume-banner-request {
-  display: grid;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.38);
-}
-
-.session-page .resume-banner-request {
-  background: rgba(15, 23, 42, 0.32);
-}
-
-.resume-banner-request > div,
-.resume-banner-request p {
-  margin: 0;
 }
 
 .resume-banner button {
@@ -7558,6 +7519,12 @@ button:disabled {
 .resume-banner button:disabled {
   cursor: not-allowed;
   opacity: 0.52;
+}
+
+@media (max-width: 760px) {
+  .retry-banner {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .composer-attachments-toolbar {

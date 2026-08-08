@@ -515,7 +515,6 @@ export function createStaticTextConversationMessageColumnProps({
 
 export function createHiddenControlsChatComposerProps(props: HiddenControlsChatComposerProps): ChatComposerProps {
   return {
-    retryBanner: null,
     isRunning: false,
     composerBlocked: false,
     canSelectCustomAgent: false,

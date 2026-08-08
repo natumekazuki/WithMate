@@ -137,7 +137,7 @@
 - `runStreamed()` を使い、assistant text・live steps・usage・error を Session Window へ中継する
 - message area には会話本文を、右 pane には `Latest Command` を表示する
 - command は raw text を優先して 1 件だけ見せ、情報過多を避ける
-- pending indicator、retry banner、scroll follow mode も入っている
+- pending indicator、recovery action surface、scroll follow mode も入っている
 
 主な実装:
 

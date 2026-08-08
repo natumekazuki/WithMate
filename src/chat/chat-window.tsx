@@ -38,6 +38,7 @@ export type ChatWindowProps = Omit<
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
+  recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
@@ -119,6 +120,7 @@ export function ChatWindow({
   isHeaderExpanded,
   headerProps,
   messageColumnProps,
+  recoveryActions,
   isActionDockExpanded,
   composerProps,
   compactActionDockProps,
@@ -137,6 +139,7 @@ export function ChatWindow({
       header={<SessionHeader {...headerProps} />}
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
+      recoveryActions={recoveryActions}
       messageColumn={(
         <StableSessionMessageColumn
           {...messageColumnProps}
