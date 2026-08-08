@@ -133,6 +133,9 @@ withmate-memory --help
 withmate-memory status
 withmate-memory characters
 withmate-memory file-usage --largest --limit 20
+withmate-memory list-targets
+withmate-memory list-entries --project <absolute-repo-path> --limit 100
+withmate-memory audit --all-targets --format markdown
 withmate-memory schema
 withmate-memory validate --command append --stdin
 withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
@@ -141,12 +144,16 @@ withmate-memory search --file memory-search.json
 withmate-memory get-entry --file memory-get-entry.json
 withmate-memory get-file --project <absolute-repo-path> --object-id <object-id> --output <absolute-output-path>
 withmate-memory export-files --project <absolute-repo-path> --entry-id <entry-id> --output-dir <absolute-output-directory>
-withmate-memory list-tags --file memory-list-tags.json
+withmate-memory list-tags --project <absolute-repo-path> --with-counts
 withmate-memory append --file memory-entry.json
 withmate-memory forget --file forget-request.json
+withmate-memory forget --file forget-request.json --dry-run
+withmate-memory move-entry --file move-request.json
 ```
 
-Commands write one JSON object to stdout, except `--help`, `-h`, and `help`, which print usage text.
+Commands write one JSON object to stdout, except help text and `audit --format jsonl|markdown`.
+
+Use the maintenance commands only for an explicit Memory review or cleanup task. Start with `list-targets`, page through `list-entries` without `--include-body`, use `audit` or counted tags to classify candidates, and run `forget --dry-run` before an approved bulk forget. Use `move-entry` instead of manual append+forget when the entry is under the wrong target. Do not inspect database files directly.
 
 For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
 
@@ -187,6 +194,12 @@ $request | withmate-memory search --stdin
 ```bash
 withmate-memory validate --command append --stdin
 ```
+
+`list-targets` inventories discoverable Memory targets and returns entry/tag counts and last-updated metadata. `--include-empty` adds known project, Character, and user-global targets with no active entries. Filters include `--owner`, `--scope`, `--project`, `--project-id`, and `--character-id`.
+
+`list-entries` lists a target without a search query. It is paginated and omits `body` unless `includeBody: true` or `--include-body` is explicit. Continue with `nextCursor` until absent for an exhaustive review.
+
+`audit` accepts exactly one of `allTargets: true` or explicit `targets[]`. JSON is the default; JSONL and Markdown are CLI projections. JSONL emits an `audit_page` metadata record before its `target_audit` records so pagination state is not lost. Audit candidates are heuristics for review, not authorization to forget or retarget entries.
 
 `search`:
 
@@ -238,7 +251,9 @@ For provider-independent user preferences, conventions, constraints, or other cr
   "schemaVersion": "withmate-memory-v1",
   "targets": [
     { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
-  ]
+  ],
+  "withCounts": true,
+  "sampleLimit": 3
 }
 ```
 
@@ -279,7 +294,23 @@ For provider-independent user preferences, conventions, constraints, or other cr
 }
 ```
 
-Choose a stable `idempotencyKey` before the first `append` or `forget` attempt. After a timeout or response loss, retry the unchanged request with the same key. Use a new key when the request body changes.
+Add `"dryRun": true` or pass `--dry-run` to return the entries that would be forgotten, not-found/target-mismatch warnings, and `writeOccurred: false`. A dry-run does not create mutation or idempotency records.
+
+`move-entry`:
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "entryId": "<entry-id>",
+  "from": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
+  "to": { "owner": "user", "scope": "global" },
+  "idempotencyKey": "stable-move-key"
+}
+```
+
+Move requires explicit, different source and destination targets. It preserves the entry ID, relations, and protected-file attachments, records the retarget operation, and is atomic. Retry an ambiguous result with the unchanged request and idempotency key.
+
+Choose a stable `idempotencyKey` before the first `append`, mutating `forget`, or `move-entry` attempt. After a timeout or response loss, retry the unchanged request with the same key. Use a new key when the request body changes.
 
 ### Protected Files
 

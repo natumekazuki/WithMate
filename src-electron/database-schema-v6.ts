@@ -26,6 +26,7 @@ export const REQUIRED_V6_TABLES = [
   "memory_mutation_events_v6",
   "memory_idempotency_keys_v6",
   "memory_idempotency_forget_results_v6",
+  "memory_move_events_v6",
   "memory_protected_objects_v6",
 ] as const;
 
@@ -53,6 +54,8 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_mutation_events_result",
   "idx_v6_memory_idempotency_response_entry",
+  "idx_v6_memory_move_events_entry",
+  "idx_v6_memory_move_events_idempotency",
   "idx_v6_memory_protected_objects_state",
   "idx_v6_memory_protected_objects_entry",
 ] as const;
@@ -169,6 +172,22 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "scope_id",
     "entry_id",
     "result_status",
+    "created_at",
+  ],
+  memory_move_events_v6: [
+    "id",
+    "entry_id",
+    "from_owner_type",
+    "from_owner_id",
+    "from_scope_type",
+    "from_scope_id",
+    "to_owner_type",
+    "to_owner_id",
+    "to_scope_type",
+    "to_scope_id",
+    "binding_id_hash",
+    "idempotency_key",
+    "request_fingerprint",
     "created_at",
   ],
   memory_protected_objects_v6: [
@@ -868,6 +887,33 @@ export const CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL = `
     ON memory_protected_objects_v6(entry_id, state);
 `;
 
+export const CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS memory_move_events_v6 (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    from_owner_type TEXT NOT NULL,
+    from_owner_id TEXT NOT NULL,
+    from_scope_type TEXT NOT NULL,
+    from_scope_id TEXT NOT NULL,
+    to_owner_type TEXT NOT NULL,
+    to_owner_id TEXT NOT NULL,
+    to_scope_type TEXT NOT NULL,
+    to_scope_id TEXT NOT NULL,
+    binding_id_hash TEXT NOT NULL,
+    idempotency_key TEXT,
+    request_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_memory_move_events_idempotency
+    ON memory_move_events_v6(binding_id_hash, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_v6_memory_move_events_entry
+    ON memory_move_events_v6(entry_id, created_at DESC);
+`;
+
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_MODEL_CATALOG_TABLES_SQL,
@@ -886,6 +932,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL,
+  CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
   `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
 ] as const;

@@ -395,8 +395,17 @@ type MemoryListTagsResponse = {
 };
 ```
 
-- 明示targetで利用可能なactive tag catalogを返す。
+- 明示targetで利用可能なactive tag catalogを返す。`withCounts`指定時はentry count、latest update、bounded sampleを同じresponseへ加える。
 - search refinementとappend時のtag reuseに使う。
+
+### Maintenance inventory / audit
+
+Memoryの明示的な保守作業では、`memory.list_targets`、`memory.list_entries`、`memory.audit`を使う。通常recallへ自動適用しない。
+
+- `list_targets`はactive entryを持つtargetを列挙し、`includeEmpty`指定時だけ既知のproject、Character、user-globalのempty targetを加える。Character×projectの空組合せは生成しない。
+- `list_entries`は単一の明示targetをqueryなしでpaginationする。既定はactive entryで、bodyは`includeBody`指定時だけ投影する。
+- `audit`はtarget単位のkind/tag集計と保守候補を返す。候補はheuristicであり、forgetやmoveのauthorityにはしない。bodyは返さない。
+- pagination、owner/scope filter、public projectionの実行契約は`src/memory-v6/memory-validation.ts`、`src-electron/memory-v6-storage.ts`、`src/memory-v6/memory-response-contract.ts`を正本とする。
 
 ### `memory.append`
 
@@ -412,6 +421,7 @@ type MemoryAppendRequest = {
   supersedes?: string[];
   sourceMessageId?: string;
   idempotencyKey?: string;
+  dryRun?: boolean;
 };
 ```
 
@@ -495,6 +505,11 @@ request-levelのprincipal不足、operation permission不足、target permission
 `memory.forget`はfirst releaseでは単一target必須とし、serviceがentry IDからtargetを推論して複数targetへ分割しない。
 entry単位では、明示targetからアクセス不能なIDを`not_found`へ畳む。
 内部auditではアクセス不能とnot foundを区別してよいが、agent-facing responseで他ownerのentry存在確認に使える差分を出さない。
+`dryRun`は実forgetと同じtarget照合結果とpreviewを返すが、entry、protected object、mutation event、idempotencyを変更しない。
+
+### `memory.move_entry`
+
+wrong-scope entryは、単一entry IDと明示した異なる`from` / `to` targetでretargetする。entry ID、relation、protected object attachmentを保持し、entry rowのtarget tupleとmove audit eventを一つのtransactionで確定する。idempotency key replayではrequest fingerprintと現在のdestination targetを再検証する。判断理由は`docs/adr/017-memory-entry-retarget-identity.md`を参照する。
 
 ### Tag Canonicalization
 
@@ -517,7 +532,7 @@ value.normalize("NFC").toLowerCase()
 CLIはuser-facing entrypointであり、app外の人間やagentが自由に呼べる薄いclientとする。
 CLIはDBを直接触らず、起動中のWithMateが提供するruntime Memory APIへ接続する。
 WithMateが起動していない場合、CLIはすべてのMemory操作を拒否し、machine-readable errorを返す。
-WithMate起動中は、WithMate外のCodex / shell / CLIからもproject owner + project scope、character owner + character scope、またはuser owner + global scopeのMemoryを明示targetで検索、取得、tag一覧、append、forgetできる。
+WithMate起動中は、WithMate外のCodex / shell / CLIからもMemory target inventory、明示targetのentry一覧・検索・取得・tag統計・audit・append・forget preview/mutation・retargetを扱える。
 CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。
 `local_user` principalは明示targetだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
 retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
@@ -540,6 +555,9 @@ current raw JSON CLI:
 ```text
 withmate-memory status
 withmate-memory characters
+withmate-memory list-targets
+withmate-memory list-entries --project <absolute-project-path> --limit 100
+withmate-memory audit --all-targets --format markdown
 withmate-memory schema
 withmate-memory validate --command append --stdin
 withmate-memory search --json '<MemorySearchRequest>'
@@ -547,13 +565,15 @@ withmate-memory get-entry --json '<MemoryGetEntryRequest>'
 withmate-memory list-tags --json '<MemoryListTagsRequest>'
 withmate-memory append --json '<MemoryAppendRequest>'
 withmate-memory forget --json '<MemoryForgetRequest>'
+withmate-memory forget --file payload.json --dry-run
+withmate-memory move-entry --file payload.json
 withmate-memory search --file payload.json
 withmate-memory search @payload.json
 withmate-memory search --project <absolute-project-path> --query "delivery cleanup" --tag delivery-cleanup
 withmate-memory search --project <absolute-project-path> --tags topic:delivery-cleanup,topic:relaygraph
 ```
 
-`--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法であり、output format指定ではない。CLI outputは常にJSONをstdoutへ出す。
+`--json`、`--file`、`@file`、`--stdin`はrequest bodyの入力方法である。CLI outputは原則JSONとし、`audit --format jsonl|markdown`だけは明示した保守用projectionをstdoutへ出す。
 Windows PowerShell / `.cmd` wrapper経由ではinline JSONのquoteが壊れやすいため、request bodyを渡すcommandでは`--stdin`または`--file <path>`を推奨する。
 `schema`と`validate`はruntime APIへ接続せずにCLI process内で完結する。`validate`はMemory entryを作成、更新、forgetしない。
 API errorもtransportできた場合はruntime APIのJSON responseをそのままstdoutへ出す。
@@ -651,7 +671,7 @@ V6 MemoryはV6 DB foundation上の新規tableとして実装する。
 legacy Memory tableは読まない、書かない、意味変更しない。
 V5以前のsession / legacy MemoryはV6 first releaseのmigration対象にしない。
 SQL正本は`src-electron/database-schema-v6.ts`に置く。
-storage実装は`src-electron/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するappend、get、lexical/tag search、supersede、forget、tag catalog、mutation event、idempotencyを扱う。
+storage実装は`src-electron/memory-v6-storage.ts`に置き、解決済みowner / scopeに対するinventory、query-free list、append、get、lexical/tag search、supersede、forget preview/mutation、retarget、tag catalog、mutation event、idempotencyを扱う。
 storage helper型とtarget SQL helperは`src-electron/memory-v6-schema.ts`に置く。
 permission、project path / id解決、Character id解決はstorageへ入れず、application service層で扱う。
 storageはvalidな`withmate-v6.db`だけを開き、legacy DB pathへV6 schemaを作らない。
@@ -664,7 +684,7 @@ Application serviceはversioned request contractとV6 storageの間に置く。
 service層で扱う:
 
 - request validation済みpayloadからstorage inputへの変換
-- `memory.search` / `memory.get_entry` / `memory.list_tags` / `memory.list_characters` / `memory.append` / `memory.forget`のresponse contract生成
+- maintenance commandを含むMemory response contract生成
 - runtime principalのpermission確認
 - explicit project targetのID / path解決
 - explicit Character targetのID解決

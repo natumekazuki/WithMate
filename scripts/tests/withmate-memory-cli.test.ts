@@ -660,7 +660,7 @@ describe("withmate-memory CLI", () => {
     assert.match(stdout.text(), /get-file/);
     assert.match(stdout.text(), /export-files/);
     assert.match(stdout.text(), /search --project/);
-    assert.match(stdout.text(), /validate --command <search\|get-entry\|get-file\|export-files\|list-tags\|append\|forget>/);
+    assert.match(stdout.text(), /validate --command <list-targets\|list-entries\|audit\|search\|get-entry\|get-file\|export-files\|list-tags\|append\|forget\|move-entry>/);
   });
 
   it("command --helpもruntime接続なしでusage textを返す", async () => {
@@ -1232,6 +1232,168 @@ describe("withmate-memory CLI", () => {
 
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.transportError);
     assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_TRANSPORT_ERROR");
+  });
+
+  it("maintenance shorthandはlist-targets、list-entries、tag countsをruntimeへ送る", async () => {
+    const cases = [
+      {
+        args: ["list-targets", "--owner", "project", "--include-empty", "--limit", "100"],
+        path: "/v1/list_targets",
+        expected: { schemaVersion: MEMORY_V6_SCHEMA_VERSION, owner: "project", includeEmpty: true, limit: 100 },
+      },
+      {
+        args: ["list-entries", "--project-id", "project-a", "--limit", "100"],
+        path: "/v1/list_entries",
+        expected: {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          limit: 100,
+        },
+      },
+      {
+        args: ["list-entries", "--owner", "user", "--scope", "global", "--limit", "100"],
+        path: "/v1/list_entries",
+        expected: {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: { owner: "user", scope: "global" },
+          limit: 100,
+        },
+      },
+      {
+        args: ["list-tags", "--project-id", "project-a", "--with-counts", "--sample-limit", "2"],
+        path: "/v1/list_tags",
+        expected: {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+          withCounts: true,
+          sampleLimit: 2,
+        },
+      },
+    ];
+    for (const testCase of cases) {
+      const stdout = createOutputCapture();
+      let capturedBody: unknown;
+      const exitCode = await runWithMateMemoryCli(testCase.args, {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url, init) => {
+          if (isStatusChallengeRequest(String(url))) {
+            return createStatusChallengeResponse(String(url));
+          }
+          assert.equal(String(url), `http://127.0.0.1:7777${testCase.path}`);
+          capturedBody = JSON.parse(String(init?.body));
+          return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] }), { status: 200 });
+        },
+      });
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      assert.deepEqual(capturedBody, testCase.expected);
+    }
+  });
+
+  it("forget --file --dry-runはrequestへpreview flagを加え、move-entryは専用routeへ送る", async () => {
+    const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-maintenance-cli-"));
+    try {
+      const forgetPath = join(tempDirectory, "forget.json");
+      const movePath = join(tempDirectory, "move.json");
+      const target = { owner: "project", scope: "project", project: { type: "id", id: "project-a" } };
+      await writeFile(forgetPath, JSON.stringify({
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target,
+        entryIds: ["mem-a"],
+      }), "utf8");
+      await writeFile(movePath, JSON.stringify({
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "mem-a",
+        from: target,
+        to: { owner: "user", scope: "global" },
+        idempotencyKey: "move-a",
+      }), "utf8");
+      for (const [args, path, expectedDryRun] of [
+        [["forget", "--file", forgetPath, "--dry-run"], "/v1/forget", true],
+        [["move-entry", "--file", movePath], "/v1/move_entry", undefined],
+      ] as const) {
+        const stdout = createOutputCapture();
+        let capturedBody: any;
+        const exitCode = await runWithMateMemoryCli(args, {
+          env: TEST_RUNTIME_ENV,
+          stdout: stdout.stream,
+          fetch: async (url, init) => {
+            if (isStatusChallengeRequest(String(url))) {
+              return createStatusChallengeResponse(String(url));
+            }
+            assert.equal(String(url), `http://127.0.0.1:7777${path}`);
+            capturedBody = JSON.parse(String(init?.body));
+            return new Response(JSON.stringify({ schemaVersion: MEMORY_V6_SCHEMA_VERSION, results: [] }), { status: 200 });
+          },
+        });
+        assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+        assert.equal(capturedBody.dryRun, expectedDryRun);
+      }
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("audit markdown/jsonlはbodyを要求せずmaintenance projectionを整形する", async () => {
+    const response = {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      generatedAt: "2026-08-09T00:00:00.000Z",
+      staleBefore: "2026-05-11T00:00:00.000Z",
+      targets: [{
+        target: {
+          target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+          owner: "project",
+          scope: "project",
+          project: { id: "project-a", displayName: "Project A" },
+          entryCount: 1,
+          tagCount: 1,
+          lastUpdatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        countsByKind: { context: 1 },
+        topTags: [{ type: "topic", value: "memory", entryCount: 1, latestUpdatedAt: "2026-01-01T00:00:00.000Z" }],
+        staleOrProgressCandidates: [{ id: "mem-a", title: "PR opened", preview: "pending", updatedAt: "2026-01-01T00:00:00.000Z", reasons: ["progress_like_metadata"] }],
+        wrongScopeCandidates: [],
+        duplicateTitleCandidates: [{
+          normalizedTitle: "pr opened",
+          entries: [
+            { id: "mem-a", title: "PR opened", preview: "pending", updatedAt: "2026-01-01T00:00:00.000Z", reasons: ["duplicate_normalized_title"] },
+            { id: "mem-b", title: "PR_opened", preview: "pending", updatedAt: "2026-01-01T00:00:00.000Z", reasons: ["duplicate_normalized_title"] },
+          ],
+        }],
+        documentationCandidates: [],
+        suspiciousTagCandidates: [],
+      }],
+      nextCursor: "next-page",
+    };
+    for (const format of ["markdown", "jsonl"] as const) {
+      const stdout = createOutputCapture();
+      const exitCode = await runWithMateMemoryCli(["audit", "--all-targets", "--format", format], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        fetch: async (url) => isStatusChallengeRequest(String(url))
+          ? createStatusChallengeResponse(String(url))
+          : new Response(JSON.stringify(response), { status: 200 }),
+      });
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.ok);
+      if (format === "markdown") {
+        assert.match(stdout.text(), /# WithMate Memory audit/);
+        assert.match(stdout.text(), /Project A/);
+        assert.match(stdout.text(), /context: 1/);
+        assert.match(stdout.text(), /topic:memory — 1/);
+        assert.match(stdout.text(), /pr opened — mem-a, mem-b/);
+        assert.match(stdout.text(), /Next cursor: `next-page`/);
+      } else {
+        assert.equal(stdout.lines().length, 2);
+        assert.deepEqual(JSON.parse(stdout.lines()[0]), {
+          recordType: "audit_page",
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          generatedAt: response.generatedAt,
+          staleBefore: response.staleBefore,
+          nextCursor: "next-page",
+        });
+        assert.equal(JSON.parse(stdout.lines()[1]).target.project.displayName, "Project A");
+      }
+    }
   });
 
   it("invalid JSONはusage errorで終了する", async () => {
