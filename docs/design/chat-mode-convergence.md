@@ -26,7 +26,7 @@ V5 preview では legacy MateTalk runtime / window / `mate-talk` mode を curren
 - MateTalk は軽量 mode だが、独自 chat 実装にはしない。不要機能は capability off で隠し、right pane shell 自体は共通 layout に残す。
 - Auxiliary は Agent 限定の feature ではなく、shared chat host 上の disposable / child conversation として扱う。
 - response action は assistant response 共通機能として扱い、表示面ごとの composer adapter だけ差し替える。
-- retry / edit last message は Agent 固有にしない。UI は共通化し、再送 API と source transcript だけ adapter で差し替える。
+- retry / edit last message は Agent 固有にしない。recovery action surface は共通 chat layout の message stack が所有し、再送 API と source transcript だけ adapter で差し替える。
 - provider や mode の制約で使えない操作は、個別 UI を作らず capability で非表示または disabled にする。
 
 ## Difference Matrix

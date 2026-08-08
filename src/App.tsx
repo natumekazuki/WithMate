@@ -209,12 +209,9 @@ import {
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
-  applyRetryDetailsReset,
   applyRetryDraftRestoreCommand,
-  buildRetryStopSummary,
   createCancelRetryDraftReplaceHandler,
   createRetryDraftReplaceConfirmationHandler,
-  createRetryDetailsToggleHandler,
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
@@ -497,7 +494,6 @@ export default function AgentSessionWindowApp() {
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
-  const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
@@ -1687,7 +1683,6 @@ export default function AgentSessionWindowApp() {
       return null;
     }
 
-    const stopSummary = buildRetryStopSummary(kind, selectedSessionLiveRun, latestTerminalAuditLog, lastAssistantMessage);
     switch (kind) {
       case "interrupted":
         return {
@@ -1699,7 +1694,6 @@ export default function AgentSessionWindowApp() {
             selectedSession.id,
             retryLastUserMessage.text,
           ]),
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       case "failed":
@@ -1712,7 +1706,6 @@ export default function AgentSessionWindowApp() {
             selectedSession.id,
             retryLastUserMessage.text,
           ]),
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       case "canceled":
@@ -1726,7 +1719,6 @@ export default function AgentSessionWindowApp() {
             retryLastUserMessage.text,
             latestTerminalAuditLog?.id,
           ]),
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       default:
@@ -1772,7 +1764,6 @@ export default function AgentSessionWindowApp() {
       isAgentPickerOpen,
       isSkillPickerOpen,
       isRetryDraftReplacePending,
-      !!retryBanner && !activeAuxiliarySession,
       composerSendability.feedbackTone === "blocked",
     ],
   });
@@ -1907,34 +1898,11 @@ export default function AgentSessionWindowApp() {
       }),
     [draft, selectedSessionRunState],
   );
-  const retryBannerIdentity = useMemo(() => {
-    if (!retryBanner || !selectedSession || !lastUserMessage) {
-      return null;
-    }
-
-    const lastUserMessageIdentity = `${
-      selectedSession.messages.filter((message) => message.role === "user").length
-    }:${lastUserMessage.text}`;
-    const canceledAuditLogIdentity =
-      retryBanner.kind === "canceled" && latestTerminalAuditLog
-        ? `${latestTerminalAuditLog.id}:${latestTerminalAuditLog.phase}:${latestTerminalAuditLog.createdAt}`
-        : "";
-
-    return [retryBanner.kind, lastUserMessageIdentity, canceledAuditLogIdentity].join("\u001f");
-  }, [lastUserMessage, latestTerminalAuditLog, retryBanner, selectedSession]);
-
   useEffect(() => {
     if (!retryBanner) {
       setIsRetryDraftReplacePending(false);
     }
   }, [retryBanner]);
-
-  useLayoutEffect(() => {
-    applyRetryDetailsReset({
-      retryBanner,
-      setRetryDetailsOpen: setIsRetryDetailsOpen,
-    });
-  }, [retryBanner?.kind, retryBannerIdentity, selectedSession?.id]);
 
   useEffect(() => {
     setForceComposerBlockedFeedback(false);
@@ -2526,10 +2494,6 @@ export default function AgentSessionWindowApp() {
 
   const handleCancelRetryDraftReplace = createCancelRetryDraftReplaceHandler({
     setRetryDraftReplacePending: setIsRetryDraftReplacePending,
-  });
-
-  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
-    setRetryDetailsOpen: setIsRetryDetailsOpen,
   });
 
   const handleCloseWindow = () => {
@@ -3371,7 +3335,6 @@ export default function AgentSessionWindowApp() {
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
-        isRetryDetailsOpen,
         isRetryActionDisabled,
         isRetryEditDisabled,
         isRetryDraftReplacePending,
@@ -3474,7 +3437,6 @@ export default function AgentSessionWindowApp() {
         getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
-        onToggleRetryDetails: handleToggleRetryDetails,
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,

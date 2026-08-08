@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildAgentSessionChatWindowProps,
@@ -102,7 +103,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     liveRunErrorMessage: "",
     isMessageListFollowing: true,
     retryBanner: null,
-    isRetryDetailsOpen: false,
     isRetryActionDisabled: false,
     isRetryEditDisabled: false,
     isRetryDraftReplacePending: false,
@@ -195,7 +195,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     getChangedFilesEmptyText: () => "ファイル変更はありません",
     onCopyMessageText: noop,
     onQuoteMessageText: noop,
-    onToggleRetryDetails: noop,
     onResendLastMessage: noop,
     onEditLastMessage: noop,
     onConfirmRetryDraftReplace: noop,
@@ -266,6 +265,28 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode でも attachment 経�
   assert.deepEqual(props.composerProps.attachmentItems, attachmentItems);
   assert.equal(props.composerProps.onDraftPaste, onDraftPaste);
   assert.equal(props.compactActionDockProps.attachmentCount, 1);
+});
+
+test("buildAgentSessionChatWindowProps は retry actions を共通 chat layout に渡す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    retryBanner: {
+      kind: "failed",
+      badge: "失敗",
+      title: "前回の依頼は完了できませんでした",
+      lastRequestText: "調べて",
+    },
+    isRetryActionDisabled: false,
+    isRetryEditDisabled: false,
+    isRetryDraftReplacePending: false,
+    isActionDockExpanded: false,
+  }));
+
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.recoveryActions));
+
+  assert.equal(props.isActionDockExpanded, false);
+  assert.match(html, /retry-banner failed/);
+  assert.match(html, />同じ依頼を再送<\/button>/);
+  assert.match(html, />編集して再送<\/button>/);
 });
 
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {

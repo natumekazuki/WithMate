@@ -1467,7 +1467,6 @@ test("SessionMessageColumn は pending 対象の Auxiliary group が window 外�
 test("SessionComposerExpanded は Hide を描画せず、Send を設定グループの外へ配置する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
-      retryBanner: null,
       isRunning: false,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",
@@ -1567,7 +1566,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
 test("SessionComposerExpanded は実行中の操作後に jump button と表示切替を右側 group へ描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
-      retryBanner: null,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",

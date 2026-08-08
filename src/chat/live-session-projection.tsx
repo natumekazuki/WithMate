@@ -6,54 +6,25 @@ import {
 } from "./chat-window-adapter.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
 
-export type LiveSessionCommonComposerDockInput = Omit<LiveSessionComposerDockPropsInput, "retryBanner"> & {
+export type LiveSessionRecoveryActionsInput = {
   retryBanner: SessionRetryBannerProps["retryBanner"];
-  isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
-  onToggleDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
   onCancelRetryDraftReplace: () => void;
-  onOpenPath: (target: string) => void;
 };
 
-export function buildLiveSessionCommonComposerDockInput(
-  input: LiveSessionCommonComposerDockInput,
-): LiveSessionComposerDockPropsInput {
-  const {
-    retryBanner,
-    isRetryDetailsOpen,
-    isRetryActionDisabled,
-    isRetryEditDisabled,
-    isRetryDraftReplacePending,
-    onToggleDetails,
-    onResendLastMessage,
-    onEditLastMessage,
-    onConfirmRetryDraftReplace,
-    onCancelRetryDraftReplace,
-    onOpenPath,
-    ...composerInput
-  } = input;
+export function buildLiveSessionRecoveryActions(input: LiveSessionRecoveryActionsInput) {
+  return buildLiveSessionRetryBanner(input);
+}
 
-  return {
-    ...composerInput,
-    retryBanner: buildLiveSessionRetryBanner({
-      retryBanner,
-      isRetryDetailsOpen,
-      isRetryActionDisabled,
-      isRetryEditDisabled,
-      isRetryDraftReplacePending,
-      onToggleDetails,
-      onResendLastMessage,
-      onEditLastMessage,
-      onConfirmRetryDraftReplace,
-      onCancelRetryDraftReplace,
-      onOpenPath,
-    }),
-  };
+export function buildLiveSessionCommonComposerDockInput(
+  input: LiveSessionComposerDockPropsInput,
+): LiveSessionComposerDockPropsInput {
+  return input;
 }
 
 export type LiveSessionCommonMessageColumnInput = Omit<

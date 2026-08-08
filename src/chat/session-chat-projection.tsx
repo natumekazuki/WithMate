@@ -26,6 +26,7 @@ import {
   buildLiveSessionCommonComposerDockInput,
   buildLiveSessionCommonContextPaneProps,
   buildLiveSessionCommonMessageColumnProps,
+  buildLiveSessionRecoveryActions,
 } from "./live-session-projection.js";
 
 export type AgentSessionChatProjectionInput = {
@@ -68,7 +69,6 @@ export type AgentSessionChatProjectionInput = {
   isMessageListFollowing: boolean;
   pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   retryBanner: SessionRetryBannerProps["retryBanner"];
-  isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
@@ -155,7 +155,6 @@ export type AgentSessionChatProjectionInput = {
   getChangedFilesEmptyText: SessionMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText: NonNullable<SessionMessageColumnProps["onCopyMessageText"]>;
   onQuoteMessageText: NonNullable<SessionMessageColumnProps["onQuoteMessageText"]>;
-  onToggleRetryDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
@@ -208,6 +207,16 @@ export type AgentSessionChatProjectionInput = {
 
 export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjectionInput): ChatWindowProps {
   const isCharacterAuthoringSession = input.selectedSession.sessionKind === "character-authoring";
+  const recoveryActions = buildLiveSessionRecoveryActions({
+    retryBanner: input.retryBanner,
+    isRetryActionDisabled: input.isRetryActionDisabled,
+    isRetryEditDisabled: input.isRetryEditDisabled,
+    isRetryDraftReplacePending: input.isRetryDraftReplacePending,
+    onResendLastMessage: input.onResendLastMessage,
+    onEditLastMessage: input.onEditLastMessage,
+    onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
+    onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
+  });
   const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.selectedSession.taskTitle,
     isEditingTitle: input.isEditingTitle,
@@ -234,17 +243,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
 
   const composerDockProps = buildLiveSessionComposerDockProps(
     buildLiveSessionCommonComposerDockInput({
-      retryBanner: input.retryBanner,
-      isRetryDetailsOpen: input.isRetryDetailsOpen,
-      isRetryActionDisabled: input.isRetryActionDisabled,
-      isRetryEditDisabled: input.isRetryEditDisabled,
-      isRetryDraftReplacePending: input.isRetryDraftReplacePending,
-      onToggleDetails: input.onToggleRetryDetails,
-      onResendLastMessage: input.onResendLastMessage,
-      onEditLastMessage: input.onEditLastMessage,
-      onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
-      onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
-      onOpenPath: input.onOpenInlinePath,
       isRunning: input.isSelectedSessionRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
@@ -401,6 +399,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       inlinePathFeedback: input.inlinePathFeedback,
       onDismissInlinePathFeedback: input.onDismissInlinePathFeedback,
     },
+    recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
     headerSplitterProps: {

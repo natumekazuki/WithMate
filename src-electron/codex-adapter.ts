@@ -1231,6 +1231,7 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
   const assistantDelta = readCodexAssistantDelta(event);
   if (assistantDelta !== null) {
     state.streamedAssistantText += assistantDelta;
+    state.streamErrorMessage = "";
   }
 
   switch (event.type) {
@@ -1241,6 +1242,7 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
       state.usage = event.usage;
       state.liveUsage = normalizeCodexTokenUsage(event.usage);
       state.turnCompleted = true;
+      state.streamErrorMessage = "";
       break;
     case "turn.failed":
       state.streamErrorMessage = event.error.message;
@@ -1251,6 +1253,7 @@ function applyCodexTurnEvent(state: CodexTurnStreamState, event: ThreadEvent): v
     case "item.started":
     case "item.updated":
     case "item.completed": {
+      state.streamErrorMessage = "";
       state.items.set(event.item.id, event.item);
       if (event.item.type === "agent_message") {
         const { assistantText: itemAssistantText } = collectAssistantResponse(state.items.values());
@@ -1900,8 +1903,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
             streamState.liveUsage,
             getLiveStreamErrorMessage(streamState),
           );
-          // SDK terminal events are authoritative. EOF is only transport cleanup and may never arrive.
-          terminalEventReceived = event.type === "turn.completed" || event.type === "turn.failed" || event.type === "error";
+          // SDK turn events are authoritative. `error` can also report retry progress,
+          // so keep it as the latest diagnostic until the turn settles or the stream ends.
+          terminalEventReceived = event.type === "turn.completed" || event.type === "turn.failed";
         }
       } finally {
         input.signal?.removeEventListener("abort", forwardCallerAbort);

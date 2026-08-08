@@ -74,6 +74,20 @@ test("ChatWindowStatusScreen は Session 共通 shell で状態表示をレン�
   assert.doesNotMatch(html, /session-plain/);
 });
 
+test("ChatWindow は preview と compact ActionDock の間に recovery actions を維持する", () => {
+  const props = createChatWindowProps();
+  props.mainContent = React.createElement("div", null, "File Preview");
+  props.recoveryActions = React.createElement("div", null, "Retry Actions");
+  props.isActionDockExpanded = false;
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="session-recovery-actions-slot"><div>Retry Actions<\/div>/);
+  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
+  assert.ok(html.indexOf("File Preview") < html.indexOf("Retry Actions"));
+  assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
+});
+
 test("ChatWindow は Quote 対応 chat の表示 mode を message column と ActionDock で共有する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;

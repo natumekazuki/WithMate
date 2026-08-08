@@ -20,6 +20,7 @@ type LiveSessionWindowShellPropsInput = {
   onActivateDockPriority: () => void;
   headerProps: ChatWindowProps["headerProps"];
   messageColumnProps: ChatWindowProps["messageColumnProps"];
+  recoveryActions?: ChatWindowProps["recoveryActions"];
   mainContent?: ReactNode;
   isActionDockExpanded: boolean;
   composerProps: ChatWindowProps["composerProps"];
@@ -56,6 +57,7 @@ export function buildLiveSessionWindowShellProps(
       ...input.messageColumnProps,
       isContentActive: input.mainContent === undefined,
     },
+    recoveryActions: input.recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: input.composerProps,

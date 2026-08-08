@@ -12,40 +12,34 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
       kind: "failed",
       badge: "失敗",
       title: "前回の依頼は完了できませんでした",
-      stopSummary: "assistant error",
       lastRequestText: "直して",
     },
-    isRetryDetailsOpen: true,
     isRetryActionDisabled: false,
     isRetryEditDisabled: false,
     isRetryDraftReplacePending: false,
-    onToggleDetails: noop,
     onResendLastMessage: noop,
     onEditLastMessage: noop,
     onConfirmRetryDraftReplace: noop,
     onCancelRetryDraftReplace: noop,
-    onOpenPath: noop,
   }));
 
   assert.match(html, /retry-banner failed/);
+  assert.match(html, /aria-label="完了できなかった依頼の操作"/);
   assert.match(html, />同じ依頼を再送<\/button>/);
   assert.match(html, />編集して再送<\/button>/);
-  assert.match(html, /前回の依頼/);
+  assert.doesNotMatch(html, /停止地点|前回の依頼<\/span>|>Details<|>Hide</);
 });
 
 test("buildLiveSessionRetryBanner は banner がない場合 null を描画する", () => {
   const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
     retryBanner: null,
-    isRetryDetailsOpen: false,
     isRetryActionDisabled: true,
     isRetryEditDisabled: true,
     isRetryDraftReplacePending: false,
-    onToggleDetails: noop,
     onResendLastMessage: noop,
     onEditLastMessage: noop,
     onConfirmRetryDraftReplace: noop,
     onCancelRetryDraftReplace: noop,
-    onOpenPath: noop,
   }));
 
   assert.equal(html, "");

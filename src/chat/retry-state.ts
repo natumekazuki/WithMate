@@ -1,5 +1,4 @@
-import type { AuditLogSummary, LiveSessionRunState } from "../runtime-state.js";
-import type { Message } from "../session-state.js";
+import type { AuditLogSummary } from "../runtime-state.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
 export type RetryBannerKind = "interrupted" | "failed" | "canceled";
@@ -8,7 +7,6 @@ export type RetryBannerState = {
   kind: RetryBannerKind;
   badge: string;
   title: string;
-  stopSummary: string;
   lastRequestText: string;
 };
 
@@ -112,30 +110,6 @@ export function createRetryDraftReplaceConfirmationHandler(input: {
   return () => applyRetryDraftReplaceConfirmation(input);
 }
 
-export function applyRetryDetailsReset(input: {
-  retryBanner: Pick<RetryBannerState, "kind"> | null;
-  setRetryDetailsOpen: (open: boolean) => void;
-}): void {
-  if (!input.retryBanner) {
-    input.setRetryDetailsOpen(false);
-    return;
-  }
-
-  input.setRetryDetailsOpen(defaultRetryBannerDetailsOpen(input.retryBanner.kind));
-}
-
-export function applyRetryDetailsToggle(input: {
-  setRetryDetailsOpen: (updater: (current: boolean) => boolean) => void;
-}): void {
-  input.setRetryDetailsOpen((current) => !current);
-}
-
-export function createRetryDetailsToggleHandler(input: {
-  setRetryDetailsOpen: (updater: (current: boolean) => boolean) => void;
-}): () => void {
-  return () => applyRetryDetailsToggle(input);
-}
-
 export function applyCancelRetryDraftReplace(input: {
   setRetryDraftReplacePending: (pending: boolean) => void;
 }): void {
@@ -146,10 +120,6 @@ export function createCancelRetryDraftReplaceHandler(input: {
   setRetryDraftReplacePending: (pending: boolean) => void;
 }): () => void {
   return () => applyCancelRetryDraftReplace(input);
-}
-
-export function defaultRetryBannerDetailsOpen(kind: RetryBannerKind): boolean {
-  return kind !== "canceled";
 }
 
 export function resolveRetryBannerKind(input: {
@@ -204,66 +174,4 @@ export function isRetryActionDisabled(input: {
     || input.composerBlocked
     || input.isReadOnly
     || input.runState === "running";
-}
-
-function getLastNonEmptyValue(values: Array<string | null | undefined>): string {
-  for (let index = values.length - 1; index >= 0; index -= 1) {
-    const candidate = values[index]?.trim();
-    if (candidate) {
-      return candidate;
-    }
-  }
-
-  return "";
-}
-
-export function buildRetryStopSummary(
-  kind: RetryBannerKind,
-  liveRun: LiveSessionRunState | null,
-  latestTerminalAuditLog: AuditLogSummary | null,
-  lastAssistantMessage: Message | null,
-): string {
-  const liveRunSummary = getLastNonEmptyValue((liveRun?.steps ?? []).map((step) => step.summary));
-  if (liveRunSummary) {
-    return liveRunSummary;
-  }
-
-  if (kind === "interrupted") {
-    return "停止地点は復元できませんでした。";
-  }
-
-  const auditOperationSummary = getLastNonEmptyValue(
-    (latestTerminalAuditLog?.operations ?? []).map((operation) => operation.summary),
-  );
-  if (auditOperationSummary) {
-    return auditOperationSummary;
-  }
-
-  const artifactOperationSummary = getLastNonEmptyValue(
-    (lastAssistantMessage?.artifact?.operationTimeline ?? []).map((operation) => operation.summary),
-  );
-  if (artifactOperationSummary) {
-    return artifactOperationSummary;
-  }
-
-  const artifactActivitySummary = getLastNonEmptyValue(lastAssistantMessage?.artifact?.activitySummary ?? []);
-  if (artifactActivitySummary) {
-    return artifactActivitySummary;
-  }
-
-  if (kind === "failed") {
-    const errorSummary = latestTerminalAuditLog?.errorMessage.trim() ?? "";
-    if (errorSummary && errorSummary !== "ユーザーがキャンセルしたよ。") {
-      return errorSummary;
-    }
-  }
-
-  switch (kind) {
-    case "failed":
-      return "エラー箇所は復元できませんでした。";
-    case "canceled":
-      return "停止位置は記録されていません。";
-    default:
-      return "";
-  }
 }
