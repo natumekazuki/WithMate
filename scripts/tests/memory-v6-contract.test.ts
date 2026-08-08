@@ -4,11 +4,15 @@ import { describe, it } from "node:test";
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
+  validateMemoryListEntriesRequest,
+  validateMemoryListTargetsRequest,
+  validateMemoryMoveEntryRequest,
   validateMemorySearchRequest,
 } from "../../src/memory-v6/memory-validation.js";
 
@@ -583,6 +587,66 @@ describe("memory-v6 contract validation", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.field, "reason");
+  });
+
+  it("maintenance requestはqueryなしlisting、body opt-in、dry-run、move tupleを検証する", () => {
+    const targets = validateMemoryListTargetsRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      owner: "project",
+      includeEmpty: true,
+      limit: 100,
+    });
+    assert.equal(targets.ok, true);
+    assert.equal(targets.value.limit, 100);
+
+    const entries = validateMemoryListEntriesRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      includeBody: true,
+      limit: 100,
+    });
+    assert.equal(entries.ok, true);
+    assert.equal(entries.value.includeBody, true);
+
+    const audit = validateMemoryAuditRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      allTargets: true,
+    });
+    assert.equal(audit.ok, true);
+
+    const ambiguousAudit = validateMemoryAuditRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      allTargets: true,
+      targets: [projectTarget],
+    });
+    assert.equal(ambiguousAudit.ok, false);
+
+    const dryRun = validateMemoryForgetRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: projectTarget,
+      entryIds: ["mem-a"],
+      dryRun: true,
+    });
+    assert.equal(dryRun.ok, true);
+    assert.equal(dryRun.value.dryRun, true);
+
+    const move = validateMemoryMoveEntryRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: "mem-a",
+      from: projectTarget,
+      to: userGlobalTarget,
+      idempotencyKey: "move-a",
+    });
+    assert.equal(move.ok, true);
+
+    const sameTargetMove = validateMemoryMoveEntryRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: "mem-a",
+      from: projectTarget,
+      to: projectTarget,
+    });
+    assert.equal(sameTargetMove.ok, false);
+    assert.equal(sameTargetMove.error.field, "to");
   });
 
   it("get-file / export-files はabsolute output pathを必須にする", () => {

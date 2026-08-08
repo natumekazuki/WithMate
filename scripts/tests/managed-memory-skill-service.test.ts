@@ -515,6 +515,9 @@ describe("withmate-memory bundled helper", () => {
       "status",
       "characters",
       "file-usage",
+      "list-targets",
+      "list-entries",
+      "audit",
       "search",
       "get-entry",
       "get-file",
@@ -522,6 +525,7 @@ describe("withmate-memory bundled helper", () => {
       "list-tags",
       "append",
       "forget",
+      "move-entry",
       "schema",
       "validate",
     ]);

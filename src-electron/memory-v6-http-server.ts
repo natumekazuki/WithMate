@@ -28,13 +28,17 @@ export type MemoryV6HttpServer = {
 export type MemoryV6Route =
   | "characters"
   | "file_usage"
+  | "list_targets"
+  | "list_entries"
+  | "audit"
   | "search"
   | "get_entry"
   | "get_file"
   | "export_files"
   | "list_tags"
   | "append"
-  | "forget";
+  | "forget"
+  | "move_entry";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -55,6 +59,11 @@ const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/characters", "characters"],
   ["/v1/file_usage", "file_usage"],
   ["/v1/file-usage", "file_usage"],
+  ["/v1/list_targets", "list_targets"],
+  ["/v1/list-targets", "list_targets"],
+  ["/v1/list_entries", "list_entries"],
+  ["/v1/list-entries", "list_entries"],
+  ["/v1/audit", "audit"],
   ["/v1/search", "search"],
   ["/v1/get_entry", "get_entry"],
   ["/v1/get_file", "get_file"],
@@ -64,6 +73,8 @@ const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/list_tags", "list_tags"],
   ["/v1/append", "append"],
   ["/v1/forget", "forget"],
+  ["/v1/move_entry", "move_entry"],
+  ["/v1/move-entry", "move_entry"],
 ]);
 
 function memoryTransportError(code: string, message: string): MemoryErrorResponse {
@@ -183,6 +194,15 @@ async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6
   if (route === "file_usage") {
     return service.fileUsage(principal, typeof body === "object" && body !== null ? body as { includeLargestEntries?: boolean; largestLimit?: number } : {});
   }
+  if (route === "list_targets") {
+    return service.listTargets(principal, body);
+  }
+  if (route === "list_entries") {
+    return service.listEntries(principal, body);
+  }
+  if (route === "audit") {
+    return service.audit(principal, body);
+  }
   if (route === "search") {
     return service.search(principal, body);
   }
@@ -201,7 +221,10 @@ async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6
   if (route === "append") {
     return service.append(principal, body);
   }
-  return service.forget(principal, body);
+  if (route === "forget") {
+    return service.forget(principal, body);
+  }
+  return service.moveEntry(principal, body);
 }
 
 function statusForMemoryResponse(value: unknown): number {

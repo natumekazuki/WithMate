@@ -19,11 +19,15 @@ import {
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
+  validateMemoryListEntriesRequest,
+  validateMemoryListTargetsRequest,
+  validateMemoryMoveEntryRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
 
@@ -45,6 +49,9 @@ export type WithMateMemoryCliCommand =
   | "status"
   | "characters"
   | "file_usage"
+  | "list_targets"
+  | "list_entries"
+  | "audit"
   | "search"
   | "get_entry"
   | "get_file"
@@ -52,6 +59,7 @@ export type WithMateMemoryCliCommand =
   | "list_tags"
   | "append"
   | "forget"
+  | "move_entry"
   | "schema"
   | "validate";
 
@@ -64,6 +72,7 @@ export type WithMateMemoryCliRequest = {
   validateCommand?: WithMateMemoryValidatedCommand;
   discoveryFilePath?: string;
   apiUrl?: string;
+  outputFormat?: "json" | "jsonl" | "markdown";
 };
 
 export type WithMateMemoryApiConnection = {
@@ -87,6 +96,9 @@ const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST";
   status: { method: "GET", path: "/v1/status" },
   characters: { method: "GET", path: "/v1/characters" },
   file_usage: { method: "GET", path: "/v1/file_usage" },
+  list_targets: { method: "POST", path: "/v1/list_targets" },
+  list_entries: { method: "POST", path: "/v1/list_entries" },
+  audit: { method: "POST", path: "/v1/audit" },
   search: { method: "POST", path: "/v1/search" },
   get_entry: { method: "POST", path: "/v1/get_entry" },
   get_file: { method: "POST", path: "/v1/get_file" },
@@ -94,6 +106,7 @@ const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST";
   list_tags: { method: "POST", path: "/v1/list_tags" },
   append: { method: "POST", path: "/v1/append" },
   forget: { method: "POST", path: "/v1/forget" },
+  move_entry: { method: "POST", path: "/v1/move_entry" },
 };
 
 function buildRoutePath(request: WithMateMemoryCliRequest): string {
@@ -132,6 +145,11 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["list_characters", "characters"],
   ["file-usage", "file_usage"],
   ["file_usage", "file_usage"],
+  ["list-targets", "list_targets"],
+  ["list_targets", "list_targets"],
+  ["list-entries", "list_entries"],
+  ["list_entries", "list_entries"],
+  ["audit", "audit"],
   ["search", "search"],
   ["get-entry", "get_entry"],
   ["get_entry", "get_entry"],
@@ -143,6 +161,8 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["list_tags", "list_tags"],
   ["append", "append"],
   ["forget", "forget"],
+  ["move-entry", "move_entry"],
+  ["move_entry", "move_entry"],
   ["schema", "schema"],
   ["capabilities", "schema"],
   ["validate", "validate"],
@@ -156,6 +176,9 @@ Commands:
   status
   characters
   file-usage
+  list-targets
+  list-entries
+  audit
   search
   get-entry
   get-file
@@ -163,6 +186,7 @@ Commands:
   list-tags
   append
   forget
+  move-entry
   schema
   validate
 
@@ -175,6 +199,9 @@ Input options:
 Shorthand options:
   --project <absolute-path>
   --project-id <id>
+  --character-id <id>
+  --owner <user|project|character>
+  --scope <global|project|character>
   --query <text>
   --tag <tag>
   --tags <tags>
@@ -183,6 +210,13 @@ Shorthand options:
   --output <path>
   --output-dir <path>
   --largest
+  --include-empty
+  --include-body
+  --with-counts
+  --sample-limit <n>
+  --all-targets
+  --dry-run
+  --format <json|jsonl|markdown>
   --limit <n>
 
 Connection options:
@@ -190,13 +224,16 @@ Connection options:
   --discovery-file <path>
 
 Validation:
-  validate --command <search|get-entry|get-file|export-files|list-tags|append|forget>
+  validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
 Examples:
   withmate-memory status
   withmate-memory characters
   withmate-memory file-usage
   withmate-memory file-usage --largest --limit 10
+  withmate-memory list-targets --include-empty
+  withmate-memory list-entries --project C:\\path\\to\\repo --limit 100
+  withmate-memory audit --all-targets --format markdown
   withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
   withmate-memory get-file --project C:\\path\\to\\repo --object-id <id> --output C:\\path\\to\\file.bin
   withmate-memory export-files --project C:\\path\\to\\repo --entry-id <id> --output-dir C:\\path\\to\\exports
@@ -205,6 +242,9 @@ Examples:
 `;
 
 const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
+  "list_targets",
+  "list_entries",
+  "audit",
   "search",
   "get_entry",
   "get_file",
@@ -212,6 +252,7 @@ const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
   "list_tags",
   "append",
   "forget",
+  "move_entry",
 ]);
 
 function usageError(message: string): MemoryErrorResponse {
@@ -375,7 +416,7 @@ export async function parseWithMateMemoryCliArgs(
   }
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <help|status|characters|file-usage|search|get-entry|get-file|export-files|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--object-id <id>] [--output <path>] [--output-dir <path>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError("Usage: withmate-memory <help|status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [options]");
   }
   if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { command: "help", body: {} };
@@ -389,6 +430,9 @@ export async function parseWithMateMemoryCliArgs(
   let validateCommand: WithMateMemoryValidatedCommand | undefined;
   let projectPath: string | undefined;
   let projectId: string | undefined;
+  let characterId: string | undefined;
+  let owner: "user" | "project" | "character" | undefined;
+  let scope: "global" | "project" | "character" | undefined;
   let query: string | undefined;
   const tagOptions: string[] = [];
   let entryId: string | undefined;
@@ -396,7 +440,14 @@ export async function parseWithMateMemoryCliArgs(
   let outputPath: string | undefined;
   let outputDirectoryPath: string | undefined;
   let largest = false;
+  let includeEmpty = false;
+  let includeBody = false;
+  let withCounts = false;
+  let allTargets = false;
+  let dryRun = false;
+  let sampleLimit: number | undefined;
   let limit: number | undefined;
+  let outputFormat: "json" | "jsonl" | "markdown" | undefined;
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -422,6 +473,20 @@ export async function parseWithMateMemoryCliArgs(
       projectPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--project-id") {
       projectId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--character-id") {
+      characterId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--owner") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (value !== "user" && value !== "project" && value !== "character") {
+        throw usageError("--owner must be user, project, or character.");
+      }
+      owner = value as typeof owner;
+    } else if (arg === "--scope") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (value !== "global" && value !== "project" && value !== "character") {
+        throw usageError("--scope must be global, project, or character.");
+      }
+      scope = value as typeof scope;
     } else if (arg === "--query") {
       query = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--tag") {
@@ -438,6 +503,24 @@ export async function parseWithMateMemoryCliArgs(
       outputDirectoryPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--largest") {
       largest = true;
+    } else if (arg === "--include-empty") {
+      includeEmpty = true;
+    } else if (arg === "--include-body") {
+      includeBody = true;
+    } else if (arg === "--with-counts") {
+      withCounts = true;
+    } else if (arg === "--all-targets") {
+      allTargets = true;
+    } else if (arg === "--dry-run") {
+      dryRun = true;
+    } else if (arg === "--sample-limit") {
+      sampleLimit = parseLimitOption(requireOptionValue(rest, ++index, arg));
+    } else if (arg === "--format") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (!(["json", "jsonl", "markdown"] as const).includes(value as "json" | "jsonl" | "markdown")) {
+        throw usageError("--format must be json, jsonl, or markdown.");
+      }
+      outputFormat = value as "json" | "jsonl" | "markdown";
     } else if (arg === "--limit") {
       limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
     } else {
@@ -455,7 +538,7 @@ export async function parseWithMateMemoryCliArgs(
   }
 
   if (command === "validate" && !validateCommand) {
-    throw usageError("validate requires --command <search|get-entry|get-file|export-files|list-tags|append|forget>.");
+    throw usageError("validate requires --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>.");
   }
 
   let body: unknown = {};
@@ -463,8 +546,8 @@ export async function parseWithMateMemoryCliArgs(
     if (jsonInput !== null || filePath !== null || stdinRequested) {
       throw usageError("file-usage does not accept JSON body input. Use --largest and --limit.");
     }
-    if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
+    if (hasShorthandOptions({ projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit });
     }
   } else if (command !== "status" && command !== "characters" && command !== "schema") {
     if (jsonInput !== null) {
@@ -473,11 +556,21 @@ export async function parseWithMateMemoryCliArgs(
       body = await parseJsonInput(await (deps.readFile ?? readFile)(filePath, "utf8"));
     } else if (stdinRequested) {
       body = await parseJsonInput(await readStdin(deps.stdin ?? process.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
+    } else if (hasShorthandOptions({ projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {
       body = await parseJsonInput(await readStdin(deps.stdin));
     }
+  }
+
+  if (dryRun && command === "forget" && body && typeof body === "object" && !Array.isArray(body)) {
+    body = { ...(body as Record<string, unknown>), dryRun: true };
+  }
+  if (command === "list_targets" && body && typeof body === "object" && !Array.isArray(body) && Object.keys(body as object).length === 0) {
+    body = { schemaVersion: MEMORY_V6_SCHEMA_VERSION };
+  }
+  if (outputFormat && command !== "audit") {
+    throw usageError("--format is only supported by audit.");
   }
 
   return {
@@ -486,6 +579,7 @@ export async function parseWithMateMemoryCliArgs(
     ...(validateCommand ? { validateCommand } : {}),
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
+    ...(outputFormat ? { outputFormat } : {}),
   };
 }
 
@@ -531,6 +625,9 @@ function normalizeCliTagOptions(values: readonly string[]): Array<{ type: string
 function hasShorthandOptions(options: {
   projectPath?: string;
   projectId?: string;
+  characterId?: string;
+  owner?: string;
+  scope?: string;
   query?: string;
   tags?: readonly string[];
   entryId?: string;
@@ -538,11 +635,20 @@ function hasShorthandOptions(options: {
   outputPath?: string;
   outputDirectoryPath?: string;
   largest?: boolean;
+  includeEmpty?: boolean;
+  includeBody?: boolean;
+  withCounts?: boolean;
+  allTargets?: boolean;
+  dryRun?: boolean;
+  sampleLimit?: number;
   limit?: number;
 }): boolean {
   return Boolean(
     options.projectPath
     || options.projectId
+    || options.characterId
+    || options.owner
+    || options.scope
     || options.query
     || (options.tags && options.tags.length > 0)
     || options.entryId
@@ -550,6 +656,12 @@ function hasShorthandOptions(options: {
     || options.outputPath
     || options.outputDirectoryPath
     || options.largest
+    || options.includeEmpty
+    || options.includeBody
+    || options.withCounts
+    || options.allTargets
+    || options.dryRun
+    || options.sampleLimit !== undefined
     || options.limit !== undefined,
   );
 }
@@ -595,11 +707,53 @@ function buildProjectTarget(options: { projectPath?: string; projectId?: string 
   return null;
 }
 
+function buildMaintenanceTarget(options: {
+  projectPath?: string;
+  projectId?: string;
+  characterId?: string;
+  owner?: "user" | "project" | "character";
+  scope?: "global" | "project" | "character";
+}): unknown | null {
+  const project = options.projectId
+    ? { type: "id", id: options.projectId }
+    : options.projectPath
+      ? { type: "path", path: normalizeCliProjectPath(options.projectPath) }
+      : undefined;
+
+  if (!options.owner && !options.scope && !options.characterId) {
+    return buildProjectTarget(options);
+  }
+  if (!options.owner || !options.scope) {
+    throw usageError("Target shorthand requires both --owner and --scope.");
+  }
+  if (options.owner === "user" && options.scope === "global" && !project && !options.characterId) {
+    return { owner: "user", scope: "global" };
+  }
+  if (options.owner === "project" && options.scope === "project" && project && !options.characterId) {
+    return { owner: "project", scope: "project", project };
+  }
+  if (options.owner === "character" && options.scope === "character" && options.characterId && !project) {
+    return { owner: "character", scope: "character", character: { type: "id", id: options.characterId } };
+  }
+  if (options.owner === "character" && options.scope === "project" && options.characterId && project) {
+    return {
+      owner: "character",
+      scope: "project",
+      character: { type: "id", id: options.characterId },
+      project,
+    };
+  }
+  throw usageError("Target shorthand owner, scope, project, and character options do not form a supported target.");
+}
+
 function buildShorthandBody(
   command: WithMateMemoryCliCommand,
   options: {
     projectPath?: string;
     projectId?: string;
+    characterId?: string;
+    owner?: "user" | "project" | "character";
+    scope?: "global" | "project" | "character";
     query?: string;
     tags?: readonly string[];
     entryId?: string;
@@ -607,6 +761,12 @@ function buildShorthandBody(
     outputPath?: string;
     outputDirectoryPath?: string;
     largest?: boolean;
+    includeEmpty?: boolean;
+    includeBody?: boolean;
+    withCounts?: boolean;
+    allTargets?: boolean;
+    dryRun?: boolean;
+    sampleLimit?: number;
     limit?: number;
   },
 ): unknown {
@@ -614,9 +774,29 @@ function buildShorthandBody(
     throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
   }
 
-  const target = buildProjectTarget(options);
+  const projectTarget = buildProjectTarget(options);
+  const target = command === "list_entries" || command === "audit" || command === "list_tags"
+    ? buildMaintenanceTarget(options)
+    : projectTarget;
   if (command === "file_usage") {
-    if (target || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath) {
+    if (
+      projectTarget
+      || options.characterId
+      || options.owner
+      || options.scope
+      || options.query
+      || (options.tags && options.tags.length > 0)
+      || options.entryId
+      || options.objectId
+      || options.outputPath
+      || options.outputDirectoryPath
+      || options.includeEmpty
+      || options.includeBody
+      || options.withCounts
+      || options.allTargets
+      || options.dryRun
+      || options.sampleLimit !== undefined
+    ) {
       throw usageError("file-usage shorthand only supports --largest and --limit.");
     }
     if (options.limit !== undefined && !options.largest) {
@@ -624,6 +804,42 @@ function buildShorthandBody(
     }
     return {
       ...(options.largest ? { largest: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "list_targets") {
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      ...(options.owner ? { owner: options.owner } : {}),
+      ...(options.scope ? { scope: options.scope } : {}),
+      ...(options.projectId ? { project: { type: "id", id: options.projectId } } : {}),
+      ...(options.projectPath ? { project: { type: "path", path: normalizeCliProjectPath(options.projectPath) } } : {}),
+      ...(options.characterId ? { character: { type: "id", id: options.characterId } } : {}),
+      ...(options.includeEmpty ? { includeEmpty: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "list_entries") {
+    if (!target) {
+      throw usageError("list-entries shorthand requires an explicit target.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target,
+      ...(options.includeBody ? { includeBody: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "audit") {
+    if (options.allTargets === Boolean(target)) {
+      throw usageError("audit shorthand requires exactly one of --all-targets or an explicit target.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      ...(options.allTargets ? { allTargets: true } : { targets: [target] }),
       ...(options.limit !== undefined ? { limit: options.limit } : {}),
     };
   }
@@ -648,11 +864,13 @@ function buildShorthandBody(
 
   if (command === "list_tags") {
     if (!target) {
-      throw usageError("list-tags shorthand requires --project <absolute-path> or --project-id <id>.");
+      throw usageError("list-tags shorthand requires an explicit target.");
     }
     return {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       targets: [target],
+      ...(options.withCounts ? { withCounts: true } : {}),
+      ...(options.sampleLimit !== undefined ? { sampleLimit: options.sampleLimit } : {}),
     };
   }
 
@@ -706,6 +924,10 @@ function buildShorthandBody(
     };
   }
 
+  if (command === "forget" && options.dryRun) {
+    throw usageError("forget --dry-run requires --json, --file, @file, or --stdin with the forget request.");
+  }
+
   throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
 }
 
@@ -747,6 +969,9 @@ function buildSchemaResponse(): unknown {
       "status",
       "characters",
       "file-usage",
+      "list-targets",
+      "list-entries",
+      "audit",
       "search",
       "get-entry",
       "get-file",
@@ -754,6 +979,7 @@ function buildSchemaResponse(): unknown {
       "list-tags",
       "append",
       "forget",
+      "move-entry",
       "schema",
       "validate",
     ],
@@ -794,6 +1020,15 @@ function validateMemoryCliRequestBody(
   if (command === "search") {
     return validateMemorySearchRequest(body);
   }
+  if (command === "list_targets") {
+    return validateMemoryListTargetsRequest(body);
+  }
+  if (command === "list_entries") {
+    return validateMemoryListEntriesRequest(body);
+  }
+  if (command === "audit") {
+    return validateMemoryAuditRequest(body);
+  }
   if (command === "get_entry") {
     return validateMemoryGetEntryRequest(body);
   }
@@ -808,6 +1043,9 @@ function validateMemoryCliRequestBody(
   }
   if (command === "append") {
     return validateMemoryAppendRequest(body);
+  }
+  if (command === "move_entry") {
+    return validateMemoryMoveEntryRequest(body);
   }
   return validateMemoryForgetRequest(body);
 }
@@ -845,6 +1083,93 @@ async function readJsonResponse(response: Response): Promise<unknown> {
   } catch {
     throw transportError("Memory API returned a non-JSON response.");
   }
+}
+
+function formatAuditOutput(value: unknown, format: "json" | "jsonl" | "markdown"): string {
+  if (format === "json" || !value || typeof value !== "object" || !("targets" in value) || !Array.isArray((value as { targets?: unknown }).targets)) {
+    return `${JSON.stringify(value)}\n`;
+  }
+  const report = value as {
+    schemaVersion?: unknown;
+    generatedAt?: unknown;
+    staleBefore?: unknown;
+    targets: Array<Record<string, any>>;
+    nextCursor?: unknown;
+  };
+  if (format === "jsonl") {
+    const records = [JSON.stringify({
+      recordType: "audit_page",
+      schemaVersion: report.schemaVersion,
+      generatedAt: report.generatedAt,
+      staleBefore: report.staleBefore,
+      nextCursor: report.nextCursor ?? null,
+    }), ...report.targets.map((target) => JSON.stringify({
+      recordType: "target_audit",
+      ...target,
+    }))];
+    return `${records.join("\n")}\n`;
+  }
+  const lines = [
+    "# WithMate Memory audit",
+    "",
+    `- Generated: ${String(report.generatedAt ?? "")}`,
+    `- Stale before: ${String(report.staleBefore ?? "")}`,
+    "",
+  ];
+  for (const targetAudit of report.targets) {
+    const inventory = targetAudit.target ?? {};
+    const selector = inventory.target ?? {};
+    const label = inventory.project?.displayName ?? inventory.character?.displayName ?? `${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`;
+    lines.push(`## ${String(label).replace(/\r?\n/g, " ")}`, "");
+    lines.push(`- Target: ${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`);
+    lines.push(`- Entries: ${inventory.entryCount ?? 0}`);
+    lines.push(`- Tags: ${inventory.tagCount ?? 0}`);
+    lines.push(`- Last updated: ${inventory.lastUpdatedAt ?? "n/a"}`, "");
+    lines.push("### Counts by kind", "");
+    const counts = targetAudit.countsByKind && typeof targetAudit.countsByKind === "object"
+      ? Object.entries(targetAudit.countsByKind as Record<string, unknown>)
+      : [];
+    lines.push(...(counts.length > 0
+      ? counts.map(([kind, count]) => `- ${kind}: ${String(count)}`)
+      : ["- None"]), "");
+    lines.push("### Top tags", "");
+    const topTags = Array.isArray(targetAudit.topTags) ? targetAudit.topTags : [];
+    lines.push(...(topTags.length > 0
+      ? topTags.map((tag) => `- ${String(tag.type)}:${String(tag.value)} — ${String(tag.entryCount)}`)
+      : ["- None"]), "");
+    const sections: Array<[string, unknown]> = [
+      ["Stale or progress-like", targetAudit.staleOrProgressCandidates],
+      ["Wrong-scope candidates", targetAudit.wrongScopeCandidates],
+      ["Documentation candidates", targetAudit.documentationCandidates],
+      ["Suspicious tags", targetAudit.suspiciousTagCandidates],
+    ];
+    for (const [heading, candidates] of sections) {
+      lines.push(`### ${heading}`, "");
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        lines.push("- None", "");
+        continue;
+      }
+      for (const candidate of candidates) {
+        lines.push(`- ${String(candidate.id)} — ${String(candidate.title).replace(/\r?\n/g, " ")} (${Array.isArray(candidate.reasons) ? candidate.reasons.join(", ") : "candidate"})`);
+      }
+      lines.push("");
+    }
+    lines.push("### Duplicate normalized titles", "");
+    const duplicateGroups = Array.isArray(targetAudit.duplicateTitleCandidates) ? targetAudit.duplicateTitleCandidates : [];
+    if (duplicateGroups.length === 0) {
+      lines.push("- None", "");
+    } else {
+      for (const group of duplicateGroups) {
+        const ids = Array.isArray(group.entries) ? group.entries.map((entry: { id?: unknown }) => String(entry.id)).join(", ") : "";
+        lines.push(`- ${String(group.normalizedTitle)} — ${ids}`);
+      }
+      lines.push("");
+    }
+  }
+  if (report.nextCursor) {
+    lines.push(`Next cursor: \`${String(report.nextCursor)}\``, "");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
 }
 
 function createStatusChallenge(apiSecret: string, nonce: string): string {
@@ -976,7 +1301,9 @@ export async function runWithMateMemoryCli(
       clearTimeout(requestTimeout);
     }
 
-    stdout.write(`${JSON.stringify(responseJson)}\n`);
+    stdout.write(request.command === "audit"
+      ? formatAuditOutput(responseJson, request.outputFormat ?? "json")
+      : `${JSON.stringify(responseJson)}\n`);
     return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
   } catch (error) {
     const response = isMemoryErrorResponse(error)

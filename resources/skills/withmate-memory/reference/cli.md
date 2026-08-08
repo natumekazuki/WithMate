@@ -76,6 +76,32 @@ withmate-memory file-usage --largest --limit 20
 
 Returns WithMate-wide Protected Object quota and usage metadata. `--largest` includes the largest active Memory entry candidates and `--limit` bounds that list. It does not return source paths, object-store paths, keys, hashes, or decrypted content.
 
+### list-targets
+
+```bash
+withmate-memory list-targets
+withmate-memory list-targets --owner project --include-empty --limit 100
+```
+
+Returns paginated target inventory with target selectors, display metadata when available, active entry count, distinct tag count, and last update. Use `nextCursor` until absent. `--include-empty` adds known empty project, Character, and user-global targets; it does not create Character/project cartesian combinations.
+
+### list-entries
+
+```bash
+withmate-memory list-entries --project <absolute-repo-path> --limit 100
+```
+
+Lists entries in one explicit target without a search query. Active entries are the default. The response omits body text unless `--include-body` or `includeBody: true` is explicit. Request JSON may also filter `states`, `kinds`, and `tags`; repeat the same filters with `nextCursor` for exhaustive enumeration.
+
+### audit
+
+```bash
+withmate-memory audit --all-targets --format markdown
+withmate-memory audit --project <absolute-repo-path> --format jsonl
+```
+
+Returns per-target kind counts, top tag counts, and bounded candidate lists for stale/progress-like entries, broader-scope language, duplicate normalized titles, repository documentation, and missing tags. Candidate classifications are conservative heuristics and do not mutate Memory. Use `--format json`, `jsonl`, or `markdown`; JSON is the default. JSONL starts each page with an `audit_page` record containing `nextCursor`, followed by `target_audit` records. Markdown includes the same counts, tag statistics, candidate families, and continuation cursor. Audit output never includes entry bodies.
+
 ### search
 
 ```bash
@@ -183,6 +209,7 @@ The response confirms `entryId`, `outputDirectoryPath`, `exportedCount`, and one
 
 ```bash
 withmate-memory list-tags --file memory-list-tags.json
+withmate-memory list-tags --project <absolute-repo-path> --with-counts --sample-limit 3
 ```
 
 Request shape:
@@ -192,7 +219,9 @@ Request shape:
   "schemaVersion": "withmate-memory-v1",
   "targets": [
     { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
-  ]
+  ],
+  "withCounts": true,
+  "sampleLimit": 3
 }
 ```
 
@@ -235,6 +264,7 @@ Do not attach secrets or files outside the user's authorized scope. Input paths 
 
 ```bash
 withmate-memory forget --file forget-request.json
+withmate-memory forget --file forget-request.json --dry-run
 ```
 
 Input shape:
@@ -249,7 +279,27 @@ Input shape:
 }
 ```
 
-For `append` and `forget`, choose a stable idempotency key before the first attempt. If a timeout or response loss leaves the result ambiguous, retry the unchanged request with the same key. A changed request body requires a new key.
+Dry-run returns the matching entry title/preview/tags, target-mismatch-or-not-found warnings, `dryRun: true`, and `writeOccurred: false`. It does not change entries, protected objects, mutation events, or idempotency state. Review the preview before an approved bulk forget.
+
+### move-entry
+
+```bash
+withmate-memory move-entry --file move-request.json
+```
+
+```json
+{
+  "schemaVersion": "withmate-memory-v1",
+  "entryId": "<entry-id>",
+  "from": { "owner": "project", "scope": "project", "project": { "type": "path", "path": "<absolute-repo-path>" } },
+  "to": { "owner": "user", "scope": "global" },
+  "idempotencyKey": "stable-move-key"
+}
+```
+
+Moves one active entry between explicit, different targets while preserving its ID, relations, and protected-file attachments. The retarget and its audit event are atomic. Retry an ambiguous result with the unchanged request and idempotency key.
+
+For `append`, mutating `forget`, and `move-entry`, choose a stable idempotency key before the first attempt. If a timeout or response loss leaves the result ambiguous, retry the unchanged request with the same key. A changed request body requires a new key.
 
 ## Exit Codes
 

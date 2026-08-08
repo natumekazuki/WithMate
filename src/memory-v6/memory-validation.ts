@@ -11,9 +11,13 @@ import {
   type MemoryEntryKind,
   type MemoryForgetReason,
   type MemoryForgetRequest,
+  type MemoryAuditRequest,
   type MemoryGetEntryRequest,
   type MemoryGetFileRequest,
+  type MemoryListEntriesRequest,
   type MemoryListTagsRequest,
+  type MemoryListTargetsRequest,
+  type MemoryMoveEntryRequest,
   type MemorySearchRequest,
   type MemoryTargetSelector,
   type MemoryValidationResult,
@@ -29,7 +33,10 @@ const SEARCH_REQUEST_KEYS = new Set(["schemaVersion", "targets", "query", "kinds
 const GET_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "target"]);
 const GET_FILE_REQUEST_KEYS = new Set(["schemaVersion", "target", "objectId", "outputPath"]);
 const EXPORT_FILES_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryId", "outputDirectoryPath"]);
-const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets"]);
+const LIST_TARGETS_REQUEST_KEYS = new Set(["schemaVersion", "owner", "scope", "project", "character", "includeEmpty", "limit", "cursor"]);
+const LIST_ENTRIES_REQUEST_KEYS = new Set(["schemaVersion", "target", "states", "kinds", "tags", "includeBody", "limit", "cursor"]);
+const AUDIT_REQUEST_KEYS = new Set(["schemaVersion", "allTargets", "targets", "staleBefore", "limit", "cursor"]);
+const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets", "withCounts", "sampleLimit"]);
 const APPEND_REQUEST_KEYS = new Set([
   "schemaVersion",
   "target",
@@ -43,7 +50,8 @@ const APPEND_REQUEST_KEYS = new Set([
   "sourceMessageId",
   "idempotencyKey",
 ]);
-const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey"]);
+const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey", "dryRun"]);
+const MOVE_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "from", "to", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
 const CHARACTER_TARGET_ID_KEYS = new Set(["type", "id"]);
@@ -63,6 +71,7 @@ const MAX_TAG_VALUE_LENGTH = 96;
 const MAX_ID_LENGTH = 200;
 const MAX_CURSOR_LENGTH = 500;
 const MAX_LIMIT = 50;
+const MAX_MAINTENANCE_LIMIT = 200;
 const MAX_TAGS = 20;
 const MAX_SUPERSEDES = 20;
 const MAX_APPEND_FILES = 10;
@@ -73,6 +82,7 @@ const MAX_FILE_DISPLAY_NAME_LENGTH = 255;
 const MAX_FILE_CONTENT_TYPE_LENGTH = 120;
 const MAX_FORGET_ENTRY_IDS = 50;
 const MAX_TARGETS = 5;
+const MEMORY_ENTRY_STATES = new Set(["active", "superseded", "forgotten"] as const);
 
 function error(code: string, message: string, field?: string): MemoryValidationResult<never> {
   return {
@@ -171,6 +181,25 @@ function normalizeOptionalText(value: unknown, field: string, maxLength = MAX_ID
   }
 
   return { ok: true, value: normalized.value };
+}
+
+function normalizeOptionalBoolean(value: unknown, field: string): MemoryValidationResult<boolean | undefined> {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  return typeof value === "boolean"
+    ? { ok: true, value }
+    : error("MEMORY_INVALID_FIELD", `${field} must be a boolean.`, field);
+}
+
+function normalizeOptionalLimit(value: unknown, field = "limit", max = MAX_LIMIT): MemoryValidationResult<number | undefined> {
+  if (value === undefined) {
+    return { ok: true, value: undefined };
+  }
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) {
+    return error("MEMORY_INVALID_FIELD", `${field} must be an integer from 1 to ${max}.`, field);
+  }
+  return { ok: true, value };
 }
 
 function validateSchemaVersion(value: Record<string, unknown>): MemoryValidationResult<void> {
@@ -636,6 +665,177 @@ export function validateMemoryExportFilesRequest(value: unknown): MemoryValidati
   };
 }
 
+export function validateMemoryListTargetsRequest(value: unknown): MemoryValidationResult<MemoryListTargetsRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "List targets request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, LIST_TARGETS_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  if (value.owner !== undefined && !["user", "project", "character"].includes(String(value.owner))) {
+    return error("MEMORY_INVALID_FIELD", "owner must be user, project, or character.", "owner");
+  }
+  if (value.scope !== undefined && !["global", "project", "character"].includes(String(value.scope))) {
+    return error("MEMORY_INVALID_FIELD", "scope must be global, project, or character.", "scope");
+  }
+  const project = value.project === undefined ? undefined : normalizeProjectTarget(value.project, "project");
+  if (project && !project.ok) {
+    return project;
+  }
+  const character = value.character === undefined ? undefined : normalizeCharacterTarget(value.character, "character");
+  if (character && !character.ok) {
+    return character;
+  }
+  const includeEmpty = normalizeOptionalBoolean(value.includeEmpty, "includeEmpty");
+  if (!includeEmpty.ok) {
+    return includeEmpty;
+  }
+  const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+  if (!limit.ok) {
+    return limit;
+  }
+  const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+  if (!cursor.ok) {
+    return cursor;
+  }
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      ...(value.owner === undefined ? {} : { owner: value.owner as MemoryListTargetsRequest["owner"] }),
+      ...(value.scope === undefined ? {} : { scope: value.scope as MemoryListTargetsRequest["scope"] }),
+      ...(project?.ok ? { project: project.value } : {}),
+      ...(character?.ok ? { character: character.value } : {}),
+      ...(includeEmpty.value === undefined ? {} : { includeEmpty: includeEmpty.value }),
+      ...(limit.value === undefined ? {} : { limit: limit.value }),
+      ...(cursor.value === undefined ? {} : { cursor: cursor.value }),
+    },
+  };
+}
+
+export function validateMemoryListEntriesRequest(value: unknown): MemoryValidationResult<MemoryListEntriesRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "List entries request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, LIST_ENTRIES_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const target = normalizeMemoryTarget(value.target, "target");
+  if (!target.ok) {
+    return target;
+  }
+  let states: MemoryListEntriesRequest["states"];
+  if (value.states !== undefined) {
+    if (!Array.isArray(value.states) || value.states.length === 0) {
+      return error("MEMORY_INVALID_FIELD", "states must be a non-empty array.", "states");
+    }
+    states = [];
+    for (let index = 0; index < value.states.length; index += 1) {
+      const state = value.states[index];
+      if (typeof state !== "string" || !MEMORY_ENTRY_STATES.has(state as "active" | "superseded" | "forgotten")) {
+        return error("MEMORY_INVALID_FIELD", `states[${index}] must be a valid memory state.`, `states[${index}]`);
+      }
+      if (!states.includes(state as "active" | "superseded" | "forgotten")) {
+        states.push(state as "active" | "superseded" | "forgotten");
+      }
+    }
+  }
+  const kinds = normalizeKinds(value.kinds);
+  if (!kinds.ok) {
+    return kinds;
+  }
+  const tags = normalizeTags(value.tags);
+  if (!tags.ok) {
+    return tags;
+  }
+  const includeBody = normalizeOptionalBoolean(value.includeBody, "includeBody");
+  if (!includeBody.ok) {
+    return includeBody;
+  }
+  const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+  if (!limit.ok) {
+    return limit;
+  }
+  const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+  if (!cursor.ok) {
+    return cursor;
+  }
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target: target.value,
+      ...(states ? { states } : {}),
+      ...(kinds.value ? { kinds: kinds.value } : {}),
+      ...(tags.value.length > 0 ? { tags: tags.value } : {}),
+      ...(includeBody.value === undefined ? {} : { includeBody: includeBody.value }),
+      ...(limit.value === undefined ? {} : { limit: limit.value }),
+      ...(cursor.value === undefined ? {} : { cursor: cursor.value }),
+    },
+  };
+}
+
+export function validateMemoryAuditRequest(value: unknown): MemoryValidationResult<MemoryAuditRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "Audit request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, AUDIT_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const allTargets = normalizeOptionalBoolean(value.allTargets, "allTargets");
+  if (!allTargets.ok) {
+    return allTargets;
+  }
+  const targets = value.targets === undefined ? undefined : normalizeTargets(value.targets);
+  if (targets && !targets.ok) {
+    return targets;
+  }
+  if (allTargets.value === true === Boolean(targets?.ok)) {
+    return error("MEMORY_INVALID_FIELD", "Specify exactly one of allTargets=true or targets.", "allTargets");
+  }
+  const staleBefore = normalizeOptionalText(value.staleBefore, "staleBefore", 64);
+  if (!staleBefore.ok) {
+    return staleBefore;
+  }
+  if (staleBefore.value !== undefined && Number.isNaN(Date.parse(staleBefore.value))) {
+    return error("MEMORY_INVALID_FIELD", "staleBefore must be an ISO 8601 timestamp.", "staleBefore");
+  }
+  const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+  if (!limit.ok) {
+    return limit;
+  }
+  const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+  if (!cursor.ok) {
+    return cursor;
+  }
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      ...(allTargets.value ? { allTargets: true } : {}),
+      ...(targets?.ok ? { targets: targets.value } : {}),
+      ...(staleBefore.value === undefined ? {} : { staleBefore: new Date(staleBefore.value).toISOString() }),
+      ...(limit.value === undefined ? {} : { limit: limit.value }),
+      ...(cursor.value === undefined ? {} : { cursor: cursor.value }),
+    },
+  };
+}
+
 export function validateMemoryListTagsRequest(value: unknown): MemoryValidationResult<MemoryListTagsRequest> {
   if (!isRecord(value)) {
     return error("MEMORY_INVALID_REQUEST", "List tags request must be an object.");
@@ -653,11 +853,25 @@ export function validateMemoryListTagsRequest(value: unknown): MemoryValidationR
     return targets;
   }
 
+  const withCounts = normalizeOptionalBoolean(value.withCounts, "withCounts");
+  if (!withCounts.ok) {
+    return withCounts;
+  }
+  const sampleLimit = normalizeOptionalLimit(value.sampleLimit, "sampleLimit");
+  if (!sampleLimit.ok) {
+    return sampleLimit;
+  }
+  if (sampleLimit.value !== undefined && withCounts.value !== true) {
+    return error("MEMORY_INVALID_FIELD", "sampleLimit requires withCounts=true.", "sampleLimit");
+  }
+
   return {
     ok: true,
     value: {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       targets: targets.value,
+      ...(withCounts.value === undefined ? {} : { withCounts: withCounts.value }),
+      ...(sampleLimit.value === undefined ? {} : { sampleLimit: sampleLimit.value }),
     },
   };
 }
@@ -768,6 +982,11 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
     return idempotencyKey;
   }
 
+  const dryRun = normalizeOptionalBoolean(value.dryRun, "dryRun");
+  if (!dryRun.ok) {
+    return dryRun;
+  }
+
   return {
     ok: true,
     value: {
@@ -777,6 +996,55 @@ export function validateMemoryForgetRequest(value: unknown): MemoryValidationRes
       ...(value.reason !== undefined ? { reason: value.reason as MemoryForgetReason } : {}),
       ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),
       ...(idempotencyKey.value !== undefined ? { idempotencyKey: idempotencyKey.value } : {}),
+      ...(dryRun.value === undefined ? {} : { dryRun: dryRun.value }),
+    },
+  };
+}
+
+export function validateMemoryMoveEntryRequest(value: unknown): MemoryValidationResult<MemoryMoveEntryRequest> {
+  if (!isRecord(value)) {
+    return error("MEMORY_INVALID_REQUEST", "Move entry request must be an object.");
+  }
+  const unknownKeys = rejectUnknownKeys(value, MOVE_ENTRY_REQUEST_KEYS, "request");
+  if (!unknownKeys.ok) {
+    return unknownKeys;
+  }
+  const schema = validateSchemaVersion(value);
+  if (!schema.ok) {
+    return schema;
+  }
+  const entryId = normalizeText(value.entryId, "entryId", { maxLength: MAX_ID_LENGTH });
+  if (!entryId.ok) {
+    return entryId;
+  }
+  const from = normalizeMemoryTarget(value.from, "from");
+  if (!from.ok) {
+    return from;
+  }
+  const to = normalizeMemoryTarget(value.to, "to");
+  if (!to.ok) {
+    return to;
+  }
+  if (JSON.stringify(from.value) === JSON.stringify(to.value)) {
+    return error("MEMORY_INVALID_FIELD", "from and to must identify different targets.", "to");
+  }
+  const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
+  if (!sourceMessageId.ok) {
+    return sourceMessageId;
+  }
+  const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
+  if (!idempotencyKey.ok) {
+    return idempotencyKey;
+  }
+  return {
+    ok: true,
+    value: {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: entryId.value,
+      from: from.value,
+      to: to.value,
+      ...(sourceMessageId.value === undefined ? {} : { sourceMessageId: sourceMessageId.value }),
+      ...(idempotencyKey.value === undefined ? {} : { idempotencyKey: idempotencyKey.value }),
     },
   };
 }

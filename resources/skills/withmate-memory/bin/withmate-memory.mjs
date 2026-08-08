@@ -104,7 +104,40 @@ var EXPORT_FILES_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"entryId",
 	"outputDirectoryPath"
 ]);
-var LIST_TAGS_REQUEST_KEYS = /* @__PURE__ */ new Set(["schemaVersion", "targets"]);
+var LIST_TARGETS_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"owner",
+	"scope",
+	"project",
+	"character",
+	"includeEmpty",
+	"limit",
+	"cursor"
+]);
+var LIST_ENTRIES_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"target",
+	"states",
+	"kinds",
+	"tags",
+	"includeBody",
+	"limit",
+	"cursor"
+]);
+var AUDIT_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"allTargets",
+	"targets",
+	"staleBefore",
+	"limit",
+	"cursor"
+]);
+var LIST_TAGS_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"targets",
+	"withCounts",
+	"sampleLimit"
+]);
 var APPEND_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"schemaVersion",
 	"target",
@@ -123,6 +156,15 @@ var FORGET_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"target",
 	"entryIds",
 	"reason",
+	"sourceMessageId",
+	"idempotencyKey",
+	"dryRun"
+]);
+var MOVE_ENTRY_REQUEST_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"entryId",
+	"from",
+	"to",
 	"sourceMessageId",
 	"idempotencyKey"
 ]);
@@ -163,6 +205,7 @@ var MAX_TAG_VALUE_LENGTH = 96;
 var MAX_ID_LENGTH = 200;
 var MAX_CURSOR_LENGTH = 500;
 var MAX_LIMIT = 50;
+var MAX_MAINTENANCE_LIMIT = 200;
 var MAX_TAGS = 20;
 var MAX_SUPERSEDES = 20;
 var MAX_APPEND_FILES = 10;
@@ -173,6 +216,11 @@ var MAX_FILE_DISPLAY_NAME_LENGTH = 255;
 var MAX_FILE_CONTENT_TYPE_LENGTH = 120;
 var MAX_FORGET_ENTRY_IDS = 50;
 var MAX_TARGETS = 5;
+var MEMORY_ENTRY_STATES = /* @__PURE__ */ new Set([
+	"active",
+	"superseded",
+	"forgotten"
+]);
 function error(code, message, field) {
 	return {
 		ok: false,
@@ -249,6 +297,27 @@ function normalizeOptionalText(value, field, maxLength = MAX_ID_LENGTH) {
 	return {
 		ok: true,
 		value: normalized.value
+	};
+}
+function normalizeOptionalBoolean(value, field) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	return typeof value === "boolean" ? {
+		ok: true,
+		value
+	} : error("MEMORY_INVALID_FIELD", `${field} must be a boolean.`, field);
+}
+function normalizeOptionalLimit(value, field = "limit", max = MAX_LIMIT) {
+	if (value === void 0) return {
+		ok: true,
+		value: void 0
+	};
+	if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > max) return error("MEMORY_INVALID_FIELD", `${field} must be an integer from 1 to ${max}.`, field);
+	return {
+		ok: true,
+		value
 	};
 }
 function validateSchemaVersion(value) {
@@ -613,6 +682,118 @@ function validateMemoryExportFilesRequest(value) {
 		}
 	};
 }
+function validateMemoryListTargetsRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "List targets request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, LIST_TARGETS_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	if (value.owner !== void 0 && ![
+		"user",
+		"project",
+		"character"
+	].includes(String(value.owner))) return error("MEMORY_INVALID_FIELD", "owner must be user, project, or character.", "owner");
+	if (value.scope !== void 0 && ![
+		"global",
+		"project",
+		"character"
+	].includes(String(value.scope))) return error("MEMORY_INVALID_FIELD", "scope must be global, project, or character.", "scope");
+	const project = value.project === void 0 ? void 0 : normalizeProjectTarget(value.project, "project");
+	if (project && !project.ok) return project;
+	const character = value.character === void 0 ? void 0 : normalizeCharacterTarget(value.character, "character");
+	if (character && !character.ok) return character;
+	const includeEmpty = normalizeOptionalBoolean(value.includeEmpty, "includeEmpty");
+	if (!includeEmpty.ok) return includeEmpty;
+	const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+	if (!limit.ok) return limit;
+	const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+	if (!cursor.ok) return cursor;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...value.owner === void 0 ? {} : { owner: value.owner },
+			...value.scope === void 0 ? {} : { scope: value.scope },
+			...project?.ok ? { project: project.value } : {},
+			...character?.ok ? { character: character.value } : {},
+			...includeEmpty.value === void 0 ? {} : { includeEmpty: includeEmpty.value },
+			...limit.value === void 0 ? {} : { limit: limit.value },
+			...cursor.value === void 0 ? {} : { cursor: cursor.value }
+		}
+	};
+}
+function validateMemoryListEntriesRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "List entries request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, LIST_ENTRIES_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const target = normalizeMemoryTarget(value.target, "target");
+	if (!target.ok) return target;
+	let states;
+	if (value.states !== void 0) {
+		if (!Array.isArray(value.states) || value.states.length === 0) return error("MEMORY_INVALID_FIELD", "states must be a non-empty array.", "states");
+		states = [];
+		for (let index = 0; index < value.states.length; index += 1) {
+			const state = value.states[index];
+			if (typeof state !== "string" || !MEMORY_ENTRY_STATES.has(state)) return error("MEMORY_INVALID_FIELD", `states[${index}] must be a valid memory state.`, `states[${index}]`);
+			if (!states.includes(state)) states.push(state);
+		}
+	}
+	const kinds = normalizeKinds(value.kinds);
+	if (!kinds.ok) return kinds;
+	const tags = normalizeTags(value.tags);
+	if (!tags.ok) return tags;
+	const includeBody = normalizeOptionalBoolean(value.includeBody, "includeBody");
+	if (!includeBody.ok) return includeBody;
+	const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+	if (!limit.ok) return limit;
+	const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+	if (!cursor.ok) return cursor;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target: target.value,
+			...states ? { states } : {},
+			...kinds.value ? { kinds: kinds.value } : {},
+			...tags.value.length > 0 ? { tags: tags.value } : {},
+			...includeBody.value === void 0 ? {} : { includeBody: includeBody.value },
+			...limit.value === void 0 ? {} : { limit: limit.value },
+			...cursor.value === void 0 ? {} : { cursor: cursor.value }
+		}
+	};
+}
+function validateMemoryAuditRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Audit request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, AUDIT_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const allTargets = normalizeOptionalBoolean(value.allTargets, "allTargets");
+	if (!allTargets.ok) return allTargets;
+	const targets = value.targets === void 0 ? void 0 : normalizeTargets(value.targets);
+	if (targets && !targets.ok) return targets;
+	if (allTargets.value === true === Boolean(targets?.ok)) return error("MEMORY_INVALID_FIELD", "Specify exactly one of allTargets=true or targets.", "allTargets");
+	const staleBefore = normalizeOptionalText(value.staleBefore, "staleBefore", 64);
+	if (!staleBefore.ok) return staleBefore;
+	if (staleBefore.value !== void 0 && Number.isNaN(Date.parse(staleBefore.value))) return error("MEMORY_INVALID_FIELD", "staleBefore must be an ISO 8601 timestamp.", "staleBefore");
+	const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+	if (!limit.ok) return limit;
+	const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+	if (!cursor.ok) return cursor;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...allTargets.value ? { allTargets: true } : {},
+			...targets?.ok ? { targets: targets.value } : {},
+			...staleBefore.value === void 0 ? {} : { staleBefore: new Date(staleBefore.value).toISOString() },
+			...limit.value === void 0 ? {} : { limit: limit.value },
+			...cursor.value === void 0 ? {} : { cursor: cursor.value }
+		}
+	};
+}
 function validateMemoryListTagsRequest(value) {
 	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "List tags request must be an object.");
 	const unknownKeys = rejectUnknownKeys(value, LIST_TAGS_REQUEST_KEYS, "request");
@@ -621,11 +802,18 @@ function validateMemoryListTagsRequest(value) {
 	if (!schema.ok) return schema;
 	const targets = normalizeTargets(value.targets);
 	if (!targets.ok) return targets;
+	const withCounts = normalizeOptionalBoolean(value.withCounts, "withCounts");
+	if (!withCounts.ok) return withCounts;
+	const sampleLimit = normalizeOptionalLimit(value.sampleLimit, "sampleLimit");
+	if (!sampleLimit.ok) return sampleLimit;
+	if (sampleLimit.value !== void 0 && withCounts.value !== true) return error("MEMORY_INVALID_FIELD", "sampleLimit requires withCounts=true.", "sampleLimit");
 	return {
 		ok: true,
 		value: {
 			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			targets: targets.value
+			targets: targets.value,
+			...withCounts.value === void 0 ? {} : { withCounts: withCounts.value },
+			...sampleLimit.value === void 0 ? {} : { sampleLimit: sampleLimit.value }
 		}
 	};
 }
@@ -694,6 +882,8 @@ function validateMemoryForgetRequest(value) {
 	if (!sourceMessageId.ok) return sourceMessageId;
 	const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
 	if (!idempotencyKey.ok) return idempotencyKey;
+	const dryRun = normalizeOptionalBoolean(value.dryRun, "dryRun");
+	if (!dryRun.ok) return dryRun;
 	return {
 		ok: true,
 		value: {
@@ -702,7 +892,37 @@ function validateMemoryForgetRequest(value) {
 			entryIds: entryIds.value,
 			...value.reason !== void 0 ? { reason: value.reason } : {},
 			...sourceMessageId.value !== void 0 ? { sourceMessageId: sourceMessageId.value } : {},
-			...idempotencyKey.value !== void 0 ? { idempotencyKey: idempotencyKey.value } : {}
+			...idempotencyKey.value !== void 0 ? { idempotencyKey: idempotencyKey.value } : {},
+			...dryRun.value === void 0 ? {} : { dryRun: dryRun.value }
+		}
+	};
+}
+function validateMemoryMoveEntryRequest(value) {
+	if (!isRecord(value)) return error("MEMORY_INVALID_REQUEST", "Move entry request must be an object.");
+	const unknownKeys = rejectUnknownKeys(value, MOVE_ENTRY_REQUEST_KEYS, "request");
+	if (!unknownKeys.ok) return unknownKeys;
+	const schema = validateSchemaVersion(value);
+	if (!schema.ok) return schema;
+	const entryId = normalizeText(value.entryId, "entryId", { maxLength: MAX_ID_LENGTH });
+	if (!entryId.ok) return entryId;
+	const from = normalizeMemoryTarget(value.from, "from");
+	if (!from.ok) return from;
+	const to = normalizeMemoryTarget(value.to, "to");
+	if (!to.ok) return to;
+	if (JSON.stringify(from.value) === JSON.stringify(to.value)) return error("MEMORY_INVALID_FIELD", "from and to must identify different targets.", "to");
+	const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
+	if (!sourceMessageId.ok) return sourceMessageId;
+	const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
+	if (!idempotencyKey.ok) return idempotencyKey;
+	return {
+		ok: true,
+		value: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			entryId: entryId.value,
+			from: from.value,
+			to: to.value,
+			...sourceMessageId.value === void 0 ? {} : { sourceMessageId: sourceMessageId.value },
+			...idempotencyKey.value === void 0 ? {} : { idempotencyKey: idempotencyKey.value }
 		}
 	};
 }
@@ -727,6 +947,18 @@ var routeByCommand = {
 	file_usage: {
 		method: "GET",
 		path: "/v1/file_usage"
+	},
+	list_targets: {
+		method: "POST",
+		path: "/v1/list_targets"
+	},
+	list_entries: {
+		method: "POST",
+		path: "/v1/list_entries"
+	},
+	audit: {
+		method: "POST",
+		path: "/v1/audit"
 	},
 	search: {
 		method: "POST",
@@ -755,6 +987,10 @@ var routeByCommand = {
 	forget: {
 		method: "POST",
 		path: "/v1/forget"
+	},
+	move_entry: {
+		method: "POST",
+		path: "/v1/move_entry"
 	}
 };
 function buildRoutePath(request) {
@@ -783,6 +1019,11 @@ var commandAliases = /* @__PURE__ */ new Map([
 	["list_characters", "characters"],
 	["file-usage", "file_usage"],
 	["file_usage", "file_usage"],
+	["list-targets", "list_targets"],
+	["list_targets", "list_targets"],
+	["list-entries", "list_entries"],
+	["list_entries", "list_entries"],
+	["audit", "audit"],
 	["search", "search"],
 	["get-entry", "get_entry"],
 	["get_entry", "get_entry"],
@@ -794,6 +1035,8 @@ var commandAliases = /* @__PURE__ */ new Map([
 	["list_tags", "list_tags"],
 	["append", "append"],
 	["forget", "forget"],
+	["move-entry", "move_entry"],
+	["move_entry", "move_entry"],
 	["schema", "schema"],
 	["capabilities", "schema"],
 	["validate", "validate"]
@@ -806,6 +1049,9 @@ Commands:
   status
   characters
   file-usage
+  list-targets
+  list-entries
+  audit
   search
   get-entry
   get-file
@@ -813,6 +1059,7 @@ Commands:
   list-tags
   append
   forget
+  move-entry
   schema
   validate
 
@@ -825,6 +1072,9 @@ Input options:
 Shorthand options:
   --project <absolute-path>
   --project-id <id>
+  --character-id <id>
+  --owner <user|project|character>
+  --scope <global|project|character>
   --query <text>
   --tag <tag>
   --tags <tags>
@@ -833,6 +1083,13 @@ Shorthand options:
   --output <path>
   --output-dir <path>
   --largest
+  --include-empty
+  --include-body
+  --with-counts
+  --sample-limit <n>
+  --all-targets
+  --dry-run
+  --format <json|jsonl|markdown>
   --limit <n>
 
 Connection options:
@@ -840,13 +1097,16 @@ Connection options:
   --discovery-file <path>
 
 Validation:
-  validate --command <search|get-entry|get-file|export-files|list-tags|append|forget>
+  validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
 Examples:
   withmate-memory status
   withmate-memory characters
   withmate-memory file-usage
   withmate-memory file-usage --largest --limit 10
+  withmate-memory list-targets --include-empty
+  withmate-memory list-entries --project C:\\path\\to\\repo --limit 100
+  withmate-memory audit --all-targets --format markdown
   withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
   withmate-memory get-file --project C:\\path\\to\\repo --object-id <id> --output C:\\path\\to\\file.bin
   withmate-memory export-files --project C:\\path\\to\\repo --entry-id <id> --output-dir C:\\path\\to\\exports
@@ -854,13 +1114,17 @@ Examples:
   withmate-memory schema
 `;
 var validatableCommands = /* @__PURE__ */ new Set([
+	"list_targets",
+	"list_entries",
+	"audit",
 	"search",
 	"get_entry",
 	"get_file",
 	"export_files",
 	"list_tags",
 	"append",
-	"forget"
+	"forget",
+	"move_entry"
 ]);
 function usageError(message) {
 	return createMemoryErrorResponse({
@@ -969,7 +1233,7 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 		body: {}
 	};
 	const command = rawCommand ? commandAliases.get(rawCommand) : void 0;
-	if (!command) throw usageError("Usage: withmate-memory <help|status|characters|file-usage|search|get-entry|get-file|export-files|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--object-id <id>] [--output <path>] [--output-dir <path>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+	if (!command) throw usageError("Usage: withmate-memory <help|status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [options]");
 	if (command === "help" || rest.includes("--help") || rest.includes("-h")) return {
 		command: "help",
 		body: {}
@@ -982,6 +1246,9 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 	let validateCommand;
 	let projectPath;
 	let projectId;
+	let characterId;
+	let owner;
+	let scope;
 	let query;
 	const tagOptions = [];
 	let entryId;
@@ -989,7 +1256,14 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 	let outputPath;
 	let outputDirectoryPath;
 	let largest = false;
+	let includeEmpty = false;
+	let includeBody = false;
+	let withCounts = false;
+	let allTargets = false;
+	let dryRun = false;
+	let sampleLimit;
 	let limit;
+	let outputFormat;
 	for (let index = 0; index < rest.length; index += 1) {
 		const arg = rest[index];
 		if (arg === "--json") jsonInput = requireOptionValue(rest, ++index, arg);
@@ -1003,7 +1277,16 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 			if (!validateCommand) throw usageError(`--command must be one of: ${Array.from(validatableCommands).join(", ")}.`);
 		} else if (arg === "--project") projectPath = requireOptionValue(rest, ++index, arg);
 		else if (arg === "--project-id") projectId = requireOptionValue(rest, ++index, arg);
-		else if (arg === "--query") query = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--character-id") characterId = requireOptionValue(rest, ++index, arg);
+		else if (arg === "--owner") {
+			const value = requireOptionValue(rest, ++index, arg);
+			if (value !== "user" && value !== "project" && value !== "character") throw usageError("--owner must be user, project, or character.");
+			owner = value;
+		} else if (arg === "--scope") {
+			const value = requireOptionValue(rest, ++index, arg);
+			if (value !== "global" && value !== "project" && value !== "character") throw usageError("--scope must be global, project, or character.");
+			scope = value;
+		} else if (arg === "--query") query = requireOptionValue(rest, ++index, arg);
 		else if (arg === "--tag") tagOptions.push(requireOptionValue(rest, ++index, arg));
 		else if (arg === "--tags") tagOptions.push(...parseTagsOption(requireOptionValue(rest, ++index, arg)));
 		else if (arg === "--entry-id") entryId = requireOptionValue(rest, ++index, arg);
@@ -1011,7 +1294,21 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 		else if (arg === "--output") outputPath = requireOptionValue(rest, ++index, arg);
 		else if (arg === "--output-dir") outputDirectoryPath = requireOptionValue(rest, ++index, arg);
 		else if (arg === "--largest") largest = true;
-		else if (arg === "--limit") limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
+		else if (arg === "--include-empty") includeEmpty = true;
+		else if (arg === "--include-body") includeBody = true;
+		else if (arg === "--with-counts") withCounts = true;
+		else if (arg === "--all-targets") allTargets = true;
+		else if (arg === "--dry-run") dryRun = true;
+		else if (arg === "--sample-limit") sampleLimit = parseLimitOption(requireOptionValue(rest, ++index, arg));
+		else if (arg === "--format") {
+			const value = requireOptionValue(rest, ++index, arg);
+			if (![
+				"json",
+				"jsonl",
+				"markdown"
+			].includes(value)) throw usageError("--format must be json, jsonl, or markdown.");
+			outputFormat = value;
+		} else if (arg === "--limit") limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
 		else throw usageError(`Unknown option: ${arg}`);
 	}
 	if ([
@@ -1020,13 +1317,16 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 		stdinRequested
 	].filter(Boolean).length > 1) throw usageError("--json, --file, @file, and --stdin cannot be used together.");
 	if ([Boolean(projectPath), Boolean(projectId)].filter(Boolean).length > 1) throw usageError("--project and --project-id cannot be used together.");
-	if (command === "validate" && !validateCommand) throw usageError("validate requires --command <search|get-entry|get-file|export-files|list-tags|append|forget>.");
+	if (command === "validate" && !validateCommand) throw usageError("validate requires --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>.");
 	let body = {};
 	if (command === "file_usage") {
 		if (jsonInput !== null || filePath !== null || stdinRequested) throw usageError("file-usage does not accept JSON body input. Use --largest and --limit.");
 		if (hasShorthandOptions({
 			projectPath,
 			projectId,
+			characterId,
+			owner,
+			scope,
 			query,
 			tags: tagOptions,
 			entryId,
@@ -1034,10 +1334,19 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 			outputPath,
 			outputDirectoryPath,
 			largest,
+			includeEmpty,
+			includeBody,
+			withCounts,
+			allTargets,
+			dryRun,
+			sampleLimit,
 			limit
 		})) body = buildShorthandBody(command, {
 			projectPath,
 			projectId,
+			characterId,
+			owner,
+			scope,
 			query,
 			tags: tagOptions,
 			entryId,
@@ -1045,6 +1354,12 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 			outputPath,
 			outputDirectoryPath,
 			largest,
+			includeEmpty,
+			includeBody,
+			withCounts,
+			allTargets,
+			dryRun,
+			sampleLimit,
 			limit
 		});
 	} else if (command !== "status" && command !== "characters" && command !== "schema") {
@@ -1054,6 +1369,9 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 		else if (hasShorthandOptions({
 			projectPath,
 			projectId,
+			characterId,
+			owner,
+			scope,
 			query,
 			tags: tagOptions,
 			entryId,
@@ -1061,10 +1379,19 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 			outputPath,
 			outputDirectoryPath,
 			largest,
+			includeEmpty,
+			includeBody,
+			withCounts,
+			allTargets,
+			dryRun,
+			sampleLimit,
 			limit
 		})) body = buildShorthandBody(command, {
 			projectPath,
 			projectId,
+			characterId,
+			owner,
+			scope,
 			query,
 			tags: tagOptions,
 			entryId,
@@ -1072,16 +1399,29 @@ async function parseWithMateMemoryCliArgs(args, deps = {}) {
 			outputPath,
 			outputDirectoryPath,
 			largest,
+			includeEmpty,
+			includeBody,
+			withCounts,
+			allTargets,
+			dryRun,
+			sampleLimit,
 			limit
 		});
 		else if (deps.stdin && !deps.stdin.isTTY) body = await parseJsonInput(await readStdin(deps.stdin));
 	}
+	if (dryRun && command === "forget" && body && typeof body === "object" && !Array.isArray(body)) body = {
+		...body,
+		dryRun: true
+	};
+	if (command === "list_targets" && body && typeof body === "object" && !Array.isArray(body) && Object.keys(body).length === 0) body = { schemaVersion: MEMORY_V6_SCHEMA_VERSION };
+	if (outputFormat && command !== "audit") throw usageError("--format is only supported by audit.");
 	return {
 		command,
 		body: normalizeProjectPathTargets(body),
 		...validateCommand ? { validateCommand } : {},
 		...apiUrl ? { apiUrl } : {},
-		...discoveryFilePath ? { discoveryFilePath } : {}
+		...discoveryFilePath ? { discoveryFilePath } : {},
+		...outputFormat ? { outputFormat } : {}
 	};
 }
 function parseLimitOption(value) {
@@ -1113,7 +1453,7 @@ function normalizeCliTagOptions(values) {
 	return tags;
 }
 function hasShorthandOptions(options) {
-	return Boolean(options.projectPath || options.projectId || options.query || options.tags && options.tags.length > 0 || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath || options.largest || options.limit !== void 0);
+	return Boolean(options.projectPath || options.projectId || options.characterId || options.owner || options.scope || options.query || options.tags && options.tags.length > 0 || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath || options.largest || options.includeEmpty || options.includeBody || options.withCounts || options.allTargets || options.dryRun || options.sampleLimit !== void 0 || options.limit !== void 0);
 }
 function isAbsoluteCliPath(value) {
 	return path.isAbsolute(value) || path.win32.isAbsolute(value);
@@ -1149,14 +1489,89 @@ function buildProjectTarget(options) {
 	};
 	return null;
 }
+function buildMaintenanceTarget(options) {
+	const project = options.projectId ? {
+		type: "id",
+		id: options.projectId
+	} : options.projectPath ? {
+		type: "path",
+		path: normalizeCliProjectPath(options.projectPath)
+	} : void 0;
+	if (!options.owner && !options.scope && !options.characterId) return buildProjectTarget(options);
+	if (!options.owner || !options.scope) throw usageError("Target shorthand requires both --owner and --scope.");
+	if (options.owner === "user" && options.scope === "global" && !project && !options.characterId) return {
+		owner: "user",
+		scope: "global"
+	};
+	if (options.owner === "project" && options.scope === "project" && project && !options.characterId) return {
+		owner: "project",
+		scope: "project",
+		project
+	};
+	if (options.owner === "character" && options.scope === "character" && options.characterId && !project) return {
+		owner: "character",
+		scope: "character",
+		character: {
+			type: "id",
+			id: options.characterId
+		}
+	};
+	if (options.owner === "character" && options.scope === "project" && options.characterId && project) return {
+		owner: "character",
+		scope: "project",
+		character: {
+			type: "id",
+			id: options.characterId
+		},
+		project
+	};
+	throw usageError("Target shorthand owner, scope, project, and character options do not form a supported target.");
+}
 function buildShorthandBody(command, options) {
 	if (command === "validate") throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
-	const target = buildProjectTarget(options);
+	const projectTarget = buildProjectTarget(options);
+	const target = command === "list_entries" || command === "audit" || command === "list_tags" ? buildMaintenanceTarget(options) : projectTarget;
 	if (command === "file_usage") {
-		if (target || options.query || options.tags && options.tags.length > 0 || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath) throw usageError("file-usage shorthand only supports --largest and --limit.");
+		if (projectTarget || options.characterId || options.owner || options.scope || options.query || options.tags && options.tags.length > 0 || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath || options.includeEmpty || options.includeBody || options.withCounts || options.allTargets || options.dryRun || options.sampleLimit !== void 0) throw usageError("file-usage shorthand only supports --largest and --limit.");
 		if (options.limit !== void 0 && !options.largest) throw usageError("file-usage --limit requires --largest.");
 		return {
 			...options.largest ? { largest: true } : {},
+			...options.limit !== void 0 ? { limit: options.limit } : {}
+		};
+	}
+	if (command === "list_targets") return {
+		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+		...options.owner ? { owner: options.owner } : {},
+		...options.scope ? { scope: options.scope } : {},
+		...options.projectId ? { project: {
+			type: "id",
+			id: options.projectId
+		} } : {},
+		...options.projectPath ? { project: {
+			type: "path",
+			path: normalizeCliProjectPath(options.projectPath)
+		} } : {},
+		...options.characterId ? { character: {
+			type: "id",
+			id: options.characterId
+		} } : {},
+		...options.includeEmpty ? { includeEmpty: true } : {},
+		...options.limit !== void 0 ? { limit: options.limit } : {}
+	};
+	if (command === "list_entries") {
+		if (!target) throw usageError("list-entries shorthand requires an explicit target.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			target,
+			...options.includeBody ? { includeBody: true } : {},
+			...options.limit !== void 0 ? { limit: options.limit } : {}
+		};
+	}
+	if (command === "audit") {
+		if (options.allTargets === Boolean(target)) throw usageError("audit shorthand requires exactly one of --all-targets or an explicit target.");
+		return {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...options.allTargets ? { allTargets: true } : { targets: [target] },
 			...options.limit !== void 0 ? { limit: options.limit } : {}
 		};
 	}
@@ -1174,10 +1589,12 @@ function buildShorthandBody(command, options) {
 		};
 	}
 	if (command === "list_tags") {
-		if (!target) throw usageError("list-tags shorthand requires --project <absolute-path> or --project-id <id>.");
+		if (!target) throw usageError("list-tags shorthand requires an explicit target.");
 		return {
 			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-			targets: [target]
+			targets: [target],
+			...options.withCounts ? { withCounts: true } : {},
+			...options.sampleLimit !== void 0 ? { sampleLimit: options.sampleLimit } : {}
 		};
 	}
 	if (command === "get_entry") {
@@ -1211,6 +1628,7 @@ function buildShorthandBody(command, options) {
 			outputDirectoryPath: normalizeCliOutputDirectoryPath(options.outputDirectoryPath)
 		};
 	}
+	if (command === "forget" && options.dryRun) throw usageError("forget --dry-run requires --json, --file, @file, or --stdin with the forget request.");
 	throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
 }
 function normalizeProjectPathTargets(value) {
@@ -1237,6 +1655,9 @@ function buildSchemaResponse() {
 			"status",
 			"characters",
 			"file-usage",
+			"list-targets",
+			"list-entries",
+			"audit",
 			"search",
 			"get-entry",
 			"get-file",
@@ -1244,6 +1665,7 @@ function buildSchemaResponse() {
 			"list-tags",
 			"append",
 			"forget",
+			"move-entry",
 			"schema",
 			"validate"
 		],
@@ -1283,11 +1705,15 @@ function buildSchemaResponse() {
 }
 function validateMemoryCliRequestBody(command, body) {
 	if (command === "search") return validateMemorySearchRequest(body);
+	if (command === "list_targets") return validateMemoryListTargetsRequest(body);
+	if (command === "list_entries") return validateMemoryListEntriesRequest(body);
+	if (command === "audit") return validateMemoryAuditRequest(body);
 	if (command === "get_entry") return validateMemoryGetEntryRequest(body);
 	if (command === "get_file") return validateMemoryGetFileRequest(body);
 	if (command === "export_files") return validateMemoryExportFilesRequest(body);
 	if (command === "list_tags") return validateMemoryListTagsRequest(body);
 	if (command === "append") return validateMemoryAppendRequest(body);
+	if (command === "move_entry") return validateMemoryMoveEntryRequest(body);
 	return validateMemoryForgetRequest(body);
 }
 function buildValidateResponse(command, body) {
@@ -1314,6 +1740,70 @@ async function readJsonResponse(response) {
 	} catch {
 		throw transportError("Memory API returned a non-JSON response.");
 	}
+}
+function formatAuditOutput(value, format) {
+	if (format === "json" || !value || typeof value !== "object" || !("targets" in value) || !Array.isArray(value.targets)) return `${JSON.stringify(value)}\n`;
+	const report = value;
+	if (format === "jsonl") return `${[JSON.stringify({
+		recordType: "audit_page",
+		schemaVersion: report.schemaVersion,
+		generatedAt: report.generatedAt,
+		staleBefore: report.staleBefore,
+		nextCursor: report.nextCursor ?? null
+	}), ...report.targets.map((target) => JSON.stringify({
+		recordType: "target_audit",
+		...target
+	}))].join("\n")}\n`;
+	const lines = [
+		"# WithMate Memory audit",
+		"",
+		`- Generated: ${String(report.generatedAt ?? "")}`,
+		`- Stale before: ${String(report.staleBefore ?? "")}`,
+		""
+	];
+	for (const targetAudit of report.targets) {
+		const inventory = targetAudit.target ?? {};
+		const selector = inventory.target ?? {};
+		const label = inventory.project?.displayName ?? inventory.character?.displayName ?? `${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`;
+		lines.push(`## ${String(label).replace(/\r?\n/g, " ")}`, "");
+		lines.push(`- Target: ${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`);
+		lines.push(`- Entries: ${inventory.entryCount ?? 0}`);
+		lines.push(`- Tags: ${inventory.tagCount ?? 0}`);
+		lines.push(`- Last updated: ${inventory.lastUpdatedAt ?? "n/a"}`, "");
+		lines.push("### Counts by kind", "");
+		const counts = targetAudit.countsByKind && typeof targetAudit.countsByKind === "object" ? Object.entries(targetAudit.countsByKind) : [];
+		lines.push(...counts.length > 0 ? counts.map(([kind, count]) => `- ${kind}: ${String(count)}`) : ["- None"], "");
+		lines.push("### Top tags", "");
+		const topTags = Array.isArray(targetAudit.topTags) ? targetAudit.topTags : [];
+		lines.push(...topTags.length > 0 ? topTags.map((tag) => `- ${String(tag.type)}:${String(tag.value)} — ${String(tag.entryCount)}`) : ["- None"], "");
+		const sections = [
+			["Stale or progress-like", targetAudit.staleOrProgressCandidates],
+			["Wrong-scope candidates", targetAudit.wrongScopeCandidates],
+			["Documentation candidates", targetAudit.documentationCandidates],
+			["Suspicious tags", targetAudit.suspiciousTagCandidates]
+		];
+		for (const [heading, candidates] of sections) {
+			lines.push(`### ${heading}`, "");
+			if (!Array.isArray(candidates) || candidates.length === 0) {
+				lines.push("- None", "");
+				continue;
+			}
+			for (const candidate of candidates) lines.push(`- ${String(candidate.id)} — ${String(candidate.title).replace(/\r?\n/g, " ")} (${Array.isArray(candidate.reasons) ? candidate.reasons.join(", ") : "candidate"})`);
+			lines.push("");
+		}
+		lines.push("### Duplicate normalized titles", "");
+		const duplicateGroups = Array.isArray(targetAudit.duplicateTitleCandidates) ? targetAudit.duplicateTitleCandidates : [];
+		if (duplicateGroups.length === 0) lines.push("- None", "");
+		else {
+			for (const group of duplicateGroups) {
+				const ids = Array.isArray(group.entries) ? group.entries.map((entry) => String(entry.id)).join(", ") : "";
+				lines.push(`- ${String(group.normalizedTitle)} — ${ids}`);
+			}
+			lines.push("");
+		}
+	}
+	if (report.nextCursor) lines.push(`Next cursor: \`${String(report.nextCursor)}\``, "");
+	return `${lines.join("\n").trimEnd()}\n`;
 }
 function createStatusChallenge(apiSecret, nonce) {
 	return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
@@ -1407,7 +1897,7 @@ async function runWithMateMemoryCli(args, deps = {}) {
 		} finally {
 			clearTimeout(requestTimeout);
 		}
-		stdout.write(`${JSON.stringify(responseJson)}\n`);
+		stdout.write(request.command === "audit" ? formatAuditOutput(responseJson, request.outputFormat ?? "json") : `${JSON.stringify(responseJson)}\n`);
 		return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 	} catch (error) {
 		const response = isMemoryErrorResponse(error) ? error : transportError(error instanceof Error ? error.message : "Memory CLI request failed.");

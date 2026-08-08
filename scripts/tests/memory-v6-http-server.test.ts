@@ -316,6 +316,45 @@ describe("MemoryV6HttpServer", () => {
     });
   });
 
+  it("maintenance routesはinventory、listing、dry-run、moveをservice境界へ通す", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "http-maintenance-append" }));
+      assert.equal(append.status, 200);
+      const entryId = append.json.entry.id;
+
+      const targets = await postJson(baseUrl, "/v1/list_targets", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      assert.equal(targets.status, 200);
+      assert.equal(targets.json.items[0].entryCount, 1);
+
+      const entries = await postJson(baseUrl, "/v1/list_entries", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      });
+      assert.equal(entries.status, 200);
+      assert.equal(entries.json.items[0].id, entryId);
+      assert.equal("body" in entries.json.items[0], false);
+
+      const dryRun = await postJson(baseUrl, "/v1/forget", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryIds: [entryId],
+        dryRun: true,
+      });
+      assert.equal(dryRun.status, 200);
+      assert.equal(dryRun.json.writeOccurred, false);
+
+      const moved = await postJson(baseUrl, "/v1/move_entry", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId,
+        from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        to: { owner: "user", scope: "global" },
+        idempotencyKey: "http-maintenance-move",
+      });
+      assert.equal(moved.status, 200);
+      assert.equal(moved.json.entry.owner.type, "user");
+    });
+  });
+
   it("invalid route / method / JSON / body sizeをtransport errorで返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const missing = await fetch(`${baseUrl}/v1/missing`, {
