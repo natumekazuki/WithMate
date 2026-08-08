@@ -84,8 +84,17 @@ function mergeClassName(baseClassName: string, className?: string) {
   return className ? `${baseClassName} ${className}` : baseClassName;
 }
 
+function decodeEncodedWindowsPathSeparators(target: string): string {
+  return target.replace(/%5c/gi, "\\");
+}
+
+function isWindowsAbsolutePathTarget(target: string): boolean {
+  const normalizedTarget = decodeEncodedWindowsPathSeparators(target);
+  return /^[a-zA-Z]:[\\/]/.test(normalizedTarget) || /^\\\\[^\\]+\\[^\\]+/.test(normalizedTarget);
+}
+
 function hasUnsupportedUrlScheme(target: string): boolean {
-  if (/^[a-zA-Z]:[\\/]/.test(target)) {
+  if (isWindowsAbsolutePathTarget(target)) {
     return false;
   }
 
@@ -96,10 +105,6 @@ function hasUnsupportedUrlScheme(target: string): boolean {
 
   const scheme = schemeMatch[1].toLowerCase();
   return scheme !== "http" && scheme !== "https" && scheme !== "file" && scheme !== "mailto" && scheme !== "tel";
-}
-
-function isWindowsAbsolutePathTarget(target: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(target) || /^\\\\[^\\]+\\[^\\]+/.test(target);
 }
 
 function isAllowedMarkdownHref(target: string): boolean {
@@ -138,7 +143,7 @@ const markdownUrlTransform: UrlTransform = (url, key) => {
     if (url.startsWith("//")) {
       return `https:${url}`;
     }
-    return isWindowsAbsolutePathTarget(url) ? toLocalFileUrl(url) : url;
+    return isWindowsAbsolutePathTarget(url) ? toLocalFileUrl(decodeEncodedWindowsPathSeparators(url)) : url;
   }
   if (key !== "href") {
     return defaultUrlTransform(url);
