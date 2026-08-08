@@ -494,6 +494,7 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     character_snapshot_json TEXT DEFAULT NULL,
     project_scope_id TEXT,
     workspace_path TEXT NOT NULL DEFAULT '',
+    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_active_at TEXT NOT NULL,
@@ -1059,6 +1060,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       continue;
     }
     db.exec(statement);
+  }
+
+  const sessionColumns = tableColumnNames(db, "sessions_v6");
+  if (!sessionColumns.has("is_pinned")) {
+    db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
 
   if (!tableExists(db, "auxiliary_sessions")) {

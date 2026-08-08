@@ -451,6 +451,7 @@ export default function AgentSessionWindowApp() {
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isSessionPinPending, setIsSessionPinPending] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileResourceRequest | null>(null);
@@ -2219,6 +2220,26 @@ export default function AgentSessionWindowApp() {
     return savedSession;
   };
 
+  const handleToggleSessionPin = async () => {
+    if (!withmateApi || !selectedSession || isSessionPinPending) {
+      return;
+    }
+    setIsSessionPinPending(true);
+    try {
+      const saved = await withmateApi.setSessionPinned({
+        sessionId: selectedSession.id,
+        isPinned: selectedSession.isPinned !== true,
+      });
+      setSessions((current) => current.map((session) => (
+        session.id === saved.id ? { ...session, isPinned: saved.isPinned } : session
+      )));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "ピン止めの変更に失敗したよ。");
+    } finally {
+      setIsSessionPinPending(false);
+    }
+  };
+
   const handleChangeApproval = async (approvalMode: Session["approvalMode"]) => {
     if (
       !selectedSession ||
@@ -3320,9 +3341,11 @@ export default function AgentSessionWindowApp() {
         onActivateDockPriority: handleActivateDockPriority,
         isSessionHeaderExpanded,
         isEditingTitle,
+        isSessionPinPending,
         titleDraft,
         isSelectedSessionRunning: renderedIsRunning,
         isSelectedSessionReadOnly: activeAuxiliarySession ? true : isSelectedSessionReadOnly,
+        isSelectedSessionPinned: selectedSession.isPinned === true,
         messageListRef,
         pendingRunIndicatorAnnouncement,
         pendingRunIndicatorText,
@@ -3417,6 +3440,7 @@ export default function AgentSessionWindowApp() {
         onCancelTitleEdit: handleCancelTitleEdit,
         onStartTitleEdit: handleStartTitleEdit,
         onDeleteSession: () => void handleDeleteSession(),
+        onToggleSessionPin: () => void handleToggleSessionPin(),
         onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,

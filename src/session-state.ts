@@ -65,6 +65,7 @@ export type Session = {
   taskTitle: string;
   status: "running" | "idle" | "saved";
   updatedAt: string;
+  isPinned: boolean;
   provider: string;
   catalogRevision: number;
   workspaceLabel: string;
@@ -90,7 +91,9 @@ export type Session = {
   stream: StreamEntry[];
 };
 
-export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRuntimeSnapshot">;
+export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRuntimeSnapshot" | "isPinned"> & {
+  isPinned: boolean;
+};
 export type SessionDetail = Session;
 
 export type DiffPreviewPayload = {
@@ -146,6 +149,23 @@ export type CreateSessionRequest = Omit<
 > & {
   workspace: CreateSessionWorkspaceRequest;
 };
+
+export type SetSessionPinnedRequest = {
+  sessionId: string;
+  isPinned: boolean;
+};
+
+export function parseSetSessionPinnedRequest(value: unknown): SetSessionPinnedRequest {
+  if (!value || typeof value !== "object") {
+    throw new Error("ピン止めするセッションの指定が正しくないよ。");
+  }
+  const candidate = value as Partial<SetSessionPinnedRequest>;
+  const sessionId = typeof candidate.sessionId === "string" ? candidate.sessionId.trim() : "";
+  if (!sessionId || typeof candidate.isPinned !== "boolean") {
+    throw new Error("ピン止めするセッションの指定が正しくないよ。");
+  }
+  return { sessionId, isPinned: candidate.isPinned };
+}
 
 export function normalizeSessionAccessMode(value: unknown, fallback: SessionAccessMode = "active"): SessionAccessMode {
   return SESSION_ACCESS_MODE_VALUES.includes(value as SessionAccessMode) ? value as SessionAccessMode : fallback;
@@ -326,6 +346,7 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
           ? currentTimestampLabel()
           : candidate.updatedAt
         : currentTimestampLabel(),
+    isPinned: candidate.isPinned === true,
     provider: normalizeProviderId(candidate.provider),
     catalogRevision:
       typeof candidate.catalogRevision === "number" && Number.isInteger(candidate.catalogRevision) && candidate.catalogRevision > 0
@@ -467,6 +488,7 @@ export function buildNewSession(input: CreateSessionInput): Session {
     taskTitle: normalizedTaskTitle,
     status: "idle",
     updatedAt: currentTimestampLabel(),
+    isPinned: false,
     provider: normalizeProviderId(input.provider ?? DEFAULT_PROVIDER_ID),
     catalogRevision:
       typeof input.catalogRevision === "number" && Number.isInteger(input.catalogRevision) && input.catalogRevision > 0
@@ -553,6 +575,7 @@ export function buildSessionSummarySignature(summary: SessionSummary): string {
   return [
     summary.id,
     summary.updatedAt,
+    String(summary.isPinned),
     summary.status,
     summary.runState,
     summary.taskTitle,

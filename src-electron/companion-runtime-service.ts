@@ -85,6 +85,7 @@ function buildProviderSession(session: CompanionSession): Session {
     taskTitle: session.taskTitle,
     status: session.runState === "running" ? "running" : "idle",
     updatedAt: session.updatedAt,
+    isPinned: false,
     provider: session.provider,
     catalogRevision: session.catalogRevision,
     workspaceLabel: session.focusPath || session.repoRoot,

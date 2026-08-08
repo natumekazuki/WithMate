@@ -139,6 +139,7 @@ import {
   type PersistentStoreBundle,
   type ProjectMemoryStorageAccess,
   type SessionMemoryStorageAccess,
+  type SessionPinStorage,
   type SessionStorageRead,
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
@@ -1487,6 +1488,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveLiveElicitation,
                 createSession: (input) => requireMainSessionCommandFacade().createSessionFromRequest(input),
                 updateSession: (session) => requireMainSessionCommandFacade().updateSession(session),
+                setSessionPinned: (request) => requireMainSessionCommandFacade().setSessionPinned(request),
                 deleteSession: (sessionId) => requireMainSessionCommandFacade().deleteSession(sessionId),
                 deleteSessionsLastActiveBefore: (request) =>
                   requireMainSessionCommandFacade().deleteSessionsLastActiveBefore(request),
@@ -1537,6 +1539,15 @@ function requireSessionStorageForWrite(): SessionStorage {
   }
 
   throw new Error("session storage は V2 DB の読み取り専用のため書き込み不可です。");
+}
+
+function requireSessionPinStorage(): SessionPinStorage {
+  const storage = requireSessionStorage();
+  const candidate = storage as Partial<SessionPinStorage>;
+  if (typeof candidate.setSessionPinned === "function") {
+    return candidate as SessionPinStorage;
+  }
+  throw new Error("このセッション保存形式ではピン止めを利用できないよ。");
 }
 
 function isSessionStorageWritable(storage: SessionStorageRead): storage is SessionStorage {
@@ -2256,6 +2267,8 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);
       },
+      setStoredSessionPinned: (sessionId, isPinned) =>
+        requireSessionPinStorage().setSessionPinned(sessionId, isPinned),
       listStoredSessions: () => requireSessionStorage().listSessions(),
       listStoredSessionIdsLastActiveBefore: (cutoff) =>
         requireSessionStorage().listSessionIdsLastActiveBefore(cutoff),

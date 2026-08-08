@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
   buildNewSession,
+  projectSessionSummary,
   type CreateSessionInput,
   type Session,
 } from "../../src/app-state.js";
@@ -79,6 +80,51 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("SessionPersistenceService", () => {
+  it("setSessionPinnedは実行状態とupdatedAtを変えずにcacheとbroadcastを更新する", async () => {
+    const session = createSession({
+      id: "pin-target",
+      status: "running",
+      runState: "running",
+      accessMode: "legacy_readonly",
+      sourceSchemaVersion: 4,
+      updatedAt: "2026-08-09T04:38:00.000Z",
+      isPinned: false,
+    });
+    let cachedSessions = [session];
+    const broadcasts: string[][] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cachedSessions,
+      setSessions: (next) => { cachedSessions = next; },
+      getSession: () => session,
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: (next) => next,
+      replaceStoredSessions: () => undefined,
+      setStoredSessionPinned: (sessionId, isPinned) => ({
+        ...projectSessionSummary(session),
+        id: sessionId,
+        isPinned,
+      }),
+      listStoredSessions: () => [session],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
+    });
+
+    const saved = await service.setSessionPinned(session.id, true);
+
+    assert.equal(saved.isPinned, true);
+    assert.equal(saved.updatedAt, session.updatedAt);
+    assert.equal(cachedSessions[0]?.status, "running");
+    assert.equal(cachedSessions[0]?.runState, "running");
+    assert.equal(cachedSessions[0]?.isPinned, true);
+    assert.deepEqual(broadcasts, [[session.id]]);
+  });
+
   it("createSession は有効な provider と model を解決して保存する", async () => {
     const storedSessions: Session[] = [];
     const syncedSessionIds: string[] = [];
@@ -1228,7 +1274,18 @@ describe("SessionPersistenceService", () => {
         replaceOrder.push("replaceStoredSessions:start");
         await new Promise<void>((resolve) => setTimeout(resolve, 0));
         replaceOrder.push("replaceStoredSessions:end");
-        storedSessions.splice(0, storedSessions.length, ...nextSessions);
+        storedSessions.splice(0, storedSessions.length, ...nextSessions.map((session) => ({
+          ...session,
+          isPinned: session.id === "session-a" ? true : session.isPinned,
+        })));
+      },
+      setStoredSessionPinned(sessionId, isPinned) {
+        replaceOrder.push("setStoredSessionPinned");
+        const session = storedSessions.find((entry) => entry.id === sessionId);
+        assert.ok(session);
+        const pinned = { ...session, isPinned };
+        storedSessions.splice(0, storedSessions.length, pinned);
+        return pinned;
       },
       listStoredSessions() {
         return [...storedSessions];
@@ -1256,15 +1313,26 @@ describe("SessionPersistenceService", () => {
       },
     });
 
-    const replaced = await service.replaceAllSessions([nextSessionA], {
+    const replacePromise = service.replaceAllSessions([nextSessionA], {
       invalidateSessionIds: ["session-a"],
     });
+    const pinPromise = service.setSessionPinned("session-a", false);
+    const [replaced, pinned] = await Promise.all([replacePromise, pinPromise]);
 
     assert.equal(replaced.length, 1);
+    assert.equal(replaced[0]?.isPinned, true);
+    assert.equal(pinned.isPinned, false);
+    assert.equal(storedSessions[0]?.isPinned, false);
     assert.deepEqual(clearedTelemetry.sort(), ["session-a", "session-b"]);
     assert.deepEqual(clearedBackground, ["session-b"]);
     assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: "session-a" }]);
-    assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"]]);
-    assert.deepEqual(replaceOrder, ["replaceStoredSessions:start", "replaceStoredSessions:end", "setSessions"]);
+    assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"], ["session-a"]]);
+    assert.deepEqual(replaceOrder, [
+      "replaceStoredSessions:start",
+      "replaceStoredSessions:end",
+      "setSessions",
+      "setStoredSessionPinned",
+      "setSessions",
+    ]);
   });
 });

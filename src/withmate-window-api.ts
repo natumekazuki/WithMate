@@ -25,6 +25,7 @@ import type {
     RunSessionTurnRequest,
     Session,
     SessionSummary,
+    SetSessionPinnedRequest,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
@@ -138,6 +139,7 @@ export type WithMateWindowSessionApi = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
+  setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;

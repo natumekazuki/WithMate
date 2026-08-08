@@ -154,6 +154,7 @@ import {
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_SET_SESSION_PINNED_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
@@ -329,6 +330,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     updateSession(session) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_SESSION_CHANNEL, session);
+    },
+    setSessionPinned(request) {
+      return ipcRenderer.invoke(WITHMATE_SET_SESSION_PINNED_CHANNEL, request);
     },
     deleteSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_CHANNEL, sessionId);

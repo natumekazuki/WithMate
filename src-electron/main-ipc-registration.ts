@@ -88,7 +88,13 @@ import type {
   FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type {
+  CreateSessionRequest,
+  DiffPreviewPayload,
+  MessageArtifact,
+  Session,
+  SetSessionPinnedRequest,
+} from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -219,6 +225,7 @@ import {
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_SET_SESSION_PINNED_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
@@ -373,6 +380,7 @@ export type MainIpcRegistrationDeps = {
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Awaitable<Session>;
+  setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;
   deleteSessionsLastActiveBefore(
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
@@ -587,6 +595,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "resolveLiveElicitation"
   | "createSession"
   | "updateSession"
+  | "setSessionPinned"
   | "deleteSession"
   | "deleteSessionsLastActiveBefore"
   | "runSessionTurn"
@@ -1283,6 +1292,10 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   );
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionRequest) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
+  ipcMain.handle(
+    WITHMATE_SET_SESSION_PINNED_CHANNEL,
+    (_event, request: SetSessionPinnedRequest) => deps.setSessionPinned(request),
+  );
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (event, sessionId: string) => {
     assertSessionDeleteSender(event, sessionId, deps);
     return deps.deleteSession(sessionId);

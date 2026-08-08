@@ -53,6 +53,7 @@ export const WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL = "withmate:cancel-co
 export const WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL = "withmate:update-companion-session";
 export const WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL = "withmate:preview-companion-composer-input";
 export const WITHMATE_UPDATE_SESSION_CHANNEL = "withmate:update-session";
+export const WITHMATE_SET_SESSION_PINNED_CHANNEL = "withmate:set-session-pinned";
 export const WITHMATE_DELETE_SESSION_CHANNEL = "withmate:delete-session";
 export const WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL = "withmate:delete-sessions-last-active-before";
 export const WITHMATE_GET_MATE_STATE_CHANNEL = "withmate:get-mate-state";

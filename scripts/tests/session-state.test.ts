@@ -12,6 +12,7 @@ import {
   CURRENT_SESSION_SCHEMA_VERSION,
   isReadOnlySession,
   normalizeSession,
+  parseSetSessionPinnedRequest,
   selectHydrationTarget,
   type SessionSummary,
 } from "../../src/session-state.js";
@@ -73,12 +74,22 @@ function createSession(provider: string, id?: string) {
 }
 
 describe("session-state custom agent selection", () => {
+  it("pin requestはtrim済みIDとbooleanだけを受理する", () => {
+    assert.deepEqual(
+      parseSetSessionPinnedRequest({ sessionId: " session-1 ", isPinned: true }),
+      { sessionId: "session-1", isPinned: true },
+    );
+    assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "", isPinned: true }), /正しくない/);
+    assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "session-1", isPinned: "true" }), /正しくない/);
+  });
+
   it("新規 session は V5 schema version で作成し、V4 以前は閲覧専用として扱う", () => {
     const session = createSession("codex", "launch-fixed");
 
     assert.equal(session.id, "launch-fixed");
     assert.equal(CURRENT_SESSION_SCHEMA_VERSION, 5);
     assert.equal(session.sourceSchemaVersion, 5);
+    assert.equal(session.isPinned, false);
     assert.equal(isReadOnlySession(session), false);
     assert.equal(isReadOnlySession({ ...session, sourceSchemaVersion: 4 }), true);
     assert.equal(isReadOnlySession({ ...session, accessMode: "legacy_readonly", sourceSchemaVersion: 5 }), true);
@@ -290,6 +301,7 @@ function makeSummary(overrides: Partial<SessionSummary> = {}): SessionSummary {
     taskTitle: "task",
     status: "idle",
     updatedAt: "2026-04-15 12:00",
+    isPinned: false,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "workspace",
@@ -320,6 +332,12 @@ describe("buildSessionSummarySignature", () => {
   it("updatedAt が異なれば signature も異なる", () => {
     const a = makeSummary({ updatedAt: "2026-04-15 12:00" });
     const b = makeSummary({ updatedAt: "2026-04-15 12:01" });
+    assert.notEqual(buildSessionSummarySignature(a), buildSessionSummarySignature(b));
+  });
+
+  it("pin stateが異なればsignatureも異なる", () => {
+    const a = makeSummary({ isPinned: false });
+    const b = makeSummary({ isPinned: true });
     assert.notEqual(buildSessionSummarySignature(a), buildSessionSummarySignature(b));
   });
 

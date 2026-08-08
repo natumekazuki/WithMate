@@ -2,7 +2,7 @@ import { basename, dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { Session } from "../src/session-state.js";
+import type { Session, SessionSummary } from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
   CharacterCatalogEntry,
@@ -65,6 +65,9 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead;
+export type SessionPinStorage = {
+  setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
+};
 
 export type AuditLogStorageRead = AwaitableStorageMethods<
   AuditLogStorage,

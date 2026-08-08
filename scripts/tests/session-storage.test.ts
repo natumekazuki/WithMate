@@ -300,6 +300,7 @@ describe("SessionStorage", () => {
           taskTitle: session.taskTitle,
           status: session.status,
           updatedAt: session.updatedAt,
+          isPinned: session.isPinned,
           provider: session.provider,
           catalogRevision: session.catalogRevision,
           workspaceLabel: session.workspaceLabel,

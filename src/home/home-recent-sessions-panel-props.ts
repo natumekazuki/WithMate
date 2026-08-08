@@ -9,6 +9,7 @@ type HomeRecentSessionsPanelHandlers = {
   onChangeSearchText: (value: string) => void;
   onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
+  onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
 
@@ -20,6 +21,7 @@ export type HomeRecentSessionsPanelPropsInput = {
   searchIcon: ReactNode;
   handlers: HomeRecentSessionsPanelHandlers;
   canUsePrimaryFeatures?: boolean;
+  pendingSessionPinIds?: readonly string[];
 };
 
 export function buildHomeRecentSessionsPanelProps({
@@ -30,6 +32,7 @@ export function buildHomeRecentSessionsPanelProps({
   searchIcon,
   handlers,
   canUsePrimaryFeatures,
+  pendingSessionPinIds,
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
     filteredSessionEntries,
@@ -40,7 +43,9 @@ export function buildHomeRecentSessionsPanelProps({
     onChangeSearchText: handlers.onChangeSearchText,
     onOpenLaunchDialog: handlers.onOpenLaunchDialog,
     onOpenSession: handlers.onOpenSession,
+    onSetSessionPinned: handlers.onSetSessionPinned,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
     canUsePrimaryFeatures,
+    pendingSessionPinIds,
   };
 }

@@ -11,6 +11,7 @@ import {
   createWorkspaceExplorerAction,
   resolveAuxiliaryHeaderActionState,
 } from "../../src/chat/chat-header-actions.js";
+import { SessionHeader } from "../../src/session-components.js";
 
 const noop = () => {};
 
@@ -177,4 +178,33 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
   assert.match(workspaceHtml, />Explorer<\/button>/);
   assert.match(sessionFilesHtml, />Explorer<\/button>/);
   assert.match(sessionFilesHtml, />Terminal<\/button>/);
+});
+
+test("SessionHeader はpin stateとpending stateを操作ボタンへ投影する", () => {
+  const html = renderToStaticMarkup(<SessionHeader
+    taskTitle="Pinned session"
+    isEditingTitle={false}
+    titleDraft="Pinned session"
+    isRunning={true}
+    isReadOnly={true}
+    isPinned={true}
+    isPinPending={true}
+    showRenameButton={false}
+    showAuditLogButton={false}
+    showTerminalButton={false}
+    showDeleteButton={false}
+    onTogglePin={noop}
+    onOpenAuditLog={noop}
+    onOpenTerminal={noop}
+    onTitleDraftChange={noop}
+    onTitleInputKeyDown={noop}
+    onSaveTitle={noop}
+    onCancelTitleEdit={noop}
+    onStartTitleEdit={noop}
+    onDeleteSession={noop}
+  />);
+
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /disabled=""/);
+  assert.match(html, />変更中\.\.\.<\/button>/);
 });

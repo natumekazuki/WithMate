@@ -617,6 +617,8 @@ export type SessionHeaderProps = {
   titleDraft: string;
   isRunning: boolean;
   isReadOnly?: boolean;
+  isPinned?: boolean;
+  isPinPending?: boolean;
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
@@ -624,6 +626,7 @@ export type SessionHeaderProps = {
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
   actions?: ReactNode;
+  onTogglePin?: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -640,6 +643,8 @@ export function SessionHeader({
   titleDraft,
   isRunning,
   isReadOnly = false,
+  isPinned = false,
+  isPinPending = false,
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
@@ -647,6 +652,7 @@ export function SessionHeader({
   workspaceActions,
   sessionFilesActions,
   actions,
+  onTogglePin,
   onOpenAuditLog,
   onOpenTerminal,
   onTitleDraftChange,
@@ -703,6 +709,17 @@ export function SessionHeader({
               </div>
             ) : null}
             {actions}
+            {onTogglePin ? (
+              <button
+                className={`drawer-toggle compact secondary session-pin-toggle${isPinned ? " is-active" : ""}`}
+                type="button"
+                aria-pressed={isPinned}
+                onClick={onTogglePin}
+                disabled={isPinPending}
+              >
+                {isPinPending ? "変更中..." : isPinned ? "ピン解除" : "ピン止め"}
+              </button>
+            ) : null}
             {showRenameButton || showAuditLogButton || showDeleteButton ? (
               <details className="session-header-more">
                 <summary aria-label="Session actions" title="Session actions">⋯</summary>
