@@ -62,12 +62,14 @@ WithMate は Electron + React + TypeScript のデスクトップアプリであ�
 - `npm run typecheck`: renderer と Electron の TypeScript 型検査を実行する。
 - `npm test`: `scripts/tests/*.test.ts(x)` を `tsx --test` で実行する。
 - `npm run dist:win`: Windows installer を作成する。
+- `& .\scripts\start-withmate-visual-check.ps1`: 現在の Worktree を build し、`%APPDATA%\WithMate-visual-check` を使う検証用 Electron を起動する。既存の検証用プロセスは安全に識別できる場合だけ差し替え、インストール版 WithMate は停止しない。
 
 ## Testing
 
 - 変更種別に合う最小の targeted test を優先する。
 - 永続化、migration、IPC、provider adapter を変更した場合は、関連 test に加えて TypeScript 型検査を実行する。
 - UI 変更では、可能なら state / projection / component test を追加または更新する。
+- UI 変更や branch 固有の smoke / 目視確認が有効な場合、agent は `scripts/start-withmate-visual-check.ps1` による分離起動を候補としてユーザーへ提案する。実行する場合は対象 Worktree の root から呼び出し、検証用プロセスが差し替わることを明示する。
 - 全体検証が既存の unrelated failure で落ちる場合は、関係する failure と unrelated failure を切り分けて報告する。
 - 検証できない場合は、理由、代替確認、残リスクを明記する。
 
