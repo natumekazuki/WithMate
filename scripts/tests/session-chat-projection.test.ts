@@ -285,8 +285,8 @@ test("buildAgentSessionChatWindowProps は retry actions を共通 chat layout �
 
   assert.equal(props.isActionDockExpanded, false);
   assert.match(html, /retry-banner failed/);
-  assert.match(html, />同じ依頼を再送<\/button>/);
-  assert.match(html, />編集して再送<\/button>/);
+  assert.match(html, />再送<\/button>/);
+  assert.match(html, />編集<\/button>/);
 });
 
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {

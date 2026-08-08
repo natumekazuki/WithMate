@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+import { SessionHeader } from "../../src/session-components.js";
 
 import {
   buildLiveSessionHeaderProps,
@@ -10,6 +13,31 @@ import {
 } from "../../src/chat/chat-header-actions.js";
 
 const noop = () => {};
+
+test("SessionHeader は低頻度の管理操作を menu にまとめる", () => {
+  const html = renderToStaticMarkup(
+    <SessionHeader
+      taskTitle="Session"
+      isEditingTitle={false}
+      titleDraft="Session"
+      isRunning={false}
+      onOpenAuditLog={noop}
+      onOpenTerminal={noop}
+      onTitleDraftChange={noop}
+      onTitleInputKeyDown={noop}
+      onSaveTitle={noop}
+      onCancelTitleEdit={noop}
+      onStartTitleEdit={noop}
+      onDeleteSession={noop}
+    />,
+  );
+
+  assert.match(html, /<summary aria-label="Session actions"/);
+  assert.match(html, /role="menu"/);
+  assert.match(html, /role="menuitem">Rename<\/button>/);
+  assert.match(html, /role="menuitem">Audit Log<\/button>/);
+  assert.match(html, /role="menuitem">Delete<\/button>/);
+});
 
 test("createWorkspaceExplorerAction は共通の workspace Explorer action を描画する", () => {
   const html = renderToStaticMarkup(createWorkspaceExplorerAction({ onOpenExplorer: noop }));

@@ -25,9 +25,10 @@ test("buildLiveSessionRetryBanner は retry banner UI を mode-neutral に組み
 
   assert.match(html, /retry-banner failed/);
   assert.match(html, /aria-label="完了できなかった依頼の操作"/);
-  assert.match(html, />同じ依頼を再送<\/button>/);
-  assert.match(html, />編集して再送<\/button>/);
-  assert.doesNotMatch(html, /停止地点|前回の依頼<\/span>|>Details<|>Hide</);
+  assert.match(html, />再送<\/button>/);
+  assert.match(html, />編集<\/button>/);
+  assert.match(html, /title="前回の依頼は完了できませんでした"/);
+  assert.doesNotMatch(html, /停止地点|resume-banner-title|>Details<|>Hide</);
 });
 
 test("buildLiveSessionRetryBanner は banner がない場合 null を描画する", () => {

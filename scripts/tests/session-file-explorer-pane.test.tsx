@@ -119,6 +119,7 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
       return request.promise;
     },
   };
+  let changesRefreshCalls = 0;
   let root: Root | null = null;
   try {
     await act(async () => {
@@ -131,6 +132,9 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
         selectedFile: null,
         activeTab: "files",
         onActiveTabChange() {},
+        onRefreshChanges() {
+          changesRefreshCalls += 1;
+        },
         onOpenFile() {},
       }));
     });
@@ -180,6 +184,28 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     });
     assert.match(dom.window.document.body.textContent ?? "", /new\.txt/);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old\.txt/);
+
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        selectedFile: null,
+        activeTab: "changes",
+        onActiveTabChange() {},
+        onRefreshChanges() {
+          changesRefreshCalls += 1;
+        },
+        onOpenFile() {},
+        changesContent: React.createElement("div", null, "Changes content"),
+      }));
+    });
+    const changesRefresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");
+    assert.ok(changesRefresh);
+    assert.equal(changesRefresh.ariaLabel, "Refresh changes");
+    await act(async () => changesRefresh.click());
+    assert.equal(changesRefreshCalls, 1);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
