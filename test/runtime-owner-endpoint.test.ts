@@ -136,6 +136,7 @@ test("Windows kernel object security requires owner and exact protected allow-al
     ["S-1-5-18", "SY"],
     ["S-1-5-19", "LS"],
     ["S-1-5-20", "NS"],
+    ["S-1-5-32-545", "BU"],
   ] as const) {
     assert.doesNotThrow(() =>
       validateWindowsKernelObjectSecuritySddl(`O:${alias}D:P(A;;FA;;;SY)(A;;FA;;;${alias})`, principalSid),

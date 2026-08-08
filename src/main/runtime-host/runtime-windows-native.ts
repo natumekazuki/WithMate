@@ -746,7 +746,17 @@ export function validateWindowsKernelObjectSecuritySddl(
 }
 
 function normalizeWindowsSddlSid(sid: string): string {
-  return WINDOWS_SDDL_WELL_KNOWN_SIDS.get(sid) ?? sid;
+  const knownSid = WINDOWS_SDDL_WELL_KNOWN_SIDS.get(sid);
+  if (knownSid !== undefined || /^S-\d+(?:-\d+)+$/u.test(sid)) return knownSid ?? sid;
+
+  const native = loadWindowsNativeApi();
+  const sidPointer = [null] as [NativeHandle];
+  if (!native.convertStringSidToSid(sid, sidPointer) || isInvalidHandle(sidPointer[0])) return sid;
+  try {
+    return convertSidPointerToString(sidPointer[0], "Runtime endpoint SID alias could not be converted.");
+  } finally {
+    native.localFree(sidPointer[0]);
+  }
 }
 
 function isInvalidHandle(handle: NativeHandle): boolean {
@@ -840,6 +850,7 @@ function createWindowsNativeApi() {
       "bool __stdcall GetTokenInformation(void *, int, _Out_ void *, uint32_t, _Out_ uint32_t *)",
     ),
     convertSidToStringSid: advapi32.func("bool __stdcall ConvertSidToStringSidW(void *, _Out_ void **)"),
+    convertStringSidToSid: advapi32.func("bool __stdcall ConvertStringSidToSidW(str16, _Out_ void **)"),
     convertStringSecurityDescriptorToSecurityDescriptor: advapi32.func(
       "bool __stdcall ConvertStringSecurityDescriptorToSecurityDescriptorW(str16, uint32_t, _Out_ void **, _Out_ uint32_t *)",
     ),
