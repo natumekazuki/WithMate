@@ -132,6 +132,15 @@ test("runtime connection registry releases a disconnected pre-accept connection 
 test("Windows kernel object security requires owner and exact protected allow-all ACEs", () => {
   const sid = "S-1-5-21-1000";
   assert.doesNotThrow(() => validateWindowsKernelObjectSecuritySddl(`O:${sid}D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, sid));
+  for (const [principalSid, alias] of [
+    ["S-1-5-18", "SY"],
+    ["S-1-5-19", "LS"],
+    ["S-1-5-20", "NS"],
+  ] as const) {
+    assert.doesNotThrow(() =>
+      validateWindowsKernelObjectSecuritySddl(`O:${alias}D:P(A;;FA;;;SY)(A;;FA;;;${alias})`, principalSid),
+    );
+  }
   for (const [sddl, reason] of [
     [`D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, "owner-mismatch"],
     [`O:${sid}D:(A;;FA;;;SY)(A;;FA;;;${sid})`, "dacl-not-protected"],
@@ -140,6 +149,7 @@ test("Windows kernel object security requires owner and exact protected allow-al
     [`O:${sid}D:P(A;CI;FA;;;SY)(A;;FA;;;${sid})`, "ace-shape"],
     [`O:${sid}D:P(A;;GR;;;SY)(A;;FA;;;${sid})`, "ace-shape"],
     [`O:${sid}D:P(A;;FA;;;SY)(A;;FA;;;SY)`, "trustee-set"],
+    [`O:BAD:P(A;;FA;;;SY)(A;;FA;;;${sid})`, "owner-mismatch"],
     [`O:S-1-5-21-2000D:P(A;;FA;;;SY)(A;;FA;;;${sid})`, "owner-mismatch"],
   ] as const) {
     assert.throws(
@@ -279,9 +289,8 @@ test(
 
     assert.equal(client.peerPrincipalId, identity.principalId);
     assert.equal(server.peerPrincipalId, identity.principalId);
-    assert.match(server.endpointSecurity.daclSddl, new RegExp(escapeRegExp(identity.principalId), "u"));
-    assert.match(client.endpointSecurity.daclSddl, new RegExp(`^O:${escapeRegExp(identity.principalId)}D:P`, "u"));
-    assert.match(server.endpointSecurity.daclSddl, /;;;SY\)/u);
+    assertWindowsEndpointSddlPrincipal(server.endpointSecurity.daclSddl, identity.principalId);
+    assertWindowsEndpointSddlPrincipal(client.endpointSecurity.daclSddl, identity.principalId);
     assert.doesNotMatch(server.endpointSecurity.daclSddl, /;;;(?:WD|AN|AU|BU)\)/u);
 
     await client.write(Buffer.from("client"));
@@ -482,8 +491,28 @@ function isClosedIpcChannel(error: unknown): boolean {
   );
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+function assertWindowsEndpointSddlPrincipal(sddl: string, principalSid: string): void {
+  const owner = /^O:([^:()]+)D:P/u.exec(sddl)?.[1];
+  assert.equal(owner === undefined ? undefined : normalizeWindowsSddlSidForTest(owner), principalSid);
+
+  const trustees = [...sddl.matchAll(/\([^)]*;;;([^;)]+)\)/gu)].map((match) =>
+    normalizeWindowsSddlSidForTest(match[1] ?? ""),
+  );
+  assert.ok(trustees.includes(principalSid));
+  assert.ok(trustees.includes("S-1-5-18"));
+}
+
+function normalizeWindowsSddlSidForTest(sid: string): string {
+  switch (sid) {
+    case "SY":
+      return "S-1-5-18";
+    case "LS":
+      return "S-1-5-19";
+    case "NS":
+      return "S-1-5-20";
+    default:
+      return sid;
+  }
 }
 
 function listenNetServer(server: Server, address: string): Promise<void> {

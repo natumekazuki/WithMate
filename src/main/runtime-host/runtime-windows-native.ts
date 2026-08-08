@@ -40,6 +40,11 @@ const OWNER_SECURITY_INFORMATION = 0x00000001;
 const DACL_SECURITY_INFORMATION = 0x00000004;
 const OWNER_AND_DACL_SECURITY_INFORMATION = OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION;
 const MAX_PIPE_CHUNK_BYTES = 64 * 1024;
+const WINDOWS_SDDL_WELL_KNOWN_SIDS = new Map([
+  ["SY", "S-1-5-18"],
+  ["LS", "S-1-5-19"],
+  ["NS", "S-1-5-20"],
+]);
 
 type NativeHandle = bigint | null;
 
@@ -686,12 +691,11 @@ function inspectSecureKernelObjectSecurity(handle: NativeHandle, principalSid: s
 
 export function validateWindowsKernelObjectSecuritySddl(sddl: string, principalSid: string): void {
   const accessEntries = sddl.match(/\([^)]*\)/gu) ?? [];
-  const expectedTrustees = new Set([principalSid, "SY"]);
+  const expectedTrustees = new Set([principalSid, "S-1-5-18"]);
   const normalizedEntries = accessEntries.map((entry) => {
     const fields = entry.slice(1, -1).split(";");
     if (fields.length !== 6) return undefined;
     const [type, flags, rights, objectGuid, inheritObjectGuid, trustee] = fields;
-    const normalizedTrustee = trustee === "S-1-5-18" ? "SY" : trustee;
     if (
       type !== "A" ||
       flags !== "" ||
@@ -701,12 +705,13 @@ export function validateWindowsKernelObjectSecuritySddl(sddl: string, principalS
     ) {
       return undefined;
     }
-    return normalizedTrustee;
+    return normalizeWindowsSddlSid(trustee as string);
   });
+  const owner = /^O:([^:()]+)D:/u.exec(sddl)?.[1];
   let failureReason: string | undefined;
-  if (!sddl.startsWith(`O:${principalSid}`)) {
+  if (owner === undefined || normalizeWindowsSddlSid(owner) !== principalSid) {
     failureReason = "owner-mismatch";
-  } else if (!sddl.startsWith(`O:${principalSid}D:P`)) {
+  } else if (!sddl.startsWith(`O:${owner}D:P`)) {
     failureReason = "dacl-not-protected";
   } else if (accessEntries.length !== 2) {
     failureReason = "ace-count";
@@ -723,6 +728,10 @@ export function validateWindowsKernelObjectSecuritySddl(sddl: string, principalS
       `Runtime endpoint ACL is not restricted to the current user and SYSTEM (reason: ${failureReason}).`,
     );
   }
+}
+
+function normalizeWindowsSddlSid(sid: string): string {
+  return WINDOWS_SDDL_WELL_KNOWN_SIDS.get(sid) ?? sid;
 }
 
 function isInvalidHandle(handle: NativeHandle): boolean {
