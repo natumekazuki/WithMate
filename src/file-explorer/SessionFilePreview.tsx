@@ -13,7 +13,7 @@ import {
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
-import { SelectionCopySurface } from "../session-components.js";
+import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
   SessionFileDescriptor,
@@ -83,6 +83,7 @@ type SessionFilePreviewProps = {
   request: SessionFileResourceRequest;
   onClose: () => void;
   onCopyText: (text: string) => void;
+  onQuoteText: (text: string) => void;
   diffScopes?: FileRootGitChangeScope[];
   onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
   diffLoadingScope?: FileRootGitChangeScope | null;
@@ -207,6 +208,7 @@ async function readWholeResource(
 type VirtualizedTextContentProps = {
   text: string;
   copyText: (text: string) => void;
+  quoteText: (text: string) => void;
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
   variant?: "text" | "diff";
@@ -308,6 +310,7 @@ function renderSyntaxHighlightedLine(
 function VirtualizedTextContent({
   text,
   copyText,
+  quoteText,
   matches,
   currentMatchIndex,
   variant = "text",
@@ -340,9 +343,10 @@ function VirtualizedTextContent({
   }, [targetLine, virtualizer]);
 
   return (
-    <SelectionCopySurface
+    <SelectionTextActionSurface
       className="session-file-text-scroll"
       onCopyText={copyText}
+      onQuoteText={quoteText}
       surfaceRef={scrollRef}
     >
       <div className="session-file-text-lines" style={{ height: virtualizer.getTotalSize() }}>
@@ -380,13 +384,14 @@ function VirtualizedTextContent({
           );
         })}
       </div>
-    </SelectionCopySurface>
+    </SelectionTextActionSurface>
   );
 }
 
 type VirtualizedSplitDiffContentProps = {
   patch: string;
   copyText: (text: string) => void;
+  quoteText: (text: string) => void;
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
 };
@@ -401,6 +406,7 @@ function rowContainsPatchLine(row: UnifiedDiffDisplayRow, patchLineIndex: number
 function VirtualizedSplitDiffContent({
   patch,
   copyText,
+  quoteText,
   matches,
   currentMatchIndex,
 }: VirtualizedSplitDiffContentProps) {
@@ -465,9 +471,10 @@ function VirtualizedSplitDiffContent({
         <span />
         <strong>After</strong>
       </div>
-      <SelectionCopySurface
+      <SelectionTextActionSurface
         className="session-live-diff-split-scroll"
         onCopyText={copyText}
+        onQuoteText={quoteText}
         surfaceRef={scrollRef}
       >
         <div className="session-live-diff-split-rows" style={{ height: virtualizer.getTotalSize() }}>
@@ -510,7 +517,7 @@ function VirtualizedSplitDiffContent({
             );
           })}
         </div>
-      </SelectionCopySurface>
+      </SelectionTextActionSurface>
     </div>
   );
 }
@@ -520,6 +527,7 @@ export function SessionFilePreview({
   request,
   onClose,
   onCopyText,
+  onQuoteText,
   diffScopes = [],
   onOpenDiff,
   diffLoadingScope = null,
@@ -1305,6 +1313,7 @@ export function SessionFilePreview({
         <VirtualizedTextContent
           text={displayedText}
           copyText={onCopyText}
+          quoteText={onQuoteText}
           matches={findMatches}
           currentMatchIndex={activeCurrentMatch}
           syntaxTokens={displayedSyntaxTokens}
@@ -1312,9 +1321,10 @@ export function SessionFilePreview({
       ) : null}
       {loadState.status === "ready" && loaded && previewKind === "markdown" ? (
         markdownMode === "preview" ? (
-          <SelectionCopySurface
+          <SelectionTextActionSurface
             className="session-file-markdown-scroll"
             onCopyText={onCopyText}
+            onQuoteText={onQuoteText}
             surfaceRef={markdownSurfaceRef}
           >
             <MessageRichText
@@ -1323,11 +1333,12 @@ export function SessionFilePreview({
               onOpenPath={handleOpenMarkdownPath}
               resolveImageSource={resolveMarkdownImageSource}
             />
-          </SelectionCopySurface>
+          </SelectionTextActionSurface>
         ) : (
           <VirtualizedTextContent
             text={decodedText}
             copyText={onCopyText}
+            quoteText={onQuoteText}
             matches={findMatches}
             currentMatchIndex={activeCurrentMatch}
           />
@@ -1382,6 +1393,7 @@ export type SessionDiffPreviewProps = {
   patch: string;
   onClose: () => void;
   onCopyText: (text: string) => void;
+  onQuoteText: (text: string) => void;
   onReload?: () => Promise<string | null>;
   reloadPending?: boolean;
   chatNotice?: string;
@@ -1393,6 +1405,7 @@ export function SessionDiffPreview({
   patch,
   onClose,
   onCopyText,
+  onQuoteText,
   onReload,
   reloadPending = false,
   chatNotice = "",
@@ -1520,6 +1533,7 @@ export function SessionDiffPreview({
         <VirtualizedSplitDiffContent
           patch={patch}
           copyText={onCopyText}
+          quoteText={onQuoteText}
           matches={matches}
           currentMatchIndex={activeCurrentMatch}
         />
@@ -1527,6 +1541,7 @@ export function SessionDiffPreview({
         <VirtualizedTextContent
           text={patch}
           copyText={onCopyText}
+          quoteText={onQuoteText}
           matches={matches}
           currentMatchIndex={activeCurrentMatch}
           variant="diff"

@@ -66,6 +66,7 @@ function installDomGlobals(dom: JSDOM): () => void {
   const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousMutationObserver = globalThis.MutationObserver;
+  const previousNode = globalThis.Node;
 
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
@@ -83,6 +84,7 @@ function installDomGlobals(dom: JSDOM): () => void {
     configurable: true,
     value: dom.window.MutationObserver,
   });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
 
   return () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
@@ -95,7 +97,24 @@ function installDomGlobals(dom: JSDOM): () => void {
       configurable: true,
       value: previousMutationObserver,
     });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
   };
+}
+
+function createRect(input: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}): DOMRect {
+  return {
+    ...input,
+    right: input.left + input.width,
+    bottom: input.top + input.height,
+    x: input.left,
+    y: input.top,
+    toJSON: () => ({}),
+  } as DOMRect;
 }
 
 function installElementSize(dom: JSDOM): () => void {
@@ -263,11 +282,82 @@ async function renderPreview(
       request,
       onClose() {},
       onCopyText() {},
+      onQuoteText() {},
       ...extraProps,
     }));
   });
   return root;
 }
+
+test("Text preview の選択範囲は Copy と Quote の共通 action を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "notes.txt",
+  };
+  const quotedTexts: string[] = [];
+  const api = createTextPreviewApi(request, "notes.txt", "selected preview text", "text-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request, {
+      onQuoteText: (text) => quotedTexts.push(text),
+    });
+    await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+
+    const surface = container.querySelector<HTMLElement>(".session-file-text-scroll");
+    const selectedNode = container.querySelector(".session-file-text-line code")?.firstChild;
+    assert.ok(surface);
+    assert.ok(selectedNode);
+    Object.defineProperty(surface, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createRect({ left: 0, top: 0, width: 500, height: 500 }),
+    });
+    const anchorRect = createRect({ left: 100, top: 100, width: 80, height: 20 });
+    const selection = {
+      isCollapsed: false,
+      rangeCount: 1,
+      getRangeAt() {
+        return {
+          commonAncestorContainer: selectedNode,
+          getBoundingClientRect: () => anchorRect,
+          getClientRects: () => [anchorRect],
+        };
+      },
+      toString: () => "  selected preview text\n",
+    } as unknown as Selection;
+    Object.defineProperty(dom.window, "getSelection", {
+      configurable: true,
+      value: () => selection,
+    });
+
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
+    });
+    const toolbar = container.querySelector(".message-response-actions");
+    assert.ok(toolbar);
+    const buttons = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button"));
+    assert.deepEqual(buttons.map((button) => button.textContent), ["Copy", "Quote"]);
+
+    await act(async () => buttons[1]?.click());
+    assert.deepEqual(quotedTexts, ["  selected preview text\n"]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
 
 function dispatchPointerEvent(
   dom: JSDOM,
@@ -906,6 +996,7 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
         request,
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
         diffScopes: ["working-tree"],
         onOpenDiff: () => diffResult.promise,
       }));
@@ -973,6 +1064,7 @@ test("操作feedbackと後着するGit Diff利用不可理由を両方表示す�
         request: MARKDOWN_REQUEST,
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
         diffAvailabilityMessage,
       }));
     });
@@ -1027,6 +1119,7 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
         patch: "@@ -1 +1 @@\n-old\n+new\n",
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
         onReload,
       }));
     });
@@ -1099,6 +1192,7 @@ test("Git Diff検索はReloadで一致件数が減っても現在位置を有効
         patch,
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
       }));
     });
   };
@@ -1159,6 +1253,7 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
         patch: "@@ -1 +1 @@\n-old\n+new\n",
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
       }));
     });
 
