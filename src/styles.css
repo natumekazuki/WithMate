@@ -740,6 +740,11 @@ button:disabled {
   border: 0;
 }
 
+.session-pin-toggle.is-active {
+  border-color: color-mix(in srgb, var(--character-main) 46%, rgba(203, 213, 225, 0.2));
+  background: color-mix(in srgb, var(--character-main) 18%, rgba(255, 255, 255, 0.04));
+}
+
 .session-title-shell-toggle {
   padding: 0;
   border: 0;
@@ -1471,6 +1476,46 @@ button:disabled {
   min-height: 108px;
 }
 
+.home-page .home-session-card.is-pinnable {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0;
+  padding: 0;
+  cursor: default;
+}
+
+.home-page .home-session-card-open {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+  align-self: stretch;
+  min-width: 0;
+  padding: 16px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.home-page .home-session-card-open:focus-visible,
+.home-page .home-session-pin-button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--card-ink, var(--ink)) 72%, transparent);
+  outline-offset: -3px;
+}
+
+.home-page .home-session-card-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  align-self: stretch;
+  padding: 14px 14px 14px 0;
+}
+
 .home-page .home-session-card-avatar {
   align-self: start;
   margin-top: 2px;
@@ -1490,6 +1535,30 @@ button:disabled {
   gap: 6px;
 }
 
+.home-page .home-session-pin-button {
+  min-width: 76px;
+  padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--card-ink, var(--ink)) 22%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-ink, var(--ink)) 8%, transparent);
+  color: var(--card-ink, var(--ink));
+  font-size: 0.74rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.home-page .home-session-pin-button:hover:not(:disabled),
+.home-page .home-session-pin-button.is-active {
+  border-color: color-mix(in srgb, var(--card-ink, var(--ink)) 38%, transparent);
+  background: color-mix(in srgb, var(--card-ink, var(--ink)) 16%, transparent);
+}
+
+.home-page .home-session-pin-button.is-pending {
+  cursor: wait;
+  opacity: 0.62;
+}
+
+.home-page .home-session-card-open strong,
 .home-page .home-session-card-topline strong {
   overflow: hidden;
   text-overflow: ellipsis;

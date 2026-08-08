@@ -90,6 +90,8 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     titleDraft: "Main session",
     isSelectedSessionRunning: false,
     isSelectedSessionReadOnly: false,
+    isSelectedSessionPinned: false,
+    isSessionPinPending: false,
     messageListRef: React.createRef<HTMLDivElement>(),
     pendingRunIndicatorAnnouncement: "",
     pendingRunIndicatorText: "",
@@ -183,6 +185,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onCancelTitleEdit: noop,
     onStartTitleEdit: noop,
     onDeleteSession: noop,
+    onToggleSessionPin: noop,
     onOpenSessionExplorer: noop,
     onOpenSessionFilesExplorer: noop,
     onMessageListScroll: noop,
@@ -344,10 +347,13 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
   const onOpenSessionExplorer = () => {};
   const onOpenSessionFilesExplorer = () => {};
   const onOpenSessionFilesTerminal = () => {};
+  const onToggleSessionPin = () => {};
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isSelectedSessionPinned: true,
     onOpenSessionExplorer,
     onOpenSessionFilesExplorer,
     onOpenSessionFilesTerminal,
+    onToggleSessionPin,
   }));
   const workspaceAction = props.headerProps.workspaceActions as React.ReactElement<{
     onClick: () => void;
@@ -362,6 +368,8 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
   assert.equal(workspaceAction.props.onClick, onOpenSessionExplorer);
   assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
   assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
+  assert.equal(props.headerProps.isPinned, true);
+  assert.equal(props.headerProps.onTogglePin, onToggleSessionPin);
 });
 
 test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {

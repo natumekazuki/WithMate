@@ -10,8 +10,11 @@ import {
   APP_DATABASE_V6_SCHEMA_VERSION,
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
+  CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
+  CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
+  CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
@@ -102,6 +105,42 @@ function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
 }
 
 describe("database-schema-v6", () => {
+  it("ensureV6Schemaは既存sessionを保持してis_pinnedを既定falseで追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(CREATE_V6_CHARACTERS_TABLE_SQL);
+      db.exec(CREATE_V6_PROJECT_SCOPES_TABLE_SQL);
+      db.exec(CREATE_V6_SESSIONS_TABLE_SQL.replace(
+        "    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n",
+        "",
+      ));
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, session_kind, provider_id, catalog_revision, model_id,
+          reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
+          allowed_additional_directories_json, runtime_policy_json, thread_id,
+          workspace_path, created_at, updated_at, last_active_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "existing-session", "Existing", "active", "default", "codex", 1, "gpt-test",
+        "high", "", "never", "danger-full-access", "[]", "{}", "", "C:/workspace",
+        "2026-08-01T00:00:00.000Z", "2026-08-09T04:38:00.000Z", "2026-08-09T04:38:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      const row = db.prepare("SELECT id, is_pinned FROM sessions_v6").get() as {
+        id: string;
+        is_pinned: number;
+      };
+      assert.equal(row.id, "existing-session");
+      assert.equal(row.is_pinned, 0);
+    } finally {
+      db.close();
+    }
+  });
+
   it("withmate-v6.db 用の schema constants、fresh path、required tables を固定する", () => {
     assert.equal(APP_DATABASE_V6_FILENAME, "withmate-v6.db");
     assert.equal(APP_DATABASE_V6_SCHEMA_VERSION, 6);
@@ -252,6 +291,7 @@ describe("database-schema-v6", () => {
         "character_snapshot_json",
         "project_scope_id",
         "workspace_path",
+        "is_pinned",
         "created_at",
         "updated_at",
         "last_active_at",
@@ -260,6 +300,7 @@ describe("database-schema-v6", () => {
       assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");
       assert.equal(tableSql(db, "sessions_v6").includes("json_valid(character_snapshot_json)"), true);
       assert.equal(tableSql(db, "sessions_v6").includes("allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]'"), true);
+      assert.equal(tableSql(db, "sessions_v6").includes("is_pinned INTEGER NOT NULL DEFAULT 0"), true);
 
       assert.deepEqual(columnNames(db, "session_messages_v6"), [
         "id",

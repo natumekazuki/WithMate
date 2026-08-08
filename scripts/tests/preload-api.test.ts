@@ -420,6 +420,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "searchMemoryV6Entries",
     "setMateAvatar",
     "setDefaultCharacter",
+    "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",

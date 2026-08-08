@@ -54,6 +54,8 @@ export type AgentSessionChatProjectionInput = {
   titleDraft: string;
   isSelectedSessionRunning: boolean;
   isSelectedSessionReadOnly: boolean;
+  isSelectedSessionPinned: boolean;
+  isSessionPinPending: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   pendingRunIndicatorAnnouncement: string;
   pendingRunIndicatorText: string;
@@ -142,6 +144,7 @@ export type AgentSessionChatProjectionInput = {
   onCancelTitleEdit: () => void;
   onStartTitleEdit: () => void;
   onDeleteSession: () => void;
+  onToggleSessionPin: () => void;
   onOpenSessionExplorer: () => void;
   onOpenSessionFilesExplorer: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
@@ -223,6 +226,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
     isReadOnly: input.isSelectedSessionReadOnly,
+    isPinned: input.isSelectedSessionPinned,
+    isPinPending: input.isSessionPinPending,
     isAuxiliaryMode: input.isAuxiliaryMode,
     canViewAuxiliaryAuditLog: true,
     canDeleteSession: true,
@@ -237,6 +242,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
+    onTogglePin: input.onToggleSessionPin,
     actions: input.headerActions,
     onOpenWorkspaceExplorer: input.onOpenSessionExplorer,
   });

@@ -6,6 +6,7 @@ import {
   projectSessionSummary,
   type CreateSessionInput,
   type Session,
+  type SessionSummary,
 } from "../src/session-state.js";
 import {
   DEFAULT_PROVIDER_ID,
@@ -43,6 +44,7 @@ export type SessionPersistenceServiceDeps = {
   listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
+  setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
   listStoredSessionIdsLastActiveBefore?(cutoff: DeleteSessionsLastActiveBeforeCutoff): Awaitable<string[]>;
   deleteStoredSession?(sessionId: string): Awaitable<void>;
@@ -81,7 +83,15 @@ function assertSessionWritable(session: Session): void {
 }
 
 export class SessionPersistenceService {
+  private sessionMutationQueue: Promise<void> = Promise.resolve();
+
   constructor(private readonly deps: SessionPersistenceServiceDeps) {}
+
+  private enqueueSessionMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.sessionMutationQueue.then(operation);
+    this.sessionMutationQueue = pending.then(() => undefined, () => undefined);
+    return pending;
+  }
 
   resolveCharacterAuthoringProvider(providerId: string): string {
     return this.resolveEnabledProviderCatalog(
@@ -180,6 +190,22 @@ export class SessionPersistenceService {
     return updatedSession;
   }
 
+  async setSessionPinned(sessionId: string, isPinned: boolean): Promise<SessionSummary> {
+    return this.enqueueSessionMutation(() => this.setSessionPinnedNow(sessionId, isPinned));
+  }
+
+  private async setSessionPinnedNow(sessionId: string, isPinned: boolean): Promise<SessionSummary> {
+    if (!this.deps.setStoredSessionPinned) {
+      throw new Error("このセッション保存形式ではピン止めを利用できないよ。");
+    }
+    const stored = await this.deps.setStoredSessionPinned(sessionId, isPinned);
+    this.deps.setSessions(this.deps.getSessions().map((session) => (
+      session.id === stored.id ? { ...session, isPinned: stored.isPinned } : session
+    )));
+    this.deps.broadcastSessions([stored.id]);
+    return projectSessionSummary(stored);
+  }
+
   async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
     return this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false });
   }
@@ -270,6 +296,13 @@ export class SessionPersistenceService {
     nextSession: Session,
     operation: "create" | "upsert" = "upsert",
   ): Promise<Session> {
+    return this.enqueueSessionMutation(() => this.upsertSessionNow(nextSession, operation));
+  }
+
+  private async upsertSessionNow(
+    nextSession: Session,
+    operation: "create" | "upsert",
+  ): Promise<Session> {
     const startedAt = Date.now();
     const currentSession = this.deps.getSession(nextSession.id);
     if (currentSession) {
@@ -314,6 +347,16 @@ export class SessionPersistenceService {
       invalidateSessionIds?: Iterable<string>;
     },
   ): Promise<Session[]> {
+    return this.enqueueSessionMutation(() => this.replaceAllSessionsNow(nextSessions, options));
+  }
+
+  private async replaceAllSessionsNow(
+    nextSessions: Session[],
+    options?: {
+      broadcast?: boolean;
+      invalidateSessionIds?: Iterable<string>;
+    },
+  ): Promise<Session[]> {
     const previousSessions = cloneSessions(this.deps.getSessions());
     const normalizedSessions = nextSessions.map((session) => ({
       ...session,
@@ -324,8 +367,8 @@ export class SessionPersistenceService {
     }));
 
     await this.deps.replaceStoredSessions(normalizedSessions);
-    this.deps.setSessions(toCachedSessions(normalizedSessions));
-    const storedSessions = normalizedSessions;
+    const storedSessions = await this.deps.listStoredSessions();
+    this.deps.setSessions(toCachedSessions(storedSessions));
     for (const session of storedSessions) {
       this.syncStoredSession(session);
     }

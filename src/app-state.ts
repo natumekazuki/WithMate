@@ -10,6 +10,7 @@ export {
   normalizeSession,
   normalizeSessionAccessMode,
   normalizeSessionSummary,
+  parseSetSessionPinnedRequest,
   projectSessionSummary,
 } from "./session-state.js";
 export type {
@@ -24,6 +25,7 @@ export type {
   SessionDetail,
   SessionKind,
   SessionSummary,
+  SetSessionPinnedRequest,
   StreamEntry,
 } from "./session-state.js";
 export {

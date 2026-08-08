@@ -195,6 +195,48 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
+  it("pin stateだけを更新し、updatedAtと本文を維持して再読込できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const session = storage.insertSession({
+        ...buildNewSession({
+          id: "pin-session",
+          taskTitle: "Pin session",
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        updatedAt: "2026-08-09T04:38:00.000Z",
+        messages: [{ role: "user", text: "keep me" }],
+      });
+
+      const pinned = storage.setSessionPinned(session.id, true);
+      assert.equal(pinned.isPinned, true);
+      assert.equal(pinned.updatedAt, session.updatedAt);
+      assert.equal(storage.getSession(session.id)?.messages[0]?.text, "keep me");
+      storage.upsertSession({ ...session, taskTitle: "Updated title", isPinned: false });
+      assert.equal(storage.getSession(session.id)?.isPinned, true);
+
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+      assert.equal(storage.getSession(session.id)?.isPinned, true);
+      assert.equal(storage.setSessionPinned(session.id, false).isPinned, false);
+      assert.throws(() => storage?.setSessionPinned("missing", true), /見つからない/);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("snapshot を作れない Character authoring Session も修復対象 ID を round-trip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

@@ -639,6 +639,7 @@ describe("HomeRecentSessionsPanel", () => {
   const createSessionSummary = (partial: Partial<SessionSummary> & Pick<SessionSummary, "id" | "taskTitle">): SessionSummary => ({
     status: "idle",
     updatedAt: "2026-06-17T00:00:00.000Z",
+    isPinned: false,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "workspace",
@@ -713,6 +714,7 @@ describe("HomeRecentSessionsPanel", () => {
       onChangeSearchText={noOp}
       onOpenLaunchDialog={noOp}
       onOpenSession={noOp}
+      onSetSessionPinned={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
     />,
@@ -748,6 +750,38 @@ describe("HomeRecentSessionsPanel", () => {
     assert.ok(html.includes("Mia の character.md 改善"));
     assert.ok(html.includes("session-mode-badge character"));
     assert.ok(html.includes(">Character<"));
+  });
+
+  it("pin済みAgentを先頭にし、開く操作とpin操作を兄弟buttonで表示する", () => {
+    const html = renderHomeRecentSessions({
+      filteredSessionEntries: [
+        {
+          kind: "agent",
+          session: createSessionSummary({
+            id: "recent",
+            taskTitle: "Recent task",
+            updatedAt: "2026-08-09T05:00:00.000Z",
+          }),
+          state: { kind: "neutral", label: "待機" },
+        },
+        {
+          kind: "agent",
+          session: createSessionSummary({
+            id: "pinned",
+            taskTitle: "Pinned task",
+            isPinned: true,
+            updatedAt: "2026-08-08T05:00:00.000Z",
+          }),
+          state: { kind: "neutral", label: "待機" },
+        },
+      ],
+    });
+
+    assert.ok(html.indexOf("Pinned task") < html.indexOf("Recent task"));
+    assert.match(html, /class="session-card home-session-card is-pinnable is-pinned"/);
+    assert.match(html, /class="home-session-card-open"/);
+    assert.match(html, /aria-pressed="true"/);
+    assert.match(html, />ピン解除<\/button>/);
   });
 
   it("companion kind label で Companion session を検索できる", () => {

@@ -44,6 +44,7 @@ import type { CharacterCatalogEntry } from "./character/character-catalog.js";
 import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
+import { mergePinnedSessionSummary } from "./home/session-pinning.js";
 import { buildHomeRightPaneProps } from "./home/home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
@@ -103,6 +104,7 @@ export default function HomeApp() {
   const openSessionWindowIds = openSessionWindowIdsState.sessionIds;
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
+  const [pendingSessionPinIds, setPendingSessionPinIds] = useState<string[]>([]);
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
@@ -159,6 +161,26 @@ export default function HomeApp() {
 
   const applyLoadedSessionSummaries = (summaries: SessionSummary[]) => {
     setSessionSummariesState({ status: "loaded", summaries });
+  };
+
+  const setSessionPinned = async (sessionId: string, isPinned: boolean) => {
+    const api = getWithMateApi();
+    if (!api) {
+      window.alert("ピン止めはElectronアプリから操作してね。");
+      return;
+    }
+    setPendingSessionPinIds((current) => current.includes(sessionId) ? current : [...current, sessionId]);
+    try {
+      const saved = await api.setSessionPinned({ sessionId, isPinned });
+      setSessionSummariesState((current) => ({
+        ...current,
+        summaries: mergePinnedSessionSummary(current.summaries, saved),
+      }));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "ピン止めの変更に失敗したよ。");
+    } finally {
+      setPendingSessionPinIds((current) => current.filter((id) => id !== sessionId));
+    }
   };
 
   const refreshCharacterEntries = async (
@@ -579,9 +601,11 @@ export default function HomeApp() {
         onChangeSearchText: setSessionSearchText,
         onOpenLaunchDialog: homeLaunchHandlers.onOpenLaunchDialog,
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
+        onSetSessionPinned: (sessionId, isPinned) => void setSessionPinned(sessionId, isPinned),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
       canUsePrimaryFeatures,
+      pendingSessionPinIds,
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,

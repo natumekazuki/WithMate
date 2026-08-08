@@ -77,7 +77,13 @@ import type {
   FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type {
+  CreateSessionRequest,
+  DiffPreviewPayload,
+  MessageArtifact,
+  Session,
+  SetSessionPinnedRequest,
+} from "../src/session-state.js";
 import type {
   ImageFilePickerPurpose,
   OpenPathOptions,
@@ -270,6 +276,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
+  setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;
   deleteSessionsLastActiveBefore(
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
@@ -470,6 +477,7 @@ export function createMainIpcRegistrationDeps(
     resolveLiveElicitation: args.sessionRuntime.resolveLiveElicitation,
     createSession: args.sessionRuntime.createSession,
     updateSession: args.sessionRuntime.updateSession,
+    setSessionPinned: args.sessionRuntime.setSessionPinned,
     deleteSession: args.sessionRuntime.deleteSession,
     deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
