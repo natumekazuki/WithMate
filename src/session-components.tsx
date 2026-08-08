@@ -2224,19 +2224,21 @@ function MessageResponseActions({
   );
 }
 
-export type SelectionCopySurfaceProps = {
+export type SelectionTextActionSurfaceProps = {
   children: ReactNode;
   className?: string;
   onCopyText: (text: string) => void;
+  onQuoteText?: (text: string) => void;
   surfaceRef?: RefObject<HTMLDivElement | null>;
 };
 
-export function SelectionCopySurface({
+export function SelectionTextActionSurface({
   children,
   className = "",
   onCopyText,
+  onQuoteText,
   surfaceRef: externalSurfaceRef,
-}: SelectionCopySurfaceProps) {
+}: SelectionTextActionSurfaceProps) {
   const internalSurfaceRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = externalSurfaceRef ?? internalSurfaceRef;
   const toolbarRef = useRef<HTMLDivElement | null>(null);
@@ -2276,10 +2278,13 @@ export function SelectionCopySurface({
       style: clampToolbarPosition({
         anchorRect: resolvedAnchorRect,
         boundaryRect,
-        toolbarRect: toolbarRef.current?.getBoundingClientRect() ?? { width: 72, height: 32 },
+        toolbarRect: toolbarRef.current?.getBoundingClientRect() ?? {
+          width: onQuoteText ? 112 : 72,
+          height: 32,
+        },
       }),
     });
-  }, []);
+  }, [onQuoteText, surfaceRef]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
@@ -2304,6 +2309,7 @@ export function SelectionCopySurface({
         <MessageResponseActions
           actionText={selectionToolbar.text}
           onCopyMessageText={onCopyText}
+          onQuoteMessageText={onQuoteText}
           style={selectionToolbar.style}
           toolbarRef={toolbarRef}
         />

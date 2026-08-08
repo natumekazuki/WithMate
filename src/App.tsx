@@ -3308,6 +3308,7 @@ export default function AgentSessionWindowApp() {
       patch={fileRootDiffPreview.patch}
       onClose={closeCentralPreview}
       onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
       onReload={handleReloadFileRootDiff}
       reloadPending={fileRootDiffLoadingScope === fileRootDiffPreview.scope}
       chatNotice={previewChatNotice}
@@ -3318,6 +3319,7 @@ export default function AgentSessionWindowApp() {
       request={selectedFilePreview}
       onClose={closeCentralPreview}
       onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
       diffScopes={selectedFileDiffScopes}
       diffAvailabilityMessage={selectedFileDiffAvailabilityMessage}
       onOpenDiff={selectedFileDiffScopes.length > 0 ? handleOpenSelectedFileDiff : undefined}
