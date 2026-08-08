@@ -82,6 +82,28 @@ test("MessageRichText は **bold** を strong として render する", () => {
   assert.match(html, /<strong class="message-inline-strong">message<\/strong>/);
 });
 
+test("MessageRichText の Source は元 Markdown を変換せず plain text で描画する", () => {
+  const source = [
+    "[link label](https://example.test/path)",
+    "`inline code`",
+    "> quoted line",
+    "- list item",
+    "",
+    "second paragraph",
+  ].join("\n");
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: source,
+      displayMode: "source",
+    }),
+  );
+  const dom = new JSDOM(html);
+  const sourceElement = dom.window.document.body.firstElementChild;
+
+  assert.equal(sourceElement?.textContent, source);
+  assert.equal(sourceElement?.querySelector("a, code, blockquote, ul"), null);
+});
+
 test("MessageRichText は inline code と link を優先しつつ bold を併用できる", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
