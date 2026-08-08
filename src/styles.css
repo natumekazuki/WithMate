@@ -4681,8 +4681,7 @@ button:disabled {
   border-top: 0;
 }
 
-.workspace-changes-root-header strong,
-.workspace-changes-root-header span {
+.workspace-changes-root-header strong {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4691,6 +4690,7 @@ button:disabled {
 .workspace-changes-root-header span {
   color: var(--muted);
   font-size: 0.7rem;
+  overflow-wrap: anywhere;
 }
 
 .workspace-changes-group-header {
@@ -4732,8 +4732,43 @@ button:disabled {
   cursor: pointer;
 }
 
+.workspace-change-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding-top: 5px;
+  padding-right: 6px;
+  padding-bottom: 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.workspace-change-directory-row:hover,
 .workspace-change-row:hover {
   background: color-mix(in srgb, var(--character-sub-soft) 24%, rgba(15, 23, 42, 0.54));
+}
+
+.workspace-change-directory-icon {
+  flex: 0 0 16px;
+  color: var(--muted);
+  text-align: center;
+  transition: transform 120ms ease;
+}
+
+.workspace-change-directory-icon.is-expanded {
+  transform: rotate(90deg);
+}
+
+.workspace-change-directory-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
 }
 
 .workspace-change-kind {

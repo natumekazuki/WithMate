@@ -2,6 +2,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { WithMateWindowApi } from "../withmate-window-api.js";
+import {
+  buildChangedFileTree,
+  changedFileDisplayName,
+  type ChangedFileTreeNode,
+} from "./changed-file-tree.js";
 import type {
   FileRootFileDiffRequest,
   FileRootChangesResult,
@@ -53,11 +58,26 @@ type FileRootChangeRow =
   | { key: string; type: "error"; label: string }
   | {
       key: string;
+      type: "directory";
+      rootId: string;
+      scope: FileRootGitChangeScope;
+      relativePath: string;
+      name: string;
+      depth: number;
+      expanded: boolean;
+    }
+  | {
+      key: string;
       type: "entry";
       rootId: string;
       entry: FileRootGitChangeEntry;
       scope: FileRootGitChangeScope;
+      depth: number;
     };
+
+function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relativePath: string): string {
+  return `${rootId}\u0000${scope}\u0000${relativePath}`;
+}
 
 export function FileRootChangesPane({
   api,
@@ -73,6 +93,7 @@ export function FileRootChangesPane({
   const [loading, setLoading] = useState(false);
   const [loadingKey, setLoadingKey] = useState("");
   const [message, setMessage] = useState("");
+  const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const reload = useCallback(async () => {
@@ -142,6 +163,15 @@ export function FileRootChangesPane({
     };
   }, [reload, rootsRevision]);
 
+  useEffect(() => {
+    setCollapsedDirectories({});
+  }, [rootsRevision, sessionId]);
+
+  const toggleDirectory = (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => {
+    const key = directoryStateKey(rootId, scope, relativePath);
+    setCollapsedDirectories((current) => ({ ...current, [key]: !current[key] }));
+  };
+
   const openEntry = async (
     rootId: string,
     entry: FileRootGitChangeEntry,
@@ -181,6 +211,41 @@ export function FileRootChangesPane({
 
   const rows = useMemo(() => {
     const nextRows: FileRootChangeRow[] = [];
+    const appendTreeNodes = (
+      nodes: ChangedFileTreeNode[],
+      rootId: string,
+      scope: FileRootGitChangeScope,
+      depth: number,
+    ) => {
+      for (const node of nodes) {
+        if (node.type === "directory") {
+          const stateKey = directoryStateKey(rootId, scope, node.relativePath);
+          const expanded = !collapsedDirectories[stateKey];
+          nextRows.push({
+            key: `directory:${rootId}:${scope}:${node.relativePath}`,
+            type: "directory",
+            rootId,
+            scope,
+            relativePath: node.relativePath,
+            name: node.name,
+            depth,
+            expanded,
+          });
+          if (expanded) {
+            appendTreeNodes(node.children, rootId, scope, depth + 1);
+          }
+        } else {
+          nextRows.push({
+            key: `${rootId}:${scope}:${node.relativePath}`,
+            type: "entry",
+            rootId,
+            entry: node.entry,
+            scope,
+            depth,
+          });
+        }
+      }
+    };
     for (const rootChange of rootChanges) {
       nextRows.push({ key: `root:${rootChange.root.id}`, type: "root", root: rootChange.root });
       if (rootChange.message) {
@@ -198,15 +263,7 @@ export function FileRootChangesPane({
         if (scopedEntries.length === 0) {
           nextRows.push({ key: `empty:${rootChange.root.id}:${scope}`, type: "empty", label: "No changes." });
         } else {
-          scopedEntries.forEach((entry) => {
-            nextRows.push({
-              key: `${rootChange.root.id}:${scope}:${entry.relativePath}`,
-              type: "entry",
-              rootId: rootChange.root.id,
-              entry,
-              scope,
-            });
-          });
+          appendTreeNodes(buildChangedFileTree(scopedEntries, scope), rootChange.root.id, scope, 0);
         }
       }
     }
@@ -214,12 +271,12 @@ export function FileRootChangesPane({
       nextRows.push({ key: "no-git-roots", type: "empty", label: "No Git repositories." });
     }
     return nextRows;
-  }, [loading, rootChanges]);
+  }, [collapsedDirectories, loading, rootChanges]);
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
     getItemKey: (index) => rows[index]?.key ?? index,
-    estimateSize: (index) => rows[index]?.type === "root" ? 38 : rows[index]?.type === "header" ? 31 : 30,
+    estimateSize: (index) => rows[index]?.type === "root" ? 48 : rows[index]?.type === "header" ? 31 : 30,
     overscan: 16,
     initialRect: { width: 280, height: 480 },
     useFlushSync: false,
@@ -258,6 +315,18 @@ export function FileRootChangesPane({
                   <p>{row.label}</p>
                 ) : row.type === "error" ? (
                   <p className="workspace-changes-root-error">{row.label}</p>
+                ) : row.type === "directory" ? (
+                  <button
+                    className="workspace-change-directory-row"
+                    type="button"
+                    style={{ paddingLeft: `${6 + row.depth * 14}px` }}
+                    aria-expanded={row.expanded}
+                    title={row.relativePath}
+                    onClick={() => toggleDirectory(row.rootId, row.scope, row.relativePath)}
+                  >
+                    <span className={`workspace-change-directory-icon${row.expanded ? " is-expanded" : ""}`}>▸</span>
+                    <span className="workspace-change-directory-name">{row.name}</span>
+                  </button>
                 ) : (() => {
                   const key = `${row.rootId}:${row.scope}:${row.entry.relativePath}`;
                   const kind = row.entry.kinds[row.scope] ?? "modified";
@@ -265,6 +334,7 @@ export function FileRootChangesPane({
                     <button
                       className="workspace-change-row"
                       type="button"
+                      style={{ paddingLeft: `${6 + row.depth * 14}px` }}
                       disabled={!!loadingKey}
                       onClick={() => void openEntry(row.rootId, row.entry, row.scope)}
                       title={row.entry.previousRelativePath
@@ -272,7 +342,7 @@ export function FileRootChangesPane({
                         : row.entry.relativePath}
                     >
                       <span className={`workspace-change-kind ${kind}`}>{changeKindLabel(kind)}</span>
-                      <span className="workspace-change-path">{row.entry.relativePath}</span>
+                      <span className="workspace-change-path">{changedFileDisplayName(row.entry)}</span>
                       {loadingKey === key ? <span className="workspace-change-loading">…</span> : null}
                     </button>
                   );
