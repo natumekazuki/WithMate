@@ -483,10 +483,10 @@ describe("CopilotAdapter env", () => {
     ]);
   });
 
-  it("character prompt は Copilot systemMessage append へ変換する", () => {
+  it("character prompt だけをCopilot systemMessageへ変換し、可変timingはinput側に留める", () => {
     const systemMessage = buildCopilotSystemMessage({
       systemBodyText: "あなたは頼れる相棒です。",
-      inputBodyText: "hello",
+      inputBodyText: "# Conversation Timing\n\n- Observed local time: 2026-08-04T21:32:00+09:00\n\n# User Input\n\nhello",
       logicalPrompt: {
         systemText: "# System Prompt\n\nあなたは頼れる相棒です。",
         inputText: "# User Input Prompt\n\nhello",
@@ -500,6 +500,7 @@ describe("CopilotAdapter env", () => {
       mode: "append",
       content: "あなたは頼れる相棒です。",
     });
+    assert.doesNotMatch(systemMessage?.content ?? "", /Conversation Timing|2026-08-04/);
   });
 
   it("quota snapshot は Copilot の 0-1 percentage を 0-100 表示用へ正規化する", () => {

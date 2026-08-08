@@ -103,6 +103,7 @@ import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js"
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
+import { resolveConversationTimingContext } from "./conversation-timing.js";
 import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
@@ -1973,6 +1974,17 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         taskTitle: session.taskTitle,
       }),
       resolveProjectMemoryEntriesForPrompt: () => [],
+      resolveConversationTimingContext: async (session, observedAt) => {
+        if (session.sessionKind !== "default") {
+          return null;
+        }
+        const storage = requireAuditLogStorage();
+        if (!storage.getConversationTimingSnapshot) {
+          return null;
+        }
+        const snapshot = await storage.getConversationTimingSnapshot(session.id, observedAt.toISOString());
+        return resolveConversationTimingContext(snapshot, observedAt);
+      },
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
       setLiveSessionRun,

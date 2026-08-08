@@ -31,6 +31,7 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { ConversationTimingContext } from "./conversation-timing.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -65,6 +66,10 @@ export type SessionRuntimeServiceDeps = {
     userMessage: string,
     sessionMemory: SessionMemory,
   ): ProjectMemoryEntry[];
+  resolveConversationTimingContext?: (
+    session: Session,
+    observedAt: Date,
+  ) => Awaitable<ConversationTimingContext | null>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -89,6 +94,7 @@ export type SessionRuntimeServiceDeps = {
   getMateState?: () => MateStorageState;
   notifySessionTurnCompleted?: (session: Session, lastNonEmptyAssistantMessageText: string) => Awaitable<void>;
   currentTimestampLabel?: () => string;
+  currentDate?: () => Date;
   providerCancelGraceMs?: number;
   auditEnrichmentGraceMs?: number;
 };
@@ -729,6 +735,7 @@ export class SessionRuntimeService {
     request: RunSessionTurnRequest,
     runAbortController: AbortController,
   ): Promise<Session> {
+    const observedAt = (this.deps.currentDate ?? (() => new Date()))();
     const investigationStartedAt = Date.now();
     const storedSession = await this.deps.getSession(sessionId);
     throwIfRunCanceled(runAbortController.signal);
@@ -788,6 +795,9 @@ export class SessionRuntimeService {
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
+    const conversationTimingContext = await Promise.resolve(
+      this.deps.resolveConversationTimingContext?.(session, observedAt) ?? null,
+    );
     throwIfRunCanceled(runAbortController.signal);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 
@@ -808,6 +818,7 @@ export class SessionRuntimeService {
         userMessage: nextMessage,
         appSettings,
         attachments: composerPreview.attachments,
+        conversationTimingContext: conversationTimingContext ?? undefined,
       });
 
       runningSession = {
@@ -972,6 +983,7 @@ export class SessionRuntimeService {
         userMessage: nextMessage,
         appSettings,
         attachments: composerPreview.attachments,
+        conversationTimingContext: conversationTimingContext ?? undefined,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
