@@ -18,7 +18,7 @@ import type {
   AuditLogSummary,
 } from "./app-state.js";
 import { DiffViewer } from "./DiffViewer.js";
-import { MessageRichText } from "./MessageRichText.js";
+import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
@@ -2101,6 +2101,7 @@ export type SessionMessageColumnProps = {
   inlinePathFeedback?: string;
   onDismissInlinePathFeedback?: () => void;
   isContentActive?: boolean;
+  messageViewMode?: MessageViewMode;
 };
 
 function getNonBlankSelectionText(selection: Selection): string | null {
@@ -2342,6 +2343,7 @@ export function SessionMessageColumn({
   inlinePathFeedback = "",
   onDismissInlinePathFeedback,
   isContentActive = true,
+  messageViewMode = "preview",
 }: SessionMessageColumnProps) {
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
@@ -2352,6 +2354,7 @@ export function SessionMessageColumn({
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const wasContentActiveRef = useRef(isContentActive);
+  const previousMessageViewModeRef = useRef(messageViewMode);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
@@ -2382,15 +2385,21 @@ export function SessionMessageColumn({
   const hasFindQuery = findQuery.trim().length > 0;
   const messageRenderedSearchTexts = useMemo(
     () => (hasFindQuery
-      ? messages.map((message) => projectMessageRenderedSearchText(message.text))
+      ? messages.map((message) => (
+          messageViewMode === "source"
+            ? message.text
+            : projectMessageRenderedSearchText(message.text)
+        ))
       : []),
-    [hasFindQuery, messages],
+    [hasFindQuery, messageViewMode, messages],
   );
   const pendingRenderedSearchText = useMemo(
     () => (hasFindQuery && isRunning && hasPendingMessageText
-      ? projectMessageRenderedSearchText(pendingMessageText)
+      ? messageViewMode === "source"
+        ? pendingMessageText
+        : projectMessageRenderedSearchText(pendingMessageText)
       : ""),
-    [hasFindQuery, hasPendingMessageText, isRunning, pendingMessageText],
+    [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText],
   );
   const hasPendingInlineContent =
     liveApprovalRequest !== null ||
@@ -2451,6 +2460,14 @@ export function SessionMessageColumn({
     return messages.length > 0 ? messages.length - 1 : null;
   }, [messages.length, pendingMessageGroupEndIndex]);
   const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
+
+  useEffect(() => {
+    if (previousMessageViewModeRef.current === messageViewMode) {
+      return;
+    }
+    previousMessageViewModeRef.current = messageViewMode;
+    setSelectionToolbar(null);
+  }, [messageViewMode]);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
     onMessageListScroll(event);
@@ -2730,6 +2747,7 @@ export function SessionMessageColumn({
             <MessageRichText
               text={pendingMessageText}
               forceFullRender={findOpen && hasFindQuery}
+              displayMode={messageViewMode}
               onOpenPath={onOpenPath}
             />
           </div>
@@ -2879,6 +2897,7 @@ export function SessionMessageColumn({
                     <MessageRichText
                       text={message.text}
                       forceFullRender={findOpen && hasFindQuery}
+                      displayMode={messageViewMode}
                       onOpenPath={onOpenPath}
                     />
                   </div>
@@ -3222,6 +3241,8 @@ export type SessionComposerExpandedProps = {
   showSkillPicker?: boolean;
   showAdditionalDirectoryControls?: boolean;
   showExecutionModeControls?: boolean;
+  showMessageViewModeControls?: boolean;
+  messageViewMode?: MessageViewMode;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
@@ -3280,6 +3301,7 @@ export type SessionComposerExpandedProps = {
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
+  onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
 
 export function SessionComposerExpanded({
@@ -3296,6 +3318,8 @@ export function SessionComposerExpanded({
   showSkillPicker = true,
   showAdditionalDirectoryControls = true,
   showExecutionModeControls = true,
+  showMessageViewModeControls = false,
+  messageViewMode = "preview",
   isAgentPickerOpen,
   isSkillPickerOpen,
   isAdditionalDirectoryListOpen,
@@ -3354,6 +3378,7 @@ export function SessionComposerExpanded({
   onChangeCodexSandboxMode,
   onChangeModel,
   onChangeReasoningEffort,
+  onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const skillListRef = useRef<HTMLDivElement | null>(null);
@@ -3390,6 +3415,7 @@ export function SessionComposerExpanded({
     showCustomAgentPicker ||
     showSkillPicker ||
     showAdditionalDirectoryControls ||
+    showMessageViewModeControls ||
     showJumpToBottom ||
     !!modeLabel ||
     !!chatNotice ||
@@ -3502,15 +3528,6 @@ export function SessionComposerExpanded({
               />
             </div>
           ) : null}
-          {showJumpToBottom ? (
-            <button
-              className="drawer-toggle compact secondary message-jump-bottom-button"
-              type="button"
-              onClick={onJumpToBottom}
-            >
-              末尾へ移動
-            </button>
-          ) : null}
           {isRunning ? (
               <button
                 className="drawer-toggle compact danger composer-toolbar-cancel-button"
@@ -3520,6 +3537,39 @@ export function SessionComposerExpanded({
               >
                 Cancel
               </button>
+          ) : null}
+          {showJumpToBottom || showMessageViewModeControls ? (
+            <div className="composer-toolbar-view-actions">
+              {showJumpToBottom ? (
+                <button
+                  className="drawer-toggle compact secondary message-jump-bottom-button"
+                  type="button"
+                  onClick={onJumpToBottom}
+                >
+                  末尾へ移動
+                </button>
+              ) : null}
+              {showMessageViewModeControls ? (
+                <div className="composer-message-view-mode" role="group" aria-label="Message display mode">
+                  <button
+                    className="composer-message-view-mode-button"
+                    type="button"
+                    aria-pressed={messageViewMode === "preview"}
+                    onClick={() => onMessageViewModeChange("preview")}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    className="composer-message-view-mode-button"
+                    type="button"
+                    aria-pressed={messageViewMode === "source"}
+                    onClick={() => onMessageViewModeChange("source")}
+                  >
+                    Source
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}
