@@ -11,6 +11,218 @@ type OutputOperations = ApplicationRunOutputOperations<Authorization>;
 
 const authorization: Authorization = { transport: "test" };
 const outputOperations = runOutputOperations();
+const providerSettings = {
+  providerId: "codex",
+  definitionVersion: "codex-provider-v1",
+  settings: {
+    model: "gpt-test",
+    reasoningEffort: "medium",
+    approvalPolicy: "never",
+    sandbox: { mode: "workspace-write", networkAccess: false },
+  },
+} as const;
+
+test("Run mutations dispatch only caller-owned fields", async () => {
+  const calls: unknown[] = [];
+  const operations = runOperations({
+    start: async (request, options) => {
+      calls.push(["start", request, options]);
+      return writeSuccess({ sessionId: request.sessionId, runId: "run-new", phase: "queued" as const });
+    },
+    retry: async (request, options) => {
+      calls.push(["retry", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: "run-retry",
+        retryOfRunId: request.retryOfRunId,
+        phase: "queued" as const,
+      });
+    },
+    sendInput: async (request, options) => {
+      calls.push(["send-input", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: request.runId,
+        messageId: "message-1",
+        deliveryState: "pending" as const,
+      });
+    },
+    cancel: async (request, options) => {
+      calls.push(["cancel", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: request.runId,
+        phase: "canceling" as const,
+        liveActivity: null,
+        createdAt: 1,
+        updatedAt: 2,
+        cancellation: { requestedAt: 2 },
+      });
+    },
+  });
+  const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000701";
+  const start = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "start" },
+      sessionId: "session-1",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "hello" }],
+      providerSettings,
+    },
+    { operations, outputOperations, authorization },
+  );
+  const retry = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "retry" },
+      sessionId: "session-1",
+      retryOfRunId: "run-source",
+      idempotencyKey,
+      providerSettingsOverride: {
+        ...providerSettings,
+        settings: { ...providerSettings.settings, reasoningEffort: "high" },
+      },
+    },
+    { operations, outputOperations, authorization },
+  );
+  const sendInput = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "send-input" },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey,
+      contentBlocks: [{ type: "text", text: "continue" }],
+      timeoutMs: 500,
+    },
+    { operations, outputOperations, authorization },
+  );
+  const cancel = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "cancel" },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey,
+      timeoutMs: 750,
+    },
+    { operations, outputOperations, authorization },
+  );
+
+  assert.equal(start.ok, true);
+  assert.equal(retry.ok, true);
+  assert.equal(sendInput.ok, true);
+  assert.equal(cancel.ok, true);
+  assert.deepEqual(calls, [
+    [
+      "start",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        idempotencyKey,
+        contentBlocks: [{ type: "text", text: "hello" }],
+        providerSettings,
+      },
+      {},
+    ],
+    [
+      "retry",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        retryOfRunId: "run-source",
+        idempotencyKey,
+        providerSettingsOverride: {
+          ...providerSettings,
+          settings: { ...providerSettings.settings, reasoningEffort: "high" },
+        },
+      },
+      {},
+    ],
+    [
+      "send-input",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey,
+        contentBlocks: [{ type: "text", text: "continue" }],
+      },
+      { timeoutMs: 500 },
+    ],
+    [
+      "cancel",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey,
+      },
+      { timeoutMs: 750 },
+    ],
+  ]);
+});
+
+test("Run interaction operations dispatch the exact public request and preserve caller wait controls", async () => {
+  const calls: unknown[] = [];
+  const operations = runOperations({
+    interactions: async (request, options) => {
+      calls.push(["interactions", request, options]);
+      return success({ sessionId: request.sessionId, runId: request.runId, runVersion: 7, interactions: [] });
+    },
+    respondInteraction: async (request, options) => {
+      calls.push(["respond-interaction", request, options]);
+      return writeSuccess({
+        sessionId: request.sessionId,
+        runId: request.runId,
+        interactionId: request.response.interactionId,
+        admittedAt: 1,
+        effectCertainty: "admitted" as const,
+        writeAttemptedAt: null,
+        settledAt: null,
+        resolutionCode: null,
+      });
+    },
+  });
+  const controller = new AbortController();
+  const response = {
+    interactionId: "interaction-1",
+    kind: "provider.approval",
+    payload: { decision: "accept" },
+  } as const;
+  const read = await dispatchCliRunCommand(
+    { identity: { namespace: "run", operation: "interactions" }, sessionId: "session-1", runId: "run-1" },
+    { operations, outputOperations, authorization, signal: controller.signal, timeoutMs: 2_000 },
+  );
+  const write = await dispatchCliRunCommand(
+    {
+      identity: { namespace: "run", operation: "respond-interaction" },
+      sessionId: "session-1",
+      runId: "run-1",
+      idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000701",
+      response,
+      timeoutMs: 1_000,
+    },
+    { operations, outputOperations, authorization, signal: controller.signal },
+  );
+  assert.equal(read.ok, true);
+  assert.equal(write.ok, true);
+  assert.deepEqual(calls, [
+    [
+      "interactions",
+      { context: { authorization }, sessionId: "session-1", runId: "run-1" },
+      { timeoutMs: 2_000, signal: controller.signal },
+    ],
+    [
+      "respond-interaction",
+      {
+        context: { authorization },
+        sessionId: "session-1",
+        runId: "run-1",
+        idempotencyKey: "018f1f4e-7f0a-7000-8000-000000000701",
+        response,
+      },
+      { timeoutMs: 1_000, signal: controller.signal },
+    ],
+  ]);
+});
 
 test("Run status and events dispatch only validated Application requests", async () => {
   const calls: unknown[] = [];
@@ -267,7 +479,13 @@ function runOperations(overrides: Partial<Operations>): Operations {
     throw new Error("unexpected operation");
   };
   return {
+    start: overrides.start ?? unsupported,
+    retry: overrides.retry ?? unsupported,
+    sendInput: overrides.sendInput ?? unsupported,
+    cancel: overrides.cancel ?? unsupported,
+    respondInteraction: overrides.respondInteraction ?? unsupported,
     status: overrides.status ?? unsupported,
+    interactions: overrides.interactions ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,
   };
@@ -288,6 +506,14 @@ function runOutputOperations(overrides: Partial<OutputOperations> = {}): OutputO
 
 function success<TValue>(value: TValue) {
   return { overallStatus: "success", value, persistence: { status: "read", effect: "none" } } as const;
+}
+
+function writeSuccess<TValue>(value: TValue) {
+  return {
+    overallStatus: "success",
+    value,
+    persistence: { status: "committed", effect: "none", replayed: false },
+  } as const;
 }
 
 function activeStatus() {

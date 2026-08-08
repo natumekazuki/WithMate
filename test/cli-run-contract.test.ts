@@ -4,13 +4,78 @@ import test from "node:test";
 import {
   CLI_EXIT_CODES,
   CLI_SCHEMA_VERSION,
+  type CliRunCancelValue,
   type CliRunStatusValue,
+  type CliSessionRunItem,
   type CliValidatedRunCommand,
 } from "../src/cli/contract.js";
 import { helpText } from "../src/cli/help.js";
 import { parseCliArgv } from "../src/cli/parser.js";
 import { projectCliRunOperationOutput } from "../src/cli/run-output.js";
+import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionCollectionWireBytes,
+  applicationRunInteractionWireItemBytes,
+} from "../src/shared/application-run-interaction-limits.js";
 
+const idempotencyKey = "018f1f4e-7f0a-7000-8000-000000000701";
+const startCommand = {
+  identity: { namespace: "run", operation: "start" },
+  sessionId: "session-1",
+  idempotencyKey,
+  contentBlocks: [{ type: "text", text: "hello" }],
+  providerSettings: {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-test",
+      reasoningEffort: "medium",
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+  },
+} as const satisfies CliValidatedRunCommand;
+const retryCommand = {
+  identity: { namespace: "run", operation: "retry" },
+  sessionId: "session-1",
+  retryOfRunId: "run-source",
+  idempotencyKey,
+  providerSettingsOverride: {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    settings: {
+      model: "gpt-test",
+      reasoningEffort: "high",
+      approvalPolicy: "never",
+      sandbox: { mode: "workspace-write", networkAccess: false },
+    },
+  },
+} as const satisfies CliValidatedRunCommand;
+const sendInputCommand = {
+  identity: { namespace: "run", operation: "send-input" },
+  sessionId: "session-1",
+  runId: "run-1",
+  idempotencyKey,
+  contentBlocks: [{ type: "text", text: "continue" }],
+} as const satisfies CliValidatedRunCommand;
+const cancelCommand = {
+  identity: { namespace: "run", operation: "cancel" },
+  sessionId: "session-1",
+  runId: "run-1",
+  idempotencyKey,
+} as const satisfies CliValidatedRunCommand;
+const interactionsCommand = {
+  identity: { namespace: "run", operation: "interactions" },
+  sessionId: "session-1",
+  runId: "run-1",
+} as const satisfies CliValidatedRunCommand;
+const respondInteractionCommand = {
+  identity: { namespace: "run", operation: "respond-interaction" },
+  sessionId: "session-1",
+  runId: "run-1",
+  idempotencyKey,
+  response: { interactionId: "interaction-1", kind: "provider.approval", payload: { decision: "accept" } },
+} as const satisfies CliValidatedRunCommand;
 const statusCommand = {
   identity: { namespace: "run", operation: "status" },
   sessionId: "session-1",
@@ -48,6 +113,43 @@ const cliOwnedStatusContract: CliRunStatusValue = {
 };
 void cliOwnedStatusContract;
 
+// @ts-expect-error canceled Run status cannot expose a request without its acknowledgement
+const invalidCanceledStatusCancellation: CliRunStatusValue = {
+  sessionId: "session-1",
+  runId: "run-1",
+  phase: "canceled",
+  liveActivity: null,
+  createdAt: 1,
+  updatedAt: 2,
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+// @ts-expect-error canceled Run history cannot expose a request without its acknowledgement
+const invalidCanceledHistoryCancellation: CliSessionRunItem = {
+  runId: "run-1",
+  ordinal: 1,
+  initiatingMessageId: "message-1",
+  phase: "canceled",
+  createdAt: 1,
+  updatedAt: 2,
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+// @ts-expect-error canceled Run cancel result cannot expose a request without its acknowledgement
+const invalidCanceledCancelResult: CliRunCancelValue = {
+  sessionId: "session-1",
+  runId: "run-1",
+  phase: "canceled",
+  liveActivity: null,
+  createdAt: 1,
+  updatedAt: 2,
+  terminalAt: 2,
+  cancellation: { requestedAt: 1 },
+};
+void invalidCanceledStatusCancellation;
+void invalidCanceledHistoryCancellation;
+void invalidCanceledCancelResult;
+
 test("Run help and validated commands are runtime-free parser results", () => {
   assert.deepEqual(parseCliArgv(["run"]), { kind: "help", topic: { kind: "run" } });
   assert.deepEqual(parseCliArgv(["run", "events", "--help"]), {
@@ -55,12 +157,125 @@ test("Run help and validated commands are runtime-free parser results", () => {
     topic: { kind: "operation", command: { namespace: "run", operation: "events" } },
   });
   assert.match(helpText({ kind: "root" }), /withmate run --help/u);
-  assert.match(helpText({ kind: "run" }), /status[\s\S]*events[\s\S]*follow/u);
-  assert.doesNotMatch(helpText({ kind: "run" }), /\bstart\b|\bretry\b|\bcancel\b/u);
+  assert.match(
+    helpText({ kind: "run" }),
+    /start[\s\S]*retry[\s\S]*send-input[\s\S]*cancel[\s\S]*status[\s\S]*events[\s\S]*follow/u,
+  );
+  const startHelp = helpText({ kind: "operation", command: startCommand.identity });
+  assert.match(startHelp, /content-blocks-json/u);
+  assert.match(
+    startHelp,
+    /providerId[\s\S]*definitionVersion[\s\S]*model[\s\S]*reasoningEffort[\s\S]*approvalPolicy[\s\S]*sandbox/u,
+  );
+  assert.match(startHelp, /"approvalPolicy":"never"/u);
+  assert.match(startHelp, /Partial settings and unknown fields are rejected/u);
+  const retryHelp = helpText({ kind: "operation", command: retryCommand.identity });
+  assert.match(retryHelp, /complete Provider settings envelope is inherited from the source Run/u);
+  assert.match(retryHelp, /complete same-Provider envelope[\s\S]*replaces the source envelope in full/u);
+  assert.match(retryHelp, /Partial settings merge is not supported/u);
+  const inputHelp = helpText({ kind: "operation", command: sendInputCommand.identity });
+  assert.match(inputHelp, /same idempotency key returns its current durable outcome/u);
+  assert.match(inputHelp, /does not cancel an admitted delivery/u);
+  assert.match(inputHelp, /new idempotency key can duplicate/u);
+  const cancelHelp = helpText({ kind: "operation", command: cancelCommand.identity });
+  assert.match(cancelHelp, /same idempotency key returns its current durable outcome/u);
+  assert.match(cancelHelp, /terminal target is a successful no-op/u);
+  assert.match(cancelHelp, /SIGINT[\s\S]*neither undo a durable/u);
+  assert.match(helpText({ kind: "run" }), /interactions[\s\S]*respond-interaction/u);
+  const respondHelp = helpText({ kind: "operation", command: respondInteractionCommand.identity });
+  assert.match(respondHelp, /Exact \{interactionId,kind,payload\} object/u);
+  assert.match(respondHelp, /same response with the same idempotency key/u);
+  assert.match(respondHelp, /retained \(30 days\)[\s\S]*idempotency_expired/u);
+  assert.match(respondHelp, /different idempotency key[\s\S]*rejected before the Provider send/u);
+  assert.match(
+    respondHelp,
+    /stale, already-resolved, or terminal interaction[\s\S]*rejected before the Provider send/u,
+  );
+  assert.match(respondHelp, /timeout, SIGINT, and client disconnect[\s\S]*do not undo an admitted[\s\S]*response/u);
+
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      JSON.stringify(startCommand.contentBlocks),
+      "--provider-settings-json",
+      JSON.stringify(startCommand.providerSettings),
+    ]),
+    { kind: "command", command: startCommand },
+  );
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "retry",
+      "--session-id",
+      "session-1",
+      "--retry-of-run-id",
+      "run-source",
+      "--idempotency-key",
+      idempotencyKey,
+      "--provider-settings-json",
+      JSON.stringify(retryCommand.providerSettingsOverride),
+    ]),
+    { kind: "command", command: retryCommand },
+  );
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "send-input",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      JSON.stringify(sendInputCommand.contentBlocks),
+    ]),
+    { kind: "command", command: sendInputCommand },
+  );
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "cancel",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--timeout-ms",
+      "5000",
+    ]),
+    { kind: "command", command: { ...cancelCommand, timeoutMs: 5000 } },
+  );
 
   assert.deepEqual(
     parseCliArgv(["run", "status", "--session-id", "session-1", "--run-id", "run-1", "--timeout-ms", "5000"]),
     { kind: "command", command: { ...statusCommand, timeoutMs: 5000 } },
+  );
+  assert.deepEqual(parseCliArgv(["run", "interactions", "--session-id", "session-1", "--run-id", "run-1"]), {
+    kind: "command",
+    command: interactionsCommand,
+  });
+  assert.deepEqual(
+    parseCliArgv([
+      "run",
+      "respond-interaction",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--response-json",
+      JSON.stringify(respondInteractionCommand.response),
+    ]),
+    { kind: "command", command: respondInteractionCommand },
   );
   assert.deepEqual(
     parseCliArgv(["run", "events", "--session-id", "session-1", "--run-id", "run-1", "--cursor", "opaque"]),
@@ -89,7 +304,7 @@ test("Run help and validated commands are runtime-free parser results", () => {
   );
 });
 
-test("Run parser rejects missing, duplicate, unknown, unbounded, and mutation inputs", () => {
+test("Run parser rejects missing, duplicate, unknown, unbounded, and invalid mutation inputs", () => {
   const cases = [
     ["run", "status", "--session-id", "session-1"],
     ["run", "status", "--session-id", "session-1", "--run-id", "run-1", "--run-id", "run-2"],
@@ -101,7 +316,171 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and mutation in
     ["run", "follow", "--session-id", "session-1", "--run-id", "run-1", "--poll-ms", "5001"],
     ["run", "start"],
     ["run", "retry"],
+    ["run", "send-input"],
     ["run", "cancel"],
+    ["run", "interactions", "--session-id", "session-1"],
+    ["run", "respond-interaction"],
+    [
+      "run",
+      "respond-interaction",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--response-json",
+      '{"interactionId":"interaction-1","kind":"provider.approval","payload":{},"payload":{}}',
+    ],
+    [
+      "run",
+      "respond-interaction",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--response-json",
+      '{"interactionId":"interaction-1","kind":"provider.approval","payload":{"score":0.5}}',
+    ],
+    [
+      "run",
+      "respond-interaction",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--response-json",
+      '{"interactionId":"interaction-1","kind":"provider.approval","payload":{},"privateId":"raw"}',
+    ],
+    [
+      "run",
+      "respond-interaction",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--response-json",
+      "[]",
+    ],
+    [
+      "run",
+      "respond-interaction",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--response-json",
+      JSON.stringify(respondInteractionCommand.response),
+      "--approval",
+      "accept",
+    ],
+    ["run", "cancel", "--session-id", "session-1", "--run-id", "run-1", "--idempotency-key", "not-a-uuid"],
+    [
+      "run",
+      "cancel",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      "[]",
+    ],
+    [
+      "run",
+      "cancel",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--run-id",
+      "run-2",
+      "--idempotency-key",
+      idempotencyKey,
+    ],
+    [
+      "run",
+      "send-input",
+      "--session-id",
+      "session-1",
+      "--run-id",
+      "run-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      "[]",
+      "--model",
+      "not-owned-by-input",
+    ],
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      "not-a-uuid",
+      "--content-blocks-json",
+      "[]",
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"danger-full-access"}',
+    ],
+    [
+      "run",
+      "retry",
+      "--session-id",
+      "session-1",
+      "--retry-of-run-id",
+      "run-source",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      "[]",
+    ],
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      '[{"type":"image","type":"text","text":"hello"}]',
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"danger-full-access"}',
+    ],
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      idempotencyKey,
+      "--content-blocks-json",
+      '[{"type":"text","text":"hello"}]',
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"read-only","mode":"danger-full-access"}',
+    ],
   ] as const;
   for (const argv of cases) {
     const parsed = parseCliArgv(argv);
@@ -110,7 +489,722 @@ test("Run parser rejects missing, duplicate, unknown, unbounded, and mutation in
   }
 });
 
-test("Run status output uses a phase-specific allowlist and preserves schema v1", () => {
+test("Run content mutations accept the exact inline JSON byte limit and reject one byte beyond it", () => {
+  const emptyJsonBytes = Buffer.byteLength(JSON.stringify([{ type: "text", text: "" }]));
+  const exactText = "a".repeat(64 * 1024 - emptyJsonBytes);
+  const argv = (contentBlocksJson: string) => [
+    "run",
+    "start",
+    "--session-id",
+    "session-1",
+    "--idempotency-key",
+    idempotencyKey,
+    "--content-blocks-json",
+    contentBlocksJson,
+    "--provider-settings-json",
+    JSON.stringify(startCommand.providerSettings),
+  ];
+  assert.equal(parseCliArgv(argv(JSON.stringify([{ type: "text", text: exactText }]))).kind, "command");
+  assert.equal(parseCliArgv(argv(JSON.stringify([{ type: "text", text: `${exactText}a` }]))).kind, "usage_failure");
+  const inputArgv = (contentBlocksJson: string) => [
+    "run",
+    "send-input",
+    "--session-id",
+    "session-1",
+    "--run-id",
+    "run-1",
+    "--idempotency-key",
+    idempotencyKey,
+    "--content-blocks-json",
+    contentBlocksJson,
+  ];
+  assert.equal(parseCliArgv(inputArgv(JSON.stringify([{ type: "text", text: exactText }]))).kind, "command");
+  assert.equal(
+    parseCliArgv(inputArgv(JSON.stringify([{ type: "text", text: `${exactText}a` }]))).kind,
+    "usage_failure",
+  );
+});
+
+test("Run interactions independently canonicalize Provider-owned public snapshots", () => {
+  const interactions = canonicalInteractionSnapshots();
+  const projected = projectCliRunOperationOutput(interactionsCommand, {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      runId: "run-1",
+      runVersion: 7,
+      interactions,
+    },
+    persistence: { status: "read", effect: "none" },
+  });
+  assert.equal(projected.ok, true);
+  if (!projected.ok) assert.fail("interaction projection failed");
+  const response = projected.output.applicationResponse;
+  if (response.overallStatus === "failure") assert.fail("interaction projection unexpectedly failed");
+  assert.deepEqual((response.value as { interactions: unknown }).interactions, interactions);
+
+  const interaction = interactions[0] as (typeof interactions)[number];
+  const invalidInteractions = [
+    { ...interaction, adapterHandle: { requestId: 42 } },
+    { ...interaction, definitionVersion: "codex-unknown-interactions-v2" },
+    { ...interaction, kind: "codex.file_change_approval" },
+    { ...interaction, display: { ...interaction.display, rawRequestId: "provider-private" } },
+    { ...interaction, display: { ...interaction.display, absolutePath: "C:\\private\\secret.txt" } },
+    { ...interaction, display: { ...interaction.display, extra: true } },
+    { ...interaction, display: { summary: "unsafe\u202etext", command: "node --version" } },
+    { ...interaction, display: { summary: "Location=/home/alice/.ssh/id_rsa", command: "node --version" } },
+    {
+      ...interaction,
+      kind: "codex.file_change_approval",
+      display: { summary: "Changes", changes: [{ displayPath: "/private/secret.txt", changeKind: "update" }] },
+    },
+    { ...interaction, display: { ...interaction.display, availableDecisions: ["accept", "accept"] } },
+    { ...interaction, answerable: false },
+  ];
+  for (const invalidInteraction of invalidInteractions) {
+    assert.equal(
+      projectCliRunOperationOutput(interactionsCommand, {
+        overallStatus: "success",
+        value: {
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: [invalidInteraction],
+        },
+        persistence: { status: "read", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
+  const sparse: unknown[] = [];
+  sparse.length = 1;
+  const accessor: unknown[] = [];
+  Object.defineProperty(accessor, "0", { enumerable: true, configurable: true, get: () => ({}) });
+  accessor.length = 1;
+  for (const interactions of [sparse, accessor]) {
+    assert.equal(
+      projectCliRunOperationOutput(interactionsCommand, {
+        overallStatus: "success",
+        value: { sessionId: "session-1", runId: "run-1", runVersion: 7, interactions },
+        persistence: { status: "read", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
+});
+
+test("Run interactions preserve the shared collection wire budget after canonicalization", () => {
+  let interactions: readonly ReturnType<typeof largeFileInteraction>[] | undefined;
+  for (let pathLength = 1; pathLength <= 512; pathLength += 1) {
+    const candidate = Object.freeze(
+      Array.from({ length: 3 }, (_unused, index) => largeFileInteraction(index, pathLength)),
+    );
+    const itemBytes = candidate.reduce((total, item) => total + applicationRunInteractionWireItemBytes(item), 0);
+    if (
+      applicationRunInteractionCollectionWireBytes(itemBytes, candidate.length) >
+      APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes
+    ) {
+      break;
+    }
+    interactions = candidate;
+  }
+  assert.ok(interactions);
+  const itemBytes = interactions.reduce((total, item) => total + applicationRunInteractionWireItemBytes(item), 0);
+  assert.equal(
+    projectCliRunOperationOutput(interactionsCommand, {
+      overallStatus: "success",
+      value: { sessionId: "session-1", runId: "run-1", runVersion: 7, interactions },
+      persistence: { status: "read", effect: "none" },
+    }).ok,
+    true,
+  );
+  const over = Object.freeze([...interactions, interactions[0] as ReturnType<typeof largeFileInteraction>]);
+  assert.ok(
+    applicationRunInteractionCollectionWireBytes(
+      itemBytes + applicationRunInteractionWireItemBytes(over.at(-1) as ReturnType<typeof largeFileInteraction>),
+      over.length,
+    ) > APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes,
+  );
+  assert.equal(
+    projectCliRunOperationOutput(interactionsCommand, {
+      overallStatus: "success",
+      value: { sessionId: "session-1", runId: "run-1", runVersion: 7, interactions: over },
+      persistence: { status: "read", effect: "none" },
+    }).ok,
+    false,
+  );
+});
+
+test("Run interaction response projects every certainty variant and rejects private or inconsistent tuples", () => {
+  const variants = [
+    { effectCertainty: "admitted", writeAttemptedAt: null, settledAt: null, resolutionCode: null },
+    { effectCertainty: "write_attempted", writeAttemptedAt: 2, settledAt: null, resolutionCode: null },
+    { effectCertainty: "resolved", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "provider_resolved" },
+    { effectCertainty: "ambiguous", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "transport_unknown" },
+    { effectCertainty: "ambiguous", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "process_unknown" },
+    { effectCertainty: "not_sent", writeAttemptedAt: null, settledAt: 3, resolutionCode: "owner_lost_before_write" },
+    { effectCertainty: "not_sent", writeAttemptedAt: null, settledAt: 3, resolutionCode: "adapter_rejected" },
+    { effectCertainty: "not_sent", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "transport_not_sent" },
+    { effectCertainty: "not_sent", writeAttemptedAt: 2, settledAt: 3, resolutionCode: "adapter_rejected" },
+  ] as const;
+  for (const variant of variants) {
+    const projected = projectCliRunOperationOutput(respondInteractionCommand, {
+      overallStatus: "success",
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        interactionId: "interaction-1",
+        admittedAt: 1,
+        ...variant,
+      },
+      persistence: { status: "committed", effect: "none", replayed: false },
+    });
+    assert.equal(projected.ok, true, variant.effectCertainty);
+  }
+
+  for (const value of [
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "resolved",
+      writeAttemptedAt: null,
+      settledAt: 3,
+      resolutionCode: "provider_resolved",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 3,
+      effectCertainty: "ambiguous",
+      writeAttemptedAt: 2,
+      settledAt: 4,
+      resolutionCode: "process_unknown",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "not_sent",
+      writeAttemptedAt: null,
+      settledAt: 3,
+      resolutionCode: "transport_not_sent",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "not_sent",
+      writeAttemptedAt: 2,
+      settledAt: 3,
+      resolutionCode: "owner_lost_before_write",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      interactionId: "interaction-1",
+      admittedAt: 1,
+      effectCertainty: "admitted",
+      writeAttemptedAt: null,
+      settledAt: null,
+      resolutionCode: null,
+      providerRequestId: "private",
+    },
+  ]) {
+    assert.equal(
+      projectCliRunOperationOutput(respondInteractionCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "committed", effect: "none", replayed: false },
+      }).ok,
+      false,
+    );
+  }
+
+  for (const failure of [
+    {
+      overallStatus: "failure",
+      error: { kind: "domain", code: "reference_invalid", message: "Interaction is stale.", retryable: false },
+      persistence: { status: "rejected", effect: "none" },
+    },
+    {
+      overallStatus: "failure",
+      error: {
+        kind: "persistence",
+        code: "persistence_operation_failed",
+        message: "Admission result is unknown.",
+        retryable: true,
+        effect: "unknown",
+      },
+      persistence: { status: "failed", effect: "unknown", reconciliation: "exact_request_required" },
+    },
+  ] as const) {
+    const projected = projectCliRunOperationOutput(respondInteractionCommand, failure);
+    assert.equal(projected.ok, true);
+    if (!projected.ok) assert.fail("interaction failure projection failed");
+    assert.deepEqual(projected.output.applicationResponse, failure);
+  }
+});
+
+test("Run mutation output exposes only durable public admission identity", () => {
+  const start = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "success",
+    value: { sessionId: "session-1", runId: "run-new", phase: "queued" },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  assert.equal(start.ok, true);
+  if (!start.ok) assert.fail("start projection failed");
+  assert.equal(start.exitCode, CLI_EXIT_CODES.success);
+  assert.deepEqual(start.output.applicationResponse, {
+    overallStatus: "success",
+    value: { sessionId: "session-1", runId: "run-new", phase: "queued" },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  const phases = [
+    "queued",
+    "starting",
+    "active",
+    "canceling",
+    "finalizing",
+    "completed",
+    "failed",
+    "canceled",
+    "interrupted",
+  ] as const;
+  for (const command of [startCommand, retryCommand]) {
+    for (const phase of phases) {
+      const value = {
+        sessionId: "session-1",
+        runId: "run-replay",
+        ...(command.identity.operation === "retry" ? { retryOfRunId: "run-source" } : {}),
+        phase,
+      };
+      assert.equal(
+        projectCliRunOperationOutput(command, {
+          overallStatus: "success",
+          value,
+          persistence: { status: "committed", effect: "none", replayed: true },
+        }).ok,
+        true,
+      );
+      if (phase !== "queued") {
+        assert.equal(
+          projectCliRunOperationOutput(command, {
+            overallStatus: "success",
+            value,
+            persistence: { status: "committed", effect: "none", replayed: false },
+          }).ok,
+          false,
+        );
+      }
+    }
+  }
+
+  const leaked = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "success",
+    value: {
+      sessionId: "session-1",
+      runId: "run-new",
+      phase: "queued",
+      attemptId: "attempt-private",
+    },
+    persistence: { status: "committed", effect: "none", replayed: false },
+  });
+  assert.equal(leaked.ok, false);
+  if (!leaked.ok) assert.equal(leaked.output.error.code, "malformed_application_response");
+
+  const capacity = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Provider capacity was reached.",
+      retryable: true,
+      details: { scope: "provider", current: 4, limit: 4 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  });
+  assert.equal(capacity.ok, true);
+  if (!capacity.ok) assert.fail("capacity projection failed");
+  assert.equal(JSON.stringify(capacity.output).includes("providerId"), false);
+
+  const capacityLeak = projectCliRunOperationOutput(startCommand, {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Provider capacity was reached.",
+      retryable: true,
+      details: { scope: "provider", providerId: "provider-private", current: 4, limit: 4 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  });
+  assert.equal(capacityLeak.ok, false);
+});
+
+test("Run input output preserves delivery states and rejects non-public fields", () => {
+  const states = [
+    { deliveryState: "pending" },
+    { deliveryState: "accepted" },
+    { deliveryState: "rejected", resolutionCode: "provider_rejected" },
+    { deliveryState: "rejected", resolutionCode: "delivery_not_sent" },
+    { deliveryState: "ambiguous", resolutionCode: "transport_unknown" },
+    { deliveryState: "ambiguous", resolutionCode: "process_unknown" },
+    { deliveryState: "aborted", resolutionCode: "run_terminal_not_sent" },
+  ] as const;
+  for (const state of states) {
+    const projected = projectCliRunOperationOutput(sendInputCommand, {
+      overallStatus: "success",
+      value: {
+        sessionId: "session-1",
+        runId: "run-1",
+        messageId: "message-1",
+        ...state,
+      },
+      persistence: { status: "committed", effect: "none", replayed: true },
+    });
+    assert.equal(projected.ok, true);
+    if (!projected.ok) assert.fail("Run input projection failed");
+    const applicationResponse = projected.output.applicationResponse;
+    if (applicationResponse.overallStatus !== "success") assert.fail("Expected a successful Run input response.");
+    assert.deepEqual(applicationResponse.value, {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      ...state,
+    });
+  }
+  for (const privateFields of [{ attemptId: "attempt-private" }, { providerError: "provider-private" }]) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "success",
+        value: {
+          sessionId: "session-1",
+          runId: "run-1",
+          messageId: "message-1",
+          deliveryState: "accepted",
+          ...privateFields,
+        },
+        persistence: { status: "committed", effect: "none", replayed: true },
+      }).ok,
+      false,
+    );
+  }
+  for (const value of [
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "pending",
+      resolutionCode: "process_unknown",
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "rejected",
+      resolutionCode: "raw_provider_error",
+    },
+    {
+      sessionId: "session-other",
+      runId: "run-1",
+      messageId: "message-1",
+      deliveryState: "accepted",
+    },
+  ]) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "committed", effect: "none", replayed: true },
+      }).ok,
+      false,
+    );
+  }
+  const capacity = projectCliRunOperationOutput(sendInputCommand, {
+    overallStatus: "failure",
+    error: {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Run input capacity was reached.",
+      retryable: true,
+      details: { scope: "run", runId: "run-1", current: 64, limit: 64 },
+    },
+    persistence: { status: "rejected", effect: "none" },
+  });
+  assert.equal(capacity.ok, true);
+  for (const error of [
+    {
+      kind: "domain",
+      code: "lifecycle_conflict",
+      message: "The active Run is not owned by this runtime.",
+      retryable: true,
+    },
+    {
+      kind: "domain",
+      code: "capacity_exceeded",
+      message: "Run input capacity was reached.",
+      retryable: true,
+      details: { scope: "run", runId: "run-1", current: 1, limit: 1 },
+    },
+  ] as const) {
+    const projected = projectCliRunOperationOutput(sendInputCommand, {
+      overallStatus: "failure",
+      error,
+      persistence: { status: "not_attempted", effect: "none" },
+    });
+    assert.equal(projected.ok, true);
+    if (!projected.ok) assert.fail("preflight domain failure projection failed");
+    assert.deepEqual(projected.output.applicationResponse, {
+      overallStatus: "failure",
+      error,
+      persistence: { status: "not_attempted", effect: "none" },
+    });
+  }
+  assert.equal(
+    projectCliRunOperationOutput(sendInputCommand, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "capacity_exceeded",
+        message: "Run input capacity was reached.",
+        retryable: true,
+        details: { scope: "run", runId: "run-private", current: 64, limit: 64 },
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }).ok,
+    false,
+  );
+  assert.equal(
+    projectCliRunOperationOutput(startCommand, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "capacity_exceeded",
+        message: "Unexpected Run input capacity.",
+        retryable: true,
+        details: { scope: "run", runId: "run-private", current: 64, limit: 64 },
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }).ok,
+    false,
+  );
+  for (const code of ["cursor_invalid", "destination_invalid"] as const) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "failure",
+        error: {
+          kind: "domain",
+          code,
+          message: "This domain failure is not owned by Run input.",
+          retryable: false,
+        },
+        persistence: { status: "not_attempted", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
+  for (const persistence of [
+    { status: "not_attempted", effect: "none" },
+    { status: "rejected", effect: "none" },
+  ] as const) {
+    assert.equal(
+      projectCliRunOperationOutput(sendInputCommand, {
+        overallStatus: "failure",
+        error: {
+          kind: "domain",
+          code: "lifecycle_conflict",
+          message: "The active Run is not owned by this runtime.",
+          retryable: true,
+          details: { internalOwner: "hidden" },
+        },
+        persistence,
+      }).ok,
+      false,
+    );
+  }
+});
+
+test("Run cancel output accepts only durable canceling or terminal timestamp tuples", () => {
+  const outcomes = [
+    {
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "completed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "failed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      failure: { origin: "provider" },
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "interrupted",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      failure: { origin: "transport" },
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2, acknowledgedAt: 3 },
+    },
+    {
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+    },
+  ] as const;
+  for (const [index, outcome] of outcomes.entries()) {
+    const projected = projectCliRunOperationOutput(cancelCommand, {
+      overallStatus: "success",
+      value: { sessionId: "session-1", runId: "run-1", ...outcome },
+      persistence: { status: "committed", effect: "none", replayed: index !== 0 },
+    });
+    assert.equal(projected.ok, true, outcome.phase);
+  }
+
+  const invalidValues = [
+    activeStatus(),
+    { ...activeStatus(), phase: "queued" },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2, acknowledgedAt: 2 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "completed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2, acknowledgedAt: 3 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 3,
+      terminalAt: 3,
+      cancellation: { requestedAt: 3, acknowledgedAt: 2 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceled",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 4,
+      terminalAt: 3,
+      cancellation: { requestedAt: 2, acknowledgedAt: 4 },
+    },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2, ownerToken: "private" },
+    },
+    {
+      sessionId: "session-2",
+      runId: "run-1",
+      phase: "canceling",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      cancellation: { requestedAt: 2 },
+    },
+  ];
+  for (const value of invalidValues) {
+    assert.equal(
+      projectCliRunOperationOutput(cancelCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "committed", effect: "none", replayed: false },
+      }).ok,
+      false,
+    );
+  }
+
+  assert.equal(
+    projectCliRunOperationOutput(cancelCommand, {
+      overallStatus: "failure",
+      error: {
+        kind: "domain",
+        code: "lifecycle_conflict",
+        message: "Run cannot be canceled.",
+        retryable: false,
+      },
+      persistence: { status: "rejected", effect: "none" },
+    }).ok,
+    true,
+  );
+  for (const code of ["capacity_exceeded", "cursor_invalid"] as const) {
+    assert.equal(
+      projectCliRunOperationOutput(cancelCommand, {
+        overallStatus: "failure",
+        error: { kind: "domain", code, message: "not a cancel error", retryable: false },
+        persistence: { status: "rejected", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
+});
+
+test("Run status output uses a strict phase allowlist and preserves schema v1", () => {
   const summary = "x".repeat(4_096);
   const projected = projectCliRunOperationOutput(statusCommand, {
     overallStatus: "success",
@@ -123,11 +1217,9 @@ test("Run status output uses a phase-specific allowlist and preserves schema v1"
       startedAt: 2,
       updatedAt: 3,
       terminalAt: 3,
-      failure: { origin: "provider", summary, providerErrorCode: "hidden" },
-      executionSnapshot: "hidden",
-      version: 4,
+      failure: { origin: "provider", summary },
     },
-    persistence: { status: "read", effect: "none", workerId: "hidden" },
+    persistence: { status: "read", effect: "none" },
   });
   assert.equal(projected.ok, true);
   if (!projected.ok) assert.fail("expected projected output");
@@ -148,6 +1240,29 @@ test("Run status output uses a phase-specific allowlist and preserves schema v1"
     },
     persistence: { status: "read", effect: "none" },
   });
+
+  for (const value of [
+    { ...activeStatus(), executionSnapshot: "hidden" },
+    {
+      sessionId: "session-1",
+      runId: "run-1",
+      phase: "failed",
+      liveActivity: null,
+      createdAt: 1,
+      updatedAt: 2,
+      terminalAt: 2,
+      failure: { origin: "provider", providerErrorCode: "hidden" },
+    },
+  ]) {
+    assert.equal(
+      projectCliRunOperationOutput(statusCommand, {
+        overallStatus: "success",
+        value,
+        persistence: { status: "read", effect: "none" },
+      }).ok,
+      false,
+    );
+  }
 });
 
 test("Run event output preserves omissions, opaque continuation, order, and unknown kinds", () => {
@@ -352,4 +1467,94 @@ function activeStatus(overrides: Readonly<Record<string, unknown>> = {}) {
 
 function event(ordinal: number) {
   return { ordinal, kind: "unknown", createdAt: ordinal };
+}
+
+function canonicalInteractionSnapshots() {
+  const base = {
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    answerable: true,
+  } as const;
+  return [
+    {
+      ...base,
+      interactionId: "interaction-command",
+      kind: "codex.command_approval",
+      display: {
+        summary: "Approve command",
+        command: "node --version",
+        availableDecisions: ["accept", "decline", "cancel"],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-file",
+      kind: "codex.file_change_approval",
+      display: { summary: "Changes", changes: [{ displayPath: "src/index.ts", changeKind: "update" }] },
+    },
+    {
+      ...base,
+      interactionId: "interaction-permission",
+      kind: "codex.permission_approval",
+      display: { summary: "Permissions", permissions: ["workspace_write"] },
+    },
+    {
+      ...base,
+      interactionId: "interaction-input",
+      kind: "codex.user_input",
+      display: {
+        questions: [
+          {
+            questionId: "choice",
+            header: "Choice",
+            prompt: "Choose one",
+            allowOther: false,
+            options: [{ label: "one" }, { label: "two", description: "Second" }],
+          },
+        ],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-tool",
+      kind: "codex.mcp_tool_approval",
+      display: { server: "fixture", tool: "collect", summary: "Allow collect" },
+    },
+    {
+      ...base,
+      interactionId: "interaction-form",
+      kind: "codex.mcp_server_form",
+      display: {
+        server: "fixture",
+        message: "Enter values",
+        fields: [{ fieldId: "value", label: "Value", inputType: "string", required: false, maxLength: 4096 }],
+      },
+    },
+    {
+      ...base,
+      interactionId: "interaction-unavailable",
+      kind: "codex.command_approval",
+      answerable: false,
+      display: {
+        summary: "A command approval request is unavailable.",
+        unavailableReason: "unsafe_projection",
+      },
+    },
+  ] as const;
+}
+
+function largeFileInteraction(index: number, pathLength: number) {
+  return Object.freeze({
+    interactionId: `interaction-${index}`,
+    providerId: "codex",
+    definitionVersion: "codex-provider-v1",
+    kind: "codex.file_change_approval",
+    answerable: true,
+    display: Object.freeze({
+      summary: "Codex requests permission to apply file changes.",
+      changes: Object.freeze(
+        Array.from({ length: 256 }, () => Object.freeze({ displayPath: "x".repeat(pathLength), changeKind: "update" })),
+      ),
+    }),
+  });
 }

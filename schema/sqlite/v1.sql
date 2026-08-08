@@ -106,6 +106,30 @@ CREATE TABLE runs (
   CHECK ((phase IN ('completed', 'failed', 'canceled', 'interrupted')) = (terminal_at IS NOT NULL)),
   CHECK (final_assistant_message_id IS NULL OR phase = 'completed'),
   CHECK (phase NOT IN ('failed', 'interrupted') OR failure_origin IS NOT NULL),
+  CHECK (cancel_requested_at IS NULL OR cancel_requested_at >= 0),
+  CHECK (cancel_acknowledged_at IS NULL OR (
+    cancel_requested_at IS NOT NULL AND cancel_acknowledged_at >= cancel_requested_at
+  )),
+  CHECK (cancel_requested_at IS NULL OR terminal_at IS NULL OR cancel_requested_at <= terminal_at),
+  CHECK (cancel_acknowledged_at IS NULL OR (
+    terminal_at IS NOT NULL AND cancel_acknowledged_at <= terminal_at
+  )),
+  CHECK (
+    (phase IN ('queued', 'starting', 'active', 'finalizing')
+      AND cancel_requested_at IS NULL AND cancel_acknowledged_at IS NULL)
+    OR
+    (phase = 'canceling'
+      AND cancel_requested_at IS NOT NULL AND cancel_acknowledged_at IS NULL)
+    OR
+    (phase IN ('completed', 'failed', 'interrupted')
+      AND cancel_acknowledged_at IS NULL)
+    OR
+    (phase = 'canceled' AND (
+      (cancel_requested_at IS NULL AND cancel_acknowledged_at IS NULL)
+      OR
+      (cancel_requested_at IS NOT NULL AND cancel_acknowledged_at IS NOT NULL)
+    ))
+  ),
   FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE RESTRICT,
   FOREIGN KEY (initiating_message_id, session_id)
     REFERENCES messages(id, session_id) ON DELETE RESTRICT,
@@ -174,6 +198,8 @@ CREATE UNIQUE INDEX provider_bindings_one_open_per_session_uq
   WHERE binding_state IN ('creating', 'active');
 CREATE UNIQUE INDEX provider_bindings_session_ordinal_uq
   ON provider_bindings(session_id, ordinal);
+CREATE UNIQUE INDEX provider_bindings_id_session_provider_uq
+  ON provider_bindings(id, session_id, provider_id);
 CREATE UNIQUE INDEX provider_bindings_external_conversation_uq
   ON provider_bindings(provider_id, external_conversation_id)
   WHERE external_conversation_id IS NOT NULL;
@@ -214,6 +240,8 @@ CREATE UNIQUE INDEX run_attempts_one_non_terminal_per_run_uq
 CREATE UNIQUE INDEX run_attempts_one_succeeded_per_run_uq
   ON run_attempts(run_id) WHERE attempt_state = 'succeeded';
 CREATE UNIQUE INDEX run_attempts_run_ordinal_uq ON run_attempts(run_id, ordinal);
+CREATE UNIQUE INDEX run_attempts_id_run_binding_uq
+  ON run_attempts(id, run_id, provider_binding_id);
 CREATE UNIQUE INDEX run_attempts_binding_external_uq
   ON run_attempts(provider_binding_id, external_execution_id)
   WHERE external_execution_id IS NOT NULL;
@@ -288,8 +316,15 @@ CREATE TABLE idempotency_records (
       AND response_ref_id IS NULL AND response_envelope_json IS NULL
       AND completed_at IS NULL AND expires_at IS NULL)
     OR
+    (record_state = 'in_progress'
+      AND operation = 'run.interaction.respond'
+      AND response_kind IS NULL AND response_ref_type = 'interaction'
+      AND response_ref_id IS NOT NULL AND response_envelope_json IS NULL
+      AND completed_at IS NULL AND expires_at IS NULL)
+    OR
     (record_state = 'completed'
       AND response_kind IS NOT NULL AND response_ref_type IS NOT NULL
+      AND (response_ref_type <> 'interaction' OR operation = 'run.interaction.respond')
       AND response_envelope_json IS NOT NULL
       AND completed_at IS NOT NULL AND expires_at IS NOT NULL
       AND ((response_ref_type = 'none' AND response_ref_id IS NULL)
@@ -327,6 +362,8 @@ CREATE INDEX idempotency_records_expires_idx
   ON idempotency_records(expires_at) WHERE record_state = 'completed';
 CREATE INDEX idempotency_records_scope_session_idx
   ON idempotency_records(scope_session_id, created_at);
+CREATE UNIQUE INDEX idempotency_records_interaction_ref_uq
+  ON idempotency_records(response_ref_id) WHERE response_ref_type = 'interaction';
 
 CREATE TABLE session_deletion_manifests (
   deletion_id TEXT PRIMARY KEY
@@ -451,6 +488,73 @@ CREATE INDEX run_input_deliveries_run_state_idx
   ON run_input_deliveries(run_id, delivery_state, created_at);
 CREATE INDEX run_input_deliveries_attempt_state_idx
   ON run_input_deliveries(run_attempt_id, delivery_state);
+CREATE INDEX run_input_deliveries_unresolved_state_idx
+  ON run_input_deliveries(delivery_state)
+  WHERE delivery_state IN ('pending', 'dispatching');
+
+CREATE TABLE run_interaction_responses (
+  id TEXT PRIMARY KEY CHECK (
+    length(id) = 36
+    AND id = lower(id)
+    AND substr(id, 9, 1) = '-'
+    AND substr(id, 14, 1) = '-'
+    AND substr(id, 19, 1) = '-'
+    AND substr(id, 24, 1) = '-'
+    AND length(replace(id, '-', '')) = 32
+    AND replace(id, '-', '') NOT GLOB '*[^0-9a-f]*'
+  ),
+  session_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  run_attempt_id TEXT NOT NULL,
+  provider_binding_id TEXT NOT NULL,
+  interaction_id TEXT NOT NULL CHECK (length(interaction_id) BETWEEN 1 AND 1024),
+  provider_id TEXT NOT NULL CHECK (length(provider_id) BETWEEN 1 AND 1024),
+  definition_version TEXT NOT NULL CHECK (length(definition_version) BETWEEN 1 AND 1024),
+  interaction_kind TEXT NOT NULL CHECK (length(interaction_kind) BETWEEN 1 AND 1024),
+  semantic_action TEXT NOT NULL CHECK (semantic_action IN ('accept', 'decline', 'cancel', 'answer', 'submit')),
+  effect_certainty TEXT NOT NULL CHECK (
+    effect_certainty IN ('admitted', 'write_attempted', 'resolved', 'ambiguous', 'not_sent')
+  ),
+  resolution_code TEXT CHECK (resolution_code IN (
+    'provider_resolved', 'transport_unknown', 'process_unknown',
+    'transport_not_sent', 'owner_lost_before_write', 'adapter_rejected'
+  )),
+  admitted_at INTEGER NOT NULL CHECK (admitted_at >= 0),
+  write_attempted_at INTEGER CHECK (write_attempted_at >= admitted_at),
+  settled_at INTEGER CHECK (
+    settled_at >= admitted_at
+    AND (write_attempted_at IS NULL OR settled_at >= write_attempted_at)
+  ),
+  CHECK (
+    (effect_certainty = 'admitted'
+      AND write_attempted_at IS NULL AND settled_at IS NULL AND resolution_code IS NULL)
+    OR (effect_certainty = 'write_attempted'
+      AND write_attempted_at IS NOT NULL AND settled_at IS NULL AND resolution_code IS NULL)
+    OR (effect_certainty = 'resolved'
+      AND write_attempted_at IS NOT NULL AND settled_at IS NOT NULL
+      AND resolution_code = 'provider_resolved')
+    OR (effect_certainty = 'ambiguous'
+      AND write_attempted_at IS NOT NULL AND settled_at IS NOT NULL
+      AND resolution_code IN ('transport_unknown', 'process_unknown'))
+    OR (effect_certainty = 'not_sent'
+      AND settled_at IS NOT NULL
+      AND ((write_attempted_at IS NULL
+          AND resolution_code IN ('owner_lost_before_write', 'adapter_rejected'))
+        OR (write_attempted_at IS NOT NULL
+          AND resolution_code IN ('transport_not_sent', 'adapter_rejected'))))
+  ),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE RESTRICT,
+  FOREIGN KEY (run_id, session_id) REFERENCES runs(id, session_id) ON DELETE RESTRICT,
+  FOREIGN KEY (run_attempt_id, run_id, provider_binding_id)
+    REFERENCES run_attempts(id, run_id, provider_binding_id) ON DELETE RESTRICT,
+  FOREIGN KEY (provider_binding_id, session_id, provider_id)
+    REFERENCES provider_bindings(id, session_id, provider_id) ON DELETE RESTRICT
+) STRICT;
+
+CREATE UNIQUE INDEX run_interaction_responses_run_interaction_uq
+  ON run_interaction_responses(run_id, interaction_id);
+CREATE INDEX run_interaction_responses_attempt_certainty_idx
+  ON run_interaction_responses(run_attempt_id, effect_certainty, admitted_at);
 
 CREATE TABLE run_output_items (
   id TEXT PRIMARY KEY CHECK (length(id) > 0),

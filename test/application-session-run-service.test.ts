@@ -123,6 +123,9 @@ test("Run history resolves a closed Session scope, applies the default, and proj
     response.value.items[5]?.phase === "completed" && response.value.items[5].finalAssistantMessageId,
     undefined,
   );
+  assert.deepEqual(response.value.items[5]?.phase === "completed" ? response.value.items[5].cancellation : undefined, {
+    requestedAt: 1,
+  });
   assert.equal("liveActivity" in (response.value.items[2] ?? {}), false);
   assert.equal("sessionId" in (response.value.items[0] ?? {}), false);
   assert.equal(response.value.nextCursor, "cursor-2");
@@ -368,18 +371,23 @@ function runPhaseProjections(): Record<string, unknown>[] {
     runProjection({ runId: "run-3", ordinal: 3, phase: "active", terminalAt: undefined }),
     runProjection({ runId: "run-4", ordinal: 4, phase: "canceling", terminalAt: undefined, cancelRequestedAt: 4 }),
     runProjection({ runId: "run-5", ordinal: 5, phase: "finalizing", terminalAt: undefined }),
-    runProjection({ runId: "run-6", ordinal: 6, finalAssistantMessageId: undefined }),
+    runProjection({ runId: "run-6", ordinal: 6, finalAssistantMessageId: undefined, cancelRequestedAt: 1 }),
     runProjection({
       runId: "run-7",
       ordinal: 7,
       phase: "failed",
       failureOrigin: "provider",
       errorSummary: "failed",
-      cancelRequestedAt: 6,
-      cancelAcknowledgedAt: 7,
+      cancelRequestedAt: 1,
     }),
     runProjection({ runId: "run-8", ordinal: 8, phase: "interrupted", failureOrigin: "transport" }),
-    runProjection({ runId: "run-9", ordinal: 9, phase: "canceled", cancelRequestedAt: 8 }),
+    runProjection({
+      runId: "run-9",
+      ordinal: 9,
+      phase: "canceled",
+      cancelRequestedAt: 1,
+      cancelAcknowledgedAt: 2,
+    }),
   ];
 }
 

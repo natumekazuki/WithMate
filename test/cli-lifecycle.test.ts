@@ -39,6 +39,50 @@ const exportArgv = [
   "--destination",
   path.resolve("output.bin"),
 ] as const;
+const runStartArgv = [
+  "run",
+  "start",
+  "--session-id",
+  "session-1",
+  "--idempotency-key",
+  "018f1f4e-7f0a-7000-8000-000000000004",
+  "--content-blocks-json",
+  '[{"type":"text","text":"hello"}]',
+  "--provider-settings-json",
+  '{"providerId":"codex","definitionVersion":"codex-provider-v1","settings":{"model":"gpt-test","reasoningEffort":"medium","approvalPolicy":"never","sandbox":{"mode":"danger-full-access"}}}',
+] as const;
+const runRetryArgv = [
+  "run",
+  "retry",
+  "--session-id",
+  "session-1",
+  "--retry-of-run-id",
+  "run-source",
+  "--idempotency-key",
+  "018f1f4e-7f0a-7000-8000-000000000005",
+] as const;
+const runSendInputArgv = [
+  "run",
+  "send-input",
+  "--session-id",
+  "session-1",
+  "--run-id",
+  "run-1",
+  "--idempotency-key",
+  "018f1f4e-7f0a-7000-8000-000000000006",
+  "--content-blocks-json",
+  '[{"type":"text","text":"continue"}]',
+] as const;
+const runCancelArgv = [
+  "run",
+  "cancel",
+  "--session-id",
+  "session-1",
+  "--run-id",
+  "run-1",
+  "--idempotency-key",
+  "018f1f4e-7f0a-7000-8000-000000000007",
+] as const;
 
 test("help and parse failures do not register signals or start runtime", async () => {
   let starts = 0;
@@ -57,6 +101,7 @@ test("help and parse failures do not register signals or start runtime", async (
 
   const help = await runCliLifecycle(["--help"], dependencies);
   const runHelp = await runCliLifecycle(["run", "--help"], dependencies);
+  const interactionHelp = await runCliLifecycle(["run", "respond-interaction", "--help"], dependencies);
   const messageHelp = await runCliLifecycle(["session", "messages", "--help"], dependencies);
   const invalid = await runCliLifecycle(["session", "read"], dependencies);
   const invalidMessage = await runCliLifecycle(
@@ -83,20 +128,61 @@ test("help and parse failures do not register signals or start runtime", async (
     ["session", "delete", "--session-id", "session-1", "--idempotency-key", "018f1f4e-7f0a-7000-8000-000000000001"],
     dependencies,
   );
+  const duplicateContent = await runCliLifecycle(
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      "018f1f4e-7f0a-7000-8000-000000000002",
+      "--content-blocks-json",
+      '[{"type":"image","type":"text","text":"hello"}]',
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"danger-full-access"}',
+    ],
+    dependencies,
+  );
+  const duplicateSandbox = await runCliLifecycle(
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      "018f1f4e-7f0a-7000-8000-000000000003",
+      "--content-blocks-json",
+      '[{"type":"text","text":"hello"}]',
+      "--model",
+      "gpt-test",
+      "--reasoning-effort",
+      "medium",
+      "--sandbox-json",
+      '{"mode":"read-only","mode":"danger-full-access"}',
+    ],
+    dependencies,
+  );
 
   assert.equal(help.exitCode, CLI_EXIT_CODES.success);
   assert.equal(runHelp.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(interactionHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(messageHelp.exitCode, CLI_EXIT_CODES.success);
   assert.equal(invalid.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidMessage.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidRun.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(invalidExport.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(unconfirmedDelete.exitCode, CLI_EXIT_CODES.usageInvalid);
+  assert.equal(duplicateContent.exitCode, CLI_EXIT_CODES.usageInvalid);
+  assert.equal(duplicateSandbox.exitCode, CLI_EXIT_CODES.usageInvalid);
   assert.equal(starts, 0);
   assert.equal(registrations, 0);
 });
 
-test("Run operation completion writes one JSON object and performs one clean shutdown", async () => {
+test("Run operation completion writes one JSON object and closes one runtime client connection", async () => {
   let statusCalls = 0;
   let shutdowns = 0;
   const runOperations = unsupportedRunOperations();
@@ -135,7 +221,138 @@ test("Run operation completion writes one JSON object and performs one clean shu
   assert.equal(shutdowns, 1);
 });
 
-test("Run output completion writes one JSON object and performs one clean shutdown", async () => {
+test("Run start completion returns durable admission without waiting for terminal Run state", async () => {
+  let startCalls = 0;
+  const runOperations = unsupportedRunOperations({
+    start: async (request) => {
+      startCalls += 1;
+      return {
+        overallStatus: "success",
+        value: { sessionId: request.sessionId, runId: "run-new", phase: "queued" },
+        persistence: { status: "committed", effect: "none", replayed: false },
+      };
+    },
+  });
+  const result = await runCliLifecycle(
+    [
+      "run",
+      "start",
+      "--session-id",
+      "session-1",
+      "--idempotency-key",
+      "018f1f4e-7f0a-7000-8000-000000000701",
+      "--content-blocks-json",
+      '[{"type":"text","text":"hello"}]',
+      "--provider-settings-json",
+      '{"providerId":"codex","definitionVersion":"codex-provider-v1","settings":{"model":"gpt-test","reasoningEffort":"medium","approvalPolicy":"never","sandbox":{"mode":"workspace-write","networkAccess":false}}}',
+    ],
+    {
+      version: CLI_VERSION,
+      startRuntime: async () => runtime(successfulOperations(), undefined, runOperations),
+    },
+  );
+
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(startCalls, 1);
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).value, {
+    sessionId: "session-1",
+    runId: "run-new",
+    phase: "queued",
+  });
+});
+
+test("Run input completion returns the durable admission snapshot and closes the runtime", async () => {
+  let inputCalls = 0;
+  let shutdowns = 0;
+  const runOperations = unsupportedRunOperations({
+    sendInput: async (request) => {
+      inputCalls += 1;
+      return {
+        overallStatus: "success",
+        value: {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          messageId: "message-1",
+          deliveryState: "pending",
+        },
+        persistence: { status: "committed", effect: "none", replayed: false },
+      };
+    },
+  });
+  const result = await runCliLifecycle(runSendInputArgv, {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        runOperations,
+      ),
+  });
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(inputCalls, 1);
+  assert.equal(shutdowns, 1);
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).value, {
+    sessionId: "session-1",
+    runId: "run-1",
+    messageId: "message-1",
+    deliveryState: "pending",
+  });
+});
+
+test("Run cancel completion returns durable canceling without waiting for terminal closure", async () => {
+  let cancelCalls = 0;
+  let shutdowns = 0;
+  const runOperations = unsupportedRunOperations({
+    cancel: async (request) => {
+      cancelCalls += 1;
+      return {
+        overallStatus: "success",
+        value: {
+          sessionId: request.sessionId,
+          runId: request.runId,
+          phase: "canceling",
+          liveActivity: null,
+          createdAt: 1,
+          updatedAt: 2,
+          cancellation: { requestedAt: 2 },
+        },
+        persistence: { status: "committed", effect: "none", replayed: false },
+      };
+    },
+  });
+  const result = await runCliLifecycle(runCancelArgv, {
+    version: CLI_VERSION,
+    startRuntime: async () =>
+      runtime(
+        successfulOperations(),
+        async () => {
+          shutdowns += 1;
+          return { checkpoint: "completed" };
+        },
+        runOperations,
+      ),
+  });
+  const output = oneJsonObject(result.stdout);
+  assert.equal(result.exitCode, CLI_EXIT_CODES.success);
+  assert.equal(cancelCalls, 1);
+  assert.equal(shutdowns, 1);
+  assert.deepEqual((output.applicationResponse as Readonly<Record<string, unknown>>).value, {
+    sessionId: "session-1",
+    runId: "run-1",
+    phase: "canceling",
+    liveActivity: null,
+    createdAt: 1,
+    updatedAt: 2,
+    cancellation: { requestedAt: 2 },
+  });
+});
+
+test("Run output completion writes one JSON object and closes one runtime client connection", async () => {
   let outputCalls = 0;
   let shutdowns = 0;
   const runOutputOperations = unsupportedRunOutputOperations({
@@ -182,7 +399,7 @@ test("Run output completion writes one JSON object and performs one clean shutdo
   assert.equal(shutdowns, 1);
 });
 
-test("Session Message completion writes one JSON object and performs one clean shutdown", async () => {
+test("Session Message completion writes one JSON object and closes one runtime client connection", async () => {
   let messageCalls = 0;
   let shutdowns = 0;
   const messageOperations = unsupportedMessageOperations({
@@ -218,7 +435,7 @@ test("Session Message completion writes one JSON object and performs one clean s
   assert.equal(shutdowns, 1);
 });
 
-test("Session Run history completion writes one JSON object and performs one clean shutdown", async () => {
+test("Session Run history completion writes one JSON object and closes one runtime client connection", async () => {
   let runHistoryCalls = 0;
   let shutdowns = 0;
   const sessionRunOperations = unsupportedSessionRunOperations({
@@ -255,7 +472,7 @@ test("Session Run history completion writes one JSON object and performs one cle
   assert.equal(shutdowns, 1);
 });
 
-test("operation completion always performs one clean shutdown", async () => {
+test("operation completion always closes one runtime client connection", async () => {
   let shutdowns = 0;
   let removals = 0;
   const result = await runCliLifecycle(readArgv, {
@@ -552,6 +769,98 @@ test("SIGINT bounds a non-cooperative Application operation and still starts shu
   });
   assert.equal(shutdowns, 1);
   assert.equal(interrupt, undefined);
+});
+
+test("SIGINT preserves unknown durable-write effect for Run start, retry, and cancel", async () => {
+  for (const operation of ["start", "retry", "cancel"] as const) {
+    let interrupt: (() => void) | undefined;
+    let shutdowns = 0;
+    const handler = async (_request: unknown, options?: Readonly<{ signal?: AbortSignal }>) =>
+      await new Promise<ReturnType<typeof unknownRunWriteEffect>>((resolve) => {
+        options?.signal?.addEventListener("abort", () => resolve(unknownRunWriteEffect("persistence_canceled")), {
+          once: true,
+        });
+        interrupt?.();
+      });
+    const runOperations =
+      operation === "start"
+        ? unsupportedRunOperations({ start: handler })
+        : operation === "retry"
+          ? unsupportedRunOperations({ retry: handler })
+          : unsupportedRunOperations({ cancel: handler });
+
+    const argv = operation === "start" ? runStartArgv : operation === "retry" ? runRetryArgv : runCancelArgv;
+    const result = await runCliLifecycle(argv, {
+      version: CLI_VERSION,
+      registerInterrupt: (abort) => {
+        interrupt = abort;
+        return () => {
+          interrupt = undefined;
+        };
+      },
+      startRuntime: async () =>
+        runtime(
+          successfulOperations(),
+          async () => {
+            shutdowns += 1;
+            return { checkpoint: "completed" };
+          },
+          runOperations,
+        ),
+    });
+
+    const output = oneJsonObject(result.stdout);
+    assert.equal(result.exitCode, CLI_EXIT_CODES.canceled);
+    assert.equal(output.kind, "operation");
+    assert.equal((output.command as Readonly<Record<string, unknown>>).operation, operation);
+    assert.deepEqual((output.applicationResponse as Readonly<{ persistence: unknown }>).persistence, {
+      status: "failed",
+      effect: "unknown",
+      reconciliation: "exact_request_required",
+    });
+    assert.equal(shutdowns, 1);
+    assert.equal(interrupt, undefined);
+  }
+});
+
+test("hard timeout preserves matching and skewed unknown durable-write outcomes", async () => {
+  for (const applicationCode of ["persistence_timeout", "persistence_canceled"] as const) {
+    let shutdowns = 0;
+    const runOperations = unsupportedRunOperations({
+      start: async (_request, options) =>
+        await new Promise((resolve) => {
+          options?.signal?.addEventListener("abort", () => resolve(unknownRunWriteEffect(applicationCode)), {
+            once: true,
+          });
+        }),
+    });
+
+    const result = await runCliLifecycle([...runStartArgv, "--timeout-ms", "20"], {
+      version: CLI_VERSION,
+      startRuntime: async () =>
+        runtime(
+          successfulOperations(),
+          async () => {
+            shutdowns += 1;
+            return { checkpoint: "completed" };
+          },
+          runOperations,
+        ),
+    });
+
+    const output = oneJsonObject(result.stdout);
+    assert.equal(result.exitCode, CLI_EXIT_CODES.timeout);
+    assert.equal(output.kind, applicationCode === "persistence_timeout" ? "operation" : "lifecycle_failure");
+    assert.deepEqual((output.applicationResponse as Readonly<{ persistence: unknown }>).persistence, {
+      status: "failed",
+      effect: "unknown",
+      reconciliation: "exact_request_required",
+    });
+    if (applicationCode === "persistence_canceled") {
+      assert.equal((output.error as Readonly<Record<string, unknown>>).code, "lifecycle_timeout");
+    }
+    assert.equal(shutdowns, 1);
+  }
 });
 
 test("SIGINT preserves an export Application failure when publication is ambiguous", async () => {
@@ -928,7 +1237,13 @@ function unsupportedRunOperations(overrides: Partial<RunOperations> = {}): RunOp
     throw new Error("unexpected Run operation");
   };
   return {
+    start: overrides.start ?? unsupported,
+    retry: overrides.retry ?? unsupported,
+    sendInput: overrides.sendInput ?? unsupported,
+    cancel: overrides.cancel ?? unsupported,
+    respondInteraction: overrides.respondInteraction ?? unsupported,
     status: overrides.status ?? unsupported,
+    interactions: overrides.interactions ?? unsupported,
     events: overrides.events ?? unsupported,
     follow: overrides.follow ?? unsupported,
   };
@@ -1018,6 +1333,24 @@ function readSuccess() {
     },
     persistence: { status: "read", effect: "none" },
   };
+}
+
+function unknownRunWriteEffect(code: "persistence_timeout" | "persistence_canceled") {
+  return {
+    overallStatus: "failure",
+    error: {
+      kind: "persistence",
+      code,
+      message: "Runtime operation result is unknown.",
+      retryable: true,
+      effect: "unknown",
+    },
+    persistence: {
+      status: "failed",
+      effect: "unknown",
+      reconciliation: "exact_request_required",
+    },
+  } as const;
 }
 
 function outputStream(error?: Error): CliTextOutputStream & { text: string } {

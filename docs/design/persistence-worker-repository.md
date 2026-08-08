@@ -4,7 +4,7 @@
 
 この文書は、Persistence WorkerがCP2へ提供するRepository read契約を定める。SQLite tableと不変条件は`docs/design/multi-agent-persistence.md`、Worker lifecycleとresponse上限は`docs/design/persistence-worker-lifecycle.md`を正本とする。
 
-Main / Application Serviceはcallerの認可を行う。Persistence Workerは認証主体を扱わないが、通常のSession / Run readでは、受け取った`workspaceKey`、`sessionId`、`runId`、child relationをSQL JOINで再検証する。通常readはIDだけでscopeを決めず、所属不一致を存在の有無を漏らさない`not_found`へ畳む。削除済みSessionのexact retryに限り、ADR 009に従うMain内部readがcleanup tokenからpending / completed状態とworkspace bindingを復元する。この内部scopeをpublic responseへ投影しない。
+runtime hostのApplication Serviceはcallerの認可を行う。Persistence Workerは認証主体を扱わないが、通常のSession / Run readでは、受け取った`workspaceKey`、`sessionId`、`runId`、child relationをSQL JOINで再検証する。通常readはIDだけでscopeを決めず、所属不一致を存在の有無を漏らさない`not_found`へ畳む。削除済みSessionのexact retryに限り、ADR 009に従うruntime host内部readがcleanup tokenからpending / completed状態とworkspace bindingを復元する。この内部scopeをpublic responseへ投影しない。process ownershipはADR 013を正本とする。
 
 ## Public surface
 
@@ -17,7 +17,7 @@ CP2は`RepositoryReadClient`を使用し、raw operation名を直接組み立て
 - Message本文とstored output payloadのscoped chunk
 - child result delivery page
 
-ProviderBinding、RunAttempt、RunDispatchのrecovery projectionはMain内部専用とし、Renderer / CLIへexternal IDやdispatch情報を直接公開しない。Binding fieldは、Binding自身のSession / Providerに加え、作成元AttemptのRun Sessionが対象Run Sessionと一致し、ephemeral Bindingなら対象Attemptが作成元でもある場合だけ返す。scope tupleが不一致の場合は、Run、Attempt、Dispatchのprojectionを維持し、Binding ID、Provider ID、外部conversation IDをnullにする。repair、collect、state収束はwriteであるためS6の責務とする。
+ProviderBinding、RunAttempt、RunDispatchのrecovery projectionはruntime host内部専用とし、Electron Main process、Renderer、CLIへexternal IDやdispatch情報を直接公開しない。Binding fieldは、Binding自身のSession / Providerに加え、作成元AttemptのRun Sessionが対象Run Sessionと一致し、ephemeral Bindingなら対象Attemptが作成元でもある場合だけ返す。scope tupleが不一致の場合は、Run、Attempt、Dispatchのprojectionを維持し、Binding ID、Provider ID、外部conversation IDをnullにする。repair、collect、state収束はwriteであるためS6の責務とする。
 
 ## Pagination and snapshot
 

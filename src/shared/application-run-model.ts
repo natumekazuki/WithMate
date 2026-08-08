@@ -1,15 +1,22 @@
 import type {
   ApplicationAccessDecision,
+  ApplicationDomainErrorCode,
   ApplicationOperationOptions,
   ApplicationOperationResponse,
   ApplicationSessionOperationContext,
 } from "./application-service-model.js";
+import type { TextContentBlock } from "./message-content.js";
+import type { ProviderSettingsEnvelope } from "./provider-settings.js";
 import { REPOSITORY_READ_LIMITS } from "./repository-read-model.js";
 
 export const APPLICATION_RUN_LIMITS = {
   maxIdentifierLength: 1_024,
+  maxExecutionSettingLength: 1_024,
   maxCursorLength: 2_048,
   maxSummaryLength: 4_096,
+  maxPendingInputsPerAttempt: 64,
+  maxTrackedInputs: 128,
+  interactionsMaxItems: 32,
   eventsDefaultItems: REPOSITORY_READ_LIMITS.events.default,
   eventsMaxItems: REPOSITORY_READ_LIMITS.events.max,
   followDefaultWaitMs: 10_000,
@@ -19,7 +26,72 @@ export const APPLICATION_RUN_LIMITS = {
   followMaxPollMs: 5_000,
 } as const;
 
-export type ApplicationRunOperation = "status" | "events" | "follow";
+export const APPLICATION_RUN_SEND_INPUT_DOMAIN_ERROR_CODES = [
+  "request_invalid",
+  "not_found",
+  "reference_invalid",
+  "lifecycle_conflict",
+  "session_busy",
+  "capacity_exceeded",
+  "insufficient_disk_space",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+  "identity_exhausted",
+] as const satisfies readonly ApplicationDomainErrorCode[];
+
+export type ApplicationRunSendInputDomainErrorCode = (typeof APPLICATION_RUN_SEND_INPUT_DOMAIN_ERROR_CODES)[number];
+
+export function isApplicationRunSendInputDomainErrorCode(
+  value: unknown,
+): value is ApplicationRunSendInputDomainErrorCode {
+  return (
+    typeof value === "string" && (APPLICATION_RUN_SEND_INPUT_DOMAIN_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
+export const APPLICATION_RUN_CANCEL_DOMAIN_ERROR_CODES = [
+  "request_invalid",
+  "not_found",
+  "reference_invalid",
+  "lifecycle_conflict",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+] as const satisfies readonly ApplicationDomainErrorCode[];
+
+export const APPLICATION_RUN_RESPOND_INTERACTION_DOMAIN_ERROR_CODES = [
+  "request_invalid",
+  "not_found",
+  "reference_invalid",
+  "lifecycle_conflict",
+  "idempotency_conflict",
+  "idempotency_in_progress",
+  "idempotency_expired",
+] as const satisfies readonly ApplicationDomainErrorCode[];
+
+export type ApplicationRunRespondInteractionDomainErrorCode =
+  (typeof APPLICATION_RUN_RESPOND_INTERACTION_DOMAIN_ERROR_CODES)[number];
+
+export function isApplicationRunRespondInteractionDomainErrorCode(
+  value: unknown,
+): value is ApplicationRunRespondInteractionDomainErrorCode {
+  return (
+    typeof value === "string" &&
+    (APPLICATION_RUN_RESPOND_INTERACTION_DOMAIN_ERROR_CODES as readonly string[]).includes(value)
+  );
+}
+
+export type ApplicationRunCancelDomainErrorCode = (typeof APPLICATION_RUN_CANCEL_DOMAIN_ERROR_CODES)[number];
+
+export function isApplicationRunCancelDomainErrorCode(value: unknown): value is ApplicationRunCancelDomainErrorCode {
+  return typeof value === "string" && (APPLICATION_RUN_CANCEL_DOMAIN_ERROR_CODES as readonly string[]).includes(value);
+}
+
+export type ApplicationRunOperation =
+  "start" | "retry" | "send-input" | "cancel" | "respond-interaction" | "status" | "events" | "follow" | "interactions";
+
+export type ApplicationRunProviderSettings = ProviderSettingsEnvelope;
 
 export type ApplicationRunPhase =
   "queued" | "starting" | "active" | "canceling" | "finalizing" | "completed" | "failed" | "canceled" | "interrupted";
@@ -31,10 +103,18 @@ export type ApplicationRunFailureSummary = Readonly<{
   summary?: string;
 }>;
 
-export type ApplicationRunCancellationSummary = Readonly<{
+export type ApplicationRunCancellationRequestSummary = Readonly<{
   requestedAt: number;
-  acknowledgedAt?: number;
+  acknowledgedAt?: never;
 }>;
+
+export type ApplicationRunCancellationAcknowledgementSummary = Readonly<{
+  requestedAt: number;
+  acknowledgedAt: number;
+}>;
+
+export type ApplicationRunCancellationSummary =
+  ApplicationRunCancellationRequestSummary | ApplicationRunCancellationAcknowledgementSummary;
 
 type ApplicationRunStatusBase = Readonly<{
   sessionId: string;
@@ -67,7 +147,7 @@ type ApplicationRunCancelingStatus = ApplicationRunStatusBase &
   Readonly<{
     phase: "canceling";
     liveActivity: null;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation: ApplicationRunCancellationRequestSummary;
     failure?: never;
     terminalAt?: never;
   }>;
@@ -78,7 +158,7 @@ type ApplicationRunCompletedStatus = ApplicationRunStatusBase &
     liveActivity: null;
     terminalAt: number;
     failure?: never;
-    cancellation?: never;
+    cancellation?: ApplicationRunCancellationRequestSummary;
   }>;
 
 type ApplicationRunFailedStatus = ApplicationRunStatusBase &
@@ -87,7 +167,7 @@ type ApplicationRunFailedStatus = ApplicationRunStatusBase &
     liveActivity: null;
     terminalAt: number;
     failure: ApplicationRunFailureSummary;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation?: ApplicationRunCancellationRequestSummary;
   }>;
 
 type ApplicationRunCanceledStatus = ApplicationRunStatusBase &
@@ -95,7 +175,7 @@ type ApplicationRunCanceledStatus = ApplicationRunStatusBase &
     phase: "canceled";
     liveActivity: null;
     terminalAt: number;
-    cancellation?: ApplicationRunCancellationSummary;
+    cancellation?: ApplicationRunCancellationAcknowledgementSummary;
     failure?: never;
   }>;
 
@@ -106,6 +186,11 @@ export type ApplicationRunStatus =
   | ApplicationRunCompletedStatus
   | ApplicationRunFailedStatus
   | ApplicationRunCanceledStatus;
+
+export type ApplicationRunCancelResult = Extract<
+  ApplicationRunStatus,
+  Readonly<{ phase: "canceling" | "completed" | "failed" | "canceled" | "interrupted" }>
+>;
 
 export type ApplicationRunEventKind = "run_terminal" | "child_result_collected" | "unknown";
 
@@ -123,10 +208,177 @@ export type ApplicationRunEventPage = Readonly<{
   nextCursor: string;
 }>;
 
+export type ApplicationRunInteractionJsonValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly ApplicationRunInteractionJsonValue[]
+  | Readonly<{ [key: string]: ApplicationRunInteractionJsonValue }>;
+
+export type ApplicationRunInteraction = Readonly<{
+  interactionId: string;
+  providerId: string;
+  definitionVersion: string;
+  kind: string;
+  answerable: boolean;
+  display: Readonly<{ [key: string]: ApplicationRunInteractionJsonValue }>;
+}>;
+
+export type ApplicationRunInteractionResponse = Readonly<{
+  interactionId: string;
+  kind: string;
+  payload: ApplicationRunInteractionJsonValue;
+}>;
+
+export type ApplicationRunRespondInteractionRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  response: ApplicationRunInteractionResponse;
+}>;
+
+type ApplicationRunRespondInteractionResultBase = Readonly<{
+  sessionId: string;
+  runId: string;
+  interactionId: string;
+  admittedAt: number;
+}>;
+
+export type ApplicationRunRespondInteractionResult =
+  | (ApplicationRunRespondInteractionResultBase &
+      Readonly<{
+        effectCertainty: "admitted";
+        writeAttemptedAt: null;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (ApplicationRunRespondInteractionResultBase &
+      Readonly<{
+        effectCertainty: "write_attempted";
+        writeAttemptedAt: number;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (ApplicationRunRespondInteractionResultBase &
+      Readonly<{
+        effectCertainty: "resolved";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "provider_resolved";
+      }>)
+  | (ApplicationRunRespondInteractionResultBase &
+      Readonly<{
+        effectCertainty: "ambiguous";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_unknown" | "process_unknown";
+      }>)
+  | (ApplicationRunRespondInteractionResultBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: null;
+        settledAt: number;
+        resolutionCode: "owner_lost_before_write" | "adapter_rejected";
+      }>)
+  | (ApplicationRunRespondInteractionResultBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_not_sent" | "adapter_rejected";
+      }>);
+
+export type ApplicationRunInteractionsResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  runVersion: number;
+  interactions: readonly ApplicationRunInteraction[];
+}>;
+
 export type ApplicationRunStatusRequest<TAuthorizationContext> = Readonly<{
   context: ApplicationSessionOperationContext<TAuthorizationContext>;
   sessionId: string;
   runId: string;
+}>;
+
+export type ApplicationRunInteractionsRequest<TAuthorizationContext> =
+  ApplicationRunStatusRequest<TAuthorizationContext>;
+
+export type ApplicationRunStartRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  idempotencyKey: string;
+  contentBlocks: readonly TextContentBlock[];
+  providerSettings: ApplicationRunProviderSettings;
+}>;
+
+export type ApplicationRunRetryRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  retryOfRunId: string;
+  idempotencyKey: string;
+  providerSettingsOverride?: ApplicationRunProviderSettings;
+}>;
+
+export type ApplicationRunSendInputRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+  contentBlocks: readonly TextContentBlock[];
+}>;
+
+export type ApplicationRunCancelRequest<TAuthorizationContext> = Readonly<{
+  context: ApplicationSessionOperationContext<TAuthorizationContext>;
+  sessionId: string;
+  runId: string;
+  idempotencyKey: string;
+}>;
+
+export type ApplicationRunSendInputResult =
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "pending";
+      resolutionCode?: never;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "accepted";
+      resolutionCode?: never;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "rejected";
+      resolutionCode: "provider_rejected" | "delivery_not_sent";
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "ambiguous";
+      resolutionCode: "transport_unknown" | "process_unknown";
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      messageId: string;
+      deliveryState: "aborted";
+      resolutionCode: "run_terminal_not_sent";
+    }>;
+
+export type ApplicationRunAdmissionResult = Readonly<{
+  sessionId: string;
+  runId: string;
+  retryOfRunId?: string;
+  phase: ApplicationRunPhase;
 }>;
 
 export type ApplicationRunEventsRequest<TAuthorizationContext> = ApplicationRunStatusRequest<TAuthorizationContext> &
@@ -152,22 +404,93 @@ export type ApplicationRunFollowResult =
   | Readonly<{ reason: "terminal"; status: ApplicationTerminalRunStatus; events: ApplicationRunEventPage }>
   | Readonly<{ reason: "deadline"; status: ApplicationNonTerminalRunStatus; events: ApplicationRunEventPage }>;
 
-export type ApplicationRunAccessValidationInput<TAuthorizationContext> = Readonly<{
-  operation: ApplicationRunOperation;
-  access: "read";
-  context: ApplicationSessionOperationContext<TAuthorizationContext>;
-  target: Readonly<{
-    kind: "run";
-    sessionId: string;
-    runId: string;
-  }>;
-}>;
+export type ApplicationRunAccessValidationInput<TAuthorizationContext> =
+  | Readonly<{
+      operation: "start";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "session_run_start";
+        sessionId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "retry";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "session_run_retry";
+        sessionId: string;
+        retryOfRunId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "send-input";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run_input";
+        sessionId: string;
+        runId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "cancel";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run_cancel";
+        sessionId: string;
+        runId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "respond-interaction";
+      access: "write";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run_interaction";
+        sessionId: string;
+        runId: string;
+        interactionId: string;
+      }>;
+    }>
+  | Readonly<{
+      operation: "status" | "events" | "follow" | "interactions";
+      access: "read";
+      context: ApplicationSessionOperationContext<TAuthorizationContext>;
+      target: Readonly<{
+        kind: "run";
+        sessionId: string;
+        runId: string;
+      }>;
+    }>;
 
 export interface ApplicationRunAccessValidator<TAuthorizationContext> {
   authorize(input: ApplicationRunAccessValidationInput<TAuthorizationContext>): Promise<ApplicationAccessDecision>;
 }
 
 export interface ApplicationRunOperations<TAuthorizationContext> {
+  start(
+    request: ApplicationRunStartRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">>;
+  retry(
+    request: ApplicationRunRetryRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunAdmissionResult, "write">>;
+  sendInput(
+    request: ApplicationRunSendInputRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunSendInputResult, "write">>;
+  cancel(
+    request: ApplicationRunCancelRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunCancelResult, "write">>;
+  respondInteraction(
+    request: ApplicationRunRespondInteractionRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunRespondInteractionResult, "write">>;
   status(
     request: ApplicationRunStatusRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
@@ -176,6 +499,10 @@ export interface ApplicationRunOperations<TAuthorizationContext> {
     request: ApplicationRunEventsRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,
   ): Promise<ApplicationOperationResponse<ApplicationRunEventPage, "read">>;
+  interactions(
+    request: ApplicationRunInteractionsRequest<TAuthorizationContext>,
+    options?: ApplicationOperationOptions,
+  ): Promise<ApplicationOperationResponse<ApplicationRunInteractionsResult, "read">>;
   follow(
     request: ApplicationRunFollowRequest<TAuthorizationContext>,
     options?: ApplicationOperationOptions,

@@ -1969,7 +1969,6 @@ function projectCapacityExceededDetails(value: unknown): ApplicationCapacityExce
       if (!isBoundedString(snapshot.providerId)) return invalidRepositoryValue();
       return {
         scope: snapshot.scope,
-        providerId: snapshot.providerId,
         current: snapshot.current,
         limit: snapshot.limit,
       };

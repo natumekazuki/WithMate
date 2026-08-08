@@ -1,4 +1,5 @@
 import type { LocalRepositoryMetadata, SessionMetadata } from "./session-metadata.js";
+import { APPLICATION_RUN_PAYLOAD_LIMITS } from "./application-run-payload-limits.js";
 import type { TextContentBlock } from "./message-content.js";
 
 export const REPOSITORY_WRITE_OPERATIONS = {
@@ -17,10 +18,19 @@ export const REPOSITORY_WRITE_OPERATIONS = {
   runInputAdmit: "repository.run.input.admit",
   runInputBegin: "repository.run.input.begin",
   runInputResolve: "repository.run.input.resolve",
+  runInteractionResponseAdmit: "repository.run.interaction-response.admit",
+  runInteractionResponseMarkWriteAttempt: "repository.run.interaction-response.mark-write-attempt",
+  runInteractionResponseSettle: "repository.run.interaction-response.settle",
+  runCancelAdmit: "repository.run.cancel.admit",
   runOutputAppend: "repository.run.output.append",
   runOutputResolvePending: "repository.run.output.resolve-pending",
   runTerminal: "repository.run.terminal",
   childResultCollect: "repository.child-result.collect",
+} as const;
+
+export const RUN_WRITE_PAYLOAD_LIMITS = {
+  executionSnapshotMaxJsonBytes: APPLICATION_RUN_PAYLOAD_LIMITS.executionSnapshotMaxJsonBytes,
+  providerRequestMaxJsonBytes: APPLICATION_RUN_PAYLOAD_LIMITS.providerRequestMaxJsonBytes,
 } as const;
 
 export type SessionLifecycleStatus = "active" | "archived" | "closed";
@@ -30,10 +40,9 @@ export type RepositoryJsonValue =
 
 export type RunExecutionSnapshot = Readonly<{
   providerId: string;
-  model: string;
-  reasoning: RepositoryJsonValue;
-  approval: RepositoryJsonValue;
-  sandbox: RepositoryJsonValue;
+  definitionVersion: string;
+  modelSelection: "explicit" | "inherited";
+  settings: Readonly<{ [key: string]: RepositoryJsonValue }>;
   workspace: Readonly<{ [key: string]: RepositoryJsonValue }>;
   character: Readonly<{ [key: string]: RepositoryJsonValue }> | null;
 }>;
@@ -77,14 +86,6 @@ export type SessionDeletionCleanupCompleteCommand = Readonly<{
 
 export type StartupRepairCommand = Readonly<Record<string, never>>;
 
-export type RunAdmissionBindingIntent =
-  | Readonly<{ kind: "reuse"; bindingId: string }>
-  | Readonly<{
-      kind: "create";
-      bindingId: string;
-      persistenceMode: "persistent" | "ephemeral";
-    }>;
-
 export type RunAdmissionDispatch = Readonly<{
   providerRequest: Readonly<{ [key: string]: RepositoryJsonValue }>;
   providerIdempotencyKey: string | null;
@@ -100,12 +101,9 @@ export type NormalRunAdmissionCommand = Readonly<{
   workspaceKey: string;
   idempotencyKey: string;
   message: Readonly<{
-    id: string;
     contentBlocks: readonly TextContentBlock[];
   }>;
-  run: RunAdmissionDraft;
-  attemptId: string;
-  bindingIntent: RunAdmissionBindingIntent;
+  run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
   dispatch: RunAdmissionDispatch;
 }>;
 
@@ -114,9 +112,7 @@ export type RetryRunAdmissionCommand = Readonly<{
   workspaceKey: string;
   idempotencyKey: string;
   retryOfRunId: string;
-  run: RunAdmissionDraft;
-  attemptId: string;
-  bindingIntent: RunAdmissionBindingIntent;
+  run: Readonly<{ executionSnapshot: RunExecutionSnapshot }>;
   dispatch: RunAdmissionDispatch;
 }>;
 
@@ -199,10 +195,7 @@ export type RunInputAdmissionCommand = Readonly<{
   runId: string;
   attemptId: string;
   ephemeralOwnerToken: string | null;
-  message: Readonly<{
-    id: string;
-    contentBlocks: readonly TextContentBlock[];
-  }>;
+  contentBlocks: readonly TextContentBlock[];
 }>;
 
 export type RunInputBeginCommand = Readonly<{
@@ -216,7 +209,7 @@ export type RunInputBeginCommand = Readonly<{
 }>;
 
 export type RunInputResolutionCode =
-  "provider_rejected" | "transport_unknown" | "process_unknown" | "run_terminal_not_sent";
+  "provider_rejected" | "delivery_not_sent" | "transport_unknown" | "process_unknown" | "run_terminal_not_sent";
 
 export type RunInputResolutionCommand = Readonly<{
   sessionId: string;
@@ -228,8 +221,81 @@ export type RunInputResolutionCommand = Readonly<{
   ephemeralOwnerToken: string | null;
   outcome:
     | Readonly<{ kind: "accepted" }>
-    | Readonly<{ kind: "rejected"; resolutionCode: "provider_rejected" }>
+    | Readonly<{ kind: "rejected"; resolutionCode: "provider_rejected" | "delivery_not_sent" }>
     | Readonly<{ kind: "ambiguous"; resolutionCode: "transport_unknown" | "process_unknown" }>;
+}>;
+
+export type RunInteractionSemanticAction = "accept" | "decline" | "cancel" | "answer" | "submit";
+
+export type RunInteractionResponseAdmissionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  runId: string;
+  attemptId: string;
+  bindingId: string;
+  ephemeralOwnerToken: string | null;
+  externalConversationId: string;
+  externalExecutionId: string;
+  providerId: string;
+  definitionVersion: string;
+  interactionKind: string;
+  interactionId: string;
+  semanticAction: RunInteractionSemanticAction;
+  canonicalResponseJson: string;
+}>;
+
+export type RunInteractionResponseMarkWriteAttemptCommand = Readonly<{
+  responseRefId: string;
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  interactionId: string;
+}>;
+
+export type RunInteractionResponseResolutionCode =
+  | "provider_resolved"
+  | "transport_unknown"
+  | "process_unknown"
+  | "transport_not_sent"
+  | "owner_lost_before_write"
+  | "adapter_rejected";
+
+export type RunInteractionResponseSettlementCommand = Readonly<{
+  responseRefId: string;
+  sessionId: string;
+  workspaceKey: string;
+  runId: string;
+  interactionId: string;
+  outcome:
+    | Readonly<{ effectCertainty: "resolved"; resolutionCode: "provider_resolved" }>
+    | Readonly<{
+        effectCertainty: "ambiguous";
+        resolutionCode: "transport_unknown" | "process_unknown";
+      }>
+    | Readonly<{
+        effectCertainty: "not_sent";
+        resolutionCode: "transport_not_sent" | "owner_lost_before_write" | "adapter_rejected";
+      }>;
+}>;
+
+export type RunCancelAdmissionOwner =
+  | Readonly<{ kind: "terminal_only" }>
+  | Readonly<{
+      kind: "active_execution";
+      attemptId: string;
+      bindingId: string;
+      ephemeralOwnerToken: string | null;
+      externalConversationId: string;
+      externalExecutionId: string;
+    }>;
+
+export type RunCancelAdmissionCommand = Readonly<{
+  sessionId: string;
+  workspaceKey: string;
+  idempotencyKey: string;
+  runId: string;
+  owner: RunCancelAdmissionOwner;
 }>;
 
 export type RunOutputCategory =
@@ -264,10 +330,18 @@ export type RunOutputDraft = Readonly<{
   payload: RunOutputPayloadCommand;
 }>;
 
+export type RunProviderExecutionCorrelation = Readonly<{
+  attemptId: string;
+  bindingId: string;
+  externalConversationId: string;
+  externalExecutionId: string;
+}>;
+
 export type RunOutputAppendCommand = Readonly<{
   sessionId: string;
   workspaceKey: string;
   runId: string;
+  providerExecution: RunProviderExecutionCorrelation;
   item: RunOutputDraft;
 }>;
 
@@ -302,7 +376,15 @@ export type RunTerminalPreDispatchResolution =
   | Readonly<{ kind: "not_applicable" }>
   | Readonly<{ kind: "binding_creation_not_sent" }>
   | Readonly<{ kind: "binding_creation_ambiguous" }>
-  | Readonly<{ kind: "dispatch_not_sent" }>;
+  | Readonly<{ kind: "dispatch_not_sent" }>
+  | Readonly<{ kind: "dispatch_ambiguous" }>;
+
+export type RunTerminalCancelCorrelation =
+  | Readonly<{ kind: "none" }>
+  | Readonly<{
+      kind: "admitted_user_cancel";
+      cancelRequestedAt: number;
+    }>;
 
 export type RunTerminalCommand = Readonly<{
   sessionId: string;
@@ -313,7 +395,9 @@ export type RunTerminalCommand = Readonly<{
     id: string;
     dedupeKey: string;
   }>;
+  providerExecution: RunProviderExecutionCorrelation | null;
   preDispatchResolution: RunTerminalPreDispatchResolution;
+  cancelCorrelation: RunTerminalCancelCorrelation;
   outcome: RunTerminalOutcome;
   outputs: readonly RunTerminalOutputDraft[];
   childResult: Readonly<{
@@ -363,6 +447,7 @@ export type RepositoryCommandErrorCode =
 export type RepositoryCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "run"; runId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
   | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
 
@@ -426,7 +511,9 @@ export type StartupRepairResult = Readonly<{
     expiredIdempotencyRecords: number;
     invalidatedBindings: number;
     abortedDispatches: number;
+    ambiguousDispatches: number;
     settledInputDeliveries: number;
+    settledInteractionResponses: number;
     availableChildResults: number;
     repairedDelegations: number;
     storedOutputPayloads: number;
@@ -439,6 +526,7 @@ export type StartupRepairResult = Readonly<{
     ephemeralResumeBlockedRuns: number;
     diagnosticRuns: number;
     diagnosticIdempotencyRecords: number;
+    diagnosticInteractionResponses: number;
     diagnosticChildResults: number;
   }>;
 }>;
@@ -449,8 +537,10 @@ export type NormalRunAdmissionResult = Readonly<{
   runId: string;
   attemptId: string;
   bindingId: string;
-  bindingState: "creating" | "active";
-  dispatchState: "pending";
+  runPhase:
+    "queued" | "starting" | "active" | "canceling" | "finalizing" | "completed" | "failed" | "canceled" | "interrupted";
+  bindingState: "creating" | "active" | "invalidated" | "superseded";
+  dispatchState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   admittedAt: number;
 }>;
 
@@ -513,8 +603,9 @@ export type RunInputAdmissionResult = Readonly<{
   runId: string;
   attemptId: string;
   messageId: string;
+  messageOrdinal: number;
   bindingId: string;
-  deliveryState: "pending" | "accepted" | "rejected" | "ambiguous" | "aborted";
+  deliveryState: "pending" | "dispatching" | "accepted" | "rejected" | "ambiguous" | "aborted";
   resolutionCode: RunInputResolutionCode | null;
   admittedAt: number;
   dispatchingAt: number | null;
@@ -542,6 +633,96 @@ export type RunInputResolutionResult = Readonly<{
   resolutionCode: RunInputResolutionCode | null;
   resolvedAt: number;
 }>;
+
+type RunInteractionResponseResultBase = Readonly<{
+  responseRefId: string;
+  sessionId: string;
+  runId: string;
+  interactionId: string;
+  providerId: string;
+  definitionVersion: string;
+  interactionKind: string;
+  semanticAction: RunInteractionSemanticAction;
+  admittedAt: number;
+}>;
+
+export type RunInteractionResponseResult =
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "admitted";
+        writeAttemptedAt: null;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "write_attempted";
+        writeAttemptedAt: number;
+        settledAt: null;
+        resolutionCode: null;
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "resolved";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "provider_resolved";
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "ambiguous";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_unknown" | "process_unknown";
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: null;
+        settledAt: number;
+        resolutionCode: "owner_lost_before_write" | "adapter_rejected";
+      }>)
+  | (RunInteractionResponseResultBase &
+      Readonly<{
+        effectCertainty: "not_sent";
+        writeAttemptedAt: number;
+        settledAt: number;
+        resolutionCode: "transport_not_sent" | "adapter_rejected";
+      }>);
+
+export type RunCancelAdmissionResult =
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "canceling";
+      cancelRequestedAt: number;
+      cancelAcknowledgedAt: null;
+      terminalAt: null;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "completed" | "failed" | "interrupted";
+      cancelRequestedAt: number | null;
+      cancelAcknowledgedAt: null;
+      terminalAt: number;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "canceled";
+      cancelRequestedAt: null;
+      cancelAcknowledgedAt: null;
+      terminalAt: number;
+    }>
+  | Readonly<{
+      sessionId: string;
+      runId: string;
+      phase: "canceled";
+      cancelRequestedAt: number;
+      cancelAcknowledgedAt: number;
+      terminalAt: number;
+    }>;
 
 export type RunOutputAppendResult = Readonly<{
   sessionId: string;

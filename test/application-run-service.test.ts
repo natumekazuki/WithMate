@@ -62,26 +62,52 @@ test("Run status accepts canceled persistence without cancel timestamps and expo
 
   const withCancellation = createService({
     reads: reads({
-      run: { ...repositoryRun("canceled"), cancelRequestedAt: 20, cancelAcknowledgedAt: 21 },
+      run: { ...repositoryRun("canceled"), cancelRequestedAt: 5, cancelAcknowledgedAt: 6 },
     }),
   });
   const present = await withCancellation.status(request());
   assert.equal(present.overallStatus, "success");
   if (present.overallStatus === "success") {
     assert.deepEqual("cancellation" in present.value ? present.value.cancellation : undefined, {
-      requestedAt: 20,
-      acknowledgedAt: 21,
+      requestedAt: 5,
+      acknowledgedAt: 6,
     });
   }
 });
 
-test("Run status shares the history cancellation invariant for phases that cannot expose cancellation", async () => {
-  for (const phase of ["queued", "starting", "active", "finalizing", "completed"] as const) {
+test("Run status exposes request-only cancellation on natural completion and rejects impossible phase pairs", async () => {
+  const completed = createService({
+    reads: reads({ run: { ...repositoryRun("completed"), cancelRequestedAt: 2 } }),
+  });
+  const response = await completed.status(request());
+  assert.equal(response.overallStatus, "success");
+  if (response.overallStatus === "success") {
+    assert.equal(response.value.phase, "completed");
+    assert.deepEqual(response.value.cancellation, { requestedAt: 2 });
+  }
+
+  for (const phase of ["queued", "starting", "active", "finalizing"] as const) {
     const service = createService({
       reads: reads({ run: { ...repositoryRun(phase), cancelRequestedAt: 2 } }),
     });
     assert.deepEqual(await service.status(request()), internalReadFailure());
   }
+  for (const phase of ["completed", "failed", "interrupted"] as const) {
+    const service = createService({
+      reads: reads({
+        run: {
+          ...repositoryRun(phase),
+          cancelRequestedAt: 2,
+          cancelAcknowledgedAt: 3,
+        },
+      }),
+    });
+    assert.deepEqual(await service.status(request()), internalReadFailure());
+  }
+  const canceledWithoutAcknowledgment = createService({
+    reads: reads({ run: { ...repositoryRun("canceled"), cancelRequestedAt: 2 } }),
+  });
+  assert.deepEqual(await canceledWithoutAcknowledgment.status(request()), internalReadFailure());
 });
 
 test("Run status accepts the full persisted failure summary bound", async () => {
@@ -132,6 +158,230 @@ test("authorization rejection prevents every Repository and live activity call",
   });
 
   const response = await service.status(request());
+  assert.equal(response.overallStatus, "failure");
+  if (response.overallStatus === "failure") assert.equal(response.error.kind, "access");
+  assert.deepEqual(calls, ["authorize"]);
+});
+
+test("Run interactions authorizes exact read scope and projects only active current-version public state", async () => {
+  const authorizationTargets: unknown[] = [];
+  const readsSeen: unknown[] = [];
+  const service = createService({
+    access: allowAccess(authorizationTargets),
+    interactions: {
+      async readInteractions(input) {
+        readsSeen.push(input);
+        return {
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: [
+            {
+              interactionId: "interaction-public",
+              providerId: "codex",
+              definitionVersion: "codex-provider-v1",
+              kind: "codex.command_approval",
+              answerable: true,
+              display: {
+                summary: "Approve command",
+                command: "npm test",
+                availableDecisions: ["accept", "decline", "cancel"],
+              },
+            },
+          ],
+        } as never;
+      },
+    },
+  });
+
+  const response = await service.interactions(request());
+  assert.equal(response.overallStatus, "success");
+  if (response.overallStatus === "success") {
+    assert.deepEqual(response.value, {
+      sessionId: "session-1",
+      runId: "run-1",
+      runVersion: 7,
+      interactions: [
+        {
+          interactionId: "interaction-public",
+          providerId: "codex",
+          definitionVersion: "codex-provider-v1",
+          kind: "codex.command_approval",
+          answerable: true,
+          display: {
+            summary: "Approve command",
+            command: "npm test",
+            availableDecisions: ["accept", "decline", "cancel"],
+          },
+        },
+      ],
+    });
+  }
+  assert.deepEqual(readsSeen, [{ sessionId: "session-1", runId: "run-1", runVersion: 7 }]);
+  assert.deepEqual(authorizationTargets, [
+    {
+      operation: "interactions",
+      access: "read",
+      context: { authorization },
+      target: { kind: "run", sessionId: "session-1", runId: "run-1" },
+    },
+  ]);
+});
+
+test("Run interactions returns an empty versioned snapshot for terminal, absent, or stale live ownership", async () => {
+  let terminalReads = 0;
+  const terminal = createService({
+    reads: reads({ run: repositoryRun("completed") }),
+    interactions: {
+      async readInteractions() {
+        terminalReads += 1;
+        return null;
+      },
+    },
+  });
+  const absent = createService({
+    interactions: {
+      async readInteractions() {
+        return null;
+      },
+    },
+  });
+  const stale = createService({
+    interactions: {
+      async readInteractions() {
+        return { sessionId: "session-1", runId: "run-1", runVersion: 6, interactions: [] };
+      },
+    },
+  });
+
+  for (const response of [
+    await terminal.interactions(request()),
+    await absent.interactions(request()),
+    await stale.interactions(request()),
+  ]) {
+    assert.equal(response.overallStatus, "success");
+    if (response.overallStatus === "success") {
+      assert.deepEqual(response.value, {
+        sessionId: "session-1",
+        runId: "run-1",
+        runVersion: 7,
+        interactions: [],
+      });
+    }
+  }
+  assert.equal(terminalReads, 0);
+});
+
+test("Run interactions rejects unknown request fields and malformed live scope", async () => {
+  const invalidRequest = await createService().interactions({ ...request(), attemptId: "private" } as never);
+  assert.equal(invalidRequest.overallStatus, "failure");
+  if (invalidRequest.overallStatus === "failure") assert.equal(invalidRequest.error.code, "request_invalid");
+
+  const malformed = await createService({
+    interactions: {
+      async readInteractions() {
+        return { sessionId: "session-other", runId: "run-1", runVersion: 7, interactions: [] };
+      },
+    },
+  }).interactions(request());
+  assert.deepEqual(malformed, internalReadFailure());
+
+  const fractionalDisplay = await createService({
+    interactions: {
+      async readInteractions() {
+        return {
+          sessionId: "session-1",
+          runId: "run-1",
+          runVersion: 7,
+          interactions: [
+            {
+              interactionId: "interaction-public",
+              providerId: "codex",
+              definitionVersion: "codex-provider-v1",
+              kind: "codex.mcp_server_form",
+              answerable: true,
+              display: { maxLength: 1.5 },
+            },
+          ],
+        };
+      },
+    },
+  }).interactions(request());
+  assert.deepEqual(fractionalDisplay, internalReadFailure());
+
+  const unsafeSnapshots = [
+    {
+      interactionId: "interaction-public",
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "File:///private/secret", command: "npm test" },
+    },
+    {
+      interactionId: "interaction-public",
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "Approve command", command: "npm test", rawProviderId: "provider-request-1" },
+    },
+    {
+      interactionId: "interaction-public",
+      providerId: "codex",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "Approve command", command: "npm test", secret: "token" },
+    },
+    {
+      interactionId: "interaction-public",
+      providerId: "raw-provider-request-1",
+      definitionVersion: "codex-provider-v1",
+      kind: "codex.command_approval",
+      answerable: true,
+      display: { summary: "Approve command", command: "npm test" },
+    },
+  ];
+  for (const snapshot of unsafeSnapshots) {
+    const response = await createService({
+      interactions: {
+        async readInteractions() {
+          return {
+            sessionId: "session-1",
+            runId: "run-1",
+            runVersion: 7,
+            interactions: [snapshot],
+          };
+        },
+      },
+    }).interactions(request());
+    assert.deepEqual(response, internalReadFailure());
+  }
+});
+
+test("Run interactions authorization denial prevents Repository and live owner reads", async () => {
+  const calls: string[] = [];
+  const response = await createService({
+    access: {
+      async authorize() {
+        calls.push("authorize");
+        return { allowed: false, error: { code: "forbidden", message: "denied", retryable: false } };
+      },
+    },
+    reads: reads({
+      sessionGet: async () => {
+        calls.push("sessionGet");
+        return sessionProjection();
+      },
+    }),
+    interactions: {
+      async readInteractions() {
+        calls.push("interactions");
+        return null;
+      },
+    },
+  }).interactions(request());
   assert.equal(response.overallStatus, "failure");
   if (response.overallStatus === "failure") assert.equal(response.error.kind, "access");
   assert.deepEqual(calls, ["authorize"]);
@@ -868,6 +1118,7 @@ function createService(
       return { principal: "owner" };
     },
     ...(overrides.liveActivity === undefined ? {} : { liveActivity: overrides.liveActivity }),
+    ...(overrides.interactions === undefined ? {} : { interactions: overrides.interactions }),
     ...(overrides.clock === undefined ? {} : { clock: overrides.clock }),
     ...(overrides.sleeper === undefined ? {} : { sleeper: overrides.sleeper }),
   });
@@ -893,6 +1144,16 @@ function reads(
 ): Reads {
   return {
     sessionGet: overrides.sessionGet ?? (async () => sessionProjection()),
+    sessionDirectoriesChunk: async ({ sessionId, offset }) =>
+      jsonChunk({ sessionId }, [], offset) as Awaited<ReturnType<Reads["sessionDirectoriesChunk"]>>,
+    messageContentChunk: async ({ sessionId, messageId, offset }) =>
+      jsonChunk({ sessionId, messageId }, [{ type: "text", text: "hello" }], offset) as Awaited<
+        ReturnType<Reads["messageContentChunk"]>
+      >,
+    runSnapshotChunk: async ({ sessionId, runId, offset }) =>
+      jsonChunk({ sessionId, runId }, repositoryExecutionSnapshot(), offset) as Awaited<
+        ReturnType<Reads["runSnapshotChunk"]>
+      >,
     runGet:
       overrides.runGet ??
       (async () => runProjection(overrides.run ?? repositoryRun("active")) as Awaited<ReturnType<Reads["runGet"]>>),
@@ -914,6 +1175,7 @@ function sessionProjection(sessionId = "session-1") {
       repositoryName: null,
       allowedAdditionalDirectoriesByteLength: 2,
       allowedAdditionalDirectoriesState: "inline" as const,
+      allowedAdditionalDirectories: [],
       defaultCharacterId: "character-1",
       maxConcurrentChildRuns: 1,
       lifecycleStatus: "active" as const,
@@ -922,6 +1184,34 @@ function sessionProjection(sessionId = "session-1") {
       lastActivityAt: 1,
     },
     execution: { state: "not_started" as const },
+  };
+}
+
+function repositoryExecutionSnapshot() {
+  return {
+    providerId: "codex",
+    model: "test-model",
+    reasoning: { effort: "medium" },
+    approval: { policy: "never" },
+    sandbox: { mode: "read-only", networkAccess: false },
+    workspace: {
+      key: "workspace-1",
+      path: "C:\\workspace",
+      allowedAdditionalDirectories: [],
+    },
+    character: null,
+  };
+}
+
+function jsonChunk(scope: Readonly<Record<string, string>>, value: unknown, offset: number) {
+  const encoded = new TextEncoder().encode(JSON.stringify(value));
+  const bytes = encoded.slice(offset);
+  return {
+    ...scope,
+    offset,
+    totalBytes: encoded.byteLength,
+    eof: true,
+    bytes: bytes.buffer,
   };
 }
 
@@ -940,6 +1230,7 @@ function repositoryRun(phase: ApplicationRunPhase): Readonly<Record<string, unkn
     externalSideEffectState: "present",
     providerErrorCode: failure ? "provider-private-code" : undefined,
     ...(failure ? { failureOrigin: "provider", errorSummary: "redacted failure" } : {}),
+    ...(phase === "canceling" ? { cancelRequestedAt: 2 } : {}),
     createdAt: 1,
     ...(phase === "queued" ? {} : { startedAt: 2 }),
     ...(terminal ? { terminalAt: 10 } : {}),

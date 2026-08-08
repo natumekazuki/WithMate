@@ -3,6 +3,7 @@
 - Status: Accepted
 - Date: 2026-07-19
 - Amends: ADR 006のCLI lifecycle interruption分類
+- Amended by: ADR 013のruntime host ownership
 
 ## Context
 

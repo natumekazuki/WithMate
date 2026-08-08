@@ -1,6 +1,7 @@
 import {
   APPLICATION_RUN_LIMITS,
-  type ApplicationRunCancellationSummary,
+  type ApplicationRunCancellationAcknowledgementSummary,
+  type ApplicationRunCancellationRequestSummary,
   type ApplicationRunFailureSummary,
   type ApplicationRunPhase,
 } from "../shared/application-run-model.js";
@@ -25,28 +26,28 @@ export type PersistedRunProjection =
         phase: "canceling";
         terminalAt?: never;
         failure?: never;
-        cancellation?: ApplicationRunCancellationSummary;
+        cancellation: ApplicationRunCancellationRequestSummary;
       }>)
   | (PersistedRunBase &
       Readonly<{
         phase: "completed";
         terminalAt: number;
         failure?: never;
-        cancellation?: never;
+        cancellation?: ApplicationRunCancellationRequestSummary;
       }>)
   | (PersistedRunBase &
       Readonly<{
         phase: "failed" | "interrupted";
         terminalAt: number;
         failure: ApplicationRunFailureSummary;
-        cancellation?: ApplicationRunCancellationSummary;
+        cancellation?: ApplicationRunCancellationRequestSummary;
       }>)
   | (PersistedRunBase &
       Readonly<{
         phase: "canceled";
         terminalAt: number;
         failure?: never;
-        cancellation?: ApplicationRunCancellationSummary;
+        cancellation?: ApplicationRunCancellationAcknowledgementSummary;
       }>);
 
 export const PERSISTED_RUN_PROJECTION_KEYS = [
@@ -99,8 +100,29 @@ export function projectPersistedRun(value: unknown): PersistedRunProjection {
   if ((phase === "failed" || phase === "interrupted") && failureOrigin === undefined) {
     throw new TypeError("Failure Run has no origin.");
   }
-  if (!["canceling", "failed", "interrupted", "canceled"].includes(phase) && cancellation !== undefined) {
+  if (!["canceling", "completed", "failed", "interrupted", "canceled"].includes(phase) && cancellation !== undefined) {
     throw new TypeError("Run phase has cancellation details.");
+  }
+  if (requestedAt !== undefined && terminalAt !== undefined && requestedAt > terminalAt) {
+    throw new TypeError("Cancel request is after the terminal time.");
+  }
+  if (
+    acknowledgedAt !== undefined &&
+    (requestedAt === undefined ||
+      acknowledgedAt < requestedAt ||
+      terminalAt === undefined ||
+      acknowledgedAt > terminalAt)
+  ) {
+    throw new TypeError("Cancel acknowledgment order is invalid.");
+  }
+  if (phase === "canceling" && (requestedAt === undefined || acknowledgedAt !== undefined)) {
+    throw new TypeError("Canceling Run has invalid cancellation details.");
+  }
+  if ((phase === "completed" || phase === "failed" || phase === "interrupted") && acknowledgedAt !== undefined) {
+    throw new TypeError("Non-canceled terminal Run has a cancel acknowledgment.");
+  }
+  if (phase === "canceled" && (requestedAt === undefined) !== (acknowledgedAt === undefined)) {
+    throw new TypeError("Canceled Run has incomplete cancellation details.");
   }
 
   switch (phase) {
@@ -110,9 +132,16 @@ export function projectPersistedRun(value: unknown): PersistedRunProjection {
     case "finalizing":
       return { ...base, phase };
     case "canceling":
-      return { ...base, phase, ...(cancellation === undefined ? {} : { cancellation }) };
+      return { ...base, phase, cancellation: cancellation as ApplicationRunCancellationRequestSummary };
     case "completed":
-      return { ...base, phase, terminalAt: terminalAt as number };
+      return {
+        ...base,
+        phase,
+        terminalAt: terminalAt as number,
+        ...(cancellation === undefined
+          ? {}
+          : { cancellation: cancellation as ApplicationRunCancellationRequestSummary }),
+      };
     case "failed":
     case "interrupted":
       return {
@@ -123,14 +152,18 @@ export function projectPersistedRun(value: unknown): PersistedRunProjection {
           origin: failureOrigin as ApplicationRunFailureSummary["origin"],
           ...(errorSummary === undefined ? {} : { summary: errorSummary }),
         },
-        ...(cancellation === undefined ? {} : { cancellation }),
+        ...(cancellation === undefined
+          ? {}
+          : { cancellation: cancellation as ApplicationRunCancellationRequestSummary }),
       };
     case "canceled":
       return {
         ...base,
         phase,
         terminalAt: terminalAt as number,
-        ...(cancellation === undefined ? {} : { cancellation }),
+        ...(cancellation === undefined
+          ? {}
+          : { cancellation: cancellation as ApplicationRunCancellationAcknowledgementSummary }),
       };
   }
 }

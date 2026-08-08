@@ -4,14 +4,27 @@ export const MESSAGE_CONTENT_LIMITS = {
   inlineMaxBytes: 64 * 1024,
 } as const;
 
+export const RUN_MUTATION_INLINE_CONTENT_LIMITS = {
+  maxBlocks: 4_096,
+  maxJsonBytes: 64 * 1024,
+} as const;
+
 export type TextContentBlock = Readonly<{
   type: "text";
   text: string;
 }>;
 
-export function snapshotMessageContentBlocks(value: unknown): readonly TextContentBlock[] | undefined {
+type MessageContentSnapshotLimits = Readonly<{
+  maxBlocks: number;
+  maxJsonBytes: number;
+}>;
+
+export function snapshotMessageContentBlocks(
+  value: unknown,
+  limits: MessageContentSnapshotLimits = MESSAGE_CONTENT_LIMITS,
+): readonly TextContentBlock[] | undefined {
   try {
-    if (!Array.isArray(value) || value.length > MESSAGE_CONTENT_LIMITS.maxBlocks || !isDensePlainArray(value)) {
+    if (!Array.isArray(value) || value.length > limits.maxBlocks || !isDensePlainArray(value)) {
       return undefined;
     }
     const blocks: TextContentBlock[] = [];
@@ -22,10 +35,10 @@ export function snapshotMessageContentBlocks(value: unknown): readonly TextConte
       const block = snapshotTextContentBlock(element.value);
       if (block === undefined) return undefined;
       minimumJsonBytes += (index === 0 ? 0 : 1) + 25 + block.text.length;
-      if (minimumJsonBytes > MESSAGE_CONTENT_LIMITS.maxJsonBytes) return undefined;
+      if (minimumJsonBytes > limits.maxJsonBytes) return undefined;
       blocks.push(block);
     }
-    if (new TextEncoder().encode(JSON.stringify(blocks)).byteLength > MESSAGE_CONTENT_LIMITS.maxJsonBytes) {
+    if (new TextEncoder().encode(JSON.stringify(blocks)).byteLength > limits.maxJsonBytes) {
       return undefined;
     }
     return Object.freeze(blocks);

@@ -1,10 +1,17 @@
 import { normalizeHostAbsolutePath, WORKSPACE_PATH_MAX_LENGTH } from "../shared/workspace-path.js";
 import { isCanonicalUuid } from "../shared/persistence-runtime-protocol.js";
+import type { ProviderSettingsEnvelope } from "../shared/provider-settings.js";
+import { RUN_MUTATION_INLINE_CONTENT_LIMITS, snapshotMessageContentBlocks } from "../shared/message-content.js";
+import {
+  APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS,
+  applicationRunInteractionWireItemBytes,
+} from "../shared/application-run-interaction-limits.js";
 import {
   canonicalizeSessionQuery,
   canonicalizeSessionTitle,
   isLocalRepositoryKey,
 } from "../shared/session-metadata.js";
+import { parseStrictJson } from "../shared/strict-json.js";
 import {
   CLI_EXIT_CODES,
   CLI_RUN_LIMITS,
@@ -16,6 +23,7 @@ import {
   type CliCommandIdentity,
   type CliParseResult,
   type CliRunOperation,
+  type CliRunRespondInteractionCommand,
   type CliSessionOperation,
   type CliSessionWriteCommand,
   type CliUsageErrorCode,
@@ -54,7 +62,13 @@ const sessionOperations = new Set<CliSessionOperation>([
   "delete",
 ]);
 const runOperations = new Set<CliRunOperation>([
+  "start",
+  "retry",
+  "send-input",
+  "cancel",
+  "respond-interaction",
   "status",
+  "interactions",
   "events",
   "follow",
   "output-counts",
@@ -148,8 +162,20 @@ function parseSessionCommand(
 
 function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: readonly string[]): CliParseResult {
   switch (identity.operation) {
+    case "start":
+      return parseRunStart(identity as CliCommandIdentity<"start">, argv);
+    case "retry":
+      return parseRunRetry(identity as CliCommandIdentity<"retry">, argv);
+    case "send-input":
+      return parseRunSendInput(identity as CliCommandIdentity<"send-input">, argv);
+    case "cancel":
+      return parseRunCancel(identity as CliCommandIdentity<"cancel">, argv);
+    case "respond-interaction":
+      return parseRunRespondInteraction(identity as CliCommandIdentity<"respond-interaction">, argv);
     case "status":
       return parseRunStatus(identity as CliCommandIdentity<"status">, argv);
+    case "interactions":
+      return parseRunInteractions(identity as CliCommandIdentity<"interactions">, argv);
     case "events":
       return parseRunEvents(identity as CliCommandIdentity<"events">, argv);
     case "follow":
@@ -167,7 +193,142 @@ function parseRunCommand(identity: CliCommandIdentity<CliRunOperation>, argv: re
   }
 }
 
+function parseRunStart(identity: CliCommandIdentity<"start">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--content-blocks-json": requiredOption(parseContentBlocksJson),
+    "--provider-settings-json": requiredOption(parseProviderSettingsJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      contentBlocks: parsed.values["--content-blocks-json"] as NonNullable<
+        ReturnType<typeof snapshotMessageContentBlocks>
+      >,
+      providerSettings: parsed.values["--provider-settings-json"] as ProviderSettingsEnvelope,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunSendInput(identity: CliCommandIdentity<"send-input">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--content-blocks-json": requiredOption(parseContentBlocksJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      contentBlocks: parsed.values["--content-blocks-json"] as NonNullable<
+        ReturnType<typeof snapshotMessageContentBlocks>
+      >,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunCancel(identity: CliCommandIdentity<"cancel">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunRespondInteraction(
+  identity: CliCommandIdentity<"respond-interaction">,
+  argv: readonly string[],
+): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--response-json": requiredOption(parseInteractionResponseJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      response: parsed.values["--response-json"] as CliRunRespondInteractionCommand["response"],
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunRetry(identity: CliCommandIdentity<"retry">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--retry-of-run-id": requiredOption(parseIdentifier),
+    "--idempotency-key": requiredOption(parseUuid),
+    "--provider-settings-json": option(parseProviderSettingsJson),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      retryOfRunId: parsed.values["--retry-of-run-id"] as string,
+      idempotencyKey: parsed.values["--idempotency-key"] as string,
+      ...(parsed.values["--provider-settings-json"] === undefined
+        ? {}
+        : { providerSettingsOverride: parsed.values["--provider-settings-json"] as ProviderSettingsEnvelope }),
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
 function parseRunStatus(identity: CliCommandIdentity<"status">, argv: readonly string[]): CliParseResult {
+  const parsed = parseOptions(identity, argv, {
+    "--session-id": requiredOption(parseIdentifier),
+    "--run-id": requiredOption(parseIdentifier),
+    ...timeoutOption,
+  });
+  if (!parsed.ok) return parsed.result;
+  return {
+    kind: "command",
+    command: {
+      identity,
+      sessionId: parsed.values["--session-id"] as string,
+      runId: parsed.values["--run-id"] as string,
+      ...optionalTimeout(parsed.values),
+    },
+  };
+}
+
+function parseRunInteractions(identity: CliCommandIdentity<"interactions">, argv: readonly string[]): CliParseResult {
   const parsed = parseOptions(identity, argv, {
     "--session-id": requiredOption(parseIdentifier),
     "--run-id": requiredOption(parseIdentifier),
@@ -685,6 +846,71 @@ function parseUuid(value: string): string | undefined {
   return isCanonicalUuid(value) ? value : undefined;
 }
 
+function parseContentBlocksJson(value: string) {
+  if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInlineContentJsonBytes) return undefined;
+  try {
+    return snapshotMessageContentBlocks(parseStrictJson(value), RUN_MUTATION_INLINE_CONTENT_LIMITS);
+  } catch {
+    return undefined;
+  }
+}
+
+function parseProviderSettingsJson(value: string): ProviderSettingsEnvelope | undefined {
+  if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInlineContentJsonBytes) return undefined;
+  try {
+    const envelope = parseStrictJson(value);
+    if (!isExactRecord(envelope, ["providerId", "definitionVersion", "settings"])) return undefined;
+    if (
+      typeof envelope.providerId !== "string" ||
+      parseBoundedString(envelope.providerId, CLI_RUN_LIMITS.maxExecutionSettingLength) === undefined ||
+      typeof envelope.definitionVersion !== "string" ||
+      parseBoundedString(envelope.definitionVersion, CLI_RUN_LIMITS.maxExecutionSettingLength) === undefined ||
+      !isPlainJsonObject(envelope.settings)
+    )
+      return undefined;
+    return envelope as ProviderSettingsEnvelope;
+  } catch {
+    return undefined;
+  }
+}
+
+function parseInteractionResponseJson(value: string): CliRunRespondInteractionCommand["response"] | undefined {
+  if (new TextEncoder().encode(value).byteLength > CLI_RUN_LIMITS.maxInteractionResponseJsonBytes) return undefined;
+  try {
+    const response = parseStrictJson(value);
+    if (!isExactRecord(response, ["interactionId", "kind", "payload"])) return undefined;
+    if (
+      parseIdentifierValue(response.interactionId) === undefined ||
+      parseIdentifierValue(response.kind) === undefined
+    ) {
+      return undefined;
+    }
+    if (
+      applicationRunInteractionWireItemBytes(response) >
+      APPLICATION_RUN_INTERACTION_TRANSPORT_LIMITS.maxCollectionWireBytes
+    ) {
+      return undefined;
+    }
+    return response as CliRunRespondInteractionCommand["response"];
+  } catch {
+    return undefined;
+  }
+}
+
+function isExactRecord(value: unknown, keys: readonly string[]): value is Readonly<Record<string, unknown>> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length &&
+    actual.every((key) => keys.includes(key)) &&
+    Reflect.ownKeys(value).every((key) => typeof key === "string" && actual.includes(key))
+  );
+}
+
+function isPlainJsonObject(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function normalizeAbsolutePathValue(value: string): string | undefined {
   const normalized = normalizeHostAbsolutePath(value);
   return normalized === undefined || normalized.path.length > WORKSPACE_PATH_MAX_LENGTH ? undefined : normalized.path;
@@ -699,6 +925,10 @@ function parseExportDestination(value: string): string | undefined {
 
 function parseIdentifier(value: string): string | undefined {
   return parseBoundedString(value, CLI_SESSION_LIMITS.maxIdentifierLength);
+}
+
+function parseIdentifierValue(value: unknown): string | undefined {
+  return typeof value === "string" ? parseIdentifier(value) : undefined;
 }
 
 function parseBoundedString(value: string, maxLength: number): string | undefined {

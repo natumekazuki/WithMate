@@ -134,6 +134,7 @@ export type ApplicationDomainErrorCode =
   | "not_found"
   | "reference_invalid"
   | "lifecycle_conflict"
+  | "provider_capability_unavailable"
   | "session_busy"
   | "capacity_exceeded"
   | "insufficient_disk_space"
@@ -177,8 +178,9 @@ export type ApplicationRunOutputPayloadFormatDetails = Readonly<{
 export type ApplicationCapacityExceededDetails =
   | Readonly<{ scope: "root"; rootSessionId: string; current: number; limit: number }>
   | Readonly<{ scope: "session_tree"; rootSessionId: string; current: number; limit: number }>
+  | Readonly<{ scope: "run"; runId: string; current: number; limit: number }>
   | Readonly<{ scope: "application"; current: number; limit: number }>
-  | Readonly<{ scope: "provider"; providerId: string; current: number; limit: number }>;
+  | Readonly<{ scope: "provider"; current: number; limit: number }>;
 
 export type ApplicationDomainError =
   | Readonly<{
@@ -262,6 +264,12 @@ export type ApplicationPersistenceStatus =
   | ApplicationRejectedPersistenceStatus
   | ApplicationFailedPersistenceStatus;
 
+export function isApplicationDomainFailurePersistenceStatus(
+  value: unknown,
+): value is ApplicationNotAttemptedPersistenceStatus["status"] | ApplicationRejectedPersistenceStatus["status"] {
+  return value === "not_attempted" || value === "rejected";
+}
+
 export type ApplicationOperationOptions = Readonly<{
   timeoutMs?: number;
   signal?: AbortSignal;
@@ -330,7 +338,7 @@ type ApplicationPrePersistenceFailureResponse = Readonly<{
 type ApplicationDomainFailureResponse = Readonly<{
   overallStatus: "failure";
   error: ApplicationDomainError;
-  persistence: ApplicationRejectedPersistenceStatus;
+  persistence: ApplicationNotAttemptedPersistenceStatus | ApplicationRejectedPersistenceStatus;
 }>;
 
 type ApplicationPersistenceFailureEffect<TMode extends ApplicationOperationMode> = TMode extends "read"

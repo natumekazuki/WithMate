@@ -2288,7 +2288,7 @@ test("Repository domain rejection projects only known public fields", async () =
     code: "capacity_exceeded",
     message: "Provider capacity was reached.",
     retryable: true,
-    details: { scope: "provider", providerId: "codex", current: 4, limit: 4 },
+    details: { scope: "provider", current: 4, limit: 4 },
   });
 });
 
