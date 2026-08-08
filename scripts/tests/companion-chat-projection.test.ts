@@ -308,8 +308,8 @@ test("buildCompanionChatWindowProps は retry actions を共通 chat layout に�
   const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.recoveryActions));
 
   assert.match(html, /retry-banner failed/);
-  assert.match(html, />同じ依頼を再送<\/button>/);
-  assert.match(html, />編集して再送<\/button>/);
+  assert.match(html, />再送<\/button>/);
+  assert.match(html, />編集<\/button>/);
 });
 
 test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 composer に渡す", () => {

@@ -87,40 +87,52 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
   }];
   const requestedRootIds: string[] = [];
   const diffRequests: FileRootFileDiffRequest[] = [];
+  let rootListFailure: Error | null = null;
+  let workspaceEntries = entries;
+  const testApi = {
+    listSessionFileRoots: async () => {
+      if (rootListFailure) {
+        throw rootListFailure;
+      }
+      return [
+        { id: "session-folder", kind: "session-folder" as const, label: "Session Folder", displayPath: "C:/session" },
+        { id: "additional:broken", kind: "additional" as const, label: "broken", displayPath: "C:/broken" },
+        { id: "additional:repo", kind: "additional" as const, label: "repo", displayPath: "C:/repo" },
+        { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo/app" },
+      ];
+    },
+    listFileRootChanges: async (request: { rootId: string }) => {
+      requestedRootIds.push(request.rootId);
+      if (request.rootId === "session-folder") {
+        return { status: "not-git" as const, message: "Not a Git repository." };
+      }
+      if (request.rootId === "additional:broken") {
+        return { status: "failed" as const, message: "Git status failed for broken root." };
+      }
+      return {
+        status: "ok" as const,
+        entries: request.rootId === "workspace" ? workspaceEntries : additionalEntries,
+      };
+    },
+  };
+  const baseProps = {
+    api: testApi,
+    enabled: true,
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async (request: FileRootFileDiffRequest) => {
+      diffRequests.push(request);
+      return null;
+    },
+  };
   let root: Root | null = null;
   try {
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
       root.render(React.createElement(FileRootChangesPane, {
-        api: {
-          listSessionFileRoots: async () => [
-            { id: "session-folder", kind: "session-folder" as const, label: "Session Folder", displayPath: "C:/session" },
-            { id: "additional:broken", kind: "additional" as const, label: "broken", displayPath: "C:/broken" },
-            { id: "additional:repo", kind: "additional" as const, label: "repo", displayPath: "C:/repo" },
-            { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo/app" },
-          ],
-          listFileRootChanges: async (request) => {
-            requestedRootIds.push(request.rootId);
-            if (request.rootId === "session-folder") {
-              return { status: "not-git" as const, message: "Not a Git repository." };
-            }
-            if (request.rootId === "additional:broken") {
-              return { status: "failed" as const, message: "Git status failed for broken root." };
-            }
-            return {
-              status: "ok" as const,
-              entries: request.rootId === "workspace" ? entries : additionalEntries,
-            };
-          },
-        },
+        ...baseProps,
         sessionId: "session-1",
-        enabled: true,
-        rootsRevision: "roots-1",
-        onOpenFile: () => undefined,
-        onOpenDiff: async (request) => {
-          diffRequests.push(request);
-          return null;
-        },
       }));
     });
     await act(async () => {
@@ -129,9 +141,22 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
-    const list = dom.window.document.querySelector<HTMLElement>(".workspace-changes-list");
+    const groups = [...dom.window.document.querySelectorAll<HTMLElement>(".workspace-changes-root-group")];
+    const lists = [...dom.window.document.querySelectorAll<HTMLElement>(".workspace-changes-list")];
     const rows = [...dom.window.document.querySelectorAll<HTMLElement>(".workspace-change-virtual-row")];
-    assert.ok(list);
+    assert.equal(groups.length, 3);
+    assert.equal(lists.length, 3);
+    assert.ok(lists.every((list) => list.tabIndex === 0));
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Live root status/);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-refresh"), null);
+    assert.equal(
+      groups.find((group) => group.dataset.rootId === "workspace")
+        ?.querySelector(".workspace-changes-root-count")?.textContent,
+      String(entries.length),
+    );
+    assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
+    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "230px");
+    assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
     assert.deepEqual(requestedRootIds, ["session-folder", "additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
     assert.match(dom.window.document.body.textContent ?? "", /Git status failed for broken root/);
@@ -140,7 +165,9 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     assert.ok(rows.length > 0, dom.window.document.body.innerHTML);
     assert.ok(rows.length < entries.length, `mounted ${rows.length} rows for ${entries.length} entries`);
     assert.ok(rows.every((row) => row.dataset.index !== undefined));
-    const rootPath = dom.window.document.querySelector<HTMLElement>(".workspace-changes-root-header[title='C:/repo'] span");
+    const rootPath = dom.window.document.querySelector<HTMLElement>(
+      ".workspace-changes-root-header[title='C:/repo'] .workspace-changes-root-path",
+    );
     assert.equal(rootPath?.textContent, "C:/repo");
 
     const appDirectory = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-directory-row")]
@@ -175,6 +202,104 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       { rootId: "workspace", relativePath: "src/00-shared.ts" },
     ]);
 
+    const repoList = dom.window.document.querySelector<HTMLElement>(
+      ".workspace-changes-root-group[data-root-id='additional:repo'] .workspace-changes-list",
+    );
+    const workspaceList = dom.window.document.querySelector<HTMLElement>(
+      ".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list",
+    );
+    assert.ok(repoList);
+    assert.ok(workspaceList);
+    repoList.scrollTop = 20;
+    workspaceList.scrollTop = 120;
+    assert.equal(repoList.scrollTop, 20);
+    assert.equal(workspaceList.scrollTop, 120);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-1",
+        refreshRevision: 1,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const refreshedRepoList = dom.window.document.querySelector<HTMLElement>(
+      ".workspace-changes-root-group[data-root-id='additional:repo'] .workspace-changes-list",
+    );
+    const refreshedWorkspaceList = dom.window.document.querySelector<HTMLElement>(
+      ".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list",
+    );
+    assert.equal(refreshedRepoList, repoList);
+    assert.equal(refreshedWorkspaceList, workspaceList);
+    assert.equal(refreshedRepoList?.scrollTop, 20);
+    assert.equal(refreshedWorkspaceList?.scrollTop, 120);
+
+    rootListFailure = new Error("Temporary root refresh failure.");
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-1",
+        refreshRevision: 2,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(
+      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='additional:repo'] .workspace-changes-list"),
+      repoList,
+    );
+    assert.equal(
+      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list"),
+      workspaceList,
+    );
+    assert.equal(repoList.scrollTop, 20);
+    assert.equal(workspaceList.scrollTop, 120);
+    assert.match(dom.window.document.body.textContent ?? "", /Temporary root refresh failure/);
+
+    rootListFailure = null;
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-1",
+        refreshRevision: 3,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(
+      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list"),
+      workspaceList,
+    );
+    assert.equal(workspaceList.scrollTop, 120);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Temporary root refresh failure/);
+
+    workspaceEntries = entries.slice(0, 1);
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-1",
+        refreshRevision: 4,
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(
+      dom.window.document.querySelector(".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list"),
+      workspaceList,
+    );
+    assert.equal(workspaceList.scrollTop, 0);
+    assert.equal(repoList.scrollTop, 20);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        sessionId: "session-2",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const nextSessionWorkspaceList = dom.window.document.querySelector<HTMLElement>(
+      ".workspace-changes-root-group[data-root-id='workspace'] .workspace-changes-list",
+    );
+    assert.ok(nextSessionWorkspaceList);
+    assert.notEqual(nextSessionWorkspaceList, workspaceList);
+    assert.equal(nextSessionWorkspaceList.scrollTop, 0);
+
     let rejectStaleRequest: ((reason?: unknown) => void) | null = null;
     let statusRequestCount = 0;
     const staleReloadApi = {
@@ -203,6 +328,7 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       api: staleReloadApi,
       sessionId: "session-1",
       enabled: true,
+      refreshRevision: 0,
       onOpenFile: () => undefined,
       onOpenDiff: async () => null,
     };

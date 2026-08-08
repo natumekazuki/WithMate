@@ -703,20 +703,27 @@ export function SessionHeader({
               </div>
             ) : null}
             {actions}
-            {showRenameButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
-                Rename
-              </button>
-            ) : null}
-            {showAuditLogButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-                Audit Log
-              </button>
-            ) : null}
-            {showDeleteButton ? (
-              <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-                Delete
-              </button>
+            {showRenameButton || showAuditLogButton || showDeleteButton ? (
+              <details className="session-header-more">
+                <summary aria-label="Session actions" title="Session actions">⋯</summary>
+                <div className="session-header-more-menu" role="menu">
+                  {showRenameButton ? (
+                    <button type="button" role="menuitem" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
+                      Rename
+                    </button>
+                  ) : null}
+                  {showAuditLogButton ? (
+                    <button type="button" role="menuitem" onClick={onOpenAuditLog}>
+                      Audit Log
+                    </button>
+                  ) : null}
+                  {showDeleteButton ? (
+                    <button className="danger" type="button" role="menuitem" onClick={onDeleteSession} disabled={isRunning}>
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+              </details>
             ) : null}
           </div>
         ) : null}
@@ -2015,13 +2022,15 @@ export function SessionRetryBanner({
     >
       <div className="resume-banner-head">
         <div className="resume-banner-copy">
-          <span className={`resume-banner-badge ${retryBanner.kind}`}>{retryBanner.badge}</span>
-          <p className="resume-banner-title">{retryBanner.title}</p>
+          <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
+            {retryBanner.badge}
+            <span className="sr-only">: {retryBanner.title}</span>
+          </span>
         </div>
       </div>
       <div className="resume-banner-actions">
         <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>
-          同じ依頼を再送
+          再送
         </button>
         <button
           className="drawer-toggle secondary"
@@ -2029,7 +2038,7 @@ export function SessionRetryBanner({
           onClick={onEditLastMessage}
           disabled={isRetryEditDisabled}
         >
-          編集して再送
+          編集
         </button>
       </div>
       {isRetryDraftReplacePending ? (

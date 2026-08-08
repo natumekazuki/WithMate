@@ -18,6 +18,7 @@ type SessionFileExplorerPaneProps = {
   selectedFile: SessionFileResourceRequest | null;
   activeTab: "files" | "changes";
   onActiveTabChange: (tab: "files" | "changes") => void;
+  onRefreshChanges: () => void;
   onOpenFile: (request: SessionFileResourceRequest) => void;
   changesContent?: ReactNode;
 };
@@ -55,6 +56,7 @@ export function SessionFileExplorerPane({
   selectedFile,
   activeTab,
   onActiveTabChange,
+  onRefreshChanges,
   onOpenFile,
   changesContent,
 }: SessionFileExplorerPaneProps) {
@@ -223,7 +225,19 @@ export function SessionFileExplorerPane({
             Changes
           </button>
         </div>
-        <button className="session-file-explorer-refresh" type="button" onClick={() => void reloadRoots()} title="Refresh">
+        <button
+          className="session-file-explorer-refresh"
+          type="button"
+          onClick={() => {
+            if (activeTab === "changes") {
+              onRefreshChanges();
+              return;
+            }
+            void reloadRoots();
+          }}
+          aria-label={activeTab === "changes" ? "Refresh changes" : "Refresh files"}
+          title={activeTab === "changes" ? "Refresh changes" : "Refresh files"}
+        >
           ↻
         </button>
       </div>

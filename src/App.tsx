@@ -457,6 +457,7 @@ export default function AgentSessionWindowApp() {
   const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
   const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
+  const [fileRootChangesRefreshRevision, setFileRootChangesRefreshRevision] = useState(0);
   const [fileRootDiffPreview, setFileRootDiffPreview] = useState<{
     sessionId: string;
     rootId: string;
@@ -3229,6 +3230,7 @@ export default function AgentSessionWindowApp() {
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
       onActiveTabChange={setFileExplorerTab}
+      onRefreshChanges={() => setFileRootChangesRefreshRevision((current) => current + 1)}
       onOpenFile={(request) => {
         fileRootDiffRequestRevisionRef.current += 1;
         beginCentralPreviewIfNeeded();
@@ -3243,6 +3245,7 @@ export default function AgentSessionWindowApp() {
           sessionId={activeRunSessionId}
           enabled={isFilesPaneVisible && fileExplorerTab === "changes"}
           rootsRevision={fileExplorerRootsRevision}
+          refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
           onOpenDiff={handleShowFileRootDiff}
         />
