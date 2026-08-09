@@ -1,6 +1,23 @@
 import type { WithMateWindowPickerApi } from "../withmate-window-api.js";
+import { isSupportedComposerImagePath } from "../composer-image-reference.js";
+import type { ComposerReferenceInput } from "../session-composer-paths.js";
 
-export type PastedClipboardFile = Pick<File, "arrayBuffer" | "name">;
+const SUPPORTED_IMAGE_MIME_EXTENSIONS = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/gif", "gif"],
+  ["image/webp", "webp"],
+  ["image/bmp", "bmp"],
+  ["image/svg+xml", "svg"],
+]);
+
+export type PastedClipboardFile = {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  name: string;
+  type?: string;
+};
+
+export type PastedSessionAttachment = ComposerReferenceInput;
 
 export type PastedClipboardFileItem = {
   kind: string;
@@ -38,25 +55,65 @@ export async function collectPastedSessionAttachmentPaths(input: {
   savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
   sessionId: string;
 }): Promise<string[]> {
+  return (await collectPastedSessionAttachments(input)).map((attachment) => attachment.path);
+}
+
+function resolvePastedFileName(input: {
+  currentTimestampLabel: () => string;
+  file: PastedClipboardFile;
+}): string {
+  const trimmedName = input.file.name.trim();
+  const mimeExtension = SUPPORTED_IMAGE_MIME_EXTENSIONS.get(input.file.type?.toLocaleLowerCase() ?? "");
+  if (trimmedName) {
+    if (mimeExtension && !isSupportedComposerImagePath(trimmedName)) {
+      return `${trimmedName}.${mimeExtension}`;
+    }
+    return trimmedName;
+  }
+
+  const fallbackExtension = mimeExtension ?? "bin";
+  return `pasted-${input.currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.${fallbackExtension}`;
+}
+
+function resolvePastedAttachmentPresentation(
+  file: PastedClipboardFile,
+  fileName: string,
+): PastedSessionAttachment["presentation"] {
+  const mimeType = file.type?.toLocaleLowerCase() ?? "";
+  return SUPPORTED_IMAGE_MIME_EXTENSIONS.has(mimeType) || isSupportedComposerImagePath(fileName)
+    ? "image"
+    : "path";
+}
+
+export async function collectPastedSessionAttachments(input: {
+  clipboardData: PastedSessionFileClipboardData;
+  currentTimestampLabel: () => string;
+  preventDefault: () => void;
+  savePastedSessionFile: WithMateWindowPickerApi["savePastedSessionFile"];
+  sessionId: string;
+}): Promise<PastedSessionAttachment[]> {
   const pastedFiles = collectPastedClipboardFiles(input.clipboardData);
   if (pastedFiles.length === 0) {
     return [];
   }
 
   input.preventDefault();
-  const savedPaths: string[] = [];
+  const savedAttachments: PastedSessionAttachment[] = [];
   for (const file of pastedFiles) {
     const buffer = await file.arrayBuffer();
-    const fileName = file.name.trim() || `pasted-${input.currentTimestampLabel().replace(/[:/\\\s]+/g, "-")}.png`;
+    const fileName = resolvePastedFileName({ file, currentTimestampLabel: input.currentTimestampLabel });
     const savedPath = await input.savePastedSessionFile({
       sessionId: input.sessionId,
       fileName,
       data: buffer,
     });
-    savedPaths.push(savedPath);
+    savedAttachments.push({
+      path: savedPath,
+      presentation: resolvePastedAttachmentPresentation(file, fileName),
+    });
   }
 
-  return savedPaths;
+  return savedAttachments;
 }
 
 export function createPastedSessionAttachmentHandler(input: {
@@ -66,7 +123,7 @@ export function createPastedSessionAttachmentHandler(input: {
   fallbackErrorMessage: string;
   getSavePastedSessionFile: () => WithMateWindowPickerApi["savePastedSessionFile"] | null | undefined;
   getSessionId: () => string | null | undefined;
-  insertReferencePaths: (referencePaths: string[]) => void;
+  insertAttachments: (attachments: PastedSessionAttachment[]) => void;
 }): (event: PastedSessionAttachmentEvent) => Promise<boolean> {
   return async (event) => {
     if (!input.canPaste()) {
@@ -80,18 +137,18 @@ export function createPastedSessionAttachmentHandler(input: {
     }
 
     try {
-      const savedPaths = await collectPastedSessionAttachmentPaths({
+      const savedAttachments = await collectPastedSessionAttachments({
         clipboardData: event.clipboardData,
         currentTimestampLabel: input.currentTimestampLabel,
         preventDefault: () => event.preventDefault(),
         savePastedSessionFile,
         sessionId,
       });
-      if (savedPaths.length === 0) {
+      if (savedAttachments.length === 0) {
         return false;
       }
 
-      input.insertReferencePaths(savedPaths);
+      input.insertAttachments(savedAttachments);
       return true;
     } catch (error) {
       input.alertError(error instanceof Error ? error.message : input.fallbackErrorMessage);

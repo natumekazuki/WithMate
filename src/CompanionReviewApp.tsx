@@ -171,6 +171,7 @@ import {
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
+  type ComposerReferenceInput,
 } from "./session-composer-paths.js";
 import {
   useChatLayoutPresentation,
@@ -262,6 +263,7 @@ import {
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
+  applyComposerReferenceInsertionCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -1619,6 +1621,30 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     insertReferencePaths([selectedPath]);
   }
 
+  function insertPastedAttachments(references: ComposerReferenceInput[]): void {
+    const textarea = composerTextareaRef.current;
+    applyComposerReferenceInsertionCommand({
+      draft: activeComposerText,
+      fallbackCaret: composerCaret,
+      references,
+      textarea,
+      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+        if (activeAuxiliarySession) {
+          setComposerCaret(nextCaret);
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+        } else {
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft: setComposerText,
+            setComposerCaret,
+          });
+        }
+      },
+      restoreComposerTextareaFocusAndCaret,
+    });
+  }
+
   async function pickAndInsertPath(kind: ComposerPathPickerKind): Promise<void> {
     const withmateApi = getWithMateApi();
     if (!withmateApi || !snapshot || runDisabled) {
@@ -1726,7 +1752,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
     },
     getSessionId: () => snapshot?.session.id,
-    insertReferencePaths,
+    insertAttachments: insertPastedAttachments,
   });
 
   async function handleAddAdditionalDirectory(): Promise<void> {

@@ -17,7 +17,7 @@ import {
   cloneSessions,
 } from "../src/app-state.js";
 import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
-import { extractTextReferenceCandidates } from "../src/path-reference.js";
+import { extractComposerAttachmentReferenceCandidates } from "../src/path-reference.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainQueryServiceDeps = {
@@ -147,7 +147,7 @@ export class MainQueryService {
   }
 
   async previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview> {
-    if (extractTextReferenceCandidates(userMessage).length === 0) {
+    if (extractComposerAttachmentReferenceCandidates(userMessage).length === 0) {
       return { attachments: [], errors: [] };
     }
 

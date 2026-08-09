@@ -466,6 +466,27 @@ test("MessageRichText は local / data / external Markdown image を既定表示
   assert.match(html, /src="https:\/\/cdn\.example\.test\/image\.png"/);
 });
 
+test("MessageRichText は local image を優先読込し external image は遅延読込する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "![local](file:///C:/tmp/local.png)",
+        "![embedded](data:image/png;base64,AAAA)",
+        "![remote](https://example.test/image.png)",
+      ].join("\n"),
+    }),
+  );
+  const dom = new JSDOM(html);
+  const images = Array.from(dom.window.document.querySelectorAll("img"));
+
+  assert.equal(images[0]?.getAttribute("loading"), "eager");
+  assert.equal(images[0]?.getAttribute("fetchpriority"), "high");
+  assert.equal(images[1]?.getAttribute("loading"), "eager");
+  assert.equal(images[1]?.getAttribute("fetchpriority"), "high");
+  assert.equal(images[2]?.getAttribute("loading"), "lazy");
+  assert.equal(images[2]?.getAttribute("fetchpriority"), "auto");
+});
+
 test("MessageRichText は直接 image を表示しながら load 完了後に loading 表示を消す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,

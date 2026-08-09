@@ -322,7 +322,7 @@ export type DiscoveredCustomAgent = {
 
 export type ComposerAttachmentKind = "file" | "folder" | "image";
 
-export type ComposerAttachmentSource = "text";
+export type ComposerAttachmentSource = "text" | "markdown-image";
 
 export type ComposerAttachmentInput = {
   path: string;

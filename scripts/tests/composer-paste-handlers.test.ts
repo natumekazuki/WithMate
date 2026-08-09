@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   collectPastedClipboardFiles,
+  collectPastedSessionAttachments,
   collectPastedSessionAttachmentPaths,
   createPastedSessionAttachmentHandler,
   type PastedClipboardFile,
@@ -13,6 +14,13 @@ function createPastedFile(name: string, content: string): PastedClipboardFile {
   return {
     name,
     arrayBuffer: async () => new TextEncoder().encode(content).buffer,
+  };
+}
+
+function createTypedPastedFile(name: string, content: string, type: string): PastedClipboardFile {
+  return {
+    ...createPastedFile(name, content),
+    type,
   };
 }
 
@@ -78,11 +86,35 @@ test("collectPastedSessionAttachmentPaths は pasted files を保存して path 
   assert.equal(prevented, true);
   assert.deepEqual(saved, [
     { sessionId: "session-1", fileName: "pasted.png", dataText: "named" },
-    { sessionId: "session-1", fileName: "pasted-2026-06-05T12-34-56.000Z.png", dataText: "fallback" },
+    { sessionId: "session-1", fileName: "pasted-2026-06-05T12-34-56.000Z.bin", dataText: "fallback" },
   ]);
   assert.deepEqual(savedPaths, [
     "session-files/pasted.png",
-    "session-files/pasted-2026-06-05T12-34-56.000Z.png",
+    "session-files/pasted-2026-06-05T12-34-56.000Z.bin",
+  ]);
+});
+
+test("collectPastedSessionAttachments は空名を MIME が対応画像の場合だけ画像として扱う", async () => {
+  let timestampIndex = 0;
+  const attachments = await collectPastedSessionAttachments({
+    clipboardData: {
+      files: [
+        createTypedPastedFile("", "png", "image/png"),
+        createTypedPastedFile(" ", "avif", "image/avif"),
+        createPastedFile("", "unknown"),
+      ],
+      items: [],
+    },
+    currentTimestampLabel: () => `stamp-${timestampIndex += 1}`,
+    preventDefault: () => {},
+    savePastedSessionFile: async ({ fileName }) => `C:/session-files/${fileName}`,
+    sessionId: "session-empty-name",
+  });
+
+  assert.deepEqual(attachments, [
+    { path: "C:/session-files/pasted-stamp-1.png", presentation: "image" },
+    { path: "C:/session-files/pasted-stamp-2.bin", presentation: "path" },
+    { path: "C:/session-files/pasted-stamp-3.bin", presentation: "path" },
   ]);
 });
 
@@ -151,7 +183,7 @@ test("createPastedSessionAttachmentHandler は item file paste を保存して�
     getAsFile: () => itemFile,
   };
   const saved: Array<{ sessionId: string; fileName: string; dataText: string }> = [];
-  const insertedPaths: string[][] = [];
+  const insertedAttachments: Array<Array<{ path: string; presentation: "image" | "path" }>> = [];
   let prevented = false;
 
   const handlePaste = createPastedSessionAttachmentHandler({
@@ -170,8 +202,8 @@ test("createPastedSessionAttachmentHandler は item file paste を保存して�
       return `session-files/${fileName}`;
     },
     getSessionId: () => "session-3",
-    insertReferencePaths: (referencePaths) => {
-      insertedPaths.push(referencePaths);
+    insertAttachments: (attachments) => {
+      insertedAttachments.push(attachments);
     },
   });
 
@@ -190,7 +222,44 @@ test("createPastedSessionAttachmentHandler は item file paste を保存して�
   assert.deepEqual(saved, [
     { sessionId: "session-3", fileName: "from-items.png", dataText: "items" },
   ]);
-  assert.deepEqual(insertedPaths, [["session-files/from-items.png"]]);
+  assert.deepEqual(insertedAttachments, [[{
+    path: "session-files/from-items.png",
+    presentation: "image",
+  }]]);
+});
+
+test("createPastedSessionAttachmentHandler は対応画像と通常ファイルを表示形式つきで挿入する", async () => {
+  const inserted: Array<Array<{ path: string; presentation: "image" | "path" }>> = [];
+  const handlePaste = createPastedSessionAttachmentHandler({
+    alertError: () => {
+      throw new Error("unexpected alert");
+    },
+    canPaste: () => true,
+    currentTimestampLabel: () => "unused",
+    fallbackErrorMessage: "fallback",
+    getSavePastedSessionFile: () => async ({ fileName }) => `C:/session-files/${fileName}`,
+    getSessionId: () => "session-mixed",
+    insertAttachments: (attachments) => inserted.push(attachments),
+  });
+
+  const handled = await handlePaste({
+    clipboardData: {
+      files: [
+        createTypedPastedFile("capture", "image", "image/png"),
+        createTypedPastedFile("archive.avif", "unsupported image", "image/avif"),
+        createPastedFile("notes.txt", "text"),
+      ],
+      items: [],
+    },
+    preventDefault: () => {},
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(inserted, [[
+    { path: "C:/session-files/capture.png", presentation: "image" },
+    { path: "C:/session-files/archive.avif", presentation: "path" },
+    { path: "C:/session-files/notes.txt", presentation: "path" },
+  ]]);
 });
 
 test("createPastedSessionAttachmentHandler は paste 不可なら保存も挿入も行わない", async () => {
@@ -211,7 +280,7 @@ test("createPastedSessionAttachmentHandler は paste 不可なら保存も挿入
       return "unused";
     },
     getSessionId: () => "session-4",
-    insertReferencePaths: () => {
+    insertAttachments: () => {
       inserted = true;
     },
   });
@@ -247,7 +316,7 @@ test("createPastedSessionAttachmentHandler は API や session id がなけれ�
     fallbackErrorMessage: "fallback",
     getSavePastedSessionFile: input.getSavePastedSessionFile,
     getSessionId: input.getSessionId,
-    insertReferencePaths: () => {
+    insertAttachments: () => {
       inserted = true;
     },
   });
@@ -321,7 +390,7 @@ test("createPastedSessionAttachmentHandler は保存失敗時に通知して挿�
       throw new Error("save failed");
     },
     getSessionId: () => "session-5",
-    insertReferencePaths: () => {
+    insertAttachments: () => {
       inserted = true;
     },
   });
@@ -354,7 +423,7 @@ test("createPastedSessionAttachmentHandler は保存失敗が Error でない場
       throw "non-error failure";
     },
     getSessionId: () => "session-6",
-    insertReferencePaths: () => {
+    insertAttachments: () => {
       throw new Error("unexpected insertion");
     },
   });
