@@ -91,7 +91,10 @@ function requireExplicitAuthority(authority: CharacterOperationAuthority): Chara
   );
 }
 
-function memoryErrorToContext(error: MemoryErrorResponse): CharacterContextErrorResponse {
+function memoryErrorToContext(
+  error: MemoryErrorResponse,
+  failureEffect: "none" | "unknown",
+): CharacterContextErrorResponse {
   const code = error.error.code;
   if (code === "MEMORY_TARGET_NOT_FOUND" || code === "MEMORY_ENTRY_NOT_FOUND") {
     return createCharacterContextError("unknown_scope", error.error.message, {
@@ -129,7 +132,7 @@ function memoryErrorToContext(error: MemoryErrorResponse): CharacterContextError
     field: error.error.field,
     retryable: true,
     conversationMayContinue: true,
-    effect: "unknown",
+    effect: failureEffect,
   });
 }
 
@@ -144,7 +147,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
   ): Promise<CharacterContextServiceResult<CharacterContextResponse>> {
-    return this.measure("character_context.get", transport, async () => {
+    return this.measure("character_context.get", transport, "none", async () => {
       const input = validateCharacterContextGetRequest(request);
       const snapshot = this.deps.resolveCharacterRuntimeSnapshot(input.characterId);
       if (!snapshot) {
@@ -175,7 +178,7 @@ export class CharacterContextApplicationService {
             })
           : { schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] };
         if (memoryError(memory)) {
-          return memoryErrorToContext(memory);
+          return memoryErrorToContext(memory, "none");
         }
         return {
           schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -224,7 +227,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
   ): Promise<CharacterContextServiceResult<CharacterAffectAppraiseResponse>> {
-    return this.measure("character_affect.appraise", transport, async () => {
+    return this.measure("character_affect.appraise", transport, "unknown", async () => {
       const input = validateCharacterAffectAppraiseRequest(request);
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
@@ -309,7 +312,7 @@ export class CharacterContextApplicationService {
   }
 
   async inspectAffect(request: unknown, transport: CharacterContextTransport = "internal"): Promise<unknown> {
-    return this.measure("character_affect.inspect", transport, async () => {
+    return this.measure("character_affect.inspect", transport, "none", async () => {
       const input = validateCharacterAffectInspectRequest(request);
       try {
         const inspection = this.deps.affectService.inspect({
@@ -336,7 +339,7 @@ export class CharacterContextApplicationService {
   }
 
   async correctAffect(request: unknown, transport: CharacterContextTransport = "internal"): Promise<unknown> {
-    return this.measure("character_affect.correct", transport, async () => {
+    return this.measure("character_affect.correct", transport, "unknown", async () => {
       const input = validateCharacterAffectCorrectRequest(request);
       const authorityError = requireExplicitAuthority(input.authority);
       if (authorityError) {
@@ -369,7 +372,7 @@ export class CharacterContextApplicationService {
   }
 
   async resetAffect(request: unknown, transport: CharacterContextTransport = "internal"): Promise<unknown> {
-    return this.measure("character_affect.reset", transport, async () => {
+    return this.measure("character_affect.reset", transport, "unknown", async () => {
       const input = validateCharacterAffectResetRequest(request);
       const authorityError = requireExplicitAuthority(input.authority);
       if (authorityError) {
@@ -411,7 +414,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
   ): Promise<CharacterContextServiceResult<CharacterMemorySearchResponse>> {
-    return this.measure("character_memory.search", transport, async () => {
+    return this.measure("character_memory.search", transport, "none", async () => {
       const input = validateCharacterMemorySearchRequest(request);
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
@@ -436,7 +439,7 @@ export class CharacterContextApplicationService {
         limit: input.limit,
       });
       if (memoryError(result)) {
-        return memoryErrorToContext(result);
+        return memoryErrorToContext(result, "none");
       }
       return {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -453,7 +456,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
-    return this.measure("character_memory.append_episode", transport, async () => {
+    return this.measure("character_memory.append_episode", transport, "unknown", async () => {
       const input = validateCharacterMemoryAppendEpisodeRequest(request);
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
@@ -485,7 +488,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
-    return this.measure("character_memory.correct", transport, async () => {
+    return this.measure("character_memory.correct", transport, "unknown", async () => {
       const input = validateCharacterMemoryCorrectRequest(request);
       const authorityError = requireExplicitAuthority(input.authority);
       if (authorityError) {
@@ -506,7 +509,7 @@ export class CharacterContextApplicationService {
     request: unknown,
     transport: CharacterContextTransport = "internal",
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
-    return this.measure("character_memory.forget", transport, async () => {
+    return this.measure("character_memory.forget", transport, "unknown", async () => {
       const input = validateCharacterMemoryForgetRequest(request);
       const authorityError = requireExplicitAuthority(input.authority);
       if (authorityError) {
@@ -520,7 +523,7 @@ export class CharacterContextApplicationService {
         idempotencyKey: input.idempotencyKey,
       });
       if (memoryError(result)) {
-        return memoryErrorToContext(result);
+        return memoryErrorToContext(result, "unknown");
       }
       const outcome = result.results[0];
       return {
@@ -586,7 +589,7 @@ export class CharacterContextApplicationService {
       idempotencyKey: input.idempotencyKey,
     });
     if (memoryError(result)) {
-      return memoryErrorToContext(result);
+      return memoryErrorToContext(result, "unknown");
     }
     return {
       schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -649,6 +652,7 @@ export class CharacterContextApplicationService {
   private async measure<T>(
     operation: string,
     transport: CharacterContextTransport,
+    unexpectedFailureEffect: "none" | "unknown",
     run: () => Promise<CharacterContextServiceResult<T>>,
   ): Promise<CharacterContextServiceResult<T>> {
     const key = `${transport}:${operation}`;
@@ -701,7 +705,7 @@ export class CharacterContextApplicationService {
             conversationMayContinue: true,
             effect: "none",
           })
-        : this.mapThrownError(error, operation, "unknown");
+        : this.mapThrownError(error, operation, unexpectedFailureEffect);
       if (result.error.code === "invalid_input") {
         metric.rejections += 1;
         metric.rejectionsByCode[result.error.code] = (metric.rejectionsByCode[result.error.code] ?? 0) + 1;

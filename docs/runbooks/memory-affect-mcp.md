@@ -45,7 +45,7 @@ $request = @{
 $request | withmate-memory affect-inspect --stdin
 ```
 
-主な運用commandは`context-get`、`affect-inspect`、`affect-correct`、`affect-reset`、`character-memory-search`、`character-memory-correct`、`character-memory-forget`である。完全なrequest shapeは`withmate-memory schema`とruntime validation errorを参照する。
+主な運用commandは`context-get`、`affect-inspect`、`affect-correct`、`affect-reset`、`character-memory-search`、`character-memory-correct`、`character-memory-forget`である。`withmate-memory schema`はcommand、入力方法、enumの一覧であり、完全なrequest schemaは返さない。MCP toolの完全な入力shapeはMCPの`tools/list`、CLIとapplication boundaryのcanonical validationは`src/character-context/character-context-validation.ts`、共有型は`src/character-context/character-context-contract.ts`で確認する。運用時にvalidation errorが返った場合も、失敗したfieldとcodeを修正してから再送する。
 
 `character-memory-correct`の自由記述reasonは訂正監査とidempotency判定に使われる。`character-memory-forget`のreasonは`user_request`、`incorrect`、`outdated`、`privacy`、`other`のいずれかを指定する。
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { createHmac, randomBytes } from "node:crypto";
+import { request } from "node:http";
 import process$1 from "node:process";
 //#region \0rolldown/runtime.js
 var __create = Object.create;
@@ -76,8 +77,10 @@ var MEMORY_FORGET_REASONS = [
 ];
 //#endregion
 //#region src/memory-v6/memory-discovery.ts
-var WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v1";
-var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6-api.json";
+var WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2";
+var WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME = "memory-v6-cli.current.json";
+var WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME = "memory-v6-mcp.current.json";
+var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME;
 function isLoopbackHostname(hostname) {
 	const normalized = hostname.toLowerCase();
 	if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") return true;
@@ -104,8 +107,9 @@ function resolveDefaultWithMateMemoryRuntimeDirectory(env = process.env) {
 	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
 	return path.join(tmpdir(), "withmate-memory", ownerSegment);
 }
-function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env) {
-	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
+function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env, adapter = "cli") {
+	const fileName = adapter === "cli" ? WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME : WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME;
+	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), fileName);
 }
 //#endregion
 //#region src/memory-v6/memory-response-contract.ts
@@ -1301,9 +1305,36 @@ function validateCharacterMemoryForgetRequest(value) {
 	};
 }
 //#endregion
+//#region src/memory-v6/memory-runtime-exchange.ts
+var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
+var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
+var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
+var WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH = "/v1/exchange";
+var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
+function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) {
+	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
+}
+//#endregion
 //#region scripts/withmate-memory-runtime-client.ts
+var WithMateMemoryRuntimeExchangeError = class extends Error {
+	dispatched;
+	constructor(message, dispatched, options) {
+		super(message, options);
+		this.name = "WithMateMemoryRuntimeExchangeError";
+		this.dispatched = dispatched;
+	}
+};
 var DEFAULT_REQUEST_TIMEOUT_MS = 1e4;
 var WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+function mapRuntimeHttpFailureToCharacterContext(response) {
+	if (response.ok || isCharacterContextError(response.value)) return response.value;
+	return createCharacterContextError(response.status === 401 || response.status === 403 ? "authority_denied" : response.status === 404 ? "migration_required" : response.status === 413 || response.status === 415 || response.status === 422 ? "invalid_input" : "storage_unavailable", "WithMate runtime rejected the Character context request.", {
+		retryable: response.status === 429 || response.status >= 500,
+		conversationMayContinue: true,
+		effect: "none",
+		details: { httpStatus: response.status }
+	});
+}
 function usageError$1(message) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_CLI_USAGE",
@@ -1316,63 +1347,159 @@ function transportError$1(message) {
 		message
 	});
 }
-function readEnvSecret(env) {
-	const value = env.WITHMATE_MEMORY_API_SECRET?.trim();
+function readRequiredEnvValue(env, name) {
+	const value = env[name]?.trim();
 	return value ? value : void 0;
 }
-function readEnvRuntimeInstanceId(env) {
-	const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
-	return value ? value : void 0;
+function resolveAdapterSecret(env, adapter) {
+	return readRequiredEnvValue(env, adapter === "cli" ? "WITHMATE_MEMORY_OPERATOR_API_SECRET" : "WITHMATE_MEMORY_MCP_API_SECRET");
 }
-async function discoverWithMateMemoryApi(options = {}) {
+function buildConnectionFromValues(input) {
+	if (!input.apiSecret || !input.adapterSecret || !input.runtimeInstanceId) return null;
+	return {
+		api: {
+			baseUrl: input.baseUrl,
+			apiSecret: input.apiSecret,
+			runtimeInstanceId: input.runtimeInstanceId
+		},
+		credential: {
+			adapter: input.adapter,
+			adapterSecret: input.adapterSecret
+		}
+	};
+}
+async function readDiscoveryProjection(pointerFilePath, adapter, read) {
+	const first = JSON.parse(await read(pointerFilePath, "utf8"));
+	if (first.schemaVersion === "withmate-memory-discovery-v2") return first;
+	if (first.schemaVersion !== "withmate-memory-discovery-pointer-v1" || first.adapter !== adapter || typeof first.generationFileName !== "string" || path.basename(first.generationFileName) !== first.generationFileName) return null;
+	const generationFilePath = path.join(path.dirname(pointerFilePath), first.generationFileName);
+	const document = JSON.parse(await read(generationFilePath, "utf8"));
+	return document.runtimeInstanceId === first.runtimeInstanceId ? document : null;
+}
+async function discoverWithMateMemoryApi(options) {
 	const env = options.env ?? process.env;
-	if (options.apiUrl !== void 0) {
-		const explicitUrl = normalizeWithMateMemoryApiBaseUrl(options.apiUrl);
-		if (!explicitUrl) throw usageError$1("--api-url must be a valid loopback HTTP URL.");
-		return {
-			baseUrl: explicitUrl,
-			...readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {},
-			...env.WITHMATE_MEMORY_OPERATOR_API_SECRET?.trim() ? { operatorApiSecret: env.WITHMATE_MEMORY_OPERATOR_API_SECRET.trim() } : {},
-			...env.WITHMATE_MEMORY_MCP_API_SECRET?.trim() ? { mcpApiSecret: env.WITHMATE_MEMORY_MCP_API_SECRET.trim() } : {},
-			...readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}
-		};
-	}
-	const rawEnvUrl = env.WITHMATE_MEMORY_API_URL?.trim();
-	if (rawEnvUrl) {
-		const envUrl = normalizeWithMateMemoryApiBaseUrl(rawEnvUrl);
-		if (!envUrl) throw usageError$1("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
-		return {
-			baseUrl: envUrl,
-			...readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {},
-			...env.WITHMATE_MEMORY_OPERATOR_API_SECRET?.trim() ? { operatorApiSecret: env.WITHMATE_MEMORY_OPERATOR_API_SECRET.trim() } : {},
-			...env.WITHMATE_MEMORY_MCP_API_SECRET?.trim() ? { mcpApiSecret: env.WITHMATE_MEMORY_MCP_API_SECRET.trim() } : {},
-			...readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}
-		};
+	const explicitApiUrl = options.apiUrl ?? env.WITHMATE_MEMORY_API_URL?.trim();
+	if (explicitApiUrl) {
+		const baseUrl = normalizeWithMateMemoryApiBaseUrl(explicitApiUrl);
+		if (!baseUrl) throw usageError$1(`${options.apiUrl !== void 0 ? "--api-url" : "WITHMATE_MEMORY_API_URL"} must be a valid loopback HTTP URL.`);
+		return buildConnectionFromValues({
+			adapter: options.adapter,
+			baseUrl,
+			apiSecret: readRequiredEnvValue(env, "WITHMATE_MEMORY_API_SECRET"),
+			adapterSecret: resolveAdapterSecret(env, options.adapter),
+			runtimeInstanceId: readRequiredEnvValue(env, "WITHMATE_MEMORY_RUNTIME_INSTANCE_ID")
+		});
 	}
 	const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
-	const discoveryFilePath = options.discoveryFilePath ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env));
+	const discoveryFilePath = options.discoveryFilePath ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env, options.adapter));
 	const read = options.readFile ?? readFile;
 	try {
-		const document = JSON.parse(await read(discoveryFilePath, "utf8"));
-		if (document.schemaVersion !== "withmate-memory-discovery-v1" || typeof document.baseUrl !== "string") return null;
+		const document = await readDiscoveryProjection(discoveryFilePath, options.adapter, read);
+		if (document?.schemaVersion !== "withmate-memory-discovery-v2" || document.adapter !== options.adapter || typeof document.baseUrl !== "string") return null;
 		const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
 		if (!baseUrl) return null;
-		return {
+		return buildConnectionFromValues({
+			adapter: options.adapter,
 			baseUrl,
-			...typeof document.apiSecret === "string" && document.apiSecret.trim() ? { apiSecret: document.apiSecret.trim() } : {},
-			...typeof document.operatorApiSecret === "string" && document.operatorApiSecret.trim() ? { operatorApiSecret: document.operatorApiSecret.trim() } : {},
-			...typeof document.mcpApiSecret === "string" && document.mcpApiSecret.trim() ? { mcpApiSecret: document.mcpApiSecret.trim() } : {},
-			...typeof document.runtimeInstanceId === "string" && document.runtimeInstanceId.trim() ? { runtimeInstanceId: document.runtimeInstanceId.trim() } : {}
-		};
+			apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() : void 0,
+			adapterSecret: typeof document.adapterSecret === "string" ? document.adapterSecret.trim() : void 0,
+			runtimeInstanceId: typeof document.runtimeInstanceId === "string" ? document.runtimeInstanceId.trim() : void 0
+		});
 	} catch {
 		return null;
 	}
 }
-function hasVerifiableRuntimeIdentity(connection) {
-	return Boolean(connection.apiSecret?.trim() && connection.runtimeInstanceId?.trim());
+async function callWithMateMemoryRuntime(connection, operation, options) {
+	const nonce = randomBytes(16).toString("base64url");
+	const exchangeUrl = new URL(WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
+	return new Promise((resolve, reject) => {
+		let dispatched = false;
+		let identityVerified = false;
+		let settled = false;
+		const fail = (message, cause) => {
+			if (settled) return;
+			settled = true;
+			reject(new WithMateMemoryRuntimeExchangeError(message, dispatched, cause === void 0 ? void 0 : { cause }));
+		};
+		let request$1;
+		try {
+			request$1 = request({
+				protocol: exchangeUrl.protocol,
+				hostname: exchangeUrl.hostname,
+				port: exchangeUrl.port,
+				path: exchangeUrl.pathname,
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
+					[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeInstanceId
+				},
+				signal: options.signal
+			}, (response) => {
+				if (!identityVerified) {
+					response.destroy();
+					request$1.destroy();
+					fail("Memory API returned a final response before runtime identity was verified.");
+					return;
+				}
+				const chunks = [];
+				response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+				response.on("error", (error) => fail("Memory API response failed.", error));
+				response.on("end", () => {
+					if (settled) return;
+					const text = Buffer.concat(chunks).toString("utf8");
+					if (!text.trim()) {
+						fail("Memory API returned a non-JSON response.");
+						return;
+					}
+					try {
+						const value = JSON.parse(text);
+						settled = true;
+						resolve({
+							ok: typeof response.statusCode === "number" && response.statusCode >= 200 && response.statusCode < 300,
+							status: response.statusCode ?? 500,
+							value
+						});
+					} catch (error) {
+						fail("Memory API returned a non-JSON response.", error);
+					}
+				});
+			});
+		} catch (error) {
+			fail("Memory API request could not be created.", error);
+			return;
+		}
+		request$1.on("information", (information) => {
+			if (settled || identityVerified || information.statusCode !== 103) return;
+			const runtimeInstanceId = information.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+			const challenge = information.headers[WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER];
+			const expected = createWithMateMemoryRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeInstanceId, nonce);
+			if (runtimeInstanceId !== connection.api.runtimeInstanceId || challenge !== expected) {
+				request$1.destroy();
+				fail("Memory API runtime identity could not be verified.");
+				return;
+			}
+			identityVerified = true;
+			dispatched = true;
+			request$1.end(JSON.stringify({
+				schemaVersion: WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+				apiSecret: connection.api.apiSecret,
+				adapter: connection.credential.adapter,
+				adapterSecret: connection.credential.adapterSecret,
+				operation
+			}));
+		});
+		request$1.on("error", (error) => fail("Memory API request failed.", error));
+		options.signal.addEventListener("abort", () => fail("Memory API request was aborted."), { once: true });
+		try {
+			request$1.flushHeaders();
+		} catch (error) {
+			request$1.destroy();
+			fail("Memory API request could not be dispatched.", error);
+		}
+	});
 }
 async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
-	if (!hasVerifiableRuntimeIdentity(connection)) return false;
 	const nonce = randomBytes(16).toString("base64url");
 	const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
 		method: "GET",
@@ -21684,10 +21811,9 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 		}
 	}
 ];
-var WITHMATE_MEMORY_MCP_API_SECRET_HEADER = "x-withmate-memory-mcp-api-secret";
-async function callRuntime(path, body, deps) {
-	const fetchImpl = deps.fetch ?? fetch;
+async function callRuntime(path, body, operationKind, deps) {
 	const connection = await discoverWithMateMemoryApi({
+		adapter: "mcp",
 		env: deps.env,
 		readFile: deps.readFile
 	});
@@ -21700,37 +21826,19 @@ async function callRuntime(path, body, deps) {
 	const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
 	let dispatched = false;
 	try {
-		if (!await verifyRuntimeIdentity(connection, fetchImpl, abortController.signal)) return createCharacterContextError("storage_unavailable", "WithMate runtime identity could not be verified.", {
-			retryable: true,
-			conversationMayContinue: true,
-			effect: "none"
-		});
-		dispatched = true;
-		const response = await fetchImpl(`${connection.baseUrl}${path}`, {
+		const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
 			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				...connection.mcpApiSecret ? { [WITHMATE_MEMORY_MCP_API_SECRET_HEADER]: connection.mcpApiSecret } : {},
-				...connection.apiSecret ? { [WITHMATE_MEMORY_API_SECRET_HEADER]: connection.apiSecret } : {}
-			},
-			body: JSON.stringify(body),
-			redirect: "error",
-			signal: abortController.signal
-		});
-		const text = await response.text();
-		const value = text.trim() ? JSON.parse(text) : {};
-		if (response.ok || isCharacterContextError(value)) return value;
-		return createCharacterContextError(response.status === 401 || response.status === 403 ? "authority_denied" : response.status === 404 ? "migration_required" : response.status === 413 || response.status === 415 || response.status === 422 ? "invalid_input" : "storage_unavailable", "WithMate runtime rejected the Character context request.", {
-			retryable: response.status === 429 || response.status >= 500,
-			conversationMayContinue: true,
-			effect: "none",
-			details: { httpStatus: response.status }
-		});
-	} catch {
+			path,
+			body
+		}, { signal: abortController.signal });
+		dispatched = true;
+		return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
+	} catch (error) {
+		const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
 		return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
 			retryable: true,
 			conversationMayContinue: true,
-			effect: dispatched ? "unknown" : "none"
+			effect: operationKind === "write" && operationDispatched ? "unknown" : "none"
 		});
 	} finally {
 		clearTimeout(timeout);
@@ -21765,7 +21873,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_context/get", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, deps)));
+	}, "read", deps)));
 	server.registerTool("character_affect.appraise", {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object({
@@ -21778,7 +21886,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, deps)));
+	}, "write", deps)));
 	server.registerTool("character_memory.search", {
 		...definitions.get("character_memory.search"),
 		inputSchema: object({
@@ -21794,7 +21902,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/search", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, deps)));
+	}, "read", deps)));
 	server.registerTool("character_memory.append_episode", {
 		...definitions.get("character_memory.append_episode"),
 		inputSchema: object({
@@ -21807,7 +21915,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/append_episode", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, deps)));
+	}, "write", deps)));
 	server.registerTool("character_memory.correct", {
 		...definitions.get("character_memory.correct"),
 		inputSchema: object({
@@ -21821,7 +21929,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/correct", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, deps)));
+	}, "write", deps)));
 	server.registerTool("character_memory.forget", {
 		...definitions.get("character_memory.forget"),
 		inputSchema: object({
@@ -21840,7 +21948,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 	}, async (input) => toolResult(await callRuntime("/v1/character_memory/forget", {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
-	}, deps)));
+	}, "write", deps)));
 	return server;
 }
 async function startWithMateMemoryMcpServer(deps = {}) {
@@ -22779,15 +22887,6 @@ function buildValidateResponse(command, body) {
 		}
 	};
 }
-async function readJsonResponse(response) {
-	const text = await response.text();
-	if (!text.trim()) return {};
-	try {
-		return JSON.parse(text);
-	} catch {
-		throw transportError("Memory API returned a non-JSON response.");
-	}
-}
 function formatAuditOutput(value, format) {
 	if (format === "json" || !value || typeof value !== "object" || !("targets" in value) || !Array.isArray(value.targets)) return `${JSON.stringify(value)}\n`;
 	const report = value;
@@ -22855,7 +22954,6 @@ function formatAuditOutput(value, format) {
 async function runWithMateMemoryCli(args, deps = {}) {
 	const stdout = deps.stdout ?? process.stdout;
 	const stderr = deps.stderr ?? process.stderr;
-	const fetchImpl = deps.fetch ?? fetch;
 	try {
 		const request = await parseWithMateMemoryCliArgs(args, deps);
 		if (request.command === "help") {
@@ -22865,7 +22963,6 @@ async function runWithMateMemoryCli(args, deps = {}) {
 		if (request.command === "mcp_server") {
 			await startWithMateMemoryMcpServer({
 				env: deps.env,
-				fetch: deps.fetch,
 				readFile: deps.readFile,
 				requestTimeoutMs: deps.requestTimeoutMs
 			});
@@ -22881,36 +22978,13 @@ async function runWithMateMemoryCli(args, deps = {}) {
 			return result.exitCode;
 		}
 		const connection = await discoverWithMateMemoryApi({
+			adapter: "cli",
 			env: deps.env,
 			apiUrl: request.apiUrl,
 			discoveryFilePath: request.discoveryFilePath,
 			readFile: deps.readFile
 		});
 		if (!connection) {
-			if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
-				stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
-				return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
-			}
-			stdout.write(`${JSON.stringify(notRunningError())}\n`);
-			return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-		}
-		try {
-			const verifyAbortController = new AbortController();
-			const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? 1e4);
-			try {
-				if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
-					if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
-						stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
-						return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
-					}
-					stdout.write(`${JSON.stringify(notRunningError())}\n`);
-					return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-				}
-			} finally {
-				clearTimeout(verifyTimeout);
-			}
-		} catch (error) {
-			if (isMemoryErrorResponse(error)) throw error;
 			if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
 				stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
 				return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
@@ -22925,26 +22999,27 @@ async function runWithMateMemoryCli(args, deps = {}) {
 		const abortController = new AbortController();
 		const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
 		try {
-			const headers = {};
-			if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
-				if (connection.operatorApiSecret) headers[WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER] = connection.operatorApiSecret;
-			}
-			if (request.fallbackFrom && CHARACTER_CONTEXT_COMMANDS.has(request.command)) headers["x-withmate-fallback-from"] = request.fallbackFrom;
-			if (route.method === "POST") headers["Content-Type"] = "application/json";
-			if (connection.apiSecret) headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
-			response = await fetchImpl(`${connection.baseUrl}${buildRoutePath(request)}`, {
+			const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
 				method: route.method,
-				headers: Object.keys(headers).length > 0 ? headers : void 0,
-				body: route.method === "POST" ? JSON.stringify(request.body) : void 0,
-				redirect: "error",
-				signal: abortController.signal
-			});
-			responseJson = await readJsonResponse(response);
+				path: buildRoutePath(request),
+				body: request.body,
+				...request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}
+			}, { signal: abortController.signal });
+			response = runtimeResponse;
+			responseJson = runtimeResponse.value;
 		} catch (error) {
 			if (isMemoryErrorResponse(error)) throw error;
-			if (isAbortError(error)) {
+			if (error instanceof WithMateMemoryRuntimeExchangeError && !error.dispatched) {
 				if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
-					const effect = CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command) ? "unknown" : "none";
+					stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+					return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+				}
+				stdout.write(`${JSON.stringify(notRunningError())}\n`);
+				return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+			}
+			if (isAbortError(error) || error instanceof WithMateMemoryRuntimeExchangeError) {
+				if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
+					const effect = error instanceof WithMateMemoryRuntimeExchangeError && !error.dispatched ? "none" : CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command) ? "unknown" : "none";
 					stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
 					return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 				}
@@ -22952,8 +23027,7 @@ async function runWithMateMemoryCli(args, deps = {}) {
 				return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 			}
 			if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
-				const effect = CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command) ? "unknown" : "none";
-				stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
+				stdout.write(`${JSON.stringify(characterRuntimeUnavailable("none"))}\n`);
 				return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 			}
 			stdout.write(`${JSON.stringify(notRunningError())}\n`);
@@ -22961,6 +23035,11 @@ async function runWithMateMemoryCli(args, deps = {}) {
 		} finally {
 			clearTimeout(requestTimeout);
 		}
+		if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) responseJson = mapRuntimeHttpFailureToCharacterContext({
+			ok: response.ok,
+			status: response.status,
+			value: responseJson
+		});
 		stdout.write(request.command === "audit" ? formatAuditOutput(responseJson, request.outputFormat ?? "json") : `${JSON.stringify(responseJson)}\n`);
 		return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 	} catch (error) {

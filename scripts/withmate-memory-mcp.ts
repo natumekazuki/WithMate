@@ -9,14 +9,22 @@ import {
 } from "../src/character-context/character-context-contract.js";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
+  callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
-  verifyRuntimeIdentity,
-  WITHMATE_MEMORY_API_SECRET_HEADER,
+  mapRuntimeHttpFailureToCharacterContext,
+  WithMateMemoryRuntimeExchangeError,
+  type WithMateMemoryRuntimeConnection,
+  type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryRuntimeResponse,
 } from "./withmate-memory-runtime-client.js";
 
 type McpRuntimeDeps = {
   env?: NodeJS.ProcessEnv;
-  fetch?: typeof fetch;
+  runtimeCall?: (
+    connection: WithMateMemoryRuntimeConnection,
+    operation: WithMateMemoryRuntimeOperation,
+    options: { signal: AbortSignal },
+  ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof import("node:fs/promises").readFile;
   requestTimeoutMs?: number;
 };
@@ -301,11 +309,13 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
 ] as const;
 
-const WITHMATE_MEMORY_MCP_API_SECRET_HEADER = "x-withmate-memory-mcp-api-secret";
-
-async function callRuntime(path: string, body: unknown, deps: McpRuntimeDeps): Promise<unknown> {
-  const fetchImpl = deps.fetch ?? fetch;
-  const connection = await discoverWithMateMemoryApi({ env: deps.env, readFile: deps.readFile });
+async function callRuntime(
+  path: string,
+  body: unknown,
+  operationKind: "read" | "write",
+  deps: McpRuntimeDeps,
+): Promise<unknown> {
+  const connection = await discoverWithMateMemoryApi({ adapter: "mcp", env: deps.env, readFile: deps.readFile });
   if (!connection) {
     return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
       retryable: true,
@@ -317,50 +327,21 @@ async function callRuntime(path: string, body: unknown, deps: McpRuntimeDeps): P
   const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
   let dispatched = false;
   try {
-    if (!await verifyRuntimeIdentity(connection, fetchImpl, abortController.signal)) {
-      return createCharacterContextError("storage_unavailable", "WithMate runtime identity could not be verified.", {
-        retryable: true,
-        conversationMayContinue: true,
-        effect: "none",
-      });
-    }
-    dispatched = true;
-    const response = await fetchImpl(`${connection.baseUrl}${path}`, {
+    const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(connection.mcpApiSecret
-          ? { [WITHMATE_MEMORY_MCP_API_SECRET_HEADER]: connection.mcpApiSecret }
-          : {}),
-        ...(connection.apiSecret ? { [WITHMATE_MEMORY_API_SECRET_HEADER]: connection.apiSecret } : {}),
-      },
-      body: JSON.stringify(body),
-      redirect: "error",
-      signal: abortController.signal,
-    });
-    const text = await response.text();
-    const value = text.trim() ? JSON.parse(text) as unknown : {};
-    if (response.ok || isCharacterContextError(value)) {
-      return value;
-    }
-    const code = response.status === 401 || response.status === 403
-      ? "authority_denied"
-      : response.status === 404
-        ? "migration_required"
-        : response.status === 413 || response.status === 415 || response.status === 422
-          ? "invalid_input"
-          : "storage_unavailable";
-    return createCharacterContextError(code, "WithMate runtime rejected the Character context request.", {
-      retryable: response.status === 429 || response.status >= 500,
-      conversationMayContinue: true,
-      effect: "none",
-      details: { httpStatus: response.status },
-    });
-  } catch {
+      path,
+      body,
+    }, { signal: abortController.signal });
+    dispatched = true;
+    return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
+  } catch (error) {
+    const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError
+      ? error.dispatched
+      : dispatched;
     return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
       retryable: true,
       conversationMayContinue: true,
-      effect: dispatched ? "unknown" : "none",
+      effect: operationKind === "write" && operationDispatched ? "unknown" : "none",
     });
   } finally {
     clearTimeout(timeout);
@@ -395,7 +376,7 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   }, async (input) => toolResult(await callRuntime("/v1/character_context/get", {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
-  }, deps)));
+  }, "read", deps)));
 
   server.registerTool("character_affect.appraise", {
     ...definitions.get("character_affect.appraise")!,
@@ -409,7 +390,7 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   }, async (input) => toolResult(await callRuntime("/v1/character_affect/appraise", {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
-  }, deps)));
+  }, "write", deps)));
 
   server.registerTool("character_memory.search", {
     ...definitions.get("character_memory.search")!,
@@ -426,7 +407,7 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   }, async (input) => toolResult(await callRuntime("/v1/character_memory/search", {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
-  }, deps)));
+  }, "read", deps)));
 
   server.registerTool("character_memory.append_episode", {
     ...definitions.get("character_memory.append_episode")!,
@@ -440,7 +421,7 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   }, async (input) => toolResult(await callRuntime("/v1/character_memory/append_episode", {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
-  }, deps)));
+  }, "write", deps)));
 
   server.registerTool("character_memory.correct", {
     ...definitions.get("character_memory.correct")!,
@@ -455,7 +436,7 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   }, async (input) => toolResult(await callRuntime("/v1/character_memory/correct", {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
-  }, deps)));
+  }, "write", deps)));
 
   server.registerTool("character_memory.forget", {
     ...definitions.get("character_memory.forget")!,
@@ -469,7 +450,7 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
   }, async (input) => toolResult(await callRuntime("/v1/character_memory/forget", {
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
-  }, deps)));
+  }, "write", deps)));
 
   return server;
 }

@@ -1,17 +1,29 @@
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-export const WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v1" as const;
-export const WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6-api.json" as const;
+export const WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2" as const;
+export const WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION = "withmate-memory-discovery-pointer-v1" as const;
+export const WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME = "memory-v6-cli.current.json" as const;
+export const WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME = "memory-v6-mcp.current.json" as const;
+export const WITHMATE_MEMORY_DISCOVERY_FILE_NAME = WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME;
+
+export type WithMateMemoryAdapterKind = "cli" | "mcp";
 
 export type WithMateMemoryDiscoveryDocument = {
   schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION;
+  adapter: WithMateMemoryAdapterKind;
   baseUrl: string;
-  apiSecret?: string;
-  operatorApiSecret?: string;
-  mcpApiSecret?: string;
-  runtimeInstanceId?: string;
-  publishedAt?: string;
+  apiSecret: string;
+  adapterSecret: string;
+  runtimeInstanceId: string;
+  publishedAt: string;
+};
+
+export type WithMateMemoryDiscoveryPointer = {
+  schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION;
+  adapter: WithMateMemoryAdapterKind;
+  runtimeInstanceId: string;
+  generationFileName: string;
 };
 
 function isLoopbackHostname(hostname: string): boolean {
@@ -60,6 +72,10 @@ export function resolveDefaultWithMateMemoryRuntimeDirectory(
 
 export function resolveDefaultWithMateMemoryDiscoveryFilePath(
   env: NodeJS.ProcessEnv = process.env,
+  adapter: WithMateMemoryAdapterKind = "cli",
 ): string {
-  return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
+  const fileName = adapter === "cli"
+    ? WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME
+    : WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME;
+  return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), fileName);
 }

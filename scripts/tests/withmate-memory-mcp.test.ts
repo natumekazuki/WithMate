@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { describe, it } from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -10,6 +12,72 @@ import {
   CHARACTER_MCP_TOOL_DEFINITIONS,
   createWithMateMemoryMcpServer,
 } from "../withmate-memory-mcp.js";
+import {
+  createWithMateMemoryRuntimeChallenge,
+  WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
+} from "../../src/memory-v6/memory-runtime-exchange.js";
+import {
+  verifyRuntimeIdentity,
+  WithMateMemoryRuntimeExchangeError,
+  WITHMATE_MEMORY_API_SECRET_HEADER,
+  type WithMateMemoryRuntimeConnection,
+  type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryRuntimeResponse,
+} from "../withmate-memory-runtime-client.js";
+
+function createLegacyRuntimeCall(fetchImpl: typeof fetch) {
+  return async (
+    connection: WithMateMemoryRuntimeConnection,
+    operation: WithMateMemoryRuntimeOperation,
+    options: { signal: AbortSignal },
+  ): Promise<WithMateMemoryRuntimeResponse> => {
+    if (!await verifyRuntimeIdentity(connection.api, fetchImpl, options.signal)) {
+      throw new WithMateMemoryRuntimeExchangeError("Runtime identity mismatch.", false);
+    }
+    let response: Response;
+    try {
+      response = await fetchImpl(`${connection.api.baseUrl}${operation.path}`, {
+        method: operation.method,
+        headers: {
+          "Content-Type": "application/json",
+          [WITHMATE_MEMORY_API_SECRET_HEADER]: connection.api.apiSecret,
+          "x-withmate-memory-mcp-api-secret": connection.credential.adapterSecret,
+        },
+        body: JSON.stringify(operation.body),
+        redirect: "error",
+        signal: options.signal,
+      });
+    } catch (error) {
+      throw new WithMateMemoryRuntimeExchangeError("Legacy test runtime request failed.", true, { cause: error });
+    }
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      value: text.trim() ? JSON.parse(text) as unknown : {},
+    };
+  };
+}
+
+async function listenServer(server: ReturnType<typeof createServer>, port = 0): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return (server.address() as AddressInfo).port;
+}
+
+async function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  if (!server.listening) {
+    return;
+  }
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}
 
 describe("WithMate Memory / Character Affect MCP contract", () => {
   it("6 toolsをschema、短い利用条件、read/write annotation付きで公開する", async () => {
@@ -116,7 +184,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
         WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
       },
-      fetch: async (url) => {
+      runtimeCall: createLegacyRuntimeCall(async (url) => {
         const parsed = new URL(String(url));
         if (parsed.pathname === "/v1/status") {
           const nonce = parsed.searchParams.get("nonce")!;
@@ -132,7 +200,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
           schemaVersion: "withmate-memory-v1",
           error: { code: "MEMORY_REQUEST_TOO_LARGE", message: "too large" },
         }), { status: 413 });
-      },
+      }),
     });
     const client = new Client({ name: "withmate-mcp-http-error-test", version: "1.0.0" });
     try {
@@ -157,6 +225,201 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     } finally {
       await client.close();
       await server.close();
+    }
+  });
+
+  it("post-dispatch response lossはreadをeffect none、writeをeffect unknownにする", async () => {
+    const apiSecret = "effect-api-secret";
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: apiSecret,
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-effect",
+      },
+      runtimeCall: createLegacyRuntimeCall(async (url) => {
+        const parsed = new URL(String(url));
+        if (parsed.pathname === "/v1/status") {
+          const nonce = parsed.searchParams.get("nonce")!;
+          return new Response(JSON.stringify({
+            runtimeInstanceId: "runtime-effect",
+            challenge: {
+              nonce,
+              hmacSha256: createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url"),
+            },
+          }), { status: 200 });
+        }
+        throw new TypeError("response lost after dispatch");
+      }),
+    });
+    const client = new Client({ name: "withmate-mcp-effect-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const readResult = await client.callTool({
+        name: "character_context.get",
+        arguments: { characterId: "character-a", sessionId: "session-a" },
+      });
+      const writeResult = await client.callTool({
+        name: "character_memory.forget",
+        arguments: {
+          characterId: "character-a",
+          entryId: "entry-a",
+          reason: "user_request",
+          idempotencyKey: "effect-mcp-1",
+        },
+      });
+      assert.equal((readResult.structuredContent as any).error.effect, "none");
+      assert.equal((writeResult.structuredContent as any).error.effect, "unknown");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("pre-dispatch同期failureはwriteでもeffect noneを返す", async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+      },
+      runtimeCall: async () => {
+        throw new TypeError("invalid request header");
+      },
+    });
+    const client = new Client({ name: "withmate-mcp-predispatch-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "character_memory.forget",
+        arguments: {
+          characterId: "character-a",
+          entryId: "entry-a",
+          reason: "user_request",
+          idempotencyKey: "predispatch-mcp-1",
+        },
+      });
+      assert.equal(result.isError, true);
+      assert.equal((result.structuredContent as any).error.effect, "none");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("runtimeのauthority errorを共通Character schemaへ変換する", async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+      },
+      runtimeCall: async () => ({
+        ok: false,
+        status: 401,
+        value: { schemaVersion: "withmate-memory-v1", error: { code: "MEMORY_UNAUTHORIZED", message: "rejected" } },
+      }),
+    });
+    const client = new Client({ name: "withmate-mcp-authority-error-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "character_context.get",
+        arguments: { characterId: "character-a", sessionId: "session-a" },
+      });
+      assert.equal(result.isError, true);
+      assert.equal((result.structuredContent as any).schemaVersion, "withmate-character-context-v1");
+      assert.equal((result.structuredContent as any).error.code, "authority_denied");
+      assert.equal((result.structuredContent as any).error.effect, "none");
+      assert.equal((result.structuredContent as any).error.details.httpStatus, 401);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("challenge後に同じportのpeerが差し替わってもcredentialとmutationを再送せず偽成功を拒否する", async () => {
+    const apiSecret = "swap-api-secret";
+    const runtimeInstanceId = "swap-runtime";
+    let replacementRequests = 0;
+    let replacementServer: ReturnType<typeof createServer> | null = null;
+    let replacementListening: Promise<void> | null = null;
+    const firstHeaders: Array<Record<string, string | string[] | undefined>> = [];
+    const firstServer = createServer((request, response) => {
+      firstHeaders.push(request.headers);
+      const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
+      response.writeEarlyHints({
+        link: "</v1/exchange>; rel=preconnect",
+        [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+        [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
+          apiSecret,
+          runtimeInstanceId,
+          typeof nonce === "string" ? nonce : "",
+        ),
+      }, () => {
+        request.socket.destroy();
+        firstServer.close(() => {
+          replacementServer = createServer((_replacementRequest, replacementResponse) => {
+            replacementRequests += 1;
+            replacementResponse.writeHead(200, { "Content-Type": "application/json" });
+            replacementResponse.end(JSON.stringify({ ok: true, forged: true }));
+          });
+          replacementListening = listenServer(replacementServer, port).then(() => undefined);
+        });
+      });
+    });
+    const port = await listenServer(firstServer);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: `http://127.0.0.1:${port}`,
+        WITHMATE_MEMORY_API_SECRET: apiSecret,
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: runtimeInstanceId,
+      },
+    });
+    const client = new Client({ name: "withmate-mcp-peer-swap-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "character_memory.forget",
+        arguments: {
+          characterId: "character-a",
+          entryId: "entry-a",
+          reason: "user_request",
+          idempotencyKey: "swap-mcp-1",
+        },
+      });
+      if (replacementListening) {
+        await replacementListening;
+      }
+      assert.equal(result.isError, true);
+      assert.equal((result.structuredContent as any).error.code, "storage_unavailable");
+      assert.equal((result.structuredContent as any).error.effect, "unknown");
+      assert.equal(replacementRequests, 0);
+      assert.equal(firstHeaders.length, 1);
+      assert.equal(firstHeaders[0]["x-withmate-memory-api-secret"], undefined);
+      assert.equal(firstHeaders[0]["x-withmate-memory-mcp-api-secret"], undefined);
+      assert.equal(firstHeaders[0]["content-length"], undefined);
+    } finally {
+      await client.close();
+      await server.close();
+      await closeServer(firstServer);
+      if (replacementListening) {
+        await replacementListening.catch(() => undefined);
+      }
+      if (replacementServer) {
+        await closeServer(replacementServer);
+      }
     }
   });
 });

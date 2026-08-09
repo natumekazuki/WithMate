@@ -18,7 +18,7 @@ import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
-function createFixture(options: { failEpisodeWrite?: boolean } = {}) {
+function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?: boolean } = {}) {
   const directory = mkdtempSync(join(tmpdir(), "withmate-character-context-"));
   const dbPath = join(directory, "withmate-v6.db");
   const db = new DatabaseSync(dbPath);
@@ -42,6 +42,11 @@ function createFixture(options: { failEpisodeWrite?: boolean } = {}) {
     storage: memoryStorage,
     resolveCharacterById: (id) => id === "character-a" ? { id, name: "A" } : null,
   });
+  if (options.failMemorySearch) {
+    memoryService.search = async () => {
+      throw new Error("injected Memory search failure");
+    };
+  }
   const affectService = options.failEpisodeWrite
     ? new CharacterAffectService(
         affectStorage,
@@ -107,6 +112,27 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
 }
 
 describe("CharacterContextApplicationService", () => {
+  it("read-only Memory searchの予期しないfailureをeffect noneで返す", async () => {
+    const fixture = createFixture({ failMemorySearch: true });
+    try {
+      const result = await fixture.service.searchMemory({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        query: "failure",
+        scope: { scope: "character" },
+        limit: 3,
+      });
+      assert.equal(isCharacterContextError(result), true);
+      if (isCharacterContextError(result)) {
+        assert.equal(result.error.code, "storage_unavailable");
+        assert.equal(result.error.effect, "none");
+        assert.equal(result.error.retryable, true);
+      }
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("context、appraise、Memory episodeを同じ正本からversion付きでread-backする", async () => {
     const fixture = createFixture();
     try {

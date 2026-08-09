@@ -44,10 +44,15 @@ import {
 } from "../src/character-context/character-context-validation.js";
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
+  callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
+  mapRuntimeHttpFailureToCharacterContext,
   verifyRuntimeIdentity,
+  WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
-  type WithMateMemoryApiConnection,
+  type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryRuntimeResponse,
+  type WithMateMemoryRuntimeConnection,
 } from "./withmate-memory-runtime-client.js";
 import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
 
@@ -116,7 +121,11 @@ export type WithMateMemoryCliDeps = {
   stdin?: NodeJS.ReadStream;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
-  fetch?: typeof fetch;
+  runtimeCall?: (
+    connection: WithMateMemoryRuntimeConnection,
+    operation: WithMateMemoryRuntimeOperation,
+    options: { signal: AbortSignal },
+  ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
@@ -1173,19 +1182,6 @@ function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: un
   };
 }
 
-async function readJsonResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text.trim()) {
-    return {};
-  }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw transportError("Memory API returned a non-JSON response.");
-  }
-}
-
 function formatAuditOutput(value: unknown, format: "json" | "jsonl" | "markdown"): string {
   if (format === "json" || !value || typeof value !== "object" || !("targets" in value) || !Array.isArray((value as { targets?: unknown }).targets)) {
     return `${JSON.stringify(value)}\n`;
@@ -1279,7 +1275,6 @@ export async function runWithMateMemoryCli(
 ): Promise<number> {
   const stdout = deps.stdout ?? process.stdout;
   const stderr = deps.stderr ?? process.stderr;
-  const fetchImpl = deps.fetch ?? fetch;
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
@@ -1290,7 +1285,6 @@ export async function runWithMateMemoryCli(
     if (request.command === "mcp_server") {
       await startWithMateMemoryMcpServer({
         env: deps.env,
-        fetch: deps.fetch,
         readFile: deps.readFile,
         requestTimeoutMs: deps.requestTimeoutMs,
       });
@@ -1307,6 +1301,7 @@ export async function runWithMateMemoryCli(
     }
 
     const connection = await discoverWithMateMemoryApi({
+      adapter: "cli",
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
@@ -1321,70 +1316,39 @@ export async function runWithMateMemoryCli(
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
 
-    try {
-      const verifyAbortController = new AbortController();
-      const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
-      try {
-        if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
-          if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-            stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
-            return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
-          }
-          stdout.write(`${JSON.stringify(notRunningError())}\n`);
-          return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-        }
-      } finally {
-        clearTimeout(verifyTimeout);
-      }
-    } catch (error) {
-      if (isMemoryErrorResponse(error)) {
-        throw error;
-      }
-      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-        stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
-        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
-      }
-      stdout.write(`${JSON.stringify(notRunningError())}\n`);
-      return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-    }
-
     const route = routeByCommand[request.command];
-    let response: Response;
+    let response: Pick<Response, "ok" | "status">;
     let responseJson: unknown;
     const operationTimeoutMs = resolveRuntimeRequestTimeoutMs(request.command, deps);
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
-      const headers: Record<string, string> = {};
-      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-        if (connection.operatorApiSecret) {
-          headers[WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER] = connection.operatorApiSecret;
-        }
-      }
-      if (request.fallbackFrom && CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-        headers["x-withmate-fallback-from"] = request.fallbackFrom;
-      }
-      if (route.method === "POST") {
-        headers["Content-Type"] = "application/json";
-      }
-      if (connection.apiSecret) {
-        headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
-      }
-      response = await fetchImpl(`${connection.baseUrl}${buildRoutePath(request)}`, {
+      const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
         method: route.method,
-        headers: Object.keys(headers).length > 0 ? headers : undefined,
-        body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
-        redirect: "error",
-        signal: abortController.signal,
-      });
-      responseJson = await readJsonResponse(response);
+        path: buildRoutePath(request),
+        body: request.body,
+        ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
+      }, { signal: abortController.signal });
+      response = runtimeResponse;
+      responseJson = runtimeResponse.value;
     } catch (error) {
       if (isMemoryErrorResponse(error)) {
         throw error;
       }
-      if (isAbortError(error)) {
+      if (error instanceof WithMateMemoryRuntimeExchangeError && !error.dispatched) {
         if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-          const effect = CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand)
+          stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+          return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+        }
+        stdout.write(`${JSON.stringify(notRunningError())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+      }
+      if (isAbortError(error) || error instanceof WithMateMemoryRuntimeExchangeError) {
+        if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+          const effect = error instanceof WithMateMemoryRuntimeExchangeError
+            && !error.dispatched
+            ? "none"
+            : CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand)
             ? "unknown"
             : "none";
           stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
@@ -1394,10 +1358,7 @@ export async function runWithMateMemoryCli(
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
-        const effect = CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand)
-          ? "unknown"
-          : "none";
-        stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
+        stdout.write(`${JSON.stringify(characterRuntimeUnavailable("none"))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
@@ -1406,6 +1367,13 @@ export async function runWithMateMemoryCli(
       clearTimeout(requestTimeout);
     }
 
+    if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+      responseJson = mapRuntimeHttpFailureToCharacterContext({
+        ok: response.ok,
+        status: response.status,
+        value: responseJson,
+      });
+    }
     stdout.write(request.command === "audit"
       ? formatAuditOutput(responseJson, request.outputFormat ?? "json")
       : `${JSON.stringify(responseJson)}\n`);

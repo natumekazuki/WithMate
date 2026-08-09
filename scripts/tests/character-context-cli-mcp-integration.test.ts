@@ -62,9 +62,10 @@ describe("Character context CLI / MCP integration", () => {
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
     db.close();
 
-    const env = { WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath };
+    const cliEnv = { WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath };
+    const mcpEnv = { WITHMATE_MEMORY_DISCOVERY_FILE: runtime.mcpDiscoveryFilePath };
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    const server = createWithMateMemoryMcpServer({ env });
+    const server = createWithMateMemoryMcpServer({ env: mcpEnv });
     const client = new Client({ name: "withmate-cli-mcp-integration", version: "1.0.0" });
     try {
       await server.connect(serverTransport);
@@ -79,7 +80,7 @@ describe("Character context CLI / MCP integration", () => {
           characterId: "character-a",
           sessionId: "session-a",
         }),
-      ], { env, stdout: beforeOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream }), 0);
       const before = beforeOutput.json();
 
       const appraisal = await client.callTool({
@@ -118,7 +119,7 @@ describe("Character context CLI / MCP integration", () => {
           sessionId: "session-a",
           authority: { kind: "operator", reason: "Integration inspection." },
         }),
-      ], { env, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
       const inspection = inspectOutput.json();
       assert.equal(inspection.version.version, appraisalState.version);
       assert.equal(inspection.events[0].targetId, "mcp-integration");
@@ -141,7 +142,7 @@ describe("Character context CLI / MCP integration", () => {
             observedFact: "The integration test completed the CLI write.",
           },
         }),
-      ], { env, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: appendOutput.stream, stderr: outputBuffer().stream }), 0);
       const appended = appendOutput.json();
 
       const correctOutput = outputBuffer();
@@ -163,7 +164,7 @@ describe("Character context CLI / MCP integration", () => {
             observedFact: "The CLI correction completed.",
           },
         }),
-      ], { env, stdout: correctOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: cliEnv, stdout: correctOutput.stream, stderr: outputBuffer().stream }), 0);
       const corrected = correctOutput.json();
 
       const search = await client.callTool({
@@ -191,6 +192,38 @@ describe("Character context CLI / MCP integration", () => {
       });
       assert.equal(forgotten.isError, undefined);
       assert.equal((forgotten.structuredContent as Record<string, any>).readBack, "forgotten");
+
+      const failureDb = new DatabaseSync(runtime.dbPath);
+      failureDb.exec("ALTER TABLE memory_entries_v6 RENAME TO memory_entries_v6_unavailable");
+      failureDb.close();
+
+      const failedCliSearchOutput = outputBuffer();
+      assert.equal(await runWithMateMemoryCli([
+        "character-memory-search",
+        "--json",
+        JSON.stringify({
+          schemaVersion: "withmate-character-context-v1",
+          characterId: "character-a",
+          query: "server failure",
+          scope: { scope: "character" },
+          limit: 3,
+        }),
+      ], { env: cliEnv, stdout: failedCliSearchOutput.stream, stderr: outputBuffer().stream }), 3);
+      assert.equal(failedCliSearchOutput.json().error.code, "storage_unavailable");
+      assert.equal(failedCliSearchOutput.json().error.effect, "none");
+
+      const failedMcpSearch = await client.callTool({
+        name: "character_memory.search",
+        arguments: {
+          characterId: "character-a",
+          query: "server failure",
+          scope: { scope: "character" },
+          limit: 3,
+        },
+      });
+      assert.equal(failedMcpSearch.isError, true);
+      assert.equal((failedMcpSearch.structuredContent as Record<string, any>).error.code, "storage_unavailable");
+      assert.equal((failedMcpSearch.structuredContent as Record<string, any>).error.effect, "none");
     } finally {
       await client.close();
       await server.close();
