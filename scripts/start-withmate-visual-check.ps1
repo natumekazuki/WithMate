@@ -56,6 +56,30 @@ function Resolve-FullPath {
   return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Enter-VisualCheckLifecycleLock {
+  param(
+    [Parameter(Mandatory = $true)][string]$LockPath,
+    [Parameter(Mandatory = $true)][TimeSpan]$Timeout
+  )
+
+  $deadline = [DateTimeOffset]::UtcNow.Add($Timeout)
+  while ($true) {
+    try {
+      return [System.IO.File]::Open(
+        $LockPath,
+        [System.IO.FileMode]::OpenOrCreate,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::None
+      )
+    } catch [System.IO.IOException] {
+      if ([DateTimeOffset]::UtcNow -ge $deadline) {
+        throw "Timed out waiting for another visual-check launch to finish"
+      }
+      Start-Sleep -Milliseconds 200
+    }
+  }
+}
+
 function Assert-NotReparsePoint {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
@@ -166,15 +190,12 @@ const { DatabaseSync, backup } = require("node:sqlite");
   }
 }
 
-function Initialize-VisualCheckUserData {
+function Recreate-VisualCheckUserData {
   param(
     [Parameter(Mandatory = $true)][string]$SourcePath,
     [Parameter(Mandatory = $true)][string]$DestinationPath
   )
 
-  if (Test-Path -LiteralPath $DestinationPath) {
-    return
-  }
   if (-not (Test-Path -LiteralPath $SourcePath -PathType Container)) {
     throw "Source userData was not found: $SourcePath"
   }
@@ -216,8 +237,11 @@ function Initialize-VisualCheckUserData {
       -DestinationPath (Join-Path $stagingPath $databaseFile.Name)
   }
 
+  if (Test-Path -LiteralPath $DestinationPath) {
+    Remove-Item -LiteralPath $DestinationPath -Recurse -Force
+  }
   Move-Item -LiteralPath $stagingPath -Destination $DestinationPath
-  Write-Host "Created visual-check userData: $DestinationPath"
+  Write-Host "Recreated visual-check userData: $DestinationPath"
 }
 
 function Get-CommandLineArguments {
@@ -341,10 +365,9 @@ if (-not (Test-Path -LiteralPath (Join-Path $resolvedWorktreePath "package.json"
 }
 Assert-NotReparsePoint -Path $resolvedSourceUserDataPath -Label "Source userData"
 Assert-NotReparsePoint -Path $resolvedUserDataPath -Label "Visual-check userData"
-
-Initialize-VisualCheckUserData `
-  -SourcePath $resolvedSourceUserDataPath `
-  -DestinationPath $resolvedUserDataPath
+if (-not (Test-Path -LiteralPath $resolvedSourceUserDataPath -PathType Container)) {
+  throw "Source userData was not found: $resolvedSourceUserDataPath"
+}
 
 $requiredElectronVersion = Get-RequiredElectronVersion -RepositoryPath $resolvedWorktreePath
 $resolvedElectronPath = Get-ElectronExecutable `
@@ -352,66 +375,82 @@ $resolvedElectronPath = Get-ElectronExecutable `
   -RequiredVersion $requiredElectronVersion `
   -ExplicitPath $ElectronPath
 
-Write-Host "Building $resolvedWorktreePath"
-Push-Location $resolvedWorktreePath
+$lifecycleLockPath = "$resolvedUserDataPath.lifecycle.lock"
+$lifecycleLock = $null
 try {
-  & npm.cmd run build
-  if ($LASTEXITCODE -ne 0) {
-    throw "WithMate build failed"
+  $lifecycleLock = Enter-VisualCheckLifecycleLock `
+    -LockPath $lifecycleLockPath `
+    -Timeout ([TimeSpan]::FromMinutes(10))
+
+  Write-Host "Building $resolvedWorktreePath"
+  Push-Location $resolvedWorktreePath
+  try {
+    & npm.cmd run build
+    if ($LASTEXITCODE -ne 0) {
+      throw "WithMate build failed"
+    }
+  } finally {
+    Pop-Location
   }
-} finally {
-  Pop-Location
-}
 
-$mainPath = Join-Path $resolvedWorktreePath "dist-electron\src-electron\main.js"
-if (-not (Test-Path -LiteralPath $mainPath -PathType Leaf)) {
-  throw "Electron main build was not found: $mainPath"
-}
+  $mainPath = Join-Path $resolvedWorktreePath "dist-electron\src-electron\main.js"
+  if (-not (Test-Path -LiteralPath $mainPath -PathType Leaf)) {
+    throw "Electron main build was not found: $mainPath"
+  }
 
-if ($ValidateOnly) {
+  if ($ValidateOnly) {
+    [pscustomobject]@{
+      WorktreePath = $resolvedWorktreePath
+      UserDataPath = $resolvedUserDataPath
+      ElectronPath = $resolvedElectronPath
+      ElectronVersion = $requiredElectronVersion
+      MainPath = $mainPath
+      Ready = $true
+    }
+    return
+  }
+
+  Stop-ExistingVisualCheckProcess `
+    -RepositoryPath $resolvedWorktreePath `
+    -UserDataPath $resolvedUserDataPath `
+    -ProcessMarker $VisualCheckProcessMarker
+
+  Recreate-VisualCheckUserData `
+    -SourcePath $resolvedSourceUserDataPath `
+    -DestinationPath $resolvedUserDataPath
+
+  $env:WITHMATE_USER_DATA_PATH = $resolvedUserDataPath
+  Remove-Item Env:VITE_DEV_SERVER_URL -ErrorAction SilentlyContinue
+  $process = Start-Process `
+    -FilePath $resolvedElectronPath `
+    -ArgumentList @($mainPath, $VisualCheckProcessMarker) `
+    -WorkingDirectory $resolvedWorktreePath `
+    -PassThru
+
+  Start-Sleep -Seconds 3
+  if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+    throw "WithMate exited during startup (PID $($process.Id))"
+  }
+
+  $processStatePath = Join-Path $resolvedUserDataPath "visual-check-process.json"
+  @{
+    schemaVersion = 1
+    processId = $process.Id
+    mainPath = $mainPath
+    electronPath = $resolvedElectronPath
+    marker = $VisualCheckProcessMarker
+    launchedAt = [DateTimeOffset]::UtcNow.ToString("O")
+  } | ConvertTo-Json | Set-Content -LiteralPath $processStatePath -Encoding utf8
+
   [pscustomobject]@{
+    ProcessId = $process.Id
     WorktreePath = $resolvedWorktreePath
     UserDataPath = $resolvedUserDataPath
     ElectronPath = $resolvedElectronPath
     ElectronVersion = $requiredElectronVersion
-    MainPath = $mainPath
-    Ready = $true
   }
-  return
-}
-
-Stop-ExistingVisualCheckProcess `
-  -RepositoryPath $resolvedWorktreePath `
-  -UserDataPath $resolvedUserDataPath `
-  -ProcessMarker $VisualCheckProcessMarker
-
-$env:WITHMATE_USER_DATA_PATH = $resolvedUserDataPath
-Remove-Item Env:VITE_DEV_SERVER_URL -ErrorAction SilentlyContinue
-$process = Start-Process `
-  -FilePath $resolvedElectronPath `
-  -ArgumentList @($mainPath, $VisualCheckProcessMarker) `
-  -WorkingDirectory $resolvedWorktreePath `
-  -PassThru
-
-Start-Sleep -Seconds 3
-if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
-  throw "WithMate exited during startup (PID $($process.Id))"
-}
-
-$processStatePath = Join-Path $resolvedUserDataPath "visual-check-process.json"
-@{
-  schemaVersion = 1
-  processId = $process.Id
-  mainPath = $mainPath
-  electronPath = $resolvedElectronPath
-  marker = $VisualCheckProcessMarker
-  launchedAt = [DateTimeOffset]::UtcNow.ToString("O")
-} | ConvertTo-Json | Set-Content -LiteralPath $processStatePath -Encoding utf8
-
-[pscustomobject]@{
-  ProcessId = $process.Id
-  WorktreePath = $resolvedWorktreePath
-  UserDataPath = $resolvedUserDataPath
-  ElectronPath = $resolvedElectronPath
-  ElectronVersion = $requiredElectronVersion
+} finally {
+  if ($null -ne $lifecycleLock) {
+    $lifecycleLock.Dispose()
+  }
 }

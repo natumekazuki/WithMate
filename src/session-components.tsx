@@ -2238,6 +2238,7 @@ export type SelectionTextActionSurfaceProps = {
   className?: string;
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
+  selectAllText?: string;
   surfaceRef?: RefObject<HTMLDivElement | null>;
 };
 
@@ -2246,11 +2247,13 @@ export function SelectionTextActionSurface({
   className = "",
   onCopyText,
   onQuoteText,
+  selectAllText,
   surfaceRef: externalSurfaceRef,
 }: SelectionTextActionSurfaceProps) {
   const internalSurfaceRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = externalSurfaceRef ?? internalSurfaceRef;
   const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const logicalSelectAllTextRef = useRef<string | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
 
   const updateSelectionToolbar = useCallback(() => {
@@ -2267,7 +2270,7 @@ export function SelectionTextActionSurface({
       ? commonAncestor as Element
       : commonAncestor.parentElement;
     const selectableBody = commonElement?.closest("[data-selection-copy-body='true']") ?? null;
-    const selectedText = getNonBlankSelectionText(selection);
+    const selectedText = logicalSelectAllTextRef.current ?? getNonBlankSelectionText(selection);
     if (!selectableBody || !surface.contains(selectableBody) || selectedText === null) {
       setSelectionToolbar(null);
       return;
@@ -2295,6 +2298,72 @@ export function SelectionTextActionSurface({
     });
   }, [onQuoteText, surfaceRef]);
 
+  const clearLogicalSelectAll = useCallback((clearBrowserSelection = false) => {
+    const wasLogicalSelectAll = logicalSelectAllTextRef.current !== null;
+    logicalSelectAllTextRef.current = null;
+    if (wasLogicalSelectAll && clearBrowserSelection && typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges();
+    }
+  }, []);
+
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    const target = event.target;
+    if (
+      event.defaultPrevented ||
+      !(event.ctrlKey || event.metaKey)
+      || event.key.toLocaleLowerCase() !== "a"
+      || (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable='true']"))
+    ) {
+      return;
+    }
+
+    const surface = surfaceRef.current;
+    const selectableBody = surface?.querySelector<HTMLElement>("[data-selection-copy-body='true']") ?? null;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+    if (!surface || !selectableBody || !selection) {
+      return;
+    }
+
+    const resolvedText = selectAllText
+      ?? (typeof selectableBody.innerText === "string" ? selectableBody.innerText : selectableBody.textContent ?? "");
+    event.preventDefault();
+    surface.focus({ preventScroll: true });
+    clearLogicalSelectAll();
+    selection.removeAllRanges();
+    if (!resolvedText.trim()) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    logicalSelectAllTextRef.current = resolvedText;
+    const range = document.createRange();
+    range.selectNodeContents(selectableBody);
+    selection.addRange(range);
+    updateSelectionToolbar();
+  }, [clearLogicalSelectAll, selectAllText, surfaceRef, updateSelectionToolbar]);
+
+  const handleCopy = useCallback<ClipboardEventHandler<HTMLDivElement>>((event) => {
+    const logicalText = logicalSelectAllTextRef.current;
+    if (logicalText === null) {
+      return;
+    }
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", logicalText);
+  }, []);
+
+  useEffect(() => {
+    clearLogicalSelectAll();
+    setSelectionToolbar(null);
+  }, [clearLogicalSelectAll, selectAllText]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
+
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
       return;
@@ -2312,7 +2381,23 @@ export function SelectionTextActionSurface({
   }, [updateSelectionToolbar]);
 
   return (
-    <div ref={surfaceRef} className={className}>
+    <div
+      ref={surfaceRef}
+      className={className}
+      tabIndex={0}
+      onCopy={handleCopy}
+      onPointerDownCapture={(event) => {
+        if (!(event.target instanceof HTMLElement) || !event.target.closest(".message-response-actions")) {
+          clearLogicalSelectAll();
+        }
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          clearLogicalSelectAll(true);
+          setSelectionToolbar(null);
+        }
+      }}
+    >
       <div data-selection-copy-body="true">{children}</div>
       {selectionToolbar ? (
         <MessageResponseActions

@@ -359,6 +359,133 @@ test("Text preview の選択範囲は Copy と Quote の共通 action を表示�
   }
 });
 
+test("Text preview の Ctrl+A は仮想化された全文だけを Copy と Quote の対象にする", async () => {
+  const dom = new JSDOM("<!doctype html><p>outside preview</p><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const rangePrototype = dom.window.Range.prototype as Range & {
+    getBoundingClientRect?: () => DOMRect;
+    getClientRects?: () => DOMRect[];
+  };
+  const previousGetBoundingClientRect = rangePrototype.getBoundingClientRect;
+  const previousGetClientRects = rangePrototype.getClientRects;
+  const selectionRect = createRect({ left: 40, top: 40, width: 400, height: 300 });
+  rangePrototype.getBoundingClientRect = () => selectionRect;
+  rangePrototype.getClientRects = () => [selectionRect];
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "many-lines.txt",
+  };
+  const text = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join("\n");
+  const quotedTexts: string[] = [];
+  const api = createTextPreviewApi(request, "many-lines.txt", text, "text-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request, {
+      onQuoteText: (value) => quotedTexts.push(value),
+    });
+    await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+
+    const surface = container.querySelector<HTMLElement>(".session-file-text-scroll");
+    assert.ok(surface);
+    Object.defineProperty(surface, "getBoundingClientRect", {
+      configurable: true,
+      value: () => selectionRect,
+    });
+    const previewHeaderButton = container.querySelector<HTMLButtonElement>(".session-file-preview-header button");
+    assert.ok(previewHeaderButton);
+    previewHeaderButton.focus();
+    const selectAllEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      previewHeaderButton.dispatchEvent(selectAllEvent);
+    });
+    assert.equal(selectAllEvent.defaultPrevented, true);
+    assert.equal(dom.window.document.activeElement, surface);
+    assert.ok(container.querySelectorAll(".session-file-text-line").length < 200);
+
+    let copiedText = "";
+    const copyEvent = new dom.window.Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: {
+        setData(type: string, value: string) {
+          assert.equal(type, "text/plain");
+          copiedText = value;
+        },
+      },
+    });
+    await act(async () => {
+      surface.dispatchEvent(copyEvent);
+    });
+    assert.equal(copyEvent.defaultPrevented, true);
+    assert.equal(copiedText, text);
+    assert.doesNotMatch(copiedText, /outside preview/);
+
+    const quoteButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".message-response-actions button"))
+      .find((button) => button.textContent === "Quote");
+    assert.ok(quoteButton);
+    await act(async () => quoteButton.click());
+    assert.deepEqual(quotedTexts, [text]);
+
+    const findButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Find");
+    assert.ok(findButton);
+    await act(async () => findButton.click());
+    const findInput = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(findInput);
+    const inputSelectAllEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      findInput.dispatchEvent(inputSelectAllEvent);
+    });
+    assert.equal(inputSelectAllEvent.defaultPrevented, false);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    if (previousGetBoundingClientRect) {
+      rangePrototype.getBoundingClientRect = previousGetBoundingClientRect;
+    } else {
+      Reflect.deleteProperty(rangePrototype, "getBoundingClientRect");
+    }
+    if (previousGetClientRects) {
+      rangePrototype.getClientRects = previousGetClientRects;
+    } else {
+      Reflect.deleteProperty(rangePrototype, "getClientRects");
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 function dispatchPointerEvent(
   dom: JSDOM,
   target: Element,
