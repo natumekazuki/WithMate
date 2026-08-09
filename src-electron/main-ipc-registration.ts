@@ -80,12 +80,19 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
+} from "../src/file-explorer/file-explorer-contract.js";
+import {
+  areSessionFileResourcesEqual,
+  isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type {
@@ -143,6 +150,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
@@ -263,6 +272,9 @@ export type MainIpcRegistrationDeps = {
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   listSessionSummaries(): Awaitable<SessionSummary[]>;
@@ -342,6 +354,10 @@ export type MainIpcRegistrationDeps = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Awaitable<SessionFilePreviewWindowOpenResult>;
+  getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   copySessionFilePreviewImage(
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
@@ -437,6 +453,8 @@ type MainIpcWindowDeps = Pick<
   | "openMemoryV6ReviewWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
+  | "isFilePreviewWindow"
+  | "isFilePreviewTokenWindow"
   | "openCompanionReviewWindow"
   | "openCompanionMergeWindow"
   | "openPathTarget"
@@ -525,6 +543,9 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveSessionWindow"
+  | "isFilePreviewWindow"
+  | "getFilePreviewWindowResource"
+  | "isFilePreviewTokenWindow"
   | "listSessionSummaries"
   | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
@@ -552,6 +573,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
+  | "openSessionFilePreviewWindow"
+  | "getSessionFilePreviewWindowPayload"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
   | "listFileRootChanges"
@@ -682,6 +705,31 @@ async function assertSessionFileExplorerSender(
   sessionId: string,
   deps: Pick<
     MainIpcRegistrationDeps,
+    | "resolveEventWindow"
+    | "resolveSessionWindow"
+    | "getSessionFileExplorerOwnerSessionId"
+    | "getFilePreviewWindowResource"
+  >,
+): Promise<SessionFileResourceRequest | null> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return null;
+  }
+  const currentResource = window
+    ? deps.getFilePreviewWindowResource(window, sessionId)
+    : null;
+  if (currentResource) {
+    return currentResource;
+  }
+  throw new Error("File Explorer IPC is only available from the owning Session window.");
+}
+
+async function assertOwningSessionFileExplorerSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<
+    MainIpcRegistrationDeps,
     "resolveEventWindow" | "resolveSessionWindow" | "getSessionFileExplorerOwnerSessionId"
   >,
 ): Promise<void> {
@@ -690,7 +738,103 @@ async function assertSessionFileExplorerSender(
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
     return;
   }
-  throw new Error("File Explorer IPC is only available from the owning Session window.");
+  throw new Error("File preview navigation is only available from the owning Session window.");
+}
+
+async function assertSessionFileResourceSender(
+  event: IpcMainInvokeEvent,
+  resource: SessionFileResourceRequest,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    | "resolveEventWindow"
+    | "resolveSessionWindow"
+    | "getSessionFileExplorerOwnerSessionId"
+    | "getFilePreviewWindowResource"
+  >,
+): Promise<void> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(resource.sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (
+    ownerSessionId
+    && window
+    && deps.resolveSessionWindow(ownerSessionId) === window
+    && isSessionFileRootResource(resource)
+  ) {
+    return;
+  }
+  const currentResource = window
+    ? deps.getFilePreviewWindowResource(window, resource.sessionId)
+    : null;
+  if (currentResource && areSessionFileResourcesEqual(currentResource, resource)) {
+    return;
+  }
+  throw new Error("File Preview IPC is only available for the current Preview resource.");
+}
+
+async function assertSessionFileLinkSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  baseResource: SessionFileResourceRequest | undefined,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    | "resolveEventWindow"
+    | "resolveSessionWindow"
+    | "getSessionFileExplorerOwnerSessionId"
+    | "getFilePreviewWindowResource"
+  >,
+): Promise<void> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return;
+  }
+  const currentResource = window
+    ? deps.getFilePreviewWindowResource(window, sessionId)
+    : null;
+  if (
+    currentResource
+    && baseResource
+    && areSessionFileResourcesEqual(currentResource, baseResource)
+  ) {
+    return;
+  }
+  throw new Error("File Preview navigation must use the current Preview resource as its base.");
+}
+
+function assertValidSessionFileResourceRequest(
+  input: unknown,
+  expectedSessionId?: string,
+): asserts input is SessionFileResourceRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File preview resource is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || (expectedSessionId !== undefined && candidate.sessionId !== expectedSessionId)
+  ) {
+    throw new TypeError("File preview resource is invalid.");
+  }
+  const hasAbsolutePath = Object.hasOwn(candidate, "absolutePath");
+  const hasRootFields = Object.hasOwn(candidate, "rootId") || Object.hasOwn(candidate, "relativePath");
+  if (
+    hasAbsolutePath === hasRootFields
+    || (
+      hasAbsolutePath
+      && (typeof candidate.absolutePath !== "string" || !candidate.absolutePath)
+    )
+    || (
+      hasRootFields
+      && (
+        typeof candidate.rootId !== "string"
+        || !candidate.rootId
+        || typeof candidate.relativePath !== "string"
+      )
+    )
+  ) {
+    throw new TypeError("File preview resource is invalid.");
+  }
 }
 
 function parseSessionFilePreviewImageActionRequest(
@@ -1104,38 +1248,63 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL, async (event, sessionId: string) => {
     if (typeof sessionId !== "string" || !sessionId) {
-      throw new TypeError("Session ID が不正だよ。");
+      throw new TypeError("Session ID is invalid.");
     }
     await assertSessionFileExplorerSender(event, sessionId, deps);
     return deps.listSessionFileRoots(sessionId);
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL, async (event, request: SessionDirectoryRequest) => {
     if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
+      throw new TypeError("File Explorer request is invalid.");
     }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.listSessionDirectory(request);
   });
   ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFileResourceRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    assertValidSessionFileResourceRequest(request);
+    await assertSessionFileResourceSender(event, request, deps);
     return deps.inspectSessionFile(request);
   });
   ipcMain.handle(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, async (event, request: SessionFileChunkRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    assertValidSessionFileResourceRequest(request);
+    await assertSessionFileResourceSender(event, request, deps);
     return deps.readSessionFileChunk(request);
   });
   ipcMain.handle(WITHMATE_OPEN_SESSION_FILE_CHANNEL, async (event, request: SessionFileOpenRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    assertValidSessionFileResourceRequest(request);
+    await assertSessionFileResourceSender(event, request, deps);
     return deps.openSessionFile(request);
+  });
+  ipcMain.handle(
+    WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+    async (event, request: SessionFilePreviewWindowOpenRequest) => {
+      if (!request || (request.kind !== "resource" && request.kind !== "link")) {
+        throw new TypeError("File preview navigation request is invalid.");
+      }
+      if (request.kind === "resource") {
+        assertValidSessionFileResourceRequest(request.resource);
+        if (!isSessionFileRootResource(request.resource)) {
+          throw new TypeError("Direct file preview resources must be root-scoped.");
+        }
+        await assertOwningSessionFileExplorerSender(event, request.resource.sessionId, deps);
+      } else {
+        if (typeof request.sessionId !== "string" || !request.sessionId || typeof request.target !== "string") {
+          throw new TypeError("File preview navigation request is invalid.");
+        }
+        if (request.baseResource !== undefined) {
+          assertValidSessionFileResourceRequest(request.baseResource, request.sessionId);
+        }
+        await assertSessionFileLinkSender(event, request.sessionId, request.baseResource, deps);
+      }
+      return deps.openSessionFilePreviewWindow(request);
+    },
+  );
+  ipcMain.handle(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL, (event, token: string) => {
+    const window = deps.resolveEventWindow(event);
+    if (!token || !window || !deps.isFilePreviewTokenWindow(window, token)) {
+      return null;
+    }
+    return deps.getSessionFilePreviewWindowPayload(token);
   });
   ipcMain.handle(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, async (event, input: unknown) => {
     const request = parseSessionFilePreviewImageActionRequest(input);
@@ -1155,10 +1324,30 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       || typeof request.rootId !== "string"
       || !request.rootId
     ) {
-      throw new TypeError("File root changes request が不正だよ。");
+      throw new TypeError("File root changes request is invalid.");
     }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
-    return deps.listFileRootChanges(request);
+    const currentResource = await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    if (
+      currentResource
+      && (
+        !isSessionFileRootResource(currentResource)
+        || currentResource.rootId !== request.rootId
+      )
+    ) {
+      throw new Error("Git changes are only available for the current Preview resource.");
+    }
+    const result = await deps.listFileRootChanges(request);
+    if (!currentResource || result.status !== "ok") {
+      return result;
+    }
+    return {
+      ...result,
+      entries: result.entries.filter((entry) => areSessionFileResourcesEqual(currentResource, {
+        sessionId: request.sessionId,
+        rootId: request.rootId,
+        relativePath: entry.relativePath,
+      })),
+    };
   });
   ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
     if (
@@ -1171,9 +1360,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       || !request.relativePath
       || (request.scope !== "working-tree" && request.scope !== "staged")
     ) {
-      throw new TypeError("Git Diff request が不正だよ。");
+      throw new TypeError("Git Diff request is invalid.");
     }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    await assertSessionFileResourceSender(event, {
+      sessionId: request.sessionId,
+      rootId: request.rootId,
+      relativePath: request.relativePath,
+    }, deps);
     return deps.getFileRootDiff(request);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {

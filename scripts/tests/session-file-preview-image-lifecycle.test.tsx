@@ -17,13 +17,23 @@ type PreviewApi = NonNullable<React.ComponentProps<typeof SessionFilePreview>["a
 
 const DEFAULT_IMAGE_COPY_API: Pick<
   PreviewApi,
-  "copySessionFilePreviewImage" | "showSessionFilePreviewImageContextMenu"
+  | "copySessionFilePreviewImage"
+  | "showSessionFilePreviewImageContextMenu"
+  | "openSessionFilePreviewWindow"
 > = {
   async copySessionFilePreviewImage() {
     return { status: "copied" };
   },
   async showSessionFilePreviewImageContextMenu() {
     return { status: "dismissed" };
+  },
+  async openSessionFilePreviewWindow() {
+    return {
+      status: "opened",
+      targetType: "preview-window",
+      disposition: "created",
+      resource: MARKDOWN_REQUEST,
+    };
   },
 };
 
@@ -288,6 +298,85 @@ async function renderPreview(
   });
   return root;
 }
+
+test("Markdown preview の local file link は current resource を基準に detached Preview navigation へ戻す", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    absolutePath: "C:\\outside\\current.md",
+  };
+  const bytes = new TextEncoder().encode("[next](./next.md)");
+  const navigationRequests: unknown[] = [];
+  const descriptor: SessionFileDescriptor = {
+    ...request,
+    name: "current.md",
+    kind: "markdown",
+    byteLength: bytes.byteLength,
+    modifiedAt: "2026-08-10T00:00:00.000Z",
+    mimeType: "text/markdown",
+    suggestedEncoding: "utf-8",
+    revision: "outside-r1",
+  };
+  const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [];
+    },
+    async inspectSessionFile() {
+      return descriptor;
+    },
+    async readSessionFileChunk(chunkRequest) {
+      const chunk = bytes.slice(chunkRequest.offset, chunkRequest.offset + chunkRequest.length);
+      return {
+        data: copyArrayBuffer(chunk),
+        offset: chunkRequest.offset,
+        nextOffset: chunkRequest.offset + chunk.byteLength,
+        totalBytes: bytes.byteLength,
+        done: true,
+        revision: chunkRequest.expectedRevision,
+      };
+    },
+    async openSessionFile() {
+      return { status: "opened", targetType: "local-path", target: request.absolutePath };
+    },
+    async openPath(target) {
+      assert.fail(`Markdown local file link must not use openPath: ${target}`);
+    },
+    async openSessionFilePreviewWindow(navigationRequest) {
+      navigationRequests.push(navigationRequest);
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition: "created",
+        resource: { sessionId: "session-1", absolutePath: "C:\\outside\\next.md" },
+      };
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.querySelector<HTMLAnchorElement>("a") !== null);
+    await act(async () => container.querySelector<HTMLAnchorElement>("a")?.click());
+    assert.deepEqual(navigationRequests, [{
+      kind: "link",
+      sessionId: "session-1",
+      target: "./next.md",
+      baseResource: request,
+    }]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
 
 test("Text preview の選択範囲は Copy と Quote の共通 action を表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {

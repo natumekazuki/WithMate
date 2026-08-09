@@ -67,6 +67,10 @@ import type {
   OpenPathResult,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
+import type {
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+} from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -1155,6 +1159,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           },
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
+          loadFilePreviewEntry: (window, token) => requireWindowEntryLoader().loadFilePreviewEntry(window, token),
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeReviewEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
@@ -1279,6 +1284,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
+                isFilePreviewWindow: (window, sessionId) =>
+                  requireMainWindowFacade().isFilePreviewWindow(window, sessionId),
+                getFilePreviewWindowResource: (window, sessionId) =>
+                  requireMainWindowFacade().getFilePreviewWindowResource(window, sessionId),
+                isFilePreviewTokenWindow: (window, token) =>
+                  requireMainWindowFacade().isFilePreviewTokenWindow(window, token),
                 openCompanionReviewWindow,
                 openCompanionMergeWindow,
                 pickDirectory: (targetWindow, initialPath) =>
@@ -1371,6 +1382,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
                 readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
+                openSessionFilePreviewWindow,
+                getSessionFilePreviewWindowPayload: (token) =>
+                  requireMainWindowFacade().getFilePreviewPayload(token),
                 listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
                 getFileRootDiff: (request) => createFileRootGitChangesService().getFileDiff(request),
                 getSessionMessageArtifact,
@@ -1393,8 +1407,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireAuxiliarySessionService().createAuxiliarySession(input),
                 updateAuxiliarySession: (session) =>
                   requireAuxiliarySessionService().updateAuxiliarySession(session),
-                closeAuxiliarySession: (auxiliarySessionId) =>
-                  requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId),
+                closeAuxiliarySession: async (auxiliarySessionId) => {
+                  const closed = await requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId);
+                  requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
+                  return closed;
+                },
                 runAuxiliarySessionTurn: async (auxiliarySessionId, request) => {
                   await requireAuxiliarySessionRuntimeService().runSessionTurn(auxiliarySessionId, request);
                   const session = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
@@ -2281,6 +2298,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       invalidateProviderSessionThread,
       closeSessionWindow: (sessionId) => {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
+        requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
       },
       broadcastSessions,
     });
@@ -3378,6 +3396,76 @@ async function openSessionWindow(sessionId: string): Promise<BrowserWindow> {
 
 async function openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
   return requireMainWindowFacade().openDiffWindow(diffPreview);
+}
+
+async function openSessionFilePreviewWindow(
+  request: SessionFilePreviewWindowOpenRequest,
+): Promise<SessionFilePreviewWindowOpenResult> {
+  const explorer = createSessionFileExplorerService();
+  let resource = request.kind === "resource" ? request.resource : null;
+  if (request.kind === "link") {
+    const resolution = await explorer.resolvePreviewTarget(
+      request.sessionId,
+      request.target,
+      request.baseResource,
+    );
+    if (resolution.type === "external-url") {
+      const opened = await openPathTarget(resolution.target);
+      return opened.status === "opened"
+        ? { status: "opened", targetType: "external-url", target: opened.target }
+        : {
+            status: "failed",
+            targetType: "unknown",
+            target: opened.target,
+            message: opened.message ?? "The external URL could not be opened.",
+          };
+    }
+    if (resolution.type === "directory") {
+      const opened = await openPathTarget(resolution.targetPath);
+      return opened.status === "opened"
+        ? { status: "opened", targetType: "local-directory", target: opened.target }
+        : {
+            status: opened.status === "not-found" ? "not-found" : "failed",
+            targetType: "local-path",
+            target: opened.target,
+            message: opened.message ?? "The directory could not be opened.",
+          };
+    }
+    if (resolution.type !== "file") {
+      return {
+        status: resolution.type,
+        targetType: resolution.type === "not-previewable" ? "local-file" : "local-path",
+        target: resolution.targetPath,
+        message: resolution.message,
+      };
+    }
+    resource = resolution.resource;
+  }
+
+  if (!resource) {
+    return {
+      status: "failed",
+      targetType: "unknown",
+      target: "",
+      message: "The preview resource could not be resolved.",
+    };
+  }
+  try {
+    await explorer.inspectFile(resource);
+    const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
+    if (!ownerSessionId) {
+      throw new Error("The owning Session could not be resolved.");
+    }
+    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({ resource, ownerSessionId });
+    return { status: "opened", targetType: "preview-window", disposition, resource };
+  } catch (error) {
+    return {
+      status: "failed",
+      targetType: "local-file",
+      target: "absolutePath" in resource ? resource.absolutePath : resource.relativePath,
+      message: error instanceof Error ? error.message : "The file preview could not be opened.",
+    };
+  }
 }
 
 async function openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow> {

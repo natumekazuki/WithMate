@@ -86,6 +86,9 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -102,6 +105,9 @@ export type WithMateWindowNavigationApi = {
   openMemoryV6ReviewWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Promise<SessionFilePreviewWindowOpenResult>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
@@ -128,6 +134,7 @@ export type WithMateWindowSessionApi = {
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
+  getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;
   copySessionFilePreviewImage(
     request: SessionFilePreviewImageActionRequest,
   ): Promise<SessionFilePreviewImageCopyResult>;

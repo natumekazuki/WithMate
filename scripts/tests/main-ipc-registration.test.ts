@@ -34,7 +34,11 @@ import {
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
+  WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
+  WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
@@ -73,6 +77,9 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     resolveHomeWindow: () => null,
     isSettingsWindow: () => false,
     isMemoryV6ReviewWindow: () => false,
+    isFilePreviewWindow: () => false,
+    getFilePreviewWindowResource: () => null,
+    isFilePreviewTokenWindow: () => false,
     getMateState: async () => "active",
     logIpcError: (input: { channel: string }) => calls.push(`log:${input.channel}`),
     ...overrides,
@@ -300,8 +307,15 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
   const otherWindow = createWindowStub("file:///home.html");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview-1");
+  const currentPreviewResource = {
+    sessionId: "aux-1",
+    absolutePath: "C:/outside/current.md",
+  };
   let currentWindow = ownerWindow;
   const directoryRequests: unknown[] = [];
+  const inspectRequests: unknown[] = [];
+  const readRequests: unknown[] = [];
   const openRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
@@ -309,10 +323,33 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     resolveEventWindow: () => currentWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
     getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    isFilePreviewWindow: (window: unknown, sessionId: string) => window === previewWindow && sessionId === "aux-1",
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentPreviewResource : null
+    ),
+    isFilePreviewTokenWindow: (window: unknown, token: string) => window === previewWindow && token === "preview-1",
+    openSessionFilePreviewWindow: async () => ({
+      status: "opened",
+      targetType: "preview-window",
+      disposition: "created",
+      resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" },
+    }),
+    getSessionFilePreviewWindowPayload: () => ({
+      resource: currentPreviewResource,
+      ownerSessionId: "session-1",
+    }),
     listSessionFileRoots: async () => [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
     listSessionDirectory: async (request: unknown) => {
       directoryRequests.push(request);
       return [];
+    },
+    inspectSessionFile: async (request: unknown) => {
+      inspectRequests.push(request);
+      return null;
+    },
+    readSessionFileChunk: async (request: unknown) => {
+      readRequests.push(request);
+      return null;
     },
     openSessionFile: async (request: unknown) => {
       openRequests.push(request);
@@ -343,6 +380,38 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     target: "C:/repo/src/App.tsx",
   });
   assert.deepEqual(openRequests, [openRequest]);
+  const outsideResource = { sessionId: "aux-1", absolutePath: "C:/outside/current.md" };
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, outsideResource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, {
+      ...outsideResource,
+      offset: 0,
+      length: 1024,
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, outsideResource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "resource",
+      resource: outsideResource,
+    }) as Promise<unknown>,
+    /must be root-scoped/,
+  );
+  assert.deepEqual(inspectRequests, []);
+  assert.deepEqual(readRequests, []);
+  assert.deepEqual(openRequests, [openRequest]);
+  const previewRequest = { kind: "resource", resource: openRequest };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as { status: string }).status,
+    "opened",
+  );
   const changesRequest = { sessionId: "aux-1", rootId: "workspace" };
   assert.deepEqual(await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest), {
     status: "ok",
@@ -377,14 +446,168 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     /owning Session window/,
   );
   await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
     () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest) as Promise<unknown>,
     /owning Session window/,
   );
   assert.deepEqual(changesRequests, [changesRequest]);
   await assert.rejects(
     () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  currentWindow = previewWindow;
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1"),
+    [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL)?.({}, request) as Promise<unknown>,
     /owning Session window/,
   );
+  assert.deepEqual(directoryRequests, [request]);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL)?.({}, "preview-1"),
+    {
+      resource: currentPreviewResource,
+      ownerSessionId: "session-1",
+    },
+  );
+  assert.equal(
+    await handlers.get(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL)?.({}, "wrong-token"),
+    null,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, diffRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "link",
+      sessionId: "aux-1",
+      target: "../outside.txt",
+      baseResource: currentPreviewResource,
+    }) as { status: string }).status,
+    "opened",
+  );
+  await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, currentPreviewResource);
+  assert.deepEqual(inspectRequests, [currentPreviewResource]);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, currentPreviewResource),
+    { status: "opened", targetType: "local-path", target: "C:/repo/src/App.tsx" },
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      absolutePath: "C:/outside/other.md",
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "link",
+      sessionId: "aux-1",
+      target: "../outside.txt",
+      baseResource: {
+        sessionId: "aux-1",
+        absolutePath: "C:/outside/other.md",
+      },
+    }) as Promise<unknown>,
+    /current Preview resource as its base/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "link",
+      sessionId: "aux-1",
+      target: "../outside.txt",
+      baseResource: {
+        sessionId: "aux-1",
+        absolutePath: "C:/outside/current.md",
+        rootId: "workspace",
+        relativePath: "current.md",
+      },
+    }) as Promise<unknown>,
+    /File preview resource is invalid/,
+  );
+});
+
+test("File Preview の Git IPC は current root file だけを投影する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=preview-1");
+  const currentResource = {
+    sessionId: "aux-1",
+    rootId: "workspace",
+    relativePath: "src/current.ts",
+  };
+  const diffRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => previewWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? currentResource : null
+    ),
+    listFileRootChanges: async () => ({
+      status: "ok",
+      entries: [
+        { relativePath: "src/current.ts", previousRelativePath: null, kinds: { "working-tree": "modified" }, scopes: ["working-tree"] },
+        { relativePath: "src/secret.ts", previousRelativePath: null, kinds: { "working-tree": "modified" }, scopes: ["working-tree"] },
+      ],
+    }),
+    getFileRootDiff: async (request: unknown) => {
+      diffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootId: "workspace",
+    }),
+    {
+      status: "ok",
+      entries: [{
+        relativePath: "src/current.ts",
+        previousRelativePath: null,
+        kinds: { "working-tree": "modified" },
+        scopes: ["working-tree"],
+      }],
+    },
+  );
+  const currentDiff = { ...currentResource, scope: "working-tree" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, currentDiff),
+    { status: "not-changed", message: "none" },
+  );
+  assert.deepEqual(diffRequests, [currentDiff]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      rootId: "other-root",
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL)?.({}, {
+      ...currentDiff,
+      relativePath: "src/secret.ts",
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  assert.deepEqual(diffRequests, [currentDiff]);
 });
 
 test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {

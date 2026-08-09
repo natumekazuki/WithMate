@@ -240,6 +240,14 @@ test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast�
   );
   assert.match(
     stylesSource,
+    /\.session-file-markdown \.message-inline-code\s*{\s*background:\s*rgba\(255,\s*255,\s*255,\s*0\.08\);\s*color:\s*var\(--ink\);\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown a \.message-inline-code\s*{\s*color:\s*inherit;\s*}/,
+  );
+  assert.match(
+    stylesSource,
     /\.session-file-markdown \.message-mermaid-error\s*{\s*color:\s*var\(--session-file-error\);\s*}/,
   );
 });

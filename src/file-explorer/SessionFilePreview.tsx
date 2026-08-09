@@ -22,13 +22,17 @@ import type {
   FileRootGitChangeScope,
 } from "./file-explorer-contract.js";
 import {
+  getSessionFileResourceDisplayPath,
+  isSessionFileAbsoluteResource,
+  isSessionFileRootResource,
+} from "./file-explorer-contract.js";
+import {
   calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   formatFileByteLength,
   PreviewByteAccumulator,
   resolveMarkdownImageTarget,
-  resolveMarkdownLinkTarget,
   SESSION_FILE_LARGE_WARNING_BYTES,
   SESSION_FILE_READ_CHUNK_BYTES,
   splitPreviewLines,
@@ -73,6 +77,7 @@ type FilePreviewApi = Pick<
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
+  | "openSessionFilePreviewWindow"
   | "openPath"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
@@ -83,7 +88,8 @@ type SessionFilePreviewProps = {
   request: SessionFileResourceRequest;
   onClose: () => void;
   onCopyText: (text: string) => void;
-  onQuoteText: (text: string) => void;
+  onQuoteText?: (text: string) => void;
+  closeLabel?: string;
   diffScopes?: FileRootGitChangeScope[];
   onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
   diffLoadingScope?: FileRootGitChangeScope | null;
@@ -180,11 +186,16 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
+  const resource = isSessionFileAbsoluteResource(descriptor)
+    ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
+    : {
+        sessionId: descriptor.sessionId,
+        rootId: descriptor.rootId,
+        relativePath: descriptor.relativePath,
+      };
   while (offset < descriptor.byteLength) {
     const result = await api.readSessionFileChunk({
-      sessionId: descriptor.sessionId,
-      rootId: descriptor.rootId,
-      relativePath: descriptor.relativePath,
+      ...resource,
       offset,
       length: Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
       expectedRevision: descriptor.revision,
@@ -208,7 +219,7 @@ async function readWholeResource(
 type VirtualizedTextContentProps = {
   text: string;
   copyText: (text: string) => void;
-  quoteText: (text: string) => void;
+  quoteText?: (text: string) => void;
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
   variant?: "text" | "diff";
@@ -392,7 +403,7 @@ function VirtualizedTextContent({
 type VirtualizedSplitDiffContentProps = {
   patch: string;
   copyText: (text: string) => void;
-  quoteText: (text: string) => void;
+  quoteText?: (text: string) => void;
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
 };
@@ -530,6 +541,7 @@ export function SessionFilePreview({
   onClose,
   onCopyText,
   onQuoteText,
+  closeLabel = "Back to Chat",
   diffScopes = [],
   onOpenDiff,
   diffLoadingScope = null,
@@ -591,8 +603,7 @@ export function SessionFilePreview({
     markdownImageQueue,
     markdownMode,
     reloadRevision,
-    request.relativePath,
-    request.rootId,
+    getSessionFileResourceDisplayPath(request),
     request.sessionId,
     roots,
   ]);
@@ -1076,19 +1087,17 @@ export function SessionFilePreview({
     if (!api) {
       return;
     }
-    const resolved = resolveMarkdownLinkTarget(roots, request.rootId, request.relativePath, target);
-    if (resolved.kind === "fragment") {
-      return;
-    }
-    if (resolved.kind === "unsupported") {
-      setFeedback("The link is outside the authorized root or uses an unsupported URL scheme.");
+    const trimmedTarget = target.trim();
+    if (!trimmedTarget || trimmedTarget.startsWith("#")) {
       return;
     }
     const revision = loadRevisionRef.current;
-    const openPromise = resolved.kind === "local"
-      ? api.openSessionFile({ sessionId: request.sessionId, ...resolved.resource })
-      : api.openPath(resolved.target);
-    void openPromise
+    void api.openSessionFilePreviewWindow({
+      kind: "link",
+      sessionId: request.sessionId,
+      target: trimmedTarget,
+      baseResource: request,
+    })
       .then((result) => {
         if (loadRevisionRef.current === revision) {
           setFeedback(result.status === "opened" ? "" : result.message);
@@ -1099,7 +1108,7 @@ export function SessionFilePreview({
           setFeedback(error instanceof Error ? error.message : "The link could not be opened.");
         }
       });
-  }, [api, request, roots]);
+  }, [api, request]);
 
   const resolveMarkdownImageSource = useCallback(async (target: string): Promise<string | null> => {
     if (!api) {
@@ -1107,14 +1116,17 @@ export function SessionFilePreview({
     }
     const imageTarget = resolveMarkdownImageTarget(
       roots,
-      request.rootId,
-      request.relativePath,
+      isSessionFileRootResource(request) ? request.rootId : "absolute-preview",
+      isSessionFileRootResource(request) ? request.relativePath : "",
       target,
     );
     if (imageTarget.kind === "external") {
       return imageTarget.source;
     }
     if (imageTarget.kind === "unsupported") {
+      return null;
+    }
+    if (imageTarget.resource.rootId === "absolute-preview") {
       return null;
     }
     const revision = loadRevisionRef.current;
@@ -1187,10 +1199,10 @@ export function SessionFilePreview({
     <section className="session-file-preview" aria-label="File preview">
       <header className="session-file-preview-header">
         <button className="session-file-back-to-chat" type="button" onClick={onClose}>
-          Back to Chat{chatNotice ? <span>{chatNotice}</span> : null}
+          {closeLabel}{chatNotice ? <span>{chatNotice}</span> : null}
         </button>
         <div className="session-file-preview-title">
-          <strong>{descriptor?.name ?? request.relativePath.split("/").at(-1)}</strong>
+          <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
@@ -1395,7 +1407,8 @@ export type SessionDiffPreviewProps = {
   patch: string;
   onClose: () => void;
   onCopyText: (text: string) => void;
-  onQuoteText: (text: string) => void;
+  onQuoteText?: (text: string) => void;
+  closeLabel?: string;
   onReload?: () => Promise<string | null>;
   reloadPending?: boolean;
   chatNotice?: string;
@@ -1408,6 +1421,7 @@ export function SessionDiffPreview({
   onClose,
   onCopyText,
   onQuoteText,
+  closeLabel = "Back to Chat",
   onReload,
   reloadPending = false,
   chatNotice = "",
@@ -1489,7 +1503,7 @@ export function SessionDiffPreview({
     <section className="session-file-preview session-diff-preview" aria-label="Git diff preview">
       <header className="session-file-preview-header">
         <button className="session-file-back-to-chat" type="button" onClick={onClose}>
-          Back to Chat{chatNotice ? <span>{chatNotice}</span> : null}
+          {closeLabel}{chatNotice ? <span>{chatNotice}</span> : null}
         </button>
         <div className="session-file-preview-title"><strong>{title}</strong><span>Git Diff</span></div>
         <div className="session-file-preview-actions">

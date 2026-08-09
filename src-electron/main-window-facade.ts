@@ -1,6 +1,10 @@
 import type { BrowserWindow } from "electron";
 
 import type { DiffPreviewPayload } from "../src/session-state.js";
+import type {
+  SessionFilePreviewWindowPayload,
+  SessionFileResourceRequest,
+} from "../src/file-explorer/file-explorer-contract.js";
 import type { AuxWindowService } from "./aux-window-service.js";
 import type { SessionWindowBridge } from "./session-window-bridge.js";
 
@@ -46,6 +50,35 @@ export class MainWindowFacade {
 
   async openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow> {
     return this.deps.getAuxWindowService().openDiffWindow(diffPreview);
+  }
+
+  async openFilePreviewWindow(
+    payload: SessionFilePreviewWindowPayload,
+  ): Promise<{ window: BrowserWindow; disposition: "created" | "focused" }> {
+    return this.deps.getAuxWindowService().openFilePreviewWindow(payload);
+  }
+
+  getFilePreviewPayload(token: string): SessionFilePreviewWindowPayload | null {
+    return this.deps.getAuxWindowService().getFilePreviewPayload(token);
+  }
+
+  isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean {
+    return this.deps.getAuxWindowService().isFilePreviewWindow(window, sessionId);
+  }
+
+  getFilePreviewWindowResource(
+    window: BrowserWindow,
+    sessionId: string,
+  ): SessionFileResourceRequest | null {
+    return this.deps.getAuxWindowService().getFilePreviewWindowResource(window, sessionId);
+  }
+
+  isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean {
+    return this.deps.getAuxWindowService().isFilePreviewTokenWindow(window, token);
+  }
+
+  closeFilePreviewWindowsForSession(sessionId: string): void {
+    this.deps.getAuxWindowService().closeFilePreviewWindowsForSession(sessionId);
   }
 
   async openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow> {

@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import type {
   SessionDirectoryEntry,
-  SessionFileResourceRequest,
+  SessionFileRootResourceRequest,
   SessionFileRoot,
 } from "./file-explorer-contract.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
@@ -15,11 +15,11 @@ type SessionFileExplorerPaneProps = {
   sessionId: string | null;
   enabled: boolean;
   rootsRevision: string;
-  selectedFile: SessionFileResourceRequest | null;
+  selectedFile: SessionFileRootResourceRequest | null;
   activeTab: "files" | "changes";
   onActiveTabChange: (tab: "files" | "changes") => void;
   onRefreshChanges: () => void;
-  onOpenFile: (request: SessionFileResourceRequest) => void;
+  onOpenFile: (request: SessionFileRootResourceRequest, openInWindow: boolean) => void;
   changesContent?: ReactNode;
 };
 
@@ -290,11 +290,14 @@ export function SessionFileExplorerPane({
                           className={`session-file-tree-row${isSelected ? " is-selected" : ""}`}
                           type="button"
                           style={{ paddingLeft: `${10 + row.depth * 14}px` }}
-                          onClick={() => {
+                          onClick={(event) => {
                             if (isDirectory) {
                               toggleDirectory(row.rootId, row.entry.relativePath);
                             } else if (row.entry.kind === "file") {
-                              onOpenFile({ sessionId: sessionId!, rootId: row.rootId, relativePath: row.entry.relativePath });
+                              onOpenFile(
+                                { sessionId: sessionId!, rootId: row.rootId, relativePath: row.entry.relativePath },
+                                event.ctrlKey || event.metaKey,
+                              );
                             }
                           }}
                           title={row.entry.relativePath}

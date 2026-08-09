@@ -69,6 +69,9 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -119,6 +122,9 @@ export type MainIpcWindowDepsArgs = {
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
+  isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -228,6 +234,10 @@ export type MainIpcSessionQueryDepsArgs = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Awaitable<SessionFilePreviewWindowOpenResult>;
+  getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -368,6 +378,9 @@ export function createMainIpcRegistrationDeps(
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
     },
+    isFilePreviewWindow: args.window.isFilePreviewWindow,
+    getFilePreviewWindowResource: args.window.getFilePreviewWindowResource,
+    isFilePreviewTokenWindow: args.window.isFilePreviewTokenWindow,
     openCompanionReviewWindow: async (sessionId) => {
       await args.window.openCompanionReviewWindow(sessionId);
     },
@@ -440,6 +453,8 @@ export function createMainIpcRegistrationDeps(
     inspectSessionFile: args.sessionQuery.inspectSessionFile,
     readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
     openSessionFile: args.sessionQuery.openSessionFile,
+    openSessionFilePreviewWindow: args.sessionQuery.openSessionFilePreviewWindow,
+    getSessionFilePreviewWindowPayload: args.sessionQuery.getSessionFilePreviewWindowPayload,
     listFileRootChanges: args.sessionQuery.listFileRootChanges,
     getFileRootDiff: args.sessionQuery.getFileRootDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,

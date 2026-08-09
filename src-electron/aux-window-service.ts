@@ -1,10 +1,19 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
+import type {
+  SessionFilePreviewWindowPayload,
+  SessionFileResourceRequest,
+} from "../src/file-explorer/file-explorer-contract.js";
+import {
+  getSessionFileResourceDisplayPath,
+  isSessionFileAbsoluteResource,
+} from "../src/file-explorer/file-explorer-contract.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
+  FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS,
 } from "./window-defaults.js";
 
 type BaseWindowLike = WindowLike & {
@@ -32,6 +41,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   }): TWindow;
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
+  loadFilePreviewEntry(window: TWindow, token: string): Promise<void>;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
   loadCharacterEditorEntry(window: TWindow, characterId?: string | null): Promise<void>;
@@ -45,10 +55,15 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private settingsWindow: TWindow | null = null;
   private memoryV6ReviewWindow: TWindow | null = null;
   private readonly diffWindows = new Map<string, TWindow>();
+  private readonly filePreviewWindows = new Map<string, TWindow>();
+  private readonly filePreviewResourceTokens = new Map<string, string>();
+  private readonly filePreviewLoads = new Map<string, Promise<void>>();
+  private readonly closedFilePreviewSessionIds = new Set<string>();
   private readonly companionReviewWindows = new Map<string, TWindow>();
   private readonly companionMergeWindows = new Map<string, TWindow>();
   private readonly characterEditorWindows = new Map<string, TWindow>();
   private readonly diffPreviewStore = new Map<string, DiffPreviewPayload>();
+  private readonly filePreviewStore = new Map<string, SessionFilePreviewWindowPayload>();
 
   constructor(private readonly deps: AuxWindowServiceDeps<TWindow>) {}
 
@@ -75,6 +90,49 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
   getDiffPreview(token: string): DiffPreviewPayload | null {
     return this.diffPreviewStore.get(token) ?? null;
+  }
+
+  getFilePreviewPayload(token: string): SessionFilePreviewWindowPayload | null {
+    return this.filePreviewStore.get(token) ?? null;
+  }
+
+  isFilePreviewWindow(window: TWindow, sessionId: string): boolean {
+    return this.getFilePreviewWindowResource(window, sessionId) !== null;
+  }
+
+  getFilePreviewWindowResource(
+    window: TWindow,
+    sessionId: string,
+  ): SessionFileResourceRequest | null {
+    for (const [token, candidate] of this.filePreviewWindows.entries()) {
+      if (
+        candidate === window
+        && !candidate.isDestroyed()
+        && this.filePreviewStore.get(token)?.resource.sessionId === sessionId
+      ) {
+        return this.filePreviewStore.get(token)?.resource ?? null;
+      }
+    }
+    return null;
+  }
+
+  isFilePreviewTokenWindow(window: TWindow, token: string): boolean {
+    const candidate = this.filePreviewWindows.get(token);
+    return candidate === window && !candidate.isDestroyed();
+  }
+
+  closeFilePreviewWindowsForSession(sessionId: string): void {
+    this.closedFilePreviewSessionIds.add(sessionId);
+    for (const [token, window] of [...this.filePreviewWindows.entries()]) {
+      const payload = this.filePreviewStore.get(token);
+      if (
+        payload
+        && (payload.resource.sessionId === sessionId || payload.ownerSessionId === sessionId)
+        && !window.isDestroyed()
+      ) {
+        window.close();
+      }
+    }
   }
 
   listOpenCompanionReviewWindowIds(): string[] {
@@ -222,6 +280,59 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
+  async openFilePreviewWindow(
+    payload: SessionFilePreviewWindowPayload,
+  ): Promise<{ window: TWindow; disposition: "created" | "focused" }> {
+    if (
+      this.closedFilePreviewSessionIds.has(payload.resource.sessionId)
+      || this.closedFilePreviewSessionIds.has(payload.ownerSessionId)
+    ) {
+      throw new Error("The Session is no longer active for file preview navigation.");
+    }
+    const resourceKey = this.makeFilePreviewResourceKey(payload.resource);
+    const existingToken = this.filePreviewResourceTokens.get(resourceKey);
+    const existing = existingToken ? this.reuseWindow(this.filePreviewWindows.get(existingToken) ?? null) : null;
+    if (existing && existingToken) {
+      await this.filePreviewLoads.get(existingToken);
+      this.assertFilePreviewWindowActive(resourceKey, existingToken, existing, payload);
+      return { window: existing, disposition: "focused" };
+    }
+    if (existingToken) {
+      this.filePreviewResourceTokens.delete(resourceKey);
+      this.filePreviewWindows.delete(existingToken);
+      this.filePreviewStore.delete(existingToken);
+      this.filePreviewLoads.delete(existingToken);
+    }
+
+    const token = this.deps.generateDiffToken();
+    const window = this.deps.createWindow({
+      ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS,
+      title: `Preview - ${getSessionFileResourceDisplayPath(payload.resource)}`,
+    });
+    this.filePreviewResourceTokens.set(resourceKey, token);
+    this.filePreviewWindows.set(token, window);
+    this.filePreviewStore.set(token, payload);
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.filePreviewResourceTokens.delete(resourceKey);
+      this.filePreviewWindows.delete(token);
+      this.filePreviewStore.delete(token);
+      this.filePreviewLoads.delete(token);
+    });
+    const load = this.deps.loadFilePreviewEntry(window, token);
+    this.filePreviewLoads.set(token, load);
+    try {
+      await load;
+      this.assertFilePreviewWindowActive(resourceKey, token, window, payload);
+      return { window, disposition: "created" };
+    } catch (error) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+      throw error;
+    }
+  }
+
   async openCompanionReviewWindow(sessionId: string): Promise<TWindow> {
     const existing = this.reuseWindow(this.companionReviewWindows.get(sessionId) ?? null);
     if (existing) {
@@ -275,6 +386,15 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
       this.diffPreviewStore.delete(token);
     }
     this.diffWindows.clear();
+    for (const window of this.filePreviewWindows.values()) {
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    }
+    this.filePreviewWindows.clear();
+    this.filePreviewResourceTokens.clear();
+    this.filePreviewStore.clear();
+    this.filePreviewLoads.clear();
     for (const window of this.companionReviewWindows.values()) {
       if (!window.isDestroyed()) {
         window.close();
@@ -305,5 +425,40 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     }
     window.focus();
     return window;
+  }
+
+  private assertFilePreviewWindowActive(
+    resourceKey: string,
+    token: string,
+    window: TWindow,
+    requestedPayload: SessionFilePreviewWindowPayload,
+  ): void {
+    const storedPayload = this.filePreviewStore.get(token);
+    if (
+      this.closedFilePreviewSessionIds.has(requestedPayload.resource.sessionId)
+      || this.closedFilePreviewSessionIds.has(requestedPayload.ownerSessionId)
+      || !storedPayload
+      || this.closedFilePreviewSessionIds.has(storedPayload.resource.sessionId)
+      || this.closedFilePreviewSessionIds.has(storedPayload.ownerSessionId)
+      || window.isDestroyed()
+      || this.filePreviewResourceTokens.get(resourceKey) !== token
+      || this.filePreviewWindows.get(token) !== window
+    ) {
+      throw new Error("The Session is no longer active for file preview navigation.");
+    }
+  }
+
+  private makeFilePreviewResourceKey(resource: SessionFileResourceRequest): string {
+    return isSessionFileAbsoluteResource(resource)
+      ? JSON.stringify([
+          resource.sessionId,
+          "absolute-file",
+          resource.absolutePath,
+        ])
+      : JSON.stringify([
+          resource.sessionId,
+          resource.rootId,
+          resource.relativePath.replaceAll("\\", "/"),
+        ]);
   }
 }

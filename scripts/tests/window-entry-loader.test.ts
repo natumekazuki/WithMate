@@ -28,6 +28,7 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadChatEntry(stub.window, { kind: "agent", sessionId: "session 1" });
   await loader.loadDiffEntry(stub.window, "diff#1");
+  await loader.loadFilePreviewEntry(stub.window, "preview#1");
   await loader.loadBootEntry(stub.window);
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
   await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
@@ -38,6 +39,7 @@ test("WindowEntryLoader は dev server 使用時に loadURL する", async () =>
     { kind: "url", value: "http://localhost:5173?mode=settings" },
     { kind: "url", value: "http://localhost:5173/session.html?sessionId=session%201" },
     { kind: "url", value: "http://localhost:5173/diff.html?token=diff%231" },
+    { kind: "url", value: "http://localhost:5173/file-preview.html?token=preview%231" },
     { kind: "url", value: "http://localhost:5173/boot.html" },
     { kind: "url", value: "http://localhost:5173/session.html?companionSessionId=companion%201&mode=companion" },
     { kind: "url", value: "http://localhost:5173/review.html?companionSessionId=companion%201&view=merge" },
@@ -64,6 +66,7 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
   await loader.loadHomeEntry(stub.window);
   await loader.loadHomeEntry(stub.window, "settings");
   await loader.loadBootEntry(stub.window);
+  await loader.loadFilePreviewEntry(stub.window, "preview#1");
   await loader.loadChatEntry(stub.window, { kind: "companion", sessionId: "companion 1" });
   await loader.loadCompanionMergeReviewEntry(stub.window, "companion 1");
   await loader.loadCharacterEditorEntry(stub.window, "char 1");
@@ -72,6 +75,7 @@ test("WindowEntryLoader は production build で loadFile する", async () => {
     { kind: "file", value: "F:\\dist\\index.html", search: undefined },
     { kind: "file", value: "F:\\dist\\index.html", search: "?mode=settings" },
     { kind: "file", value: "F:\\dist\\boot.html", search: undefined },
+    { kind: "file", value: "F:\\dist\\file-preview.html", search: "?token=preview%231" },
     {
       kind: "file",
       value: "F:\\dist\\session.html",
