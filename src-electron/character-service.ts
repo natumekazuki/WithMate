@@ -17,7 +17,6 @@ export type CharacterCatalogServiceStorage = Pick<
   | "updateCharacterMetadata"
   | "updateCharacterDefinition"
   | "archiveCharacter"
-  | "setDefaultCharacter"
   | "resolveLaunchCharacter"
   | "createRuntimeSnapshot"
   | "getCharacterDirectory"
@@ -51,10 +50,6 @@ export class CharacterService {
 
   archiveCharacter(characterId: string): CharacterCatalogEntry {
     return this.storage.archiveCharacter(characterId);
-  }
-
-  setDefaultCharacter(characterId: string): CharacterCatalogEntry {
-    return this.storage.setDefaultCharacter(characterId);
   }
 
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): CharacterDetail | null {

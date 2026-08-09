@@ -79,7 +79,6 @@ export function HomeCharactersPanel({
                 <span className="home-character-card-copy">
                   <span className="home-character-card-title">
                     {character.name}
-                    {character.isDefault ? <span className="settings-character-badge">Default</span> : null}
                   </span>
                   <span>{character.description || character.id}</span>
                 </span>

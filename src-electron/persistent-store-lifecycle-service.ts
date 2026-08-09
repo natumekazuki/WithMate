@@ -105,7 +105,6 @@ export type CharacterStorageAccess = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): CharacterDetail;
   archiveCharacter(characterId: string): CharacterCatalogEntry;
-  setDefaultCharacter(characterId: string): CharacterCatalogEntry;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput): CharacterDetail | null;
   createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
   getCharacterDirectory(characterId: string): string;
@@ -404,10 +403,6 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
   }
 
   archiveCharacter(): CharacterCatalogEntry {
-    throw new Error("Character catalog は legacy DB では利用できません。");
-  }
-
-  setDefaultCharacter(): CharacterCatalogEntry {
     throw new Error("Character catalog は legacy DB では利用できません。");
   }
 

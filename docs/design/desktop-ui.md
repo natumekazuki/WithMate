@@ -92,10 +92,10 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - right pane 上部の segmented toggle で `Session Monitor` と排他的に切り替える
   - Character catalog の active Character を card list で表示する
   - header に `Create Character` を置く
-  - card には avatar / name / description / default badge / updatedAt / `Edit` を表示する
+  - card には avatar / name / description / updatedAt / `Edit` を表示する
   - card click または `Edit` で `Character Editor Window` を開く
   - Character 0 件時は empty state と `Create Character` を表示する
-  - Home には archive / delete / Set Default を置かない
+  - Home には archive / delete を置かない
   - `Your Mate` / MateTalk launcher / Mate Profile 編集導線は表示しない
   - card theme
     - background = Character `main`
@@ -105,7 +105,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - session title 入力
   - Agent Mode の workspace は既存 directory を選ぶ `Browse` と、WithMate 管理下の directory を開始時に作る `SessionFolder` から選ぶ
   - enabled provider の選択
-  - Character selector で default Character を初期選択する。Character が 0 件の場合は neutral fallback を使う
+  - Character selector は開くたびにランダムを初期選択する。明示選択したactive Characterはそのまま使い、Characterが0件の場合はneutral fallbackを使う。詳細はADR 004を参照する
   - model / depth / approval / sandbox / custom agent は dialog には出さず、Main Process が作成直前に選択中 provider の直近 Session 一件から解決する。詳細は ADR 007 を参照する
   - open 時は dialog 内の最初の主要入力へ focus し、`Escape` で閉じる
   - `Tab` / `Shift+Tab` で dialog 外へ focus を逃がさない
@@ -142,7 +142,6 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - description
   - icon path + Browse
   - theme main / sub
-  - default state と `Set Default`
 - `character.md`
   - runtime definition の正本である説明
   - save 前 validation summary

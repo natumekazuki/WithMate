@@ -326,7 +326,6 @@ describe("withmate-memory CLI", () => {
           id: "mika",
           name: "Mika",
           description: "Guitar",
-          isDefault: true,
         },
       ],
     };

@@ -43,7 +43,7 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     title: "",
     workspace: null,
     providerId: "",
-    characterSelectionMode: "specific",
+    characterSelectionMode: "random",
     characterId: "",
   };
 }
@@ -52,7 +52,6 @@ export function openLaunchDraft(
   draft: HomeLaunchDraft,
   defaultProviderId: string,
   mode: HomeLaunchDraft["mode"] = "session",
-  defaultCharacterId = "",
 ): HomeLaunchDraft {
   return {
     ...draft,
@@ -61,8 +60,8 @@ export function openLaunchDraft(
     title: "",
     workspace: null,
     providerId: defaultProviderId,
-    characterSelectionMode: "specific",
-    characterId: defaultCharacterId,
+    characterSelectionMode: "random",
+    characterId: "",
   };
 }
 
@@ -95,6 +94,9 @@ export function buildCreateCompanionSessionInputFromLaunchDraft({
     openSessionCharacterIds,
     random,
   );
+  if (!characterSnapshot) {
+    return null;
+  }
 
   return {
     taskTitle: normalizedTitle,
@@ -115,7 +117,7 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
     title: "",
     workspace: null,
     providerId: "",
-    characterSelectionMode: "specific",
+    characterSelectionMode: "random",
     characterId: "",
   };
 }
@@ -215,6 +217,9 @@ export function buildCreateSessionRequestFromLaunchDraft({
     openSessionCharacterIds,
     random,
   );
+  if (!characterSnapshot) {
+    return null;
+  }
   const workspace = isSessionFolderLaunchWorkspace(draft.workspace)
     ? { kind: "session-folder" as const }
     : {
@@ -239,12 +244,13 @@ export function resolveLaunchCharacterId(
   entries: readonly CharacterCatalogEntry[],
   currentCharacterId: string | null | undefined,
 ): string {
-  const activeEntries = entries.filter((entry) => entry.state === "active");
-  if (currentCharacterId && activeEntries.some((entry) => entry.id === currentCharacterId)) {
+  if (currentCharacterId && entries.some(
+    (entry) => entry.state === "active" && entry.id === currentCharacterId,
+  )) {
     return currentCharacterId;
   }
 
-  return activeEntries[0]?.id ?? "";
+  return "";
 }
 
 export function selectWeightedRandomLaunchCharacterId(
@@ -309,12 +315,15 @@ function buildLaunchCharacterSnapshot(
   sessions: readonly CharacterUsageSessionSource[],
   openSessionCharacterIds: readonly string[],
   random: () => number,
-): LaunchCharacterSnapshot {
+): LaunchCharacterSnapshot | null {
   const characterId = draft.characterSelectionMode === "random"
     ? selectWeightedRandomLaunchCharacterId(entries, sessions, openSessionCharacterIds, random)
     : draft.characterId;
   const character = resolveLaunchCharacterEntry(entries, characterId);
   if (!character) {
+    if (draft.characterSelectionMode === "specific") {
+      return null;
+    }
     return {
       characterId: NEUTRAL_CHARACTER_ID,
       character: NEUTRAL_CHARACTER_NAME,

@@ -211,9 +211,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async archiveCharacter() {
         return {} as never;
       },
-      async setDefaultCharacter() {
-        return {} as never;
-      },
       async resolveLaunchCharacter() {
         return null;
       },

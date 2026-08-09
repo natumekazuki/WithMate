@@ -128,7 +128,6 @@ import {
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
-  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
@@ -561,9 +560,6 @@ function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharact
     },
     archiveCharacter(characterId) {
       return ipcRenderer.invoke(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, characterId);
-    },
-    setDefaultCharacter(characterId) {
-      return ipcRenderer.invoke(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, characterId);
     },
     resolveLaunchCharacter(input) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, input ?? null);

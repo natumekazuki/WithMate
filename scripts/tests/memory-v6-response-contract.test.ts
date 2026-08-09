@@ -166,7 +166,6 @@ describe("memory-v6 response contract", () => {
       iconFilePath: "C:/Users/example/AppData/Roaming/WithMate/characters/character-a/icon.png",
       theme: { main: "#111111", sub: "#222222" },
       state: "active",
-      isDefault: true,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
@@ -177,8 +176,8 @@ describe("memory-v6 response contract", () => {
       id: "character-a",
       name: "Character A",
       description: "Test",
-      isDefault: true,
     }]);
+    assert.equal("isDefault" in response.characters[0], false);
     assert.equal("iconFilePath" in response.characters[0], false);
     assert.equal("theme" in response.characters[0], false);
     assert.equal("createdAt" in response.characters[0], false);

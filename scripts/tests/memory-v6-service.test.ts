@@ -47,7 +47,6 @@ async function withService<T>(
       iconFilePath: "",
       theme: { main: "#111111", sub: "#222222" },
       state: "active",
-      isDefault: true,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
@@ -125,8 +124,8 @@ describe("MemoryV6Service", () => {
         id: "character-a",
         name: "Character A",
         description: "Test character",
-        isDefault: true,
       }]);
+      assert.equal("isDefault" in characters.characters[0], false);
       assert.equal("iconFilePath" in characters.characters[0], false);
       assert.equal("theme" in characters.characters[0], false);
 

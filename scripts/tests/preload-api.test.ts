@@ -152,10 +152,7 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:archive-character",
     args: ["char-1"],
   });
-  assert.deepEqual(await api.setDefaultCharacter("char-1"), {
-    channel: "withmate:set-default-character",
-    args: ["char-1"],
-  });
+  assert.equal("setDefaultCharacter" in api, false);
   assert.deepEqual(await api.resolveLaunchCharacter({ characterId: "char-1" }), {
     channel: "withmate:resolve-launch-character",
     args: [{ characterId: "char-1" }],
@@ -419,7 +416,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "savePastedSessionFile",
     "searchMemoryV6Entries",
     "setMateAvatar",
-    "setDefaultCharacter",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
     "startCharacterAuthoringSession",

@@ -68,7 +68,6 @@ export const WITHMATE_CREATE_CHARACTER_CHANNEL = "withmate:create-character";
 export const WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL = "withmate:update-character-metadata";
 export const WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL = "withmate:update-character-definition";
 export const WITHMATE_ARCHIVE_CHARACTER_CHANNEL = "withmate:archive-character";
-export const WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL = "withmate:set-default-character";
 export const WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL = "withmate:resolve-launch-character";
 export const WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL = "withmate:start-character-authoring-session";
 export const WITHMATE_PICK_DIRECTORY_CHANNEL = "withmate:pick-directory";

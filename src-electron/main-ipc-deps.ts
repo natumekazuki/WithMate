@@ -301,7 +301,6 @@ export type MainIpcCharacterDepsArgs = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
-  setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
 };
@@ -494,7 +493,6 @@ export function createMainIpcRegistrationDeps(
     updateCharacterMetadata: args.character.updateCharacterMetadata,
     updateCharacterDefinition: args.character.updateCharacterDefinition,
     archiveCharacter: args.character.archiveCharacter,
-    setDefaultCharacter: args.character.setDefaultCharacter,
     resolveLaunchCharacter: args.character.resolveLaunchCharacter,
     startCharacterAuthoringSession: args.character.startCharacterAuthoringSession,
   };

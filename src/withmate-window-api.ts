@@ -296,7 +296,6 @@ export type WithMateWindowCharacterApi = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail>;
   archiveCharacter(characterId: string): Promise<CharacterCatalogEntry>;
-  setDefaultCharacter(characterId: string): Promise<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Promise<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult>;
 };

@@ -18,7 +18,6 @@ V5 Core に含める:
 - `characters/<character-id>/character.md` file body
 - optional `characters/<character-id>/character-notes.md`
 - optional managed icon file `characters/<character-id>/icon.<ext>`
-- default Character selection
 - archive
 - session / companion snapshot 用 domain model
 - renderer から Main Process 経由で使う IPC / preload API
@@ -40,7 +39,6 @@ V5 Core に含めない:
 | runtime definition body | `characters/<character-id>/character.md` |
 | authoring notes | `characters/<character-id>/character-notes.md` |
 | managed icon body | `characters/<character-id>/icon.<ext>` |
-| launch default | SQLite `characters.is_default` |
 | session runtime input | session / companion 作成時に保存する `CharacterRuntimeSnapshot` |
 
 Renderer は filesystem を直接走査しない。Character catalog は Main Process service 経由で取得する。
@@ -79,10 +77,10 @@ Character icon は保存時に Main Process が app data 配下へ materialize �
 | `icon_file_path` | optional icon path。managed icon は `characters/<character-id>/icon.<ext>` の app data 相対 path |
 | `theme_main` / `theme_sub` | UI theme color snapshot の元値 |
 | `state` | `active` / `archived` |
-| `is_default` | launch selector の default |
+| `is_default` | 互換性のため残すlegacy metadata。sourceとpublic projectionは参照しない |
 | `created_at` / `updated_at` / `archived_at` | lifecycle timestamps |
 
-`is_default = 1` は active Character で最大 1 件にする。default Character を archive した場合は、残る active Character から fallback default を選ぶ。active Character が 0 件なら default なしを許容する。
+`is_default`列とunique indexは、既存DBとの互換性のため物理削除しない。Character作成・archive・一覧・launch解決では読み書きせず、既存rowの値も初期化時に変更しない。table rebuildを伴う別migrationが必要になった時点で物理削除を再検討する。
 
 既存 V4 DB への安全な追加にするため、`characters` table は V4 required table 判定には入れず、`CharacterStorage` 初期化時に `CREATE TABLE IF NOT EXISTS` で作成する。
 
@@ -117,18 +115,12 @@ V5 Core の storage service は次を提供する:
 - `updateCharacterMetadata(input)`
 - `updateCharacterDefinition(input)`
 - `archiveCharacter(characterId)`
-- `setDefaultCharacter(characterId)`
 - `resolveLaunchCharacter({ characterId? })`
 - `createRuntimeSnapshot(characterId)`
 
-`resolveLaunchCharacter` は次の順で active Character を返す:
+`resolveLaunchCharacter` は、明示された `characterId` がactive Characterを指す場合だけ返す。Character未指定、不明、archivedの場合は`null`を返し、特定Characterや更新日時順の先頭へ暗黙にfallbackしない。
 
-1. 明示された `characterId`
-2. default Character
-3. 更新日時順の active Character
-4. `null`
-
-Character 0 件時は `null` を返し、Home / launch branch 側で neutral fallback を維持する。
+Session / Companionのランダム選択とactive Character 0件時のneutral fallbackはHome launch境界が所有し、ADR 004に従う。
 
 ## Runtime Snapshot
 
