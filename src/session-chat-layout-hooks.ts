@@ -29,7 +29,7 @@ const SESSION_ACTION_DOCK_COMPACT_DEFAULT_HEIGHT = 54;
 const SESSION_ACTION_DOCK_MIN_HEIGHT = 260;
 const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.4;
 const SESSION_CENTRAL_SURFACE_MIN_HEIGHT = 280;
-const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 24;
+const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
 
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
