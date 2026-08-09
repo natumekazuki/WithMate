@@ -347,6 +347,7 @@ function VirtualizedTextContent({
       className="session-file-text-scroll"
       onCopyText={copyText}
       onQuoteText={quoteText}
+      selectAllText={text}
       surfaceRef={scrollRef}
     >
       <div className="session-file-text-lines" style={{ height: virtualizer.getTotalSize() }}>
@@ -475,6 +476,7 @@ function VirtualizedSplitDiffContent({
         className="session-live-diff-split-scroll"
         onCopyText={copyText}
         onQuoteText={quoteText}
+        selectAllText={patch}
         surfaceRef={scrollRef}
       >
         <div className="session-live-diff-split-rows" style={{ height: virtualizer.getTotalSize() }}>
