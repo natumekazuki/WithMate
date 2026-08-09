@@ -2,7 +2,7 @@
 
 - Issue: `ISSUE-251`
 - Draft Issue ID: `WM-AFFECT-CORE`
-- Status: final-closure
+- Status: completed
 - Accepted contract: ISSUE-251本文、ADR 018
 
 ## Scope
@@ -153,3 +153,14 @@ Candidate preflightは`verified`。`contract-schema-projection`と`lifecycle-eff
 2. Affect schema validationが一部CHECKだけを検証し、event `state`などのinvariant-bearing CHECKを欠く既存DBをvalidと判定し得る。
 
 `recordEvent`はcanonical fingerprintとledger replayを先に解決し、新規作成だけsession ownerを検証する。source session削除後も同じrelationship event IDを`created: false`で返し、replay observationを残すcontractを追加した。schema validationは全Character Affect tableのenum、scope、tuple、非空、JSON、range CHECKを検証し、列・index・FKを維持したままevent `state` CHECKだけを欠くDBを拒否するnegative contractを追加した。C6のholistic entryはimmutableな発見記録とし、complete diffの再レビューは行わない。最終Candidateではこの2 familyのdirect check、targeted closure、両specialist lensへのdelta非影響だけを取得する。
+
+### Candidate ISSUE-251-C7 completion
+
+Candidate preflightと最終verificationは`verified`。最終差分では、関連targeted testが86/86、全体testが2210 tests（2209 pass、1 skip）、typecheck、production build、`git diff --check`が成功した。
+
+holistic reviewで検出した2件のfinding familyは、次のtargeted closureで閉じた。
+
+- `ISSUE-251-TC7-CONTRACT`: record replay順序とCharacter Affect CHECK schemaを確認し、blocking finding、accepted risk、validation gapなしでapprove
+- `ISSUE-251-TC7-LIFECYCLE`: source session削除後のrelationship lifecycleと並行appendへの非影響を確認し、blocking finding、accepted risk、validation gapなしでapprove
+
+両reviewはC7のverificationをreview前後に実行し、source identityの一致を確認した。C6のholistic complete-diff reviewは一度だけ実行したimmutableな発見記録として保持し、C7の完了根拠にはdirect checkと上記targeted closureを使用する。ISSUE-251の完了条件に対する未解決項目はない。
