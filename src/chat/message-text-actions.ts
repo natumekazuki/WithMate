@@ -81,12 +81,22 @@ export function insertComposerTextAtCaret(
   text: string,
   caret: number,
 ): { draft: string; caret: number } {
-  const currentCaret = Math.max(0, Math.min(caret, draft.length));
-  const needsLeadingBreak = currentCaret > 0 && !draft.slice(0, currentCaret).endsWith("\n");
-  const needsTrailingBreak = draft.length > currentCaret && !draft.slice(currentCaret).startsWith("\n");
+  return insertComposerTextAtSelection(draft, text, caret, caret);
+}
+
+export function insertComposerTextAtSelection(
+  draft: string,
+  text: string,
+  selectionStart: number,
+  selectionEnd: number,
+): { draft: string; caret: number } {
+  const start = Math.max(0, Math.min(selectionStart, selectionEnd, draft.length));
+  const end = Math.max(start, Math.min(Math.max(selectionStart, selectionEnd), draft.length));
+  const needsLeadingBreak = start > 0 && !draft.slice(0, start).endsWith("\n");
+  const needsTrailingBreak = draft.length > end && !draft.slice(end).startsWith("\n");
   const insertion = `${needsLeadingBreak ? "\n\n" : ""}${text}${needsTrailingBreak ? "\n" : ""}`;
   return {
-    draft: `${draft.slice(0, currentCaret)}${insertion}${draft.slice(currentCaret)}`,
-    caret: currentCaret + insertion.length,
+    draft: `${draft.slice(0, start)}${insertion}${draft.slice(end)}`,
+    caret: start + insertion.length,
   };
 }

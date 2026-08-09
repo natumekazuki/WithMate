@@ -9,6 +9,7 @@ import type {
 } from "../src/app-state.js";
 import type { CompanionSessionSummary } from "../src/companion-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { PromptTemplate } from "../src/prompt-template.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
@@ -17,6 +18,7 @@ import {
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
+  WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
   WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
@@ -57,6 +59,10 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   public broadcastAppSettings(settings: AppSettings): void {
     this.broadcast(WITHMATE_APP_SETTINGS_CHANGED_EVENT, settings);
+  }
+
+  public broadcastPromptTemplates(templates: PromptTemplate[]): void {
+    this.broadcast(WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT, templates);
   }
 
   public broadcastOpenSessionWindowIds(sessionIds: string[]): void {

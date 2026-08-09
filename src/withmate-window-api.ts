@@ -30,6 +30,11 @@ import type {
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
 import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "./prompt-template.js";
+import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
   CompanionReviewSnapshot,
@@ -241,6 +246,14 @@ export type WithMateWindowSettingsApi = {
   deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
 };
 
+export type WithMateWindowPromptTemplateApi = {
+  listPromptTemplates(): Promise<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Promise<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Promise<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Promise<PromptTemplate[]>;
+  subscribePromptTemplates(listener: (templates: PromptTemplate[]) => void): () => void;
+};
+
 export type WithMateWindowPickerApi = {
   pickDirectory(initialPath?: string | null): Promise<string | null>;
   pickFile(initialPath?: string | null): Promise<string | null>;
@@ -309,6 +322,7 @@ export type WithMateWindowApi =
   & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi
   & WithMateWindowSettingsApi
+  & WithMateWindowPromptTemplateApi
   & WithMateWindowPickerApi
   & WithMateWindowSubscriptionApi
   & WithMateWindowMateApi

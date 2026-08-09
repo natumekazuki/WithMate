@@ -30,11 +30,13 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
       onCancelTitleEdit={noop}
       onStartTitleEdit={noop}
       onDeleteSession={noop}
+      onTogglePin={noop}
     />,
   );
 
   assert.match(html, /<summary aria-label="Session actions"/);
   assert.match(html, /role="menu"/);
+  assert.match(html, /role="menuitem" aria-pressed="false">ピン止め<\/button>/);
   assert.match(html, /role="menuitem">Rename<\/button>/);
   assert.match(html, /role="menuitem">Audit Log<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
@@ -205,6 +207,8 @@ test("SessionHeader はpin stateとpending stateを操作ボタンへ投影す�
   />);
 
   assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /role="menu"/);
+  assert.match(html, /role="menuitem"/);
   assert.match(html, /disabled=""/);
   assert.match(html, />変更中\.\.\.<\/button>/);
 });

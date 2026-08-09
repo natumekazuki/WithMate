@@ -111,6 +111,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     composerBlocked: false,
     isAgentPickerOpen: false,
     isSkillPickerOpen: false,
+    isPromptTemplateWorkspaceOpen: false,
     isAdditionalDirectoryListOpen: false,
     selectedCustomAgentLabel: "Agent",
     selectedCustomAgentTitle: "",
@@ -209,6 +210,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onPickSessionFiles: noop,
     onToggleAgentPicker: noop,
     onToggleSkillPicker: noop,
+    onOpenPromptTemplates: noop,
     onAddAdditionalDirectory: noop,
     onToggleAdditionalDirectoryList: noop,
     onCollapseActionDock: noop,
@@ -406,6 +408,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.composerProps.canSelectCustomAgent, true);
   assert.equal(props.composerProps.showCustomAgentPicker, true);
+  assert.equal(props.composerProps.showPromptTemplateButton, true);
   assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
   assert.equal(props.composerProps.additionalDirectoryCount, 1);
   assert.equal(props.composerProps.showJumpToBottom, true);

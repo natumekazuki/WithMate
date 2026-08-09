@@ -9,6 +9,7 @@ import {
   createQuotedMessageInsertionFromComposer,
   formatMarkdownQuote,
   normalizeMessageTextForCopy,
+  insertComposerTextAtSelection,
 } from "../../src/chat/message-text-actions.js";
 
 test("normalizeMessageTextForCopy は response text の前後空白を除く", () => {
@@ -125,6 +126,16 @@ test("createQuotedMessageInsertionFromComposer は textarea selection を優先�
     {
       draft: "before\n\n> quote\n\n",
       caret: "before\n\n> quote\n\n".length,
+    },
+  );
+});
+
+test("insertComposerTextAtSelection は選択範囲を置換し、周囲の下書きを保持する", () => {
+  assert.deepEqual(
+    insertComposerTextAtSelection("before OLD after", "template", 7, 10),
+    {
+      draft: "before \n\ntemplate\n after",
+      caret: 18,
     },
   );
 });

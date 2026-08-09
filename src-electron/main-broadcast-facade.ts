@@ -1,6 +1,7 @@
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type { SessionSummary } from "../src/app-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import type { PromptTemplate } from "../src/prompt-template.js";
 import type { WindowBroadcastService } from "./window-broadcast-service.js";
 
 type BroadcastWindowLike = {
@@ -15,6 +16,7 @@ type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
   listSessionSummaries(): SessionSummary[];
   getModelCatalog(): ModelCatalogSnapshot | null;
   getAppSettings(): AppSettings;
+  listPromptTemplates(): PromptTemplate[];
   listOpenSessionWindowIds(): string[];
   listOpenCompanionReviewWindowIds(): string[];
 };
@@ -42,6 +44,11 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
   broadcastAppSettings(settings?: AppSettings): void {
     const payload = settings ?? this.deps.getAppSettings();
     this.deps.getWindowBroadcastService().broadcastAppSettings(payload);
+  }
+
+  broadcastPromptTemplates(templates?: PromptTemplate[]): void {
+    const payload = templates ?? this.deps.listPromptTemplates();
+    this.deps.getWindowBroadcastService().broadcastPromptTemplates(payload);
   }
 
   broadcastOpenSessionWindowIds(): void {
