@@ -360,7 +360,7 @@ describe("SessionTurnNotificationService", () => {
     assert.equal(harness.options[0]?.body, "before $x$ after const value = 1;");
   });
 
-  it("返答 preview は2048 code unitsを超える本文を解析せず完了文へ戻す", () => {
+  it("返答 preview は65536 code unitsを超える本文を解析せず完了文へ戻す", () => {
     const withinLimitHarness = createHarness({
       isResponsePreviewEnabled: () => true,
     });
@@ -368,7 +368,7 @@ describe("SessionTurnNotificationService", () => {
     const withinLimitSession = createSession({
       messages: [{
         role: "assistant",
-        text: `${prefix}${"あ".repeat(2_048 - prefix.length)}`,
+        text: `${prefix}${"[".repeat(65_536 - prefix.length)}`,
       }],
     });
 
@@ -385,7 +385,7 @@ describe("SessionTurnNotificationService", () => {
     const overLimitSession = createSession({
       messages: [{
         role: "assistant",
-        text: "[".repeat(2_049),
+        text: "[".repeat(65_537),
       }],
     });
 

@@ -19,7 +19,7 @@ Session のターン完了まで時間がかかる場合、ユーザーは WithM
 - 対象 Session Window 自体が focus 中の場合だけ通知を抑止する。対象 Window が表示中でも、別アプリまたは別の WithMate Window が focus 中なら通知する。
 - 返答冒頭の表示が無効、provider turn で確定した top-level assistant response message に空白以外の本文がない、または設定確認・preview 生成に失敗した場合、通知の title は `WithMate`、body は `「Session名」のターンが完了しました` とする。
 - 返答冒頭の表示が有効な場合、通知の title は Session 名、body は provider turn で確定した top-level assistant response message のうち、最後の空白以外を含む message から生成した preview とする。末尾に空または空白だけの message が続いても、その直前の最後の非空 message を使う。Session timeline と Audit Log に保存する複数 response message の連結本文は preview source に使わない。preview は Renderer と同じ GFM と数式構文を認識し、リンク先、参照定義、HTML、数式、Mermaid、画像など画面上の平文ではない内容を除外して、表示対象の text だけを使う。除外後に表示対象の text がなければ完了通知へ戻す。改行と連続空白は一つの空白へまとめる。40 grapheme を超える場合は、その範囲内にある最後の `。`、`！`、`？`、`!`、`?` で切り、文末がなければ40 graphemeで切る。後続がある場合だけ `…` を付ける。
-- 最後の非空 top-level assistant response message が 2,048 UTF-16 code units を超える場合は Markdown を解析せず、完了通知へ戻す。Markdown の解析負荷は構文によって増えるため、40 grapheme の preview に必要な範囲より十分大きく、main process の同期処理を短く保てる固定上限とする。2,048 以下は preview 生成の対象とする。
+- 最後の非空 top-level assistant response message が 65,536 UTF-16 code units を超える場合は Markdown を解析せず、完了通知へ戻す。Markdown の解析負荷は構文によって増えるため、通常の provider 応答を十分に含めつつ、main process の同期処理を有限に保てる固定上限とする。65,536 以下は preview 生成の対象とする。
 - Character icon は `nativeImage` で読み込める場合だけ通知へ渡す。未設定、相対 path、欠損、不正、非対応形式の場合は icon を省略し、Windows が選ぶアプリアイコンへフォールバックする。
 - Session ID から安定した Windows notification ID を生成する。同一 Session の未処理通知がある場合は閉じ、プロセス再起動をまたぐ場合も Windows の Tag と Group によって新しい完了通知へ置き換える。
 - Windows の system timeout 後も元の notification instance を Session 単位で保持する。同じ Session の新しい通知へ置き換える場合、または Session の単体削除、cutoff 一括削除、Sessions を含む DB 初期化が成功した場合は、その instance の `close()` を呼び、Action Center からの撤去を試みる。削除されなかった Session と、実行中のため一括削除から除外された Session の通知は閉じない。
@@ -67,7 +67,7 @@ Session のターン完了まで時間がかかる場合、ユーザーは WithM
 - Windows の通知設定、集中モード、Electron の対応状況によって通知が表示されない場合がある。
 - 返答冒頭の表示を有効にすると、Windows の通知表示設定に応じて作業内容の一部がロック画面や Action Center に残る可能性がある。
 - Markdown の完全な描画は行わないため、preview には一部の記号が残る場合がある。
-- 数式、Mermaid、画像だけの返答と、2,048 UTF-16 code units を超える返答では、preview を有効にしていても完了通知だけを表示する。
+- 数式、Mermaid、画像だけの返答と、65,536 UTF-16 code units を超える返答では、preview を有効にしていても完了通知だけを表示する。
 - icon を読み込めない場合は Character icon ではなくアプリアイコンになる。
 - プロセス終了後、または通知 instance の破棄後に過去通知をクリックしても、元の Session へ直接復帰できない場合がある。
 - Electron 43 の notification ID を使った static removal は macOS 専用である。プロセス終了によって Windows の notification instance を失った後は、その後の Session 削除から Action Center の過去通知を撤去できない。
