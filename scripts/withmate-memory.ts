@@ -1,4 +1,3 @@
-import { createHmac, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,11 +9,8 @@ import {
   type MemoryValidationResult,
 } from "../src/memory-v6/memory-contract.js";
 import {
-  normalizeWithMateMemoryApiBaseUrl,
-  resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
-  type WithMateMemoryDiscoveryDocument,
 } from "../src/memory-v6/memory-discovery.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import {
@@ -30,8 +26,36 @@ import {
   validateMemoryMoveEntryRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
+import {
+  CHARACTER_CONTEXT_SCHEMA_VERSION,
+  createCharacterContextError,
+} from "../src/character-context/character-context-contract.js";
+import {
+  CharacterContextValidationError,
+  validateCharacterAffectAppraiseRequest,
+  validateCharacterAffectCorrectRequest,
+  validateCharacterAffectInspectRequest,
+  validateCharacterAffectResetRequest,
+  validateCharacterContextGetRequest,
+  validateCharacterMemoryAppendEpisodeRequest,
+  validateCharacterMemoryCorrectRequest,
+  validateCharacterMemoryForgetRequest,
+  validateCharacterMemorySearchRequest,
+} from "../src/character-context/character-context-validation.js";
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  discoverWithMateMemoryApi,
+  verifyRuntimeIdentity,
+  WITHMATE_MEMORY_API_SECRET_HEADER,
+  type WithMateMemoryApiConnection,
+} from "./withmate-memory-runtime-client.js";
+import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
 
 export {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  discoverWithMateMemoryApi,
+  verifyRuntimeIdentity,
+  WITHMATE_MEMORY_API_SECRET_HEADER,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 };
@@ -60,11 +84,22 @@ export type WithMateMemoryCliCommand =
   | "append"
   | "forget"
   | "move_entry"
+  | "context_get"
+  | "affect_appraise"
+  | "affect_inspect"
+  | "affect_correct"
+  | "affect_reset"
+  | "character_memory_search"
+  | "character_memory_append_episode"
+  | "character_memory_correct"
+  | "character_memory_forget"
+  | "character_metrics"
+  | "mcp_server"
   | "schema"
   | "validate";
 
-export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate">;
-export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters" | "file_usage">;
+export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate" | "mcp_server">;
+export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters" | "file_usage" | "character_metrics">;
 
 export type WithMateMemoryCliRequest = {
   command: WithMateMemoryCliCommand;
@@ -73,12 +108,7 @@ export type WithMateMemoryCliRequest = {
   discoveryFilePath?: string;
   apiUrl?: string;
   outputFormat?: "json" | "jsonl" | "markdown";
-};
-
-export type WithMateMemoryApiConnection = {
-  baseUrl: string;
-  apiSecret?: string;
-  runtimeInstanceId?: string;
+  fallbackFrom?: "mcp";
 };
 
 export type WithMateMemoryCliDeps = {
@@ -91,6 +121,36 @@ export type WithMateMemoryCliDeps = {
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
 };
+
+const CHARACTER_CONTEXT_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "context_get",
+  "affect_appraise",
+  "affect_inspect",
+  "affect_correct",
+  "affect_reset",
+  "character_memory_search",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+  "character_metrics",
+]);
+
+const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "affect_appraise",
+  "affect_correct",
+  "affect_reset",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+]);
+
+function characterRuntimeUnavailable(effect: "none" | "unknown" = "none") {
+  return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
+    retryable: true,
+    conversationMayContinue: true,
+    effect,
+  });
+}
 
 const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST"; path: string }> = {
   status: { method: "GET", path: "/v1/status" },
@@ -107,6 +167,16 @@ const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST";
   append: { method: "POST", path: "/v1/append" },
   forget: { method: "POST", path: "/v1/forget" },
   move_entry: { method: "POST", path: "/v1/move_entry" },
+  context_get: { method: "POST", path: "/v1/character_context/get" },
+  affect_appraise: { method: "POST", path: "/v1/character_affect/appraise" },
+  affect_inspect: { method: "POST", path: "/v1/character_affect/inspect" },
+  affect_correct: { method: "POST", path: "/v1/character_affect/correct" },
+  affect_reset: { method: "POST", path: "/v1/character_affect/reset" },
+  character_memory_search: { method: "POST", path: "/v1/character_memory/search" },
+  character_memory_append_episode: { method: "POST", path: "/v1/character_memory/append_episode" },
+  character_memory_correct: { method: "POST", path: "/v1/character_memory/correct" },
+  character_memory_forget: { method: "POST", path: "/v1/character_memory/forget" },
+  character_metrics: { method: "GET", path: "/v1/character_context/metrics" },
 };
 
 function buildRoutePath(request: WithMateMemoryCliRequest): string {
@@ -127,9 +197,8 @@ function buildRoutePath(request: WithMateMemoryCliRequest): string {
   return queryString ? `${route.path}?${queryString}` : route.path;
 }
 
-export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
-const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+export const WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER = "x-withmate-memory-operator-api-secret";
 
 const FILE_OPERATION_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "append",
@@ -163,6 +232,22 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["forget", "forget"],
   ["move-entry", "move_entry"],
   ["move_entry", "move_entry"],
+  ["context-get", "context_get"],
+  ["context_get", "context_get"],
+  ["affect-appraise", "affect_appraise"],
+  ["affect_appraise", "affect_appraise"],
+  ["affect-inspect", "affect_inspect"],
+  ["affect_inspect", "affect_inspect"],
+  ["affect-correct", "affect_correct"],
+  ["affect_correct", "affect_correct"],
+  ["affect-reset", "affect_reset"],
+  ["affect_reset", "affect_reset"],
+  ["character-memory-search", "character_memory_search"],
+  ["character-memory-append-episode", "character_memory_append_episode"],
+  ["character-memory-correct", "character_memory_correct"],
+  ["character-memory-forget", "character_memory_forget"],
+  ["character-metrics", "character_metrics"],
+  ["mcp-server", "mcp_server"],
   ["schema", "schema"],
   ["capabilities", "schema"],
   ["validate", "validate"],
@@ -187,6 +272,17 @@ Commands:
   append
   forget
   move-entry
+  context-get
+  affect-appraise
+  affect-inspect
+  affect-correct
+  affect-reset
+  character-memory-search
+  character-memory-append-episode
+  character-memory-correct
+  character-memory-forget
+  character-metrics
+  mcp-server
   schema
   validate
 
@@ -222,6 +318,7 @@ Shorthand options:
 Connection options:
   --api-url <url>
   --discovery-file <path>
+  --fallback-from <mcp>
 
 Validation:
   validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
@@ -238,6 +335,9 @@ Examples:
   withmate-memory get-file --project C:\\path\\to\\repo --object-id <id> --output C:\\path\\to\\file.bin
   withmate-memory export-files --project C:\\path\\to\\repo --entry-id <id> --output-dir C:\\path\\to\\exports
   withmate-memory validate --command append --stdin
+  withmate-memory context-get --stdin
+  withmate-memory affect-inspect --stdin
+  withmate-memory mcp-server
   withmate-memory schema
 `;
 
@@ -253,6 +353,15 @@ const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
   "append",
   "forget",
   "move_entry",
+  "context_get",
+  "affect_appraise",
+  "affect_inspect",
+  "affect_correct",
+  "affect_reset",
+  "character_memory_search",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
 ]);
 
 function usageError(message: string): MemoryErrorResponse {
@@ -301,16 +410,6 @@ export function resolveRuntimeRequestTimeoutMs(
   return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
-function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
-  const value = env.WITHMATE_MEMORY_API_SECRET?.trim();
-  return value ? value : undefined;
-}
-
-function readEnvRuntimeInstanceId(env: NodeJS.ProcessEnv): string | undefined {
-  const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
-  return value ? value : undefined;
-}
-
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stdin) {
@@ -344,68 +443,6 @@ function normalizeValidatableCommand(value: string): WithMateMemoryValidatedComm
   return undefined;
 }
 
-export async function discoverWithMateMemoryApi(
-  options: {
-    env?: NodeJS.ProcessEnv;
-    apiUrl?: string;
-    discoveryFilePath?: string;
-    readFile?: typeof readFile;
-  } = {},
-): Promise<WithMateMemoryApiConnection | null> {
-  const env = options.env ?? process.env;
-  if (options.apiUrl !== undefined) {
-    const explicitUrl = normalizeWithMateMemoryApiBaseUrl(options.apiUrl);
-    if (!explicitUrl) {
-      throw usageError("--api-url must be a valid loopback HTTP URL.");
-    }
-    return {
-      baseUrl: explicitUrl,
-      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
-      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
-    };
-  }
-
-  const rawEnvUrl = env.WITHMATE_MEMORY_API_URL?.trim();
-  if (rawEnvUrl) {
-    const envUrl = normalizeWithMateMemoryApiBaseUrl(rawEnvUrl);
-    if (!envUrl) {
-      throw usageError("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
-    }
-    return {
-      baseUrl: envUrl,
-      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
-      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
-    };
-  }
-
-  const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
-  const discoveryFilePath = options.discoveryFilePath
-    ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env));
-  const read = options.readFile ?? readFile;
-
-  try {
-    const document = JSON.parse(await read(discoveryFilePath, "utf8")) as Partial<WithMateMemoryDiscoveryDocument>;
-    if (document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION || typeof document.baseUrl !== "string") {
-      return null;
-    }
-    const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
-    if (!baseUrl) {
-      return null;
-    }
-    return {
-      baseUrl,
-      ...(typeof document.apiSecret === "string" && document.apiSecret.trim()
-        ? { apiSecret: document.apiSecret.trim() }
-        : {}),
-      ...(typeof document.runtimeInstanceId === "string" && document.runtimeInstanceId.trim()
-        ? { runtimeInstanceId: document.runtimeInstanceId.trim() }
-        : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function parseWithMateMemoryCliArgs(
   args: readonly string[],
   deps: Pick<WithMateMemoryCliDeps, "stdin" | "readFile"> = {},
@@ -416,7 +453,9 @@ export async function parseWithMateMemoryCliArgs(
   }
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <help|status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [options]");
+    throw usageError(
+      "Usage: withmate-memory <status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|context-get|affect-appraise|affect-inspect|affect-correct|affect-reset|character-memory-search|character-memory-append-episode|character-memory-correct|character-memory-forget|character-metrics|mcp-server|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <path>] [--tag <tag>] [options]",
+    );
   }
   if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { command: "help", body: {} };
@@ -427,6 +466,7 @@ export async function parseWithMateMemoryCliArgs(
   let stdinRequested = false;
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
+  let fallbackFrom: "mcp" | undefined;
   let validateCommand: WithMateMemoryValidatedCommand | undefined;
   let projectPath: string | undefined;
   let projectId: string | undefined;
@@ -463,6 +503,12 @@ export async function parseWithMateMemoryCliArgs(
       apiUrl = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--discovery-file") {
       discoveryFilePath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--fallback-from") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (value !== "mcp") {
+        throw usageError("--fallback-from must be mcp.");
+      }
+      fallbackFrom = value;
     } else if (arg === "--command") {
       const value = requireOptionValue(rest, ++index, arg);
       validateCommand = normalizeValidatableCommand(value);
@@ -580,6 +626,7 @@ export async function parseWithMateMemoryCliArgs(
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
     ...(outputFormat ? { outputFormat } : {}),
+    ...(fallbackFrom ? { fallbackFrom } : {}),
   };
 }
 
@@ -980,6 +1027,17 @@ function buildSchemaResponse(): unknown {
       "append",
       "forget",
       "move-entry",
+      "context-get",
+      "affect-appraise",
+      "affect-inspect",
+      "affect-correct",
+      "affect-reset",
+      "character-memory-search",
+      "character-memory-append-episode",
+      "character-memory-correct",
+      "character-memory-forget",
+      "character-metrics",
+      "mcp-server",
       "schema",
       "validate",
     ],
@@ -1017,6 +1075,47 @@ function validateMemoryCliRequestBody(
   command: WithMateMemoryValidatedCommand,
   body: unknown,
 ): MemoryValidationResult<unknown> {
+  try {
+    if (command === "context_get") {
+      return { ok: true, value: validateCharacterContextGetRequest(body) };
+    }
+    if (command === "affect_appraise") {
+      return { ok: true, value: validateCharacterAffectAppraiseRequest(body) };
+    }
+    if (command === "affect_inspect") {
+      return { ok: true, value: validateCharacterAffectInspectRequest(body) };
+    }
+    if (command === "affect_correct") {
+      return { ok: true, value: validateCharacterAffectCorrectRequest(body) };
+    }
+    if (command === "affect_reset") {
+      return { ok: true, value: validateCharacterAffectResetRequest(body) };
+    }
+    if (command === "character_memory_search") {
+      return { ok: true, value: validateCharacterMemorySearchRequest(body) };
+    }
+    if (command === "character_memory_append_episode") {
+      return { ok: true, value: validateCharacterMemoryAppendEpisodeRequest(body) };
+    }
+    if (command === "character_memory_correct") {
+      return { ok: true, value: validateCharacterMemoryCorrectRequest(body) };
+    }
+    if (command === "character_memory_forget") {
+      return { ok: true, value: validateCharacterMemoryForgetRequest(body) };
+    }
+  } catch (error) {
+    if (error instanceof CharacterContextValidationError) {
+      return {
+        ok: false,
+        error: {
+          code: "CHARACTER_CONTEXT_INVALID_INPUT",
+          message: error.message,
+          field: error.field,
+        },
+      };
+    }
+    throw error;
+  }
   if (command === "search") {
     return validateMemorySearchRequest(body);
   }
@@ -1064,7 +1163,9 @@ function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: un
   return {
     exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.ok,
     response: {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      schemaVersion: command.startsWith("character_") || command.startsWith("affect_") || command === "context_get"
+        ? CHARACTER_CONTEXT_SCHEMA_VERSION
+        : MEMORY_V6_SCHEMA_VERSION,
       valid: true,
       command,
       value: validation.value,
@@ -1172,45 +1273,6 @@ function formatAuditOutput(value: unknown, format: "json" | "jsonl" | "markdown"
   return `${lines.join("\n").trimEnd()}\n`;
 }
 
-function createStatusChallenge(apiSecret: string, nonce: string): string {
-  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
-}
-
-function hasVerifiableRuntimeIdentity(connection: WithMateMemoryApiConnection): connection is WithMateMemoryApiConnection & {
-  apiSecret: string;
-  runtimeInstanceId: string;
-} {
-  return Boolean(connection.apiSecret?.trim() && connection.runtimeInstanceId?.trim());
-}
-
-async function verifyRuntimeIdentity(
-  connection: WithMateMemoryApiConnection,
-  fetchImpl: typeof fetch,
-  signal: AbortSignal,
-): Promise<boolean> {
-  if (!hasVerifiableRuntimeIdentity(connection)) {
-    return false;
-  }
-
-  const nonce = randomBytes(16).toString("base64url");
-  const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
-    method: "GET",
-    redirect: "error",
-    signal,
-  });
-  if (!response.ok) {
-    return false;
-  }
-
-  const status = await readJsonResponse(response) as {
-    runtimeInstanceId?: unknown;
-    challenge?: { nonce?: unknown; hmacSha256?: unknown };
-  };
-  return status.runtimeInstanceId === connection.runtimeInstanceId
-    && status.challenge?.nonce === nonce
-    && status.challenge.hmacSha256 === createStatusChallenge(connection.apiSecret, nonce);
-}
-
 export async function runWithMateMemoryCli(
   args: readonly string[],
   deps: WithMateMemoryCliDeps = {},
@@ -1223,6 +1285,15 @@ export async function runWithMateMemoryCli(
     const request = await parseWithMateMemoryCliArgs(args, deps);
     if (request.command === "help") {
       stdout.write(WITHMATE_MEMORY_CLI_HELP);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+    }
+    if (request.command === "mcp_server") {
+      await startWithMateMemoryMcpServer({
+        env: deps.env,
+        fetch: deps.fetch,
+        readFile: deps.readFile,
+        requestTimeoutMs: deps.requestTimeoutMs,
+      });
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
     }
     if (request.command === "schema") {
@@ -1242,6 +1313,10 @@ export async function runWithMateMemoryCli(
       readFile: deps.readFile,
     });
     if (!connection) {
+      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+      }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
@@ -1251,6 +1326,10 @@ export async function runWithMateMemoryCli(
       const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
       try {
         if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
+          if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+            stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+            return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+          }
           stdout.write(`${JSON.stringify(notRunningError())}\n`);
           return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
         }
@@ -1260,6 +1339,10 @@ export async function runWithMateMemoryCli(
     } catch (error) {
       if (isMemoryErrorResponse(error)) {
         throw error;
+      }
+      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
@@ -1273,6 +1356,14 @@ export async function runWithMateMemoryCli(
     const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
       const headers: Record<string, string> = {};
+      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        if (connection.operatorApiSecret) {
+          headers[WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER] = connection.operatorApiSecret;
+        }
+      }
+      if (request.fallbackFrom && CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        headers["x-withmate-fallback-from"] = request.fallbackFrom;
+      }
       if (route.method === "POST") {
         headers["Content-Type"] = "application/json";
       }
@@ -1292,7 +1383,21 @@ export async function runWithMateMemoryCli(
         throw error;
       }
       if (isAbortError(error)) {
+        if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+          const effect = CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand)
+            ? "unknown"
+            : "none";
+          stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
+          return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+        }
         stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+      }
+      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        const effect = CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand)
+          ? "unknown"
+          : "none";
+        stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);

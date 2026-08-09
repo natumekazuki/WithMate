@@ -125,6 +125,10 @@ describe("Memory V6 runtime API", () => {
         assert.equal(discovery.baseUrl, runtime.baseUrl);
         assert.equal(typeof discovery.apiSecret, "string");
         assert.equal(discovery.apiSecret.length > 20, true);
+        assert.equal(typeof discovery.operatorApiSecret, "string");
+        assert.equal(discovery.operatorApiSecret.length > 20, true);
+        assert.equal(typeof discovery.mcpApiSecret, "string");
+        assert.equal(discovery.mcpApiSecret.length > 20, true);
         assert.equal(typeof discovery.runtimeInstanceId, "string");
         assert.equal(runtime.dbPath, path.join(userDataPath, "withmate-v6.db"));
 
@@ -177,6 +181,38 @@ describe("Memory V6 runtime API", () => {
         });
         assert.equal(context.status, 404);
         assert.equal((await context.json()).error.code, "MEMORY_ROUTE_NOT_FOUND");
+
+        const spoofedCli = await fetch(`${runtime.baseUrl}/v1/character_context/get`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            "x-withmate-client": "cli",
+          },
+          body: JSON.stringify({
+            schemaVersion: "withmate-character-context-v1",
+            characterId: "missing-character",
+            sessionId: "missing-session",
+          }),
+        });
+        assert.equal(spoofedCli.status, 403);
+        assert.equal((await spoofedCli.json()).error.code, "authority_denied");
+
+        const authenticatedCli = await fetch(`${runtime.baseUrl}/v1/character_context/get`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
+            "x-withmate-memory-operator-api-secret": discovery.operatorApiSecret,
+          },
+          body: JSON.stringify({
+            schemaVersion: "withmate-character-context-v1",
+            characterId: "missing-character",
+            sessionId: "missing-session",
+          }),
+        });
+        assert.equal(authenticatedCli.status, 404);
+        assert.equal((await authenticatedCli.json()).error.code, "unknown_character");
 
         const characters = await fetch(`${runtime.baseUrl}/v1/characters`, {
           headers: {

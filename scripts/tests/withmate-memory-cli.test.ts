@@ -222,6 +222,73 @@ describe("withmate-memory CLI", () => {
     assert.equal(stdout.json().error.code, "WITHMATE_NOT_RUNNING");
   });
 
+  it("Character commandのruntime unavailableを共通error semanticsで返す", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli([
+      "context-get",
+      "--json",
+      JSON.stringify({
+        schemaVersion: "withmate-character-context-v1",
+        characterId: "character-a",
+        sessionId: "session-a",
+      }),
+    ], {
+      env: {},
+      stdout: stdout.stream,
+      readFile: async () => {
+        throw new Error("missing discovery file");
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.deepEqual(stdout.json(), {
+      schemaVersion: "withmate-character-context-v1",
+      error: {
+        code: "storage_unavailable",
+        message: "WithMate runtime is not available.",
+        retryable: true,
+        conversationMayContinue: true,
+        effect: "none",
+      },
+    });
+  });
+
+  it("Character writeのdispatch後timeoutはeffect unknownを返す", async () => {
+    const stdout = createOutputCapture();
+    const exitCode = await runWithMateMemoryCli([
+      "character-memory-forget",
+      "--json",
+      JSON.stringify({
+        schemaVersion: "withmate-character-context-v1",
+        characterId: "character-a",
+        entryId: "entry-a",
+        authority: { kind: "operator", reason: "Recovery test." },
+        reason: "other",
+        idempotencyKey: "forget-timeout-1",
+      }),
+    ], {
+      env: {
+        ...TEST_RUNTIME_ENV,
+        WITHMATE_MEMORY_OPERATOR_API_SECRET: "operator-secret",
+      },
+      stdout: stdout.stream,
+      requestTimeoutMs: 5,
+      fetch: async (url, init) => {
+        if (isStatusChallengeRequest(String(url))) {
+          return createStatusChallengeResponse(String(url));
+        }
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")));
+        });
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+    assert.equal(stdout.json().error.code, "storage_unavailable");
+    assert.equal(stdout.json().error.effect, "unknown");
+    assert.equal(stdout.json().error.retryable, true);
+  });
+
   it("stale discovery endpointへ接続できない場合もWITHMATE_NOT_RUNNINGを返す", async () => {
     const stdout = createOutputCapture();
     const exitCode = await runWithMateMemoryCli(["status"], {

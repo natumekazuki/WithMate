@@ -32,6 +32,7 @@ import {
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
+import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -170,6 +171,136 @@ describe("SessionRuntimeService stale retry helpers", () => {
   });
 });
 describe("SessionRuntimeService", () => {
+
+  it("各turnで最新Character contextを取得し、完了後appraisalを待ってから返す", async () => {
+    let storedSession = createSession();
+    let contextVersion = 0;
+    let auditId = 0;
+    const appraisalCorrelations: string[] = [];
+    const callOrder: string[] = [];
+    const adapter: ProviderCodingAdapter = {
+      composePrompt() {
+        return {
+          systemBodyText: "system",
+          inputBodyText: "input",
+          logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+          imagePaths: [],
+          additionalDirectories: [],
+        };
+      },
+      async getProviderQuotaTelemetry() {
+        return null;
+      },
+      invalidateSessionThread() {},
+      invalidateAllSessionThreads() {},
+      async runSessionTurn() {
+        return createPartialResult({ assistantText: "完了" });
+      },
+    };
+    const context = (version: number): CharacterContextResponse => ({
+      schemaVersion: "withmate-character-context-v1",
+      characterId: "char-a",
+      sessionId: storedSession.id,
+      baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
+      affect: {
+        mode: "active",
+        effective: [],
+        version: `affect-v1-${version}`,
+        updatedAt: "2026-08-09T00:00:00.000Z",
+      },
+      memory: { items: [], updatedAt: null },
+      scope: { userId: "local-user", characterId: "char-a", sessionId: storedSession.id },
+    });
+
+    const service = new SessionRuntimeService({
+      getSession(sessionId) {
+        return sessionId === storedSession.id ? storedSession : null;
+      },
+      upsertSession(next) {
+        if (next.status === "idle" && next.messages.at(-1)?.role === "assistant") {
+          callOrder.push("completed-upsert");
+        }
+        storedSession = next;
+        return next;
+      },
+      async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      getAppSettings() {
+        return normalizeAppSettings({});
+      },
+      resolveProviderCatalog() {
+        const provider = createProviderCatalog();
+        return { snapshot: { revision: 1, providers: [provider] }, provider };
+      },
+      getProviderCodingAdapter() {
+        return adapter;
+      },
+      getSessionMemory(session) {
+        return createSessionMemory(session.id);
+      },
+      resolveProjectMemoryEntriesForPrompt() {
+        return [];
+      },
+      resolveCharacterContext() {
+        contextVersion += 1;
+        return context(contextVersion);
+      },
+      async queueCompletedTurnAppraisal(input) {
+        assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
+        callOrder.push(`queued:${input.correlationId}`);
+      },
+      async appraiseCompletedTurn(input) {
+        await Promise.resolve();
+        appraisalCorrelations.push(input.correlationId);
+        callOrder.push("appraised");
+      },
+      createAuditLog(input) {
+        auditId += 1;
+        return { ...createAuditLogBase(input), id: auditId };
+      },
+      updateAuditLog() {},
+      setLiveSessionRun() {},
+      getLiveSessionRun() {
+        return null;
+      },
+      waitForApprovalDecision() {
+        return "approve";
+      },
+      waitForElicitationResponse() {
+        return { action: "cancel" };
+      },
+      setProviderQuotaTelemetry() {},
+      setSessionContextTelemetry() {},
+      invalidateProviderSessionThread() {},
+      scheduleProviderQuotaTelemetryRefresh() {},
+      broadcastLiveSessionRun() {},
+      resolvePendingApprovalRequest() {},
+      resolvePendingElicitationRequest() {},
+      currentTimestampLabel,
+    });
+
+    await service.runSessionTurn(storedSession.id, { userMessage: "first" });
+    callOrder.push("first-returned");
+    await service.runSessionTurn(storedSession.id, { userMessage: "second" });
+    callOrder.push("second-returned");
+
+    assert.equal(contextVersion, 2);
+    assert.deepEqual(appraisalCorrelations, [
+      `turn:${storedSession.id}:audit:1`,
+      `turn:${storedSession.id}:audit:2`,
+    ]);
+    assert.deepEqual(callOrder, [
+      `queued:turn:${storedSession.id}:audit:1`,
+      "completed-upsert",
+      "appraised",
+      "first-returned",
+      `queued:turn:${storedSession.id}:audit:2`,
+      "completed-upsert",
+      "appraised",
+      "second-returned",
+    ]);
+  });
 
   it("character-authoring session は turn 開始時の最新 Character snapshot を使う", async () => {
     const staleSession = createSession({
@@ -1764,6 +1895,7 @@ describe("SessionRuntimeService", () => {
     const session = createSession();
     let resolveProvider: ((result: RunSessionTurnResult) => void) | null = null;
     let notificationCount = 0;
+    let queuedAppraisalCount = 0;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -1814,6 +1946,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
+      queueCompletedTurnAppraisal(input) {
+        queuedAppraisalCount += 1;
+        assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
+      },
       createAuditLog(input) {
         return createAuditLogBase(input);
       },
@@ -1855,6 +1991,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.runState, "idle");
     assert.equal(result.messages.at(-1)?.text, "完了したよ。");
     assert.equal(notificationCount, 0);
+    assert.equal(queuedAppraisalCount, 1);
   });
 
   it("stale thread / session error で meaningful partial が無い時だけ thread reset 後に 1 回 retry する", async () => {

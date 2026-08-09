@@ -25,6 +25,21 @@ export class CharacterAffectIdempotencyConflictError extends Error {
   }
 }
 
+export class CharacterAffectVersionConflictError extends Error {
+  constructor(
+    readonly expectedVersion: string,
+    readonly actualVersion: string,
+  ) {
+    super("Character affect version does not match the current state.");
+    this.name = "CharacterAffectVersionConflictError";
+  }
+}
+
+export type CharacterAffectStateVersion = {
+  version: string;
+  updatedAt: string | null;
+};
+
 export type StoredAffectEvent = Omit<AffectEventInput, "sessionId"> & {
   id: string;
   sessionId: string | null;
@@ -106,7 +121,10 @@ export class CharacterAffectStorage {
     this.db.close();
   }
 
-  recordEvent(input: AffectEventInput): { event: StoredAffectEvent; created: boolean } {
+  recordEvent(
+    input: AffectEventInput,
+    options: { expectedVersion?: string } = {},
+  ): { event: StoredAffectEvent; created: boolean } {
     assertValidAffectEvent(input);
     assertLocalUser(input.userId);
     const requestFingerprint = fingerprint({ operation: "record", input });
@@ -123,6 +141,16 @@ export class CharacterAffectStorage {
       }
 
       this.assertSessionOwner(input.sessionId, input.characterId);
+      if (options.expectedVersion) {
+        const actualVersion = this.getStateVersion({
+          characterId: input.characterId,
+          userId: input.userId,
+          sessionId: input.sessionId,
+        }).version;
+        if (actualVersion !== options.expectedVersion) {
+          throw new CharacterAffectVersionConflictError(options.expectedVersion, actualVersion);
+        }
+      }
       const eventId = randomUUID();
       const createdAt = new Date().toISOString();
       this.insertEvent(eventId, input, requestFingerprint, null, null, createdAt);
@@ -150,7 +178,7 @@ export class CharacterAffectStorage {
     eventId: string;
     replacement: AffectEventInput;
     reason: string;
-  }): { event: StoredAffectEvent; created: boolean } {
+  }, options: { expectedVersion?: string } = {}): { event: StoredAffectEvent; created: boolean } {
     assertValidAffectEvent(input.replacement);
     assertLocalUser(input.replacement.userId);
     requireText(input.reason, "reason");
@@ -176,6 +204,16 @@ export class CharacterAffectStorage {
         return { conflict: false, result: { event: toStoredEvent(this.requireEvent(replay.event_id)), created: false } } as const;
       }
       this.assertSessionOwner(input.replacement.sessionId, input.replacement.characterId);
+      if (options.expectedVersion) {
+        const actualVersion = this.getStateVersion({
+          characterId: input.replacement.characterId,
+          userId: input.replacement.userId,
+          sessionId: input.replacement.sessionId,
+        }).version;
+        if (actualVersion !== options.expectedVersion) {
+          throw new CharacterAffectVersionConflictError(options.expectedVersion, actualVersion);
+        }
+      }
       const original = this.requireEvent(input.eventId);
       if (
         original.character_id !== input.replacement.characterId
@@ -221,7 +259,10 @@ export class CharacterAffectStorage {
     return outcome.result;
   }
 
-  reset(input: AffectResetInput): { resetId: string; created: boolean } {
+  reset(
+    input: AffectResetInput,
+    options: { expectedVersion?: string; versionSessionId?: string } = {},
+  ): { resetId: string; created: boolean } {
     requireText(input.characterId, "characterId");
     requireText(input.userId, "userId");
     assertLocalUser(input.userId);
@@ -245,6 +286,21 @@ export class CharacterAffectStorage {
         }
         this.insertObservation("idempotency", "replayed", input, null, replay.reset_id, "Identical affect reset replayed.");
         return { conflict: false, result: { resetId: replay.reset_id, created: false } } as const;
+      }
+
+      if (options.expectedVersion) {
+        const versionSessionId = input.layer === "session" ? input.sessionId! : options.versionSessionId;
+        if (!versionSessionId) {
+          throw new Error("Relationship reset version validation requires versionSessionId.");
+        }
+        const actualVersion = this.getStateVersion({
+          characterId: input.characterId,
+          userId: input.userId,
+          sessionId: versionSessionId,
+        }).version;
+        if (actualVersion !== options.expectedVersion) {
+          throw new CharacterAffectVersionConflictError(options.expectedVersion, actualVersion);
+        }
       }
 
       const resetId = randomUUID();
@@ -428,6 +484,48 @@ export class CharacterAffectStorage {
       sessionId: input.sessionId,
       layers: aggregateComponents(layers, true),
       components: aggregateComponents(layers, false),
+    };
+  }
+
+  getStateVersion(input: {
+    characterId: string;
+    userId: string;
+    sessionId: string;
+  }): CharacterAffectStateVersion {
+    assertLocalUser(input.userId);
+    this.assertSessionOwner(input.sessionId, input.characterId);
+    const events = this.db.prepare(`
+      SELECT id, state, occurred_at AS occurredAt, created_at AS createdAt
+      FROM character_affect_events_v6
+      WHERE character_id = ?
+        AND user_id = ?
+        AND (layer = 'relationship' OR session_id = ?)
+      ORDER BY occurred_at ASC, id ASC
+    `).all(input.characterId, input.userId, input.sessionId) as Array<{
+      id: string;
+      state: "active" | "corrected";
+      occurredAt: string;
+      createdAt: string;
+    }>;
+    const resets = this.db.prepare(`
+      SELECT id, layer, reset_at AS resetAt, created_at AS createdAt
+      FROM character_affect_resets_v6
+      WHERE character_id = ?
+        AND user_id = ?
+        AND (layer = 'relationship' OR session_id = ?)
+      ORDER BY reset_at ASC, id ASC
+    `).all(input.characterId, input.userId, input.sessionId) as Array<{
+      id: string;
+      layer: AffectLayer;
+      resetAt: string;
+      createdAt: string;
+    }>;
+    const updatedAt = [...events.map((event) => event.createdAt), ...resets.map((reset) => reset.createdAt)]
+      .sort()
+      .at(-1) ?? null;
+    return {
+      version: `affect-v1-${fingerprint({ events, resets })}`,
+      updatedAt,
     };
   }
 
@@ -734,6 +832,7 @@ export class CharacterAffectStorage {
   private sessionExists(sessionId: string): boolean {
     return Boolean(this.db.prepare("SELECT 1 FROM sessions_v6 WHERE id = ?").get(sessionId));
   }
+
 
   private transaction<T>(run: () => T): T {
     this.db.exec("BEGIN IMMEDIATE TRANSACTION;");

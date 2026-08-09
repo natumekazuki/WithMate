@@ -8,6 +8,8 @@ export type WithMateMemoryDiscoveryDocument = {
   schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION;
   baseUrl: string;
   apiSecret?: string;
+  operatorApiSecret?: string;
+  mcpApiSecret?: string;
   runtimeInstanceId?: string;
   publishedAt?: string;
 };

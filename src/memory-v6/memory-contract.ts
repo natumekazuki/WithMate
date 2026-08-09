@@ -154,6 +154,7 @@ export type MemoryAppendRequest = {
   preview: string;
   tags: NormalizedMemoryTag[];
   supersedes?: string[];
+  mutationReason?: string;
   files?: MemoryAppendFileInput[];
   sourceMessageId?: string;
   idempotencyKey?: string;

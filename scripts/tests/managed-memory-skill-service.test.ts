@@ -8,6 +8,9 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   ManagedMemorySkillService,
@@ -23,6 +26,23 @@ import {
 } from "../build-withmate-memory-cli.js";
 
 const execFileAsync = promisify(execFile);
+
+async function initializeIsolatedMcpServer(helperPath: string, cwd: string): Promise<Record<string, unknown>> {
+  const client = new Client({ name: "isolated-layout-test", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [helperPath, "mcp-server"],
+    cwd,
+    env: process.env as Record<string, string>,
+    stderr: "pipe",
+  });
+  try {
+    await client.connect(transport);
+    return await client.getServerVersion() as unknown as Record<string, unknown>;
+  } finally {
+    await client.close();
+  }
+}
 
 async function createBundle(): Promise<string> {
   const bundlePath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-bundle-"));
@@ -400,6 +420,24 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
+  it("依存のないisolated directoryでも生成CLIを起動できる", async () => {
+    const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-isolated-"));
+    try {
+      const isolatedHelperPath = await buildWithMateMemoryCli(outputDirectoryPath);
+      const source = await readFile(isolatedHelperPath, "utf8");
+      assert.doesNotMatch(source, /from\s+["'](?:@modelcontextprotocol\/sdk|zod)["']/);
+      const { stdout } = await execFileAsync(process.execPath, [isolatedHelperPath, "schema"], {
+        cwd: outputDirectoryPath,
+        env: process.env,
+      });
+      assert.equal(JSON.parse(stdout).commands.includes("mcp-server"), true);
+      const initialized = await initializeIsolatedMcpServer(isolatedHelperPath, outputDirectoryPath);
+      assert.equal(initialized.name, "withmate-character-context");
+    } finally {
+      await rm(outputDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("runtime directory の discovery path で status できる", async () => {
     const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-root-"));
     const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
@@ -526,6 +564,17 @@ describe("withmate-memory bundled helper", () => {
       "append",
       "forget",
       "move-entry",
+      "context-get",
+      "affect-appraise",
+      "affect-inspect",
+      "affect-correct",
+      "affect-reset",
+      "character-memory-search",
+      "character-memory-append-episode",
+      "character-memory-correct",
+      "character-memory-forget",
+      "character-metrics",
+      "mcp-server",
       "schema",
       "validate",
     ]);

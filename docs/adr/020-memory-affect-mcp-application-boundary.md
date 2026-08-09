@@ -1,0 +1,53 @@
+# ADR 020: MemoryとCharacter AffectのMCPは共通application boundaryへ接続する
+
+## Status
+
+Accepted
+
+## Context
+
+MemoryとCharacter Affectをagentへ公開する際、MCP serverからCLIをsubprocess起動すると、CLIの表示形式とexit codeが実質的なAPIになる。CLIとMCPが個別にSQLiteへ接続すると、authority、validation、idempotency、transaction、監査、error semanticsが分岐する。
+
+WithMateにはMemory V6 application serviceとlocal runtime endpointがあり、Character Affectにはappend-only event、Memory episode収束、訂正、resetを所有するapplication serviceがある。外部MCP processはElectron main process内のserviceを直接参照できないため、process境界も同じ正本へ接続する必要がある。
+
+## Decision
+
+- MemoryとCharacter Affectは一つのstdio MCP serverで公開する。Character context、Affect、Character Memoryは同じuser / character / session identityとdiscovery lifecycleを共有するため、capability別processへ分割しない。
+- Electron main process内にCharacter Context application serviceを置き、Memory serviceとAffect serviceを合成する。domain validation、scope、authority、idempotency、version、read-back、error semantics、metricsはこのapplication boundaryの内側で扱う。
+- CLIとMCPは、loopback限定かつruntime credentialで保護されたlocal application endpointへ接続する兄弟adapterとする。通常のruntime secretはreadとbounded write、CLI専用operator secretは訂正、forget、resetを認可する。callerが指定したtransport名をauthorityへ昇格させない。MCPはCLIを起動せず、どちらもSQLiteへ直接接続しない。
+- 配布用CLI/MCP artifactはSDKを含むself-containedな`extraResources`として生成する。runtime discoveryとidentity検証は兄弟adapterから共有clientへ寄せ、CLIとMCPの相互importや配布先の`node_modules`へ依存させない。
+- 通常Sessionのturn lifecycleは同じprocess内のapplication serviceを直接呼ぶ。毎turn必須のpre-turn snapshotとpost-turn appraisalを内部MCP clientへ委譲しない。
+- MCP write toolにはread-only、destructive、idempotent、open-worldのannotationを付ける。annotationはclient UIの補助であり、server側のauthority validationを代替しない。
+- bounded writeは通常会話authorityで許可する。訂正、forget、relationship resetは明示的なユーザー指示またはoperator authorityを要求する。MCPはcaller-asserted authority fieldを公開せず、destructive tool invocationを明示指示としてserverへ送る。CLIのoperator authorityはCLI専用credentialの検証後だけserver側で導く。scope identityは保存済みCharacter / Session / Projectから解決し、request文字列だけを根拠にしない。
+- Affect versionはappend-only event/resetの現行投影から導出し、write transaction内でexpected versionを再検証する。状態snapshotを新しい永続化正本にしない。
+- Character AffectとMemory episodeのcross-storage mutationはADR 018の収束契約を維持する。途中失敗は保存済みeffectを含む構造化errorとして返し、atomic successとして扱わない。
+- completed turnの必須appraisalにはdurable settlement recordを置く。provider response確定後、Sessionをcompletedとして保存する前にaudit IDで一意なpending recordとassistant message indexを保存する。cancelとprovider成功が競合してもcompleted responseを保存する場合は同じ順序を維持する。起動時は保存済みSessionの同じindexに同じassistant messageが存在することをcommit markerとして検証し、未commit recordはappraiseせず破棄する。appraiseのread-back後だけsettledへ遷移し、一時保存した会話本文を除去する。
+- post-turn appraisalは評価直前の最新contextを使う。version conflict時は古いcandidateをblind retryせず、最新contextで一度だけ再評価する。turn correlationとAffect eventのidempotencyは表示用timestampではなく永続audit IDを使う。
+- MCPはinputとstructured outputの両schemaを公開し、output schemaにはsuccessとstructured errorの双方を含める。CLIとMCPはavailability、timeout、response loss、HTTP non-2xxを同じCharacter Context error semanticsへ写像し、write dispatch後に結果を確認できない場合は`effect: unknown`とする。
+- context resultとturn注入はbaselineへの参照、componentごとに全layerを合成したeffective Affectと寄与layer、必要最小限のCharacter Memory、scope、version、更新時刻だけを返す。Character Definition、生event履歴、監査、secret、検索結果全体は含めない。
+- Character Memoryの訂正理由はMemory append mutationの監査reasonとidempotency fingerprintへ渡す。forget理由はMemory V6のcanonical enumをpublic contractでも使い、adapterで別値へ置換しない。
+
+## Alternatives
+
+### MemoryとAffectを別MCP serverへ分ける
+
+identity、runtime discovery、authority、cross-capability contextを重複させ、同一turnの整合確認も複雑になるため採用しない。将来process isolationまたは独立した運用ownerが必要になった時点で再検討する。
+
+### MCP serverがCLIを起動する
+
+CLI出力、timeout、exit codeをapplication contractへ昇格させ、validationとerror mappingを二重化するため採用しない。
+
+### MCPとCLIがSQLiteへ直接接続する
+
+Electron runtimeと別のcomposition、authority、secret管理、migration timingを持ち、silent divergenceを起こし得るため採用しない。
+
+### Turn lifecycleが内部MCP clientを使う
+
+必須処理がMCP processとclient availabilityへ依存し、同一processのapplication serviceを遠回りするため採用しない。
+
+## Consequences
+
+- MCP unavailable時もCLIは同じruntime stateを扱い、復旧後のMCP read-backと一致する。
+- WithMateが起動していない場合、CLIとMCPのwriteはどちらも失敗し、別のlocal stateを作らない。
+- external adapterはruntime endpoint availabilityへ依存する。read failureとwrite failure、retryability、会話継続可否を構造化resultで区別する。
+- 将来MCP transportを追加してもapplication serviceとcontract testを再利用できる。

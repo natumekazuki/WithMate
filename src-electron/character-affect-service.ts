@@ -32,6 +32,17 @@ export type CharacterAffectEpisodeWriter = {
 
 export type CharacterAffectServiceMode = "shadow" | "active";
 
+export class CharacterAffectEpisodePersistenceError extends Error {
+  constructor(
+    readonly eventId: string,
+    options: { cause: unknown },
+  ) {
+    const causeMessage = options.cause instanceof Error ? options.cause.message : "Memory episode persistence failed.";
+    super(`${causeMessage} Character affect was saved, but its Memory episode did not converge.`, options);
+    this.name = "CharacterAffectEpisodePersistenceError";
+  }
+}
+
 export class CharacterAffectService {
   constructor(
     private readonly storage: CharacterAffectStorage,
@@ -118,6 +129,29 @@ export class CharacterAffectService {
     return { mode: this.mode, events: recorded };
   }
 
+  async recordAppraisal(
+    candidate: Parameters<CharacterAffectStorage["recordEvent"]>[0],
+    options: { expectedVersion?: string } = {},
+  ): Promise<{ event: StoredAffectEvent; created: boolean }> {
+    if (candidate.memoryEpisode) {
+      this.episodeWriter.validateEpisode({
+        characterId: candidate.characterId,
+        userId: candidate.userId,
+        sourceSessionId: candidate.sessionId,
+        candidate: candidate.memoryEpisode,
+      });
+    }
+    const result = this.storage.recordEvent(candidate, options);
+    try {
+      return {
+        ...result,
+        event: await this.persistEpisode(result.event, candidate.memoryEpisode),
+      };
+    } catch (error) {
+      throw new CharacterAffectEpisodePersistenceError(result.event.id, { cause: error });
+    }
+  }
+
   getEffectiveState(input: {
     characterId: string;
     userId: string;
@@ -127,22 +161,33 @@ export class CharacterAffectService {
     return { ...this.storage.getEffectiveState(input), mode: this.mode };
   }
 
-  async correctEvent(input: Parameters<CharacterAffectStorage["correctEvent"]>[0]) {
+  getStateVersion(input: Parameters<CharacterAffectStorage["getStateVersion"]>[0]) {
+    return this.storage.getStateVersion(input);
+  }
+
+  async correctEvent(
+    input: Parameters<CharacterAffectStorage["correctEvent"]>[0],
+    options: Parameters<CharacterAffectStorage["correctEvent"]>[1] = {},
+  ) {
     const original = this.storage.getEvent({
       eventId: input.eventId,
       characterId: input.replacement.characterId,
       userId: input.replacement.userId,
     });
     if (!original || original.state !== "active") {
-      const replay = this.storage.correctEvent(input);
-      return {
-        ...replay,
-        event: await this.persistEpisode(
-          replay.event,
-          input.replacement.memoryEpisode,
-          replay.event.supersedesMemoryEntryId ?? undefined,
-        ),
-      };
+      const replay = this.storage.correctEvent(input, options);
+      try {
+        return {
+          ...replay,
+          event: await this.persistEpisode(
+            replay.event,
+            input.replacement.memoryEpisode,
+            replay.event.supersedesMemoryEntryId ?? undefined,
+          ),
+        };
+      } catch (error) {
+        throw new CharacterAffectEpisodePersistenceError(replay.event.id, { cause: error });
+      }
     }
     if (original.memoryEntryId && !input.replacement.memoryEpisode) {
       throw new Error("Affect correction must provide a replacement Memory episode.");
@@ -156,19 +201,23 @@ export class CharacterAffectService {
         ...(original.memoryEntryId ? { supersedesMemoryEntryId: original.memoryEntryId } : {}),
       });
     }
-    const result = this.storage.correctEvent(input);
-    return {
-      ...result,
-      event: await this.persistEpisode(
-        result.event,
-        input.replacement.memoryEpisode,
-        original.memoryEntryId ?? undefined,
-      ),
-    };
+    const result = this.storage.correctEvent(input, options);
+    try {
+      return {
+        ...result,
+        event: await this.persistEpisode(
+          result.event,
+          input.replacement.memoryEpisode,
+          original.memoryEntryId ?? undefined,
+        ),
+      };
+    } catch (error) {
+      throw new CharacterAffectEpisodePersistenceError(result.event.id, { cause: error });
+    }
   }
 
-  reset(input: AffectResetInput) {
-    return this.storage.reset(input);
+  reset(input: AffectResetInput, options: Parameters<CharacterAffectStorage["reset"]>[1] = {}) {
+    return this.storage.reset(input, options);
   }
 
   inspect(input: Parameters<CharacterAffectStorage["inspect"]>[0]) {

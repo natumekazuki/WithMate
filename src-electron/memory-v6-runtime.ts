@@ -26,12 +26,18 @@ import { MemoryProtectedObjectKeyStore, type MemoryProtectedObjectKeyProtector }
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6Service } from "./memory-v6-service.js";
 import { MemoryV6Storage } from "./memory-v6-storage.js";
-import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
+import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import { CharacterAffectStorage } from "./character-affect-storage.js";
+import { createCharacterAffectServiceWithMemory } from "./character-affect-memory-adapter.js";
+import { CharacterContextApplicationService } from "./character-context-application-service.js";
+import { CharacterAffectTurnSettlementStorage } from "./character-affect-turn-settlement-storage.js";
 
 export type MemoryV6RuntimeApiHandle = {
   baseUrl: string;
   dbPath: string;
   discoveryFilePath: string;
+  characterContextService: CharacterContextApplicationService;
+  characterAffectTurnSettlements: CharacterAffectTurnSettlementStorage;
   stop(): Promise<void>;
 };
 
@@ -39,6 +45,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   userDataPath: string;
   runtimeDirectoryPath?: string;
   listCharacters?: () => readonly CharacterCatalogEntry[];
+  resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null;
   getMemoryFileQuotaBytes?: () => number;
   protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
   log?: (input: AppLogInput) => void;
@@ -47,6 +54,8 @@ export type StartMemoryV6RuntimeApiOptions = {
 export type PublishMemoryV6DiscoveryFileOptions = {
   baseUrl: string;
   apiSecret?: string;
+  operatorApiSecret?: string;
+  mcpApiSecret?: string;
   runtimeInstanceId?: string;
   runtimeDirectoryPath?: string;
 };
@@ -216,6 +225,8 @@ export async function publishMemoryV6DiscoveryFile(
     schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
     baseUrl: options.baseUrl,
     ...(options.apiSecret ? { apiSecret: options.apiSecret } : {}),
+    ...(options.operatorApiSecret ? { operatorApiSecret: options.operatorApiSecret } : {}),
+    ...(options.mcpApiSecret ? { mcpApiSecret: options.mcpApiSecret } : {}),
     runtimeInstanceId,
     publishedAt: new Date().toISOString(),
   };
@@ -244,6 +255,8 @@ export async function startMemoryV6RuntimeApi(
   options: StartMemoryV6RuntimeApiOptions,
 ): Promise<MemoryV6RuntimeApiHandle> {
   let storage: MemoryV6Storage | null = null;
+  let affectStorage: CharacterAffectStorage | null = null;
+  let affectTurnSettlements: CharacterAffectTurnSettlementStorage | null = null;
   let server: MemoryV6HttpServer | null = null;
   let discoveryFile: PublishedMemoryV6DiscoveryFile | null = null;
   const { runtimeDirectoryPath, discoveryFilePath } = resolveRuntimeDiscoveryPaths(options.runtimeDirectoryPath);
@@ -287,11 +300,29 @@ export async function startMemoryV6RuntimeApi(
         },
       } : {}),
     });
+    affectStorage = new CharacterAffectStorage(bootstrap.dbPath);
+    affectTurnSettlements = new CharacterAffectTurnSettlementStorage(bootstrap.dbPath);
+    const affectService = createCharacterAffectServiceWithMemory({
+      affectStorage,
+      memoryStorage: storage,
+      evaluator: { async evaluate() { return []; } },
+    });
+    const characterContextService = new CharacterContextApplicationService({
+      memoryService: service,
+      affectService,
+      resolveCharacterRuntimeSnapshot: (characterId) =>
+        options.resolveCharacterRuntimeSnapshot?.(characterId) ?? null,
+    });
     const apiSecret = createRuntimeApiSecret();
+    const operatorApiSecret = createRuntimeApiSecret();
+    const mcpApiSecret = createRuntimeApiSecret();
     const runtimeInstanceId = randomUUID();
     server = createMemoryV6HttpServer({
       service,
+      characterContextService,
       apiSecret,
+      operatorApiSecret,
+      mcpApiSecret,
       runtimeInstanceId,
     });
     await server.start();
@@ -304,6 +335,8 @@ export async function startMemoryV6RuntimeApi(
     discoveryFile = await publishMemoryV6DiscoveryFile({
       baseUrl,
       apiSecret,
+      operatorApiSecret,
+      mcpApiSecret,
       runtimeInstanceId,
       runtimeDirectoryPath,
     });
@@ -326,6 +359,8 @@ export async function startMemoryV6RuntimeApi(
       baseUrl,
       dbPath: bootstrap.dbPath,
       discoveryFilePath: discoveryFile.discoveryFilePath,
+      characterContextService,
+      characterAffectTurnSettlements: affectTurnSettlements,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];
         try {
@@ -339,6 +374,8 @@ export async function startMemoryV6RuntimeApi(
           cleanupErrors.push(error);
         }
         storage?.close();
+        affectStorage?.close();
+        affectTurnSettlements?.close();
 
         if (cleanupErrors.length > 0) {
           throw new AggregateError(cleanupErrors, "Memory V6 runtime API cleanup failed.");
@@ -349,6 +386,8 @@ export async function startMemoryV6RuntimeApi(
     await discoveryFile?.cleanup().catch(() => undefined);
     await server?.stop().catch(() => undefined);
     storage?.close();
+    affectStorage?.close();
+    affectTurnSettlements?.close();
     throw error;
   }
 }

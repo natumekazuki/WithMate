@@ -21,6 +21,8 @@ import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/me
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
 const TEST_API_SECRET = "test-secret";
+const TEST_OPERATOR_API_SECRET = "test-operator-secret";
+const TEST_MCP_API_SECRET = "test-mcp-secret";
 const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
 
 async function withMemoryApi<T>(
@@ -52,6 +54,8 @@ async function withMemoryApi<T>(
   const server = createMemoryV6HttpServer({
     service,
     apiSecret: TEST_API_SECRET,
+    operatorApiSecret: TEST_OPERATOR_API_SECRET,
+    mcpApiSecret: TEST_MCP_API_SECRET,
     runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
     maxBodyBytes: 512,
   });

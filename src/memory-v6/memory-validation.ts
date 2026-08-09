@@ -46,6 +46,7 @@ const APPEND_REQUEST_KEYS = new Set([
   "preview",
   "tags",
   "supersedes",
+  "mutationReason",
   "files",
   "sourceMessageId",
   "idempotencyKey",
@@ -916,6 +917,10 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
   if (!supersedes.ok) {
     return supersedes;
   }
+  const mutationReason = normalizeOptionalText(value.mutationReason, "mutationReason");
+  if (!mutationReason.ok) {
+    return mutationReason;
+  }
   const files = normalizeAppendFiles(value.files);
   if (!files.ok) {
     return files;
@@ -940,6 +945,7 @@ export function validateMemoryAppendRequest(value: unknown): MemoryValidationRes
       preview: preview.value,
       tags: tags.value,
       ...(supersedes.value && supersedes.value.length > 0 ? { supersedes: supersedes.value } : {}),
+      ...(mutationReason.value !== undefined ? { mutationReason: mutationReason.value } : {}),
       ...(files.value && files.value.length > 0 ? { files: files.value } : {}),
       ...(sourceMessageId.value !== undefined ? { sourceMessageId: sourceMessageId.value } : {}),
       ...(idempotencyKey.value !== undefined ? { idempotencyKey: idempotencyKey.value } : {}),
