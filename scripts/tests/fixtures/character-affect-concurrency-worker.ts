@@ -1,8 +1,16 @@
 import { parentPort, workerData } from "node:worker_threads";
+import { tsImport } from "tsx/esm/api";
 
 import type { AffectEventInput } from "../../../src/character-affect/affect-contract.js";
-import { CharacterAffectStorage } from "../../../src-electron/character-affect-storage.ts";
-import { openAppDatabase } from "../../../src-electron/sqlite-connection.ts";
+
+const { CharacterAffectStorage } = await tsImport(
+  "../../../src-electron/character-affect-storage.ts",
+  import.meta.url,
+) as typeof import("../../../src-electron/character-affect-storage.js");
+const { openAppDatabase } = await tsImport(
+  "../../../src-electron/sqlite-connection.ts",
+  import.meta.url,
+) as typeof import("../../../src-electron/sqlite-connection.js");
 
 type WorkerData =
   | { mode: "blocker"; dbPath: string }
