@@ -1,8 +1,8 @@
 import { parentPort, workerData } from "node:worker_threads";
 
 import type { AffectEventInput } from "../../../src/character-affect/affect-contract.js";
-import { CharacterAffectStorage } from "../../../src-electron/character-affect-storage.js";
-import { openAppDatabase } from "../../../src-electron/sqlite-connection.js";
+import { CharacterAffectStorage } from "../../../src-electron/character-affect-storage.ts";
+import { openAppDatabase } from "../../../src-electron/sqlite-connection.ts";
 
 type WorkerData =
   | { mode: "blocker"; dbPath: string }
