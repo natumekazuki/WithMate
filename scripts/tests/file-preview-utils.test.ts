@@ -9,7 +9,6 @@ import {
   projectFileRootDiffAvailability,
   resolveAuthorizedMarkdownResource,
   resolveMarkdownImageTarget,
-  resolveMarkdownLinkTarget,
   resolveRelativeMarkdownResourcePath,
 } from "../../src/file-explorer/file-preview-utils.js";
 import { detectSessionFileEncoding } from "../../src/file-explorer/file-content-detection.js";
@@ -94,38 +93,6 @@ test("resolveRelativeMarkdownResourcePath は Markdown 親基準で正規化し 
   assert.equal(resolveRelativeMarkdownResourcePath("docs/readme.md", "images/hero%20one.png"), "docs/images/hero one.png");
   assert.equal(resolveRelativeMarkdownResourcePath("readme.md", "../secret.png"), null);
   assert.equal(resolveRelativeMarkdownResourcePath("readme.md", "%2e%2e/secret.png"), null);
-});
-
-test("resolveMarkdownLinkTarget は外部・絶対・相対 link を先に分類し root escape を fallback しない", () => {
-  const roots = [
-    { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\work" },
-    { id: "extra", kind: "additional" as const, label: "Assets", displayPath: "C:\\work\\assets" },
-  ];
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "docs/readme.md", "//example.com/a"), {
-    kind: "external",
-    target: "https://example.com/a",
-  });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "docs/readme.md", "https://example.com/a"), {
-    kind: "external",
-    target: "https://example.com/a",
-  });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "docs/readme.md", "C:\\work\\assets\\note.txt"), {
-    kind: "local",
-    resource: { rootId: "extra", relativePath: "note.txt" },
-  });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "docs/readme.md", "../note%20one.txt#part"), {
-    kind: "local",
-    resource: { rootId: "workspace", relativePath: "note one.txt" },
-  });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "docs/readme.md", "images/my%23file%3Fv.txt#part"), {
-    kind: "local",
-    resource: { rootId: "workspace", relativePath: "docs/images/my#file?v.txt" },
-  });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "docs/readme.md", "C:\\outside\\secret.txt"), {
-    kind: "unsupported",
-  });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "readme.md", "../outside.txt"), { kind: "unsupported" });
-  assert.deepEqual(resolveMarkdownLinkTarget(roots, "workspace", "readme.md", "javascript:alert(1)"), { kind: "unsupported" });
 });
 
 test("resolveMarkdownImageTarget は external と認可済み local resource を一つの境界で分類する", () => {

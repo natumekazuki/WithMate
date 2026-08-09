@@ -74,6 +74,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
@@ -245,6 +247,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
     },
+    openSessionFilePreviewWindow(request) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, request);
+    },
     openCompanionReviewWindow(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, sessionId);
     },
@@ -314,6 +319,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     openSessionFile(request) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_CHANNEL, request);
+    },
+    getSessionFilePreviewWindowPayload(token) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL, token);
     },
     copySessionFilePreviewImage(request) {
       return ipcRenderer.invoke(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, request);

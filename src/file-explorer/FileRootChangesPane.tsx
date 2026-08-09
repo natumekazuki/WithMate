@@ -10,7 +10,7 @@ import type {
   FileRootChangesResult,
   FileRootGitChangeEntry,
   FileRootGitChangeScope,
-  SessionFileResourceRequest,
+  SessionFileRootResourceRequest,
 } from "./file-explorer-contract.js";
 
 type FileRootChangesApi = Pick<
@@ -24,7 +24,7 @@ export type FileRootChangesPaneProps = {
   enabled: boolean;
   rootsRevision: string;
   refreshRevision: number;
-  onOpenFile: (request: SessionFileResourceRequest) => void;
+  onOpenFile: (request: SessionFileRootResourceRequest) => void;
   onOpenDiff: (request: FileRootFileDiffRequest) => Promise<string | null>;
 };
 

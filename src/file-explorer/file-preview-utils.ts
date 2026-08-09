@@ -81,12 +81,6 @@ export function projectFileRootDiffAvailability(
   };
 }
 
-export type MarkdownLinkTarget =
-  | { kind: "fragment" }
-  | { kind: "external"; target: string }
-  | { kind: "local"; resource: AuthorizedMarkdownResource }
-  | { kind: "unsupported" };
-
 export type AuthorizedMarkdownResource = {
   rootId: string;
   relativePath: string;
@@ -200,42 +194,6 @@ export function resolveRelativeMarkdownResourcePath(
   }
 
   return targetSegments.join("/");
-}
-
-export function resolveMarkdownLinkTarget(
-  roots: SessionFileRoot[],
-  currentRootId: string,
-  markdownRelativePath: string,
-  target: string,
-): MarkdownLinkTarget {
-  const trimmedTarget = target.trim();
-  if (!trimmedTarget || trimmedTarget.startsWith("#")) {
-    return { kind: "fragment" };
-  }
-  if (trimmedTarget.startsWith("//")) {
-    return { kind: "external", target: `https:${trimmedTarget}` };
-  }
-  if (/^(?:https?:|mailto:|tel:)/i.test(trimmedTarget)) {
-    return { kind: "external", target: trimmedTarget };
-  }
-  const absoluteResource = resolveAuthorizedMarkdownResource(roots, trimmedTarget);
-  if (absoluteResource) {
-    return { kind: "local", resource: absoluteResource };
-  }
-  if (/^(?:file:|[a-zA-Z]:[\\/]|\\\\|\/)/i.test(trimmedTarget)) {
-    return { kind: "unsupported" };
-  }
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmedTarget)) {
-    return { kind: "unsupported" };
-  }
-
-  const relativePath = resolveRelativeMarkdownResourcePath(
-    markdownRelativePath,
-    trimmedTarget,
-  );
-  return relativePath
-    ? { kind: "local", resource: { rootId: currentRootId, relativePath } }
-    : { kind: "unsupported" };
 }
 
 export function resolveAuthorizedMarkdownResource(

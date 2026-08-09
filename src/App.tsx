@@ -153,7 +153,7 @@ import { FileRootChangesPane } from "./file-explorer/FileRootChangesPane.js";
 import type {
   FileRootFileDiffRequest,
   FileRootGitChangeScope,
-  SessionFileResourceRequest,
+  SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
@@ -458,7 +458,7 @@ export default function AgentSessionWindowApp() {
   const [isSessionPinPending, setIsSessionPinPending] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
-  const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileResourceRequest | null>(null);
+  const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileRootResourceRequest | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
   const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
@@ -761,7 +761,7 @@ export default function AgentSessionWindowApp() {
       active = false;
     };
   }, [activeRunSessionId, selectedFilePreview, withmateApi]);
-  const handleOpenFileRootFile = useCallback((request: SessionFileResourceRequest) => {
+  const handleOpenFileRootFile = useCallback((request: SessionFileRootResourceRequest) => {
     fileRootDiffRequestRevisionRef.current += 1;
     beginCentralPreviewIfNeeded();
     setFileRootDiffLoadingScope(null);
@@ -2572,14 +2572,19 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleOpenInlinePath = async (target: string) => {
-    if (!withmateApi) {
+    if (!withmateApi || !activeRunSessionId) {
       return;
     }
-
-    setInlinePathFeedback(await resolveOpenPathFeedback(
-      () => withmateApi.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null }),
-      "The path could not be opened.",
-    ));
+    try {
+      const result = await withmateApi.openSessionFilePreviewWindow({
+        kind: "link",
+        sessionId: activeRunSessionId,
+        target,
+      });
+      setInlinePathFeedback(result.status === "opened" ? "" : result.message);
+    } catch (error) {
+      setInlinePathFeedback(error instanceof Error ? error.message : "The path could not be opened.");
+    }
   };
 
   const handleCancelAuxiliaryRun = async () => {
@@ -3338,13 +3343,23 @@ export default function AgentSessionWindowApp() {
       activeTab={fileExplorerTab}
       onActiveTabChange={setFileExplorerTab}
       onRefreshChanges={() => setFileRootChangesRefreshRevision((current) => current + 1)}
-      onOpenFile={(request) => {
-        fileRootDiffRequestRevisionRef.current += 1;
-        beginCentralPreviewIfNeeded();
-        setFileRootDiffLoadingScope(null);
-        setFileRootDiffPreview(null);
-        setSelectedFileDiffAvailabilityMessage("");
-        setSelectedFilePreview(request);
+      onOpenFile={(request, openInWindow) => {
+        if (openInWindow) {
+          if (!withmateApi) {
+            return;
+          }
+          void withmateApi.openSessionFilePreviewWindow({ kind: "resource", resource: request })
+            .then((result) => {
+              if (result.status !== "opened") {
+                window.alert(result.message);
+              }
+            })
+            .catch((error) => {
+              window.alert(error instanceof Error ? error.message : "The file preview could not be opened.");
+            });
+          return;
+        }
+        handleOpenFileRootFile(request);
       }}
       changesContent={(
         <FileRootChangesPane

@@ -239,6 +239,10 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - image は 100% を既定とし、Zoom と Fit を受け付ける。単体Image / SVG previewはtoolbarと画像上のcontext menuから、表示中の画像をbitmapとしてclipboardへcopyできる。Markdown内画像とchat画像は対象外とする
   - Ctrl+F は active な chat / Text / Markdown / live Git Diff を検索する。Preview 中の chat component は状態保持のため mount したまま非表示にするが、shortcut と検索対象からは外す。Text、Markdown、live Git Diff の選択範囲には chat と同じ floating Copy / Quote を表示し、Quote は現在の writable composer へ挿入する。Preview 表示中の Ctrl+A は、Find input または Action Dock の入力中を除き、Window 全体ではなく表示中の document または diff の文字列だけを選択する
   - file と live Git Diff は Back to Chat で閉じる。run、approval、elicitation の状態は preview 中も確認できる
+- detached file preview
+  - File Explorer の Ctrl+click / Cmd+click と Session message の local-file link から開く。通常の File Explorer click は中央 preview を維持する
+  - 中央 preview と同じ `SessionFilePreview` / `SessionDiffPreview` を使用し、Quote と Action Dock は表示しない
+  - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
 - live Git Diff と chat artifact Diff は別機能とする。既存 chat artifact の `Open Diff` は snapshot を inline modal / Diff Window に開く従来経路を維持し、File Explorer の Changes や中央 live Git Diff へ接続しない
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する

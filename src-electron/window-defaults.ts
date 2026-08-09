@@ -19,6 +19,13 @@ export const DIFF_WINDOW_DEFAULT_BOUNDS = {
   minHeight: 640,
 } as const;
 
+export const FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS = {
+  width: 1360,
+  height: 900,
+  minWidth: 760,
+  minHeight: 560,
+} as const;
+
 export const COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS = {
   width: SESSION_WINDOW_DEFAULT_BOUNDS.width,
   height: SESSION_WINDOW_DEFAULT_BOUNDS.height,
