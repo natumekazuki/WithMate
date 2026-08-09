@@ -89,6 +89,12 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         forgetMemoryV6Entry: (entryId: string) => ({ entryId, status: "not_found", reason: "user_request" }),
         resetAppDatabase: async () => null,
       },
+      promptTemplates: {
+        listPromptTemplates: () => [],
+        createPromptTemplate: () => [],
+        updatePromptTemplate: () => [],
+        deletePromptTemplate: () => [],
+      },
       sessionQuery: {
         listSessionSummaries: () => [],
         listCompanionSessionSummaries: () => [],

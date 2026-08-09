@@ -8,6 +8,7 @@ export const V6_SCHEMA_STATUS = "foundation";
 
 export const REQUIRED_V6_TABLES = [
   "app_settings",
+  "prompt_templates",
   "model_catalog_revisions",
   "model_catalog_providers",
   "model_catalog_models",
@@ -44,6 +45,7 @@ export const FORBIDDEN_V6_TABLES = [
 ] as const;
 
 const REQUIRED_V6_INDEXES = [
+  "idx_v6_prompt_templates_name",
   "idx_v6_characters_state_updated",
   "idx_v6_project_scopes_key",
   "idx_v6_sessions_last_active",
@@ -72,6 +74,7 @@ const REQUIRED_V6_INDEXES = [
 
 const REQUIRED_V6_TABLE_COLUMNS = {
   app_settings: ["setting_key", "setting_value", "updated_at"],
+  prompt_templates: ["id", "name", "prompt", "created_at", "updated_at"],
   model_catalog_revisions: ["revision", "source", "imported_at", "is_active"],
   model_catalog_providers: ["revision", "provider_id", "label", "default_model_id", "default_reasoning_effort", "sort_order"],
   model_catalog_models: ["revision", "provider_id", "model_id", "label", "reasoning_efforts_json", "sort_order"],
@@ -588,6 +591,19 @@ export const CREATE_V6_APP_SETTINGS_TABLE_SQL = `
     setting_value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+`;
+
+export const CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS prompt_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    prompt TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_prompt_templates_name
+    ON prompt_templates(name COLLATE NOCASE);
 `;
 
 export const CREATE_V6_MODEL_CATALOG_TABLES_SQL = `
@@ -1234,6 +1250,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
 
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
+  CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
   CREATE_V6_MODEL_CATALOG_TABLES_SQL,
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,

@@ -70,6 +70,12 @@ import type {
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
+import { PromptTemplateStorage } from "./prompt-template-storage.js";
+import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "../src/prompt-template.js";
 import { resolveAuxiliaryParentSession } from "./auxiliary-parent-session.js";
 import { AuxiliarySessionService } from "./auxiliary-session-service.js";
 import { AuxiliarySessionStorage } from "./auxiliary-session-storage.js";
@@ -270,6 +276,7 @@ let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
 let appSettingsStorage: AppSettingsStorage | null = null;
+let promptTemplateStorage: PromptTemplateStorage | null = null;
 let mateStorage: MateStorage | null = null;
 let mateProfileItemStorage: MateProfileItemStorage | null = null;
 type CompanionStorageHandle = CompanionStorage | CompanionStorageV3;
@@ -1335,6 +1342,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 forgetMemoryV6Entry,
                 resetAppDatabase: async (request) => requireSettingsCatalogService().resetAppDatabase(request),
               },
+              promptTemplates: {
+                listPromptTemplates,
+                createPromptTemplate,
+                updatePromptTemplate,
+                deletePromptTemplate,
+              },
               sessionQuery: {
                 listSessionSummaries: () => listSessionSummaries(),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
@@ -1596,6 +1609,7 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
       listSessionSummaries: () => listSessionSummaries(),
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      listPromptTemplates,
       listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
       listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
     });
@@ -1781,6 +1795,41 @@ function requireAppSettingsStorage(): AppSettingsStorage {
   }
 
   return appSettingsStorage;
+}
+
+function requirePromptTemplateStorage(): PromptTemplateStorage {
+  if (!promptTemplateStorage) {
+    if (!dbPath) {
+      throw new Error("DB path が初期化されていないよ。");
+    }
+    promptTemplateStorage = new PromptTemplateStorage(dbPath);
+  }
+  return promptTemplateStorage;
+}
+
+function listPromptTemplates(): PromptTemplate[] {
+  return requirePromptTemplateStorage().listPromptTemplates();
+}
+
+function publishPromptTemplates(): PromptTemplate[] {
+  const templates = listPromptTemplates();
+  requireMainBroadcastFacade().broadcastPromptTemplates(templates);
+  return templates;
+}
+
+function createPromptTemplate(input: CreatePromptTemplateInput): PromptTemplate[] {
+  requirePromptTemplateStorage().createPromptTemplate(input);
+  return publishPromptTemplates();
+}
+
+function updatePromptTemplate(input: UpdatePromptTemplateInput): PromptTemplate[] {
+  requirePromptTemplateStorage().updatePromptTemplate(input);
+  return publishPromptTemplates();
+}
+
+function deletePromptTemplate(id: string): PromptTemplate[] {
+  requirePromptTemplateStorage().deletePromptTemplate(id);
+  return publishPromptTemplates();
 }
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
@@ -2546,6 +2595,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 
 function closePersistentStores(): void {
   stopWalMaintenance();
+  promptTemplateStorage?.close();
   companionStorage?.close();
   companionAuditLogStorage?.close();
   mateProfileItemStorage?.close();
@@ -2575,6 +2625,7 @@ function closePersistentStores(): void {
   auxiliarySessionService = null;
   auxiliarySessionRuntimeService = null;
   appSettingsStorage = null;
+  promptTemplateStorage = null;
   mateStorage = null;
   mateProfileItemStorage = null;
   companionStorage = null;
