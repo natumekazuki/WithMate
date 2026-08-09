@@ -307,9 +307,6 @@ export default function CharacterEditorApp() {
         iconFilePath: draft.iconFilePath,
         theme: draft.theme,
       });
-      if (draft.isDefault && !updated.isDefault) {
-        await api.setDefaultCharacter(draft.characterId);
-      }
       const refreshed = await api.getCharacter(draft.characterId);
       if (!refreshed) {
         throw new Error("保存後の Character を再読み込みできませんでした。");
@@ -319,27 +316,6 @@ export default function CharacterEditorApp() {
       setFeedback("Character を保存しました。");
     } catch (error) {
       setFeedback(formatCharacterEditorError(error, "Character の保存に失敗しました。"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const setDefaultCharacter = async () => {
-    const api = getWithMateApi();
-    if (!api || !draft.characterId || draft.isDefault || archived) {
-      return;
-    }
-    setSaving(true);
-    try {
-      const updated = await api.setDefaultCharacter(draft.characterId);
-      const refreshed = await api.getCharacter(updated.id);
-      setPersistedDetail(refreshed);
-      if (refreshed) {
-        setDraft(createCharacterEditorDraftFromDetail(refreshed));
-      }
-      setFeedback("Default Character を更新しました。");
-    } catch (error) {
-      setFeedback(formatCharacterEditorError(error, "Default Character の更新に失敗しました。"));
     } finally {
       setSaving(false);
     }
@@ -359,13 +335,11 @@ export default function CharacterEditorApp() {
       const archivedCharacter = await api.archiveCharacter(draft.characterId);
       setDraft((current) => updateCharacterEditorDraft(current, {
         state: archivedCharacter.state,
-        isDefault: archivedCharacter.isDefault,
       }));
       setPersistedDetail((current) => current
         ? {
             ...current,
             state: archivedCharacter.state,
-            isDefault: archivedCharacter.isDefault,
             archivedAt: archivedCharacter.archivedAt,
             updatedAt: archivedCharacter.updatedAt,
           }
@@ -623,17 +597,6 @@ export default function CharacterEditorApp() {
                   </label>
                 </div>
               </div>
-              <div className="settings-actions">
-                <button
-                  className="launch-toggle"
-                  type="button"
-                  onClick={setDefaultCharacter}
-                  disabled={saving || archived || draft.mode !== "edit" || draft.isDefault}
-                >
-                  Set Default
-                </button>
-                {draft.isDefault ? <span className="settings-character-badge">Default</span> : null}
-              </div>
             </section>
           ) : null}
 
@@ -721,7 +684,6 @@ export default function CharacterEditorApp() {
                 <CharacterAvatar character={{ name: draft.name, iconPath: draft.iconFilePath }} size="large" />
                 <strong>{draft.name || "New Character"}</strong>
                 <p>{draft.description || "No description"}</p>
-                {draft.isDefault ? <span className="settings-character-badge">Default</span> : null}
               </div>
               <label className="settings-provider-input character-editor-runtime-preview">
                 <span>Runtime prompt preview</span>

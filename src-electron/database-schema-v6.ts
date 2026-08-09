@@ -630,6 +630,7 @@ export const CREATE_V6_CHARACTERS_TABLE_SQL = `
     theme_main TEXT NOT NULL DEFAULT '#6f8cff',
     theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'archived')),
+    -- Legacy metadata retained until a future table-rebuild migration; runtime code does not read or write it.
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,

@@ -152,7 +152,6 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         updateCharacterMetadata: async () => ({}) as never,
         updateCharacterDefinition: async () => ({}) as never,
         archiveCharacter: async () => ({}) as never,
-        setDefaultCharacter: async () => ({}) as never,
         resolveLaunchCharacter: async () => null,
       },
       mate: {

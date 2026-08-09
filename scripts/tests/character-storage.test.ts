@@ -38,7 +38,7 @@ async function createTempPaths(): Promise<{ dbPath: string; userDataPath: string
 }
 
 describe("CharacterStorage", () => {
-  it("複数 Character を作成し default / definition file / list を保持する", async () => {
+  it("複数 Character を作成し definition file / updated順のlistを保持する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
 
@@ -58,10 +58,8 @@ describe("CharacterStorage", () => {
       });
 
       assert.equal(mia.id, "mia");
-      assert.equal(mia.isDefault, true);
       assert.equal(mia.iconFilePath, path.join(userDataPath, "assets/my  icon.png"));
-      assert.equal(noa.isDefault, false);
-      assert.deepEqual(storage.listCharacters().map((character) => character.id), ["mia", "noa"]);
+      assert.deepEqual(storage.listCharacters().map((character) => character.id), ["noa", "mia"]);
 
       const definitionPath = path.join(userDataPath, "characters", "mia", "character.md");
       assert.match(await readFile(definitionPath, "utf8"), /name: "Mia"/);
@@ -432,9 +430,10 @@ describe("CharacterStorage", () => {
     }
   });
 
-  it("metadata / definition 更新、default 切替、archive fallback、launch 解決を扱う", async () => {
+  it("legacy default metadataを参照・更新せず、明示Characterだけlaunch解決する", async () => {
     const { dbPath, userDataPath, cleanup } = await createTempPaths();
     let storage: CharacterStorage | null = null;
+    let db: DatabaseSync | null = null;
 
     try {
       storage = new CharacterStorage(dbPath, userDataPath);
@@ -461,15 +460,31 @@ describe("CharacterStorage", () => {
         notesMarkdown: "# Character Notes\n\n## Revision Notes\n- updated\n",
       }).definitionMarkdown, /Updated persona/);
 
-      assert.equal(storage.setDefaultCharacter(noa.id).isDefault, true);
-      assert.equal(storage.resolveLaunchCharacter({})?.id, noa.id);
+      db = new DatabaseSync(dbPath);
+      db.prepare("UPDATE characters SET is_default = 1 WHERE id = ?").run(mia.id);
+
+      const yui = storage.createCharacter({ name: "Yui", definitionMarkdown: validDefinition("Yui") });
+      assert.deepEqual(
+        (db.prepare("SELECT id, is_default FROM characters ORDER BY id").all() as Array<{ id: string; is_default: number }>)
+          .map((row) => ({ ...row })),
+        [
+          { id: mia.id, is_default: 1 },
+          { id: noa.id, is_default: 0 },
+          { id: yui.id, is_default: 0 },
+        ],
+      );
+      assert.equal(storage.resolveLaunchCharacter({}), null);
       assert.equal(storage.resolveLaunchCharacter({ characterId: mia.id })?.id, mia.id);
 
-      assert.equal(storage.archiveCharacter(noa.id).state, "archived");
-      assert.equal(storage.resolveLaunchCharacter({ characterId: noa.id })?.id, mia.id);
-      assert.deepEqual(storage.listCharacters().map((character) => character.id), [mia.id]);
-      assert.deepEqual(storage.listCharacters({ includeArchived: true }).map((character) => character.id), [mia.id, noa.id]);
+      assert.equal(storage.archiveCharacter(mia.id).state, "archived");
+      assert.equal(storage.resolveLaunchCharacter({ characterId: mia.id }), null);
+      assert.equal(
+        (db.prepare("SELECT is_default FROM characters WHERE id = ?").get(mia.id) as { is_default: number }).is_default,
+        1,
+      );
+      assert.deepEqual(storage.listCharacters().map((character) => character.id), [yui.id, noa.id]);
     } finally {
+      db?.close();
       storage?.close();
       await cleanup();
     }

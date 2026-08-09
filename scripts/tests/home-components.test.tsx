@@ -540,11 +540,10 @@ describe("HomeLaunchDialog", () => {
   const characterOptions = [{
     id: "mia",
     name: "Mia",
-    description: "Default character",
+    description: "Character description",
     iconFilePath: "",
     theme: { main: "#111111", sub: "#eeeeee" },
     state: "active" as const,
-    isDefault: true,
     createdAt: "",
     updatedAt: "",
     archivedAt: null,
@@ -596,8 +595,8 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
-    assert.ok(html.includes("Default"));
-    assert.ok(html.includes("Default character"));
+    assert.ok(!html.includes(">Default</span>"));
+    assert.ok(html.includes("Character description"));
     assert.ok(html.includes("ランダム"));
     assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
     assert.ok(html.includes("最近使っていないCharacterを優先"));
@@ -960,7 +959,6 @@ describe("HomeRightPane", () => {
     iconFilePath: "",
     theme: { main: "#3b82f6", sub: "#1d4ed8" },
     state: "active" as const,
-    isDefault: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     archivedAt: null,
@@ -1011,7 +1009,7 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes("<h3>Characters</h3>"));
     assert.ok(html.includes('aria-label="Characterを名前で検索"'));
     assert.ok(html.includes('placeholder="名前で検索"'));
-    assert.ok(html.includes("Default"));
+    assert.ok(!html.includes(">Default</span>"));
     assert.match(html, /<button class="home-character-card"/);
     assert.ok(!html.includes("home-character-card-edit"));
     assert.ok(!html.includes("2026-01-01T00:00:00.000Z"));
@@ -1028,7 +1026,6 @@ describe("HomeRightPane", () => {
         iconFilePath: "",
         theme: { main: "#3b82f6", sub: "#1d4ed8" },
         state: "active" as const,
-        isDefault: true,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
         archivedAt: null,
@@ -1040,7 +1037,6 @@ describe("HomeRightPane", () => {
         iconFilePath: "",
         theme: { main: "#10b981", sub: "#047857" },
         state: "active" as const,
-        isDefault: false,
         createdAt: "2026-01-02T00:00:00.000Z",
         updatedAt: "2026-01-02T00:00:00.000Z",
         archivedAt: null,
@@ -1088,7 +1084,6 @@ describe("HomeRightPane", () => {
       iconFilePath: "",
       theme: { main: "#10b981", sub: "#047857" },
       state: "active",
-      isDefault: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,

@@ -14,7 +14,6 @@ export type CharacterCatalogEntry = {
   iconFilePath: string;
   theme: CharacterTheme;
   state: CharacterCatalogState;
-  isDefault: boolean;
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
@@ -32,7 +31,6 @@ export type CreateCharacterInput = {
   theme?: Partial<CharacterTheme>;
   definitionMarkdown?: string;
   notesMarkdown?: string;
-  setDefault?: boolean;
 };
 
 export type UpdateCharacterMetadataInput = {

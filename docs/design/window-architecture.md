@@ -88,7 +88,6 @@ Character Editor は V5 Character catalog の 1 Character を集中して編集�
 
 - `Profile`
   - name / description / icon / theme
-  - default state / `Set Default`
 - `character.md`
   - runtime definition の正本
   - save 前 validation

@@ -49,7 +49,6 @@ function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<Cha
     iconFilePath: partial.iconFilePath ?? "",
     theme: partial.theme ?? { main: "#6f8cff", sub: "#6fb8c7" },
     state: partial.state ?? "active",
-    isDefault: partial.isDefault ?? false,
     createdAt: partial.createdAt ?? "",
     updatedAt: partial.updatedAt ?? "",
     archivedAt: partial.archivedAt ?? null,
@@ -68,7 +67,6 @@ describe("home-launch-state", () => {
       },
       "codex",
       "session",
-      "mia",
     );
 
     assert.deepEqual(opened, {
@@ -77,8 +75,8 @@ describe("home-launch-state", () => {
       title: "",
       workspace: null,
       providerId: "codex",
-      characterSelectionMode: "specific",
-      characterId: "mia",
+      characterSelectionMode: "random",
+      characterId: "",
     });
 
     assert.deepEqual(closeLaunchDraft(opened), {
@@ -87,7 +85,7 @@ describe("home-launch-state", () => {
       title: "",
       workspace: null,
       providerId: "",
-      characterSelectionMode: "specific",
+      characterSelectionMode: "random",
       characterId: "",
     });
   });
@@ -125,14 +123,14 @@ describe("home-launch-state", () => {
     assert.equal(draft.characterSelectionMode, "random");
   });
 
-  it("character selection は既存選択、default順の先頭、空文字の順で解決する", () => {
+  it("specific character selection は指定したactive Characterだけを解決する", () => {
     const entries = [
-      createCharacterEntry({ id: "mia", name: "Mia", isDefault: true }),
+      createCharacterEntry({ id: "mia", name: "Mia" }),
       createCharacterEntry({ id: "noa", name: "Noa" }),
     ];
 
     assert.equal(resolveLaunchCharacterId(entries, "noa"), "noa");
-    assert.equal(resolveLaunchCharacterId(entries, "missing"), "mia");
+    assert.equal(resolveLaunchCharacterId(entries, "missing"), "");
     assert.equal(resolveLaunchCharacterId([], "missing"), "");
   });
 
@@ -142,7 +140,7 @@ describe("home-launch-state", () => {
       createCharacterEntry({ id: "noa", name: "Noa" }),
     ];
 
-    assert.equal(resolveLaunchCharacterId(entries, "mia"), "noa");
+    assert.equal(resolveLaunchCharacterId(entries, "mia"), "");
   });
 
   it("random character selection は最近使っていないactive Characterほど選択範囲を広くする", () => {
@@ -320,6 +318,7 @@ describe("home-launch-state", () => {
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
         characterId: "mia",
+        characterSelectionMode: "specific",
       },
       mateProfile: createMateProfile({
         id: "mate-a",
@@ -336,7 +335,6 @@ describe("home-launch-state", () => {
           description: "assistant profile",
           iconFilePath: "icon.png",
           theme: { main: "#000000", sub: "#ffffff" },
-          isDefault: true,
         }),
       ],
     });
@@ -387,7 +385,7 @@ describe("home-launch-state", () => {
     });
   });
 
-  it("archived Character が draft に残っていても active Character で session input を組み立てる", () => {
+  it("specific Character がarchivedなら別Characterへ置換せずsession開始を拒否する", () => {
     const input = buildCreateSessionRequestFromLaunchDraft({
       draft: {
         ...createClosedLaunchDraft(),
@@ -396,6 +394,7 @@ describe("home-launch-state", () => {
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
         characterId: "mia",
+        characterSelectionMode: "specific",
       },
       mateProfile: null,
       selectedProviderId: "codex",
@@ -405,8 +404,29 @@ describe("home-launch-state", () => {
       ],
     });
 
-    assert.equal(input?.characterId, "noa");
-    assert.equal(input?.character, "Noa");
+    assert.equal(input, null);
+  });
+
+  it("specific Character がmissingなら別Characterへ置換せずCompanion開始を拒否する", () => {
+    const input = buildCreateCompanionSessionInputFromLaunchDraft({
+      draft: {
+        ...createClosedLaunchDraft(),
+        open: true,
+        mode: "companion",
+        title: "task",
+        workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
+        providerId: "codex",
+        characterId: "missing",
+        characterSelectionMode: "specific",
+      },
+      mateProfile: null,
+      selectedProviderId: "codex",
+      characterEntries: [
+        createCharacterEntry({ id: "noa", name: "Noa", description: "active profile" }),
+      ],
+    });
+
+    assert.equal(input, null);
   });
 
   it("Mate 未作成でも neutral character で Companion input を組み立てる", () => {
@@ -445,6 +465,7 @@ describe("home-launch-state", () => {
         workspace: { label: "demo", path: "F:/work/demo", branch: "main" },
         providerId: "codex",
         characterId: "mia",
+        characterSelectionMode: "specific",
       },
       mateProfile: createMateProfile({
         id: "mate-a",

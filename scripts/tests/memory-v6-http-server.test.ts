@@ -39,7 +39,6 @@ async function withMemoryApi<T>(
       iconFilePath: "",
       theme: { main: "#111111", sub: "#222222" },
       state: "active",
-      isDefault: true,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
@@ -178,8 +177,8 @@ describe("MemoryV6HttpServer", () => {
         id: "mika",
         name: "Mika",
         description: "Guitar",
-        isDefault: true,
       }]);
+      assert.equal("isDefault" in charactersJson.characters[0], false);
       assert.equal("iconFilePath" in charactersJson.characters[0], false);
       assert.equal("theme" in charactersJson.characters[0], false);
 

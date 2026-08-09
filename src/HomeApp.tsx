@@ -440,6 +440,7 @@ export default function HomeApp() {
       }
       return refreshCharacterEntries(api);
     },
+    setCharactersLoaded,
     setLaunchFeedback,
     setLaunchStarting,
     setLaunchDraft,

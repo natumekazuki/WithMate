@@ -34,7 +34,6 @@ function buildCharacter(overrides: Partial<CharacterDetail> = {}): CharacterDeta
     iconFilePath: "",
     theme: DEFAULT_CHARACTER_THEME,
     state: "active",
-    isDefault: false,
     createdAt: "2026-06-16T00:00:00.000Z",
     updatedAt: "2026-06-16T00:00:00.000Z",
     archivedAt: null,

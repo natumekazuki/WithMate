@@ -121,7 +121,6 @@ export type MemoryCharacterSummary = {
   id: string;
   name: string;
   description?: string;
-  isDefault?: boolean;
 };
 
 export type MemoryListCharactersResponse = {
@@ -313,7 +312,6 @@ export function createMemoryListCharactersResponse(characters: readonly Characte
         id: character.id,
         name: character.name,
         ...(description.length > 0 ? { description } : {}),
-        ...(character.isDefault ? { isDefault: true } : {}),
       };
     }),
   };

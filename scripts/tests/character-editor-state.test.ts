@@ -71,7 +71,6 @@ describe("Character editor state", () => {
       iconFilePath: "",
       theme: { ...DEFAULT_CHARACTER_THEME },
       state: "active",
-      isDefault: true,
       createdAt: "2026-06-14T00:00:00.000Z",
       updatedAt: "2026-06-14T00:00:00.000Z",
       archivedAt: null,
@@ -102,7 +101,6 @@ describe("Character editor state", () => {
       iconFilePath: "",
       theme: { ...DEFAULT_CHARACTER_THEME },
       state: "active",
-      isDefault: false,
       createdAt: "2026-06-14T00:00:00.000Z",
       updatedAt: "2026-06-14T00:00:00.000Z",
       archivedAt: null,
@@ -143,7 +141,6 @@ describe("Character editor state", () => {
       iconFilePath: "",
       theme: { ...DEFAULT_CHARACTER_THEME },
       state: "active",
-      isDefault: false,
       createdAt: "2026-06-14T00:00:00.000Z",
       updatedAt: "2026-06-14T00:00:00.000Z",
       archivedAt: null,
@@ -229,7 +226,7 @@ describe("Character editor state", () => {
     );
   });
 
-  it("create payload は default fallback を潰す setDefault false を渡さない", () => {
+  it("create payload はDefault指定を含めない", () => {
     const draft = createNewCharacterEditorDraft("Mia");
 
     assert.deepEqual(buildCreateCharacterInputFromDraft(draft), {
@@ -240,7 +237,7 @@ describe("Character editor state", () => {
       definitionMarkdown: draft.definitionMarkdown,
       notesMarkdown: draft.notesMarkdown,
     });
-    assert.equal(buildCreateCharacterInputFromDraft({ ...draft, isDefault: true }).setDefault, true);
+    assert.equal("setDefault" in buildCreateCharacterInputFromDraft(draft), false);
   });
 
   it("create payload は character.md frontmatter の metadata を優先する", () => {

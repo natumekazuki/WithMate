@@ -1510,7 +1510,6 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateCharacterMetadata: (input) => requireCharacterService().updateCharacterMetadata(input),
                 updateCharacterDefinition: (input) => requireCharacterService().updateCharacterDefinition(input),
                 archiveCharacter: (characterId) => requireCharacterService().archiveCharacter(characterId),
-                setDefaultCharacter: (characterId) => requireCharacterService().setDefaultCharacter(characterId),
                 resolveLaunchCharacter: (input) => requireCharacterService().resolveLaunchCharacter(input),
                 startCharacterAuthoringSession,
               },

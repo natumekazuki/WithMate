@@ -211,7 +211,6 @@ import {
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
-  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
@@ -400,7 +399,6 @@ export type MainIpcRegistrationDeps = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
-  setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -622,7 +620,6 @@ type MainIpcCharacterDeps = Pick<
   | "updateCharacterMetadata"
   | "updateCharacterDefinition"
   | "archiveCharacter"
-  | "setDefaultCharacter"
   | "resolveLaunchCharacter"
   | "startCharacterAuthoringSession"
 >;
@@ -1345,9 +1342,6 @@ function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCha
   );
   ipcMain.handle(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, (_event, characterId: string) =>
     deps.archiveCharacter(characterId),
-  );
-  ipcMain.handle(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, (_event, characterId: string) =>
-    deps.setDefaultCharacter(characterId),
   );
   ipcMain.handle(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, (_event, input: ResolveLaunchCharacterInput | null) =>
     deps.resolveLaunchCharacter(input),
