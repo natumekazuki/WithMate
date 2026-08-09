@@ -52,6 +52,19 @@ test("Artifact result details は長い path と本文を折り返せる", async
   );
 });
 
+test("Session header menu は固定高の Header Dock に切られず中央領域へ重ねて表示する", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-header-dock-slot\s*{\s*position:\s*relative;\s*z-index:\s*30;\s*overflow:\s*visible;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-slot\s*{\s*overflow:\s*hidden;\s*}/,
+  );
+});
+
 test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉する", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 

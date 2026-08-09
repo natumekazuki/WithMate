@@ -71,6 +71,11 @@ import {
 } from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "../src/prompt-template.js";
+import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
@@ -109,10 +114,12 @@ import {
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
@@ -182,6 +189,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -228,6 +236,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
@@ -331,6 +340,10 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
+  listPromptTemplates(): Awaitable<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -1179,6 +1192,19 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   });
 }
 
+function registerPromptTemplateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcRegistrationDeps): void {
+  ipcMain.handle(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL, () => deps.listPromptTemplates());
+  ipcMain.handle(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL, (_event, input: CreatePromptTemplateInput) =>
+    deps.createPromptTemplate(input),
+  );
+  ipcMain.handle(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL, (_event, input: UpdatePromptTemplateInput) =>
+    deps.updatePromptTemplate(input),
+  );
+  ipcMain.handle(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL, (_event, id: string) =>
+    deps.deletePromptTemplate(id),
+  );
+}
+
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
@@ -1550,6 +1576,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerAuxiliaryHandlers(wrappedIpcMain, deps);
   registerCatalogHandlers(wrappedIpcMain, deps);
   registerSettingsHandlers(wrappedIpcMain, deps);
+  registerPromptTemplateHandlers(wrappedIpcMain, deps);
   registerSessionQueryHandlers(wrappedIpcMain, deps);
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);

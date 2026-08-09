@@ -13,7 +13,9 @@ import {
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_GET_ACTIVE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_GET_CHARACTER_CHANNEL,
@@ -32,6 +34,7 @@ import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
@@ -53,6 +56,7 @@ import {
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
+  WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
 } from "../../src/withmate-ipc-channels.js";
 
@@ -148,6 +152,10 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL));
@@ -195,6 +203,44 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("prompt template IPC は CRUD payload を専用 dependency へ渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const received: unknown[] = [];
+  const templates = [{ id: "template-1", name: "Review", prompt: "review it" }];
+  const { deps } = createDeps({
+    listPromptTemplates: () => templates,
+    createPromptTemplate: (input: unknown) => {
+      received.push({ kind: "create", input });
+      return templates;
+    },
+    updatePromptTemplate: (input: unknown) => {
+      received.push({ kind: "update", input });
+      return templates;
+    },
+    deletePromptTemplate: (id: string) => {
+      received.push({ kind: "delete", id });
+      return [];
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL)?.({}), templates);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL)?.({}, { name: "Review", prompt: "review it" }),
+    templates,
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL)?.({}, { id: "template-1", name: "Review", prompt: "review it" }),
+    templates,
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL)?.({}, "template-1"), []);
+  assert.deepEqual(received, [
+    { kind: "create", input: { name: "Review", prompt: "review it" } },
+    { kind: "update", input: { id: "template-1", name: "Review", prompt: "review it" } },
+    { kind: "delete", id: "template-1" },
+  ]);
 });
 
 test("pick-image-file IPC は Character icon purpose を伝播し、不正な purpose を拒否する", async () => {

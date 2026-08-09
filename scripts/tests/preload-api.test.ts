@@ -294,6 +294,22 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:update-chat-layout-preference",
     args: [{ target: "sidePane", value: "files" }],
   });
+  assert.deepEqual(await api.listPromptTemplates(), {
+    channel: "withmate:list-prompt-templates",
+    args: [],
+  });
+  assert.deepEqual(await api.createPromptTemplate({ name: "Review", prompt: "review it" }), {
+    channel: "withmate:create-prompt-template",
+    args: [{ name: "Review", prompt: "review it" }],
+  });
+  assert.deepEqual(await api.updatePromptTemplate({ id: "template-1", name: "Review", prompt: "review it" }), {
+    channel: "withmate:update-prompt-template",
+    args: [{ id: "template-1", name: "Review", prompt: "review it" }],
+  });
+  assert.deepEqual(await api.deletePromptTemplate("template-1"), {
+    channel: "withmate:delete-prompt-template",
+    args: ["template-1"],
+  });
 });
 
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
@@ -313,8 +329,10 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "createAuxiliarySession",
     "createCharacter",
     "createCompanionSession",
+    "createPromptTemplate",
     "createSession",
     "deleteSession",
+    "deletePromptTemplate",
     "deleteSessionsLastActiveBefore",
     "discardCompanionSession",
     "dropCompanionTargetStash",
@@ -363,6 +381,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listOpenActiveAuxiliarySessionSummaries",
     "listOpenCompanionReviewWindowIds",
     "listOpenSessionWindowIds",
+    "listPromptTemplates",
     "listSessionAuditLogSummaryPage",
     "listSessionAuditLogSummaries",
     "listSessionAuditLogs",
@@ -429,6 +448,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenCompanionReviewWindowIds",
     "subscribeOpenSessionWindowIds",
+    "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionInvalidation",
     "subscribeSessionSummaries",
@@ -444,6 +464,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "updateCharacterMetadata",
     "updateCompanionSession",
     "updateMate",
+    "updatePromptTemplate",
     "updateSession",
   ] satisfies Array<keyof WithMateWindowApi>;
 
@@ -506,26 +527,33 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
     received.push({ kind: "liveRun", sessionId, state });
   });
+  const disposeTemplates = api.subscribePromptTemplates((templates) => {
+    received.push({ kind: "templates", templates });
+  });
 
   listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
   listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
   listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
+  listeners.get("withmate:prompt-templates-changed")?.({}, [{ id: "template-1", name: "Review" }]);
   disposeSummaries();
   disposeBoot();
   disposeInvalidation();
   disposeLiveRun();
+  disposeTemplates();
 
   assert.deepEqual(received, [
     { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
     { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
     { kind: "invalidation", sessionIds: ["session-1"] },
     { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
+    { kind: "templates", templates: [{ id: "template-1", name: "Review" }] },
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
+  assert.equal(listeners.has("withmate:prompt-templates-changed"), false);
 });
 
 test("createWithMateWindowApi は telemetry / background activity の payload も unwrap する", () => {

@@ -147,6 +147,8 @@ import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
 import type { SessionSidePane } from "./session-side-pane.js";
 import { SessionFileExplorerPane } from "./file-explorer/SessionFileExplorerPane.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
+import { PromptTemplateWorkspace } from "./prompt-templates/PromptTemplateWorkspace.js";
+import { insertComposerTextAtSelection } from "./chat/message-text-actions.js";
 import { FileRootChangesPane } from "./file-explorer/FileRootChangesPane.js";
 import type {
   FileRootFileDiffRequest,
@@ -457,6 +459,7 @@ export default function AgentSessionWindowApp() {
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileRootResourceRequest | null>(null);
+  const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
   const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
   const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
@@ -550,6 +553,7 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const auxiliaryLoadRevisionRef = useRef(0);
   const mainComposerCaretRef = useRef(0);
+  const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -684,8 +688,11 @@ export default function AgentSessionWindowApp() {
   });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
   const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
-  const isCentralPreviewActive = selectedFilePreview !== null || fileRootDiffPreview !== null;
+  const isCentralPreviewActive = selectedFilePreview !== null
+    || fileRootDiffPreview !== null
+    || isPromptTemplateWorkspaceOpen;
   const beginCentralPreviewIfNeeded = useCallback(() => {
+    setIsPromptTemplateWorkspaceOpen(false);
     if (!isCentralPreviewActive && activeRunSessionId) {
       setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
     }
@@ -696,6 +703,7 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
+    setIsPromptTemplateWorkspaceOpen(false);
     setPreviewChatActivity(endPreviewChatActivity());
   }, []);
   useEffect(() => {
@@ -3248,6 +3256,53 @@ export default function AgentSessionWindowApp() {
   const renderedSession = displayedSession;
   const renderedMessages = messageListMessages;
   const renderedDraft = activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft;
+  const handleOpenPromptTemplates = () => {
+    if (isPromptTemplateWorkspaceOpen) {
+      closeCentralPreview();
+      return;
+    }
+    const textarea = composerTextareaRef.current;
+    const fallbackCaret = activeAuxiliarySession ? composerCaret : mainComposerCaretRef.current;
+    promptTemplateSelectionRef.current = {
+      start: textarea?.selectionStart ?? fallbackCaret,
+      end: textarea?.selectionEnd ?? fallbackCaret,
+    };
+    fileRootDiffRequestRevisionRef.current += 1;
+    setFileRootDiffLoadingScope(null);
+    setFileRootDiffPreview(null);
+    setSelectedFileDiffAvailabilityMessage("");
+    setSelectedFilePreview(null);
+    if (!isCentralPreviewActive && activeRunSessionId) {
+      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
+    }
+    setIsPromptTemplateWorkspaceOpen(true);
+  };
+  const handleInsertPromptTemplate = (prompt: string) => {
+    const insertion = insertComposerTextAtSelection(
+      renderedDraft,
+      prompt,
+      promptTemplateSelectionRef.current.start,
+      promptTemplateSelectionRef.current.end,
+    );
+    if (activeAuxiliarySession) {
+      void handleAuxiliaryDraftChange(insertion.draft, insertion.caret);
+    } else {
+      applyComposerDraftChangeCommand({
+        value: insertion.draft,
+        selectionStart: insertion.caret,
+        setDraft,
+        setComposerCaret,
+        syncMainComposerCaret: (caret) => {
+          mainComposerCaretRef.current = caret;
+        },
+        clearFeedback: () => setForceComposerBlockedFeedback(false),
+      });
+    }
+    closeCentralPreview();
+    window.requestAnimationFrame(() => {
+      restoreComposerTextareaFocusAndCaret(composerTextareaRef.current, insertion.caret);
+    });
+  };
   const renderedComposerSendability = activeAuxiliarySession ? auxiliaryComposerSendability : composerSendability;
   const renderedIsSendDisabled = activeAuxiliarySession
     ? auxiliaryComposerSendability.isSendDisabled || isAuxiliaryActionPending
@@ -3335,7 +3390,16 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New messages"
         : "";
-  const filePreviewContent = fileRootDiffPreview ? (
+  const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
+    <PromptTemplateWorkspace
+      api={withmateApi}
+      canInsert={activeAuxiliarySession
+        ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+        : !isComposerDisabled}
+      onClose={closeCentralPreview}
+      onInsert={handleInsertPromptTemplate}
+    />
+  ) : fileRootDiffPreview ? (
     <SessionDiffPreview
       title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
       previewRevision={fileRootDiffPreview.generation}
@@ -3413,6 +3477,7 @@ export default function AgentSessionWindowApp() {
         composerBlocked: !!composerBlockedReason,
         isAgentPickerOpen,
         isSkillPickerOpen,
+        isPromptTemplateWorkspaceOpen,
         isAdditionalDirectoryListOpen,
         selectedCustomAgentLabel: selectedCustomAgentDisplay.label,
         selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
@@ -3523,6 +3588,7 @@ export default function AgentSessionWindowApp() {
         onPickSessionImage: () => void handlePickSessionImage(),
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
+        onOpenPromptTemplates: handleOpenPromptTemplates,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,

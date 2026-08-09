@@ -31,14 +31,17 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
   service.broadcastSessionSummaries([]);
   service.broadcastSessionInvalidation(["session-1"]);
   service.broadcastOpenSessionWindowIds(["session-1"]);
+  service.broadcastPromptTemplates([]);
 
   assert.deepEqual(home.sent.map((entry) => entry.channel), [
     "withmate:sessions-changed",
     "withmate:open-session-windows-changed",
+    "withmate:prompt-templates-changed",
   ]);
   assert.deepEqual(session.sent.map((entry) => entry.channel), [
     "withmate:sessions-invalidated",
     "withmate:open-session-windows-changed",
+    "withmate:prompt-templates-changed",
   ]);
   assert.equal(closed.sent.length, 0);
 });

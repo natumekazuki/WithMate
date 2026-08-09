@@ -104,6 +104,11 @@ import type {
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "../src/prompt-template.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -182,6 +187,13 @@ export type MainIpcSettingsDepsArgs = {
   getMemoryV6Entry(entryId: string): Awaitable<MemoryV6ReviewEntryDetail | null>;
   forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null): Awaitable<MemoryV6ReviewForgetResult>;
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
+};
+
+export type MainIpcPromptTemplateDepsArgs = {
+  listPromptTemplates(): Awaitable<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
 };
 
 export type MainIpcSessionQueryDepsArgs = {
@@ -319,6 +331,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   window: MainIpcWindowDepsArgs;
   catalog: MainIpcCatalogDepsArgs;
   settings: MainIpcSettingsDepsArgs;
+  promptTemplates: MainIpcPromptTemplateDepsArgs;
   sessionQuery: MainIpcSessionQueryDepsArgs;
   auxiliary?: MainIpcAuxiliaryDepsArgs;
   companion: MainIpcCompanionDepsArgs;
@@ -426,6 +439,10 @@ export function createMainIpcRegistrationDeps(
     getMemoryV6Entry: args.settings.getMemoryV6Entry,
     forgetMemoryV6Entry: args.settings.forgetMemoryV6Entry,
     resetAppDatabase: args.settings.resetAppDatabase,
+    listPromptTemplates: args.promptTemplates.listPromptTemplates,
+    createPromptTemplate: args.promptTemplates.createPromptTemplate,
+    updatePromptTemplate: args.promptTemplates.updatePromptTemplate,
+    deletePromptTemplate: args.promptTemplates.deletePromptTemplate,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,

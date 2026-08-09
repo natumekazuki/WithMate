@@ -108,6 +108,12 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         return null;
       },
     },
+    promptTemplates: {
+      listPromptTemplates: () => [],
+      createPromptTemplate: () => [],
+      updatePromptTemplate: () => [],
+      deletePromptTemplate: () => [],
+    },
     sessionQuery: {
       listSessionSummaries: () => [],
       listCompanionSessionSummaries: () => [],

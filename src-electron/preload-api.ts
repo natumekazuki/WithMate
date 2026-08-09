@@ -10,6 +10,7 @@ import type {
   WithMateWindowObservabilityApi,
   WithMateWindowAuxiliaryApi,
   WithMateWindowPickerApi,
+  WithMateWindowPromptTemplateApi,
   WithMateWindowSessionApi,
   WithMateWindowSettingsApi,
   WithMateWindowMateApi,
@@ -17,6 +18,7 @@ import type {
 } from "../src/withmate-window-api.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
+  WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
@@ -25,7 +27,9 @@ import {
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
@@ -92,6 +96,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
@@ -155,6 +160,7 @@ import {
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_SET_SESSION_PINNED_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
@@ -610,6 +616,26 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
   };
 }
 
+function createPromptTemplateApi(ipcRenderer: IpcRendererLike): WithMateWindowPromptTemplateApi {
+  return {
+    listPromptTemplates() {
+      return ipcRenderer.invoke(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL);
+    },
+    createPromptTemplate(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL, input);
+    },
+    updatePromptTemplate(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL, input);
+    },
+    deletePromptTemplate(id) {
+      return ipcRenderer.invoke(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL, id);
+    },
+    subscribePromptTemplates(listener) {
+      return subscribe(ipcRenderer, WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT, listener);
+    },
+  };
+}
+
 function createMemoryV6ReviewApi(ipcRenderer: IpcRendererLike): Pick<
   WithMateWindowApi,
   "getMemoryV6FileUsage" | "exportMemoryV6EntryFiles" | "runMemoryV6ProtectedObjectGc" | "searchMemoryV6Entries" | "getMemoryV6Entry" | "forgetMemoryV6Entry"
@@ -803,6 +829,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),
+    ...createPromptTemplateApi(ipcRenderer),
     ...createPickerApi(ipcRenderer),
     ...createSubscriptionApi(ipcRenderer),
     ...createMateApi(ipcRenderer),
