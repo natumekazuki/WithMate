@@ -277,7 +277,7 @@ describe("withmate-memory CLI", () => {
   it("runtime directoryのdiscovery fileを既定で読む", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-runtime-"));
     try {
-      await writeFile(join(tempDirectory, "memory-v6-cli.current.json"), JSON.stringify({
+      await writeFile(join(tempDirectory, "memory-v6.current.json"), JSON.stringify({
         schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
         adapter: "cli",
         baseUrl: "http://127.0.0.1:4567",

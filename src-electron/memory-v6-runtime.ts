@@ -1,8 +1,9 @@
 import { chmod, lstat, mkdir, open, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import {
+  buildWithMateMemoryDiscoveryGenerationFileName,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   resolveDefaultWithMateMemoryRuntimeDirectory,
   WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME,
@@ -33,7 +34,6 @@ import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/cha
 import { CharacterAffectStorage } from "./character-affect-storage.js";
 import { createCharacterAffectServiceWithMemory } from "./character-affect-memory-adapter.js";
 import { CharacterContextApplicationService } from "./character-context-application-service.js";
-import { CharacterAffectTurnSettlementStorage } from "./character-affect-turn-settlement-storage.js";
 
 export type MemoryV6RuntimeApiHandle = {
   baseUrl: string;
@@ -41,7 +41,6 @@ export type MemoryV6RuntimeApiHandle = {
   discoveryFilePath: string;
   mcpDiscoveryFilePath: string;
   characterContextService: CharacterContextApplicationService;
-  characterAffectTurnSettlements: CharacterAffectTurnSettlementStorage;
   stop(): Promise<void>;
 };
 
@@ -63,6 +62,7 @@ export type PublishMemoryV6DiscoveryFileOptions = {
   runtimeInstanceId?: string;
   runtimeDirectoryPath?: string;
   beforeCleanup?: () => Promise<void>;
+  beforePairCommit?: () => Promise<void>;
 };
 
 type PublishedMemoryV6DiscoveryFile = {
@@ -144,22 +144,21 @@ function resolveRuntimeDiscoveryPaths(runtimeDirectoryPath?: string): {
   };
 }
 
-function buildGenerationFileName(adapter: WithMateMemoryAdapterKind, runtimeInstanceId: string): string {
-  const generationId = createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex");
-  return `memory-v6-${adapter}.${generationId}.json`;
-}
-
-async function publishDiscoveryProjection(input: {
+type PreparedDiscoveryProjection = {
   adapter: WithMateMemoryAdapterKind;
-  pointerFilePath: string;
+  generationFilePath: string;
+};
+
+async function prepareDiscoveryProjection(input: {
+  adapter: WithMateMemoryAdapterKind;
+  runtimeDirectoryPath: string;
   runtimeInstanceId: string;
   baseUrl: string;
   apiSecret: string;
   adapterSecret: string;
-}): Promise<string> {
-  const generationFileName = buildGenerationFileName(input.adapter, input.runtimeInstanceId);
-  const generationFilePath = path.join(path.dirname(input.pointerFilePath), generationFileName);
-  const pointerTemporaryFilePath = `${input.pointerFilePath}.${input.runtimeInstanceId}.tmp`;
+}): Promise<PreparedDiscoveryProjection> {
+  const generationFileName = buildWithMateMemoryDiscoveryGenerationFileName(input.adapter, input.runtimeInstanceId);
+  const generationFilePath = path.join(input.runtimeDirectoryPath, generationFileName);
   const document: WithMateMemoryDiscoveryDocument = {
     schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
     adapter: input.adapter,
@@ -169,25 +168,40 @@ async function publishDiscoveryProjection(input: {
     runtimeInstanceId: input.runtimeInstanceId,
     publishedAt: new Date().toISOString(),
   };
-  const pointer: WithMateMemoryDiscoveryPointer = {
-    schemaVersion: WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION,
-    adapter: input.adapter,
-    runtimeInstanceId: input.runtimeInstanceId,
-    generationFileName,
-  };
   try {
     await writeFileExclusive(generationFilePath, `${JSON.stringify(document)}\n`, 0o600);
     await chmodRuntimePath(generationFilePath, 0o600);
-    await writeFileExclusive(pointerTemporaryFilePath, `${JSON.stringify(pointer)}\n`, 0o600);
-    await chmodRuntimePath(pointerTemporaryFilePath, 0o600);
-    await rename(pointerTemporaryFilePath, input.pointerFilePath);
-    await chmodRuntimePath(input.pointerFilePath, 0o600);
-    return generationFilePath;
+    return {
+      adapter: input.adapter,
+      generationFilePath,
+    };
   } catch (error) {
-    await rm(pointerTemporaryFilePath, { force: true }).catch(() => undefined);
     await rm(generationFilePath, { force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+async function prepareDiscoveryPairPointer(
+  pointerFilePath: string,
+  runtimeInstanceId: string,
+): Promise<string> {
+  const pointerTemporaryFilePath = `${pointerFilePath}.${runtimeInstanceId}.tmp`;
+  const pointer: WithMateMemoryDiscoveryPointer = {
+    schemaVersion: WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION,
+    runtimeInstanceId,
+  };
+  try {
+    await writeFileExclusive(pointerTemporaryFilePath, `${JSON.stringify(pointer)}\n`, 0o600);
+    await chmodRuntimePath(pointerTemporaryFilePath, 0o600);
+    return pointerTemporaryFilePath;
+  } catch (error) {
+    await rm(pointerTemporaryFilePath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function cleanupPreparedDiscoveryProjection(projection: PreparedDiscoveryProjection): Promise<void> {
+  await rm(projection.generationFilePath, { force: true });
 }
 
 export async function publishMemoryV6DiscoveryFile(
@@ -196,28 +210,39 @@ export async function publishMemoryV6DiscoveryFile(
   const { runtimeDirectoryPath, discoveryFilePath, mcpDiscoveryFilePath } = resolveRuntimeDiscoveryPaths(options.runtimeDirectoryPath);
   const runtimeInstanceId = options.runtimeInstanceId ?? randomUUID();
   await ensureSecureRuntimeDirectory(runtimeDirectoryPath);
-  const generationFilePaths: string[] = [];
+  const prepared: PreparedDiscoveryProjection[] = [];
+  let pointerTemporaryFilePath: string | null = null;
   try {
-    generationFilePaths.push(await publishDiscoveryProjection({
+    prepared.push(await prepareDiscoveryProjection({
       adapter: "cli",
-      pointerFilePath: discoveryFilePath,
+      runtimeDirectoryPath,
       runtimeInstanceId,
       baseUrl: options.baseUrl,
       apiSecret: options.apiSecret,
       adapterSecret: options.operatorApiSecret,
     }));
-    generationFilePaths.push(await publishDiscoveryProjection({
+    prepared.push(await prepareDiscoveryProjection({
       adapter: "mcp",
-      pointerFilePath: mcpDiscoveryFilePath,
+      runtimeDirectoryPath,
       runtimeInstanceId,
       baseUrl: options.baseUrl,
       apiSecret: options.apiSecret,
       adapterSecret: options.mcpApiSecret,
     }));
+
+    pointerTemporaryFilePath = await prepareDiscoveryPairPointer(discoveryFilePath, runtimeInstanceId);
+    await options.beforePairCommit?.();
+    await rename(pointerTemporaryFilePath, discoveryFilePath);
+    pointerTemporaryFilePath = null;
   } catch (error) {
-    await Promise.all(generationFilePaths.map((filePath) => rm(filePath, { force: true })));
+    await Promise.all([
+      ...prepared.map(cleanupPreparedDiscoveryProjection),
+      ...(pointerTemporaryFilePath ? [rm(pointerTemporaryFilePath, { force: true })] : []),
+    ]);
     throw error;
   }
+
+  const generationFilePaths = prepared.map((projection) => projection.generationFilePath);
 
   return {
     discoveryFilePath,
@@ -235,7 +260,6 @@ export async function startMemoryV6RuntimeApi(
 ): Promise<MemoryV6RuntimeApiHandle> {
   let storage: MemoryV6Storage | null = null;
   let affectStorage: CharacterAffectStorage | null = null;
-  let affectTurnSettlements: CharacterAffectTurnSettlementStorage | null = null;
   let server: MemoryV6HttpServer | null = null;
   let discoveryFile: PublishedMemoryV6DiscoveryFile | null = null;
   const { runtimeDirectoryPath } = resolveRuntimeDiscoveryPaths(options.runtimeDirectoryPath);
@@ -279,7 +303,6 @@ export async function startMemoryV6RuntimeApi(
       } : {}),
     });
     affectStorage = new CharacterAffectStorage(bootstrap.dbPath);
-    affectTurnSettlements = new CharacterAffectTurnSettlementStorage(bootstrap.dbPath);
     const affectService = createCharacterAffectServiceWithMemory({
       affectStorage,
       memoryStorage: storage,
@@ -339,7 +362,6 @@ export async function startMemoryV6RuntimeApi(
       discoveryFilePath: discoveryFile.discoveryFilePath,
       mcpDiscoveryFilePath: discoveryFile.mcpDiscoveryFilePath,
       characterContextService,
-      characterAffectTurnSettlements: affectTurnSettlements,
       async stop(): Promise<void> {
         const cleanupErrors: unknown[] = [];
         try {
@@ -354,7 +376,6 @@ export async function startMemoryV6RuntimeApi(
         }
         storage?.close();
         affectStorage?.close();
-        affectTurnSettlements?.close();
 
         if (cleanupErrors.length > 0) {
           throw new AggregateError(cleanupErrors, "Memory V6 runtime API cleanup failed.");
@@ -366,7 +387,6 @@ export async function startMemoryV6RuntimeApi(
     await server?.stop().catch(() => undefined);
     storage?.close();
     affectStorage?.close();
-    affectTurnSettlements?.close();
     throw error;
   }
 }

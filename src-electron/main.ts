@@ -118,6 +118,7 @@ import {
 } from "./character-affect-turn-evaluator.js";
 import { settleCharacterAffectTurnWithRetry } from "./character-affect-turn-settler.js";
 import {
+  CharacterAffectTurnSettlementStorage,
   hasCommittedAssistantMessage,
   type PendingCharacterAffectTurnSettlement,
 } from "./character-affect-turn-settlement-storage.js";
@@ -301,6 +302,7 @@ let dbPath = "";
 let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
 let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
+let characterAffectTurnSettlementStorage: CharacterAffectTurnSettlementStorage | null = null;
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
@@ -2037,13 +2039,24 @@ type CharacterAffectTurnSettlementRequest = {
   occurredAt: string;
 };
 
+function requireCharacterAffectTurnSettlementStorage(): CharacterAffectTurnSettlementStorage {
+  if (!characterAffectTurnSettlementStorage) {
+    throw new Error("Character affect turn settlement storage is not initialized.");
+  }
+  return characterAffectTurnSettlementStorage;
+}
+
 async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementRequest): Promise<boolean> {
-  if (request.session.sessionKind !== "default" || !request.session.characterId || !memoryV6RuntimeApi) {
+  if (request.session.sessionKind !== "default" || !request.session.characterId) {
     return true;
+  }
+  const settlementStorage = requireCharacterAffectTurnSettlementStorage();
+  if (!memoryV6RuntimeApi) {
+    return false;
   }
   const runtimeApi = memoryV6RuntimeApi;
   if (!hasCommittedAssistantMessage(request.session.messages, request)) {
-    runtimeApi.characterAffectTurnSettlements.markDiscarded(request.correlationId);
+    settlementStorage.markDiscarded(request.correlationId);
     return true;
   }
   const character = request.session.characterRuntimeSnapshot
@@ -2052,8 +2065,10 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     return false;
   }
 
-  runtimeApi.characterAffectTurnSettlements.recordAttempt(request.correlationId);
+  settlementStorage.recordAttempt(request.correlationId);
   const settlement = await settleCharacterAffectTurnWithRetry({
+    correlationId: request.correlationId,
+    getPending: () => settlementStorage.getPending(request.correlationId),
     getContext: () => runtimeApi.characterContextService.getContext({
       schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
       characterId: request.session.characterId!,
@@ -2061,7 +2076,7 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
       query: request.userMessage,
       memoryLimit: 3,
     }, "lifecycle"),
-    evaluate: async (context) => {
+    evaluate: async (context, idempotencyPrefix) => {
       const backgroundAdapter = getProviderBackgroundAdapter(request.session.provider);
       const prompt = buildCharacterAffectTurnPrompt({
         character,
@@ -2092,19 +2107,25 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
         sessionId: request.session.id,
         userId: "local-user",
         occurredAt: request.occurredAt,
-        idempotencyPrefix: request.correlationId,
+        idempotencyPrefix,
       });
     },
-    appraise: (context, candidates) => runtimeApi.characterContextService.appraise({
+    persistEvaluation: (input) => {
+      settlementStorage.saveEvaluation({ correlationId: request.correlationId, ...input });
+    },
+    appraise: (expectedVersion, candidates) => runtimeApi.characterContextService.appraise({
       schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
       characterId: request.session.characterId!,
       sessionId: request.session.id,
-      expectedVersion: context.affect.version,
+      expectedVersion,
       authority: { kind: "conversation" },
       candidates,
     }, "lifecycle"),
+    recordAppraisalFailure: (input) => {
+      return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
+    },
     markSettled: () => {
-      runtimeApi.characterAffectTurnSettlements.markSettled(request.correlationId);
+      settlementStorage.markSettled(request.correlationId);
     },
   });
   if (settlement.status === "pending") {
@@ -2144,9 +2165,10 @@ async function drainPendingCharacterAffectTurns(): Promise<void> {
   if (!memoryV6RuntimeApi) {
     return;
   }
+  const settlementStorage = requireCharacterAffectTurnSettlementStorage();
   let cursor: Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId"> | undefined;
   while (true) {
-    const pending = memoryV6RuntimeApi.characterAffectTurnSettlements.listPending(100, cursor);
+    const pending = settlementStorage.listPending(100, cursor);
     if (pending.length === 0) {
       return;
     }
@@ -2160,7 +2182,7 @@ async function drainPendingCharacterAffectTurns(): Promise<void> {
           message: "Pending Character affect appraisal had no committed Session owner",
           data: { sessionId: item.sessionId },
         });
-        memoryV6RuntimeApi.characterAffectTurnSettlements.markDiscarded(item.correlationId);
+        settlementStorage.markDiscarded(item.correlationId);
         continue;
       }
       try {
@@ -2259,10 +2281,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         assistantMessageIndex,
         occurredAt,
       }) => {
-        if (session.sessionKind !== "default" || !session.characterId || !memoryV6RuntimeApi) {
+        if (session.sessionKind !== "default" || !session.characterId) {
           return;
         }
-        memoryV6RuntimeApi.characterAffectTurnSettlements.enqueue({
+        requireCharacterAffectTurnSettlementStorage().enqueue({
           correlationId,
           characterId: session.characterId,
           sessionId: session.id,
@@ -2272,6 +2294,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           occurredAt,
         });
       },
+      requireDurableCompletedTurnAppraisal: true,
       appraiseCompletedTurn: async (input) => {
         await settleCharacterAffectTurn(input);
       },
@@ -2816,6 +2839,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
       app.getPath("userData"),
     );
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
+    characterAffectTurnSettlementStorage = new CharacterAffectTurnSettlementStorage(dbPath);
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
     startWalMaintenance();
     return activeModelCatalog;
@@ -2826,6 +2850,8 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 
 function closePersistentStores(): void {
   stopWalMaintenance();
+  characterAffectTurnSettlementStorage?.close();
+  characterAffectTurnSettlementStorage = null;
   promptTemplateStorage?.close();
   companionStorage?.close();
   companionAuditLogStorage?.close();
@@ -2888,6 +2914,8 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
 
   stopWalMaintenance();
+  characterAffectTurnSettlementStorage?.close();
+  characterAffectTurnSettlementStorage = null;
   await requireMateStorage().deleteMateProjectionDirectory();
   mateProfileItemStorage?.close();
   mateProfileItemStorage = null;
@@ -2935,6 +2963,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   sessions = [];
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
+  characterAffectTurnSettlementStorage = new CharacterAffectTurnSettlementStorage(dbPath);
   appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   startWalMaintenance();
   return activeModelCatalog;
@@ -3755,8 +3784,8 @@ if (!hasSingleInstanceLock) {
         message: "App database selected",
         data: appDatabaseDiagnostics,
       });
-      await startMemoryV6RuntimeApiBestEffort();
       await requireMainBootstrapService().handleReady();
+      await startMemoryV6RuntimeApiBestEffort();
       void drainPendingCharacterAffectTurns().catch((error) => {
         writeAppLog({
           level: "warn",

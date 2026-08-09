@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  buildWithMateMemoryDiscoveryGenerationFileName,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
@@ -20,10 +21,13 @@ import {
   WithMateMemoryRuntimeExchangeError,
 } from "../withmate-memory-runtime-client.js";
 
-async function readDiscoveryProjection(pointerFilePath: string) {
+async function readDiscoveryProjection(pointerFilePath: string, adapter: "cli" | "mcp" = "cli") {
   const pointer = JSON.parse(await readFile(pointerFilePath, "utf8"));
   assert.equal(pointer.schemaVersion, WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION);
-  const generationFilePath = path.join(path.dirname(pointerFilePath), pointer.generationFileName);
+  const generationFilePath = path.join(
+    path.dirname(pointerFilePath),
+    buildWithMateMemoryDiscoveryGenerationFileName(adapter, pointer.runtimeInstanceId),
+  );
   return {
     pointer,
     generationFilePath,
@@ -103,7 +107,7 @@ describe("Memory V6 runtime API", () => {
         },
       });
       const firstCliProjection = await readDiscoveryProjection(first.discoveryFilePath);
-      const firstMcpProjection = await readDiscoveryProjection(first.mcpDiscoveryFilePath);
+      const firstMcpProjection = await readDiscoveryProjection(first.mcpDiscoveryFilePath, "mcp");
       const firstCleanup = first.cleanup();
       await cleanupStartedPromise;
       const second = await publishMemoryV6DiscoveryFile({
@@ -113,11 +117,11 @@ describe("Memory V6 runtime API", () => {
         runtimeDirectoryPath,
       });
       const secondCliProjection = await readDiscoveryProjection(second.discoveryFilePath);
-      const secondMcpProjection = await readDiscoveryProjection(second.mcpDiscoveryFilePath);
+      const secondMcpProjection = await readDiscoveryProjection(second.mcpDiscoveryFilePath, "mcp");
       releaseCleanup();
       await firstCleanup;
       const remainingCli = await readDiscoveryProjection(second.discoveryFilePath);
-      const remainingMcp = await readDiscoveryProjection(second.mcpDiscoveryFilePath);
+      const remainingMcp = await readDiscoveryProjection(second.mcpDiscoveryFilePath, "mcp");
       assert.equal(remainingCli.document.runtimeInstanceId, "second-runtime");
       assert.equal(remainingCli.document.baseUrl, "http://127.0.0.1:22222");
       assert.equal(remainingMcp.document.runtimeInstanceId, "second-runtime");
@@ -135,10 +139,135 @@ describe("Memory V6 runtime API", () => {
     }
   });
 
+  it("両projection準備後のpair commit失敗でも直前のdiscovery pairを維持する", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    let first: Awaited<ReturnType<typeof publishMemoryV6DiscoveryFile>> | null = null;
+    try {
+      first = await publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:11111",
+        ...TEST_DISCOVERY_SECRETS,
+        runtimeInstanceId: "first-runtime",
+        runtimeDirectoryPath,
+      });
+      const firstCli = await readDiscoveryProjection(first.discoveryFilePath);
+      const firstMcp = await readDiscoveryProjection(first.mcpDiscoveryFilePath, "mcp");
+      const entriesBeforeFailedPublish = (await readdir(runtimeDirectoryPath)).sort();
+
+      await assert.rejects(
+        () => publishMemoryV6DiscoveryFile({
+          baseUrl: "http://127.0.0.1:22222",
+          ...TEST_DISCOVERY_SECRETS,
+          runtimeInstanceId: "second-runtime",
+          runtimeDirectoryPath,
+          beforePairCommit: async () => {
+            throw new Error("injected discovery pair commit failure");
+          },
+        }),
+        /injected discovery pair commit failure/,
+      );
+
+      const remainingCli = await readDiscoveryProjection(first.discoveryFilePath);
+      const remainingMcp = await readDiscoveryProjection(first.mcpDiscoveryFilePath, "mcp");
+      assert.equal(remainingCli.document.runtimeInstanceId, "first-runtime");
+      assert.equal(remainingMcp.document.runtimeInstanceId, "first-runtime");
+      assert.equal(remainingCli.generationFilePath, firstCli.generationFilePath);
+      assert.equal(remainingMcp.generationFilePath, firstMcp.generationFilePath);
+      assert.equal((await stat(firstCli.generationFilePath)).isFile(), true);
+      assert.equal((await stat(firstMcp.generationFilePath)).isFile(), true);
+      assert.deepEqual((await readdir(runtimeDirectoryPath)).sort(), entriesBeforeFailedPublish);
+    } finally {
+      await first?.cleanup();
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("失敗runtimeのcommit待機中に新runtimeがpublishされても新しいpairを維持する", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    let releaseFailingCommit!: () => void;
+    let failingCommitReady!: () => void;
+    const failingCommitReadyPromise = new Promise<void>((resolve) => { failingCommitReady = resolve; });
+    const failingCommitBarrier = new Promise<void>((resolve) => { releaseFailingCommit = resolve; });
+    try {
+      const first = await publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:11111",
+        ...TEST_DISCOVERY_SECRETS,
+        runtimeInstanceId: "first-runtime",
+        runtimeDirectoryPath,
+      });
+      const failingPublish = publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:22222",
+        ...TEST_DISCOVERY_SECRETS,
+        runtimeInstanceId: "failing-runtime",
+        runtimeDirectoryPath,
+        beforePairCommit: async () => {
+          failingCommitReady();
+          await failingCommitBarrier;
+          throw new Error("injected stale publisher failure");
+        },
+      });
+      await failingCommitReadyPromise;
+      const newer = await publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:33333",
+        ...TEST_DISCOVERY_SECRETS,
+        runtimeInstanceId: "newer-runtime",
+        runtimeDirectoryPath,
+      });
+      releaseFailingCommit();
+      await assert.rejects(() => failingPublish, /injected stale publisher failure/);
+
+      const cli = await readDiscoveryProjection(newer.discoveryFilePath, "cli");
+      const mcp = await readDiscoveryProjection(newer.mcpDiscoveryFilePath, "mcp");
+      assert.equal(cli.document.runtimeInstanceId, "newer-runtime");
+      assert.equal(mcp.document.runtimeInstanceId, "newer-runtime");
+      await first.cleanup();
+      await newer.cleanup();
+    } finally {
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  it("成功runtimeが重なってもcurrent pointerは常に一つのgeneration pairを選ぶ", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    let releaseOlderCommit!: () => void;
+    let olderCommitReady!: () => void;
+    const olderCommitReadyPromise = new Promise<void>((resolve) => { olderCommitReady = resolve; });
+    const olderCommitBarrier = new Promise<void>((resolve) => { releaseOlderCommit = resolve; });
+    try {
+      const olderPublish = publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:11111",
+        ...TEST_DISCOVERY_SECRETS,
+        runtimeInstanceId: "older-overlap",
+        runtimeDirectoryPath,
+        beforePairCommit: async () => {
+          olderCommitReady();
+          await olderCommitBarrier;
+        },
+      });
+      await olderCommitReadyPromise;
+      const newer = await publishMemoryV6DiscoveryFile({
+        baseUrl: "http://127.0.0.1:22222",
+        ...TEST_DISCOVERY_SECRETS,
+        runtimeInstanceId: "newer-overlap",
+        runtimeDirectoryPath,
+      });
+      releaseOlderCommit();
+      const older = await olderPublish;
+
+      const cli = await readDiscoveryProjection(older.discoveryFilePath, "cli");
+      const mcp = await readDiscoveryProjection(older.mcpDiscoveryFilePath, "mcp");
+      assert.equal(cli.document.runtimeInstanceId, mcp.document.runtimeInstanceId);
+      assert.equal(cli.document.runtimeInstanceId, "older-overlap");
+      await newer.cleanup();
+      await older.cleanup();
+    } finally {
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("discovery file publish失敗時はtemporary fileを残さない", async () => {
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
     try {
-      await mkdir(path.join(runtimeDirectoryPath, "memory-v6-cli.current.json"));
+      await mkdir(path.join(runtimeDirectoryPath, "memory-v6.current.json"));
 
       await assert.rejects(() => publishMemoryV6DiscoveryFile({
         baseUrl: "http://127.0.0.1:12345",
@@ -147,7 +276,7 @@ describe("Memory V6 runtime API", () => {
       }));
 
       const entries = await readdir(runtimeDirectoryPath);
-      assert.deepEqual(entries, ["memory-v6-cli.current.json"]);
+      assert.deepEqual(entries, ["memory-v6.current.json"]);
     } finally {
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
     }
@@ -169,7 +298,7 @@ describe("Memory V6 runtime API", () => {
         }),
         /real directory/,
       );
-      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-cli.current.json")));
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
     } finally {
       await rm(parentPath, { recursive: true, force: true });
     }
@@ -178,7 +307,7 @@ describe("Memory V6 runtime API", () => {
   it("default discovery file pathはCLIと同じruntime directory contractを使う", () => {
     assert.equal(
       resolveDefaultWithMateMemoryDiscoveryFilePath({ WITHMATE_MEMORY_RUNTIME_DIR: "C:/tmp/withmate-runtime" }),
-      path.resolve("C:/tmp/withmate-runtime", "memory-v6-cli.current.json"),
+      path.resolve("C:/tmp/withmate-runtime", "memory-v6.current.json"),
     );
   });
 
@@ -191,7 +320,7 @@ describe("Memory V6 runtime API", () => {
       const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath });
       try {
         const discovery = (await readDiscoveryProjection(runtime.discoveryFilePath)).document;
-        const mcpDiscovery = (await readDiscoveryProjection(runtime.mcpDiscoveryFilePath)).document;
+        const mcpDiscovery = (await readDiscoveryProjection(runtime.mcpDiscoveryFilePath, "mcp")).document;
         assert.equal(discovery.schemaVersion, WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION);
         assert.equal(discovery.baseUrl, runtime.baseUrl);
         assert.equal(typeof discovery.apiSecret, "string");
@@ -390,8 +519,11 @@ describe("Memory V6 runtime API", () => {
         await runtime.stop();
       }
 
-      const cliPointer = JSON.parse(await readFile(path.join(runtimeDirectoryPath, "memory-v6-cli.current.json"), "utf8"));
-      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, cliPointer.generationFileName)));
+      const currentPointer = JSON.parse(await readFile(path.join(runtimeDirectoryPath, "memory-v6.current.json"), "utf8"));
+      await assert.rejects(() => stat(path.join(
+        runtimeDirectoryPath,
+        buildWithMateMemoryDiscoveryGenerationFileName("cli", currentPointer.runtimeInstanceId),
+      )));
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });
@@ -437,7 +569,7 @@ describe("Memory V6 runtime API", () => {
         () => startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath }),
         /does not match the V6 foundation schema/,
       );
-      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6-cli.current.json")));
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
       await rm(runtimeDirectoryPath, { recursive: true, force: true });

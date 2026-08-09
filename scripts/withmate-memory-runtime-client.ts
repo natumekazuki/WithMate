@@ -9,6 +9,7 @@ import {
   type CharacterContextErrorCode,
 } from "../src/character-context/character-context-contract.js";
 import {
+  buildWithMateMemoryDiscoveryGenerationFileName,
   normalizeWithMateMemoryApiBaseUrl,
   resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION,
@@ -150,13 +151,15 @@ async function readDiscoveryProjection(
   }
   if (
     first.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION
-    || first.adapter !== adapter
-    || typeof first.generationFileName !== "string"
-    || path.basename(first.generationFileName) !== first.generationFileName
+    || typeof first.runtimeInstanceId !== "string"
+    || !first.runtimeInstanceId.trim()
   ) {
     return null;
   }
-  const generationFilePath = path.join(path.dirname(pointerFilePath), first.generationFileName);
+  const generationFilePath = path.join(
+    path.dirname(pointerFilePath),
+    buildWithMateMemoryDiscoveryGenerationFileName(adapter, first.runtimeInstanceId),
+  );
   const document = JSON.parse(await read(generationFilePath, "utf8")) as Partial<WithMateMemoryDiscoveryDocument>;
   return document.runtimeInstanceId === first.runtimeInstanceId ? document : null;
 }

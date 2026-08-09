@@ -39,6 +39,8 @@ describe("CharacterAffectTurnSettlementStorage", () => {
         ...input,
         createdAt: recovered.listPending()[0]?.createdAt,
         attemptCount: 0,
+        evaluationAttempt: 0,
+        evaluation: null,
       }]);
       recovered.recordAttempt(input.correlationId);
       assert.equal(recovered.listPending()[0]?.attemptCount, 1);
@@ -49,18 +51,117 @@ describe("CharacterAffectTurnSettlementStorage", () => {
 
       db = openAppDatabase(dbPath);
       const row = db.prepare(`
-        SELECT status, user_message, assistant_message, settled_at
+        SELECT status, user_message, assistant_message, expected_version, candidates_json, settled_at
         FROM character_affect_turn_settlements
         WHERE correlation_id = ?
       `).get(input.correlationId) as Record<string, unknown>;
       assert.equal(row.status, "settled");
       assert.equal(row.user_message, "");
       assert.equal(row.assistant_message, "");
+      assert.equal(row.expected_version, null);
+      assert.equal(row.candidates_json, null);
       assert.equal(row.settled_at, "2026-08-09T04:01:00.000Z");
       db.close();
       db = null;
     } finally {
       db?.close();
+      recovered?.close();
+      first?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("candidate identityとeffect進捗を再起動後も保持し、同じkeyへの再割当てを拒否する", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-candidate-"));
+    const dbPath = path.join(directory, "settlement.db");
+    const correlationId = "turn:session-a:audit:99";
+    const candidate = {
+      schemaVersion: "withmate-affect-v1" as const,
+      characterId: "character-a",
+      userId: "local-user",
+      sessionId: "session-a",
+      layer: "session" as const,
+      targetType: "task" as const,
+      targetId: "current-task",
+      value: { label: "interest", valence: 0.4 },
+      intensity: 0.5,
+      reason: "persist candidate identity",
+      evidence: "storage contract test",
+      occurredAt: "2026-08-09T04:00:00.000Z",
+      idempotencyKey: `${correlationId}:0`,
+    };
+    let first: CharacterAffectTurnSettlementStorage | null = null;
+    let recovered: CharacterAffectTurnSettlementStorage | null = null;
+    let migrationDb: ReturnType<typeof openAppDatabase> | null = null;
+    try {
+      first = new CharacterAffectTurnSettlementStorage(dbPath);
+      first.enqueue({
+        correlationId,
+        characterId: "character-a",
+        sessionId: "session-a",
+        userMessage: "user",
+        assistantMessage: "assistant",
+        assistantMessageIndex: 1,
+        occurredAt: "2026-08-09T04:00:00.000Z",
+      });
+      assert.deepEqual(first.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "v1",
+        candidates: [candidate],
+      }), { created: true });
+      first.recordAppraisalFailure({
+        correlationId,
+        evaluationAttempt: 0,
+        effect: "unknown",
+        savedCandidateIndices: [],
+        prepareReevaluation: false,
+      });
+      first.close();
+      first = null;
+
+      migrationDb = openAppDatabase(dbPath);
+      migrationDb.exec("ALTER TABLE character_affect_turn_settlements DROP COLUMN observed_effects_json");
+      migrationDb.close();
+      migrationDb = null;
+
+      recovered = new CharacterAffectTurnSettlementStorage(dbPath);
+      const pending = recovered.getPending(correlationId);
+      assert.equal(pending?.evaluation?.lastEffect, "unknown");
+      assert.deepEqual(pending?.evaluation?.observedEffects, ["unknown"]);
+      assert.deepEqual(pending?.evaluation?.candidates, [candidate]);
+      assert.deepEqual(recovered.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "v1",
+        candidates: [candidate],
+      }), { created: false });
+      assert.throws(() => recovered!.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "v1",
+        candidates: [{ ...candidate, reason: "different candidate" }],
+      }), /cannot be reassigned/);
+      recovered.recordAppraisalFailure({
+        correlationId,
+        evaluationAttempt: 0,
+        effect: "partial",
+        savedCandidateIndices: [0],
+        prepareReevaluation: false,
+      });
+      assert.deepEqual(recovered.recordAppraisalFailure({
+        correlationId,
+        evaluationAttempt: 0,
+        effect: "none",
+        savedCandidateIndices: [],
+        prepareReevaluation: true,
+      }), { reevaluationPrepared: false });
+      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.observedEffects, ["unknown", "partial", "none"]);
+      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.savedCandidateIndices, [0]);
+      assert.equal(recovered.getPending(correlationId)?.evaluationAttempt, 0);
+      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.candidates, [candidate]);
+    } finally {
+      migrationDb?.close();
       recovered?.close();
       first?.close();
       await rm(directory, { recursive: true, force: true });

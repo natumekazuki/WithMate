@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
@@ -33,6 +36,7 @@ import {
 } from "../../src-electron/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
+import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -300,6 +304,139 @@ describe("SessionRuntimeService", () => {
       "appraised",
       "second-returned",
     ]);
+  });
+
+  it("HTTP runtime未初期化でもpendingをcompleted Sessionより先に永続化し、保存失敗時はcompletedにしない", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-mandatory-appraisal-"));
+    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "app.sqlite"));
+    const runtimeApi: null = null;
+    const createService = (
+      initialSession: Session,
+      queueCompletedTurnAppraisal: NonNullable<SessionRuntimeServiceDeps["queueCompletedTurnAppraisal"]>,
+    ) => {
+      let storedSession = initialSession;
+      const completedWrites: Session[] = [];
+      const callOrder: string[] = [];
+      const adapter: ProviderCodingAdapter = {
+        composePrompt() {
+          return {
+            systemBodyText: "system",
+            inputBodyText: "input",
+            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+            imagePaths: [],
+            additionalDirectories: [],
+          };
+        },
+        async getProviderQuotaTelemetry() {
+          return null;
+        },
+        invalidateSessionThread() {},
+        invalidateAllSessionThreads() {},
+        async runSessionTurn() {
+          return createPartialResult({ assistantText: "完了" });
+        },
+      };
+      const service = new SessionRuntimeService({
+        getSession(sessionId) {
+          return sessionId === storedSession.id ? storedSession : null;
+        },
+        upsertSession(next) {
+          if (next.runState === "idle" && next.messages.at(-1)?.role === "assistant") {
+            completedWrites.push(next);
+            callOrder.push("completed-upsert");
+          }
+          storedSession = next;
+          return next;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] };
+        },
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        resolveProviderCatalog() {
+          const provider = createProviderCatalog();
+          return { snapshot: { revision: 1, providers: [provider] }, provider };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        getSessionMemory(session) {
+          return createSessionMemory(session.id);
+        },
+        resolveProjectMemoryEntriesForPrompt() {
+          return [];
+        },
+        queueCompletedTurnAppraisal(input) {
+          callOrder.push("pending-enqueue");
+          return queueCompletedTurnAppraisal(input);
+        },
+        requireDurableCompletedTurnAppraisal: true,
+        createAuditLog(input) {
+          return createAuditLogBase(input);
+        },
+        updateAuditLog() {},
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        waitForApprovalDecision() {
+          return "approve";
+        },
+        waitForElicitationResponse() {
+          return { action: "cancel" };
+        },
+        setProviderQuotaTelemetry() {},
+        setSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        scheduleProviderQuotaTelemetryRefresh() {},
+        broadcastLiveSessionRun() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        currentTimestampLabel,
+      });
+      return { service, completedWrites, callOrder };
+    };
+
+    try {
+      const successfulSession = createSession();
+      const successful = createService(successfulSession, (input) => {
+        assert.equal(runtimeApi, null);
+        storage.enqueue({
+          correlationId: input.correlationId,
+          characterId: input.session.characterId,
+          sessionId: input.session.id,
+          userMessage: input.userMessage,
+          assistantMessage: input.assistantMessage,
+          assistantMessageIndex: input.assistantMessageIndex,
+          occurredAt: input.occurredAt,
+        });
+      });
+      const successfulResult = await successful.service.runSessionTurn(successfulSession.id, {
+        userMessage: "保存して",
+      });
+      const pending = storage.listPending();
+
+      assert.equal(successfulResult.runState, "idle", successfulResult.messages.at(-1)?.text);
+      assert.equal(pending.length, 1);
+      assert.equal(pending[0]?.assistantMessage, "完了");
+      assert.deepEqual(successful.callOrder, ["pending-enqueue", "completed-upsert"]);
+
+      const failingSession = createSession();
+      const failing = createService(failingSession, () => {
+        throw new Error("settlement storage unavailable");
+      });
+      const failingResult = await failing.service.runSessionTurn(failingSession.id, {
+        userMessage: "保存に失敗して",
+      });
+
+      assert.equal(failingResult.runState, "error");
+      assert.equal(failing.completedWrites.length, 0);
+      assert.deepEqual(failing.callOrder, ["pending-enqueue"]);
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("character-authoring session は turn 開始時の最新 Character snapshot を使う", async () => {

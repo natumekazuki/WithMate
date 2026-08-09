@@ -1,10 +1,11 @@
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 export const WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2" as const;
-export const WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION = "withmate-memory-discovery-pointer-v1" as const;
-export const WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME = "memory-v6-cli.current.json" as const;
-export const WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME = "memory-v6-mcp.current.json" as const;
+export const WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION = "withmate-memory-discovery-pair-pointer-v1" as const;
+export const WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME = "memory-v6.current.json" as const;
+export const WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME = WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME;
 export const WITHMATE_MEMORY_DISCOVERY_FILE_NAME = WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME;
 
 export type WithMateMemoryAdapterKind = "cli" | "mcp";
@@ -21,10 +22,16 @@ export type WithMateMemoryDiscoveryDocument = {
 
 export type WithMateMemoryDiscoveryPointer = {
   schemaVersion: typeof WITHMATE_MEMORY_DISCOVERY_POINTER_SCHEMA_VERSION;
-  adapter: WithMateMemoryAdapterKind;
   runtimeInstanceId: string;
-  generationFileName: string;
 };
+
+export function buildWithMateMemoryDiscoveryGenerationFileName(
+  adapter: WithMateMemoryAdapterKind,
+  runtimeInstanceId: string,
+): string {
+  const generationId = createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex");
+  return `memory-v6-${adapter}.${generationId}.json`;
+}
 
 function isLoopbackHostname(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
@@ -72,10 +79,7 @@ export function resolveDefaultWithMateMemoryRuntimeDirectory(
 
 export function resolveDefaultWithMateMemoryDiscoveryFilePath(
   env: NodeJS.ProcessEnv = process.env,
-  adapter: WithMateMemoryAdapterKind = "cli",
+  _adapter: WithMateMemoryAdapterKind = "cli",
 ): string {
-  const fileName = adapter === "cli"
-    ? WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME
-    : WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME;
-  return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), fileName);
+  return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
 }

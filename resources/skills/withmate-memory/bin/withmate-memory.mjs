@@ -2,8 +2,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
-import { createHmac, randomBytes } from "node:crypto";
 import { request } from "node:http";
 import process$1 from "node:process";
 //#region \0rolldown/runtime.js
@@ -78,9 +78,10 @@ var MEMORY_FORGET_REASONS = [
 //#endregion
 //#region src/memory-v6/memory-discovery.ts
 var WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION = "withmate-memory-discovery-v2";
-var WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME = "memory-v6-cli.current.json";
-var WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME = "memory-v6-mcp.current.json";
-var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME;
+var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6.current.json";
+function buildWithMateMemoryDiscoveryGenerationFileName(adapter, runtimeInstanceId) {
+	return `memory-v6-${adapter}.${createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex")}.json`;
+}
 function isLoopbackHostname(hostname) {
 	const normalized = hostname.toLowerCase();
 	if (normalized === "localhost" || normalized === "::1" || normalized === "[::1]") return true;
@@ -107,9 +108,8 @@ function resolveDefaultWithMateMemoryRuntimeDirectory(env = process.env) {
 	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
 	return path.join(tmpdir(), "withmate-memory", ownerSegment);
 }
-function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env, adapter = "cli") {
-	const fileName = adapter === "cli" ? WITHMATE_MEMORY_CLI_DISCOVERY_FILE_NAME : WITHMATE_MEMORY_MCP_DISCOVERY_FILE_NAME;
-	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), fileName);
+function resolveDefaultWithMateMemoryDiscoveryFilePath(env = process.env, _adapter = "cli") {
+	return path.join(resolveDefaultWithMateMemoryRuntimeDirectory(env), WITHMATE_MEMORY_DISCOVERY_FILE_NAME);
 }
 //#endregion
 //#region src/memory-v6/memory-response-contract.ts
@@ -1371,8 +1371,8 @@ function buildConnectionFromValues(input) {
 async function readDiscoveryProjection(pointerFilePath, adapter, read) {
 	const first = JSON.parse(await read(pointerFilePath, "utf8"));
 	if (first.schemaVersion === "withmate-memory-discovery-v2") return first;
-	if (first.schemaVersion !== "withmate-memory-discovery-pointer-v1" || first.adapter !== adapter || typeof first.generationFileName !== "string" || path.basename(first.generationFileName) !== first.generationFileName) return null;
-	const generationFilePath = path.join(path.dirname(pointerFilePath), first.generationFileName);
+	if (first.schemaVersion !== "withmate-memory-discovery-pair-pointer-v1" || typeof first.runtimeInstanceId !== "string" || !first.runtimeInstanceId.trim()) return null;
+	const generationFilePath = path.join(path.dirname(pointerFilePath), buildWithMateMemoryDiscoveryGenerationFileName(adapter, first.runtimeInstanceId));
 	const document = JSON.parse(await read(generationFilePath, "utf8"));
 	return document.runtimeInstanceId === first.runtimeInstanceId ? document : null;
 }
