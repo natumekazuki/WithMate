@@ -709,21 +709,22 @@ export function SessionHeader({
               </div>
             ) : null}
             {actions}
-            {onTogglePin ? (
-              <button
-                className={`drawer-toggle compact secondary session-pin-toggle${isPinned ? " is-active" : ""}`}
-                type="button"
-                aria-pressed={isPinned}
-                onClick={onTogglePin}
-                disabled={isPinPending}
-              >
-                {isPinPending ? "変更中..." : isPinned ? "ピン解除" : "ピン止め"}
-              </button>
-            ) : null}
-            {showRenameButton || showAuditLogButton || showDeleteButton ? (
+            {onTogglePin || showRenameButton || showAuditLogButton || showDeleteButton ? (
               <details className="session-header-more">
                 <summary aria-label="Session actions" title="Session actions">⋯</summary>
                 <div className="session-header-more-menu" role="menu">
+                  {onTogglePin ? (
+                    <button
+                      className={`session-pin-toggle${isPinned ? " is-active" : ""}`}
+                      type="button"
+                      role="menuitem"
+                      aria-pressed={isPinned}
+                      onClick={onTogglePin}
+                      disabled={isPinPending}
+                    >
+                      {isPinPending ? "変更中..." : isPinned ? "ピン解除" : "ピン止め"}
+                    </button>
+                  ) : null}
                   {showRenameButton ? (
                     <button type="button" role="menuitem" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
                       Rename
@@ -3338,12 +3339,14 @@ export type SessionComposerExpandedProps = {
   showAttachmentControls?: boolean;
   showCustomAgentPicker?: boolean;
   showSkillPicker?: boolean;
+  showPromptTemplateButton?: boolean;
   showAdditionalDirectoryControls?: boolean;
   showExecutionModeControls?: boolean;
   showMessageViewModeControls?: boolean;
   messageViewMode?: MessageViewMode;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
+  isPromptTemplateWorkspaceOpen?: boolean;
   isAdditionalDirectoryListOpen: boolean;
   selectedCustomAgentLabel: string;
   selectedCustomAgentTitle: string;
@@ -3381,6 +3384,7 @@ export type SessionComposerExpandedProps = {
   onPickSessionImage?: () => void;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
+  onOpenPromptTemplates?: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
@@ -3414,12 +3418,14 @@ export function SessionComposerExpanded({
   showAttachmentControls = true,
   showCustomAgentPicker = true,
   showSkillPicker = true,
+  showPromptTemplateButton = false,
   showAdditionalDirectoryControls = true,
   showExecutionModeControls = true,
   showMessageViewModeControls = false,
   messageViewMode = "preview",
   isAgentPickerOpen,
   isSkillPickerOpen,
+  isPromptTemplateWorkspaceOpen = false,
   isAdditionalDirectoryListOpen,
   selectedCustomAgentLabel,
   selectedCustomAgentTitle,
@@ -3457,6 +3463,7 @@ export function SessionComposerExpanded({
   onPickSessionImage = () => {},
   onToggleAgentPicker,
   onToggleSkillPicker,
+  onOpenPromptTemplates = () => {},
   onAddAdditionalDirectory,
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
@@ -3512,6 +3519,7 @@ export function SessionComposerExpanded({
     showAttachmentControls ||
     showCustomAgentPicker ||
     showSkillPicker ||
+    showPromptTemplateButton ||
     showAdditionalDirectoryControls ||
     showMessageViewModeControls ||
     showJumpToBottom ||
@@ -3553,6 +3561,28 @@ export function SessionComposerExpanded({
               onPickSessionFolder={onPickSessionFolder}
               onPickSessionImage={onPickSessionImage}
             />
+          ) : null}
+          {showPromptTemplateButton ? (
+            <button
+              className={`drawer-toggle compact secondary composer-skill-button${isPromptTemplateWorkspaceOpen ? " is-open" : ""}`}
+              type="button"
+              onClick={() => {
+                setIsAttachmentMenuOpen(false);
+                if (isAgentPickerOpen) {
+                  onToggleAgentPicker();
+                }
+                if (isSkillPickerOpen) {
+                  onToggleSkillPicker();
+                }
+                if (isAdditionalDirectoryListOpen) {
+                  onToggleAdditionalDirectoryList();
+                }
+                onOpenPromptTemplates();
+              }}
+              aria-pressed={isPromptTemplateWorkspaceOpen}
+            >
+              Template
+            </button>
           ) : null}
           {showCustomAgentPicker ? (
             <div className="composer-agent-toolbar">

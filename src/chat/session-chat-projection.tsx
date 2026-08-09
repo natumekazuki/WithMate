@@ -77,6 +77,7 @@ export type AgentSessionChatProjectionInput = {
   composerBlocked: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
+  isPromptTemplateWorkspaceOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
   selectedCustomAgentLabel: string;
   selectedCustomAgentTitle: string;
@@ -171,6 +172,7 @@ export type AgentSessionChatProjectionInput = {
   onPickSessionImage: NonNullable<SessionComposerExpandedProps["onPickSessionImage"]>;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
+  onOpenPromptTemplates: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToMessageListBottom: () => void;
@@ -257,8 +259,10 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showCustomAgentPicker: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showSkillPicker: !isCharacterAuthoringSession,
+      showPromptTemplateButton: true,
       isAgentPickerOpen: input.isAgentPickerOpen,
       isSkillPickerOpen: input.isSkillPickerOpen,
+      isPromptTemplateWorkspaceOpen: input.isPromptTemplateWorkspaceOpen,
       isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
       selectedCustomAgentLabel:
         !isCharacterAuthoringSession && input.selectedSession.provider === "copilot"
@@ -301,6 +305,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onPickSessionImage: input.onPickSessionImage,
       onToggleAgentPicker: input.onToggleAgentPicker,
       onToggleSkillPicker: input.onToggleSkillPicker,
+      onOpenPromptTemplates: input.onOpenPromptTemplates,
       onAddAdditionalDirectory: input.onAddAdditionalDirectory,
       onToggleAdditionalDirectoryList: input.onToggleAdditionalDirectoryList,
       onExpandActionDock: input.onToggleActionDock,
