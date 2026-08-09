@@ -34,7 +34,7 @@ test("vertical dock height は比率上限と中央領域の最小高を優先�
     minHeight: 180,
     maxHeightRatio: 0.4,
     oppositeDockHeight: 64,
-  }), 52);
+  }), 36);
 });
 
 test("vertical dock layout は border-box から padding と border を除いた高さを使う", () => {
@@ -68,7 +68,7 @@ test("vertical dock layout は border-box から padding と border を除いた
       minHeight: 180,
       maxHeightRatio: 0.4,
       oppositeDockHeight: 64,
-    }), 207);
+    }), 191);
   } finally {
     dom.window.close();
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });

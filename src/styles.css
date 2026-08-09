@@ -148,15 +148,16 @@ button:disabled {
 .session-chat-layout {
   --session-dock-motion-duration: 220ms;
   --session-dock-motion-easing: cubic-bezier(0.22, 1, 0.36, 1);
+  --session-dock-splitter-size: 20px;
   --session-header-dock-row-height: 0px;
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
   grid-template-rows:
     var(--session-header-dock-row-height)
-    12px
+    var(--session-dock-splitter-size)
     minmax(280px, 1fr)
-    12px
+    var(--session-dock-splitter-size)
     var(--session-action-dock-row-height);
   transition:
     grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing),
@@ -166,9 +167,9 @@ button:disabled {
 .session-chat-layout.layout-priority-side-pane {
   grid-template-columns:
     var(--session-left-pane-track-width)
-    12px
+    var(--session-dock-splitter-size)
     minmax(0, 1fr)
-    12px
+    var(--session-dock-splitter-size)
     var(--session-right-pane-track-width);
   grid-template-areas:
     "left-pane left-split header right-split right-pane"
@@ -194,9 +195,9 @@ button:disabled {
 .session-chat-layout.layout-priority-dock {
   grid-template-columns:
     var(--session-left-pane-track-width)
-    12px
+    var(--session-dock-splitter-size)
     minmax(0, 1fr)
-    12px
+    var(--session-dock-splitter-size)
     var(--session-right-pane-track-width);
   grid-template-areas:
     "header header header header header"
@@ -265,7 +266,7 @@ button:disabled {
     min(
       var(--session-action-dock-height, 320px),
       40dvh,
-      calc(100dvh - var(--session-header-dock-row-height) - 326px)
+      calc(100dvh - var(--session-header-dock-row-height) - 342px)
     )
   );
 }
@@ -5242,14 +5243,14 @@ button:disabled {
 
 .session-dock-splitter.edge-left,
 .session-dock-splitter.edge-right {
-  width: 12px;
+  width: var(--session-dock-splitter-size);
   cursor: col-resize;
 }
 
 .session-dock-splitter.edge-top,
 .session-dock-splitter.edge-bottom {
   width: 100%;
-  height: 12px;
+  height: var(--session-dock-splitter-size);
   cursor: row-resize;
 }
 
@@ -5261,7 +5262,7 @@ button:disabled {
 .session-dock-splitter::before {
   content: "";
   position: absolute;
-  inset: 8px 4px;
+  inset: 8px;
   border-radius: 999px;
   background: rgba(203, 213, 225, 0.14);
   transition: background 160ms ease;
@@ -5269,7 +5270,7 @@ button:disabled {
 
 .session-dock-splitter.edge-top::before,
 .session-dock-splitter.edge-bottom::before {
-  inset: 4px 8px;
+  inset: 8px;
 }
 
 .session-dock-splitter:hover::before,
@@ -10829,7 +10830,9 @@ button:disabled {
   .session-chat-layout.layout-priority-side-pane,
   .session-chat-layout.layout-priority-dock {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto 0px 16px minmax(220px, 1fr) 16px 0px auto auto;
+    grid-template-rows:
+      auto auto 0px var(--session-dock-splitter-size) minmax(220px, 1fr)
+      var(--session-dock-splitter-size) 0px auto auto;
     grid-template-areas:
       "header"
       "top-split"
@@ -10848,7 +10851,9 @@ button:disabled {
   .session-chat-layout.layout-priority-side-pane.is-left-pane-visible,
   .session-chat-layout.layout-priority-dock.is-left-pane-visible {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(300px, 42vh) 16px minmax(220px, 1fr) 16px 0px auto auto;
+    grid-template-rows:
+      auto auto minmax(300px, 42vh) var(--session-dock-splitter-size) minmax(220px, 1fr)
+      var(--session-dock-splitter-size) 0px auto auto;
     grid-template-areas:
       "header"
       "top-split"
@@ -10864,7 +10869,9 @@ button:disabled {
   .session-chat-layout.layout-priority-side-pane.is-right-pane-visible,
   .session-chat-layout.layout-priority-dock.is-right-pane-visible {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto 0px 16px minmax(220px, 1fr) 16px minmax(300px, 42vh) auto auto;
+    grid-template-rows:
+      auto auto 0px var(--session-dock-splitter-size) minmax(220px, 1fr)
+      var(--session-dock-splitter-size) minmax(300px, 42vh) auto auto;
     grid-template-areas:
       "header"
       "top-split"
@@ -10880,7 +10887,9 @@ button:disabled {
   .session-chat-layout.layout-priority-side-pane.is-left-pane-visible.is-right-pane-visible,
   .session-chat-layout.layout-priority-dock.is-left-pane-visible.is-right-pane-visible {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(300px, 42vh) 16px minmax(220px, 1fr) 16px minmax(300px, 42vh) auto auto;
+    grid-template-rows:
+      auto auto minmax(300px, 42vh) var(--session-dock-splitter-size) minmax(220px, 1fr)
+      var(--session-dock-splitter-size) minmax(300px, 42vh) auto auto;
     grid-template-areas:
       "header"
       "top-split"
@@ -10924,7 +10933,7 @@ button:disabled {
   .session-dock-splitter.edge-right {
     display: block;
     width: 100%;
-    min-height: 16px;
+    min-height: var(--session-dock-splitter-size);
     cursor: pointer;
   }
 
@@ -10935,7 +10944,7 @@ button:disabled {
 
   .session-dock-splitter.edge-left::before,
   .session-dock-splitter.edge-right::before {
-    inset: 6px 8px;
+    inset: 8px;
   }
 
   .session-dock-splitter.edge-left .session-dock-splitter-chevron,
