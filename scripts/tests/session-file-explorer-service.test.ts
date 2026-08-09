@@ -79,7 +79,7 @@ test("SessionFileExplorerService は preview link を最も具体的な認可 ro
     assert.equal((await service.resolvePreviewTarget("session-1", "missing.md")).type, "not-found");
     assert.deepEqual(await service.resolvePreviewTarget("session-1", "packages"), {
       type: "directory",
-      targetPath: path.join(workspacePath, "packages"),
+      targetPath: await realpath(path.join(workspacePath, "packages")),
     });
     assert.deepEqual(await service.resolvePreviewTarget("session-1", "https://example.com/file.md"), {
       type: "external-url",
@@ -124,13 +124,14 @@ test("SessionFileExplorerService は regular file でも directory でもない 
   try {
     await mkdir(workspacePath, { recursive: true });
     await writeFile(specialPath, "placeholder");
+    const specialRealPath = await realpath(specialPath);
     const service = new SessionFileExplorerService({
       userDataPath: path.join(tempDirectory, "user-data"),
       async getSessionContext() {
         return { workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] };
       },
       async statPath(targetPath) {
-        if (path.resolve(targetPath) === path.resolve(specialPath)) {
+        if (path.resolve(targetPath) === path.resolve(specialRealPath)) {
           return {
             isDirectory: () => false,
             isFile: () => false,
