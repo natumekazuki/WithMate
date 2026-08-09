@@ -9,7 +9,7 @@ import type { Session } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 const RESPONSE_PREVIEW_MAX_GRAPHEMES = 40;
-const RESPONSE_PREVIEW_MAX_SOURCE_CODE_UNITS = 2_048;
+const RESPONSE_PREVIEW_MAX_SOURCE_CODE_UNITS = 65_536;
 const RESPONSE_PREVIEW_SENTENCE_ENDINGS = new Set(["。", "！", "？", "!", "?"]);
 const MARKDOWN_BLOCK_NODE_TYPES = new Set([
   "root",
