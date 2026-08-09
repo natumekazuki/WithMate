@@ -1,3 +1,6 @@
+import { extractLocalMarkdownImagePaths } from "./composer-image-reference.js";
+import type { ComposerAttachmentInput } from "./runtime-state.js";
+
 export const TEXT_PATH_REFERENCE_PATTERN = /(^|[\s(])@(?:"([^"\r\n]+)"|([^\s@]+))/gm;
 export const TEXT_PATH_REFERENCE_SIGNATURE_SEPARATOR = "\u001f";
 
@@ -21,6 +24,20 @@ export function extractTextReferenceCandidates(text: string): string[] {
   }
 
   return candidates;
+}
+
+export function extractComposerAttachmentReferenceCandidates(text: string): ComposerAttachmentInput[] {
+  return [
+    ...extractTextReferenceCandidates(text).map((path): ComposerAttachmentInput => ({
+      path,
+      source: "text",
+    })),
+    ...extractLocalMarkdownImagePaths(text).map((path): ComposerAttachmentInput => ({
+      kind: "image",
+      path,
+      source: "markdown-image",
+    })),
+  ];
 }
 
 export function buildTextReferenceCandidateState(text: string): TextReferenceCandidateState {

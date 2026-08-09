@@ -138,6 +138,10 @@ function isDirectMarkdownImageSource(target: string): boolean {
   );
 }
 
+function shouldLoadMarkdownImageEagerly(target: string): boolean {
+  return /^(?:file:|data:image\/|blob:)/i.test(target);
+}
+
 const markdownUrlTransform: UrlTransform = (url, key) => {
   if (key === "src") {
     if (!isAllowedMarkdownImageSource(url)) {
@@ -377,6 +381,7 @@ type MarkdownImageProps = {
 
 function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImageProps) {
   const canLoadDirectly = !resolveImageSource && isDirectMarkdownImageSource(source);
+  const shouldLoadEagerly = shouldLoadMarkdownImageEagerly(source);
   const [resolvedSource, setResolvedSource] = useState(canLoadDirectly ? source : "");
   const [loadStatus, setLoadStatus] = useState<"resolving" | "loading" | "ready" | "error">(
     resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error",
@@ -439,7 +444,8 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
           src={resolvedSource}
           alt={alt ?? ""}
           title={title}
-          loading="lazy"
+          loading={shouldLoadEagerly ? "eager" : "lazy"}
+          fetchPriority={shouldLoadEagerly ? "high" : "auto"}
           onLoad={() => setLoadStatus("ready")}
           onError={() => setLoadStatus("error")}
         />

@@ -9,11 +9,13 @@ import {
 } from "../session-composer-selection.js";
 import { createQuotedMessageInsertionFromComposer } from "./message-text-actions.js";
 import {
+  buildComposerReferenceInsertionState,
   buildPathReferenceRemovalState,
   buildSelectedPathReferenceInsertionState,
   resolvePickedPathBaseDirectory,
   toDirectoryPath,
   type ComposerPathPickerKind,
+  type ComposerReferenceInput,
   type PathReferenceInsertionState,
 } from "../session-composer-paths.js";
 import {
@@ -566,6 +568,31 @@ export function applySelectedPathReferenceInsertionCommand(input: {
     selectedPaths: input.selectedPaths,
     workspacePath: input.workspacePath,
   });
+  if (!insertionState) {
+    return false;
+  }
+
+  input.applyInsertion(insertionState);
+  input.restoreComposerTextareaFocusAndCaret(input.textarea, insertionState.caret);
+  return true;
+}
+
+export function applyComposerReferenceInsertionCommand(input: {
+  draft: string;
+  fallbackCaret: number;
+  references: ComposerReferenceInput[];
+  textarea: HTMLTextAreaElement | null;
+  applyInsertion: (state: PathReferenceInsertionState) => void;
+  restoreComposerTextareaFocusAndCaret: (
+    textarea: HTMLTextAreaElement | null,
+    caret: number,
+  ) => void;
+}): boolean {
+  const insertionState = buildComposerReferenceInsertionState(
+    input.draft,
+    input.textarea?.selectionStart ?? input.fallbackCaret,
+    input.references,
+  );
   if (!insertionState) {
     return false;
   }

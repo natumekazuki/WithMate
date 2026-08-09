@@ -124,6 +124,7 @@ import {
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
+  type ComposerReferenceInput,
 } from "./session-composer-paths.js";
 import {
   applyComposerDraftClearCommand,
@@ -263,6 +264,7 @@ import {
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
+  applyComposerReferenceInsertionCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -2833,6 +2835,35 @@ export default function AgentSessionWindowApp() {
     insertReferencePaths([selectedPath]);
   };
 
+  const insertPastedAttachments = (references: ComposerReferenceInput[]) => {
+    const textarea = composerTextareaRef.current;
+    const targetAuxiliarySession = activeAuxiliarySession;
+    const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
+    applyComposerReferenceInsertionCommand({
+      draft: currentDraft,
+      fallbackCaret: composerCaret,
+      references,
+      textarea,
+      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+        if (targetAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+          setComposerCaret(nextCaret);
+        } else {
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft,
+            setComposerCaret,
+            syncMainComposerCaret: (selectionStart) => {
+              mainComposerCaretRef.current = selectionStart;
+            },
+          });
+        }
+      },
+      restoreComposerTextareaFocusAndCaret,
+    });
+  };
+
   const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
     getDraft: () => activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
     applyRemoval: (nextState) => {
@@ -2971,7 +3002,7 @@ export default function AgentSessionWindowApp() {
       return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
     },
     getSessionId: () => selectedSession?.id,
-    insertReferencePaths,
+    insertAttachments: insertPastedAttachments,
   });
 
   const handleAddAdditionalDirectory = async () => {

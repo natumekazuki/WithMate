@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   buildTextReferenceCandidateState,
+  extractComposerAttachmentReferenceCandidates,
   extractTextReferenceCandidates,
   TEXT_PATH_REFERENCE_SIGNATURE_SEPARATOR,
 } from "../../src/path-reference.js";
@@ -28,4 +29,18 @@ test("buildTextReferenceCandidateState は候補有無と signature を返す", 
     hasCandidates: false,
     signature: "",
   });
+});
+
+test("extractComposerAttachmentReferenceCandidates は @path と local Markdown image を区別して返す", () => {
+  assert.deepEqual(
+    extractComposerAttachmentReferenceCandidates([
+      "確認 @src/App.tsx",
+      "![pasted](C:/session-files/pasted%20image.png)",
+      "![remote](https://example.test/image.png)",
+    ].join("\n")),
+    [
+      { path: "src/App.tsx", source: "text" },
+      { path: "C:/session-files/pasted image.png", source: "markdown-image", kind: "image" },
+    ],
+  );
 });

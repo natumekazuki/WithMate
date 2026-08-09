@@ -1,4 +1,8 @@
 import type { ComposerAttachment } from "./runtime-state.js";
+import {
+  formatMarkdownImageReference,
+  removeLocalMarkdownImageReferences,
+} from "./composer-image-reference.js";
 
 export type ComposerAttachmentDisplay = {
   kindLabel: string;
@@ -36,6 +40,11 @@ export type PathReferenceInsertionState = {
   draft: string;
 };
 
+export type ComposerReferenceInput = {
+  path: string;
+  presentation: "image" | "path";
+};
+
 export type ComposerPathPickerKind = "file" | "folder" | "image";
 
 export type ComposerReferencePathPicker = {
@@ -71,11 +80,34 @@ export function buildPathReferenceInsertionState(
   };
 }
 
+export function buildComposerReferenceInsertionState(
+  draft: string,
+  caret: number,
+  references: readonly ComposerReferenceInput[],
+): PathReferenceInsertionState | null {
+  if (references.length === 0) {
+    return null;
+  }
+
+  const referenceTokens = references.map((reference) => (
+    reference.presentation === "image"
+      ? formatMarkdownImageReference(reference.path)
+      : formatPathReference(reference.path)
+  ));
+  const leadingSpacer = caret > 0 && !/\s/.test(draft[caret - 1] ?? "") ? " " : "";
+  const trailingSpacer = draft.length > caret && !/\s/.test(draft[caret] ?? "") ? " " : "";
+  const insertion = `${leadingSpacer}${referenceTokens.join(" ")}${trailingSpacer}`;
+  return {
+    draft: `${draft.slice(0, caret)}${insertion}${draft.slice(caret)}`,
+    caret: caret + insertion.length,
+  };
+}
+
 export function removePathReferenceTokensFromDraft(
   draft: string,
   referencePaths: readonly string[],
 ): string {
-  let nextDraft = draft;
+  let nextDraft = removeLocalMarkdownImageReferences(draft, referencePaths);
   const escapedTokens = referencePaths
     .map((referencePath) => formatPathReference(referencePath))
     .map(escapeRegExpPattern);

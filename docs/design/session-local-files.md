@@ -6,7 +6,7 @@
 ## Goal
 
 WithMate の Session ごとに、repo へ入れない一時資料を置ける managed directory を用意する。
-ユーザーは composer への paste や picker から画像・ファイルを追加し、保存された path をそのまま prompt reference として使える。
+ユーザーは composer への paste や picker から画像・ファイルを追加し、保存された path を prompt reference として使える。
 
 ## Position
 
@@ -33,7 +33,7 @@ New Session の `SessionFolder` 選択は directory を作成しない。`Start 
 
 Session local files directory は次の経路で常に effective allowed directory に含める。
 
-- composer preview の `@path` 解決
+- composer preview の `@path` と local Markdown image 解決
 - provider prompt composition の `additionalDirectories`
 - Codex thread options
 - Copilot session config / attachment roots
@@ -64,8 +64,8 @@ attachment popover の `Session files` sectionにある `File` action は sessio
 composer textarea の paste は次のように扱う。
 
 - text only: 通常 paste
-- image: PNG として保存し、保存先 reference を挿入する
-- file: session local files directory へコピーし、保存先 reference を挿入する
+- image: PNG、JPEG、GIF、WebP、BMP、SVG は保存し、absolute path の Markdown image を挿入する
+- file: session local files directory へコピーし、保存先を `@path` として挿入する。AVIF、TIFF、ICO もこの扱いとする
 - mixed: browser / Electron が提供する file item を優先し、保存できた reference を挿入する
 
 保存時の basename 衝突は `name-2.ext` のように採番する。
@@ -84,8 +84,8 @@ main process が managed directory を作成し、copy / write を担当する�
 - `openSessionFilesDirectory(sessionId)`
 - `openSessionFilesTerminal(sessionId)`
 
-戻り値は保存済み absolute path の配列とする。
-composer は戻り値を既存の `@path` reference 挿入処理へ渡す。
+保存 API は保存済み absolute path を返す。
+renderer は clipboard file の MIME type と拡張子から表示形式を決め、対応画像を Markdown image、それ以外を `@path` として caret 位置へ挿入する。
 
 ## Cleanup
 
@@ -98,7 +98,8 @@ legacy MateTalk は永続 session record を持たないため、window ごと�
 
 ## Validation
 
-- paste image が session local files directory に保存され、composer に reference が挿入される
+- paste image が session local files directory に保存され、composer に Markdown image が挿入される
+- paste image の Markdown image が preview と provider image attachment の同じ file identity へ解決される
 - `Session` action で選んだ file がコピーされ、コピー先 reference が挿入される
 - preview で session local files が outside workspace attachment として認識される
 - Codex / Copilot runtime に session local files directory が additional directory として渡る

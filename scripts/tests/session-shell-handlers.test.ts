@@ -7,6 +7,7 @@ import {
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
   applyComposerSubmitKeyCommand,
+  applyComposerReferenceInsertionCommand,
   applyContextPaneTabCycleCommand,
   applyActionDockCollapseCommand,
   applyActionDockExpandCommand,
@@ -1162,6 +1163,32 @@ describe("applySelectedPathReferenceInsertionCommand", () => {
     assert.deepEqual(events, [
       "apply:16:see @src/App.tsx here",
       "restore:none:16",
+    ]);
+  });
+});
+
+describe("applyComposerReferenceInsertionCommand", () => {
+  it("paste attachment の表示形式を保って挿入し、caret を復元する", () => {
+    const events: string[] = [];
+    const textarea = { selectionStart: 0 } as HTMLTextAreaElement;
+
+    assert.equal(
+      applyComposerReferenceInsertionCommand({
+        draft: "",
+        fallbackCaret: 0,
+        references: [
+          { path: "C:/session-files/image one.png", presentation: "image" },
+          { path: "C:/session-files/note.txt", presentation: "path" },
+        ],
+        textarea,
+        applyInsertion: (state) => events.push(`apply:${state.draft}`),
+        restoreComposerTextareaFocusAndCaret: (_textarea, caret) => events.push(`caret:${caret}`),
+      }),
+      true,
+    );
+    assert.deepEqual(events, [
+      "apply:![image one.png](C:/session-files/image%20one.png) @C:/session-files/note.txt",
+      "caret:77",
     ]);
   });
 });
