@@ -712,6 +712,7 @@ export class MemoryV6Service {
           preview: validated.value.preview,
           tags: validated.value.tags,
           supersedes: validated.value.supersedes,
+          mutationReason: validated.value.mutationReason,
           idempotencyKey: validated.value.idempotencyKey,
           bindingIdHash: bindingIdHashForPrincipal(principal),
           ...(hasFiles ? {
@@ -911,6 +912,7 @@ function buildAppendRequestFingerprint(input: {
       appMessageId: null,
     },
     supersedes: [...(input.request.supersedes ?? [])].sort(),
+    mutationReason: input.request.mutationReason ?? "",
     files: (input.request.files ?? []).map((file) => ({
       path: file.path,
       summary: file.summary,

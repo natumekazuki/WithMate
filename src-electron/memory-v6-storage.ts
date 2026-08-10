@@ -44,6 +44,7 @@ type AppendMemoryEntryInput = {
   tags: readonly NormalizedMemoryTag[];
   source: MemoryV6StorageSource;
   supersedes?: readonly string[];
+  mutationReason?: string;
   id?: string;
   idempotencyKey?: string;
   bindingIdHash?: string;
@@ -526,6 +527,7 @@ function buildAppendFingerprint(input: AppendMemoryEntryInput): string {
     })),
     source: input.source,
     supersedes: [...(input.supersedes ?? [])].sort(),
+    mutationReason: input.mutationReason ?? "",
     protectedObjects: (input.protectedObjects ?? []).map((object) => ({
       objectId: object.objectId,
       role: object.role,
@@ -717,10 +719,26 @@ export class MemoryV6Storage {
         `).run(entryId, createdAt, supersededRow.id);
 
         this.decrementTagCatalog(this.getEntryTags(supersededRow.id));
-        this.insertMutationEvent("supersede", supersededRow.id, bindingIdHash, input.source.sessionId, "success", "", createdAt);
+        this.insertMutationEvent(
+          "supersede",
+          supersededRow.id,
+          bindingIdHash,
+          input.source.sessionId,
+          "success",
+          input.mutationReason ?? "",
+          createdAt,
+        );
       }
 
-      this.insertMutationEvent("append", entryId, bindingIdHash, input.source.sessionId, "success", "", createdAt);
+      this.insertMutationEvent(
+        "append",
+        entryId,
+        bindingIdHash,
+        input.source.sessionId,
+        "success",
+        input.mutationReason ?? "",
+        createdAt,
+      );
 
       if (input.idempotencyKey) {
         this.insertIdempotencyKey({

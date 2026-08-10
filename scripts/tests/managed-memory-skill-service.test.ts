@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile, execFileSync } from "node:child_process";
-import { createHmac } from "node:crypto";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { promisify } from "node:util";
+
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
@@ -18,11 +20,34 @@ import {
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../../src/memory-v6/memory-discovery.js";
 import {
+  createWithMateMemoryRuntimeChallenge,
+  WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
+} from "../../src/memory-v6/memory-runtime-exchange.js";
+import {
   BUNDLED_MEMORY_CLI_FILE_NAME,
   buildWithMateMemoryCli,
 } from "../build-withmate-memory-cli.js";
 
 const execFileAsync = promisify(execFile);
+
+async function initializeIsolatedMcpServer(helperPath: string, cwd: string): Promise<Record<string, unknown>> {
+  const client = new Client({ name: "isolated-layout-test", version: "1.0.0" });
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [helperPath, "mcp-server"],
+    cwd,
+    env: process.env as Record<string, string>,
+    stderr: "pipe",
+  });
+  try {
+    await client.connect(transport);
+    return await client.getServerVersion() as unknown as Record<string, unknown>;
+  } finally {
+    await client.close();
+  }
+}
 
 async function createBundle(): Promise<string> {
   const bundlePath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-bundle-"));
@@ -400,27 +425,59 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
+  it("依存のないisolated directoryでも生成CLIを起動できる", async () => {
+    const outputDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-cli-isolated-"));
+    try {
+      const isolatedHelperPath = await buildWithMateMemoryCli(outputDirectoryPath);
+      const source = await readFile(isolatedHelperPath, "utf8");
+      assert.doesNotMatch(source, /from\s+["'](?:@modelcontextprotocol\/sdk|zod)["']/);
+      const { stdout } = await execFileAsync(process.execPath, [isolatedHelperPath, "schema"], {
+        cwd: outputDirectoryPath,
+        env: process.env,
+      });
+      assert.equal(JSON.parse(stdout).commands.includes("mcp-server"), true);
+      const initialized = await initializeIsolatedMcpServer(isolatedHelperPath, outputDirectoryPath);
+      assert.equal(initialized.name, "withmate-character-context");
+    } finally {
+      await rm(outputDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("runtime directory の discovery path で status できる", async () => {
     const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-root-"));
     const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
     const runtimeDirectoryPath = path.join(tempRootPath, "withmate-memory", ownerSegment);
     const apiSecret = "test-secret";
+    const operatorApiSecret = "test-operator-secret";
     const runtimeInstanceId = "runtime-from-discovery";
     const requestedPaths: string[] = [];
-    const server = createServer((request, response) => {
+    const server = createServer(async (request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       requestedPaths.push(`${request.method ?? "UNKNOWN"} ${url.pathname}${url.search}`);
-      if (request.method === "GET" && url.pathname === "/v1/status") {
-        const nonce = url.searchParams.get("nonce") ?? "";
+      if (request.method === "POST" && url.pathname === "/v1/exchange") {
+        const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
+        response.writeEarlyHints({
+          link: "</v1/exchange>; rel=preconnect",
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
+            apiSecret,
+            runtimeInstanceId,
+            typeof nonce === "string" ? nonce : "",
+          ),
+        });
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const payload = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        assert.equal(payload.apiSecret, apiSecret);
+        assert.equal(payload.adapterSecret, operatorApiSecret);
+        assert.equal(payload.operation.path, "/v1/status");
         response.setHeader("Content-Type", "application/json");
         response.end(JSON.stringify({
           schemaVersion: "withmate-memory-v1",
           status: "ok",
           runtimeInstanceId,
-          challenge: {
-            nonce,
-            hmacSha256: createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url"),
-          },
         }));
         return;
       }
@@ -439,9 +496,12 @@ describe("withmate-memory bundled helper", () => {
         path.join(runtimeDirectoryPath, WITHMATE_MEMORY_DISCOVERY_FILE_NAME),
         `${JSON.stringify({
           schemaVersion: WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
+          adapter: "cli",
           baseUrl: `http://127.0.0.1:${address.port}`,
           apiSecret,
+          adapterSecret: operatorApiSecret,
           runtimeInstanceId,
+          publishedAt: "2026-08-10T00:00:00.000Z",
         })}\n`,
         "utf8",
       );
@@ -526,6 +586,17 @@ describe("withmate-memory bundled helper", () => {
       "append",
       "forget",
       "move-entry",
+      "context-get",
+      "affect-appraise",
+      "affect-inspect",
+      "affect-correct",
+      "affect-reset",
+      "character-memory-search",
+      "character-memory-append-episode",
+      "character-memory-correct",
+      "character-memory-forget",
+      "character-metrics",
+      "mcp-server",
       "schema",
       "validate",
     ]);

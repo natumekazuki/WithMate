@@ -32,6 +32,7 @@ import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
+import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -70,6 +71,28 @@ export type SessionRuntimeServiceDeps = {
     session: Session,
     observedAt: Date,
   ) => Awaitable<ConversationTimingContext | null>;
+  resolveCharacterContext?: (
+    session: Session,
+    query: string,
+  ) => Awaitable<CharacterContextResponse | null>;
+  queueCompletedTurnAppraisal?: (input: {
+    session: Session;
+    correlationId: string;
+    userMessage: string;
+    assistantMessage: string;
+    assistantMessageIndex: number;
+    occurredAt: string;
+  }) => Awaitable<void>;
+  markCompletedTurnAppraisalReady?: (correlationId: string) => Awaitable<void>;
+  requireDurableCompletedTurnAppraisal?: boolean;
+  appraiseCompletedTurn?: (input: {
+    session: Session;
+    correlationId: string;
+    userMessage: string;
+    assistantMessage: string;
+    assistantMessageIndex: number;
+    occurredAt: string;
+  }) => Awaitable<void>;
   createAuditLog(input: CreateAuditLogInput): Awaitable<AuditLogEntry>;
   updateAuditLog(id: number, entry: CreateAuditLogInput): Awaitable<void | AuditLogEntry>;
   setLiveSessionRun(sessionId: string, state: LiveSessionRunState | null): void;
@@ -798,6 +821,9 @@ export class SessionRuntimeService {
     const conversationTimingContext = await Promise.resolve(
       this.deps.resolveConversationTimingContext?.(session, observedAt) ?? null,
     );
+    const characterContext = await Promise.resolve(
+      this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
+    );
     throwIfRunCanceled(runAbortController.signal);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 
@@ -819,6 +845,7 @@ export class SessionRuntimeService {
         appSettings,
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
+        characterContext: characterContext ?? undefined,
       });
 
       runningSession = {
@@ -984,6 +1011,7 @@ export class SessionRuntimeService {
         appSettings,
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
+        characterContext: characterContext ?? undefined,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
@@ -1125,6 +1153,27 @@ export class SessionRuntimeService {
           },
         ],
       };
+      const affectTurnCorrelationId = `turn:${sessionId}:audit:${runningAuditLog.id}`;
+      const assistantMessageIndex = completedSession.messages.length - 1;
+      const requiresDurableAppraisal = this.deps.requireDurableCompletedTurnAppraisal === true
+        && completedSession.sessionKind === "default"
+        && Boolean(completedSession.characterId);
+      if (
+        requiresDurableAppraisal
+        && (!this.deps.queueCompletedTurnAppraisal || !this.deps.markCompletedTurnAppraisalReady)
+      ) {
+        throw new Error("Default Character Session requires durable affect turn settlement before completion.");
+      }
+      if (this.deps.queueCompletedTurnAppraisal) {
+        await this.deps.queueCompletedTurnAppraisal({
+          session: completedSession,
+          correlationId: affectTurnCorrelationId,
+          userMessage: nextMessage,
+          assistantMessage: result.assistantText,
+          assistantMessageIndex,
+          occurredAt: completedAt,
+        });
+      }
 
       const completedSessionUpsertStartedAt = Date.now();
       const storedCompletedSession = await this.deps.upsertSession(completedSession);
@@ -1137,6 +1186,33 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
+      if (requiresDurableAppraisal) {
+        try {
+          await this.deps.markCompletedTurnAppraisalReady!(affectTurnCorrelationId);
+        } catch (error) {
+          console.warn(
+            "Character affect turn appraisal readiness update failed",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
+      if (this.deps.appraiseCompletedTurn) {
+        try {
+          await this.deps.appraiseCompletedTurn({
+            session: storedCompletedSession,
+            correlationId: affectTurnCorrelationId,
+            userMessage: nextMessage,
+            assistantMessage: result.assistantText,
+            assistantMessageIndex,
+            occurredAt: completedAt,
+          });
+        } catch (error) {
+          console.warn(
+            "Character affect turn appraisal failed",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
       if (!runAbortController.signal.aborted) {
         notifySessionTurnCompletedBestEffort(
           this.deps.notifySessionTurnCompleted,

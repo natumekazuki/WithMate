@@ -10,6 +10,7 @@ import { AFFECT_SCHEMA_VERSION, type AffectEventInput } from "../../src/characte
 import {
   CharacterAffectIdempotencyConflictError,
   CharacterAffectStorage,
+  CharacterAffectVersionConflictError,
 } from "../../src-electron/character-affect-storage.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 
@@ -363,6 +364,32 @@ describe("CharacterAffectStorage", () => {
       assert.equal(storage.inspect({ characterId: "character-a", userId: "local-user" }).events.length, 1);
       assert.equal(storage.getMetrics().idempotencyReplays, 1);
       assert.equal(storage.getMetrics().idempotencyConflictsRejected, 1);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("同一idempotency keyのreplayをexpected version検査より先に解決する", () => {
+    const fixture = createFixture();
+    const storage = new CharacterAffectStorage(fixture.dbPath);
+    try {
+      const initialVersion = storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      }).version;
+      const first = storage.recordEvent(event(), { expectedVersion: initialVersion });
+      const replay = storage.recordEvent(event(), { expectedVersion: initialVersion });
+      assert.equal(replay.created, false);
+      assert.equal(replay.event.id, first.event.id);
+      assert.throws(
+        () => storage.recordEvent(event({ idempotencyKey: "uncommitted-generation" }), {
+          expectedVersion: initialVersion,
+        }),
+        CharacterAffectVersionConflictError,
+      );
+      assert.equal(storage.inspect({ characterId: "character-a", userId: "local-user" }).events.length, 1);
     } finally {
       storage.close();
       rmSync(fixture.directory, { recursive: true, force: true });

@@ -72,6 +72,38 @@ function buildCharacterOutputBoundarySection(enabled: boolean): string {
   ].join("\n");
 }
 
+function buildCharacterAffectContextSection(context: RunSessionTurnInput["characterContext"]): string {
+  if (!context) {
+    return "";
+  }
+  const snapshot = {
+    characterAffect: {
+      effective: context.affect.effective,
+      version: context.affect.version,
+      updatedAt: context.affect.updatedAt,
+      scope: context.scope,
+    },
+    relatedCharacterMemory: context.memory.items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      preview: item.preview,
+      tags: item.tags,
+      updatedAt: item.updatedAt,
+    })),
+    baselineRef: context.baseline,
+  };
+  return [
+    "# Character Affect Context",
+    "",
+    "This is a versioned, ephemeral state envelope for the current turn. It does not amend the Character Definition.",
+    "Use it only to adjust the Character's response tone and relevant recall. Do not present it as a diagnosis of the user or expose internal state unnecessarily.",
+    "",
+    "```json",
+    JSON.stringify(snapshot, null, 2),
+    "```",
+  ].join("\n");
+}
+
 function buildToolCallPresenceSection(enabled: boolean): string {
   if (!enabled) {
     return "";
@@ -100,7 +132,8 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   const toolCallPresenceBody = buildToolCallPresenceSection(
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
-  const systemPromptBody = [characterPromptBody, outputBoundaryBody, toolCallPresenceBody]
+  const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
+  const systemPromptBody = [characterPromptBody, characterAffectContextBody, outputBoundaryBody, toolCallPresenceBody]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
