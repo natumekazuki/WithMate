@@ -2474,7 +2474,8 @@ export function SessionMessageColumn({
       0,
       messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
-    useFlushSync: false,
+    directDomUpdates: true,
+    directDomUpdatesMode: "transform",
   });
   const virtualMessages = messageVirtualizer.getVirtualItems();
   const hasPendingMessageText =
@@ -2884,8 +2885,9 @@ export function SessionMessageColumn({
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
             <div
+              ref={messageVirtualizer.containerRef}
               className="session-message-list-window-items"
-              style={{ height: messageVirtualizer.getTotalSize(), position: "relative" }}
+              style={{ position: "relative" }}
             >
           {virtualMessages.map((virtualMessage) => {
             const absoluteIndex = virtualMessage.index;
@@ -2931,7 +2933,6 @@ export function SessionMessageColumn({
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
                 data-index={absoluteIndex}
-                style={{ transform: `translateY(${virtualMessage.start}px)` }}
               >
                 {isMessageGroupStart && messageGroup ? (
                   <div
