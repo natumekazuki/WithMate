@@ -113,6 +113,17 @@ import { CompanionAuditLogStorageV3 } from "./companion-audit-log-storage-v3.js"
 import { CompanionStorage } from "./companion-storage.js";
 import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
+import {
+  SessionExecutionService,
+  type SessionExecutionDispatchResult,
+} from "./session-execution-service.js";
+import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
+import { SessionExternalApplicationService } from "./session-external-application-service.js";
+import {
+  startSessionExternalRuntime,
+  type SessionExternalRuntimeHandle,
+} from "./session-external-runtime.js";
+import { SessionRuntimeQuitBarrier } from "./session-runtime-quit-barrier.js";
 import { resolveConversationTimingContext } from "./conversation-timing.js";
 import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
 import {
@@ -288,6 +299,7 @@ const copilotAdapter = new CopilotAdapter({
   }),
 });
 const WAL_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
+const SESSION_EXECUTION_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 
 let sessions: Session[] = [];
 let sessionStorage: SessionStorageRead | null = null;
@@ -332,6 +344,12 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 ipcMain.handle(WITHMATE_GET_APP_BOOT_STATUS_CHANNEL, () => appBootStatus);
 const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
+let sessionExecutionStorage: SessionExecutionStorageV6 | null = null;
+let sessionExecutionService: SessionExecutionService | null = null;
+let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
+let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
+const activeSessionExecutionIds = new Map<string, string>();
+const canceledSessionExecutionIds = new Set<string>();
 let sessionTurnNotificationService: SessionTurnNotificationService<NativeImage> | null = null;
 let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
@@ -359,6 +377,7 @@ let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
 let walMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
+let sessionExecutionMaintenanceTimer: ReturnType<typeof setInterval> | null = null;
 let mainInfrastructureRegistry:
   | MainInfrastructureRegistry<
       WindowBroadcastService<BrowserWindow>,
@@ -1726,6 +1745,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       dismissSessionTurnNotification: (sessionId) =>
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       cleanupSessionFilesDirectory,
+      resumeSessionExecutionQueue: (sessionId) => requireSessionExecutionService().resumeQueue(sessionId),
     });
   }
 
@@ -2374,11 +2394,151 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       notifySessionTurnCompleted: (session, lastNonEmptyAssistantMessageText) => {
         requireSessionTurnNotificationService().notifyTurnCompleted(session, lastNonEmptyAssistantMessageText);
       },
+      onSessionRunAvailable: (sessionId) => sessionExecutionService?.resumeQueue(sessionId),
       currentTimestampLabel,
     });
   }
 
   return sessionRuntimeService;
+}
+
+async function startSessionExternalRuntimeBestEffort(): Promise<void> {
+  if (sessionExternalRuntime) {
+    return;
+  }
+  try {
+    sessionExternalRuntime = await startSessionExternalRuntime({
+      handle: (operation, input) => requireSessionExternalApplicationService().execute(operation, input),
+    });
+    writeAppLog({
+      level: "info",
+      kind: "session.runtime-api.started",
+      process: "main",
+      message: "Session runtime API started",
+      data: { published: true },
+    });
+  } catch (error) {
+    sessionExternalRuntime = null;
+    writeAppLog({
+      level: "error",
+      kind: "session.runtime-api.failed",
+      process: "main",
+      message: "Session runtime API failed to start",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function stopSessionExternalRuntimeBestEffort(): Promise<void> {
+  const runtime = sessionExternalRuntime;
+  sessionExternalRuntime = null;
+  if (!runtime) {
+    return;
+  }
+  try {
+    await runtime.stop();
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "session.runtime-api.cleanup-failed",
+      process: "main",
+      message: "Session runtime API cleanup failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+function requireSessionExecutionService(): SessionExecutionService {
+  if (!sessionExecutionService) {
+    if (!dbPath) {
+      throw new Error("DB path が初期化されていないよ。");
+    }
+    sessionExecutionStorage = new SessionExecutionStorageV6(dbPath);
+    sessionExecutionService = new SessionExecutionService({
+      storage: sessionExecutionStorage,
+      validateTurn: (sessionId, request) =>
+        requireSessionRuntimeService().validateSessionTurn(sessionId, parseSessionExecutionTurnRequest(request)),
+      dispatchTurn: dispatchSessionExecutionTurn,
+      cancelRunningTurn: (sessionId, executionId) => {
+        if (activeSessionExecutionIds.get(sessionId) !== executionId) {
+          throw new Error("対象executionのprovider実行が見つからないよ。");
+        }
+        canceledSessionExecutionIds.add(executionId);
+        requireSessionRuntimeService().cancelRun(sessionId);
+      },
+      isSessionRunInFlight: (sessionId) => requireSessionRuntimeService().isRunInFlight(sessionId),
+      createExecutionId: () => `execution-${crypto.randomUUID()}`,
+      currentTimestamp: () => new Date().toISOString(),
+      resolveIdempotencyExpiresAt: (createdAt) =>
+        new Date(new Date(createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    });
+  }
+  return sessionExecutionService;
+}
+
+function requireSessionExternalApplicationService(): SessionExternalApplicationService {
+  if (!sessionExternalApplicationService) {
+    sessionExternalApplicationService = new SessionExternalApplicationService({
+      executionService: requireSessionExecutionService(),
+      currentCatalogRevision: () => getModelCatalog()?.revision ?? 0,
+    });
+  }
+  return sessionExternalApplicationService;
+}
+
+async function dispatchSessionExecutionTurn(
+  sessionId: string,
+  executionId: string,
+  request: unknown,
+): Promise<SessionExecutionDispatchResult> {
+  activeSessionExecutionIds.set(sessionId, executionId);
+  try {
+    const session = await requireSessionRuntimeService().runSessionTurn(
+      sessionId,
+      parseSessionExecutionTurnRequest(request),
+    );
+    if (canceledSessionExecutionIds.has(executionId)) {
+      return { state: "canceled", result: null, reason: "user_requested" };
+    }
+    if (session.runState === "error") {
+      return {
+        state: "failed",
+        result: null,
+        errorCode: "PROVIDER_FAILED",
+        reason: "provider_turn_failed",
+      };
+    }
+    const assistantText = [...session.messages]
+      .reverse()
+      .find((message) => message.role === "assistant")?.text ?? "";
+    return { state: "completed", result: { assistantText } };
+  } catch (error) {
+    if (canceledSessionExecutionIds.has(executionId)) {
+      return { state: "canceled", result: null, reason: "user_requested" };
+    }
+    throw error;
+  } finally {
+    if (activeSessionExecutionIds.get(sessionId) === executionId) {
+      activeSessionExecutionIds.delete(sessionId);
+    }
+    canceledSessionExecutionIds.delete(executionId);
+  }
+}
+
+function parseSessionExecutionTurnRequest(request: unknown): RunSessionTurnRequest {
+  if (typeof request !== "object" || request === null) {
+    throw new TypeError("Session execution request must be an object.");
+  }
+  const candidate = request as Partial<Record<keyof RunSessionTurnRequest, unknown>>;
+  if (typeof candidate.userMessage !== "string") {
+    throw new TypeError("Session execution userMessage must be a string.");
+  }
+  for (const key of ["model", "reasoningEffort", "approvalMode", "codexSandboxMode"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      throw new TypeError(`Session execution ${key} must be a string.`);
+    }
+  }
+  return candidate as RunSessionTurnRequest;
 }
 
 function requireSessionTurnNotificationService(): SessionTurnNotificationService<NativeImage> {
@@ -2869,6 +3029,26 @@ function stopWalMaintenance(): void {
   walMaintenanceTimer = null;
 }
 
+function startSessionExecutionMaintenance(): void {
+  stopSessionExecutionMaintenance();
+  sessionExecutionMaintenanceTimer = setInterval(() => {
+    try {
+      sessionExecutionService?.cleanupExpiredIdempotency();
+    } catch (error) {
+      console.warn("Session execution maintenance failed", error);
+    }
+  }, SESSION_EXECUTION_MAINTENANCE_INTERVAL_MS);
+  sessionExecutionMaintenanceTimer.unref?.();
+}
+
+function stopSessionExecutionMaintenance(): void {
+  if (!sessionExecutionMaintenanceTimer) {
+    return;
+  }
+  clearInterval(sessionExecutionMaintenanceTimer);
+  sessionExecutionMaintenanceTimer = null;
+}
+
 async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
@@ -2883,8 +3063,10 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
     );
     const activeModelCatalog = applyPersistentStoreBundle(bundle);
     characterAffectTurnSettlementStorage = new CharacterAffectTurnSettlementStorage(dbPath);
+    requireSessionExecutionService();
     appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
     startWalMaintenance();
+    startSessionExecutionMaintenance();
     return activeModelCatalog;
   } catch (error) {
     throw error;
@@ -2893,6 +3075,7 @@ async function initializePersistentStores(): Promise<ModelCatalogSnapshot> {
 
 function closePersistentStores(): void {
   stopWalMaintenance();
+  closeSessionExecutionRuntime();
   characterAffectTurnSettlementStorage?.close();
   characterAffectTurnSettlementStorage = null;
   promptTemplateStorage?.close();
@@ -2951,12 +3134,23 @@ function closePersistentStores(): void {
   mainInfrastructureRegistry = null;
 }
 
+function closeSessionExecutionRuntime(): void {
+  stopSessionExecutionMaintenance();
+  sessionExecutionStorage?.close();
+  sessionExecutionStorage = null;
+  sessionExecutionService = null;
+  sessionExternalApplicationService = null;
+  activeSessionExecutionIds.clear();
+  canceledSessionExecutionIds.clear();
+}
+
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   if (!dbPath) {
     throw new Error("DB path が初期化されていないよ。");
   }
 
   stopWalMaintenance();
+  closeSessionExecutionRuntime();
   characterAffectTurnSettlementStorage?.close();
   characterAffectTurnSettlementStorage = null;
   await requireMateStorage().deleteMateProjectionDirectory();
@@ -3007,8 +3201,10 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
   characterAffectTurnSettlementStorage = new CharacterAffectTurnSettlementStorage(dbPath);
+  requireSessionExecutionService();
   appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   startWalMaintenance();
+  startSessionExecutionMaintenance();
   return activeModelCatalog;
 }
 
@@ -3847,6 +4043,10 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
+  const sessionRuntimeQuitBarrier = new SessionRuntimeQuitBarrier({
+    stopRuntime: stopSessionExternalRuntimeBestEffort,
+    quitApp: () => app.quit(),
+  });
   app.on("second-instance", () => {
     if (!app.isReady()) {
       return;
@@ -3899,6 +4099,8 @@ if (!hasSingleInstanceLock) {
       });
       await requireMainBootstrapService().handleReady();
       await startMemoryV6RuntimeApiBestEffort();
+      await requireSessionExecutionService().reconcileAfterRestart();
+      await startSessionExternalRuntimeBestEffort();
       requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
@@ -3959,7 +4161,7 @@ if (!hasSingleInstanceLock) {
     requireAppLifecycleService().handleBeforeQuit(event);
   });
 
-  app.on("will-quit", () => {
+  app.on("will-quit", (event) => {
     writeAppLog({
       level: "info",
       kind: "app.will-quit",
@@ -3969,5 +4171,6 @@ if (!hasSingleInstanceLock) {
     appTrayService?.dispose();
     characterAffectTurnRetryScheduler?.dispose();
     void stopMemoryV6RuntimeApiBestEffort();
+    sessionRuntimeQuitBarrier.handleWillQuit(event);
   });
 }

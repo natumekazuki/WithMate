@@ -9,8 +9,9 @@
     "icon:generate": "node --import tsx scripts/generate-app-icon.ts",
     "stage:provider-binaries": "node --import tsx scripts/stage-provider-binaries.ts",
     "build:memory-cli": "tsx scripts/build-withmate-memory-cli.ts",
+    "build:session-cli": "tsx scripts/build-withmate-session-cli.ts",
     "build:renderer": "vite build",
-    "build:electron": "npm run build:memory-cli && tsc -p tsconfig.electron.json",
+    "build:electron": "npm run build:memory-cli && npm run build:session-cli && tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "electron:dev": "npm run build:electron && tsx scripts/run-electron-dev.ts",
     "electron:start": "npm run build && electron dist-electron/src-electron/main.js",
@@ -103,6 +104,10 @@
       {
         "from": "build/cli/withmate-memory.cmd",
         "to": "withmate-memory.cmd"
+      },
+      {
+        "from": "build/cli/withmate-session.cmd",
+        "to": "withmate-session.cmd"
       }
     ],
     "win": {

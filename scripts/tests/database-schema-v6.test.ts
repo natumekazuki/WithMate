@@ -16,6 +16,8 @@ import {
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
+  CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
@@ -161,11 +163,51 @@ describe("database-schema-v6", () => {
     const db = createV6Schema();
     try {
       const names = tableNames(db).sort();
-      assert.deepEqual(names, [...REQUIRED_V6_TABLES].sort());
+      assert.deepEqual(names, [
+        ...REQUIRED_V6_TABLES,
+        "session_executions_v6",
+        "session_execution_idempotency_v6",
+      ].sort());
       const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL), true);
     } finally {
       db.close();
+    }
+  });
+
+  it("既存V6 DBを有効と判定したままexecution tablesをadditiveに適用する", () => {
+    const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-execution-schema-"));
+    const dbPath = join(dirPath, APP_DATABASE_V6_FILENAME);
+    try {
+      const oldDb = new DatabaseSync(dbPath);
+      try {
+        for (const statement of CREATE_V6_SCHEMA_SQL) {
+          if (
+            statement !== CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL
+            && statement !== CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL
+          ) {
+            oldDb.exec(statement);
+          }
+        }
+      } finally {
+        oldDb.close();
+      }
+
+      assert.equal(isValidV6Database(dbPath), true);
+
+      const upgradedDb = new DatabaseSync(dbPath);
+      try {
+        upgradedDb.exec("PRAGMA foreign_keys = ON;");
+        ensureV6Schema(upgradedDb);
+        assert.equal(tableNames(upgradedDb).includes("session_executions_v6"), true);
+        assert.equal(tableNames(upgradedDb).includes("session_execution_idempotency_v6"), true);
+      } finally {
+        upgradedDb.close();
+      }
+    } finally {
+      rmSync(dirPath, { recursive: true, force: true });
     }
   });
 

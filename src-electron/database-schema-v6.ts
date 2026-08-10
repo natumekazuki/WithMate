@@ -845,6 +845,61 @@ export const CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL = `
     ON session_turn_provider_outputs_v6(turn_id, kind, seq);
 `;
 
+export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_executions_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    session_id TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK (operation IN ('turn.run', 'turn.enqueue')),
+    state TEXT NOT NULL CHECK (state IN (
+      'queued',
+      'running',
+      'completed',
+      'failed',
+      'canceled',
+      'interrupted'
+    )),
+    request_json TEXT NOT NULL CHECK (json_valid(request_json)),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    error_code TEXT NOT NULL DEFAULT '',
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    admitted_at TEXT,
+    completed_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_executions_session_sequence
+    ON session_executions_v6(session_id, sequence ASC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_executions_session_state_sequence
+    ON session_executions_v6(session_id, state, sequence ASC);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_executions_one_running
+    ON session_executions_v6(session_id)
+    WHERE state = 'running';
+`;
+
+export const CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_execution_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation IN ('turn.run', 'turn.enqueue')),
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    execution_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, idempotency_key),
+    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_execution_idempotency_execution
+    ON session_execution_idempotency_v6(execution_id);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_execution_idempotency_expires
+    ON session_execution_idempotency_v6(expires_at);
+`;
+
 export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS audit_events_v6 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1260,6 +1315,8 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
+  CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
+  CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,

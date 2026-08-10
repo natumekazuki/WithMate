@@ -34,6 +34,7 @@ type MainSessionCommandFacadeDeps = {
   isSessionFilesWorkspace(session: Pick<Session, "id" | "workspacePath">): boolean;
   dismissSessionTurnNotification(sessionId: string): void;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
+  resumeSessionExecutionQueue?(sessionId: string): Promise<void> | void;
 };
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
@@ -149,7 +150,11 @@ export class MainSessionCommandFacade {
       void this.deps.refreshProviderQuotaTelemetry(session.provider).catch(() => undefined);
     }
 
-    return this.deps.getSessionRuntimeService().runSessionTurn(sessionId, request);
+    try {
+      return await this.deps.getSessionRuntimeService().runSessionTurn(sessionId, request);
+    } finally {
+      void this.deps.resumeSessionExecutionQueue?.(sessionId);
+    }
   }
 
   private async cleanupDeletedSessions(

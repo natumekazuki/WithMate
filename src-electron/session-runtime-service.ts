@@ -116,6 +116,7 @@ export type SessionRuntimeServiceDeps = {
   resolvePendingElicitationRequest(sessionId: string, response: LiveElicitationResponse): void;
   getMateState?: () => MateStorageState;
   notifySessionTurnCompleted?: (session: Session, lastNonEmptyAssistantMessageText: string) => Awaitable<void>;
+  onSessionRunAvailable?: (sessionId: string) => Awaitable<void>;
   currentTimestampLabel?: () => string;
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
@@ -691,9 +692,20 @@ export class SessionRuntimeService {
       if (trackedPromises.size === 0) {
         this.terminatingSessionRuns.delete(sessionId);
       }
-      if (!this.startingSessionRuns.has(sessionId) && !this.inFlightSessionRuns.has(sessionId)) {
+      if (
+        !this.startingSessionRuns.has(sessionId)
+        && !this.inFlightSessionRuns.has(sessionId)
+        && !this.terminatingSessionRuns.has(sessionId)
+      ) {
         this.sessionRunControllers.delete(sessionId);
         this.pendingSessionRunCancels.delete(sessionId);
+        try {
+          void Promise.resolve(this.deps.onSessionRunAvailable?.(sessionId)).catch((error) => {
+            console.warn("Session run availability callback failed", error);
+          });
+        } catch (error) {
+          console.warn("Session run availability callback failed", error);
+        }
       }
     };
     promise.then(release, release);
@@ -751,6 +763,39 @@ export class SessionRuntimeService {
         this.pendingSessionRunCancels.delete(sessionId);
       }
     }
+  }
+
+  async validateSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<void> {
+    const session = await this.deps.getSession(sessionId);
+    if (!session) {
+      throw new Error("対象セッションが見つからないよ。");
+    }
+    if (isReadOnlySession(session)) {
+      throw new Error("閲覧専用セッションには送信できないよ。新しいセッションを作成してください。");
+    }
+    if (!request.userMessage.trim()) {
+      throw new Error("送信するメッセージが空だよ。");
+    }
+
+    const requestedSession = {
+      ...session,
+      model: request.model?.trim() || session.model,
+      reasoningEffort: request.reasoningEffort ?? session.reasoningEffort,
+      approvalMode: request.approvalMode ?? session.approvalMode,
+      codexSandboxMode: request.codexSandboxMode ?? session.codexSandboxMode,
+    };
+    const providerSession = this.deps.resolveProviderSession?.(requestedSession) ?? requestedSession;
+    const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
+    if (composerPreview.errors.length > 0) {
+      throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
+    }
+
+    const appSettings = this.deps.getAppSettings();
+    if (!getProviderAppSettings(appSettings, session.provider).enabled) {
+      throw new Error("この provider は Settings で無効になっているよ。");
+    }
+    const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
+    this.deps.getProviderCodingAdapter(provider.id);
   }
 
   private async runSessionTurnInternal(

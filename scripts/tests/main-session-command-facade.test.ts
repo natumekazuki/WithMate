@@ -1023,3 +1023,67 @@ test("MainSessionCommandFacade は non-Copilot session では quota refresh を�
   assert.equal(refreshed, false);
 });
 
+test("MainSessionCommandFacade は GUI run の成功後にSession queueを再開する", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async runSessionTurn(sessionId: string) {
+        calls.push(`run:${sessionId}`);
+        return { id: sessionId } as never;
+      },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+    resumeSessionExecutionQueue(sessionId) {
+      calls.push(`resume:${sessionId}`);
+    },
+  });
+
+  await facade.runSessionTurn("s-1", { userMessage: "hello" });
+
+  assert.deepEqual(calls, ["run:s-1", "resume:s-1"]);
+});
+
+test("MainSessionCommandFacade は GUI run の失敗後もSession queueを再開する", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async runSessionTurn() {
+        calls.push("run");
+        throw new Error("run failed");
+      },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+    resumeSessionExecutionQueue(sessionId) {
+      calls.push(`resume:${sessionId}`);
+    },
+  });
+
+  await assert.rejects(
+    facade.runSessionTurn("s-1", { userMessage: "hello" }),
+    /run failed/,
+  );
+  assert.deepEqual(calls, ["run", "resume:s-1"]);
+});
+

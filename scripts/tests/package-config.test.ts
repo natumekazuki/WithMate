@@ -17,11 +17,16 @@ describe("package build config", () => {
       packageJson.build?.extraFiles?.find((entry) => entry.to === "withmate-memory.cmd"),
       { from: "build/cli/withmate-memory.cmd", to: "withmate-memory.cmd" },
     );
+    assert.deepEqual(
+      packageJson.build?.extraFiles?.find((entry) => entry.to === "withmate-session.cmd"),
+      { from: "build/cli/withmate-session.cmd", to: "withmate-session.cmd" },
+    );
     assert.equal(packageJson.build?.nsis?.include, "build/installer.nsh");
 
     const installerScript = await readFile("build/installer.nsh", "utf8");
     assert.match(installerScript, /Microsoft\\WindowsApps/);
     assert.match(installerScript, /withmate-memory\.cmd/);
+    assert.match(installerScript, /withmate-session\.cmd/);
     assert.doesNotMatch(installerScript, /ReadRegStr\s+\$\d+\s+HKCU\s+"Environment"\s+"Path"/);
     assert.doesNotMatch(installerScript, /WriteRegExpandStr\s+HKCU\s+"Environment"\s+"Path"/);
   });

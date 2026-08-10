@@ -1853,6 +1853,7 @@ describe("SessionRuntimeService", () => {
     const session = createSession();
     let resolveComposer: ((preview: ComposerPreview) => void) | null = null;
     let providerCalled = false;
+    const availableSessionIds: string[] = [];
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -1928,6 +1929,9 @@ describe("SessionRuntimeService", () => {
       resolvePendingElicitationRequest() {},
       currentTimestampLabel,
       providerCancelGraceMs: 5,
+      onSessionRunAvailable(sessionId) {
+        availableSessionIds.push(sessionId);
+      },
     });
 
     const runPromise = service.runSessionTurn(session.id, { userMessage: "お願いします" });
@@ -1942,6 +1946,7 @@ describe("SessionRuntimeService", () => {
     ]);
 
     assert.equal(service.hasInFlightRuns(), true);
+    assert.deepEqual(availableSessionIds, []);
     await assert.rejects(
       service.runSessionTurn(session.id, { userMessage: "再送" }),
       /まだ実行中/,
@@ -1955,6 +1960,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(outcome, "rejected");
     assert.equal(providerCalled, false);
     assert.equal(service.hasInFlightRuns(), false);
+    assert.deepEqual(availableSessionIds, [session.id]);
   });
 
   it("provider が cancel 後も生存する間は terminal session への再送を拒否する", async () => {
