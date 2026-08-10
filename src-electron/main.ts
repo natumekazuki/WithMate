@@ -122,9 +122,12 @@ import {
   settleCharacterAffectTurnOrScheduleRetry,
 } from "./character-affect-turn-retry-scheduler.js";
 import {
+  drainCharacterAffectTurnSettlementBatch,
+  type CharacterAffectTurnDrainCursor,
+} from "./character-affect-turn-drain.js";
+import {
   CharacterAffectTurnSettlementStorage,
   hasCommittedAssistantMessage,
-  type PendingCharacterAffectTurnSettlement,
 } from "./character-affect-turn-settlement-storage.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
@@ -308,9 +311,7 @@ let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
 let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
 let characterAffectTurnSettlementStorage: CharacterAffectTurnSettlementStorage | null = null;
 let characterAffectTurnRetryScheduler: CharacterAffectTurnRetryScheduler | null = null;
-let characterAffectTurnDrainCursor:
-  | Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId">
-  | undefined;
+let characterAffectTurnDrainCursor: CharacterAffectTurnDrainCursor | undefined;
 const characterAffectTurnStartupRecoveryCutoff = new Date().toISOString();
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
@@ -2190,16 +2191,21 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
 
 async function drainPendingCharacterAffectTurns(): Promise<boolean> {
   const settlementStorage = requireCharacterAffectTurnSettlementStorage();
-  if (!memoryV6RuntimeApi) {
-    return settlementStorage.listReadyPending(1).length > 0
-      || settlementStorage.listUnreadyPendingBefore(new Date().toISOString(), 1).length > 0;
-  }
-  const recoveryPending = settlementStorage.listUnreadyPendingBefore(new Date().toISOString(), 100);
-  for (const item of recoveryPending) {
-    const session = await getRuntimeSession(item.sessionId);
-    if (session && session.characterId === item.characterId && hasCommittedAssistantMessage(session.messages, item)) {
-      settlementStorage.markReady(item.correlationId);
-    } else if (item.createdAt < characterAffectTurnStartupRecoveryCutoff) {
+  const result = await drainCharacterAffectTurnSettlementBatch({
+    storage: settlementStorage,
+    runtimeAvailable: memoryV6RuntimeApi !== null,
+    startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
+    readyCursor: characterAffectTurnDrainCursor,
+    getSession: getRuntimeSession,
+    settle: (item, session) => settleCharacterAffectTurn({
+      session,
+      correlationId: item.correlationId,
+      userMessage: item.userMessage,
+      assistantMessage: item.assistantMessage,
+      assistantMessageIndex: item.assistantMessageIndex,
+      occurredAt: item.occurredAt,
+    }),
+    onDiscard: (item) => {
       writeAppLog({
         level: "warn",
         kind: "character-affect.lifecycle.recovery-discarded",
@@ -2207,49 +2213,8 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
         message: "Pending Character affect appraisal had no committed Session owner",
         data: { sessionId: item.sessionId },
       });
-      settlementStorage.markDiscarded(item.correlationId);
-    }
-  }
-  const remainingBudget = 100 - recoveryPending.length;
-  if (remainingBudget === 0) {
-    return true;
-  }
-  const pending = settlementStorage.listReadyPending(remainingBudget, characterAffectTurnDrainCursor);
-  if (pending.length === 0) {
-    characterAffectTurnDrainCursor = undefined;
-    return settlementStorage.listReadyPending(1).length > 0
-      || settlementStorage.listUnreadyPendingBefore(new Date().toISOString(), 1).length > 0;
-  }
-  const last = pending.at(-1)!;
-  characterAffectTurnDrainCursor = pending.length === remainingBudget
-    ? { createdAt: last.createdAt, correlationId: last.correlationId }
-    : undefined;
-  let retryRequired = pending.length === remainingBudget;
-  for (const item of pending) {
-    const session = await getRuntimeSession(item.sessionId);
-    if (!session || session.characterId !== item.characterId) {
-      writeAppLog({
-        level: "warn",
-        kind: "character-affect.lifecycle.recovery-discarded",
-        process: "main",
-        message: "Pending Character affect appraisal had no committed Session owner",
-        data: { sessionId: item.sessionId },
-      });
-      settlementStorage.markDiscarded(item.correlationId);
-      continue;
-    }
-    try {
-      const settled = await settleCharacterAffectTurn({
-        session,
-        correlationId: item.correlationId,
-        userMessage: item.userMessage,
-        assistantMessage: item.assistantMessage,
-        assistantMessageIndex: item.assistantMessageIndex,
-        occurredAt: item.occurredAt,
-      });
-      retryRequired ||= !settled;
-    } catch (error) {
-      retryRequired = true;
+    },
+    onFailure: (item, error) => {
       writeAppLog({
         level: "warn",
         kind: "character-affect.lifecycle.recovery-failed",
@@ -2258,9 +2223,10 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
         data: { sessionId: item.sessionId },
         error: appLogService.errorToLogError(error),
       });
-    }
-  }
-  return retryRequired;
+    },
+  });
+  characterAffectTurnDrainCursor = result.nextReadyCursor;
+  return result.retryRequired;
 }
 
 function requireSessionRuntimeService(): SessionRuntimeService {
