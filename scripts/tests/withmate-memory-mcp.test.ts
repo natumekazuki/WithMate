@@ -80,6 +80,44 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
 }
 
 describe("WithMate Memory / Character Affect MCP contract", () => {
+  it("2025-06-18 handshakeでserver nameとversionを公開する", async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer();
+    try {
+      await server.connect(serverTransport);
+      await clientTransport.start();
+      const initialized = new Promise<Record<string, any>>((resolve, reject) => {
+        clientTransport.onmessage = (message) => {
+          if ("id" in message && message.id === 1) {
+            if ("error" in message) {
+              reject(new Error(JSON.stringify(message.error)));
+              return;
+            }
+            resolve(message.result as Record<string, any>);
+          }
+        };
+        clientTransport.onerror = reject;
+      });
+      await clientTransport.send({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "withmate-protocol-contract-test", version: "1.0.0" },
+        },
+      });
+
+      const result = await initialized;
+      assert.equal(result.protocolVersion, "2025-06-18");
+      assert.deepEqual(result.serverInfo, { name: "withmate-character-context", version: "1.0.0" });
+    } finally {
+      await clientTransport.close();
+      await server.close();
+    }
+  });
+
   it("6 toolsをschema、短い利用条件、read/write annotation付きで公開する", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer();

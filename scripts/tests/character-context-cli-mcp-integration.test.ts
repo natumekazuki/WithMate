@@ -74,6 +74,8 @@ describe("Character context CLI / MCP integration", () => {
       const beforeOutput = outputBuffer();
       assert.equal(await runWithMateMemoryCli([
         "context-get",
+        "--fallback-from",
+        "mcp",
         "--json",
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
@@ -82,6 +84,12 @@ describe("Character context CLI / MCP integration", () => {
         }),
       ], { env: cliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream }), 0);
       const before = beforeOutput.json();
+
+      const metricsOutput = outputBuffer();
+      assert.equal(await runWithMateMemoryCli([
+        "character-metrics",
+      ], { env: cliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream }), 0);
+      assert.equal(metricsOutput.json().metrics.fallbacks["mcp->cli"], 1);
 
       const appraisal = await client.callTool({
         name: "character_affect.appraise",

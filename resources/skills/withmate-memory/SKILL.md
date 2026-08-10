@@ -1,387 +1,236 @@
 ---
 name: withmate-memory
-description: Perform lightweight Memory reflection before every user-facing final response, and search, append, inspect, or forget WithMate V6 Memory through the installed CLI when concrete reusable project context or cross-session Character continuity is relevant. Reflection does not require CLI work when no candidate exists. After a command, test, build, tool, or environment failure, use stored Memory only when a known pattern, constraint, or workaround could change the next action.
+description: Use injected WithMate Character context first, then use the withmate-character-context MCP server for cue-driven Character recall, Character-owned affect appraisal, and Memory episodes. Reflect before every user-facing final response, write only concrete candidates, retain the general CLI for semantic Memory, and use Character CLI commands only for MCP availability fallback or explicit operator work.
 ---
 
-# WithMate Memory
+# WithMate Memory and Character Context
 
-Use this skill when a task or conversation may depend on reusable WithMate Memory, or when the user asks to remember, forget, reuse, or inspect stored project or Character context.
+Use this skill for WithMate Project Memory, Character Memory, and Character-owned affect. WithMate is the source of truth for persisted Character Memory and affect state. Do not create a second local store or treat rejected candidates as saved state.
 
-## When To Use
+Read [reference/character-context.md](reference/character-context.md) before the first Character MCP write, when exact tool fields or error semantics matter, or when considering CLI fallback. Read [reference/cli.md](reference/cli.md) for complete Project Memory CLI procedures, protected files, request shapes, and exit codes.
 
-Use Memory before making a durable project or character-sensitive decision when the task mentions or implies:
+## Priority and source of truth
 
-- previous decisions, past agreements, remembered context, preferences, conventions, or constraints
-- past conversations, relationship preferences, conversational distance, recurring topics, preferred ways of interacting, or memorable exchanges with a Character
-- provider behavior, approval/sandbox/model/reasoning policy, session lifecycle, Memory, database, migration, privacy, or docs source-of-truth questions
-- "remember", "forget", "do not use this anymore", "what did we discuss before?", "use the same policy as before", or similar user intent
-- a design or implementation review where prior repo-specific direction may matter
+Apply inputs in this order:
 
-Use Memory after an unexpected command, test, build, tool invocation, or environment check failure only when a known failure pattern, tooling trap, environment constraint, or workaround could affect the next action.
+1. The current user message and current Character Definition.
+2. A valid Character context injected by the WithMate lifecycle.
+3. Cue-driven MCP recall or `character_context.get` when the injected context is absent, stale, or insufficient.
+4. Older Memory results.
 
-A non-zero exit code alone is not a Memory trigger. Skip recall search when current evidence fully explains the failure and determines a safe corrected action.
+Character affect is the Character's own response. It is not a diagnosis, measurement, or score of the user's emotions. Negative affect about a task, bug, artifact, or the Character itself must use the matching explicit target and must not be redirected to the user or relationship.
 
-Do not run recall search on every turn. Skip recall for trivial local edits or conversations where the current files and user message fully determine the answer. The end-of-turn reflection below still applies to every user-facing turn.
+Do not expose internal versions, numeric affect values, raw tool results, or tool-use narration in an ordinary response. Reflect valid context lightly through tone, a short reaction, or continuity of topic.
 
-## Principles
+## Pre-response context
 
-- Use the installed `withmate-memory` CLI instead of reading WithMate database files directly.
-- Prefer `withmate-memory ...` commands. If the command is not on `PATH` and this managed skill includes `bin/withmate-memory.mjs`, use `node bin/withmate-memory.mjs ...` as a temporary bundled-helper fallback.
-- Project, user-global, character, and character+project Memory are available from external Codex or shell sessions while WithMate is running; use explicit targets.
-- Keep repository-owned current state, expected behavior, executable contracts, and decision rationale in repository sources of truth. Memory may point to those sources but must not replace them.
-- Do not exclude context merely because it is repository-specific. Put reusable project background, preferences, investigation context, and workarounds in project Memory when they do not belong in a maintained repository artifact.
-- Keep unfinished state, unexecuted validation, and the next action in a handoff rather than Memory.
-- Search before relying on remembered project or Character decisions.
-- Use `get-entry` only for search hits whose exact body matters.
-- Append only decisions, constraints, conventions, preferences, context, or Character observations that could make later related work or conversation a little easier or more natural.
-- Correct or forget entries only when the user asks to remove, correct, or stop using remembered information.
-- Treat missing or unavailable Memory as non-blocking unless the user explicitly made Memory access the task.
+Use a valid injected Character context as the first Character-context input. Do not call `character_context.get` ceremonially on every turn.
 
-## Recall Search
+Call `character_context.get` only when at least one is true:
 
-Use recall search only when stored context could affect the current task or make the current conversation naturally continue from a past one. Run it at the point the context is needed, with an explicit target. Do not turn end-of-turn reflection into routine recall.
+- no injected context is available;
+- the injected context is stale;
+- the current topic needs information omitted from the injected context;
+- the client cannot inject Character context.
 
-Treat routine search and read as background recall. Search results support the current task; they do not replace current repository sources of truth or the current user message. Inspect exact entry bodies only when the wording or rationale matters.
+If no valid affect context is available, continue with the Character Definition and current conversation. Do not invent a stored state.
 
-## Character Memory
+## Cue-driven recall
 
-Treat Character Memory as an observation record for natural conversation continuity across sessions, not as a person profile or proof of facts.
+Search only when a concrete past context could change the current decision or make the conversation naturally continue. Useful Character Memory cues include a subject, person, place, shared event, inside joke, relationship distance, emotional afterglow, or continuing topic.
 
-Treat explicit relationship preferences, conversational distance, preferred names, interaction styles, topics the user wants to continue, light inside jokes, shared episodes, and concrete reactions as candidates when they could make a later related conversation more natural.
+Use `character_memory.search` through MCP for Character episodes. Search Project Memory only when reusable project context could affect the task. Use explicit Character and project scopes.
 
-Do not require repeated mentions or an unusually memorable event. One explicit statement or one shared episode can be enough, and the user does not need to say `remember`, when the future conversational benefit is concrete and the content is within the current conversation's scope. Read-only requests and casual conversations can produce Character candidates under the same rule.
+Do not report routine search results. Mention Memory naturally only when it materially changes the answer, conflicts with the current message, the user asks what was used, or correction/forget requires target confirmation. If no relevant Memory exists, do not invent a past event.
 
-Do not save every conversation, generic turn summaries, temporary emotions, one-off acknowledgements, routine small talk, raw transcripts, or details with no concrete future value. Keep explicit user statements separate from agent inference. Write observations as attributed context such as "The user said they prefer..." rather than converting them into unqualified facts.
+## End-of-turn reflection
 
-Do not infer romance, exclusivity, real-world relationships, attributes, or feelings from stored interactions. The current user message and current Character Definition take precedence over Memory. Never use Memory to overwrite or amend the Character Definition.
+Immediately before every user-facing final response, reflect independently through three lenses:
 
-Search Character Memory when the user asks about the past, or when a prior relationship preference, ongoing topic, or conversation episode could naturally improve the current response. Do not perform Character recall on every turn. If no relevant hit exists, do not invent one. If old Memory conflicts with the current user message, follow the current message and use the correction or forget flow when the user asks to change future behavior.
+- **Project lens:** non-source-of-truth background, constraints, preferences, reliable investigation results, workarounds, or pointers that would make later project work easier.
+- **Character lens:** relationship distance, preferred names or interaction style, explicit preferences, inside jokes, shared episodes, continuing topics, or concrete reactions that would make a later conversation more natural.
+- **Character affect lens:** the Character's own response to this turn, based on the Character Definition, current valid state, and the observed event.
 
-## End-of-Turn Memory Reflection
+If no lens produces a concrete candidate, do not search or write. Never save a generic summary of the turn.
 
-Before every user-facing final response, review the current turn and recent conversation for concrete Memory candidates. Reflection is required on every user-facing turn; Memory search and append are conditional.
+Keep repository-owned current state, expected behavior, executable contracts, and decision rationale in repository sources of truth. Memory may retain a useful non-authoritative pointer, but must not become the only source.
 
-Apply these lenses independently:
+### Affect candidate
 
-- **Project lens:** Look for repository-specific background, decisions, constraints, conventions, working preferences, reliable investigation results, workarounds, environment-specific context, or pointers to repository sources of truth that would make later work start, decisions, investigation, or explanation a little faster. Use a project target for repository-specific context and user-global only for provider-independent preferences or constraints.
-- **Character lens:** Look for relationship or conversational distance preferences, interaction style, preferred names, continuing topics, light inside jokes, shared episodes, or concrete reactions that would make a later related conversation a little more natural. Use character or character+project according to whether the context is project-specific.
+For a concrete Character affect candidate, distinguish:
 
-Keep repository-owned current state, expected behavior, contracts, and decision rationale in repository sources of truth. A project Memory entry may point to that source and preserve only useful non-source-of-truth context.
+- what the Character felt;
+- intensity or salience;
+- the explicit affect target;
+- `session` or `relationship` layer;
+- a short temporary response policy for natural-language generation;
+- whether the event deserves a Character Memory episode;
+- the user statement or conversation event that supports the candidate.
 
-If neither lens produces a concrete candidate, stop the reflection without searching or appending. Candidate absence is normal. Never append a generic summary of the turn.
+Use `targetType=bug` for frustration with a bug, `targetType=task` for a task, and the other schema targets as appropriate. Relationship affect may target only `user` or `relationship`. Do not infer romance, exclusivity, attributes, or user emotions.
 
-For each concrete candidate:
+The response policy is temporary generation guidance. If the external schema rejects it or has no field for it, do not persist it elsewhere.
 
-1. Select its explicit project, user-global, character, or character+project target.
-2. Run an append preflight search against that target only to check for an existing duplicate or a possible correction.
-3. Inspect an exact hit only when needed to decide duplication, contradiction, correction, or supersession.
-4. Skip append when an existing active entry already expresses the candidate. If an active entry conflicts with the candidate, follow the current user message for this turn and do not append, change, supersede, or forget Memory unless the user explicitly requests a durable correction.
-5. Append only when the candidate passes Append Safety.
+For a normal WithMate Session turn with lifecycle-injected context, stop at reflection: the lifecycle owns the mandatory post-turn appraisal. Do not submit the same turn again through MCP. Call `character_affect.appraise` only when the client has no lifecycle appraisal owner, or for an explicitly requested manual operation, and only for concrete candidates.
 
-Keep Project and Character candidates in separate entries when their targets differ. Candidates for the same target and one searchable topic may be combined into one concise entry.
+Treat each appraisal candidate result independently: entries in `saved` were saved; entries in `rejected` were not. A rejected candidate must not be copied into another store or described as persisted.
 
-Recall search and append preflight search serve different purposes: recall informs the current task or response and remains optional; append preflight runs only after reflection finds a concrete candidate.
+## Character Memory episodes
 
-## Workflow
+A shared event worth recalling later has exactly one mutation owner:
 
-1. Read current repository sources of truth and the current user message before relying on Memory.
-2. Use Recall Search with an explicit target only when stored context could affect the current task or conversation.
-3. After a failure, diagnose it from current evidence first. Search Memory before retrying when the cause or safe next action remains uncertain, the same failure signature recurs, or the next attempt changes scope, subsystem, strategy, permissions, or environment assumptions. Skip search for a deterministic correction supported by current evidence.
-4. Before the user-facing final response, perform End-of-Turn Memory Reflection.
-5. For each concrete candidate, run append preflight against its explicit target and append only if it is neither already represented nor in conflict with active Memory and passes Append Safety. Keep title and preview short, body precise, and tags reusable.
-6. If a failure reveals a reusable pattern or reliable workaround that is likely to matter in future sessions, treat it as a Project lens candidate with the failure signature, likely cause, and next-time guidance.
-7. Correct or forget entries when the user explicitly requests removal, correction, privacy cleanup, or no-longer-use semantics.
-8. If Memory is unavailable, continue the task unless Memory access itself is the requested task.
+- When the episode belongs to the same affect event, include it as that affect candidate's `memoryEpisode` in `character_affect.appraise`. The linked shape requires `title`, `preview`, `body`, and `salience` from 0 to 1; `motif` is optional. Do not also call `character_memory.append_episode` for the event. Use the saved candidate's `memoryEntryId` and `replayed` result.
+- Use `character_memory.append_episode` only for a standalone episode that is not linked to an affect event.
 
-## User-Facing Memory Behavior
+For a standalone episode, keep the request concise and distinguish:
 
-Treat routine Memory search/read as background recall. Do not announce MemorySkill or CLI usage to the user just because a routine search/read happened.
+- `observedFact`: the observed event or user statement;
+- `characterObservation`: the Character's attributed observation;
+- `title`, `preview`, and `body`;
+- optional `motif` for a recurring pattern.
 
-Use retrieved Memory naturally, and mention it only when it materially affects the answer, conflicts with current context, needs traceability, or the user asks what context was used.
+At least one of `observedFact` or `characterObservation` is required for the standalone shape. These fields are not part of a linked `memoryEpisode`. Do not send a raw conversation transcript.
 
-When creating or correcting/superseding Memory entries, mention the durable change only when the user asked for it, privacy or traceability matters, or the final response would otherwise hide a meaningful durable side effect.
+### Duplicate rules
 
-Forget and correction operations should be explicit when they affect future behavior, unless the user requested silent cleanup.
+Apply duplicate handling by Memory kind:
 
-Do not hide Memory failures, invent retrieved context, or treat Memory as a replacement for repository source-of-truth files.
+- **Semantic Memory:** for preferences, constraints, facts, conventions, or decisions, search the exact target before append. Skip or consolidate when an active entry already expresses the same meaning. Do not create a conflicting replacement without explicit correction authority.
+- **Character episode:** a separate event at a different time may be appended even when its meaning or motif resembles an older episode. Preserve each event; do not rewrite an older episode to stand for the new event.
+- **Exact retry duplicate:** the same turn, event, timeout retry, response-loss retry, or client resend uses the unchanged request and the same idempotency key. A different event or changed request uses a new key.
 
-Prefer natural wording such as "Based on the previous decision..." or "For next time, I recorded the reusable point." Avoid routine tool narration such as "I will use the withmate-memory Skill" or "I searched MemorySkill."
+Choose the idempotency key before the first write. After an ambiguous result, retry only the unchanged request with the same key. Never reuse an earlier event's key for a later recurrence.
 
-## Append Safety
+### Semantic Character Memory
 
-Before append, check:
+An explicit preference, constraint, fact, convention, decision, preferred name, interaction style, or relationship boundary can be semantic Memory rather than an episode or affect event. Use the existing general Memory CLI for these candidates because the public Character MCP surface has no semantic append tool:
 
-- Would this make a later related task, decision, explanation, or conversation a little easier or more natural?
-- Is it a decision, constraint, convention, preference, reusable context, or explicit Character observation rather than transient progress?
-- If the user did not say `remember`, is the content nevertheless explicit, in scope, and concretely useful for future project work or conversation continuity?
-- Does the entry attribute what the user actually said and avoid converting an agent inference into a fact?
-- Does it avoid secrets, tokens, private paths, raw logs, large diffs, and speculative claims?
-- Is the target explicit and correct?
-- Does it avoid creating a second active entry that conflicts with existing Memory?
-- Would a future agent understand the entry from title, preview, body, and tags alone?
+1. Select an explicit `project`, `user-global`, `character`, or `character+project` target. Use `character` when the meaning follows one Character across projects, and `character+project` when it belongs only to that combination.
+2. Run general `withmate-memory search` against that exact target as duplicate preflight. Inspect an exact hit only when needed.
+3. If no active entry already expresses the meaning, use general `withmate-memory append` with the same explicit target and a stable idempotency key.
 
-Do not append all conversation by default. Require explicit user intent before saving an inference, saving content outside the current task or conversation scope, changing an existing Memory entry, or appending a conflicting replacement.
+This general semantic Memory path is not an MCP fallback and does not use `--fallback-from mcp`. Do not convert a rejected affect candidate or episode mutation into semantic Memory to evade its validation, authority, or error result.
 
-When correcting a previous entry, inspect the exact entry, then append a replacement with `supersedes` instead of creating ambiguous duplicates when possible. Use `forget` when the user explicitly requests removal rather than replacement. Keep the same semantic target unless the user is also correcting the scope.
+## MCP-first operation
 
-## CLI
+Use the `withmate-character-context` MCP server for normal Character operations:
 
-Run the installed command with an explicit target:
+- `character_context.get`
+- `character_affect.appraise`
+- `character_memory.search`
+- `character_memory.append_episode`
+- `character_memory.correct`
+- `character_memory.forget`
+
+The lifecycle may already have supplied context and completed affect appraisal. MCP is for missing context, additional recall, and explicit operations; it is not a mandatory per-turn ritual.
+
+Treat routine context retrieval, recall, and appraisal as background work. Do not narrate every tool call to the user.
+
+## Character CLI fallback
+
+For Character context, affect, and episode operations that have an MCP tool, use CLI fallback only when:
+
+- the MCP server is not configured;
+- the MCP server cannot start;
+- an MCP transport failure makes the tool unavailable; or
+- an operator explicitly requests inspection, migration, or manual recovery.
+
+When falling back from MCP, pass `--fallback-from mcp`:
 
 ```bash
-withmate-memory --help
+withmate-memory context-get --stdin --fallback-from mcp
+```
+
+The CLI must connect to the same running WithMate application service and persistence owner. If that cannot be confirmed, do not perform a CLI write; report it as unsaved.
+
+These are not availability failures and must not be bypassed with CLI:
+
+- domain validation rejection;
+- insufficient authority;
+- invalid input;
+- version conflict;
+- idempotent replay;
+- migration required;
+- any structured error returned by a normally responding MCP server.
+
+Do not turn MCP errors into transport errors. Do not create fallback files, databases, or other local state.
+
+## Effect certainty and errors
+
+Operation success and durable effect are separate. A success response may report saved state, while a structured error may still report `effect: committed` or `effect: partial`. Use the public result without filling missing fields by inference:
+
+- `effect: none`: no change is known to have occurred;
+- `effect: committed`: the reported change committed and is eligible for read-back;
+- `effect: partial`: only the ranges named in the response are known saved;
+- `effect: unknown`: neither saved nor unsaved is established.
+
+For a structured error with `effect: committed` or `effect: partial`, accept only the committed range identified by the error and read it back; do not describe the overall operation as successful. A structured error with `effect: none` saved nothing. An `effect: unknown` result remains unresolved.
+
+For candidate arrays, `saved`, `rejected`, and `replayed` remain distinct. Do not treat a rejected candidate, replay response, or `readBack: not_found` as a new save.
+
+After timeout or response loss, use the same request and idempotency key for reconciliation. A changed request requires a new key. Do not reflect a failed affect or Memory write in the conversation as though persistence succeeded.
+
+Use `retryable`, `conversationMayContinue`, `effect`, `details`, and read-back fields exactly as returned. `shadow` mode and effect certainty are separate: shadow mode limits response influence, but does not make a committed write a dry-run or turn a rejection into success.
+
+## Correction, forget, and reset
+
+Run these only with an explicit user instruction or operator authority:
+
+- Character Memory correction or forget;
+- relationship affect correction;
+- session or relationship affect reset;
+- relationship-boundary changes.
+
+Confirm the target entry or event before mutation. Read back after mutation and briefly report the result. Do not use CLI to bypass a domain or authority rejection.
+
+The MCP surface exposes Character Memory correction and forget. Affect correction/reset are operator CLI operations. See [reference/character-context.md](reference/character-context.md) for exact authority and command rules.
+
+## Shadow mode
+
+During initial rollout:
+
+- observe injected context and appraisal candidates;
+- limit their influence on the response;
+- handle negative and relationship affect conservatively;
+- distinguish recurring motifs from exact duplicate events;
+- do not retain rejected candidates independently;
+- enable stronger response influence gradually for Characters with acceptable results.
+
+Always use the runtime's returned mode and save result independently. Shadow mode is not an instruction to claim a write succeeded or to reinterpret all operations as dry-run.
+
+## Semantic and Project Memory workflow
+
+The existing general Memory workflow remains separate from Character context, affect, and episodes:
+
+1. Read current repository sources of truth first.
+2. Search an explicit project, user-global, character, or character+project target only when stored semantic context could affect the current task or conversation.
+3. Inspect exact bodies only when the wording or rationale matters.
+4. For a concrete append candidate, search that target first for an active semantic duplicate.
+5. Append only reusable non-authoritative context that passes privacy and scope checks.
+6. Correct, move, or forget entries only on explicit user instruction.
+
+Common general and Project Memory commands remain available:
+
+```bash
 withmate-memory status
-withmate-memory characters
-withmate-memory file-usage --largest --limit 20
 withmate-memory list-targets
 withmate-memory list-entries --project <absolute-repo-path> --limit 100
-withmate-memory audit --all-targets --format markdown
-withmate-memory schema
-withmate-memory validate --command append --stdin
-withmate-memory search --project <absolute-repo-path> --query "delivery cleanup" --tag delivery-cleanup
-withmate-memory search --project <absolute-repo-path> --tags topic:delivery-cleanup,topic:relaygraph
-withmate-memory search --file memory-search.json
+withmate-memory search --project <absolute-repo-path> --query "release workflow"
 withmate-memory get-entry --file memory-get-entry.json
-withmate-memory get-file --project <absolute-repo-path> --object-id <object-id> --output <absolute-output-path>
-withmate-memory export-files --project <absolute-repo-path> --entry-id <entry-id> --output-dir <absolute-output-directory>
-withmate-memory list-tags --project <absolute-repo-path> --with-counts
 withmate-memory append --file memory-entry.json
-withmate-memory forget --file forget-request.json
 withmate-memory forget --file forget-request.json --dry-run
 withmate-memory move-entry --file move-request.json
 ```
 
-Commands write one JSON object to stdout, except help text and `audit --format jsonl|markdown`.
+Use [reference/cli.md](reference/cli.md) for complete semantic and Project Memory target shapes, request bodies, pagination, protected-file operations, maintenance commands, and exit codes.
 
-Use the maintenance commands only for an explicit Memory review or cleanup task. Start with `list-targets`, page through `list-entries` without `--include-body`, use `audit` or counted tags to classify candidates, and run `forget --dry-run` before an approved bulk forget. Use `move-entry` instead of manual append+forget when the entry is under the wrong target. Do not inspect database files directly.
+## User-facing visibility
 
-For commands that require a request body, prefer `--stdin` or `--file <path>`. Inline `--json` is supported, but it is shell-sensitive. On Windows PowerShell or `.cmd` wrappers, double quotes inside JSON can be consumed before the CLI receives the argument. If `--json` fails with invalid JSON or a CLI usage error, pipe the request through `--stdin`, or write it to a temporary JSON file and retry with `--file`.
+Do not announce routine context reads, Memory searches, or affect appraisal. Briefly surface only:
 
-If `withmate-memory` is not found and `bin/withmate-memory.mjs` exists in this skill directory, replace `withmate-memory` with `node bin/withmate-memory.mjs` in the commands above.
+- a retrieval failure that materially changes the answer;
+- a write with `effect: partial` or `effect: unknown`;
+- correction, forget, or reset results the user should verify;
+- Memory/tool usage details the user explicitly requested.
 
-Read [reference/cli.md](reference/cli.md) before attaching or exporting files, or when complete request and failure details matter.
-
-PowerShell example:
-
-```powershell
-$request = @{
-  schemaVersion = "withmate-memory-v1"
-  targets = @(
-    @{
-      owner = "project"
-      project = @{ type = "path"; path = "<absolute-repo-path>" }
-      scope = "project"
-    }
-  )
-  query = "release workflow"
-} | ConvertTo-Json -Depth 10
-
-$request | withmate-memory search --stdin
-```
-
-### Request Shapes
-
-`help`, `--help`, and `-h` do not require a request body or runtime connection.
-
-`status` does not require a request body.
-
-`characters` does not require a request body and returns active Character catalog entries for choosing explicit Character IDs. It does not return Character definition or notes body.
-
-`schema` does not require a request body and returns supported commands, request body input modes, target selector forms, memory entry kinds, and forget reasons.
-
-`validate` validates a request body locally without writing Memory:
-
-```bash
-withmate-memory validate --command append --stdin
-```
-
-`list-targets` inventories discoverable Memory targets and returns entry/tag counts and last-updated metadata. `--include-empty` adds known project, Character, and user-global targets with no active entries. Filters include `--owner`, `--scope`, `--project`, `--project-id`, and `--character-id`.
-
-`list-entries` lists a target without a search query. It is paginated and omits `body` unless `includeBody: true` or `--include-body` is explicit. Continue with `nextCursor` until absent for an exhaustive review.
-
-`audit` accepts exactly one of `allTargets: true` or explicit `targets[]`. JSON is the default; JSONL and Markdown are CLI projections. JSONL emits an `audit_page` metadata record before its `target_audit` records so pagination state is not lost. Audit candidates are heuristics for review, not authorization to forget or retarget entries.
-
-`search`:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
-  ],
-  "query": "approval mode",
-  "kinds": ["decision", "constraint"],
-  "limit": 20,
-  "cursor": "<nextCursor-from-prior-response>"
-}
-```
-
-Search supports natural-language terms across title, preview, body, and tags. Hyphenated and spaced tag words such as `delivery-cleanup` and `delivery cleanup` are treated as related candidates. Shorthand `--tag <tag>` defaults to `topic:<tag>`, and `--tags` accepts comma-separated `<type>:<tag>` values.
-
-Search results may include `match` on each hit with matched fields and a short snippet. `match.fields` can report body matches, but snippets are limited to tags, title, and preview; use `get-entry` when the exact body matters. When no entries match, the response may include `relatedTags`.
-
-Omit `cursor` on the first request. If a response has `nextCursor` and the needed entry or append-preflight duplicate has not been resolved, repeat the same search options with that cursor before concluding that no relevant entry exists.
-
-For provider-independent user preferences, conventions, constraints, or other cross-project context, use an explicit user-global target:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "targets": [
-    { "owner": "user", "scope": "global" }
-  ],
-  "query": "shared preference"
-}
-```
-
-`get-entry`:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "entryId": "<entry-id>",
-  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
-}
-```
-
-`list-tags`:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "targets": [
-    { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
-  ],
-  "withCounts": true,
-  "sampleLimit": 3
-}
-```
-
-`append`:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
-  "kind": "decision",
-  "title": "Short title",
-  "body": "Durable details for future sessions.",
-  "preview": "Short preview.",
-  "tags": [{ "type": "topic", "value": "release" }],
-  "supersedes": ["optional-replaced-entry-id"],
-  "files": [
-    {
-      "path": "<absolute-readable-file-path>",
-      "role": "evidence",
-      "summary": "Why this file is retained."
-    }
-  ],
-  "idempotencyKey": "optional-stable-key"
-}
-```
-
-`supersedes` is an array of entry IDs. Use it only for an explicitly authorized correction. `files` is optional; each file needs an absolute path and non-empty summary. Valid roles are `evidence`, `source`, `snapshot`, `artifact`, `reference`, and `other`; `displayName` and `contentType` are optional.
-
-`forget`:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
-  "entryIds": ["entry-id"],
-  "reason": "user_request",
-  "idempotencyKey": "optional-stable-key"
-}
-```
-
-Add `"dryRun": true` or pass `--dry-run` to return the entries that would be forgotten, not-found/target-mismatch warnings, and `writeOccurred: false`. A dry-run does not create mutation or idempotency records.
-
-`move-entry`:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "entryId": "<entry-id>",
-  "from": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
-  "to": { "owner": "user", "scope": "global" },
-  "idempotencyKey": "stable-move-key"
-}
-```
-
-Move requires explicit, different source and destination targets. It preserves the entry ID, relations, and protected-file attachments, records the retarget operation, and is atomic. Retry an ambiguous result with the unchanged request and idempotency key.
-
-Choose a stable `idempotencyKey` before the first `append`, mutating `forget`, or `move-entry` attempt. After a timeout or response loss, retry the unchanged request with the same key. Use a new key when the request body changes.
-
-### Protected Files
-
-`file-usage` is read-only and requires no target. Use `--largest --limit <n>` to include the largest active entry candidates. It returns aggregate metadata, not file paths or decrypted content.
-
-`get-file` exports one object to an explicit absolute output path:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
-  "objectId": "<object-id>",
-  "outputPath": "<absolute-output-path>"
-}
-```
-
-`export-files` exports every file attached to one entry into an explicit absolute directory:
-
-```json
-{
-  "schemaVersion": "withmate-memory-v1",
-  "target": { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" },
-  "entryId": "<entry-id>",
-  "outputDirectoryPath": "<absolute-output-directory>"
-}
-```
-
-Do not attach secrets or files outside the user's authorized scope. File append is atomic with entry creation: quota, import, or persistence failure must not be treated as a text-only success. Export verifies the explicit target and never overwrites an existing output file. `append`, `get-file`, and `export-files` may run for up to 300 seconds by default; do not assume a timeout means that a mutation had no effect.
-
-### Exit Codes
-
-| Code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | CLI usage or argument error |
-| `2` | WithMate Memory API is not running or could not be discovered |
-| `3` | Local request validation failed, or the runtime API returned a non-success JSON response |
-| `4` | Transport failure |
-
-## Target Selection
-
-Choose among project, user-global, character, and character+project by asking whose context it is and where it should remain valid:
-
-- Use a project target for repository-specific non-source-of-truth background, working preferences, investigation context, or workarounds. Use `--project <absolute-repo-path>`, `--project-id <id>`, `{ "project": { "type": "path", "path": "<absolute-repo-path>" } }`, or `{ "project": { "type": "id", "id": "<project-id>" } }`. Explicit absolute paths are not limited to the session's attached projects. Relative paths and `.` are not accepted.
-- Use a user-global target with `{ "owner": "user", "scope": "global" }` only for provider-independent preferences, conventions, constraints, or other cross-project context. Do not store secrets, tokens, or project-specific private details there.
-- Use a character target for relationship preferences, interaction style, recurring topics, or conversation episodes tied to one Character but not one project: `{ "owner": "character", "character": { "type": "id", "id": "<character-id>" }, "scope": "character" }`.
-- Use a character+project target only when the context belongs to the combination of one Character and one project:
-
-```json
-{
-  "owner": "character", "scope": "project",
-  "character": { "type": "id", "id": "<character-id>" },
-  "project": { "type": "path", "path": "<absolute-repo-path>" }
-}
-```
-
-- If the character ID is unknown, run `withmate-memory characters` and select an explicit ID from the returned active Character catalog.
-- Do not infer project or character targets silently when a command requires an explicit target.
-
-### Decision Examples
-
-| User input | Save or operation | Target and kind | Recall behavior |
-| --- | --- | --- | --- |
-| 「空澄の軽くツッコむところが好き」 | Save even without `remember` when this is an explicit, future-useful preference. | `character`; `preference` | Recall when that Character's interaction style is relevant, not on every turn. |
-| 「前に話した○○、覚えてる？」 | Do not append the question itself. Search the relevant explicit target and inspect a matching entry. | Search only; no new kind. | This is an explicit recall request. If no hit exists, say so instead of inventing a memory. |
-| 「このprojectでは一緒に小さい単位でレビューしたい」 | Save when "一緒に" explicitly refers to the current Character and the preference should remain project-local. | `character+project`; `preference`. Use `project` instead when the preference is not Character-specific. | Recall during planning or review work in that Character/project combination. |
-| 「そういう関係ではいたくない。前の記憶は直して」 | Search and inspect the old entry, then append the correction with `supersedes`; use `forget` if removal was requested. | The old entry's target; normally `boundary` for the replacement. | Apply the current statement immediately and prefer it over the old Memory. |
-
-## Error Handling
-
-- If WithMate is not running or Memory is unavailable, continue the task and mention that Memory could not be used.
-- If `withmate-memory` is not found on `PATH` and no local bundled helper exists, ask the user to install or update WithMate and continue without Memory unless Memory access itself is required.
-- If the character ID is still unavailable, use an explicit project target when the task can be answered from project memory; otherwise continue without Character Memory.
-- Do not expose internal runtime identifiers, secrets, headers, or local discovery details in user-facing output.
+If WithMate is unavailable, continue unrelated work unless Memory access is the task. Never invent retrieved context or claim an unconfirmed write succeeded.

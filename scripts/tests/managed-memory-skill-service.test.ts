@@ -85,6 +85,46 @@ function normalizeLineEndings(value: string): string {
 }
 
 describe("ManagedMemorySkillService", () => {
+  it("配布元Skill documentationをCodex配置先へ同一内容で同期する", async () => {
+    const bundlePath = path.resolve("resources", "skills", WITHMATE_MEMORY_SKILL_NAME);
+    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
+    try {
+      const settings = createDefaultAppSettings();
+      settings.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: rootPath,
+        skillRelativePath: "skills",
+        instructionRelativePath: "",
+      };
+      const service = new ManagedMemorySkillService({
+        bundledSkillPath: bundlePath,
+        getAppSettings: () => settings,
+        getAppVersion: () => "6.3.19-test",
+        platform: "win32",
+      });
+
+      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "installed");
+      const installedPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
+      for (const relativePath of [
+        "SKILL.md",
+        path.join("reference", "character-context.md"),
+        path.join("reference", "cli.md"),
+      ]) {
+        assert.equal(
+          await readFile(path.join(installedPath, relativePath), "utf8"),
+          await readFile(path.join(bundlePath, relativePath), "utf8"),
+          `${relativePath} must match the distributed source`,
+        );
+      }
+      const marker = JSON.parse(await readFile(path.join(installedPath, ".withmate-managed-skill.json"), "utf8"));
+      assert.equal(marker.bundleVersion, "6.3.19-test");
+      assert.equal((await service.syncConfiguredProviderSkills())[0]?.status, "unchanged");
+    } finally {
+      await rm(rootPath, { recursive: true, force: true });
+    }
+  });
+
   it("設定済み provider skill root に Skill documentation と managed marker を install する", async () => {
     const bundlePath = await createBundle();
     const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
@@ -113,6 +153,8 @@ describe("ManagedMemorySkillService", () => {
       assert.match(await readFile(path.join(skillPath, ".withmate-managed-skill.json"), "utf8"), /"managedBy": "WithMate"/);
       assert.equal(await pathExists(path.join(skillPath, "bin")), false);
       assert.equal(await readFile(path.join(skillPath, "reference", "cli.md"), "utf8"), "# CLI\n");
+      const marker = JSON.parse(await readFile(path.join(skillPath, ".withmate-managed-skill.json"), "utf8"));
+      assert.equal(marker.bundleVersion, "5.0.0-test");
     } finally {
       await rm(bundlePath, { recursive: true, force: true });
       await rm(rootPath, { recursive: true, force: true });
