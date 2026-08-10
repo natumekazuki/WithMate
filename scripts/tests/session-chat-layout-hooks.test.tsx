@@ -312,7 +312,7 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
   }
 });
 
-test("useSessionMessageListFollowing は非表示から復帰した chat を末尾追従へ戻す", async () => {
+test("useSessionMessageListFollowing は上方向scrollで追従を止め、非表示からの復帰時に戻す", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -381,6 +381,30 @@ test("useSessionMessageListFollowing は非表示から復帰した chat を末�
     Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 1_000 });
     Object.defineProperty(messageList, "clientHeight", { configurable: true, value: 200 });
     await act(async () => {
+      messageList.scrollTop = 800;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      messageList.scrollTop = 760;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "false");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "while-reading" }));
+    });
+    assert.equal(scrollToBottomCount, 1);
+
+    await act(async () => {
+      messageList.scrollTop = 800;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "true");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "at-bottom-update" }));
+    });
+    assert.equal(scrollToBottomCount, 2);
+
+    await act(async () => {
       messageList.scrollTop = 300;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
@@ -389,12 +413,12 @@ test("useSessionMessageListFollowing は非表示から復帰した chat を末�
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: false, scrollSignature: "preview-update" }));
     });
-    assert.equal(scrollToBottomCount, 1);
+    assert.equal(scrollToBottomCount, 2);
 
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "preview-update" }));
     });
-    assert.equal(scrollToBottomCount, 1);
+    assert.equal(scrollToBottomCount, 2);
     assert.equal(following.textContent, "true");
   } finally {
     await act(async () => root?.unmount());

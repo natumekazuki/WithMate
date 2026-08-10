@@ -1,6 +1,6 @@
 # WithMate Character Context MCP and CLI Reference
 
-This reference describes the Character context interface bundled by WithMate. The installed managed Skill's `.withmate-managed-skill.json` contains `bundleVersion`, which identifies the WithMate release that supplied the Skill. In a source checkout, `package.json` is the release version anchor.
+This reference describes the Character context interface bundled by WithMate. The installed managed Skill's `.withmate-managed-skill.json` contains `bundleVersion`, which identifies the packaged WithMate release that supplied the Skill. Development runs from a source checkout do not install or update the global managed Skill.
 
 ## Contract versions
 

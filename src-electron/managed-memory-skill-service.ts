@@ -14,6 +14,7 @@ export type ManagedMemorySkillSyncStatus =
   | "installed"
   | "updated"
   | "unchanged"
+  | "skipped-unpackaged"
   | "skipped-unconfigured"
   | "skipped-collision"
   | "failed";
@@ -38,6 +39,7 @@ export type ManagedMemorySkillServiceDeps = {
   bundledSkillPath: string;
   getAppSettings(): AppSettings;
   getAppVersion(): string;
+  isPackagedApp(): boolean;
   platform?: NodeJS.Platform;
   shouldSyncSkillMarkdownOnly?: () => boolean | Promise<boolean>;
 };
@@ -67,6 +69,15 @@ export class ManagedMemorySkillService {
 
     const resolvedSkillRootPath = path.resolve(normalizedSkillRootPath);
     const skillPath = path.join(resolvedSkillRootPath, WITHMATE_MEMORY_SKILL_NAME);
+    if (!this.deps.isPackagedApp()) {
+      return {
+        providerId,
+        skillRootPath: resolvedSkillRootPath,
+        skillPath,
+        status: "skipped-unpackaged",
+      };
+    }
+
     try {
       const marker = await this.readMarker(skillPath);
       if (marker === "unmanaged") {

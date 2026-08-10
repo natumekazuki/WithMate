@@ -11,6 +11,7 @@ import {
   SessionContextPane,
   SessionComposerExpanded,
   SessionMessageColumn,
+  shouldAdjustSessionMessageScrollPosition,
   type SessionMessageColumnProps,
 } from "../../src/session-components.js";
 import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
@@ -980,6 +981,24 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
   } finally {
     await mounted.cleanup();
   }
+});
+
+test("SessionMessageColumn は上方向scroll中のrow計測補正だけを抑止する", () => {
+  assert.equal(shouldAdjustSessionMessageScrollPosition({
+    itemStart: 1_000,
+    scrollOffset: 4_000,
+    scrollDirection: "backward",
+  }), false);
+  assert.equal(shouldAdjustSessionMessageScrollPosition({
+    itemStart: 1_000,
+    scrollOffset: 4_000,
+    scrollDirection: null,
+  }), true);
+  assert.equal(shouldAdjustSessionMessageScrollPosition({
+    itemStart: 5_000,
+    scrollOffset: 4_000,
+    scrollDirection: null,
+  }), false);
 });
 
 test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従する", async () => {

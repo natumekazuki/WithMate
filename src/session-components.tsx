@@ -495,6 +495,14 @@ const SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT = 720;
 const SESSION_MESSAGE_OVERSCAN = 6;
 const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 
+export function shouldAdjustSessionMessageScrollPosition(input: {
+  itemStart: number;
+  scrollOffset: number;
+  scrollDirection: "forward" | "backward" | null;
+}): boolean {
+  return input.scrollDirection !== "backward" && input.itemStart < input.scrollOffset;
+}
+
 type MessageArtifactFoldSection = "files" | "operation";
 
 function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
@@ -2466,8 +2474,8 @@ export function SessionMessageColumn({
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
     getItemKey: getMessageKey,
     overscan: SESSION_MESSAGE_OVERSCAN,
-    anchorTo: "end",
-    followOnAppend: true,
+    anchorTo: isMessageListFollowing ? "end" : "start",
+    followOnAppend: isMessageListFollowing,
     scrollEndThreshold: SESSION_MESSAGE_SCROLL_END_THRESHOLD,
     initialRect: { width: 0, height: SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT },
     initialOffset: Math.max(
@@ -2477,6 +2485,13 @@ export function SessionMessageColumn({
     directDomUpdates: true,
     directDomUpdatesMode: "transform",
   });
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
+    shouldAdjustSessionMessageScrollPosition({
+      itemStart: item.start,
+      scrollOffset: instance.scrollOffset ?? 0,
+      scrollDirection: instance.scrollDirection,
+    })
+  );
   const virtualMessages = messageVirtualizer.getVirtualItems();
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
