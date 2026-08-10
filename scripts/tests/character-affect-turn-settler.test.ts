@@ -12,6 +12,10 @@ import {
   type CharacterContextResponse,
 } from "../../src/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
+import {
+  CharacterAffectTurnRetryScheduler,
+  settleCharacterAffectTurnOrScheduleRetry,
+} from "../../src-electron/character-affect-turn-retry-scheduler.js";
 import { settleCharacterAffectTurnWithRetry } from "../../src-electron/character-affect-turn-settler.js";
 
 function context(version: string): CharacterContextResponse {
@@ -101,7 +105,211 @@ function settle(
   });
 }
 
+function createScheduledTaskQueue() {
+  const tasks: Array<{ handle: symbol; delayMs: number; task: () => void | Promise<void> }> = [];
+  return {
+    tasks,
+    scheduleTask(task: () => void | Promise<void>, delayMs: number): symbol {
+      const handle = Symbol("scheduled-task");
+      tasks.push({ handle, delayMs, task });
+      return handle;
+    },
+    cancelTask(handle: unknown): void {
+      const index = tasks.findIndex((item) => item.handle === handle);
+      if (index >= 0) {
+        tasks.splice(index, 1);
+      }
+    },
+    async runNext(): Promise<void> {
+      const next = tasks.shift();
+      assert.ok(next, "a retry task must be scheduled");
+      await next.task();
+    },
+  };
+}
+
 describe("settleCharacterAffectTurnWithRetry", () => {
+  it("direct settlementがthrowしてもpendingをretry schedulerへ引き渡す", async () => {
+    const scheduled = createScheduledTaskQueue();
+    let drainCalls = 0;
+    const scheduler = new CharacterAffectTurnRetryScheduler({
+      scheduleTask: scheduled.scheduleTask,
+      cancelTask: scheduled.cancelTask,
+      onError(error) {
+        throw error;
+      },
+      async drain() {
+        drainCalls += 1;
+        return false;
+      },
+    });
+    await assert.rejects(
+      settleCharacterAffectTurnOrScheduleRetry({
+        async settle() {
+          throw new Error("provider timeout");
+        },
+        scheduleRetry() {
+          scheduler.request({ resetBackoff: true });
+        },
+      }),
+      /provider timeout/,
+    );
+    assert.equal(scheduled.tasks.length, 1);
+    await scheduled.runNext();
+    assert.equal(drainCalls, 1);
+    assert.equal(scheduled.tasks.length, 0);
+    scheduler.dispose();
+  });
+
+  it("unknownからversion conflictになったpendingを予約済みdrainでrestartなしにsettledへ収束させる", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-scheduled-retry-"));
+    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
+    const correlationId = "turn:session-a:audit:scheduled-retry";
+    const scheduled = createScheduledTaskQueue();
+    const appraisedKeys: string[] = [];
+    let appraisalCount = 0;
+    let drainCount = 0;
+    try {
+      enqueue(storage, correlationId);
+      const scheduler = new CharacterAffectTurnRetryScheduler({
+        initialRetryDelayMs: 10,
+        maximumRetryDelayMs: 40,
+        scheduleTask: scheduled.scheduleTask,
+        cancelTask: scheduled.cancelTask,
+        onError(error) {
+          throw error;
+        },
+        async drain() {
+          drainCount += 1;
+          const result = await settle(storage, correlationId, {
+            async getContext() {
+              return context(`v-${drainCount}`);
+            },
+            async evaluate(_current, idempotencyPrefix) {
+              return [candidate(`${idempotencyPrefix}:0`, `generation ${drainCount}`)];
+            },
+            async appraise(_expectedVersion, candidates) {
+              appraisalCount += 1;
+              appraisedKeys.push(candidates[0]!.idempotencyKey);
+              if (appraisalCount === 1) {
+                return createCharacterContextError("storage_unavailable", "response lost", {
+                  retryable: true,
+                  conversationMayContinue: true,
+                  effect: "unknown",
+                });
+              }
+              if (appraisalCount === 2) {
+                return createCharacterContextError("version_conflict", "uncommitted generation", {
+                  retryable: true,
+                  conversationMayContinue: true,
+                  effect: "none",
+                });
+              }
+              return success();
+            },
+          });
+          return result.status === "pending";
+        },
+      });
+
+      scheduler.request({ immediate: true, resetBackoff: true });
+      await scheduled.runNext();
+      assert.equal(appraisalCount, 1);
+      assert.equal(scheduled.tasks.length, 1);
+      await scheduled.runNext();
+      assert.equal(appraisalCount, 2);
+      assert.equal(storage.getPending(correlationId)?.evaluationAttempt, 1);
+      assert.equal(scheduled.tasks.length, 1);
+      await scheduled.runNext();
+
+      assert.equal(storage.getPending(correlationId), null);
+      assert.equal(appraisalCount, 3);
+      assert.equal(drainCount, 3);
+      assert.deepEqual(appraisedKeys, [
+        `${correlationId}:0`,
+        `${correlationId}:0`,
+        `${correlationId}:evaluation:1:0`,
+      ]);
+      assert.equal(scheduled.tasks.length, 0);
+      scheduler.dispose();
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retry schedulerは同時要求をcoalesceし一回のdrainで一つのappraisalだけ実行する", async () => {
+    const scheduled = createScheduledTaskQueue();
+    let drainCount = 0;
+    const scheduler = new CharacterAffectTurnRetryScheduler({
+      initialRetryDelayMs: 10,
+      maximumRetryDelayMs: 40,
+      scheduleTask: scheduled.scheduleTask,
+      cancelTask: scheduled.cancelTask,
+      onError(error) {
+        throw error;
+      },
+      async drain() {
+        drainCount += 1;
+        return drainCount < 3;
+      },
+    });
+
+    scheduler.request({ immediate: true });
+    scheduler.request({ immediate: true });
+    assert.equal(scheduled.tasks.length, 1);
+    await scheduled.runNext();
+    assert.equal(drainCount, 1);
+    assert.equal(scheduled.tasks.length, 1);
+    assert.equal(scheduled.tasks[0]!.delayMs, 10);
+    await scheduled.runNext();
+    assert.equal(drainCount, 2);
+    assert.equal(scheduled.tasks[0]!.delayMs, 20);
+    await scheduled.runNext();
+    assert.equal(drainCount, 3);
+    assert.equal(scheduled.tasks.length, 0);
+    scheduler.dispose();
+  });
+
+  it("drain実行中の追加要求も次の一回へcoalesceする", async () => {
+    const scheduled = createScheduledTaskQueue();
+    let drainCount = 0;
+    let releaseFirstDrain: (() => void) | null = null;
+    const firstDrainWaiting = new Promise<void>((resolve) => {
+      releaseFirstDrain = resolve;
+    });
+    const scheduler = new CharacterAffectTurnRetryScheduler({
+      initialRetryDelayMs: 10,
+      maximumRetryDelayMs: 40,
+      scheduleTask: scheduled.scheduleTask,
+      cancelTask: scheduled.cancelTask,
+      onError(error) {
+        throw error;
+      },
+      async drain() {
+        drainCount += 1;
+        if (drainCount === 1) {
+          await firstDrainWaiting;
+        }
+        return false;
+      },
+    });
+
+    scheduler.request({ immediate: true });
+    const running = scheduled.runNext();
+    scheduler.request();
+    scheduler.request();
+    releaseFirstDrain!();
+    await running;
+
+    assert.equal(drainCount, 1);
+    assert.equal(scheduled.tasks.length, 1);
+    await scheduled.runNext();
+    assert.equal(drainCount, 2);
+    assert.equal(scheduled.tasks.length, 0);
+    scheduler.dispose();
+  });
+
   it("effect:noneのversion conflictだけ最新contextで再評価し、別idempotency namespaceを使う", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settler-version-"));
     const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
@@ -111,7 +319,7 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     let appraisalCount = 0;
     try {
       enqueue(storage, correlationId);
-      const result = await settle(storage, correlationId, {
+      const deps = {
         async getContext() {
           contextReadCount += 1;
           return context(`v${contextReadCount}`);
@@ -131,10 +339,18 @@ describe("settleCharacterAffectTurnWithRetry", () => {
           }
           return success();
         },
-      });
+      };
+      const firstResult = await settle(storage, correlationId, deps);
+      assert.equal(firstResult.status, "pending");
+      assert.deepEqual(prefixes, [correlationId]);
+      assert.equal(appraisalCount, 1);
+      assert.equal(storage.getPending(correlationId)?.evaluationAttempt, 1);
+      assert.equal(storage.getPending(correlationId)?.evaluation, null);
 
+      const result = await settle(storage, correlationId, deps);
       assert.equal(result.status, "settled");
       assert.deepEqual(prefixes, [correlationId, `${correlationId}:evaluation:1`]);
+      assert.equal(appraisalCount, 2);
       assert.equal(storage.getPending(correlationId), null);
     } finally {
       storage.close();
@@ -142,12 +358,13 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     }
   });
 
-  it("effect:noneの再評価は再起動をまたいでも一度だけで、2回目のconflictはcandidateを維持する", async () => {
+  it("effect:noneのversion conflictが再評価後も続く場合、restartをまたぐretry generationでsettledへ収束する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settler-durable-retry-"));
     const dbPath = path.join(directory, "settlement.db");
     const correlationId = "turn:session-a:audit:durable-retry";
     const prefixes: string[] = [];
     let first: CharacterAffectTurnSettlementStorage | null = null;
+    let second: CharacterAffectTurnSettlementStorage | null = null;
     let recovered: CharacterAffectTurnSettlementStorage | null = null;
     try {
       first = new CharacterAffectTurnSettlementStorage(dbPath);
@@ -169,21 +386,21 @@ describe("settleCharacterAffectTurnWithRetry", () => {
         },
       });
       assert.equal(firstResult.status, "pending");
-      assert.deepEqual(prefixes, [correlationId, `${correlationId}:evaluation:1`]);
+      assert.deepEqual(prefixes, [correlationId]);
       const persisted = first.getPending(correlationId);
       assert.equal(persisted?.evaluationAttempt, 1);
-      assert.deepEqual(persisted?.evaluation?.observedEffects, ["none"]);
-      const persistedCandidate = persisted?.evaluation?.candidates;
+      assert.equal(persisted?.evaluation, null);
       first.close();
       first = null;
 
-      recovered = new CharacterAffectTurnSettlementStorage(dbPath);
-      const recoveredResult = await settle(recovered, correlationId, {
+      second = new CharacterAffectTurnSettlementStorage(dbPath);
+      const secondResult = await settle(second, correlationId, {
         async getContext() {
-          throw new Error("durable retry budget must prevent another context fetch");
+          return context("v2");
         },
-        async evaluate() {
-          throw new Error("durable retry budget must prevent another evaluation");
+        async evaluate(_current, idempotencyPrefix) {
+          prefixes.push(idempotencyPrefix);
+          return [candidate(`${idempotencyPrefix}:0`, "evaluation 2")];
         },
         async appraise() {
           return createCharacterContextError("version_conflict", "still stale", {
@@ -193,12 +410,37 @@ describe("settleCharacterAffectTurnWithRetry", () => {
           });
         },
       });
-      assert.equal(recoveredResult.status, "pending");
-      assert.equal(recovered.getPending(correlationId)?.evaluationAttempt, 1);
-      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.candidates, persistedCandidate);
-      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.observedEffects, ["none", "none"]);
+      assert.equal(secondResult.status, "pending");
+      assert.deepEqual(prefixes, [correlationId, `${correlationId}:evaluation:1`]);
+      assert.equal(second.getPending(correlationId)?.evaluationAttempt, 2);
+      assert.equal(second.getPending(correlationId)?.evaluation, null);
+      second.close();
+      second = null;
+
+      recovered = new CharacterAffectTurnSettlementStorage(dbPath);
+      const recoveredResult = await settle(recovered, correlationId, {
+        async getContext() {
+          return context("v3");
+        },
+        async evaluate(_current, idempotencyPrefix) {
+          prefixes.push(idempotencyPrefix);
+          return [candidate(`${idempotencyPrefix}:0`, "evaluation 3")];
+        },
+        async appraise() {
+          return success();
+        },
+      });
+      assert.equal(recoveredResult.status, "settled");
+      assert.deepEqual(prefixes, [
+        correlationId,
+        `${correlationId}:evaluation:1`,
+        `${correlationId}:evaluation:2`,
+      ]);
+      assert.equal(new Set(prefixes).size, prefixes.length);
+      assert.equal(recovered.getPending(correlationId), null);
     } finally {
       recovered?.close();
+      second?.close();
       first?.close();
       await rm(directory, { recursive: true, force: true });
     }
@@ -261,12 +503,14 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     }
   });
 
-  it("unknown後にeffect:noneのversion conflictを受けても保存済みcandidateを再評価しない", async () => {
+  it("unknown後の同一candidate retryがeffect:none version conflictなら新generationへ進みsettledへ収束する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settler-ambiguous-conflict-"));
     const dbPath = path.join(directory, "settlement.db");
     const correlationId = "turn:session-a:audit:ambiguous-conflict";
     let first: CharacterAffectTurnSettlementStorage | null = null;
+    let reconcile: CharacterAffectTurnSettlementStorage | null = null;
     let recovered: CharacterAffectTurnSettlementStorage | null = null;
+    const appraisedKeys: string[] = [];
     try {
       first = new CharacterAffectTurnSettlementStorage(dbPath);
       enqueue(first, correlationId);
@@ -277,7 +521,8 @@ describe("settleCharacterAffectTurnWithRetry", () => {
         async evaluate(_current, idempotencyPrefix) {
           return [candidate(`${idempotencyPrefix}:0`)];
         },
-        async appraise() {
+        async appraise(_expectedVersion, candidates) {
+          appraisedKeys.push(candidates[0]!.idempotencyKey);
           return createCharacterContextError("storage_unavailable", "response lost", {
             retryable: true,
             conversationMayContinue: true,
@@ -290,15 +535,17 @@ describe("settleCharacterAffectTurnWithRetry", () => {
       first.close();
       first = null;
 
-      recovered = new CharacterAffectTurnSettlementStorage(dbPath);
-      const recoveredResult = await settle(recovered, correlationId, {
+      reconcile = new CharacterAffectTurnSettlementStorage(dbPath);
+      const reconcileResult = await settle(reconcile, correlationId, {
         async getContext() {
           throw new Error("ambiguous appraisal must not fetch a new context");
         },
         async evaluate() {
           throw new Error("ambiguous appraisal must not replace candidate identity");
         },
-        async appraise() {
+        async appraise(_expectedVersion, candidates) {
+          assert.deepEqual(candidates, persistedCandidate);
+          appraisedKeys.push(candidates[0]!.idempotencyKey);
           return createCharacterContextError("version_conflict", "reconcile conflict", {
             retryable: true,
             conversationMayContinue: true,
@@ -306,12 +553,35 @@ describe("settleCharacterAffectTurnWithRetry", () => {
           });
         },
       });
-      assert.equal(recoveredResult.status, "pending");
-      assert.equal(recovered.getPending(correlationId)?.evaluationAttempt, 0);
-      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.candidates, persistedCandidate);
-      assert.deepEqual(recovered.getPending(correlationId)?.evaluation?.observedEffects, ["unknown", "none"]);
+      assert.equal(reconcileResult.status, "pending");
+      assert.equal(reconcile.getPending(correlationId)?.evaluationAttempt, 1);
+      assert.equal(reconcile.getPending(correlationId)?.evaluation, null);
+      reconcile.close();
+      reconcile = null;
+
+      recovered = new CharacterAffectTurnSettlementStorage(dbPath);
+      const recoveredResult = await settle(recovered, correlationId, {
+        async getContext() {
+          return context("v2");
+        },
+        async evaluate(_current, idempotencyPrefix) {
+          return [candidate(`${idempotencyPrefix}:0`, "post-reconcile evaluation")];
+        },
+        async appraise(_expectedVersion, candidates) {
+          appraisedKeys.push(candidates[0]!.idempotencyKey);
+          return success();
+        },
+      });
+      assert.equal(recoveredResult.status, "settled");
+      assert.deepEqual(appraisedKeys, [
+        `${correlationId}:0`,
+        `${correlationId}:0`,
+        `${correlationId}:evaluation:1:0`,
+      ]);
+      assert.equal(recovered.getPending(correlationId), null);
     } finally {
       recovered?.close();
+      reconcile?.close();
       first?.close();
       await rm(directory, { recursive: true, force: true });
     }

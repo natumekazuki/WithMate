@@ -11,6 +11,35 @@ import {
 import { openAppDatabase } from "../../src-electron/sqlite-connection.js";
 
 describe("CharacterAffectTurnSettlementStorage", () => {
+  it("Session commit前のrowをready drainから隠し、前processの未準備rowだけstartup recoveryへ返す", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-ready-"));
+    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
+    const correlationId = "turn:session-a:audit:ready";
+    try {
+      storage.enqueue({
+        correlationId,
+        characterId: "character-a",
+        sessionId: "session-a",
+        userMessage: "user",
+        assistantMessage: "assistant",
+        assistantMessageIndex: 1,
+        occurredAt: "2026-08-09T04:00:00.000Z",
+      });
+      assert.deepEqual(storage.listReadyPending(), []);
+      assert.equal(storage.listUnreadyPendingBefore("9999-12-31T23:59:59.999Z").length, 1);
+      assert.equal(storage.listUnreadyPendingBefore("0000-01-01T00:00:00.000Z").length, 0);
+
+      assert.deepEqual(storage.markReady(correlationId), { updated: true });
+      assert.equal(storage.listReadyPending()[0]?.correlationId, correlationId);
+      assert.notEqual(storage.listReadyPending()[0]?.readyAt, null);
+      assert.deepEqual(storage.listUnreadyPendingBefore("9999-12-31T23:59:59.999Z"), []);
+      assert.deepEqual(storage.markReady("missing-correlation"), { updated: false });
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("pendingを再起動後も列挙し、settled後は会話payloadを除去する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-"));
     const dbPath = path.join(directory, "settlement.db");
@@ -38,6 +67,7 @@ describe("CharacterAffectTurnSettlementStorage", () => {
       assert.deepEqual(recovered.listPending(), [{
         ...input,
         createdAt: recovered.listPending()[0]?.createdAt,
+        readyAt: null,
         attemptCount: 0,
         evaluationAttempt: 0,
         evaluation: null,
@@ -164,6 +194,74 @@ describe("CharacterAffectTurnSettlementStorage", () => {
       migrationDb?.close();
       recovered?.close();
       first?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retry generationへ進んだ後は遅延した旧generationのcandidate保存を拒否する", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-stale-generation-"));
+    const dbPath = path.join(directory, "settlement.db");
+    const correlationId = "turn:session-a:audit:stale-generation";
+    const initialCandidate = {
+      schemaVersion: "withmate-affect-v1" as const,
+      characterId: "character-a",
+      userId: "local-user",
+      sessionId: "session-a",
+      layer: "session" as const,
+      targetType: "task" as const,
+      targetId: "current-task",
+      value: { label: "interest", valence: 0.4 },
+      intensity: 0.5,
+      reason: "initial generation",
+      evidence: "storage contract test",
+      occurredAt: "2026-08-09T04:00:00.000Z",
+      idempotencyKey: `${correlationId}:0`,
+    };
+    const storage = new CharacterAffectTurnSettlementStorage(dbPath);
+    try {
+      storage.enqueue({
+        correlationId,
+        characterId: "character-a",
+        sessionId: "session-a",
+        userMessage: "user",
+        assistantMessage: "assistant",
+        assistantMessageIndex: 1,
+        occurredAt: "2026-08-09T04:00:00.000Z",
+      });
+      storage.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "v1",
+        candidates: [initialCandidate],
+      });
+      assert.deepEqual(storage.recordAppraisalFailure({
+        correlationId,
+        evaluationAttempt: 0,
+        effect: "none",
+        savedCandidateIndices: [],
+        prepareReevaluation: true,
+      }), { reevaluationPrepared: true });
+
+      assert.throws(() => storage.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "v-stale",
+        candidates: [{ ...initialCandidate, reason: "late stale evaluation" }],
+      }), /generation is stale/);
+      const nextCandidate = {
+        ...initialCandidate,
+        reason: "next generation",
+        idempotencyKey: `${correlationId}:evaluation:1:0`,
+      };
+      assert.deepEqual(storage.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 1,
+        expectedVersion: "v2",
+        candidates: [nextCandidate],
+      }), { created: true });
+      assert.deepEqual(storage.getPending(correlationId)?.evaluation?.candidates, [nextCandidate]);
+    } finally {
+      storage.close();
       await rm(directory, { recursive: true, force: true });
     }
   });

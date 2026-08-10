@@ -118,6 +118,10 @@ import {
 } from "./character-affect-turn-evaluator.js";
 import { settleCharacterAffectTurnWithRetry } from "./character-affect-turn-settler.js";
 import {
+  CharacterAffectTurnRetryScheduler,
+  settleCharacterAffectTurnOrScheduleRetry,
+} from "./character-affect-turn-retry-scheduler.js";
+import {
   CharacterAffectTurnSettlementStorage,
   hasCommittedAssistantMessage,
   type PendingCharacterAffectTurnSettlement,
@@ -303,6 +307,11 @@ let appDatabaseDiagnostics: AppDatabaseDiagnostics | null = null;
 let memoryV6RuntimeApi: MemoryV6RuntimeApiHandle | null = null;
 let memoryV6RuntimeStatus: MemoryV6Diagnostics["runtime"]["status"] = "stopped";
 let characterAffectTurnSettlementStorage: CharacterAffectTurnSettlementStorage | null = null;
+let characterAffectTurnRetryScheduler: CharacterAffectTurnRetryScheduler | null = null;
+let characterAffectTurnDrainCursor:
+  | Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId">
+  | undefined;
+const characterAffectTurnStartupRecoveryCutoff = new Date().toISOString();
 const isBackgroundLaunch = shouldLaunchInBackground(process.argv);
 let managedMemorySkillSyncResults: ManagedMemorySkillSyncResult[] = [];
 let memoryV6DiagnosticErrors: MemoryV6DiagnosticEvent[] = [];
@@ -2046,6 +2055,24 @@ function requireCharacterAffectTurnSettlementStorage(): CharacterAffectTurnSettl
   return characterAffectTurnSettlementStorage;
 }
 
+function requireCharacterAffectTurnRetryScheduler(): CharacterAffectTurnRetryScheduler {
+  if (!characterAffectTurnRetryScheduler) {
+    characterAffectTurnRetryScheduler = new CharacterAffectTurnRetryScheduler({
+      drain: drainPendingCharacterAffectTurns,
+      onError: (error) => {
+        writeAppLog({
+          level: "warn",
+          kind: "character-affect.lifecycle.recovery-failed",
+          process: "main",
+          message: "Character affect recovery did not complete",
+          error: appLogService.errorToLogError(error),
+        });
+      },
+    });
+  }
+  return characterAffectTurnRetryScheduler;
+}
+
 async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementRequest): Promise<boolean> {
   if (request.session.sessionKind !== "default" || !request.session.characterId) {
     return true;
@@ -2161,56 +2188,79 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
   return true;
 }
 
-async function drainPendingCharacterAffectTurns(): Promise<void> {
-  if (!memoryV6RuntimeApi) {
-    return;
-  }
+async function drainPendingCharacterAffectTurns(): Promise<boolean> {
   const settlementStorage = requireCharacterAffectTurnSettlementStorage();
-  let cursor: Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId"> | undefined;
-  while (true) {
-    const pending = settlementStorage.listPending(100, cursor);
-    if (pending.length === 0) {
-      return;
-    }
-    for (const item of pending) {
-      const session = await getRuntimeSession(item.sessionId);
-      if (!session || session.characterId !== item.characterId) {
-        writeAppLog({
-          level: "warn",
-          kind: "character-affect.lifecycle.recovery-discarded",
-          process: "main",
-          message: "Pending Character affect appraisal had no committed Session owner",
-          data: { sessionId: item.sessionId },
-        });
-        settlementStorage.markDiscarded(item.correlationId);
-        continue;
-      }
-      try {
-        await settleCharacterAffectTurn({
-          session,
-          correlationId: item.correlationId,
-          userMessage: item.userMessage,
-          assistantMessage: item.assistantMessage,
-          assistantMessageIndex: item.assistantMessageIndex,
-          occurredAt: item.occurredAt,
-        });
-      } catch (error) {
-        writeAppLog({
-          level: "warn",
-          kind: "character-affect.lifecycle.recovery-failed",
-          process: "main",
-          message: "Pending Character affect appraisal remains available for recovery",
-          data: { sessionId: item.sessionId },
-          error: appLogService.errorToLogError(error),
-        });
-      }
-    }
-    const last = pending.at(-1)!;
-    cursor = { createdAt: last.createdAt, correlationId: last.correlationId };
-    if (pending.length < 100) {
-      return;
+  if (!memoryV6RuntimeApi) {
+    return settlementStorage.listReadyPending(1).length > 0
+      || settlementStorage.listUnreadyPendingBefore(new Date().toISOString(), 1).length > 0;
+  }
+  const recoveryPending = settlementStorage.listUnreadyPendingBefore(new Date().toISOString(), 100);
+  for (const item of recoveryPending) {
+    const session = await getRuntimeSession(item.sessionId);
+    if (session && session.characterId === item.characterId && hasCommittedAssistantMessage(session.messages, item)) {
+      settlementStorage.markReady(item.correlationId);
+    } else if (item.createdAt < characterAffectTurnStartupRecoveryCutoff) {
+      writeAppLog({
+        level: "warn",
+        kind: "character-affect.lifecycle.recovery-discarded",
+        process: "main",
+        message: "Pending Character affect appraisal had no committed Session owner",
+        data: { sessionId: item.sessionId },
+      });
+      settlementStorage.markDiscarded(item.correlationId);
     }
   }
+  const remainingBudget = 100 - recoveryPending.length;
+  if (remainingBudget === 0) {
+    return true;
+  }
+  const pending = settlementStorage.listReadyPending(remainingBudget, characterAffectTurnDrainCursor);
+  if (pending.length === 0) {
+    characterAffectTurnDrainCursor = undefined;
+    return settlementStorage.listReadyPending(1).length > 0
+      || settlementStorage.listUnreadyPendingBefore(new Date().toISOString(), 1).length > 0;
+  }
+  const last = pending.at(-1)!;
+  characterAffectTurnDrainCursor = pending.length === remainingBudget
+    ? { createdAt: last.createdAt, correlationId: last.correlationId }
+    : undefined;
+  let retryRequired = pending.length === remainingBudget;
+  for (const item of pending) {
+    const session = await getRuntimeSession(item.sessionId);
+    if (!session || session.characterId !== item.characterId) {
+      writeAppLog({
+        level: "warn",
+        kind: "character-affect.lifecycle.recovery-discarded",
+        process: "main",
+        message: "Pending Character affect appraisal had no committed Session owner",
+        data: { sessionId: item.sessionId },
+      });
+      settlementStorage.markDiscarded(item.correlationId);
+      continue;
+    }
+    try {
+      const settled = await settleCharacterAffectTurn({
+        session,
+        correlationId: item.correlationId,
+        userMessage: item.userMessage,
+        assistantMessage: item.assistantMessage,
+        assistantMessageIndex: item.assistantMessageIndex,
+        occurredAt: item.occurredAt,
+      });
+      retryRequired ||= !settled;
+    } catch (error) {
+      retryRequired = true;
+      writeAppLog({
+        level: "warn",
+        kind: "character-affect.lifecycle.recovery-failed",
+        process: "main",
+        message: "Pending Character affect appraisal remains available for recovery",
+        data: { sessionId: item.sessionId },
+        error: appLogService.errorToLogError(error),
+      });
+    }
+  }
+  return retryRequired;
 }
 
 function requireSessionRuntimeService(): SessionRuntimeService {
@@ -2294,9 +2344,18 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           occurredAt,
         });
       },
+      markCompletedTurnAppraisalReady: (correlationId) => {
+        const result = requireCharacterAffectTurnSettlementStorage().markReady(correlationId);
+        if (!result.updated) {
+          throw new Error(`Pending Character Affect appraisal was not found: ${correlationId}`);
+        }
+      },
       requireDurableCompletedTurnAppraisal: true,
       appraiseCompletedTurn: async (input) => {
-        await settleCharacterAffectTurn(input);
+        await settleCharacterAffectTurnOrScheduleRetry({
+          settle: () => settleCharacterAffectTurn(input),
+          scheduleRetry: () => requireCharacterAffectTurnRetryScheduler().request({ resetBackoff: true }),
+        });
       },
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
@@ -3786,15 +3845,7 @@ if (!hasSingleInstanceLock) {
       });
       await requireMainBootstrapService().handleReady();
       await startMemoryV6RuntimeApiBestEffort();
-      void drainPendingCharacterAffectTurns().catch((error) => {
-        writeAppLog({
-          level: "warn",
-          kind: "character-affect.lifecycle.recovery-failed",
-          process: "main",
-          message: "Character affect recovery did not complete",
-          error: appLogService.errorToLogError(error),
-        });
-      });
+      requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
       await syncManagedMemorySkillBestEffort();
@@ -3862,6 +3913,7 @@ if (!hasSingleInstanceLock) {
       message: "App will quit",
     });
     appTrayService?.dispose();
+    characterAffectTurnRetryScheduler?.dispose();
     void stopMemoryV6RuntimeApiBestEffort();
   });
 }

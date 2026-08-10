@@ -83,6 +83,7 @@ export type SessionRuntimeServiceDeps = {
     assistantMessageIndex: number;
     occurredAt: string;
   }) => Awaitable<void>;
+  markCompletedTurnAppraisalReady?: (correlationId: string) => Awaitable<void>;
   requireDurableCompletedTurnAppraisal?: boolean;
   appraiseCompletedTurn?: (input: {
     session: Session;
@@ -1157,7 +1158,10 @@ export class SessionRuntimeService {
       const requiresDurableAppraisal = this.deps.requireDurableCompletedTurnAppraisal === true
         && completedSession.sessionKind === "default"
         && Boolean(completedSession.characterId);
-      if (requiresDurableAppraisal && !this.deps.queueCompletedTurnAppraisal) {
+      if (
+        requiresDurableAppraisal
+        && (!this.deps.queueCompletedTurnAppraisal || !this.deps.markCompletedTurnAppraisalReady)
+      ) {
         throw new Error("Default Character Session requires durable affect turn settlement before completion.");
       }
       if (this.deps.queueCompletedTurnAppraisal) {
@@ -1182,6 +1186,16 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
+      if (requiresDurableAppraisal) {
+        try {
+          await this.deps.markCompletedTurnAppraisalReady!(affectTurnCorrelationId);
+        } catch (error) {
+          console.warn(
+            "Character affect turn appraisal readiness update failed",
+            error instanceof Error ? error.name : "UnknownError",
+          );
+        }
+      }
       if (this.deps.appraiseCompletedTurn) {
         try {
           await this.deps.appraiseCompletedTurn({

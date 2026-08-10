@@ -313,6 +313,9 @@ describe("SessionRuntimeService", () => {
     const createService = (
       initialSession: Session,
       queueCompletedTurnAppraisal: NonNullable<SessionRuntimeServiceDeps["queueCompletedTurnAppraisal"]>,
+      beforeCompletedUpsert?: () => void | Promise<void>,
+      markCompletedTurnAppraisalReady?: NonNullable<SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"]>,
+      appraiseCompletedTurn?: NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>,
     ) => {
       let storedSession = initialSession;
       const completedWrites: Session[] = [];
@@ -340,8 +343,9 @@ describe("SessionRuntimeService", () => {
         getSession(sessionId) {
           return sessionId === storedSession.id ? storedSession : null;
         },
-        upsertSession(next) {
+        async upsertSession(next) {
           if (next.runState === "idle" && next.messages.at(-1)?.role === "assistant") {
+            await beforeCompletedUpsert?.();
             completedWrites.push(next);
             callOrder.push("completed-upsert");
           }
@@ -371,6 +375,14 @@ describe("SessionRuntimeService", () => {
           callOrder.push("pending-enqueue");
           return queueCompletedTurnAppraisal(input);
         },
+        markCompletedTurnAppraisalReady(correlationId) {
+          callOrder.push("pending-ready");
+          if (markCompletedTurnAppraisalReady) {
+            return markCompletedTurnAppraisalReady(correlationId);
+          }
+          storage.markReady(correlationId);
+        },
+        appraiseCompletedTurn,
         requireDurableCompletedTurnAppraisal: true,
         createAuditLog(input) {
           return createAuditLogBase(input);
@@ -400,18 +412,25 @@ describe("SessionRuntimeService", () => {
 
     try {
       const successfulSession = createSession();
-      const successful = createService(successfulSession, (input) => {
-        assert.equal(runtimeApi, null);
-        storage.enqueue({
-          correlationId: input.correlationId,
-          characterId: input.session.characterId,
-          sessionId: input.session.id,
-          userMessage: input.userMessage,
-          assistantMessage: input.assistantMessage,
-          assistantMessageIndex: input.assistantMessageIndex,
-          occurredAt: input.occurredAt,
-        });
-      });
+      const successful = createService(
+        successfulSession,
+        (input) => {
+          assert.equal(runtimeApi, null);
+          storage.enqueue({
+            correlationId: input.correlationId,
+            characterId: input.session.characterId,
+            sessionId: input.session.id,
+            userMessage: input.userMessage,
+            assistantMessage: input.assistantMessage,
+            assistantMessageIndex: input.assistantMessageIndex,
+            occurredAt: input.occurredAt,
+          });
+        },
+        () => {
+          assert.equal(storage.listPending().length, 1);
+          assert.deepEqual(storage.listReadyPending(), []);
+        },
+      );
       const successfulResult = await successful.service.runSessionTurn(successfulSession.id, {
         userMessage: "保存して",
       });
@@ -420,7 +439,8 @@ describe("SessionRuntimeService", () => {
       assert.equal(successfulResult.runState, "idle", successfulResult.messages.at(-1)?.text);
       assert.equal(pending.length, 1);
       assert.equal(pending[0]?.assistantMessage, "完了");
-      assert.deepEqual(successful.callOrder, ["pending-enqueue", "completed-upsert"]);
+      assert.notEqual(pending[0]?.readyAt, null);
+      assert.deepEqual(successful.callOrder, ["pending-enqueue", "completed-upsert", "pending-ready"]);
 
       const failingSession = createSession();
       const failing = createService(failingSession, () => {
@@ -433,6 +453,38 @@ describe("SessionRuntimeService", () => {
       assert.equal(failingResult.runState, "error");
       assert.equal(failing.completedWrites.length, 0);
       assert.deepEqual(failing.callOrder, ["pending-enqueue"]);
+
+      const readinessFailureSession = createSession();
+      let appraisalCalls = 0;
+      const readinessFailure = createService(
+        readinessFailureSession,
+        (input) => {
+          storage.enqueue({
+            correlationId: input.correlationId,
+            characterId: input.session.characterId,
+            sessionId: input.session.id,
+            userMessage: input.userMessage,
+            assistantMessage: input.assistantMessage,
+            assistantMessageIndex: input.assistantMessageIndex,
+            occurredAt: input.occurredAt,
+          });
+        },
+        undefined,
+        () => {
+          throw new Error("temporary readiness failure");
+        },
+        () => {
+          appraisalCalls += 1;
+        },
+      );
+      const readinessFailureResult = await readinessFailure.service.runSessionTurn(readinessFailureSession.id, {
+        userMessage: "ready化に失敗しても完了を維持して",
+      });
+
+      assert.equal(readinessFailureResult.runState, "idle");
+      assert.equal(readinessFailure.completedWrites.length, 1);
+      assert.equal(appraisalCalls, 1);
+      assert.equal(readinessFailureResult.messages.filter((message) => message.role === "assistant").length, 1);
     } finally {
       storage.close();
       await rm(directory, { recursive: true, force: true });

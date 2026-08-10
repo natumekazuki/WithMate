@@ -66,54 +66,49 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
   }): { reevaluationPrepared: boolean };
   markSettled(): void;
 }): Promise<CharacterAffectTurnSettlementResult> {
-  while (true) {
-    let pending = deps.getPending();
-    if (!pending) {
-      return { status: "settled", appraisal: null };
-    }
-
-    if (!pending.evaluation) {
-      const context = await deps.getContext();
-      if (isCharacterContextError(context)) {
-        return { status: "pending", error: context };
-      }
-      const candidates = await deps.evaluate(
-        context,
-        characterAffectTurnIdempotencyPrefix(deps.correlationId, pending.evaluationAttempt),
-      );
-      deps.persistEvaluation({
-        evaluationAttempt: pending.evaluationAttempt,
-        expectedVersion: context.affect.version,
-        candidates,
-      });
-      pending = deps.getPending();
-      if (!pending?.evaluation) {
-        throw new Error("Character affect turn evaluation was not readable after persistence.");
-      }
-    }
-
-    const evaluation = pending.evaluation;
-    if (evaluation.candidates.length === 0) {
-      deps.markSettled();
-      return { status: "settled", appraisal: null };
-    }
-
-    const appraisal = await deps.appraise(evaluation.expectedVersion, evaluation.candidates);
-    if (!isCharacterContextError(appraisal)) {
-      deps.markSettled();
-      return { status: "settled", appraisal };
-    }
-
-    const effect = appraisalEffect(appraisal);
-    const failure = deps.recordAppraisalFailure({
-      evaluationAttempt: evaluation.evaluationAttempt,
-      effect,
-      savedCandidateIndices: savedCandidateIndices(appraisal),
-      prepareReevaluation: appraisal.error.code === "version_conflict" && effect === "none",
-    });
-    if (failure.reevaluationPrepared) {
-      continue;
-    }
-    return { status: "pending", error: appraisal };
+  let pending = deps.getPending();
+  if (!pending) {
+    return { status: "settled", appraisal: null };
   }
+
+  if (!pending.evaluation) {
+    const context = await deps.getContext();
+    if (isCharacterContextError(context)) {
+      return { status: "pending", error: context };
+    }
+    const candidates = await deps.evaluate(
+      context,
+      characterAffectTurnIdempotencyPrefix(deps.correlationId, pending.evaluationAttempt),
+    );
+    deps.persistEvaluation({
+      evaluationAttempt: pending.evaluationAttempt,
+      expectedVersion: context.affect.version,
+      candidates,
+    });
+    pending = deps.getPending();
+    if (!pending?.evaluation) {
+      throw new Error("Character affect turn evaluation was not readable after persistence.");
+    }
+  }
+
+  const evaluation = pending.evaluation;
+  if (evaluation.candidates.length === 0) {
+    deps.markSettled();
+    return { status: "settled", appraisal: null };
+  }
+
+  const appraisal = await deps.appraise(evaluation.expectedVersion, evaluation.candidates);
+  if (!isCharacterContextError(appraisal)) {
+    deps.markSettled();
+    return { status: "settled", appraisal };
+  }
+
+  const effect = appraisalEffect(appraisal);
+  deps.recordAppraisalFailure({
+    evaluationAttempt: evaluation.evaluationAttempt,
+    effect,
+    savedCandidateIndices: savedCandidateIndices(appraisal),
+    prepareReevaluation: appraisal.error.code === "version_conflict" && effect === "none",
+  });
+  return { status: "pending", error: appraisal };
 }

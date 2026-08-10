@@ -19,6 +19,7 @@ export type CharacterAffectTurnSettlementInput = {
 
 export type PendingCharacterAffectTurnSettlement = CharacterAffectTurnSettlementInput & {
   createdAt: string;
+  readyAt: string | null;
   attemptCount: number;
   evaluationAttempt: number;
   evaluation: CharacterAffectTurnEvaluationSnapshot | null;
@@ -55,6 +56,7 @@ type SettlementRow = {
   status: "pending" | "settled";
   attempt_count: number;
   created_at: string;
+  ready_at: string | null;
   evaluation_attempt: number;
   expected_version: string | null;
   candidates_json: string | null;
@@ -79,6 +81,14 @@ function requireNonNegativeInteger(value: number, field: string): number {
     throw new Error(`${field} must be a non-negative integer.`);
   }
   return value;
+}
+
+function nextEvaluationAttempt(value: number): number {
+  const next = value + 1;
+  if (!Number.isSafeInteger(next)) {
+    throw new Error("Character affect turn evaluation generation is exhausted.");
+  }
+  return next;
 }
 
 function normalizeCandidateIndices(indices: readonly number[]): number[] {
@@ -135,6 +145,7 @@ function toPending(row: SettlementRow): PendingCharacterAffectTurnSettlement {
     assistantMessageIndex: row.assistant_message_index,
     occurredAt: row.occurred_at,
     createdAt: row.created_at,
+    readyAt: row.ready_at,
     attemptCount: row.attempt_count,
     evaluationAttempt: requireNonNegativeInteger(row.evaluation_attempt, "evaluationAttempt"),
     evaluation: parseEvaluation(row),
@@ -159,6 +170,7 @@ export class CharacterAffectTurnSettlementStorage {
         status TEXT NOT NULL CHECK (status IN ('pending', 'settled')),
         attempt_count INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
+        ready_at TEXT,
         evaluation_attempt INTEGER NOT NULL DEFAULT 0,
         expected_version TEXT,
         candidates_json TEXT,
@@ -182,6 +194,13 @@ export class CharacterAffectTurnSettlementStorage {
     if (!columns.some((column) => column.name === "evaluation_attempt")) {
       this.db.exec("ALTER TABLE character_affect_turn_settlements ADD COLUMN evaluation_attempt INTEGER NOT NULL DEFAULT 0");
     }
+    if (!columns.some((column) => column.name === "ready_at")) {
+      this.db.exec("ALTER TABLE character_affect_turn_settlements ADD COLUMN ready_at TEXT");
+    }
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_character_affect_turn_settlements_ready
+      ON character_affect_turn_settlements(status, ready_at, created_at, correlation_id)
+    `);
     if (!columns.some((column) => column.name === "expected_version")) {
       this.db.exec("ALTER TABLE character_affect_turn_settlements ADD COLUMN expected_version TEXT");
     }
@@ -274,6 +293,56 @@ export class CharacterAffectTurnSettlementStorage {
     return (rows as SettlementRow[]).map(toPending);
   }
 
+  listReadyPending(
+    limit = 100,
+    after?: Pick<PendingCharacterAffectTurnSettlement, "createdAt" | "correlationId">,
+  ): PendingCharacterAffectTurnSettlement[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error("limit must be an integer between 1 and 1000.");
+    }
+    const rows = after
+      ? this.db.prepare(`
+          SELECT * FROM character_affect_turn_settlements
+          WHERE status = 'pending' AND ready_at IS NOT NULL
+            AND (created_at > ? OR (created_at = ? AND correlation_id > ?))
+          ORDER BY created_at ASC, correlation_id ASC
+          LIMIT ?
+        `).all(after.createdAt, after.createdAt, after.correlationId, limit)
+      : this.db.prepare(`
+          SELECT * FROM character_affect_turn_settlements
+          WHERE status = 'pending' AND ready_at IS NOT NULL
+          ORDER BY created_at ASC, correlation_id ASC
+          LIMIT ?
+        `).all(limit);
+    return (rows as SettlementRow[]).map(toPending);
+  }
+
+  listUnreadyPendingBefore(
+    createdBefore: string,
+    limit = 100,
+  ): PendingCharacterAffectTurnSettlement[] {
+    const cutoff = requireText(createdBefore, "createdBefore");
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1_000) {
+      throw new Error("limit must be an integer between 1 and 1000.");
+    }
+    const rows = this.db.prepare(`
+      SELECT * FROM character_affect_turn_settlements
+      WHERE status = 'pending' AND ready_at IS NULL AND created_at < ?
+      ORDER BY created_at ASC, correlation_id ASC
+      LIMIT ?
+    `).all(cutoff, limit);
+    return (rows as SettlementRow[]).map(toPending);
+  }
+
+  markReady(correlationId: string): { updated: boolean } {
+    const result = this.db.prepare(`
+      UPDATE character_affect_turn_settlements
+      SET ready_at = COALESCE(ready_at, ?)
+      WHERE correlation_id = ? AND status = 'pending'
+    `).run(new Date().toISOString(), requireText(correlationId, "correlationId"));
+    return { updated: result.changes === 1 };
+  }
+
   getPending(correlationId: string): PendingCharacterAffectTurnSettlement | null {
     const row = this.db.prepare(`
       SELECT * FROM character_affect_turn_settlements
@@ -302,10 +371,12 @@ export class CharacterAffectTurnSettlementStorage {
     if (!row) {
       throw new Error("Pending Character affect turn settlement was not found.");
     }
+    if (row.evaluation_attempt !== evaluationAttempt) {
+      throw new Error("Character affect turn evaluation generation is stale.");
+    }
     if (row.candidates_json !== null || row.expected_version !== null) {
       if (
-        row.evaluation_attempt !== evaluationAttempt
-        || row.expected_version !== expectedVersion
+        row.expected_version !== expectedVersion
         || row.candidates_json !== candidatesJson
       ) {
         throw new Error("Character affect turn evaluation identity cannot be reassigned.");
@@ -317,8 +388,8 @@ export class CharacterAffectTurnSettlementStorage {
       SET evaluation_attempt = ?, expected_version = ?, candidates_json = ?,
           last_effect = 'none', observed_effects_json = '[]', saved_candidate_indices_json = '[]'
       WHERE correlation_id = ? AND status = 'pending'
-        AND expected_version IS NULL AND candidates_json IS NULL
-    `).run(evaluationAttempt, expectedVersion, candidatesJson, correlationId);
+        AND evaluation_attempt = ? AND expected_version IS NULL AND candidates_json IS NULL
+    `).run(evaluationAttempt, expectedVersion, candidatesJson, correlationId, evaluationAttempt);
     if (result.changes !== 1) {
       throw new Error("Character affect turn evaluation could not be persisted.");
     }
@@ -356,22 +427,21 @@ export class CharacterAffectTurnSettlementStorage {
       if (
         input.prepareReevaluation
         && effect === "none"
-        && evaluationAttempt === 0
-        && previousEffects.length === 0
         && normalizedPreviousSaved.length === 0
         && normalizedIncomingSaved.length === 0
       ) {
+        const retryEvaluationAttempt = nextEvaluationAttempt(evaluationAttempt);
         const reset = this.db.prepare(`
           UPDATE character_affect_turn_settlements
-          SET evaluation_attempt = 1,
+          SET evaluation_attempt = ?,
               expected_version = NULL,
               candidates_json = NULL,
               last_effect = 'none',
               observed_effects_json = '[]',
               saved_candidate_indices_json = '[]'
           WHERE correlation_id = ? AND status = 'pending'
-            AND evaluation_attempt = 0 AND candidates_json IS NOT NULL
-        `).run(correlationId);
+            AND evaluation_attempt = ? AND candidates_json IS NOT NULL
+        `).run(retryEvaluationAttempt, correlationId, evaluationAttempt);
         if (reset.changes !== 1) {
           throw new Error("Character affect turn reevaluation could not be prepared.");
         }
