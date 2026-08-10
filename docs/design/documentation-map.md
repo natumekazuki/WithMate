@@ -101,6 +101,7 @@ V5 Character Core で採用済みの文書は `A2. V5 Character Core Source Of T
 | --- | --- |
 | `database-v2-migration.md` | V1 -> V2 migration と V2 schema 方針 |
 | `database-v3-blob-storage.md` | V3 DB と compressed blob store の方針 |
+| `session-external-runtime.md` | CLI / MCPから通常Sessionを操作する専用runtime境界のDraft。ADR 021がAcceptedになるまでcurrent runtimeの正本として扱わない |
 
 ### C. Archived Design Notes
 
