@@ -3,6 +3,8 @@
 The bundled helper is a thin client for the running WithMate V6 Memory API. It does not read or write database files directly.
 Project-scoped, character-scoped, and user-global Memory require explicit targets. Project targets use an explicit project path or ID. Character targets use an explicit character ID.
 
+Character context, Character-owned affect, MCP-first operation, CLI fallback, authority, effect certainty, and Character-specific commands are documented in [Character Context MCP and CLI Reference](character-context.md). This file retains the Project Memory and general helper procedures.
+
 Run it with an explicit target after WithMate is installed:
 
 ```bash
@@ -18,6 +20,7 @@ When a managed skill includes `bin/withmate-memory.mjs` and no `withmate-memory`
 
 ## Contents
 
+- [Character Context](character-context.md)
 - [Commands](#commands)
 - [Exit Codes](#exit-codes)
 - [Notes](#notes)
@@ -312,6 +315,31 @@ For `append`, mutating `forget`, and `move-entry`, choose a stable idempotency k
 | `4` | Transport failure |
 
 ## Notes
+
+### Semantic Memory target shapes
+
+Use one explicit target in general `search`, `get-entry`, and mutation request bodies. A Character preference that remains valid across projects uses:
+
+```json
+{
+  "owner": "character",
+  "character": { "type": "id", "id": "<character-id>" },
+  "scope": "character"
+}
+```
+
+A Character preference that belongs only to one project uses the combined target:
+
+```json
+{
+  "owner": "character",
+  "character": { "type": "id", "id": "<character-id>" },
+  "project": { "type": "path", "path": "<absolute-repo-path>" },
+  "scope": "project"
+}
+```
+
+Use `{ "owner": "user", "scope": "global" }` only for provider- and project-independent semantic Memory. Use the project target shape shown in the request examples for repository-specific context that is not Character-specific. Do not silently drop either owner from a combined Character+Project candidate.
 
 - Search results exclude forgotten and superseded entries.
 - Project targets use `--project <absolute-repo-path>`, `--project-id <id>`, `{ "type": "path", "path": "<absolute-repo-path>" }`, or `{ "type": "id", "id": "<project-id>" }`. Explicit absolute paths are not limited to the session's attached projects.
