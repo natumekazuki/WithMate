@@ -367,6 +367,50 @@ test("resolveLiveAssistantMessageIndex は target session の次 assistant index
   );
 });
 
+test("resolveLiveAssistantMessageIndex は保存済み末尾へ遅延 live final を同じ行として収束させる", () => {
+  assert.equal(
+    resolveLiveAssistantMessageIndex(
+      [
+        { role: "user", text: "main prompt" },
+        { role: "assistant", text: "final response\n\nFailure notice" },
+      ],
+      [],
+      "session-1",
+      "session-1",
+      "final response",
+    ),
+    1,
+  );
+
+  assert.equal(
+    resolveLiveAssistantMessageIndex(
+      [
+        { role: "assistant", text: "same response" },
+        { role: "user", text: "next prompt" },
+      ],
+      [],
+      "session-1",
+      "session-1",
+      "same response",
+    ),
+    2,
+  );
+
+  assert.equal(
+    resolveLiveAssistantMessageIndex(
+      [{ role: "assistant", text: "main response" }],
+      [createAuxiliarySession([
+        { role: "user", text: "aux prompt" },
+        { role: "assistant", text: "aux final response" },
+      ], { id: "aux-1" })],
+      "aux-1",
+      "session-1",
+      "aux final response",
+    ),
+    1,
+  );
+});
+
 test("shouldProjectLiveAssistantBridge は live run が消えて persisted assistant もなければ bridge を投影しない", () => {
   assert.equal(
     shouldProjectLiveAssistantBridge({
