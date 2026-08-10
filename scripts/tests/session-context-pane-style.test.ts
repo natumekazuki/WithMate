@@ -240,6 +240,15 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
   assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
 });
 
+test("個別の file preview window は preview surface を外周まで広げる", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.file-preview-window-page\s*>\s*\.session-file-preview\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
+  );
+});
+
 test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast色を使う", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
