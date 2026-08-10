@@ -862,7 +862,7 @@ search監査は件数・latency・strategy程度に抑え、private query全文�
 ## Skill Distribution
 
 - Skillはglobal provider skill rootへ配置する。
-- current実装では、Settingsで解決できるprovider skill rootへ起動時と設定保存後に`withmate-memory`を同期する。provider skill root未設定時はskipする。
+- current実装では、packaged appだけがSettingsで解決できるprovider skill rootへ起動時と設定保存後に`withmate-memory`を同期する。source checkoutからの開発起動はglobal provider skill rootを変更せず、provider skill root未設定時もskipする。
 - WithMateが管理する場合はmanaged marker / versionを持つ。current実装では`.withmate-managed-skill.json`を持つ`withmate-memory`だけをapp version単位で更新する。
 - user-created同名Skillを無断上書きしない。
 - packaged CLI pathまたはshimをSkillが利用できるようにする。packaged CLI helperはbuild時に`scripts/withmate-memory.ts`から生成し、canonical CLIと別実装として保守しない。current実装ではWindowsのproviderへ同期するmanaged Skillは`SKILL.md`、`reference/`、managed markerを持ち、`bin/`は省略してinstalled app側のpackaged resourceをPATH shim経由で呼ぶ。Windowsではinstall rootの`withmate-memory.cmd`に加え、user PATH既定の`Microsoft\WindowsApps\withmate-memory.cmd` aliasをinstallerが作成する。installerはuser `Path` registry値を直接編集しない。macOS / LinuxではSettings > Diagnosticsから`~/.local/bin/withmate-memory` shimをinstall / uninstallできる。`~/.local/bin`がapp processの`PATH`に含まれてshimがusableな場合も、providerへ同期するmanaged Skillは`SKILL.md`、`reference/`、managed markerを持ち、`bin/`だけを省略する。
@@ -884,7 +884,7 @@ foundationではMemory Management Windowを戻さない。
 最小UI:
 
 - Settings DiagnosticsにMemory API状態を表示する。current実装ではruntime APIのrunning / stopped / failed、baseUrl、DB path、discovery file path、secret有無だけをread-onlyで返す。
-- global Skill install状態を表示する。current実装では直近managed Skill sync結果をproviderごとに表示し、collision / failed / unconfiguredを区別する。
+- global Skill install状態を表示する。current実装では直近managed Skill sync結果をproviderごとに表示し、unpackaged / collision / failed / unconfiguredを区別する。
 - last error summaryを表示する。current実装ではruntime起動/停止とSkill sync失敗の直近errorを最大3件保持する。
 - runtime API secret、discovery documentのsecret値はdiagnostics stateへ含めない。UIにはsecret値を表示しない。
 - Settings Diagnosticsにprovider instruction sampleを表示し、clipboard copy導線を置く。このsampleはユーザーが必要なprovider instruction fileへ手動で貼り付けるための補助であり、WithMateはinstruction fileを自動同期しない。
@@ -976,6 +976,7 @@ npm run build
 - `current` target、`--session-project`、`memory.resolve_context`を拒否する
 - Codex / Copilot adapterがMemory bindingなしでprovider client / session cacheを再利用する
 - user-created同名`withmate-memory` Skillを上書きせずcollisionとしてskipする
+- source checkoutからの開発起動ではmanaged Skillを新規作成も更新もしない
 - Settings DiagnosticsからMemory Review windowを開き、active entryの検索、full body閲覧、forgetを実行できる
 - Settings Diagnosticsでprovider instruction sampleを確認し、clipboardへcopyできる
 

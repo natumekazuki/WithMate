@@ -14,6 +14,7 @@ export type MemoryV6SkillSyncDiagnostics = {
     | "installed"
     | "updated"
     | "unchanged"
+    | "skipped-unpackaged"
     | "skipped-unconfigured"
     | "skipped-collision"
     | "failed"

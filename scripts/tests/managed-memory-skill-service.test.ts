@@ -101,6 +101,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "6.3.19-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -141,6 +142,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -177,6 +179,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -204,6 +207,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -237,6 +241,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -273,6 +278,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -309,6 +315,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -352,6 +359,7 @@ describe("ManagedMemorySkillService", () => {
           return settings;
         },
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -365,6 +373,50 @@ describe("ManagedMemorySkillService", () => {
     }
   });
 
+  it("同期を許可しない runtime では provider skill root を変更しない", async () => {
+    const bundlePath = await createBundle();
+    const rootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-root-"));
+    const directRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-skill-direct-root-"));
+    try {
+      const settings = createDefaultAppSettings();
+      settings.codingProviderSettings.codex = {
+        enabled: true,
+        apiKey: "",
+        skillRootPath: rootPath,
+        skillRelativePath: "skills",
+        instructionRelativePath: "",
+      };
+      const existingSkillPath = path.join(rootPath, "skills", WITHMATE_MEMORY_SKILL_NAME);
+      await mkdir(existingSkillPath, { recursive: true });
+      await writeFile(path.join(existingSkillPath, "sentinel.txt"), "keep", "utf8");
+      let appVersionReadCount = 0;
+      const service = new ManagedMemorySkillService({
+        bundledSkillPath: bundlePath,
+        getAppSettings: () => settings,
+        getAppVersion: () => {
+          appVersionReadCount += 1;
+          return "43.1.0-test";
+        },
+        isPackagedApp: () => false,
+        platform: "win32",
+      });
+
+      const configuredResult = (await service.syncConfiguredProviderSkills())[0];
+      const directResult = await service.syncProviderSkill("direct", directRootPath);
+
+      assert.equal(configuredResult?.status, "skipped-unpackaged");
+      assert.equal(directResult.status, "skipped-unpackaged");
+      assert.equal(await readFile(path.join(existingSkillPath, "sentinel.txt"), "utf8"), "keep");
+      assert.equal(await pathExists(path.join(existingSkillPath, ".withmate-managed-skill.json")), false);
+      assert.equal(await pathExists(path.join(directRootPath, WITHMATE_MEMORY_SKILL_NAME)), false);
+      assert.equal(appVersionReadCount, 0);
+    } finally {
+      await rm(bundlePath, { recursive: true, force: true });
+      await rm(rootPath, { recursive: true, force: true });
+      await rm(directRootPath, { recursive: true, force: true });
+    }
+  });
+
   it("skill root 未設定 provider は skipped-unconfigured にする", async () => {
     const bundlePath = await createBundle();
     try {
@@ -372,6 +424,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => createDefaultAppSettings(),
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "win32",
       });
 
@@ -400,6 +453,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "darwin",
       });
 
@@ -433,6 +487,7 @@ describe("ManagedMemorySkillService", () => {
         bundledSkillPath: bundlePath,
         getAppSettings: () => settings,
         getAppVersion: () => "5.0.0-test",
+        isPackagedApp: () => true,
         platform: "darwin",
         shouldSyncSkillMarkdownOnly: () => true,
       });
