@@ -5,6 +5,7 @@ import {
   appendMissingPathReferenceAttachments,
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildComposerReferenceInsertionState,
   buildPathReferenceAttachmentItems,
   buildPathReferenceInsertionState,
   buildPathReferenceRemovalState,
@@ -50,6 +51,19 @@ test("buildPathReferenceInsertionState は空白を含む path reference を quo
 
 test("buildPathReferenceInsertionState は reference path が空なら null を返す", () => {
   assert.equal(buildPathReferenceInsertionState("draft", 0, []), null);
+});
+
+test("buildComposerReferenceInsertionState は画像Markdownと通常pathを同じcaretへ挿入する", () => {
+  assert.deepEqual(
+    buildComposerReferenceInsertionState("確認後", "確認".length, [
+      { path: "C:/session-files/cover image.png", presentation: "image" },
+      { path: "C:/session-files/note.txt", presentation: "path" },
+    ]),
+    {
+      draft: "確認 ![cover image.png](C:/session-files/cover%20image.png) @C:/session-files/note.txt 後",
+      caret: "確認 ![cover image.png](C:/session-files/cover%20image.png) @C:/session-files/note.txt ".length,
+    },
+  );
 });
 
 test("buildSelectedPathReferenceInsertionState は選択 path を解決して挿入 state を作る", () => {
@@ -311,6 +325,16 @@ test("removePathReferenceTokensFromDraft は複数 token と句読点境界を�
       ["src/App.tsx", "docs/my note.md"],
     ),
     "確認 (), !",
+  );
+});
+
+test("removePathReferenceTokensFromDraft は対応するMarkdown画像全体を削除する", () => {
+  assert.equal(
+    removePathReferenceTokensFromDraft(
+      "確認 ![cover image.png](C:/session-files/cover%20image.png) して",
+      ["C:\\session-files\\cover image.png"],
+    ),
+    "確認 して",
   );
 });
 

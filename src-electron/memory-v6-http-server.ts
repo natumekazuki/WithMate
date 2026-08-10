@@ -6,10 +6,29 @@ import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memo
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
 import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
+import {
+  createCharacterContextError,
+  isCharacterContextError,
+} from "../src/character-context/character-context-contract.js";
+import type {
+  CharacterContextApplicationService,
+  CharacterContextTransport,
+} from "./character-context-application-service.js";
+import {
+  createWithMateMemoryRuntimeChallenge,
+  WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH,
+  WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+  WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
+} from "../src/memory-v6/memory-runtime-exchange.js";
 
 export type MemoryV6HttpServerOptions = {
   service: MemoryV6Service;
+  characterContextService?: CharacterContextApplicationService;
   apiSecret: string;
+  operatorApiSecret: string;
+  mcpApiSecret: string;
   runtimeInstanceId: string;
   host?: string;
   port?: number;
@@ -28,13 +47,27 @@ export type MemoryV6HttpServer = {
 export type MemoryV6Route =
   | "characters"
   | "file_usage"
+  | "list_targets"
+  | "list_entries"
+  | "audit"
   | "search"
   | "get_entry"
   | "get_file"
   | "export_files"
   | "list_tags"
   | "append"
-  | "forget";
+  | "forget"
+  | "move_entry"
+  | "character_context_get"
+  | "character_affect_appraise"
+  | "character_affect_inspect"
+  | "character_affect_correct"
+  | "character_affect_reset"
+  | "character_memory_search"
+  | "character_memory_append_episode"
+  | "character_memory_correct"
+  | "character_memory_forget"
+  | "character_context_metrics";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 0;
@@ -43,6 +76,8 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
 const DEFAULT_MAX_CONCURRENT_REQUESTS = 8;
 export const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+export const WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER = "x-withmate-memory-operator-api-secret";
+export const WITHMATE_MEMORY_MCP_API_SECRET_HEADER = "x-withmate-memory-mcp-api-secret";
 const STATUS_CHALLENGE_NONCE_QUERY = "nonce";
 
 const fileOperationRoutes = new Set<MemoryV6Route>([
@@ -55,6 +90,11 @@ const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/characters", "characters"],
   ["/v1/file_usage", "file_usage"],
   ["/v1/file-usage", "file_usage"],
+  ["/v1/list_targets", "list_targets"],
+  ["/v1/list-targets", "list_targets"],
+  ["/v1/list_entries", "list_entries"],
+  ["/v1/list-entries", "list_entries"],
+  ["/v1/audit", "audit"],
   ["/v1/search", "search"],
   ["/v1/get_entry", "get_entry"],
   ["/v1/get_file", "get_file"],
@@ -64,6 +104,27 @@ const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/list_tags", "list_tags"],
   ["/v1/append", "append"],
   ["/v1/forget", "forget"],
+  ["/v1/move_entry", "move_entry"],
+  ["/v1/move-entry", "move_entry"],
+  ["/v1/character_context/get", "character_context_get"],
+  ["/v1/character_affect/appraise", "character_affect_appraise"],
+  ["/v1/character_affect/inspect", "character_affect_inspect"],
+  ["/v1/character_affect/correct", "character_affect_correct"],
+  ["/v1/character_affect/reset", "character_affect_reset"],
+  ["/v1/character_memory/search", "character_memory_search"],
+  ["/v1/character_memory/append_episode", "character_memory_append_episode"],
+  ["/v1/character_memory/correct", "character_memory_correct"],
+  ["/v1/character_memory/forget", "character_memory_forget"],
+  ["/v1/character_context/metrics", "character_context_metrics"],
+]);
+
+const mcpRoutes = new Set<MemoryV6Route>([
+  "character_context_get",
+  "character_affect_appraise",
+  "character_memory_search",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
 ]);
 
 function memoryTransportError(code: string, message: string): MemoryErrorResponse {
@@ -183,6 +244,15 @@ async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6
   if (route === "file_usage") {
     return service.fileUsage(principal, typeof body === "object" && body !== null ? body as { includeLargestEntries?: boolean; largestLimit?: number } : {});
   }
+  if (route === "list_targets") {
+    return service.listTargets(principal, body);
+  }
+  if (route === "list_entries") {
+    return service.listEntries(principal, body);
+  }
+  if (route === "audit") {
+    return service.audit(principal, body);
+  }
   if (route === "search") {
     return service.search(principal, body);
   }
@@ -201,10 +271,124 @@ async function routeServiceRequest(service: MemoryV6Service, principal: MemoryV6
   if (route === "append") {
     return service.append(principal, body);
   }
-  return service.forget(principal, body);
+  if (route === "forget") {
+    return service.forget(principal, body);
+  }
+  return service.moveEntry(principal, body);
+}
+
+function resolveCharacterContextTransport(
+  request: IncomingMessage,
+  operatorApiSecret: string,
+  mcpApiSecret: string,
+): CharacterContextTransport | null {
+  const operatorHeader = request.headers[WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER];
+  if (typeof operatorHeader === "string" && timingSafeStringEqual(operatorHeader, operatorApiSecret)) {
+    return "cli";
+  }
+  const mcpHeader = request.headers[WITHMATE_MEMORY_MCP_API_SECRET_HEADER];
+  if (typeof mcpHeader === "string" && timingSafeStringEqual(mcpHeader, mcpApiSecret)) {
+    return "mcp";
+  }
+  return null;
+}
+
+function canTransportInvokeRoute(transport: CharacterContextTransport, route: MemoryV6Route): boolean {
+  return transport === "cli" || mcpRoutes.has(route);
+}
+
+function createTransportAuthorityError(route: MemoryV6Route): unknown {
+  return route.startsWith("character_")
+    ? createCharacterContextError(
+        "authority_denied",
+        "Character context request is not authorized for this adapter transport.",
+        { retryable: false, conversationMayContinue: true, effect: "none" },
+      )
+    : memoryTransportError("MEMORY_FORBIDDEN", "Memory API route is not authorized for this adapter transport.");
+}
+
+async function routeCharacterContextRequest(
+  service: CharacterContextApplicationService | undefined,
+  route: MemoryV6Route,
+  body: unknown,
+  transport: CharacterContextTransport,
+): Promise<unknown> {
+  if (!service) {
+    return memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Character context service is unavailable.");
+  }
+  if (route === "character_context_get") {
+    return service.getContext(body, transport);
+  }
+  const authorizedBody = resolveTransportAuthority(body, route, transport);
+  if (route === "character_affect_appraise") {
+    return service.appraise(authorizedBody, transport);
+  }
+  if (route === "character_affect_inspect") {
+    return service.inspectAffect(authorizedBody, transport);
+  }
+  if (route === "character_affect_correct") {
+    return service.correctAffect(authorizedBody, transport);
+  }
+  if (route === "character_affect_reset") {
+    return service.resetAffect(authorizedBody, transport);
+  }
+  if (route === "character_memory_search") {
+    return service.searchMemory(body, transport);
+  }
+  if (route === "character_memory_append_episode") {
+    return service.appendEpisode(authorizedBody, transport);
+  }
+  if (route === "character_memory_correct") {
+    return service.correctMemory(authorizedBody, transport);
+  }
+  if (route === "character_memory_forget") {
+    return service.forgetMemory(authorizedBody, transport);
+  }
+  return {
+    schemaVersion: "withmate-character-context-v1",
+    metrics: service.getMetrics(),
+  };
+}
+
+function resolveTransportAuthority(
+  body: unknown,
+  route: MemoryV6Route,
+  transport: CharacterContextTransport,
+): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const operationRequiresExplicitAuthority = route === "character_affect_correct"
+    || route === "character_affect_reset"
+    || route === "character_memory_correct"
+    || route === "character_memory_forget";
+  const authority = transport === "cli"
+    ? { kind: "operator", reason: "Authenticated local CLI operation." }
+    : transport === "mcp" && operationRequiresExplicitAuthority
+      ? { kind: "explicit_user_instruction", reason: "Approved destructive MCP tool invocation." }
+      : { kind: "conversation" };
+  return { ...(body as Record<string, unknown>), authority };
 }
 
 function statusForMemoryResponse(value: unknown): number {
+  if (isCharacterContextError(value)) {
+    switch (value.error.code) {
+      case "authority_denied":
+        return 403;
+      case "unknown_character":
+      case "unknown_scope":
+        return 404;
+      case "version_conflict":
+        return 409;
+      case "storage_unavailable":
+      case "migration_required":
+      case "partial_failure":
+      case "internal_error":
+        return 503;
+      default:
+        return 422;
+    }
+  }
   if (!isMemoryErrorResponse(value)) {
     return 200;
   }
@@ -256,10 +440,81 @@ function buildStatusResponse(input: { apiSecret: string; runtimeInstanceId: stri
   };
 }
 
+type RuntimeExchangePayload = {
+  schemaVersion: typeof WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION;
+  apiSecret: string;
+  adapter: CharacterContextTransport;
+  adapterSecret: string;
+  operation: {
+    method: "GET" | "POST";
+    path: string;
+    body: unknown;
+    fallbackFrom?: "mcp";
+  };
+};
+
+function parseRuntimeExchangePayload(value: unknown): RuntimeExchangePayload | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const payload = value as Partial<RuntimeExchangePayload>;
+  const operation = payload.operation;
+  if (
+    payload.schemaVersion !== WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION
+    || typeof payload.apiSecret !== "string"
+    || (payload.adapter !== "cli" && payload.adapter !== "mcp")
+    || typeof payload.adapterSecret !== "string"
+    || !operation
+    || (operation.method !== "GET" && operation.method !== "POST")
+    || typeof operation.path !== "string"
+  ) {
+    return null;
+  }
+  return payload as RuntimeExchangePayload;
+}
+
+function authenticateRuntimeExchange(
+  payload: RuntimeExchangePayload,
+  apiSecret: string,
+  operatorApiSecret: string,
+  mcpApiSecret: string,
+): boolean {
+  if (!timingSafeStringEqual(payload.apiSecret, apiSecret)) {
+    return false;
+  }
+  const expectedAdapterSecret = payload.adapter === "cli" ? operatorApiSecret : mcpApiSecret;
+  return timingSafeStringEqual(payload.adapterSecret, expectedAdapterSecret);
+}
+
+async function routeResolvedRequest(input: {
+  options: MemoryV6HttpServerOptions;
+  route: MemoryV6Route;
+  body: unknown;
+  transport: CharacterContextTransport | null;
+  fallbackFrom?: "mcp";
+}): Promise<unknown> {
+  if (!input.transport || !canTransportInvokeRoute(input.transport, input.route)) {
+    return createTransportAuthorityError(input.route);
+  }
+  if (input.fallbackFrom === "mcp" && input.transport === "cli") {
+    input.options.characterContextService?.recordFallback("mcp", "cli");
+  }
+  return input.route.startsWith("character_")
+    ? routeCharacterContextRequest(
+        input.options.characterContextService,
+        input.route,
+        input.body,
+        input.transport,
+      )
+    : routeServiceRequest(input.options.service, createLocalUserMemoryPrincipal(), input.route, input.body);
+}
+
 export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): MemoryV6HttpServer {
   const host = options.host ?? DEFAULT_HOST;
   const port = options.port ?? DEFAULT_PORT;
   const apiSecret = requireNonEmptySecret(options.apiSecret, "apiSecret");
+  const operatorApiSecret = requireNonEmptySecret(options.operatorApiSecret, "operatorApiSecret");
+  const mcpApiSecret = requireNonEmptySecret(options.mcpApiSecret, "mcpApiSecret");
   const runtimeInstanceId = requireNonEmptySecret(options.runtimeInstanceId, "runtimeInstanceId");
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -290,6 +545,85 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         return;
       }
 
+      if (pathname === WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH) {
+        if (request.method !== "POST" || !acceptsJsonRequest(request)) {
+          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory runtime exchange requires JSON POST."));
+          return;
+        }
+        const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
+        const expectedRuntimeInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+        if (
+          typeof nonce !== "string"
+          || typeof expectedRuntimeInstanceId !== "string"
+          || expectedRuntimeInstanceId !== runtimeInstanceId
+        ) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Memory runtime identity challenge is invalid."));
+          return;
+        }
+        if (activeRequests >= maxConcurrentRequests) {
+          writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Memory API has too many in-flight requests."));
+          return;
+        }
+        activeRequests += 1;
+        admitted = true;
+        request.setTimeout(requestTimeoutMs);
+        response.setTimeout(requestTimeoutMs);
+        response.writeEarlyHints({
+          link: "</v1/exchange>; rel=preconnect",
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
+            apiSecret,
+            runtimeInstanceId,
+            nonce,
+          ),
+        });
+        const payload = parseRuntimeExchangePayload(await readJsonBody(request, maxBodyBytes));
+        if (!payload || !authenticateRuntimeExchange(payload, apiSecret, operatorApiSecret, mcpApiSecret)) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Memory runtime exchange is not authorized."));
+          return;
+        }
+        const operationUrl = new URL(payload.operation.path, "http://127.0.0.1");
+        if (operationUrl.pathname === "/v1/status" && payload.operation.method === "GET") {
+          writeJson(response, 200, { ok: true, runtimeInstanceId });
+          return;
+        }
+        const route = routeByPath.get(operationUrl.pathname);
+        if (!route) {
+          writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Memory API route was not found."));
+          return;
+        }
+        if (!canTransportInvokeRoute(payload.adapter, route)) {
+          const error = createTransportAuthorityError(route);
+          writeJson(response, statusForMemoryResponse(error), error);
+          return;
+        }
+        const routeTimeoutMs = resolveMemoryV6RouteTimeoutMs(route, {
+          requestTimeoutMs,
+          fileOperationRequestTimeoutMs,
+        });
+        request.setTimeout(routeTimeoutMs);
+        response.setTimeout(routeTimeoutMs);
+        const getOnlyRoute = route === "characters" || route === "file_usage" || route === "character_context_metrics";
+        if ((getOnlyRoute && payload.operation.method !== "GET") || (!getOnlyRoute && payload.operation.method !== "POST")) {
+          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
+          return;
+        }
+        const body = route === "characters" || route === "character_context_metrics"
+          ? {}
+          : route === "file_usage"
+            ? buildFileUsageRequestOptions(payload.operation.path)
+            : payload.operation.body;
+        const result = await routeResolvedRequest({
+          options,
+          route,
+          body,
+          transport: payload.adapter,
+          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+        });
+        writeJson(response, statusForMemoryResponse(result), result);
+        return;
+      }
+
       const authenticationError = authenticateInternalApiRequest(request, apiSecret);
       if (authenticationError) {
         writeJson(response, 401, authenticationError);
@@ -314,26 +648,39 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
       });
       request.setTimeout(routeTimeoutMs);
       response.setTimeout(routeTimeoutMs);
-      if ((route === "characters" || route === "file_usage") && request.method !== "GET") {
+      const getOnlyRoute = route === "characters" || route === "file_usage" || route === "character_context_metrics";
+      if (getOnlyRoute && request.method !== "GET") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
       }
-      if (route !== "characters" && route !== "file_usage" && request.method !== "POST") {
+      if (!getOnlyRoute && request.method !== "POST") {
         writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
         return;
       }
-      if (route !== "characters" && route !== "file_usage" && !acceptsJsonRequest(request)) {
+      if (!getOnlyRoute && !acceptsJsonRequest(request)) {
         writeJson(response, 415, memoryTransportError("MEMORY_UNSUPPORTED_MEDIA_TYPE", "Memory API POST requests must use application/json."));
         return;
       }
 
-      const principal = createLocalUserMemoryPrincipal();
-      const body = route === "characters"
+      const transport = resolveCharacterContextTransport(request, operatorApiSecret, mcpApiSecret);
+      if (!transport || !canTransportInvokeRoute(transport, route)) {
+        const error = createTransportAuthorityError(route);
+        writeJson(response, statusForMemoryResponse(error), error);
+        return;
+      }
+
+      const body = route === "characters" || route === "character_context_metrics"
         ? {}
         : route === "file_usage"
           ? buildFileUsageRequestOptions(request.url)
           : await readJsonBody(request, maxBodyBytes);
-      const result = await routeServiceRequest(options.service, principal, route, body);
+      const result = await routeResolvedRequest({
+        options,
+        route,
+        body,
+        transport,
+        ...(request.headers["x-withmate-fallback-from"] === "mcp" ? { fallbackFrom: "mcp" } : {}),
+      });
       writeJson(response, statusForMemoryResponse(result), result);
     } catch (error) {
       if (isMemoryErrorResponse(error)) {

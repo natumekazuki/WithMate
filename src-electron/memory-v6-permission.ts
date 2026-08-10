@@ -11,6 +11,9 @@ export type MemoryV6LocalUserPrincipal = {
 export type MemoryV6Principal = MemoryV6LocalUserPrincipal;
 
 export const LOCAL_USER_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
+  "memory.list_targets",
+  "memory.list_entries",
+  "memory.audit",
   "memory.search",
   "memory.get_entry",
   "memory.get_file",
@@ -20,6 +23,7 @@ export const LOCAL_USER_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
   "memory.file_usage",
   "memory.append",
   "memory.forget",
+  "memory.move_entry",
 ];
 
 export function createLocalUserMemoryPrincipal(): MemoryV6LocalUserPrincipal {

@@ -24,6 +24,8 @@ import type { ModelReasoningEffort, ModelCatalogProvider } from "../src/model-ca
 import type { ApprovalMode } from "../src/approval-mode.js";
 import type { CodexSandboxMode } from "../src/codex-sandbox-mode.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
+import type { ConversationTimingContext } from "./conversation-timing.js";
+import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -43,6 +45,8 @@ export type RunSessionTurnInput = {
   userMessage: string;
   appSettings: AppSettings;
   attachments: ComposerAttachment[];
+  conversationTimingContext?: ConversationTimingContext;
+  characterContext?: CharacterContextResponse;
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;

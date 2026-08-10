@@ -592,7 +592,6 @@ test("buildLiveSessionMessageColumnProps は live message props を共通形式�
 test("buildLiveSessionComposerProps は composer の表示デフォルトを反映する", () => {
   const composerTextareaRef = React.createRef<HTMLTextAreaElement>();
   const composerProps = buildLiveSessionComposerProps({
-    retryBanner: null,
     isRunning: false,
     composerBlocked: false,
     canSelectCustomAgent: false,
@@ -688,7 +687,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   const onSendOrCancel = () => {};
   const onExpandActionDock = () => {};
   const props = buildLiveSessionComposerDockProps({
-    retryBanner: null,
     isRunning: true,
     pendingRunIndicatorAnnouncement: "実行中",
     pendingRunIndicatorText: "応答を生成中",
@@ -943,7 +941,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       getChangedFilesEmptyText: () => "",
     },
     composer: {
-      retryBanner: null,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "実行中",
       pendingRunIndicatorText: "応答を生成中",

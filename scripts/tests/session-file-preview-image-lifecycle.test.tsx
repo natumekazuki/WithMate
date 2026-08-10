@@ -9,6 +9,7 @@ import type {
   SessionFileDescriptor,
   SessionFileResourceRequest,
 } from "../../src/file-explorer/file-explorer-contract.js";
+import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,13 +17,23 @@ type PreviewApi = NonNullable<React.ComponentProps<typeof SessionFilePreview>["a
 
 const DEFAULT_IMAGE_COPY_API: Pick<
   PreviewApi,
-  "copySessionFilePreviewImage" | "showSessionFilePreviewImageContextMenu"
+  | "copySessionFilePreviewImage"
+  | "showSessionFilePreviewImageContextMenu"
+  | "openSessionFilePreviewWindow"
 > = {
   async copySessionFilePreviewImage() {
     return { status: "copied" };
   },
   async showSessionFilePreviewImageContextMenu() {
     return { status: "dismissed" };
+  },
+  async openSessionFilePreviewWindow() {
+    return {
+      status: "opened",
+      targetType: "preview-window",
+      disposition: "created",
+      resource: MARKDOWN_REQUEST,
+    };
   },
 };
 
@@ -65,6 +76,7 @@ function installDomGlobals(dom: JSDOM): () => void {
   const previousCancelAnimationFrame = globalThis.cancelAnimationFrame;
   const previousHTMLElement = globalThis.HTMLElement;
   const previousMutationObserver = globalThis.MutationObserver;
+  const previousNode = globalThis.Node;
 
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
@@ -82,6 +94,7 @@ function installDomGlobals(dom: JSDOM): () => void {
     configurable: true,
     value: dom.window.MutationObserver,
   });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
 
   return () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
@@ -94,6 +107,43 @@ function installDomGlobals(dom: JSDOM): () => void {
       configurable: true,
       value: previousMutationObserver,
     });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+  };
+}
+
+function createRect(input: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}): DOMRect {
+  return {
+    ...input,
+    right: input.left + input.width,
+    bottom: input.top + input.height,
+    x: input.left,
+    y: input.top,
+    toJSON: () => ({}),
+  } as DOMRect;
+}
+
+function installElementSize(dom: JSDOM): () => void {
+  const prototype = dom.window.HTMLElement.prototype;
+  const previousOffsetWidth = Object.getOwnPropertyDescriptor(prototype, "offsetWidth");
+  const previousOffsetHeight = Object.getOwnPropertyDescriptor(prototype, "offsetHeight");
+  Object.defineProperty(prototype, "offsetWidth", { configurable: true, get: () => 800 });
+  Object.defineProperty(prototype, "offsetHeight", { configurable: true, get: () => 600 });
+  return () => {
+    if (previousOffsetWidth) {
+      Object.defineProperty(prototype, "offsetWidth", previousOffsetWidth);
+    } else {
+      Reflect.deleteProperty(prototype, "offsetWidth");
+    }
+    if (previousOffsetHeight) {
+      Object.defineProperty(prototype, "offsetHeight", previousOffsetHeight);
+    } else {
+      Reflect.deleteProperty(prototype, "offsetHeight");
+    }
   };
 }
 
@@ -163,6 +213,50 @@ function createPreviewApi(
   return { api, getImageInspectCount: () => imageInspectCount };
 }
 
+function createTextPreviewApi(
+  request: SessionFileResourceRequest,
+  name: string,
+  raw: string,
+  revision: string,
+): PreviewApi {
+  const bytes = new TextEncoder().encode(raw);
+  return {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
+    },
+    async inspectSessionFile() {
+      return {
+        ...request,
+        name,
+        kind: "text",
+        byteLength: bytes.byteLength,
+        modifiedAt: "2026-08-09T00:00:00.000Z",
+        mimeType: "text/plain",
+        suggestedEncoding: "utf-8",
+        revision,
+      };
+    },
+    async readSessionFileChunk(chunkRequest) {
+      const chunk = bytes.slice(chunkRequest.offset, chunkRequest.offset + chunkRequest.length);
+      return {
+        data: copyArrayBuffer(chunk),
+        offset: chunkRequest.offset,
+        nextOffset: chunkRequest.offset + chunk.byteLength,
+        totalBytes: bytes.byteLength,
+        done: chunkRequest.offset + chunk.byteLength >= bytes.byteLength,
+        revision: chunkRequest.expectedRevision,
+      };
+    },
+    async openSessionFile() {
+      return { status: "opened", targetType: "local-path", target: request.relativePath };
+    },
+    async openPath(target) {
+      return { status: "opened", targetType: "local-path", target };
+    },
+  };
+}
+
 async function waitFor(condition: () => boolean): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -198,11 +292,288 @@ async function renderPreview(
       request,
       onClose() {},
       onCopyText() {},
+      onQuoteText() {},
       ...extraProps,
     }));
   });
   return root;
 }
+
+test("Markdown preview の local file link は current resource を基準に detached Preview navigation へ戻す", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    absolutePath: "C:\\outside\\current.md",
+  };
+  const bytes = new TextEncoder().encode("[next](./next.md)");
+  const navigationRequests: unknown[] = [];
+  const descriptor: SessionFileDescriptor = {
+    ...request,
+    name: "current.md",
+    kind: "markdown",
+    byteLength: bytes.byteLength,
+    modifiedAt: "2026-08-10T00:00:00.000Z",
+    mimeType: "text/markdown",
+    suggestedEncoding: "utf-8",
+    revision: "outside-r1",
+  };
+  const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [];
+    },
+    async inspectSessionFile() {
+      return descriptor;
+    },
+    async readSessionFileChunk(chunkRequest) {
+      const chunk = bytes.slice(chunkRequest.offset, chunkRequest.offset + chunkRequest.length);
+      return {
+        data: copyArrayBuffer(chunk),
+        offset: chunkRequest.offset,
+        nextOffset: chunkRequest.offset + chunk.byteLength,
+        totalBytes: bytes.byteLength,
+        done: true,
+        revision: chunkRequest.expectedRevision,
+      };
+    },
+    async openSessionFile() {
+      return { status: "opened", targetType: "local-path", target: request.absolutePath };
+    },
+    async openPath(target) {
+      assert.fail(`Markdown local file link must not use openPath: ${target}`);
+    },
+    async openSessionFilePreviewWindow(navigationRequest) {
+      navigationRequests.push(navigationRequest);
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition: "created",
+        resource: { sessionId: "session-1", absolutePath: "C:\\outside\\next.md" },
+      };
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.querySelector<HTMLAnchorElement>("a") !== null);
+    await act(async () => container.querySelector<HTMLAnchorElement>("a")?.click());
+    assert.deepEqual(navigationRequests, [{
+      kind: "link",
+      sessionId: "session-1",
+      target: "./next.md",
+      baseResource: request,
+    }]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("Text preview の選択範囲は Copy と Quote の共通 action を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "notes.txt",
+  };
+  const quotedTexts: string[] = [];
+  const api = createTextPreviewApi(request, "notes.txt", "selected preview text", "text-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request, {
+      onQuoteText: (text) => quotedTexts.push(text),
+    });
+    await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+
+    const surface = container.querySelector<HTMLElement>(".session-file-text-scroll");
+    const selectedNode = container.querySelector(".session-file-text-line code")?.firstChild;
+    assert.ok(surface);
+    assert.ok(selectedNode);
+    Object.defineProperty(surface, "getBoundingClientRect", {
+      configurable: true,
+      value: () => createRect({ left: 0, top: 0, width: 500, height: 500 }),
+    });
+    const anchorRect = createRect({ left: 100, top: 100, width: 80, height: 20 });
+    const selection = {
+      isCollapsed: false,
+      rangeCount: 1,
+      getRangeAt() {
+        return {
+          commonAncestorContainer: selectedNode,
+          getBoundingClientRect: () => anchorRect,
+          getClientRects: () => [anchorRect],
+        };
+      },
+      toString: () => "  selected preview text\n",
+    } as unknown as Selection;
+    Object.defineProperty(dom.window, "getSelection", {
+      configurable: true,
+      value: () => selection,
+    });
+
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.Event("selectionchange"));
+    });
+    const toolbar = container.querySelector(".message-response-actions");
+    assert.ok(toolbar);
+    const buttons = Array.from(toolbar.querySelectorAll<HTMLButtonElement>("button"));
+    assert.deepEqual(buttons.map((button) => button.textContent), ["Copy", "Quote"]);
+
+    await act(async () => buttons[1]?.click());
+    assert.deepEqual(quotedTexts, ["  selected preview text\n"]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("Text preview の Ctrl+A は仮想化された全文だけを Copy と Quote の対象にする", async () => {
+  const dom = new JSDOM("<!doctype html><p>outside preview</p><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.addEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value(this: HTMLElement, name: string, listener: EventListener) {
+      this.removeEventListener(name.replace(/^on/, ""), listener);
+    },
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const rangePrototype = dom.window.Range.prototype as Range & {
+    getBoundingClientRect?: () => DOMRect;
+    getClientRects?: () => DOMRect[];
+  };
+  const previousGetBoundingClientRect = rangePrototype.getBoundingClientRect;
+  const previousGetClientRects = rangePrototype.getClientRects;
+  const selectionRect = createRect({ left: 40, top: 40, width: 400, height: 300 });
+  rangePrototype.getBoundingClientRect = () => selectionRect;
+  rangePrototype.getClientRects = () => [selectionRect];
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "many-lines.txt",
+  };
+  const text = Array.from({ length: 200 }, (_, index) => `line ${index + 1}`).join("\n");
+  const quotedTexts: string[] = [];
+  const api = createTextPreviewApi(request, "many-lines.txt", text, "text-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request, {
+      onQuoteText: (value) => quotedTexts.push(value),
+    });
+    await waitFor(() => container.querySelector(".session-file-text-line code") !== null);
+
+    const surface = container.querySelector<HTMLElement>(".session-file-text-scroll");
+    assert.ok(surface);
+    Object.defineProperty(surface, "getBoundingClientRect", {
+      configurable: true,
+      value: () => selectionRect,
+    });
+    const previewHeaderButton = container.querySelector<HTMLButtonElement>(".session-file-preview-header button");
+    assert.ok(previewHeaderButton);
+    previewHeaderButton.focus();
+    const selectAllEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      previewHeaderButton.dispatchEvent(selectAllEvent);
+    });
+    assert.equal(selectAllEvent.defaultPrevented, true);
+    assert.equal(dom.window.document.activeElement, surface);
+    assert.ok(container.querySelectorAll(".session-file-text-line").length < 200);
+
+    let copiedText = "";
+    const copyEvent = new dom.window.Event("copy", { bubbles: true, cancelable: true });
+    Object.defineProperty(copyEvent, "clipboardData", {
+      value: {
+        setData(type: string, value: string) {
+          assert.equal(type, "text/plain");
+          copiedText = value;
+        },
+      },
+    });
+    await act(async () => {
+      surface.dispatchEvent(copyEvent);
+    });
+    assert.equal(copyEvent.defaultPrevented, true);
+    assert.equal(copiedText, text);
+    assert.doesNotMatch(copiedText, /outside preview/);
+
+    const quoteButton = Array.from(container.querySelectorAll<HTMLButtonElement>(".message-response-actions button"))
+      .find((button) => button.textContent === "Quote");
+    assert.ok(quoteButton);
+    await act(async () => quoteButton.click());
+    assert.deepEqual(quotedTexts, [text]);
+
+    const findButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Find");
+    assert.ok(findButton);
+    await act(async () => findButton.click());
+    const findInput = container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(findInput);
+    const inputSelectAllEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "a",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => {
+      findInput.dispatchEvent(inputSelectAllEvent);
+    });
+    assert.equal(inputSelectAllEvent.defaultPrevented, false);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    if (previousGetBoundingClientRect) {
+      rangePrototype.getBoundingClientRect = previousGetBoundingClientRect;
+    } else {
+      Reflect.deleteProperty(rangePrototype, "getBoundingClientRect");
+    }
+    if (previousGetClientRects) {
+      rangePrototype.getClientRects = previousGetClientRects;
+    } else {
+      Reflect.deleteProperty(rangePrototype, "getClientRects");
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
 
 function dispatchPointerEvent(
   dom: JSDOM,
@@ -346,6 +717,123 @@ test("inspection prefix より後ろで binary と判明した Markdown は rich
     await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
     assert.equal(container.querySelector(".session-file-markdown"), null);
     assert.match(container.textContent ?? "", /Preview is not available for this binary file/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("JSON preview は Formatted と原文を保持した Raw を切り替える", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "config/settings.json",
+  };
+  const raw = "{\"markup\":\"<img src=x onerror=alert(1)>\",\"enabled\":true}";
+  const api = createTextPreviewApi(request, "settings.json", raw, "json-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => {
+      const formatted = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+        .find((button) => button.textContent === "Formatted");
+      return formatted?.disabled === false;
+    });
+    const formattedButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Formatted");
+    const rawButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Raw");
+    assert.ok(formattedButton?.classList.contains("is-active"));
+    assert.ok(rawButton);
+    assert.equal(container.querySelector("img[src='x']"), null);
+    assert.match(container.textContent ?? "", /<img src=x onerror=alert\(1\)>/);
+
+    await act(async () => rawButton.click());
+    await waitFor(() => rawButton.classList.contains("is-active"));
+    const displayedLines = Array.from(container.querySelectorAll(".session-file-text-line code"))
+      .map((element) => element.textContent ?? "");
+    assert.deepEqual(displayedLines, [raw]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    restoreElementSize();
+    dom.window.close();
+  }
+});
+
+test("不正な YAML preview は parse error を示して Raw へ fallback する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "config/settings.yaml",
+  };
+  const raw = "root: [";
+  const api = createTextPreviewApi(request, "settings.yaml", raw, "yaml-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("Formatted preview is unavailable") ?? false);
+    const formattedButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Formatted");
+    const rawButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Raw");
+    assert.equal(formattedButton?.disabled, true);
+    assert.ok(rawButton?.classList.contains("is-active"));
+    assert.match(container.textContent ?? "", /root: \[/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    restoreElementSize();
+    dom.window.close();
+  }
+});
+
+test("上限を超える JSON preview はformatせず既存Raw表示へ戻す", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "large.json",
+  };
+  const raw = `{"value":"${"a".repeat(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}"}`;
+  const api = createTextPreviewApi(request, "large.json", raw, "large-json-r1");
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("Formatted preview is skipped") ?? false);
+    assert.equal(container.querySelector("[aria-label='Structured text display mode']"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -724,6 +1212,7 @@ test("file切替後に完了したOpenとOpen Diffの結果を新しいpreview�
         request,
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
         diffScopes: ["working-tree"],
         onOpenDiff: () => diffResult.promise,
       }));
@@ -791,6 +1280,7 @@ test("操作feedbackと後着するGit Diff利用不可理由を両方表示す�
         request: MARKDOWN_REQUEST,
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
         diffAvailabilityMessage,
       }));
     });
@@ -845,6 +1335,7 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
         patch: "@@ -1 +1 @@\n-old\n+new\n",
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
         onReload,
       }));
     });
@@ -917,6 +1408,7 @@ test("Git Diff検索はReloadで一致件数が減っても現在位置を有効
         patch,
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
       }));
     });
   };
@@ -977,6 +1469,7 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
         patch: "@@ -1 +1 @@\n-old\n+new\n",
         onClose() {},
         onCopyText() {},
+        onQuoteText() {},
       }));
     });
 

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   buildAgentSessionChatWindowProps,
@@ -89,6 +90,8 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     titleDraft: "Main session",
     isSelectedSessionRunning: false,
     isSelectedSessionReadOnly: false,
+    isSelectedSessionPinned: false,
+    isSessionPinPending: false,
     messageListRef: React.createRef<HTMLDivElement>(),
     pendingRunIndicatorAnnouncement: "",
     pendingRunIndicatorText: "",
@@ -102,13 +105,13 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     liveRunErrorMessage: "",
     isMessageListFollowing: true,
     retryBanner: null,
-    isRetryDetailsOpen: false,
     isRetryActionDisabled: false,
     isRetryEditDisabled: false,
     isRetryDraftReplacePending: false,
     composerBlocked: false,
     isAgentPickerOpen: false,
     isSkillPickerOpen: false,
+    isPromptTemplateWorkspaceOpen: false,
     isAdditionalDirectoryListOpen: false,
     selectedCustomAgentLabel: "Agent",
     selectedCustomAgentTitle: "",
@@ -183,6 +186,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onCancelTitleEdit: noop,
     onStartTitleEdit: noop,
     onDeleteSession: noop,
+    onToggleSessionPin: noop,
     onOpenSessionExplorer: noop,
     onOpenSessionFilesExplorer: noop,
     onMessageListScroll: noop,
@@ -195,7 +199,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     getChangedFilesEmptyText: () => "ファイル変更はありません",
     onCopyMessageText: noop,
     onQuoteMessageText: noop,
-    onToggleRetryDetails: noop,
     onResendLastMessage: noop,
     onEditLastMessage: noop,
     onConfirmRetryDraftReplace: noop,
@@ -207,6 +210,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onPickSessionFiles: noop,
     onToggleAgentPicker: noop,
     onToggleSkillPicker: noop,
+    onOpenPromptTemplates: noop,
     onAddAdditionalDirectory: noop,
     onToggleAdditionalDirectoryList: noop,
     onCollapseActionDock: noop,
@@ -268,6 +272,28 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode でも attachment 経�
   assert.equal(props.compactActionDockProps.attachmentCount, 1);
 });
 
+test("buildAgentSessionChatWindowProps は retry actions を共通 chat layout に渡す", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    retryBanner: {
+      kind: "failed",
+      badge: "失敗",
+      title: "前回の依頼は完了できませんでした",
+      lastRequestText: "調べて",
+    },
+    isRetryActionDisabled: false,
+    isRetryEditDisabled: false,
+    isRetryDraftReplacePending: false,
+    isActionDockExpanded: false,
+  }));
+
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.recoveryActions));
+
+  assert.equal(props.isActionDockExpanded, false);
+  assert.match(html, /retry-banner failed/);
+  assert.match(html, />再送<\/button>/);
+  assert.match(html, />編集<\/button>/);
+});
+
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
   const normalProps = buildAgentSessionChatWindowProps(createProjectionInput());
   const auxiliaryProps = buildAgentSessionChatWindowProps(createProjectionInput({ isAuxiliaryMode: true }));
@@ -323,10 +349,13 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
   const onOpenSessionExplorer = () => {};
   const onOpenSessionFilesExplorer = () => {};
   const onOpenSessionFilesTerminal = () => {};
+  const onToggleSessionPin = () => {};
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isSelectedSessionPinned: true,
     onOpenSessionExplorer,
     onOpenSessionFilesExplorer,
     onOpenSessionFilesTerminal,
+    onToggleSessionPin,
   }));
   const workspaceAction = props.headerProps.workspaceActions as React.ReactElement<{
     onClick: () => void;
@@ -341,6 +370,8 @@ test("buildAgentSessionChatWindowProps は header action callbacks を維持す�
   assert.equal(workspaceAction.props.onClick, onOpenSessionExplorer);
   assert.equal(sessionFilesExplorer.props.onClick, onOpenSessionFilesExplorer);
   assert.equal(sessionFilesTerminal.props.onClick, onOpenSessionFilesTerminal);
+  assert.equal(props.headerProps.isPinned, true);
+  assert.equal(props.headerProps.onTogglePin, onToggleSessionPin);
 });
 
 test("buildAgentSessionChatWindowProps は composer と compact dock の live props を維持する", () => {
@@ -377,6 +408,7 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.composerProps.canSelectCustomAgent, true);
   assert.equal(props.composerProps.showCustomAgentPicker, true);
+  assert.equal(props.composerProps.showPromptTemplateButton, true);
   assert.equal(props.composerProps.selectedCustomAgentLabel, "Copilot Agent");
   assert.equal(props.composerProps.additionalDirectoryCount, 1);
   assert.equal(props.composerProps.showJumpToBottom, true);

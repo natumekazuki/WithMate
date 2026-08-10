@@ -6,13 +6,14 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
-import { SelectionCopySurface } from "../session-components.js";
+import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
   SessionFileDescriptor,
@@ -21,13 +22,17 @@ import type {
   FileRootGitChangeScope,
 } from "./file-explorer-contract.js";
 import {
+  getSessionFileResourceDisplayPath,
+  isSessionFileAbsoluteResource,
+  isSessionFileRootResource,
+} from "./file-explorer-contract.js";
+import {
   calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   formatFileByteLength,
   PreviewByteAccumulator,
   resolveMarkdownImageTarget,
-  resolveMarkdownLinkTarget,
   SESSION_FILE_LARGE_WARNING_BYTES,
   SESSION_FILE_READ_CHUNK_BYTES,
   splitPreviewLines,
@@ -55,6 +60,16 @@ import {
   type UnifiedDiffContentRow,
   type UnifiedDiffDisplayRow,
 } from "./unified-diff.js";
+import {
+  canProjectStructuredText,
+  highlightRawStructuredText,
+  projectStructuredText,
+  resolveStructuredTextFormat,
+  STRUCTURED_TEXT_PREVIEW_MAX_BYTES,
+  type PreviewSyntaxToken,
+  type StructuredTextFormat,
+  type StructuredTextProjection,
+} from "./structured-text-preview.js";
 
 type FilePreviewApi = Pick<
   WithMateWindowApi,
@@ -62,6 +77,7 @@ type FilePreviewApi = Pick<
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
+  | "openSessionFilePreviewWindow"
   | "openPath"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
@@ -72,6 +88,8 @@ type SessionFilePreviewProps = {
   request: SessionFileResourceRequest;
   onClose: () => void;
   onCopyText: (text: string) => void;
+  onQuoteText?: (text: string) => void;
+  closeLabel?: string;
   diffScopes?: FileRootGitChangeScope[];
   onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
   diffLoadingScope?: FileRootGitChangeScope | null;
@@ -98,6 +116,22 @@ type FileLoadState =
   | { status: "loading"; descriptor: SessionFileDescriptor; loadedBytes: number }
   | { status: "ready"; loaded: LoadedFile | null; descriptor: SessionFileDescriptor }
   | { status: "error"; message: string };
+
+type StructuredTextProjectionState =
+  | { status: "idle" | "loading" }
+  | {
+    status: "ready";
+    sourceText: string;
+    format: StructuredTextFormat;
+    projection: StructuredTextProjection;
+  }
+  | {
+    status: "error";
+    sourceText: string;
+    format: StructuredTextFormat;
+    message: string;
+    rawTokens: PreviewSyntaxToken[][] | null;
+  };
 
 const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
 const IMAGE_ZOOM_MIN = 10;
@@ -152,11 +186,16 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
+  const resource = isSessionFileAbsoluteResource(descriptor)
+    ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
+    : {
+        sessionId: descriptor.sessionId,
+        rootId: descriptor.rootId,
+        relativePath: descriptor.relativePath,
+      };
   while (offset < descriptor.byteLength) {
     const result = await api.readSessionFileChunk({
-      sessionId: descriptor.sessionId,
-      rootId: descriptor.rootId,
-      relativePath: descriptor.relativePath,
+      ...resource,
       offset,
       length: Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
       expectedRevision: descriptor.revision,
@@ -180,9 +219,11 @@ async function readWholeResource(
 type VirtualizedTextContentProps = {
   text: string;
   copyText: (text: string) => void;
+  quoteText?: (text: string) => void;
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
   variant?: "text" | "diff";
+  syntaxTokens?: PreviewSyntaxToken[][] | null;
 };
 
 type IndexedPreviewTextMatch = PreviewTextMatch & { matchIndex: number };
@@ -217,12 +258,74 @@ function renderHighlightedLine(
   return content;
 }
 
+function syntaxTokenStyle(token: PreviewSyntaxToken, includeColor: boolean): CSSProperties {
+  return {
+    ...(includeColor && token.color ? { color: token.color } : {}),
+    ...(token.fontStyle && (token.fontStyle & 1) !== 0 ? { fontStyle: "italic" } : {}),
+    ...(token.fontStyle && (token.fontStyle & 2) !== 0 ? { fontWeight: 700 } : {}),
+    ...(token.fontStyle && (token.fontStyle & 4) !== 0 ? { textDecoration: "underline" } : {}),
+  };
+}
+
+function renderSyntaxHighlightedLine(
+  line: string,
+  tokens: PreviewSyntaxToken[],
+  matches: IndexedPreviewTextMatch[],
+  currentMatchIndex: number,
+): ReactNode {
+  if (tokens.map((token) => token.content).join("") !== line) {
+    return renderHighlightedLine(line, matches, currentMatchIndex);
+  }
+  const content: ReactNode[] = [];
+  let lineOffset = 0;
+  let key = 0;
+  for (const token of tokens) {
+    const tokenStart = lineOffset;
+    const tokenEnd = tokenStart + token.content.length;
+    const boundaries = new Set([tokenStart, tokenEnd]);
+    for (const match of matches) {
+      if (match.endOffset > tokenStart && match.startOffset < tokenEnd) {
+        boundaries.add(Math.max(tokenStart, match.startOffset));
+        boundaries.add(Math.min(tokenEnd, match.endOffset));
+      }
+    }
+    const sortedBoundaries = [...boundaries].sort((left, right) => left - right);
+    for (let index = 0; index < sortedBoundaries.length - 1; index += 1) {
+      const start = sortedBoundaries[index] ?? tokenStart;
+      const end = sortedBoundaries[index + 1] ?? tokenEnd;
+      if (end <= start) {
+        continue;
+      }
+      const text = token.content.slice(start - tokenStart, end - tokenStart);
+      const match = matches.find((candidate) => candidate.startOffset <= start && candidate.endOffset >= end);
+      if (match) {
+        content.push(
+          <mark
+            key={key}
+            className={match.matchIndex === currentMatchIndex ? "is-current" : undefined}
+            style={syntaxTokenStyle(token, false)}
+          >
+            {text}
+          </mark>,
+        );
+      } else {
+        content.push(<span key={key} style={syntaxTokenStyle(token, true)}>{text}</span>);
+      }
+      key += 1;
+    }
+    lineOffset = tokenEnd;
+  }
+  return content.length > 0 ? content : " ";
+}
+
 function VirtualizedTextContent({
   text,
   copyText,
+  quoteText,
   matches,
   currentMatchIndex,
   variant = "text",
+  syntaxTokens = null,
 }: VirtualizedTextContentProps) {
   const lines = useMemo(() => splitPreviewLines(text), [text]);
   const matchesByLine = useMemo(() => {
@@ -251,9 +354,11 @@ function VirtualizedTextContent({
   }, [targetLine, virtualizer]);
 
   return (
-    <SelectionCopySurface
+    <SelectionTextActionSurface
       className="session-file-text-scroll"
       onCopyText={copyText}
+      onQuoteText={quoteText}
+      selectAllText={text}
       surfaceRef={scrollRef}
     >
       <div className="session-file-text-lines" style={{ height: virtualizer.getTotalSize() }}>
@@ -277,18 +382,28 @@ function VirtualizedTextContent({
               style={{ transform: `translateY(${virtualLine.start}px)` }}
             >
               <span className="session-file-line-number" aria-hidden="true">{virtualLine.index + 1}</span>
-              <code>{renderHighlightedLine(line, matchesByLine.get(virtualLine.index) ?? [], currentMatchIndex)}</code>
+              <code>
+                {syntaxTokens?.[virtualLine.index]
+                  ? renderSyntaxHighlightedLine(
+                    line,
+                    syntaxTokens[virtualLine.index] ?? [],
+                    matchesByLine.get(virtualLine.index) ?? [],
+                    currentMatchIndex,
+                  )
+                  : renderHighlightedLine(line, matchesByLine.get(virtualLine.index) ?? [], currentMatchIndex)}
+              </code>
             </div>
           );
         })}
       </div>
-    </SelectionCopySurface>
+    </SelectionTextActionSurface>
   );
 }
 
 type VirtualizedSplitDiffContentProps = {
   patch: string;
   copyText: (text: string) => void;
+  quoteText?: (text: string) => void;
   matches: PreviewTextMatch[];
   currentMatchIndex: number;
 };
@@ -303,6 +418,7 @@ function rowContainsPatchLine(row: UnifiedDiffDisplayRow, patchLineIndex: number
 function VirtualizedSplitDiffContent({
   patch,
   copyText,
+  quoteText,
   matches,
   currentMatchIndex,
 }: VirtualizedSplitDiffContentProps) {
@@ -367,9 +483,11 @@ function VirtualizedSplitDiffContent({
         <span />
         <strong>After</strong>
       </div>
-      <SelectionCopySurface
+      <SelectionTextActionSurface
         className="session-live-diff-split-scroll"
         onCopyText={copyText}
+        onQuoteText={quoteText}
+        selectAllText={patch}
         surfaceRef={scrollRef}
       >
         <div className="session-live-diff-split-rows" style={{ height: virtualizer.getTotalSize() }}>
@@ -412,7 +530,7 @@ function VirtualizedSplitDiffContent({
             );
           })}
         </div>
-      </SelectionCopySurface>
+      </SelectionTextActionSurface>
     </div>
   );
 }
@@ -422,6 +540,8 @@ export function SessionFilePreview({
   request,
   onClose,
   onCopyText,
+  onQuoteText,
+  closeLabel = "Back to Chat",
   diffScopes = [],
   onOpenDiff,
   diffLoadingScope = null,
@@ -438,6 +558,10 @@ export function SessionFilePreview({
   const [loadState, setLoadState] = useState<FileLoadState>({ status: "inspecting" });
   const [encoding, setEncoding] = useState<SessionFileEncodingSelection>("auto");
   const [markdownMode, setMarkdownMode] = useState<"preview" | "source">("preview");
+  const [structuredTextMode, setStructuredTextMode] = useState<"formatted" | "raw">("formatted");
+  const [structuredTextProjection, setStructuredTextProjection] = useState<StructuredTextProjectionState>({
+    status: "idle",
+  });
   const [imageZoom, setImageZoom] = useState<"fit" | number>("fit");
   const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
@@ -479,8 +603,7 @@ export function SessionFilePreview({
     markdownImageQueue,
     markdownMode,
     reloadRevision,
-    request.relativePath,
-    request.rootId,
+    getSessionFileResourceDisplayPath(request),
     request.sessionId,
     roots,
   ]);
@@ -534,6 +657,8 @@ export function SessionFilePreview({
     setLoadState({ status: "inspecting" });
     setEncoding("auto");
     setMarkdownMode("preview");
+    setStructuredTextMode("formatted");
+    setStructuredTextProjection({ status: "idle" });
     setImageZoom("fit");
     imagePanSessionRef.current = null;
     setIsImagePanning(false);
@@ -592,7 +717,79 @@ export function SessionFilePreview({
     }
     return decodeSessionFileBytes(loaded.bytes, encoding, loaded.descriptor.suggestedEncoding);
   }, [encoding, loaded]);
-  const textLines = useMemo(() => splitPreviewLines(decodedText), [decodedText]);
+  const structuredTextFormat = previewKind === "text" && descriptor
+    ? resolveStructuredTextFormat(descriptor.name)
+    : null;
+  const structuredTextEligible = Boolean(
+    loaded &&
+    structuredTextFormat &&
+    canProjectStructuredText(loaded.bytes.byteLength),
+  );
+
+  useEffect(() => {
+    if (!structuredTextFormat || !structuredTextEligible) {
+      setStructuredTextProjection({ status: "idle" });
+      return;
+    }
+    let current = true;
+    setStructuredTextMode("formatted");
+    setStructuredTextProjection({ status: "loading" });
+    void projectStructuredText(decodedText, structuredTextFormat).then((projection) => {
+      if (current) {
+        setStructuredTextProjection({
+          status: "ready",
+          sourceText: decodedText,
+          format: structuredTextFormat,
+          projection,
+        });
+      }
+    }).catch(async (error) => {
+      const message = error instanceof Error
+        ? error.message.split(/\r?\n/, 1)[0] ?? "Structured text could not be formatted."
+        : "Structured text could not be formatted.";
+      let rawTokens: PreviewSyntaxToken[][] | null = null;
+      try {
+        rawTokens = await highlightRawStructuredText(decodedText, structuredTextFormat);
+      } catch {
+        rawTokens = null;
+      }
+      if (current) {
+        setStructuredTextMode("raw");
+        setStructuredTextProjection({
+          status: "error",
+          sourceText: decodedText,
+          format: structuredTextFormat,
+          message,
+          rawTokens,
+        });
+      }
+    });
+    return () => {
+      current = false;
+    };
+  }, [decodedText, structuredTextEligible, structuredTextFormat]);
+
+  const currentStructuredTextProjection = structuredTextProjection.status === "ready" &&
+    structuredTextProjection.sourceText === decodedText &&
+    structuredTextProjection.format === structuredTextFormat
+    ? structuredTextProjection.projection
+    : null;
+  const currentStructuredTextError = structuredTextProjection.status === "error" &&
+    structuredTextProjection.sourceText === decodedText &&
+    structuredTextProjection.format === structuredTextFormat
+    ? structuredTextProjection
+    : null;
+  const displayedText = currentStructuredTextProjection && structuredTextMode === "formatted"
+    ? currentStructuredTextProjection.formattedText
+    : decodedText;
+  const displayedSyntaxTokens = currentStructuredTextProjection
+    ? structuredTextMode === "formatted"
+      ? currentStructuredTextProjection.formattedTokens
+      : currentStructuredTextProjection.rawTokens
+    : currentStructuredTextError
+      ? currentStructuredTextError.rawTokens
+      : null;
+  const textLines = useMemo(() => splitPreviewLines(displayedText), [displayedText]);
   const findMatches = useMemo(
     () => findPreviewTextMatches(textLines, findQuery),
     [findQuery, textLines],
@@ -890,19 +1087,17 @@ export function SessionFilePreview({
     if (!api) {
       return;
     }
-    const resolved = resolveMarkdownLinkTarget(roots, request.rootId, request.relativePath, target);
-    if (resolved.kind === "fragment") {
-      return;
-    }
-    if (resolved.kind === "unsupported") {
-      setFeedback("The link is outside the authorized root or uses an unsupported URL scheme.");
+    const trimmedTarget = target.trim();
+    if (!trimmedTarget || trimmedTarget.startsWith("#")) {
       return;
     }
     const revision = loadRevisionRef.current;
-    const openPromise = resolved.kind === "local"
-      ? api.openSessionFile({ sessionId: request.sessionId, ...resolved.resource })
-      : api.openPath(resolved.target);
-    void openPromise
+    void api.openSessionFilePreviewWindow({
+      kind: "link",
+      sessionId: request.sessionId,
+      target: trimmedTarget,
+      baseResource: request,
+    })
       .then((result) => {
         if (loadRevisionRef.current === revision) {
           setFeedback(result.status === "opened" ? "" : result.message);
@@ -913,7 +1108,7 @@ export function SessionFilePreview({
           setFeedback(error instanceof Error ? error.message : "The link could not be opened.");
         }
       });
-  }, [api, request, roots]);
+  }, [api, request]);
 
   const resolveMarkdownImageSource = useCallback(async (target: string): Promise<string | null> => {
     if (!api) {
@@ -921,14 +1116,17 @@ export function SessionFilePreview({
     }
     const imageTarget = resolveMarkdownImageTarget(
       roots,
-      request.rootId,
-      request.relativePath,
+      isSessionFileRootResource(request) ? request.rootId : "absolute-preview",
+      isSessionFileRootResource(request) ? request.relativePath : "",
       target,
     );
     if (imageTarget.kind === "external") {
       return imageTarget.source;
     }
     if (imageTarget.kind === "unsupported") {
+      return null;
+    }
+    if (imageTarget.resource.rootId === "absolute-preview") {
       return null;
     }
     const revision = loadRevisionRef.current;
@@ -990,14 +1188,21 @@ export function SessionFilePreview({
     }
   }, [onOpenDiff]);
 
+  const structuredTextFeedback = currentStructuredTextError
+    ? `Formatted preview is unavailable: ${currentStructuredTextError.message} Showing raw content.`
+    : loaded && structuredTextFormat && loaded.bytes.byteLength > STRUCTURED_TEXT_PREVIEW_MAX_BYTES
+      ? `Formatted preview is skipped for files larger than ${formatFileByteLength(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}.`
+      : "";
+  const previewFeedback = [feedback, diffAvailabilityMessage, structuredTextFeedback].filter(Boolean);
+
   return (
     <section className="session-file-preview" aria-label="File preview">
       <header className="session-file-preview-header">
         <button className="session-file-back-to-chat" type="button" onClick={onClose}>
-          Back to Chat{chatNotice ? <span>{chatNotice}</span> : null}
+          {closeLabel}{chatNotice ? <span>{chatNotice}</span> : null}
         </button>
         <div className="session-file-preview-title">
-          <strong>{descriptor?.name ?? request.relativePath.split("/").at(-1)}</strong>
+          <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
@@ -1013,6 +1218,21 @@ export function SessionFilePreview({
             <div className="session-file-preview-segmented" role="group" aria-label="Markdown display mode">
               <button type="button" className={markdownMode === "preview" ? "is-active" : ""} onClick={() => setMarkdownMode("preview")}>Preview</button>
               <button type="button" className={markdownMode === "source" ? "is-active" : ""} onClick={() => setMarkdownMode("source")}>Source</button>
+            </div>
+          ) : null}
+          {structuredTextFormat && structuredTextEligible ? (
+            <div className="session-file-preview-segmented" role="group" aria-label="Structured text display mode">
+              <button
+                type="button"
+                className={structuredTextMode === "formatted" ? "is-active" : ""}
+                disabled={!currentStructuredTextProjection}
+                onClick={() => setStructuredTextMode("formatted")}
+              >Formatted</button>
+              <button
+                type="button"
+                className={structuredTextMode === "raw" ? "is-active" : ""}
+                onClick={() => setStructuredTextMode("raw")}
+              >Raw</button>
             </div>
           ) : null}
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
@@ -1105,17 +1325,20 @@ export function SessionFilePreview({
 
       {loadState.status === "ready" && loaded && previewKind === "text" ? (
         <VirtualizedTextContent
-          text={decodedText}
+          text={displayedText}
           copyText={onCopyText}
+          quoteText={onQuoteText}
           matches={findMatches}
           currentMatchIndex={activeCurrentMatch}
+          syntaxTokens={displayedSyntaxTokens}
         />
       ) : null}
       {loadState.status === "ready" && loaded && previewKind === "markdown" ? (
         markdownMode === "preview" ? (
-          <SelectionCopySurface
+          <SelectionTextActionSurface
             className="session-file-markdown-scroll"
             onCopyText={onCopyText}
+            onQuoteText={onQuoteText}
             surfaceRef={markdownSurfaceRef}
           >
             <MessageRichText
@@ -1124,11 +1347,12 @@ export function SessionFilePreview({
               onOpenPath={handleOpenMarkdownPath}
               resolveImageSource={resolveMarkdownImageSource}
             />
-          </SelectionCopySurface>
+          </SelectionTextActionSurface>
         ) : (
           <VirtualizedTextContent
             text={decodedText}
             copyText={onCopyText}
+            quoteText={onQuoteText}
             matches={findMatches}
             currentMatchIndex={activeCurrentMatch}
           />
@@ -1163,11 +1387,14 @@ export function SessionFilePreview({
           </div>
         </div>
       ) : null}
-      {feedback || diffAvailabilityMessage ? (
+      {previewFeedback.length > 0 ? (
         <p className="session-file-preview-feedback" role="alert">
-          {feedback}
-          {feedback && diffAvailabilityMessage ? <br /> : null}
-          {diffAvailabilityMessage}
+          {previewFeedback.map((message, index) => (
+            <span key={message}>
+              {index > 0 ? <br /> : null}
+              {message}
+            </span>
+          ))}
         </p>
       ) : null}
     </section>
@@ -1180,6 +1407,8 @@ export type SessionDiffPreviewProps = {
   patch: string;
   onClose: () => void;
   onCopyText: (text: string) => void;
+  onQuoteText?: (text: string) => void;
+  closeLabel?: string;
   onReload?: () => Promise<string | null>;
   reloadPending?: boolean;
   chatNotice?: string;
@@ -1191,6 +1420,8 @@ export function SessionDiffPreview({
   patch,
   onClose,
   onCopyText,
+  onQuoteText,
+  closeLabel = "Back to Chat",
   onReload,
   reloadPending = false,
   chatNotice = "",
@@ -1272,7 +1503,7 @@ export function SessionDiffPreview({
     <section className="session-file-preview session-diff-preview" aria-label="Git diff preview">
       <header className="session-file-preview-header">
         <button className="session-file-back-to-chat" type="button" onClick={onClose}>
-          Back to Chat{chatNotice ? <span>{chatNotice}</span> : null}
+          {closeLabel}{chatNotice ? <span>{chatNotice}</span> : null}
         </button>
         <div className="session-file-preview-title"><strong>{title}</strong><span>Git Diff</span></div>
         <div className="session-file-preview-actions">
@@ -1318,6 +1549,7 @@ export function SessionDiffPreview({
         <VirtualizedSplitDiffContent
           patch={patch}
           copyText={onCopyText}
+          quoteText={onQuoteText}
           matches={matches}
           currentMatchIndex={activeCurrentMatch}
         />
@@ -1325,6 +1557,7 @@ export function SessionDiffPreview({
         <VirtualizedTextContent
           text={patch}
           copyText={onCopyText}
+          quoteText={onQuoteText}
           matches={matches}
           currentMatchIndex={activeCurrentMatch}
           variant="diff"

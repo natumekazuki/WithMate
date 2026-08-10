@@ -105,7 +105,6 @@ function createProjectionInput(
     pendingMessageText: "Companion の応答を待っています。",
     isMessageListFollowing: true,
     retryBanner: null,
-    isRetryDetailsOpen: false,
     isRetryActionDisabled: true,
     isRetryEditDisabled: true,
     isRetryDraftReplacePending: false,
@@ -202,7 +201,6 @@ function createProjectionInput(
     onOpenInlinePath: noop,
     onCopyMessageText: noop,
     onQuoteMessageText: noop,
-    onToggleRetryDetails: noop,
     onResendLastMessage: noop,
     onEditLastMessage: noop,
     onConfirmRetryDraftReplace: noop,
@@ -294,26 +292,24 @@ test("buildCompanionChatWindowProps は投影済み transcript と group を mes
   assert.equal(props.messageColumnProps.pendingMessageGroupId, "aux-1");
 });
 
-test("buildCompanionChatWindowProps は retry banner を共通 composer に渡す", () => {
+test("buildCompanionChatWindowProps は retry actions を共通 chat layout に渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     retryBanner: {
       kind: "failed",
       badge: "失敗",
       title: "前回の依頼は完了できませんでした",
-      stopSummary: "assistant error",
       lastRequestText: "調べて",
     },
-    isRetryDetailsOpen: true,
     isRetryActionDisabled: false,
     isRetryEditDisabled: false,
     isRetryDraftReplacePending: false,
   }));
 
-  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.composerProps.retryBanner));
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.recoveryActions));
 
   assert.match(html, /retry-banner failed/);
-  assert.match(html, />同じ依頼を再送<\/button>/);
-  assert.match(html, />編集して再送<\/button>/);
+  assert.match(html, />再送<\/button>/);
+  assert.match(html, />編集<\/button>/);
 });
 
 test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 composer に渡す", () => {
@@ -322,16 +318,14 @@ test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 com
       kind: "failed",
       badge: "失敗",
       title: "前回の依頼は完了できませんでした",
-      stopSummary: "assistant error",
       lastRequestText: "調べて",
     },
-    isRetryDetailsOpen: true,
     isRetryActionDisabled: false,
     isRetryEditDisabled: false,
     isRetryDraftReplacePending: true,
   }));
 
-  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.composerProps.retryBanner));
+  const html = renderToStaticMarkup(React.createElement(React.Fragment, null, props.recoveryActions));
 
   assert.match(html, /今の下書きは残しています/);
   assert.match(html, />前回の依頼で置き換える<\/button>/);

@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -24,6 +24,9 @@ export async function buildWithMateMemoryCli(
   await build({
     configFile: false,
     logLevel: "error",
+    ssr: {
+      noExternal: true,
+    },
     build: {
       ssr: canonicalCliEntryPath,
       outDir: resolvedOutputDirectoryPath,
@@ -41,7 +44,10 @@ export async function buildWithMateMemoryCli(
       },
     },
   });
-  return path.join(resolvedOutputDirectoryPath, BUNDLED_MEMORY_CLI_FILE_NAME);
+  const outputPath = path.join(resolvedOutputDirectoryPath, BUNDLED_MEMORY_CLI_FILE_NAME);
+  const generatedSource = await readFile(outputPath, "utf8");
+  await writeFile(outputPath, generatedSource.replace(/[ \t]+$/gm, ""), "utf8");
+  return outputPath;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

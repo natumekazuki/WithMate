@@ -21,6 +21,8 @@ import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/me
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
 const TEST_API_SECRET = "test-secret";
+const TEST_OPERATOR_API_SECRET = "test-operator-secret";
+const TEST_MCP_API_SECRET = "test-mcp-secret";
 const TEST_RUNTIME_INSTANCE_ID = "test-runtime";
 
 async function withMemoryApi<T>(
@@ -39,7 +41,6 @@ async function withMemoryApi<T>(
       iconFilePath: "",
       theme: { main: "#111111", sub: "#222222" },
       state: "active",
-      isDefault: true,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
@@ -53,6 +54,8 @@ async function withMemoryApi<T>(
   const server = createMemoryV6HttpServer({
     service,
     apiSecret: TEST_API_SECRET,
+    operatorApiSecret: TEST_OPERATOR_API_SECRET,
+    mcpApiSecret: TEST_MCP_API_SECRET,
     runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
     maxBodyBytes: 512,
   });
@@ -75,6 +78,7 @@ async function postJson(baseUrl: string, path: string, body: unknown, apiSecret 
     headers: {
       "Content-Type": "application/json",
       "X-WithMate-Memory-Api-Secret": apiSecret,
+      "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
     },
     body: JSON.stringify(body),
   });
@@ -167,10 +171,46 @@ describe("MemoryV6HttpServer", () => {
     });
   });
 
+  it("共通apiSecretまたはMCP credentialだけではoperator Memory routeを実行できない", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const body = appendRequest({ idempotencyKey: "unauthorized-mcp-append" });
+      for (const headers of [
+        {
+          "Content-Type": "application/json",
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+        },
+        {
+          "Content-Type": "application/json",
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Mcp-Api-Secret": TEST_MCP_API_SECRET,
+        },
+      ]) {
+        const response = await fetch(`${baseUrl}/v1/append`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+        });
+        assert.equal(response.status, 403);
+        assert.equal((await response.json()).error.code, "MEMORY_FORBIDDEN");
+      }
+
+      const search = await postJson(baseUrl, "/v1/search", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        query: "localhost",
+      });
+      assert.equal(search.status, 200);
+      assert.deepEqual(search.json.items, []);
+    });
+  });
+
   it("append / search / get_entry / list_tags / forget をlocal_userとしてdispatchする", async () => {
     await withMemoryApi(async ({ baseUrl, storage }) => {
       const characters = await fetch(`${baseUrl}/v1/characters`, {
-        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+        headers: {
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
+        },
       });
       assert.equal(characters.status, 200);
       const charactersJson = await characters.json();
@@ -178,13 +218,16 @@ describe("MemoryV6HttpServer", () => {
         id: "mika",
         name: "Mika",
         description: "Guitar",
-        isDefault: true,
       }]);
+      assert.equal("isDefault" in charactersJson.characters[0], false);
       assert.equal("iconFilePath" in charactersJson.characters[0], false);
       assert.equal("theme" in charactersJson.characters[0], false);
 
       const fileUsage = await fetch(`${baseUrl}/v1/file-usage`, {
-        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+        headers: {
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
+        },
       });
       assert.equal(fileUsage.status, 200);
       const fileUsageJson = await fileUsage.json();
@@ -193,7 +236,10 @@ describe("MemoryV6HttpServer", () => {
       assert.equal(fileUsageJson.objectCount, 0);
 
       const largestFileUsage = await fetch(`${baseUrl}/v1/file-usage?largest=1&limit=5`, {
-        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+        headers: {
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
+        },
       });
       assert.equal(largestFileUsage.status, 200);
       const largestFileUsageJson = await largestFileUsage.json();
@@ -316,18 +362,63 @@ describe("MemoryV6HttpServer", () => {
     });
   });
 
+  it("maintenance routesはinventory、listing、dry-run、moveをservice境界へ通す", async () => {
+    await withMemoryApi(async ({ baseUrl }) => {
+      const append = await postJson(baseUrl, "/v1/append", appendRequest({ idempotencyKey: "http-maintenance-append" }));
+      assert.equal(append.status, 200);
+      const entryId = append.json.entry.id;
+
+      const targets = await postJson(baseUrl, "/v1/list_targets", { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      assert.equal(targets.status, 200);
+      assert.equal(targets.json.items[0].entryCount, 1);
+
+      const entries = await postJson(baseUrl, "/v1/list_entries", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+      });
+      assert.equal(entries.status, 200);
+      assert.equal(entries.json.items[0].id, entryId);
+      assert.equal("body" in entries.json.items[0], false);
+
+      const dryRun = await postJson(baseUrl, "/v1/forget", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryIds: [entryId],
+        dryRun: true,
+      });
+      assert.equal(dryRun.status, 200);
+      assert.equal(dryRun.json.writeOccurred, false);
+
+      const moved = await postJson(baseUrl, "/v1/move_entry", {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId,
+        from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        to: { owner: "user", scope: "global" },
+        idempotencyKey: "http-maintenance-move",
+      });
+      assert.equal(moved.status, 200);
+      assert.equal(moved.json.entry.owner.type, "user");
+    });
+  });
+
   it("invalid route / method / JSON / body sizeをtransport errorで返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const missing = await fetch(`${baseUrl}/v1/missing`, {
         method: "POST",
-        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+        headers: {
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
+        },
         body: "{}",
       });
       assert.equal(missing.status, 404);
       assert.equal((await missing.json()).error.code, "MEMORY_ROUTE_NOT_FOUND");
 
       const invalidMethod = await fetch(`${baseUrl}/v1/search`, {
-        headers: { "X-WithMate-Memory-Api-Secret": TEST_API_SECRET },
+        headers: {
+          "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
+        },
       });
       assert.equal(invalidMethod.status, 405);
       assert.equal((await invalidMethod.json()).error.code, "MEMORY_METHOD_NOT_ALLOWED");
@@ -337,6 +428,7 @@ describe("MemoryV6HttpServer", () => {
         headers: {
           "Content-Type": "application/json",
           "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
         },
         body: "{",
       });
@@ -348,6 +440,7 @@ describe("MemoryV6HttpServer", () => {
         headers: {
           "Content-Type": "application/json",
           "X-WithMate-Memory-Api-Secret": TEST_API_SECRET,
+          "X-WithMate-Memory-Operator-Api-Secret": TEST_OPERATOR_API_SECRET,
         },
         body: JSON.stringify({ payload: "x".repeat(800) }),
       });

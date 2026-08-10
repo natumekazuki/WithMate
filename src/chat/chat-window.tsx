@@ -1,11 +1,15 @@
 import {
   memo,
+  useCallback,
   useMemo,
   useRef,
+  useState,
   type ComponentProps,
   type MouseEventHandler,
   type PointerEventHandler,
 } from "react";
+
+import type { MessageViewMode } from "../MessageRichText.js";
 
 import {
   SESSION_ACTION_DOCK_ID,
@@ -34,6 +38,7 @@ export type ChatWindowProps = Omit<
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
+  recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
@@ -115,18 +120,32 @@ export function ChatWindow({
   isHeaderExpanded,
   headerProps,
   messageColumnProps,
+  recoveryActions,
   isActionDockExpanded,
   composerProps,
   compactActionDockProps,
   ...screenProps
 }: ChatWindowProps) {
+  const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
+  const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
+  const handleMessageViewModeChange = useCallback((mode: MessageViewMode) => {
+    window.getSelection()?.removeAllRanges();
+    setMessageViewMode(mode);
+  }, []);
+
   return (
     <SessionChatScreen
       {...screenProps}
       header={<SessionHeader {...headerProps} />}
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
-      messageColumn={<StableSessionMessageColumn {...messageColumnProps} />}
+      recoveryActions={recoveryActions}
+      messageColumn={(
+        <StableSessionMessageColumn
+          {...messageColumnProps}
+          messageViewMode={messageViewMode}
+        />
+      )}
       actionDock={(
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div
@@ -136,7 +155,12 @@ export function ChatWindow({
             aria-hidden={!isActionDockExpanded}
             inert={!isActionDockExpanded}
           >
-            <SessionComposerExpanded {...composerProps} />
+            <SessionComposerExpanded
+              {...composerProps}
+              showMessageViewModeControls={showMessageViewModeControls}
+              messageViewMode={messageViewMode}
+              onMessageViewModeChange={handleMessageViewModeChange}
+            />
           </div>
           <div
             className={`session-action-dock-content session-action-dock-compact-content${

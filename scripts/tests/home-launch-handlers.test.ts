@@ -14,7 +14,6 @@ function createCharacterEntry(partial: Partial<CharacterCatalogEntry> & Pick<Cha
     iconFilePath: partial.iconFilePath ?? "",
     theme: partial.theme ?? { main: "#6f8cff", sub: "#6fb8c7" },
     state: partial.state ?? "active",
-    isDefault: partial.isDefault ?? false,
     createdAt: partial.createdAt ?? "",
     updatedAt: partial.updatedAt ?? "",
     archivedAt: partial.archivedAt ?? null,
@@ -32,13 +31,13 @@ function createProvider(): ModelCatalogProvider {
 }
 
 describe("home-launch-handlers", () => {
-  it("launch dialog を開く直前に Character catalog を再取得して選択を更新する", async () => {
+  it("launch dialog を開く直前に Character catalog を再取得してrandom選択へ戻す", async () => {
     let draft: HomeLaunchDraft = {
       ...createClosedLaunchDraft(),
       characterId: "old",
     };
     const latestEntries = [
-      createCharacterEntry({ id: "new-default", name: "New Default", isDefault: true }),
+      createCharacterEntry({ id: "new-character", name: "New Character" }),
     ];
     const feedback: string[] = [];
     let refreshCount = 0;
@@ -59,6 +58,7 @@ describe("home-launch-handlers", () => {
         refreshCount += 1;
         return latestEntries;
       },
+      setCharactersLoaded: () => undefined,
       setLaunchFeedback: (message) => feedback.push(message),
       setLaunchStarting: () => undefined,
       setLaunchDraft: (updater) => {
@@ -77,15 +77,19 @@ describe("home-launch-handlers", () => {
 
     assert.equal(refreshCount, 1);
     assert.equal(draft.open, true);
-    assert.equal(draft.characterId, "new-default");
-    assert.equal(draft.characterSelectionMode, "specific");
+    assert.equal(draft.characterId, "");
+    assert.equal(draft.characterSelectionMode, "random");
     assert.deepEqual(feedback, [""]);
 
     handlers.onSelectRandomLaunchCharacter();
     assert.equal(draft.characterSelectionMode, "random");
 
-    handlers.onSelectLaunchCharacter("new-default");
+    handlers.onSelectLaunchCharacter("new-character");
     assert.equal(draft.characterSelectionMode, "specific");
+
+    handlers.onCloseLaunchDialog();
+    await handlers.onOpenLaunchDialog();
+    assert.equal(draft.characterSelectionMode, "random");
 
     handlers.onSelectSessionFolder();
     assert.deepEqual(draft.workspace, { kind: "session-folder" });
@@ -93,5 +97,50 @@ describe("home-launch-handlers", () => {
     handlers.onChangeMode("companion");
     assert.equal(draft.mode, "companion");
     assert.equal(draft.workspace, null);
+  });
+
+  it("Character catalog の再取得失敗時はstale一覧でrandom開始できない状態にする", async () => {
+    let draft = createClosedLaunchDraft();
+    let charactersLoaded = true;
+    const feedback: string[] = [];
+
+    const handlers = buildHomeLaunchHandlers({
+      launchDraft: draft,
+      launchStarting: false,
+      mateState: "active",
+      mateProfile: null,
+      enabledLaunchProviders: [createProvider()],
+      characterEntries: [createCharacterEntry({ id: "stale", name: "Stale" })],
+      selectedLaunchProviderId: "codex",
+      sessions: [],
+      openSessionWindowIds: [],
+      openSessionWindowIdsLoadStatus: "loaded",
+      sessionSummariesLoadStatus: "loaded",
+      refreshCharacterEntries: async () => {
+        throw new Error("Character catalog refresh failed");
+      },
+      setCharactersLoaded: (loaded) => {
+        charactersLoaded = loaded;
+      },
+      setLaunchFeedback: (message) => feedback.push(message),
+      setLaunchStarting: () => undefined,
+      setLaunchDraft: (updater) => {
+        draft = typeof updater === "function" ? updater(draft) : updater;
+      },
+      pickWorkspaceDirectory: async () => null,
+      openSessionWindow: async () => undefined,
+      openCompanionReviewWindow: async () => undefined,
+      createSession: async () => null,
+      createCompanionSession: async () => null,
+      upsertSessionSummary: () => undefined,
+      upsertCompanionSessionSummary: () => undefined,
+    });
+
+    await handlers.onOpenLaunchDialog();
+
+    assert.equal(draft.open, true);
+    assert.equal(draft.characterSelectionMode, "random");
+    assert.equal(charactersLoaded, false);
+    assert.deepEqual(feedback, ["", "Character catalog refresh failed"]);
   });
 });

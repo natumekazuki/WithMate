@@ -26,6 +26,7 @@ import {
   buildLiveSessionCommonComposerDockInput,
   buildLiveSessionCommonContextPaneProps,
   buildLiveSessionCommonMessageColumnProps,
+  buildLiveSessionRecoveryActions,
 } from "./live-session-projection.js";
 
 export type AgentSessionChatProjectionInput = {
@@ -53,6 +54,8 @@ export type AgentSessionChatProjectionInput = {
   titleDraft: string;
   isSelectedSessionRunning: boolean;
   isSelectedSessionReadOnly: boolean;
+  isSelectedSessionPinned: boolean;
+  isSessionPinPending: boolean;
   messageListRef: RefObject<HTMLDivElement | null>;
   pendingRunIndicatorAnnouncement: string;
   pendingRunIndicatorText: string;
@@ -68,13 +71,13 @@ export type AgentSessionChatProjectionInput = {
   isMessageListFollowing: boolean;
   pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   retryBanner: SessionRetryBannerProps["retryBanner"];
-  isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
   composerBlocked: boolean;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
+  isPromptTemplateWorkspaceOpen: boolean;
   isAdditionalDirectoryListOpen: boolean;
   selectedCustomAgentLabel: string;
   selectedCustomAgentTitle: string;
@@ -142,6 +145,7 @@ export type AgentSessionChatProjectionInput = {
   onCancelTitleEdit: () => void;
   onStartTitleEdit: () => void;
   onDeleteSession: () => void;
+  onToggleSessionPin: () => void;
   onOpenSessionExplorer: () => void;
   onOpenSessionFilesExplorer: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
@@ -155,7 +159,6 @@ export type AgentSessionChatProjectionInput = {
   getChangedFilesEmptyText: SessionMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText: NonNullable<SessionMessageColumnProps["onCopyMessageText"]>;
   onQuoteMessageText: NonNullable<SessionMessageColumnProps["onQuoteMessageText"]>;
-  onToggleRetryDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
@@ -169,6 +172,7 @@ export type AgentSessionChatProjectionInput = {
   onPickSessionImage: NonNullable<SessionComposerExpandedProps["onPickSessionImage"]>;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
+  onOpenPromptTemplates: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToMessageListBottom: () => void;
@@ -208,12 +212,24 @@ export type AgentSessionChatProjectionInput = {
 
 export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjectionInput): ChatWindowProps {
   const isCharacterAuthoringSession = input.selectedSession.sessionKind === "character-authoring";
+  const recoveryActions = buildLiveSessionRecoveryActions({
+    retryBanner: input.retryBanner,
+    isRetryActionDisabled: input.isRetryActionDisabled,
+    isRetryEditDisabled: input.isRetryEditDisabled,
+    isRetryDraftReplacePending: input.isRetryDraftReplacePending,
+    onResendLastMessage: input.onResendLastMessage,
+    onEditLastMessage: input.onEditLastMessage,
+    onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
+    onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
+  });
   const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.selectedSession.taskTitle,
     isEditingTitle: input.isEditingTitle,
     titleDraft: input.titleDraft,
     isRunning: input.isSelectedSessionRunning,
     isReadOnly: input.isSelectedSessionReadOnly,
+    isPinned: input.isSelectedSessionPinned,
+    isPinPending: input.isSessionPinPending,
     isAuxiliaryMode: input.isAuxiliaryMode,
     canViewAuxiliaryAuditLog: true,
     canDeleteSession: true,
@@ -228,23 +244,13 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
+    onTogglePin: input.onToggleSessionPin,
     actions: input.headerActions,
     onOpenWorkspaceExplorer: input.onOpenSessionExplorer,
   });
 
   const composerDockProps = buildLiveSessionComposerDockProps(
     buildLiveSessionCommonComposerDockInput({
-      retryBanner: input.retryBanner,
-      isRetryDetailsOpen: input.isRetryDetailsOpen,
-      isRetryActionDisabled: input.isRetryActionDisabled,
-      isRetryEditDisabled: input.isRetryEditDisabled,
-      isRetryDraftReplacePending: input.isRetryDraftReplacePending,
-      onToggleDetails: input.onToggleRetryDetails,
-      onResendLastMessage: input.onResendLastMessage,
-      onEditLastMessage: input.onEditLastMessage,
-      onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
-      onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
-      onOpenPath: input.onOpenInlinePath,
       isRunning: input.isSelectedSessionRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
@@ -253,8 +259,10 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       canSelectCustomAgent: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showCustomAgentPicker: !isCharacterAuthoringSession && input.selectedSession.provider === "copilot",
       showSkillPicker: !isCharacterAuthoringSession,
+      showPromptTemplateButton: true,
       isAgentPickerOpen: input.isAgentPickerOpen,
       isSkillPickerOpen: input.isSkillPickerOpen,
+      isPromptTemplateWorkspaceOpen: input.isPromptTemplateWorkspaceOpen,
       isAdditionalDirectoryListOpen: input.isAdditionalDirectoryListOpen,
       selectedCustomAgentLabel:
         !isCharacterAuthoringSession && input.selectedSession.provider === "copilot"
@@ -297,6 +305,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onPickSessionImage: input.onPickSessionImage,
       onToggleAgentPicker: input.onToggleAgentPicker,
       onToggleSkillPicker: input.onToggleSkillPicker,
+      onOpenPromptTemplates: input.onOpenPromptTemplates,
       onAddAdditionalDirectory: input.onAddAdditionalDirectory,
       onToggleAdditionalDirectoryList: input.onToggleAdditionalDirectoryList,
       onExpandActionDock: input.onToggleActionDock,
@@ -401,6 +410,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       inlinePathFeedback: input.inlinePathFeedback,
       onDismissInlinePathFeedback: input.onDismissInlinePathFeedback,
     },
+    recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
     headerSplitterProps: {

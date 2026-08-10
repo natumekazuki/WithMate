@@ -40,6 +40,7 @@ function createReadyDraft(mode: HomeLaunchDraft["mode"] = "session"): HomeLaunch
     mode,
     title: "Task",
     providerId: "codex",
+    characterSelectionMode: "specific",
     characterId: "mia",
   };
 }
@@ -53,7 +54,6 @@ function createCharacterEntries(): CharacterCatalogEntry[] {
       iconFilePath: "character.png",
       theme: { main: "#222222", sub: "#eeeeee" },
       state: "active",
-      isDefault: true,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,
@@ -65,7 +65,6 @@ function createCharacterEntries(): CharacterCatalogEntry[] {
       iconFilePath: "noa.png",
       theme: { main: "#333333", sub: "#dddddd" },
       state: "active",
-      isDefault: false,
       createdAt: "2026-01-02T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
       archivedAt: null,

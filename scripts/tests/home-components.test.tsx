@@ -540,11 +540,10 @@ describe("HomeLaunchDialog", () => {
   const characterOptions = [{
     id: "mia",
     name: "Mia",
-    description: "Default character",
+    description: "Character description",
     iconFilePath: "",
     theme: { main: "#111111", sub: "#eeeeee" },
     state: "active" as const,
-    isDefault: true,
     createdAt: "",
     updatedAt: "",
     archivedAt: null,
@@ -596,8 +595,8 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
-    assert.ok(html.includes("Default"));
-    assert.ok(html.includes("Default character"));
+    assert.ok(!html.includes(">Default</span>"));
+    assert.ok(html.includes("Character description"));
     assert.ok(html.includes("ランダム"));
     assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
     assert.ok(html.includes("最近使っていないCharacterを優先"));
@@ -639,6 +638,7 @@ describe("HomeRecentSessionsPanel", () => {
   const createSessionSummary = (partial: Partial<SessionSummary> & Pick<SessionSummary, "id" | "taskTitle">): SessionSummary => ({
     status: "idle",
     updatedAt: "2026-06-17T00:00:00.000Z",
+    isPinned: false,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "workspace",
@@ -713,6 +713,7 @@ describe("HomeRecentSessionsPanel", () => {
       onChangeSearchText={noOp}
       onOpenLaunchDialog={noOp}
       onOpenSession={noOp}
+      onSetSessionPinned={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
     />,
@@ -748,6 +749,38 @@ describe("HomeRecentSessionsPanel", () => {
     assert.ok(html.includes("Mia の character.md 改善"));
     assert.ok(html.includes("session-mode-badge character"));
     assert.ok(html.includes(">Character<"));
+  });
+
+  it("pin済みAgentを先頭にし、開く操作とpin操作を兄弟buttonで表示する", () => {
+    const html = renderHomeRecentSessions({
+      filteredSessionEntries: [
+        {
+          kind: "agent",
+          session: createSessionSummary({
+            id: "recent",
+            taskTitle: "Recent task",
+            updatedAt: "2026-08-09T05:00:00.000Z",
+          }),
+          state: { kind: "neutral", label: "待機" },
+        },
+        {
+          kind: "agent",
+          session: createSessionSummary({
+            id: "pinned",
+            taskTitle: "Pinned task",
+            isPinned: true,
+            updatedAt: "2026-08-08T05:00:00.000Z",
+          }),
+          state: { kind: "neutral", label: "待機" },
+        },
+      ],
+    });
+
+    assert.ok(html.indexOf("Pinned task") < html.indexOf("Recent task"));
+    assert.match(html, /class="session-card home-session-card is-pinnable is-pinned"/);
+    assert.match(html, /class="home-session-card-open"/);
+    assert.match(html, /aria-pressed="true"/);
+    assert.match(html, />ピン解除<\/button>/);
   });
 
   it("companion kind label で Companion session を検索できる", () => {
@@ -926,7 +959,6 @@ describe("HomeRightPane", () => {
     iconFilePath: "",
     theme: { main: "#3b82f6", sub: "#1d4ed8" },
     state: "active" as const,
-    isDefault: true,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     archivedAt: null,
@@ -977,7 +1009,7 @@ describe("HomeRightPane", () => {
     assert.ok(!html.includes("<h3>Characters</h3>"));
     assert.ok(html.includes('aria-label="Characterを名前で検索"'));
     assert.ok(html.includes('placeholder="名前で検索"'));
-    assert.ok(html.includes("Default"));
+    assert.ok(!html.includes(">Default</span>"));
     assert.match(html, /<button class="home-character-card"/);
     assert.ok(!html.includes("home-character-card-edit"));
     assert.ok(!html.includes("2026-01-01T00:00:00.000Z"));
@@ -994,7 +1026,6 @@ describe("HomeRightPane", () => {
         iconFilePath: "",
         theme: { main: "#3b82f6", sub: "#1d4ed8" },
         state: "active" as const,
-        isDefault: true,
         createdAt: "2026-01-01T00:00:00.000Z",
         updatedAt: "2026-01-01T00:00:00.000Z",
         archivedAt: null,
@@ -1006,7 +1037,6 @@ describe("HomeRightPane", () => {
         iconFilePath: "",
         theme: { main: "#10b981", sub: "#047857" },
         state: "active" as const,
-        isDefault: false,
         createdAt: "2026-01-02T00:00:00.000Z",
         updatedAt: "2026-01-02T00:00:00.000Z",
         archivedAt: null,
@@ -1054,7 +1084,6 @@ describe("HomeRightPane", () => {
       iconFilePath: "",
       theme: { main: "#10b981", sub: "#047857" },
       state: "active",
-      isDefault: false,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       archivedAt: null,

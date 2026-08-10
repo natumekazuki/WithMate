@@ -25,9 +25,15 @@ import type {
     RunSessionTurnRequest,
     Session,
     SessionSummary,
+    SetSessionPinnedRequest,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
+import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "./prompt-template.js";
 import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
@@ -85,6 +91,9 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -101,6 +110,9 @@ export type WithMateWindowNavigationApi = {
   openMemoryV6ReviewWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Promise<SessionFilePreviewWindowOpenResult>;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
@@ -127,6 +139,7 @@ export type WithMateWindowSessionApi = {
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
+  getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;
   copySessionFilePreviewImage(
     request: SessionFilePreviewImageActionRequest,
   ): Promise<SessionFilePreviewImageCopyResult>;
@@ -138,6 +151,7 @@ export type WithMateWindowSessionApi = {
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
+  setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<void>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<ComposerPreview>;
   listSessionSkills(sessionId: string): Promise<DiscoveredSkill[]>;
@@ -239,6 +253,14 @@ export type WithMateWindowSettingsApi = {
   deleteSessionsLastActiveBefore(request: DeleteSessionsLastActiveBeforeRequest): Promise<DeleteSessionsResult>;
 };
 
+export type WithMateWindowPromptTemplateApi = {
+  listPromptTemplates(): Promise<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Promise<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Promise<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Promise<PromptTemplate[]>;
+  subscribePromptTemplates(listener: (templates: PromptTemplate[]) => void): () => void;
+};
+
 export type WithMateWindowPickerApi = {
   pickDirectory(initialPath?: string | null): Promise<string | null>;
   pickFile(initialPath?: string | null): Promise<string | null>;
@@ -294,7 +316,6 @@ export type WithMateWindowCharacterApi = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Promise<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Promise<CharacterDetail>;
   archiveCharacter(characterId: string): Promise<CharacterCatalogEntry>;
-  setDefaultCharacter(characterId: string): Promise<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Promise<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Promise<CharacterAuthoringSessionStartResult>;
 };
@@ -308,6 +329,7 @@ export type WithMateWindowApi =
   & WithMateWindowCompanionApi
   & WithMateWindowObservabilityApi
   & WithMateWindowSettingsApi
+  & WithMateWindowPromptTemplateApi
   & WithMateWindowPickerApi
   & WithMateWindowSubscriptionApi
   & WithMateWindowMateApi

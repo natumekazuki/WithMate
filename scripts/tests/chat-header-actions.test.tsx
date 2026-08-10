@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+
+import { SessionHeader } from "../../src/session-components.js";
 
 import {
   buildLiveSessionHeaderProps,
@@ -8,8 +11,36 @@ import {
   createWorkspaceExplorerAction,
   resolveAuxiliaryHeaderActionState,
 } from "../../src/chat/chat-header-actions.js";
+import { SessionHeader } from "../../src/session-components.js";
 
 const noop = () => {};
+
+test("SessionHeader は低頻度の管理操作を menu にまとめる", () => {
+  const html = renderToStaticMarkup(
+    <SessionHeader
+      taskTitle="Session"
+      isEditingTitle={false}
+      titleDraft="Session"
+      isRunning={false}
+      onOpenAuditLog={noop}
+      onOpenTerminal={noop}
+      onTitleDraftChange={noop}
+      onTitleInputKeyDown={noop}
+      onSaveTitle={noop}
+      onCancelTitleEdit={noop}
+      onStartTitleEdit={noop}
+      onDeleteSession={noop}
+      onTogglePin={noop}
+    />,
+  );
+
+  assert.match(html, /<summary aria-label="Session actions"/);
+  assert.match(html, /role="menu"/);
+  assert.match(html, /role="menuitem" aria-pressed="false">ピン止め<\/button>/);
+  assert.match(html, /role="menuitem">Rename<\/button>/);
+  assert.match(html, /role="menuitem">Audit Log<\/button>/);
+  assert.match(html, /role="menuitem">Delete<\/button>/);
+});
 
 test("createWorkspaceExplorerAction は共通の workspace Explorer action を描画する", () => {
   const html = renderToStaticMarkup(createWorkspaceExplorerAction({ onOpenExplorer: noop }));
@@ -149,4 +180,35 @@ test("buildLiveSessionHeaderProps は live session header の共通 action を�
   assert.match(workspaceHtml, />Explorer<\/button>/);
   assert.match(sessionFilesHtml, />Explorer<\/button>/);
   assert.match(sessionFilesHtml, />Terminal<\/button>/);
+});
+
+test("SessionHeader はpin stateとpending stateを操作ボタンへ投影する", () => {
+  const html = renderToStaticMarkup(<SessionHeader
+    taskTitle="Pinned session"
+    isEditingTitle={false}
+    titleDraft="Pinned session"
+    isRunning={true}
+    isReadOnly={true}
+    isPinned={true}
+    isPinPending={true}
+    showRenameButton={false}
+    showAuditLogButton={false}
+    showTerminalButton={false}
+    showDeleteButton={false}
+    onTogglePin={noop}
+    onOpenAuditLog={noop}
+    onOpenTerminal={noop}
+    onTitleDraftChange={noop}
+    onTitleInputKeyDown={noop}
+    onSaveTitle={noop}
+    onCancelTitleEdit={noop}
+    onStartTitleEdit={noop}
+    onDeleteSession={noop}
+  />);
+
+  assert.match(html, /aria-pressed="true"/);
+  assert.match(html, /role="menu"/);
+  assert.match(html, /role="menuitem"/);
+  assert.match(html, /disabled=""/);
+  assert.match(html, />変更中\.\.\.<\/button>/);
 });

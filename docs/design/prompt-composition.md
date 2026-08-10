@@ -1,7 +1,7 @@
 # Prompt Composition
 
 - 作成日: 2026-03-13
-- 更新日: 2026-07-14
+- 更新日: 2026-08-09
 - 対象: WithMate における coding plane の prompt 合成
 
 ## Goal
@@ -18,6 +18,7 @@ WithMate が保持する system 指示、character 定義、ユーザー入力�
 - V5 Character Core の Character 注入境界は `docs/design/character-storage.md` と `docs/design/character-definition-format.md` を正本にする
 - Memory の保存方針は `docs/design/memory-architecture.md` を参照する
 - provider 境界は `docs/design/provider-adapter.md` を参照する
+- 会話時間コンテキストの選択理由と時刻の正本は `docs/adr/016-conversation-timing-context.md` を参照する
 
 ## Source Of Truth
 
@@ -50,13 +51,15 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 2. `Output Boundary`
 3. `Tool Call Presence`
 4. 必要最小限の WithMate run marker
-5. ユーザー入力
-6. 添付 reference
+5. `Conversation Timing`
+6. ユーザー入力
+7. 添付 reference
 
 通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
 provider に渡す `Character Definition Snapshot` では、snapshot の取得時点説明を prompt 本体には入れない。保存済み snapshot の frontmatter は除外し、Character 名と説明を metadata として示したうえで、`character.md` 本文だけを markdown block として囲む。Character section の固定説明は、話し方への反映と coding agent 境界の guard に絞る。
 通常 session / companion では Character section の直後に `Output Boundary` を置き、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
 通常 session / companion では `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
+通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、Companion、`character-authoring` sessionには注入しない。
 `character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
 
 ### 4.0.0 SingleMate target
@@ -76,6 +79,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 論理 prompt では `Character Definition Snapshot` section を system 側に置く。
 通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
 通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
+通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
 
 `# Session Memory`、`# Project Memory`、`# Project Context`、`# Character Memory` も coding plane prompt では作らない。
 
@@ -99,6 +103,16 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 - 形式:
   - `# User Input` 見出しの下に入力本文をそのまま置く
   - Character Definition Snapshot や Output Boundary の直後でも、ここからがユーザー入力であることを明示する
+
+### `# Conversation Timing`
+
+- source:
+  - turn開始時に固定したruntime resolverの出力
+- 形式:
+  - input側の`# User Input`直前に置く
+  - 会話のペースと親しさの弱いシグナルであり、別Sessionの内容理解や生活状況の推測には使わないことを固定文で明示する
+  - 固定の解釈規則を先に置き、turnごとに変わる観測値はsection末尾の`Observed values`へまとめる
+  - query条件、型、時刻計算の詳細はsourceとtestを正本とし、この文書へ複製しない
 
 ### `# Output Boundary`
 
@@ -225,6 +239,7 @@ Session Window の composer では、参照対象は最終的に textarea 内の
     - provider instruction projection の要約
     - app 共通 system prompt は空
   - `inputText`
+    - `# Conversation Timing`
     - `# User Input`
     - ユーザー入力本文
   - `composedText`

@@ -1,14 +1,16 @@
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { WithMateWindowApi } from "../withmate-window-api.js";
+import {
+  FileRootChangesGroup,
+  type GitRootChanges,
+} from "./FileRootChangesGroup.js";
 import type {
   FileRootFileDiffRequest,
   FileRootChangesResult,
   FileRootGitChangeEntry,
   FileRootGitChangeScope,
-  SessionFileResourceRequest,
-  SessionFileRoot,
+  SessionFileRootResourceRequest,
 } from "./file-explorer-contract.js";
 
 type FileRootChangesApi = Pick<
@@ -21,68 +23,46 @@ export type FileRootChangesPaneProps = {
   sessionId: string | null;
   enabled: boolean;
   rootsRevision: string;
-  onOpenFile: (request: SessionFileResourceRequest) => void;
+  refreshRevision: number;
+  onOpenFile: (request: SessionFileRootResourceRequest) => void;
   onOpenDiff: (request: FileRootFileDiffRequest) => Promise<string | null>;
 };
 
-type GitRootChanges = {
-  root: SessionFileRoot;
-  entries: FileRootGitChangeEntry[];
-  message: string;
-};
-
-function changeKindLabel(kind: FileRootGitChangeEntry["kinds"][FileRootGitChangeScope]): string {
-  switch (kind) {
-    case "added":
-      return "A";
-    case "deleted":
-      return "D";
-    case "renamed":
-      return "R";
-    case "untracked":
-      return "U";
-    default:
-      return "M";
-  }
+function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relativePath: string): string {
+  return `${rootId}\u0000${scope}\u0000${relativePath}`;
 }
-
-type FileRootChangeRow =
-  | { key: string; type: "root"; root: SessionFileRoot }
-  | { key: string; type: "header"; label: string; count: number }
-  | { key: string; type: "empty"; label: string }
-  | { key: string; type: "error"; label: string }
-  | {
-      key: string;
-      type: "entry";
-      rootId: string;
-      entry: FileRootGitChangeEntry;
-      scope: FileRootGitChangeScope;
-    };
 
 export function FileRootChangesPane({
   api,
   sessionId,
   enabled,
   rootsRevision,
+  refreshRevision,
   onOpenFile,
   onOpenDiff,
 }: FileRootChangesPaneProps) {
   const requestRevisionRef = useRef(0);
   const diffRevisionRef = useRef(0);
+  const rootChangesSessionIdRef = useRef<string | null>(null);
   const [rootChanges, setRootChanges] = useState<GitRootChanges[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingKey, setLoadingKey] = useState("");
   const [message, setMessage] = useState("");
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [collapsedDirectories, setCollapsedDirectories] = useState<Record<string, boolean>>({});
 
   const reload = useCallback(async () => {
     const revision = requestRevisionRef.current + 1;
     requestRevisionRef.current = revision;
     if (!api || !sessionId || !enabled) {
+      rootChangesSessionIdRef.current = sessionId;
       setRootChanges([]);
       setLoading(false);
       setMessage("");
       return;
+    }
+    if (rootChangesSessionIdRef.current !== sessionId) {
+      rootChangesSessionIdRef.current = sessionId;
+      setRootChanges([]);
     }
     setLoading(true);
     setMessage("");
@@ -121,7 +101,6 @@ export function FileRootChangesPane({
       }
     } catch (error) {
       if (requestRevisionRef.current === revision) {
-        setRootChanges([]);
         setMessage(error instanceof Error ? error.message : "Git status failed.");
       }
     } finally {
@@ -140,7 +119,16 @@ export function FileRootChangesPane({
       diffRevisionRef.current += 1;
       window.removeEventListener("focus", handleWindowFocus);
     };
-  }, [reload, rootsRevision]);
+  }, [refreshRevision, reload, rootsRevision]);
+
+  useEffect(() => {
+    setCollapsedDirectories({});
+  }, [rootsRevision, sessionId]);
+
+  const toggleDirectory = (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => {
+    const key = directoryStateKey(rootId, scope, relativePath);
+    setCollapsedDirectories((current) => ({ ...current, [key]: !current[key] }));
+  };
 
   const openEntry = async (
     rootId: string,
@@ -179,109 +167,26 @@ export function FileRootChangesPane({
     }
   };
 
-  const rows = useMemo(() => {
-    const nextRows: FileRootChangeRow[] = [];
-    for (const rootChange of rootChanges) {
-      nextRows.push({ key: `root:${rootChange.root.id}`, type: "root", root: rootChange.root });
-      if (rootChange.message) {
-        nextRows.push({ key: `error:${rootChange.root.id}`, type: "error", label: rootChange.message });
-        continue;
-      }
-      for (const [scope, label] of [["working-tree", "Working Tree"], ["staged", "Staged"]] as const) {
-        const scopedEntries = rootChange.entries.filter((entry) => entry.scopes.includes(scope));
-        nextRows.push({
-          key: `header:${rootChange.root.id}:${scope}`,
-          type: "header",
-          label,
-          count: scopedEntries.length,
-        });
-        if (scopedEntries.length === 0) {
-          nextRows.push({ key: `empty:${rootChange.root.id}:${scope}`, type: "empty", label: "No changes." });
-        } else {
-          scopedEntries.forEach((entry) => {
-            nextRows.push({
-              key: `${rootChange.root.id}:${scope}:${entry.relativePath}`,
-              type: "entry",
-              rootId: rootChange.root.id,
-              entry,
-              scope,
-            });
-          });
-        }
-      }
-    }
-    if (!loading && nextRows.length === 0) {
-      nextRows.push({ key: "no-git-roots", type: "empty", label: "No Git repositories." });
-    }
-    return nextRows;
-  }, [loading, rootChanges]);
-  const virtualizer = useVirtualizer({
-    count: rows.length,
-    getScrollElement: () => scrollRef.current,
-    getItemKey: (index) => rows[index]?.key ?? index,
-    estimateSize: (index) => rows[index]?.type === "root" ? 38 : rows[index]?.type === "header" ? 31 : 30,
-    overscan: 16,
-    initialRect: { width: 280, height: 480 },
-    useFlushSync: false,
-  });
-
   return (
-    <div className="workspace-changes-pane">
-      <div className="workspace-changes-toolbar">
-        <span>{loading ? "Refreshing…" : "Live root status"}</span>
-        <button type="button" onClick={() => void reload()} disabled={loading}>Refresh</button>
-      </div>
+    <div className="workspace-changes-pane" aria-busy={loading}>
       {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
-      <div className="workspace-changes-list" ref={scrollRef} role="list" aria-label="File root changes">
-        <div className="workspace-changes-list-inner" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map((virtualRow) => {
-            const row = rows[virtualRow.index];
-            if (!row) {
-              return null;
-            }
-            return (
-              <div
-                key={row.key}
-                className={`workspace-change-virtual-row ${row.type}`}
-                data-index={virtualRow.index}
-                ref={virtualizer.measureElement}
-                style={{ transform: `translateY(${virtualRow.start}px)` }}
-              >
-                {row.type === "root" ? (
-                  <div className="workspace-changes-root-header" title={row.root.displayPath}>
-                    <strong>{row.root.label}</strong>
-                    <span>{row.root.displayPath}</span>
-                  </div>
-                ) : row.type === "header" ? (
-                  <div className="workspace-changes-group-header"><strong>{row.label}</strong><span>{row.count}</span></div>
-                ) : row.type === "empty" ? (
-                  <p>{row.label}</p>
-                ) : row.type === "error" ? (
-                  <p className="workspace-changes-root-error">{row.label}</p>
-                ) : (() => {
-                  const key = `${row.rootId}:${row.scope}:${row.entry.relativePath}`;
-                  const kind = row.entry.kinds[row.scope] ?? "modified";
-                  return (
-                    <button
-                      className="workspace-change-row"
-                      type="button"
-                      disabled={!!loadingKey}
-                      onClick={() => void openEntry(row.rootId, row.entry, row.scope)}
-                      title={row.entry.previousRelativePath
-                        ? `${row.entry.previousRelativePath} → ${row.entry.relativePath}`
-                        : row.entry.relativePath}
-                    >
-                      <span className={`workspace-change-kind ${kind}`}>{changeKindLabel(kind)}</span>
-                      <span className="workspace-change-path">{row.entry.relativePath}</span>
-                      {loadingKey === key ? <span className="workspace-change-loading">…</span> : null}
-                    </button>
-                  );
-                })()}
-              </div>
-            );
-          })}
+      {rootChanges.length > 0 ? (
+        <div className="workspace-changes-groups" role="list" aria-label="File root changes">
+          {rootChanges.map((rootChange) => (
+            <FileRootChangesGroup
+              key={`${sessionId ?? ""}:${rootChange.root.id}`}
+              rootChange={rootChange}
+              groupCount={rootChanges.length}
+              collapsedDirectories={collapsedDirectories}
+              loadingKey={loadingKey}
+              onToggleDirectory={toggleDirectory}
+              onOpenEntry={openEntry}
+            />
+          ))}
         </div>
-      </div>
+      ) : !loading ? (
+        <p className="workspace-changes-empty">No Git repositories.</p>
+      ) : null}
     </div>
   );
 }

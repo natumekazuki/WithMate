@@ -185,7 +185,6 @@ export function HomeLaunchDialog({
                     <strong>{character.name}</strong>
                     <span>{character.description || character.id}</span>
                   </span>
-                  {character.isDefault ? <span className="launch-character-badge">Default</span> : null}
                 </button>
               ))}
             </div>

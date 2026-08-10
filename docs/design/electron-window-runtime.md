@@ -150,6 +150,7 @@ archive 済み decision `docs/plans/archive/2026/03/20260329-review-findings-rem
 - main process 側では target を external URL / local path へ正規化するが、path allowlist の強制ガードは入れない
 - `AddDirectory` は prompt / workspace 操作で許可対象ディレクトリを広げる既存機能であり、`openPath` 自体の強制ガードではない
 - `openSessionTerminal` は session の `workspacePath` を terminal で開く用途に限定する
+- detached file preview は `openPath` へ local file link を直接渡さず、Main process が root-scoped resource または user-activated absolute-file resourceへ解決する。absolute-file preview は Additional Directory や provider 権限を変更しない。詳細は ADR 020 を参照する
 - したがって local path operation の制約は一律 block ではなく、renderer 導線と main process 正規化の責務分離で扱う
 
 ## Relation To Existing Docs

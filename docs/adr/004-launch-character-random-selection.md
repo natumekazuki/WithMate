@@ -2,16 +2,18 @@
 
 - 状態: Accepted
 - 日付: 2026-07-20
+- 更新日: 2026-08-09
 
 ## Context
 
-New Session ダイアログでは Character を固定選択できる。Character の利用機会を分散するため、選択をアプリへ任せる導線も必要になった。
+New Session ダイアログでは Character を固定選択できる。Character の利用機会を分散するため、選択をアプリへ任せる導線も必要になった。当初は catalog 上の1件を default Character として初期選択していたが、この指定はランダム導線と初期選択の責務が競合し、Character作成・archive・public APIにも専用の状態遷移を広げていた。
 
 完全な均等抽選では、直前に使った Character が続けて選ばれる可能性を下げられない。一方、利用回数や抽選履歴を新たに永続化すると、schema と更新経路が増える。既存の通常 Session summary は最終利用日時の降順で取得できるため、永続化を変更せずに最近の利用状況を抽選へ反映できる。
 
 ## Decision
 
 - New Session ダイアログの Character 一覧先頭に、ランダム選択を置く。
+- New Session と Companion の launch dialog は、開くたびにランダム選択を初期状態とする。利用者が active Character を明示選択した場合だけ、そのCharacterを使用する。
 - Agent と Companion のランダム開始は、active Character を共通の候補とする。
 - 開いている通常 Session Window で使用中の Character は、未使用の active Character がある間は抽選候補から除外する。すべての active Character が使用中の場合は除外せず、重複を許容する。
 - 残った抽選候補について、通常 Session の最終利用順から Character ごとの直近位置を求め、最近使われた Character から順に `1, 2, 3, ...` の線形な重みを与える。履歴にない Character には、履歴にある候補より大きい同一の重みを与える。
@@ -20,6 +22,8 @@ New Session ダイアログでは Character を固定選択できる。Character
 - 履歴の読み込み中または取得失敗時はランダム開始を拒否する。取得成功後の0件だけを均等抽選として扱う。
 - 開いている通常 Session Window 一覧の読み込み中または取得失敗時もランダム開始を拒否する。取得成功後の0件だけを「使用中なし」として扱う。
 - DB schema と Session summary API は変更しない。
+- catalog上のdefault Character指定は廃止し、作成・archive・一覧・launch解決・public projectionから参照しない。
+- `characters.is_default`列とunique indexは既存DB互換のlegacy metadataとして残す。既存値は書き換えず、table rebuildを伴う別migrationが必要になった時点で物理削除を再検討する。
 
 実装の正本は `src/home/home-launch-state.ts`、`src/home/home-launch-actions.ts`、`src/open-session-window-subscription.ts`、観測可能な契約は `scripts/tests/home-launch-state.test.ts`、`scripts/tests/home-launch-actions.test.ts`、`scripts/tests/open-session-window-subscription.test.ts` に置く。
 
@@ -49,6 +53,7 @@ provider ごとの実行設定は security boundary が異なるため、この�
 
 - 最近使っていない Character の選択確率を上げつつ、すべての active Character に選択可能性を残せる。
 - Agent と Companion で同じ抽選方針を使える。
+- launchの初期選択とcatalogの状態遷移が分離される。
 - 新しい永続化データと migration を追加せずに実現できる。
 - 履歴未取得を履歴0件と誤認した均等抽選を防げる。
 
@@ -59,3 +64,4 @@ provider ごとの実行設定は security boundary が異なるため、この�
 - Session summary の読み込みに失敗している間は、固定 Character では開始できるが、ランダム選択では開始できない。
 - Session Window 一覧の初回取得に失敗している間も、固定 Character では開始できるが、ランダム選択では開始できない。
 - 複数の Home window 間で購読更新に短い遅延がある場合、その間は抽選時の重みが一致しない可能性がある。
+- legacyな`is_default`列とindexは、物理削除までschemaに残る。

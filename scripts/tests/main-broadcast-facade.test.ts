@@ -23,6 +23,9 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
         broadcastAppSettings(_payload: AppSettings) {
           calls.push("settings");
         },
+        broadcastPromptTemplates(payload: unknown[]) {
+          calls.push(`templates:${payload.length}`);
+        },
         broadcastOpenSessionWindowIds(payload: string[]) {
           calls.push(`windows:${payload.length}`);
         },
@@ -39,6 +42,7 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
         memoryExtractionProviderSettings: {},
         characterReflectionProviderSettings: {},
       }) as never,
+    listPromptTemplates: () => [{ id: "template-1" }] as never,
     listOpenSessionWindowIds: () => ["s-1", "s-2"],
     listOpenCompanionReviewWindowIds: () => ["review-1"],
   });
@@ -46,8 +50,9 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
   facade.broadcastSessions(["s-1"]);
   facade.broadcastModelCatalog();
   facade.broadcastAppSettings();
+  facade.broadcastPromptTemplates();
   facade.broadcastOpenSessionWindowIds();
   facade.broadcastOpenCompanionReviewWindowIds();
 
-  assert.deepEqual(calls, ["summaries:1", "invalidated:s-1", "catalog:3", "settings", "windows:2", "reviews:1"]);
+  assert.deepEqual(calls, ["summaries:1", "invalidated:s-1", "catalog:3", "settings", "templates:1", "windows:2", "reviews:1"]);
 });

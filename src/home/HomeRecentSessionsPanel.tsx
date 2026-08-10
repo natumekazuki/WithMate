@@ -14,7 +14,9 @@ export type HomeRecentSessionsPanelProps = {
   onChangeSearchText: (value: string) => void;
   onOpenLaunchDialog: () => void;
   onOpenSession: (sessionId: string) => void;
+  onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  pendingSessionPinIds?: readonly string[];
   canUsePrimaryFeatures?: boolean;
 };
 
@@ -41,7 +43,9 @@ export function HomeRecentSessionsPanel({
   onChangeSearchText,
   onOpenLaunchDialog,
   onOpenSession,
+  onSetSessionPinned,
   onOpenCompanionReview,
+  pendingSessionPinIds = [],
   canUsePrimaryFeatures = true,
 }: HomeRecentSessionsPanelProps) {
   const openLaunchDialog = () => {
@@ -81,14 +85,19 @@ export function HomeRecentSessionsPanel({
     ...filteredSessionEntries.map((entry) => ({
       kind: "agent" as const,
       updatedAt: entry.session.updatedAt,
+      isPinned: entry.session.isPinned,
       entry,
     })),
     ...visibleCompanionSessions.map((session) => ({
       kind: "companion" as const,
       updatedAt: session.updatedAt,
+      isPinned: false,
       session,
     })),
   ].sort((left, right) => {
+    if (left.isPinned !== right.isPinned) {
+      return left.isPinned ? -1 : 1;
+    }
     const leftTime = Date.parse(left.updatedAt);
     const rightTime = Date.parse(right.updatedAt);
     return (Number.isNaN(rightTime) ? 0 : rightTime) - (Number.isNaN(leftTime) ? 0 : leftTime);
@@ -161,36 +170,51 @@ export function HomeRecentSessionsPanel({
           const { session, state } = item.entry;
           const isReadOnly = isReadOnlySession(session);
           const modeBadge = getAgentSessionModeBadge(session);
+          const isPinPending = pendingSessionPinIds.includes(session.id);
           return (
-            <button
+            <div
               key={`agent-${session.id}`}
-              className="session-card home-session-card"
-              type="button"
+              className={`session-card home-session-card is-pinnable${session.isPinned ? " is-pinned" : ""}`}
               style={buildCardThemeStyle(session.characterThemeColors)}
-              onClick={() => openSession(session.id)}
-              aria-disabled={!canUsePrimaryFeatures}
-              disabled={!canUsePrimaryFeatures}
             >
-              <CharacterAvatar
-                character={{ name: session.character, iconPath: session.characterIconPath }}
-                size="tiny"
-                className="home-session-card-avatar"
-              />
-              <div className="session-card-copy">
-                <div className="session-card-topline home-session-card-topline">
+              <button
+                className="home-session-card-open"
+                type="button"
+                onClick={() => openSession(session.id)}
+                aria-disabled={!canUsePrimaryFeatures}
+                disabled={!canUsePrimaryFeatures}
+              >
+                <CharacterAvatar
+                  character={{ name: session.character, iconPath: session.characterIconPath }}
+                  size="tiny"
+                  className="home-session-card-avatar"
+                />
+                <div className="session-card-copy">
                   <strong>{session.taskTitle}</strong>
-                  <div className="home-session-card-badges">
-                    <span className={modeBadge.className}>{modeBadge.label}</span>
-                    {isReadOnly ? <span className="session-status home-session-status neutral">閲覧専用</span> : null}
-                    <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
+                  <div className="session-card-subline home-session-card-meta">
+                    <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
+                    <span>{`updatedAt: ${session.updatedAt}`}</span>
                   </div>
                 </div>
-                <div className="session-card-subline home-session-card-meta">
-                  <span>{`Workspace : ${session.workspacePath || session.workspaceLabel}`}</span>
-                  <span>{`updatedAt: ${session.updatedAt}`}</span>
+              </button>
+              <div className="home-session-card-actions">
+                <div className="home-session-card-badges">
+                  <span className={modeBadge.className}>{modeBadge.label}</span>
+                  {isReadOnly ? <span className="session-status home-session-status neutral">閲覧専用</span> : null}
+                  <span className={`session-status home-session-status ${state.kind}`.trim()}>{state.label}</span>
                 </div>
+                <button
+                  className={`home-session-pin-button${session.isPinned ? " is-active" : ""}${isPinPending ? " is-pending" : ""}`}
+                  type="button"
+                  aria-pressed={session.isPinned}
+                  aria-label={`${session.taskTitle}を${session.isPinned ? "ピン解除" : "ピン止め"}`}
+                  disabled={!canUsePrimaryFeatures || isPinPending}
+                  onClick={() => onSetSessionPinned(session.id, !session.isPinned)}
+                >
+                  {isPinPending ? "変更中..." : session.isPinned ? "ピン解除" : "ピン止め"}
+                </button>
               </div>
-            </button>
+            </div>
           );
         })}
       </div>

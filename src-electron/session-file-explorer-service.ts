@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
-import { mkdir, open, realpath, stat } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -10,10 +10,17 @@ import type {
   SessionFileChunkResult,
   SessionFileDescriptor,
   SessionFileOpenRequest,
+  SessionFileAbsoluteResourceRequest,
   SessionFileResourceKind,
   SessionFileResourceRequest,
+  SessionFileRootResourceRequest,
+  SessionFilePreviewTargetResolution,
   SessionFileRoot,
   SessionFileRootKind,
+} from "../src/file-explorer/file-explorer-contract.js";
+import {
+  isSessionFileAbsoluteResource,
+  isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   detectSessionFileEncoding,
@@ -26,6 +33,7 @@ import {
   type IdentityBoundDirectorySnapshot,
 } from "./identity-bound-directory-listing.js";
 import { resolveSessionFilesDirectory } from "./session-files.js";
+import { resolveOpenPathTarget } from "./open-path.js";
 
 const MAX_CHUNK_BYTES = 1024 * 1024;
 const INSPECTION_BYTES = 8192;
@@ -103,6 +111,7 @@ export type SessionFileExplorerServiceDeps = {
   userDataPath: string;
   getSessionContext(sessionId: string): Promise<SessionFileExplorerContext | null>;
   statPath?(targetPath: string): Promise<Stats>;
+  lstatPath?(targetPath: string): Promise<Stats>;
   openFile?(targetPath: string, flags: "r"): Promise<ReadableFileHandle>;
   listDirectory?(targetPath: string): Promise<IdentityBoundDirectorySnapshot>;
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
@@ -124,6 +133,38 @@ type AuthorizedOpenedFile = {
 };
 
 type AuthorizedResourceKind = "file" | "directory";
+
+function validateAbsoluteFileResource(
+  request: SessionFileAbsoluteResourceRequest,
+): string {
+  if (
+    typeof request.sessionId !== "string"
+    || !request.sessionId
+    || typeof request.absolutePath !== "string"
+    || !request.absolutePath
+    || !path.isAbsolute(request.absolutePath)
+    || "rootId" in request
+    || "relativePath" in request
+  ) {
+    throw new TypeError("Absolute file preview resource is invalid.");
+  }
+  return path.resolve(request.absolutePath);
+}
+
+function validateRootFileResource(
+  request: SessionFileRootResourceRequest,
+): void {
+  if (
+    typeof request.sessionId !== "string"
+    || !request.sessionId
+    || typeof request.rootId !== "string"
+    || !request.rootId
+    || typeof request.relativePath !== "string"
+    || "absolutePath" in request
+  ) {
+    throw new TypeError("Root-scoped file resource is invalid.");
+  }
+}
 
 function pathKey(value: string): string {
   const normalized = path.resolve(value);
@@ -172,6 +213,13 @@ function isPathInside(rootPath: string, targetPath: string): boolean {
 
 function isSameFileIdentity(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
+}
+
+function isMissingPathError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : "";
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 function makeFileRevision(stats: Stats): string {
@@ -258,10 +306,149 @@ export class SessionFileExplorerService {
     return (await this.resolveRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
   }
 
+  async resolvePreviewTarget(
+    sessionId: string,
+    target: string,
+    baseResource?: SessionFileResourceRequest,
+  ): Promise<SessionFilePreviewTargetResolution> {
+    const context = await this.deps.getSessionContext(sessionId);
+    if (!context) {
+      return { type: "failed", targetPath: target, message: "Session が見つからないよ。" };
+    }
+
+    let baseDirectory = context.workspacePath;
+    if (baseResource) {
+      if (baseResource.sessionId !== sessionId) {
+        return { type: "failed", targetPath: target, message: "Preview link base does not belong to this Session." };
+      }
+      try {
+        if (isSessionFileAbsoluteResource(baseResource)) {
+          baseDirectory = path.dirname(validateAbsoluteFileResource(baseResource));
+        } else {
+          validateRootFileResource(baseResource);
+          const candidate = await this.resolveTargetCandidate(baseResource, false);
+          baseDirectory = path.dirname(await realpath(candidate.unresolvedTargetPath));
+        }
+      } catch (error) {
+        return {
+          type: "failed",
+          targetPath: target,
+          message: error instanceof Error ? error.message : "Preview link base could not be resolved.",
+        };
+      }
+    }
+
+    let resolvedTarget: ReturnType<typeof resolveOpenPathTarget>;
+    try {
+      resolvedTarget = resolveOpenPathTarget(target, { baseDirectory });
+    } catch (error) {
+      return {
+        type: "failed",
+        targetPath: target,
+        message: error instanceof Error ? error.message : "リンク先を解決できなかったよ。",
+      };
+    }
+    if (resolvedTarget.type === "external-url") {
+      return resolvedTarget;
+    }
+
+    const roots = await this.resolveRoots(sessionId);
+    const resolvedRoots: Array<{ root: ResolvedSessionFileRoot; realPath: string }> = [];
+    for (const root of roots) {
+      try {
+        resolvedRoots.push({ root, realPath: await realpath(root.absolutePath) });
+      } catch {
+        // A currently unavailable root cannot provide a root-scoped resource.
+      }
+    }
+
+    let targetPath = resolvedTarget.targetPath;
+    const fallbackPath = /^(.*):[1-9]\d*:[1-9]\d*$/.exec(targetPath)?.[1]
+      ?? /^(.*):[1-9]\d*$/.exec(targetPath)?.[1]
+      ?? "";
+    const lexicalCandidates = fallbackPath ? [targetPath, fallbackPath] : [targetPath];
+    const priority: Record<SessionFileRootKind, number> = {
+      workspace: 0,
+      "session-folder": 1,
+      additional: 2,
+    };
+    const lstatPath = this.deps.lstatPath ?? lstat;
+    let targetStats: Stats | null = null;
+    let targetRealPath = "";
+    let selectedTargetPath = "";
+    for (const candidatePath of lexicalCandidates) {
+      const absoluteCandidate = path.resolve(candidatePath);
+      try {
+        await lstatPath(absoluteCandidate);
+        targetRealPath = await realpath(absoluteCandidate);
+        targetStats = await (this.deps.statPath ?? stat)(targetRealPath);
+        selectedTargetPath = absoluteCandidate;
+        break;
+      } catch (error) {
+        if (!isMissingPathError(error)) {
+          return {
+            type: "failed",
+            targetPath: absoluteCandidate,
+            message: error instanceof Error ? error.message : "The local path could not be inspected.",
+          };
+        }
+      }
+    }
+    if (!targetStats || !selectedTargetPath) {
+      return { type: "not-found", targetPath, message: "The local path was not found." };
+    }
+    targetPath = selectedTargetPath;
+
+    if (targetStats.isDirectory()) {
+      const directoryRoot = resolvedRoots.find(({ realPath: rootRealPath }) => (
+        isPathInside(rootRealPath, targetRealPath)
+      ));
+      return directoryRoot
+        ? { type: "directory", targetPath: targetRealPath }
+        : {
+            type: "not-previewable",
+            targetPath,
+            message: "The directory is outside the current Session file roots.",
+          };
+    }
+    if (!targetStats.isFile()) {
+      return { type: "not-previewable", targetPath, message: "The local path is not a file or directory." };
+    }
+
+    try {
+      const matchingRoots = resolvedRoots.filter(({ realPath: rootRealPath }) => (
+        isPathInside(rootRealPath, targetRealPath)
+      ));
+      matchingRoots.sort((left, right) => (
+        right.realPath.length - left.realPath.length
+        || priority[left.root.kind] - priority[right.root.kind]
+      ));
+      const match = matchingRoots[0];
+      if (!match) {
+        return {
+          type: "file",
+          resource: { sessionId, absolutePath: targetRealPath },
+        };
+      }
+      const relativePath = path.relative(match.realPath, targetRealPath).split(path.sep).join("/");
+      return {
+        type: "file",
+        resource: { sessionId, rootId: match.root.id, relativePath },
+      };
+    } catch (error) {
+      return {
+        type: "failed",
+        targetPath,
+        message: error instanceof Error ? error.message : "The file could not be resolved.",
+      };
+    }
+  }
+
   private async resolveTargetCandidate(
-    request: SessionFileResourceRequest,
+    request: SessionFileRootResourceRequest,
     allowRoot: boolean,
   ): Promise<ResolvedTargetCandidate> {
+    validateRootFileResource(request);
     const root = await this.resolveRoot(request.sessionId, request.rootId);
     if (!root) {
       throw new Error("指定された file root は現在の Session で利用できないよ。");
@@ -282,7 +469,7 @@ export class SessionFileExplorerService {
   }
 
   private async openAuthorizedTarget(
-    request: SessionFileResourceRequest,
+    request: SessionFileRootResourceRequest,
     allowRoot: boolean,
     expectedKind: AuthorizedResourceKind,
   ): Promise<AuthorizedOpenedFile> {
@@ -308,8 +495,56 @@ export class SessionFileExplorerService {
     }
   }
 
-  private openAuthorizedFile(request: SessionFileResourceRequest): Promise<AuthorizedOpenedFile> {
+  private openAuthorizedFile(request: SessionFileRootResourceRequest): Promise<AuthorizedOpenedFile> {
     return this.openAuthorizedTarget(request, false, "file");
+  }
+
+  private async openAbsoluteFile(
+    request: SessionFileAbsoluteResourceRequest,
+  ): Promise<AuthorizedOpenedFile> {
+    const absolutePath = validateAbsoluteFileResource(request);
+    const handle = await (this.deps.openFile ?? open)(absolutePath, "r");
+    try {
+      const openedStats = await handle.stat();
+      if (!openedStats.isFile()) {
+        throw new Error("指定 path は file ではないよ。");
+      }
+      const targetRealPath = await realpath(absolutePath);
+      const statPath = this.deps.statPath ?? stat;
+      const targetStats = await statPath(targetRealPath);
+      const confirmedTargetRealPath = await realpath(absolutePath);
+      const confirmedTargetStats = await statPath(confirmedTargetRealPath);
+      if (
+        pathKey(confirmedTargetRealPath) !== pathKey(targetRealPath)
+        || !isSameFileIdentity(openedStats, targetStats)
+        || !isSameFileIdentity(openedStats, confirmedTargetStats)
+      ) {
+        throw new Error("resource path が確認中に変更されたよ。再実行してね。");
+      }
+      return {
+        candidate: {
+          rootAbsolutePath: path.dirname(targetRealPath),
+          rootRealPath: path.dirname(targetRealPath),
+          unresolvedTargetPath: absolutePath,
+        },
+        handle,
+        stats: openedStats,
+        targetRealPath,
+      };
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
+  }
+
+  private openLocalFile(request: SessionFileResourceRequest): Promise<AuthorizedOpenedFile> {
+    if (isSessionFileAbsoluteResource(request)) {
+      return this.openAbsoluteFile(request);
+    }
+    if (isSessionFileRootResource(request)) {
+      return this.openAuthorizedFile(request);
+    }
+    throw new TypeError("File resource is invalid.");
   }
 
   private async confirmOpenedTarget(candidate: ResolvedTargetCandidate, openedStats: Stats): Promise<string> {
@@ -363,7 +598,7 @@ export class SessionFileExplorerService {
     if (!this.deps.openResolvedPath) {
       throw new Error("file open service を利用できないよ。");
     }
-    const opened = await this.openAuthorizedFile(request);
+    const opened = await this.openLocalFile(request);
     try {
       // Electron can hand the OS only a path here; preserving edits to the original file
       // intentionally accepts the path re-resolution boundary documented in ADR 013.
@@ -374,7 +609,7 @@ export class SessionFileExplorerService {
   }
 
   async inspectFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor> {
-    const opened = await this.openAuthorizedFile(request);
+    const opened = await this.openLocalFile(request);
     try {
       const { handle, stats: fileStats, targetRealPath } = opened;
       const inspection = new Uint8Array(Math.min(INSPECTION_BYTES, fileStats.size));
@@ -407,7 +642,7 @@ export class SessionFileExplorerService {
     if (!Number.isSafeInteger(request.length) || request.length < 1 || request.length > MAX_CHUNK_BYTES) {
       throw new Error(`file chunk length は 1 から ${MAX_CHUNK_BYTES} bytes で指定してね。`);
     }
-    const opened = await this.openAuthorizedFile(request);
+    const opened = await this.openLocalFile(request);
     try {
       const { handle, stats: fileStats } = opened;
       const revision = makeFileRevision(fileStats);

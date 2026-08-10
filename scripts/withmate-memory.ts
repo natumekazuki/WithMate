@@ -1,4 +1,3 @@
-import { createHmac, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,24 +9,58 @@ import {
   type MemoryValidationResult,
 } from "../src/memory-v6/memory-contract.js";
 import {
-  normalizeWithMateMemoryApiBaseUrl,
-  resolveDefaultWithMateMemoryDiscoveryFilePath,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
-  type WithMateMemoryDiscoveryDocument,
 } from "../src/memory-v6/memory-discovery.js";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
+  validateMemoryListEntriesRequest,
+  validateMemoryListTargetsRequest,
+  validateMemoryMoveEntryRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
+import {
+  CHARACTER_CONTEXT_SCHEMA_VERSION,
+  createCharacterContextError,
+} from "../src/character-context/character-context-contract.js";
+import {
+  CharacterContextValidationError,
+  validateCharacterAffectAppraiseRequest,
+  validateCharacterAffectCorrectRequest,
+  validateCharacterAffectInspectRequest,
+  validateCharacterAffectResetRequest,
+  validateCharacterContextGetRequest,
+  validateCharacterMemoryAppendEpisodeRequest,
+  validateCharacterMemoryCorrectRequest,
+  validateCharacterMemoryForgetRequest,
+  validateCharacterMemorySearchRequest,
+} from "../src/character-context/character-context-validation.js";
+import {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  callWithMateMemoryRuntime,
+  discoverWithMateMemoryApi,
+  mapRuntimeHttpFailureToCharacterContext,
+  verifyRuntimeIdentity,
+  WithMateMemoryRuntimeExchangeError,
+  WITHMATE_MEMORY_API_SECRET_HEADER,
+  type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryRuntimeResponse,
+  type WithMateMemoryRuntimeConnection,
+} from "./withmate-memory-runtime-client.js";
+import { startWithMateMemoryMcpServer } from "./withmate-memory-mcp.js";
 
 export {
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  discoverWithMateMemoryApi,
+  verifyRuntimeIdentity,
+  WITHMATE_MEMORY_API_SECRET_HEADER,
   WITHMATE_MEMORY_DISCOVERY_FILE_NAME,
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 };
@@ -45,6 +78,9 @@ export type WithMateMemoryCliCommand =
   | "status"
   | "characters"
   | "file_usage"
+  | "list_targets"
+  | "list_entries"
+  | "audit"
   | "search"
   | "get_entry"
   | "get_file"
@@ -52,11 +88,23 @@ export type WithMateMemoryCliCommand =
   | "list_tags"
   | "append"
   | "forget"
+  | "move_entry"
+  | "context_get"
+  | "affect_appraise"
+  | "affect_inspect"
+  | "affect_correct"
+  | "affect_reset"
+  | "character_memory_search"
+  | "character_memory_append_episode"
+  | "character_memory_correct"
+  | "character_memory_forget"
+  | "character_metrics"
+  | "mcp_server"
   | "schema"
   | "validate";
 
-export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate">;
-export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters" | "file_usage">;
+export type WithMateMemoryApiCommand = Exclude<WithMateMemoryCliCommand, "help" | "schema" | "validate" | "mcp_server">;
+export type WithMateMemoryValidatedCommand = Exclude<WithMateMemoryApiCommand, "status" | "characters" | "file_usage" | "character_metrics">;
 
 export type WithMateMemoryCliRequest = {
   command: WithMateMemoryCliCommand;
@@ -64,12 +112,8 @@ export type WithMateMemoryCliRequest = {
   validateCommand?: WithMateMemoryValidatedCommand;
   discoveryFilePath?: string;
   apiUrl?: string;
-};
-
-export type WithMateMemoryApiConnection = {
-  baseUrl: string;
-  apiSecret?: string;
-  runtimeInstanceId?: string;
+  outputFormat?: "json" | "jsonl" | "markdown";
+  fallbackFrom?: "mcp";
 };
 
 export type WithMateMemoryCliDeps = {
@@ -77,16 +121,53 @@ export type WithMateMemoryCliDeps = {
   stdin?: NodeJS.ReadStream;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
-  fetch?: typeof fetch;
+  runtimeCall?: (
+    connection: WithMateMemoryRuntimeConnection,
+    operation: WithMateMemoryRuntimeOperation,
+    options: { signal: AbortSignal },
+  ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
 };
 
+const CHARACTER_CONTEXT_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "context_get",
+  "affect_appraise",
+  "affect_inspect",
+  "affect_correct",
+  "affect_reset",
+  "character_memory_search",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+  "character_metrics",
+]);
+
+const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "affect_appraise",
+  "affect_correct",
+  "affect_reset",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
+]);
+
+function characterRuntimeUnavailable(effect: "none" | "unknown" = "none") {
+  return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
+    retryable: true,
+    conversationMayContinue: true,
+    effect,
+  });
+}
+
 const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST"; path: string }> = {
   status: { method: "GET", path: "/v1/status" },
   characters: { method: "GET", path: "/v1/characters" },
   file_usage: { method: "GET", path: "/v1/file_usage" },
+  list_targets: { method: "POST", path: "/v1/list_targets" },
+  list_entries: { method: "POST", path: "/v1/list_entries" },
+  audit: { method: "POST", path: "/v1/audit" },
   search: { method: "POST", path: "/v1/search" },
   get_entry: { method: "POST", path: "/v1/get_entry" },
   get_file: { method: "POST", path: "/v1/get_file" },
@@ -94,6 +175,17 @@ const routeByCommand: Record<WithMateMemoryApiCommand, { method: "GET" | "POST";
   list_tags: { method: "POST", path: "/v1/list_tags" },
   append: { method: "POST", path: "/v1/append" },
   forget: { method: "POST", path: "/v1/forget" },
+  move_entry: { method: "POST", path: "/v1/move_entry" },
+  context_get: { method: "POST", path: "/v1/character_context/get" },
+  affect_appraise: { method: "POST", path: "/v1/character_affect/appraise" },
+  affect_inspect: { method: "POST", path: "/v1/character_affect/inspect" },
+  affect_correct: { method: "POST", path: "/v1/character_affect/correct" },
+  affect_reset: { method: "POST", path: "/v1/character_affect/reset" },
+  character_memory_search: { method: "POST", path: "/v1/character_memory/search" },
+  character_memory_append_episode: { method: "POST", path: "/v1/character_memory/append_episode" },
+  character_memory_correct: { method: "POST", path: "/v1/character_memory/correct" },
+  character_memory_forget: { method: "POST", path: "/v1/character_memory/forget" },
+  character_metrics: { method: "GET", path: "/v1/character_context/metrics" },
 };
 
 function buildRoutePath(request: WithMateMemoryCliRequest): string {
@@ -114,9 +206,8 @@ function buildRoutePath(request: WithMateMemoryCliRequest): string {
   return queryString ? `${route.path}?${queryString}` : route.path;
 }
 
-export const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
 export const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
-const WITHMATE_MEMORY_API_SECRET_HEADER = "x-withmate-memory-api-secret";
+export const WITHMATE_MEMORY_OPERATOR_API_SECRET_HEADER = "x-withmate-memory-operator-api-secret";
 
 const FILE_OPERATION_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "append",
@@ -132,6 +223,11 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["list_characters", "characters"],
   ["file-usage", "file_usage"],
   ["file_usage", "file_usage"],
+  ["list-targets", "list_targets"],
+  ["list_targets", "list_targets"],
+  ["list-entries", "list_entries"],
+  ["list_entries", "list_entries"],
+  ["audit", "audit"],
   ["search", "search"],
   ["get-entry", "get_entry"],
   ["get_entry", "get_entry"],
@@ -143,6 +239,24 @@ const commandAliases = new Map<string, WithMateMemoryCliCommand>([
   ["list_tags", "list_tags"],
   ["append", "append"],
   ["forget", "forget"],
+  ["move-entry", "move_entry"],
+  ["move_entry", "move_entry"],
+  ["context-get", "context_get"],
+  ["context_get", "context_get"],
+  ["affect-appraise", "affect_appraise"],
+  ["affect_appraise", "affect_appraise"],
+  ["affect-inspect", "affect_inspect"],
+  ["affect_inspect", "affect_inspect"],
+  ["affect-correct", "affect_correct"],
+  ["affect_correct", "affect_correct"],
+  ["affect-reset", "affect_reset"],
+  ["affect_reset", "affect_reset"],
+  ["character-memory-search", "character_memory_search"],
+  ["character-memory-append-episode", "character_memory_append_episode"],
+  ["character-memory-correct", "character_memory_correct"],
+  ["character-memory-forget", "character_memory_forget"],
+  ["character-metrics", "character_metrics"],
+  ["mcp-server", "mcp_server"],
   ["schema", "schema"],
   ["capabilities", "schema"],
   ["validate", "validate"],
@@ -156,6 +270,9 @@ Commands:
   status
   characters
   file-usage
+  list-targets
+  list-entries
+  audit
   search
   get-entry
   get-file
@@ -163,6 +280,18 @@ Commands:
   list-tags
   append
   forget
+  move-entry
+  context-get
+  affect-appraise
+  affect-inspect
+  affect-correct
+  affect-reset
+  character-memory-search
+  character-memory-append-episode
+  character-memory-correct
+  character-memory-forget
+  character-metrics
+  mcp-server
   schema
   validate
 
@@ -175,6 +304,9 @@ Input options:
 Shorthand options:
   --project <absolute-path>
   --project-id <id>
+  --character-id <id>
+  --owner <user|project|character>
+  --scope <global|project|character>
   --query <text>
   --tag <tag>
   --tags <tags>
@@ -183,28 +315,45 @@ Shorthand options:
   --output <path>
   --output-dir <path>
   --largest
+  --include-empty
+  --include-body
+  --with-counts
+  --sample-limit <n>
+  --all-targets
+  --dry-run
+  --format <json|jsonl|markdown>
   --limit <n>
 
 Connection options:
   --api-url <url>
   --discovery-file <path>
+  --fallback-from <mcp>
 
 Validation:
-  validate --command <search|get-entry|get-file|export-files|list-tags|append|forget>
+  validate --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>
 
 Examples:
   withmate-memory status
   withmate-memory characters
   withmate-memory file-usage
   withmate-memory file-usage --largest --limit 10
+  withmate-memory list-targets --include-empty
+  withmate-memory list-entries --project C:\\path\\to\\repo --limit 100
+  withmate-memory audit --all-targets --format markdown
   withmate-memory search --project C:\\path\\to\\repo --query "release workflow"
   withmate-memory get-file --project C:\\path\\to\\repo --object-id <id> --output C:\\path\\to\\file.bin
   withmate-memory export-files --project C:\\path\\to\\repo --entry-id <id> --output-dir C:\\path\\to\\exports
   withmate-memory validate --command append --stdin
+  withmate-memory context-get --stdin
+  withmate-memory affect-inspect --stdin
+  withmate-memory mcp-server
   withmate-memory schema
 `;
 
 const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
+  "list_targets",
+  "list_entries",
+  "audit",
   "search",
   "get_entry",
   "get_file",
@@ -212,6 +361,16 @@ const validatableCommands = new Set<WithMateMemoryValidatedCommand>([
   "list_tags",
   "append",
   "forget",
+  "move_entry",
+  "context_get",
+  "affect_appraise",
+  "affect_inspect",
+  "affect_correct",
+  "affect_reset",
+  "character_memory_search",
+  "character_memory_append_episode",
+  "character_memory_correct",
+  "character_memory_forget",
 ]);
 
 function usageError(message: string): MemoryErrorResponse {
@@ -260,16 +419,6 @@ export function resolveRuntimeRequestTimeoutMs(
   return DEFAULT_REQUEST_TIMEOUT_MS;
 }
 
-function readEnvSecret(env: NodeJS.ProcessEnv): string | undefined {
-  const value = env.WITHMATE_MEMORY_API_SECRET?.trim();
-  return value ? value : undefined;
-}
-
-function readEnvRuntimeInstanceId(env: NodeJS.ProcessEnv): string | undefined {
-  const value = env.WITHMATE_MEMORY_RUNTIME_INSTANCE_ID?.trim();
-  return value ? value : undefined;
-}
-
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of stdin) {
@@ -303,68 +452,6 @@ function normalizeValidatableCommand(value: string): WithMateMemoryValidatedComm
   return undefined;
 }
 
-export async function discoverWithMateMemoryApi(
-  options: {
-    env?: NodeJS.ProcessEnv;
-    apiUrl?: string;
-    discoveryFilePath?: string;
-    readFile?: typeof readFile;
-  } = {},
-): Promise<WithMateMemoryApiConnection | null> {
-  const env = options.env ?? process.env;
-  if (options.apiUrl !== undefined) {
-    const explicitUrl = normalizeWithMateMemoryApiBaseUrl(options.apiUrl);
-    if (!explicitUrl) {
-      throw usageError("--api-url must be a valid loopback HTTP URL.");
-    }
-    return {
-      baseUrl: explicitUrl,
-      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
-      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
-    };
-  }
-
-  const rawEnvUrl = env.WITHMATE_MEMORY_API_URL?.trim();
-  if (rawEnvUrl) {
-    const envUrl = normalizeWithMateMemoryApiBaseUrl(rawEnvUrl);
-    if (!envUrl) {
-      throw usageError("WITHMATE_MEMORY_API_URL must be a valid loopback HTTP URL.");
-    }
-    return {
-      baseUrl: envUrl,
-      ...(readEnvSecret(env) ? { apiSecret: readEnvSecret(env) } : {}),
-      ...(readEnvRuntimeInstanceId(env) ? { runtimeInstanceId: readEnvRuntimeInstanceId(env) } : {}),
-    };
-  }
-
-  const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
-  const discoveryFilePath = options.discoveryFilePath
-    ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env));
-  const read = options.readFile ?? readFile;
-
-  try {
-    const document = JSON.parse(await read(discoveryFilePath, "utf8")) as Partial<WithMateMemoryDiscoveryDocument>;
-    if (document.schemaVersion !== WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION || typeof document.baseUrl !== "string") {
-      return null;
-    }
-    const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
-    if (!baseUrl) {
-      return null;
-    }
-    return {
-      baseUrl,
-      ...(typeof document.apiSecret === "string" && document.apiSecret.trim()
-        ? { apiSecret: document.apiSecret.trim() }
-        : {}),
-      ...(typeof document.runtimeInstanceId === "string" && document.runtimeInstanceId.trim()
-        ? { runtimeInstanceId: document.runtimeInstanceId.trim() }
-        : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
 export async function parseWithMateMemoryCliArgs(
   args: readonly string[],
   deps: Pick<WithMateMemoryCliDeps, "stdin" | "readFile"> = {},
@@ -375,7 +462,9 @@ export async function parseWithMateMemoryCliArgs(
   }
   const command = rawCommand ? commandAliases.get(rawCommand) : undefined;
   if (!command) {
-    throw usageError("Usage: withmate-memory <help|status|characters|file-usage|search|get-entry|get-file|export-files|list-tags|append|forget|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--command <command>] [--project <absolute-path> | --project-id <id>] [--query <text>] [--tag <tag> | --tags <tags>] [--entry-id <id>] [--object-id <id>] [--output <path>] [--output-dir <path>] [--limit <n>] [--api-url <url>] [--discovery-file <path>]");
+    throw usageError(
+      "Usage: withmate-memory <status|characters|file-usage|list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry|context-get|affect-appraise|affect-inspect|affect-correct|affect-reset|character-memory-search|character-memory-append-episode|character-memory-correct|character-memory-forget|character-metrics|mcp-server|schema|validate> [--json <json> | --file <path> | @file | --stdin] [--project <path>] [--tag <tag>] [options]",
+    );
   }
   if (command === "help" || rest.includes("--help") || rest.includes("-h")) {
     return { command: "help", body: {} };
@@ -386,9 +475,13 @@ export async function parseWithMateMemoryCliArgs(
   let stdinRequested = false;
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
+  let fallbackFrom: "mcp" | undefined;
   let validateCommand: WithMateMemoryValidatedCommand | undefined;
   let projectPath: string | undefined;
   let projectId: string | undefined;
+  let characterId: string | undefined;
+  let owner: "user" | "project" | "character" | undefined;
+  let scope: "global" | "project" | "character" | undefined;
   let query: string | undefined;
   const tagOptions: string[] = [];
   let entryId: string | undefined;
@@ -396,7 +489,14 @@ export async function parseWithMateMemoryCliArgs(
   let outputPath: string | undefined;
   let outputDirectoryPath: string | undefined;
   let largest = false;
+  let includeEmpty = false;
+  let includeBody = false;
+  let withCounts = false;
+  let allTargets = false;
+  let dryRun = false;
+  let sampleLimit: number | undefined;
   let limit: number | undefined;
+  let outputFormat: "json" | "jsonl" | "markdown" | undefined;
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
@@ -412,6 +512,12 @@ export async function parseWithMateMemoryCliArgs(
       apiUrl = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--discovery-file") {
       discoveryFilePath = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--fallback-from") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (value !== "mcp") {
+        throw usageError("--fallback-from must be mcp.");
+      }
+      fallbackFrom = value;
     } else if (arg === "--command") {
       const value = requireOptionValue(rest, ++index, arg);
       validateCommand = normalizeValidatableCommand(value);
@@ -422,6 +528,20 @@ export async function parseWithMateMemoryCliArgs(
       projectPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--project-id") {
       projectId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--character-id") {
+      characterId = requireOptionValue(rest, ++index, arg);
+    } else if (arg === "--owner") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (value !== "user" && value !== "project" && value !== "character") {
+        throw usageError("--owner must be user, project, or character.");
+      }
+      owner = value as typeof owner;
+    } else if (arg === "--scope") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (value !== "global" && value !== "project" && value !== "character") {
+        throw usageError("--scope must be global, project, or character.");
+      }
+      scope = value as typeof scope;
     } else if (arg === "--query") {
       query = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--tag") {
@@ -438,6 +558,24 @@ export async function parseWithMateMemoryCliArgs(
       outputDirectoryPath = requireOptionValue(rest, ++index, arg);
     } else if (arg === "--largest") {
       largest = true;
+    } else if (arg === "--include-empty") {
+      includeEmpty = true;
+    } else if (arg === "--include-body") {
+      includeBody = true;
+    } else if (arg === "--with-counts") {
+      withCounts = true;
+    } else if (arg === "--all-targets") {
+      allTargets = true;
+    } else if (arg === "--dry-run") {
+      dryRun = true;
+    } else if (arg === "--sample-limit") {
+      sampleLimit = parseLimitOption(requireOptionValue(rest, ++index, arg));
+    } else if (arg === "--format") {
+      const value = requireOptionValue(rest, ++index, arg);
+      if (!(["json", "jsonl", "markdown"] as const).includes(value as "json" | "jsonl" | "markdown")) {
+        throw usageError("--format must be json, jsonl, or markdown.");
+      }
+      outputFormat = value as "json" | "jsonl" | "markdown";
     } else if (arg === "--limit") {
       limit = parseLimitOption(requireOptionValue(rest, ++index, arg));
     } else {
@@ -455,7 +593,7 @@ export async function parseWithMateMemoryCliArgs(
   }
 
   if (command === "validate" && !validateCommand) {
-    throw usageError("validate requires --command <search|get-entry|get-file|export-files|list-tags|append|forget>.");
+    throw usageError("validate requires --command <list-targets|list-entries|audit|search|get-entry|get-file|export-files|list-tags|append|forget|move-entry>.");
   }
 
   let body: unknown = {};
@@ -463,8 +601,8 @@ export async function parseWithMateMemoryCliArgs(
     if (jsonInput !== null || filePath !== null || stdinRequested) {
       throw usageError("file-usage does not accept JSON body input. Use --largest and --limit.");
     }
-    if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
+    if (hasShorthandOptions({ projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit });
     }
   } else if (command !== "status" && command !== "characters" && command !== "schema") {
     if (jsonInput !== null) {
@@ -473,11 +611,21 @@ export async function parseWithMateMemoryCliArgs(
       body = await parseJsonInput(await (deps.readFile ?? readFile)(filePath, "utf8"));
     } else if (stdinRequested) {
       body = await parseJsonInput(await readStdin(deps.stdin ?? process.stdin));
-    } else if (hasShorthandOptions({ projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit })) {
-      body = buildShorthandBody(command, { projectPath, projectId, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, limit });
+    } else if (hasShorthandOptions({ projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit })) {
+      body = buildShorthandBody(command, { projectPath, projectId, characterId, owner, scope, query, tags: tagOptions, entryId, objectId, outputPath, outputDirectoryPath, largest, includeEmpty, includeBody, withCounts, allTargets, dryRun, sampleLimit, limit });
     } else if (deps.stdin && !deps.stdin.isTTY) {
       body = await parseJsonInput(await readStdin(deps.stdin));
     }
+  }
+
+  if (dryRun && command === "forget" && body && typeof body === "object" && !Array.isArray(body)) {
+    body = { ...(body as Record<string, unknown>), dryRun: true };
+  }
+  if (command === "list_targets" && body && typeof body === "object" && !Array.isArray(body) && Object.keys(body as object).length === 0) {
+    body = { schemaVersion: MEMORY_V6_SCHEMA_VERSION };
+  }
+  if (outputFormat && command !== "audit") {
+    throw usageError("--format is only supported by audit.");
   }
 
   return {
@@ -486,6 +634,8 @@ export async function parseWithMateMemoryCliArgs(
     ...(validateCommand ? { validateCommand } : {}),
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
+    ...(outputFormat ? { outputFormat } : {}),
+    ...(fallbackFrom ? { fallbackFrom } : {}),
   };
 }
 
@@ -531,6 +681,9 @@ function normalizeCliTagOptions(values: readonly string[]): Array<{ type: string
 function hasShorthandOptions(options: {
   projectPath?: string;
   projectId?: string;
+  characterId?: string;
+  owner?: string;
+  scope?: string;
   query?: string;
   tags?: readonly string[];
   entryId?: string;
@@ -538,11 +691,20 @@ function hasShorthandOptions(options: {
   outputPath?: string;
   outputDirectoryPath?: string;
   largest?: boolean;
+  includeEmpty?: boolean;
+  includeBody?: boolean;
+  withCounts?: boolean;
+  allTargets?: boolean;
+  dryRun?: boolean;
+  sampleLimit?: number;
   limit?: number;
 }): boolean {
   return Boolean(
     options.projectPath
     || options.projectId
+    || options.characterId
+    || options.owner
+    || options.scope
     || options.query
     || (options.tags && options.tags.length > 0)
     || options.entryId
@@ -550,6 +712,12 @@ function hasShorthandOptions(options: {
     || options.outputPath
     || options.outputDirectoryPath
     || options.largest
+    || options.includeEmpty
+    || options.includeBody
+    || options.withCounts
+    || options.allTargets
+    || options.dryRun
+    || options.sampleLimit !== undefined
     || options.limit !== undefined,
   );
 }
@@ -595,11 +763,53 @@ function buildProjectTarget(options: { projectPath?: string; projectId?: string 
   return null;
 }
 
+function buildMaintenanceTarget(options: {
+  projectPath?: string;
+  projectId?: string;
+  characterId?: string;
+  owner?: "user" | "project" | "character";
+  scope?: "global" | "project" | "character";
+}): unknown | null {
+  const project = options.projectId
+    ? { type: "id", id: options.projectId }
+    : options.projectPath
+      ? { type: "path", path: normalizeCliProjectPath(options.projectPath) }
+      : undefined;
+
+  if (!options.owner && !options.scope && !options.characterId) {
+    return buildProjectTarget(options);
+  }
+  if (!options.owner || !options.scope) {
+    throw usageError("Target shorthand requires both --owner and --scope.");
+  }
+  if (options.owner === "user" && options.scope === "global" && !project && !options.characterId) {
+    return { owner: "user", scope: "global" };
+  }
+  if (options.owner === "project" && options.scope === "project" && project && !options.characterId) {
+    return { owner: "project", scope: "project", project };
+  }
+  if (options.owner === "character" && options.scope === "character" && options.characterId && !project) {
+    return { owner: "character", scope: "character", character: { type: "id", id: options.characterId } };
+  }
+  if (options.owner === "character" && options.scope === "project" && options.characterId && project) {
+    return {
+      owner: "character",
+      scope: "project",
+      character: { type: "id", id: options.characterId },
+      project,
+    };
+  }
+  throw usageError("Target shorthand owner, scope, project, and character options do not form a supported target.");
+}
+
 function buildShorthandBody(
   command: WithMateMemoryCliCommand,
   options: {
     projectPath?: string;
     projectId?: string;
+    characterId?: string;
+    owner?: "user" | "project" | "character";
+    scope?: "global" | "project" | "character";
     query?: string;
     tags?: readonly string[];
     entryId?: string;
@@ -607,6 +817,12 @@ function buildShorthandBody(
     outputPath?: string;
     outputDirectoryPath?: string;
     largest?: boolean;
+    includeEmpty?: boolean;
+    includeBody?: boolean;
+    withCounts?: boolean;
+    allTargets?: boolean;
+    dryRun?: boolean;
+    sampleLimit?: number;
     limit?: number;
   },
 ): unknown {
@@ -614,9 +830,29 @@ function buildShorthandBody(
     throw usageError("validate shorthand options are not supported. Use --json, --file, @file, or --stdin.");
   }
 
-  const target = buildProjectTarget(options);
+  const projectTarget = buildProjectTarget(options);
+  const target = command === "list_entries" || command === "audit" || command === "list_tags"
+    ? buildMaintenanceTarget(options)
+    : projectTarget;
   if (command === "file_usage") {
-    if (target || options.query || (options.tags && options.tags.length > 0) || options.entryId || options.objectId || options.outputPath || options.outputDirectoryPath) {
+    if (
+      projectTarget
+      || options.characterId
+      || options.owner
+      || options.scope
+      || options.query
+      || (options.tags && options.tags.length > 0)
+      || options.entryId
+      || options.objectId
+      || options.outputPath
+      || options.outputDirectoryPath
+      || options.includeEmpty
+      || options.includeBody
+      || options.withCounts
+      || options.allTargets
+      || options.dryRun
+      || options.sampleLimit !== undefined
+    ) {
       throw usageError("file-usage shorthand only supports --largest and --limit.");
     }
     if (options.limit !== undefined && !options.largest) {
@@ -624,6 +860,42 @@ function buildShorthandBody(
     }
     return {
       ...(options.largest ? { largest: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "list_targets") {
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      ...(options.owner ? { owner: options.owner } : {}),
+      ...(options.scope ? { scope: options.scope } : {}),
+      ...(options.projectId ? { project: { type: "id", id: options.projectId } } : {}),
+      ...(options.projectPath ? { project: { type: "path", path: normalizeCliProjectPath(options.projectPath) } } : {}),
+      ...(options.characterId ? { character: { type: "id", id: options.characterId } } : {}),
+      ...(options.includeEmpty ? { includeEmpty: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "list_entries") {
+    if (!target) {
+      throw usageError("list-entries shorthand requires an explicit target.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      target,
+      ...(options.includeBody ? { includeBody: true } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    };
+  }
+
+  if (command === "audit") {
+    if (options.allTargets === Boolean(target)) {
+      throw usageError("audit shorthand requires exactly one of --all-targets or an explicit target.");
+    }
+    return {
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      ...(options.allTargets ? { allTargets: true } : { targets: [target] }),
       ...(options.limit !== undefined ? { limit: options.limit } : {}),
     };
   }
@@ -648,11 +920,13 @@ function buildShorthandBody(
 
   if (command === "list_tags") {
     if (!target) {
-      throw usageError("list-tags shorthand requires --project <absolute-path> or --project-id <id>.");
+      throw usageError("list-tags shorthand requires an explicit target.");
     }
     return {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       targets: [target],
+      ...(options.withCounts ? { withCounts: true } : {}),
+      ...(options.sampleLimit !== undefined ? { sampleLimit: options.sampleLimit } : {}),
     };
   }
 
@@ -706,6 +980,10 @@ function buildShorthandBody(
     };
   }
 
+  if (command === "forget" && options.dryRun) {
+    throw usageError("forget --dry-run requires --json, --file, @file, or --stdin with the forget request.");
+  }
+
   throw usageError(`${command} does not support shorthand options. Use --json, --file, @file, or --stdin.`);
 }
 
@@ -747,6 +1025,9 @@ function buildSchemaResponse(): unknown {
       "status",
       "characters",
       "file-usage",
+      "list-targets",
+      "list-entries",
+      "audit",
       "search",
       "get-entry",
       "get-file",
@@ -754,6 +1035,18 @@ function buildSchemaResponse(): unknown {
       "list-tags",
       "append",
       "forget",
+      "move-entry",
+      "context-get",
+      "affect-appraise",
+      "affect-inspect",
+      "affect-correct",
+      "affect-reset",
+      "character-memory-search",
+      "character-memory-append-episode",
+      "character-memory-correct",
+      "character-memory-forget",
+      "character-metrics",
+      "mcp-server",
       "schema",
       "validate",
     ],
@@ -791,8 +1084,58 @@ function validateMemoryCliRequestBody(
   command: WithMateMemoryValidatedCommand,
   body: unknown,
 ): MemoryValidationResult<unknown> {
+  try {
+    if (command === "context_get") {
+      return { ok: true, value: validateCharacterContextGetRequest(body) };
+    }
+    if (command === "affect_appraise") {
+      return { ok: true, value: validateCharacterAffectAppraiseRequest(body) };
+    }
+    if (command === "affect_inspect") {
+      return { ok: true, value: validateCharacterAffectInspectRequest(body) };
+    }
+    if (command === "affect_correct") {
+      return { ok: true, value: validateCharacterAffectCorrectRequest(body) };
+    }
+    if (command === "affect_reset") {
+      return { ok: true, value: validateCharacterAffectResetRequest(body) };
+    }
+    if (command === "character_memory_search") {
+      return { ok: true, value: validateCharacterMemorySearchRequest(body) };
+    }
+    if (command === "character_memory_append_episode") {
+      return { ok: true, value: validateCharacterMemoryAppendEpisodeRequest(body) };
+    }
+    if (command === "character_memory_correct") {
+      return { ok: true, value: validateCharacterMemoryCorrectRequest(body) };
+    }
+    if (command === "character_memory_forget") {
+      return { ok: true, value: validateCharacterMemoryForgetRequest(body) };
+    }
+  } catch (error) {
+    if (error instanceof CharacterContextValidationError) {
+      return {
+        ok: false,
+        error: {
+          code: "CHARACTER_CONTEXT_INVALID_INPUT",
+          message: error.message,
+          field: error.field,
+        },
+      };
+    }
+    throw error;
+  }
   if (command === "search") {
     return validateMemorySearchRequest(body);
+  }
+  if (command === "list_targets") {
+    return validateMemoryListTargetsRequest(body);
+  }
+  if (command === "list_entries") {
+    return validateMemoryListEntriesRequest(body);
+  }
+  if (command === "audit") {
+    return validateMemoryAuditRequest(body);
   }
   if (command === "get_entry") {
     return validateMemoryGetEntryRequest(body);
@@ -808,6 +1151,9 @@ function validateMemoryCliRequestBody(
   }
   if (command === "append") {
     return validateMemoryAppendRequest(body);
+  }
+  if (command === "move_entry") {
+    return validateMemoryMoveEntryRequest(body);
   }
   return validateMemoryForgetRequest(body);
 }
@@ -826,7 +1172,9 @@ function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: un
   return {
     exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.ok,
     response: {
-      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      schemaVersion: command.startsWith("character_") || command.startsWith("affect_") || command === "context_get"
+        ? CHARACTER_CONTEXT_SCHEMA_VERSION
+        : MEMORY_V6_SCHEMA_VERSION,
       valid: true,
       command,
       value: validation.value,
@@ -834,56 +1182,91 @@ function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: un
   };
 }
 
-async function readJsonResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
-  if (!text.trim()) {
-    return {};
+function formatAuditOutput(value: unknown, format: "json" | "jsonl" | "markdown"): string {
+  if (format === "json" || !value || typeof value !== "object" || !("targets" in value) || !Array.isArray((value as { targets?: unknown }).targets)) {
+    return `${JSON.stringify(value)}\n`;
   }
-
-  try {
-    return JSON.parse(text) as unknown;
-  } catch {
-    throw transportError("Memory API returned a non-JSON response.");
-  }
-}
-
-function createStatusChallenge(apiSecret: string, nonce: string): string {
-  return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
-}
-
-function hasVerifiableRuntimeIdentity(connection: WithMateMemoryApiConnection): connection is WithMateMemoryApiConnection & {
-  apiSecret: string;
-  runtimeInstanceId: string;
-} {
-  return Boolean(connection.apiSecret?.trim() && connection.runtimeInstanceId?.trim());
-}
-
-async function verifyRuntimeIdentity(
-  connection: WithMateMemoryApiConnection,
-  fetchImpl: typeof fetch,
-  signal: AbortSignal,
-): Promise<boolean> {
-  if (!hasVerifiableRuntimeIdentity(connection)) {
-    return false;
-  }
-
-  const nonce = randomBytes(16).toString("base64url");
-  const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
-    method: "GET",
-    redirect: "error",
-    signal,
-  });
-  if (!response.ok) {
-    return false;
-  }
-
-  const status = await readJsonResponse(response) as {
-    runtimeInstanceId?: unknown;
-    challenge?: { nonce?: unknown; hmacSha256?: unknown };
+  const report = value as {
+    schemaVersion?: unknown;
+    generatedAt?: unknown;
+    staleBefore?: unknown;
+    targets: Array<Record<string, any>>;
+    nextCursor?: unknown;
   };
-  return status.runtimeInstanceId === connection.runtimeInstanceId
-    && status.challenge?.nonce === nonce
-    && status.challenge.hmacSha256 === createStatusChallenge(connection.apiSecret, nonce);
+  if (format === "jsonl") {
+    const records = [JSON.stringify({
+      recordType: "audit_page",
+      schemaVersion: report.schemaVersion,
+      generatedAt: report.generatedAt,
+      staleBefore: report.staleBefore,
+      nextCursor: report.nextCursor ?? null,
+    }), ...report.targets.map((target) => JSON.stringify({
+      recordType: "target_audit",
+      ...target,
+    }))];
+    return `${records.join("\n")}\n`;
+  }
+  const lines = [
+    "# WithMate Memory audit",
+    "",
+    `- Generated: ${String(report.generatedAt ?? "")}`,
+    `- Stale before: ${String(report.staleBefore ?? "")}`,
+    "",
+  ];
+  for (const targetAudit of report.targets) {
+    const inventory = targetAudit.target ?? {};
+    const selector = inventory.target ?? {};
+    const label = inventory.project?.displayName ?? inventory.character?.displayName ?? `${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`;
+    lines.push(`## ${String(label).replace(/\r?\n/g, " ")}`, "");
+    lines.push(`- Target: ${selector.owner ?? "unknown"}/${selector.scope ?? "unknown"}`);
+    lines.push(`- Entries: ${inventory.entryCount ?? 0}`);
+    lines.push(`- Tags: ${inventory.tagCount ?? 0}`);
+    lines.push(`- Last updated: ${inventory.lastUpdatedAt ?? "n/a"}`, "");
+    lines.push("### Counts by kind", "");
+    const counts = targetAudit.countsByKind && typeof targetAudit.countsByKind === "object"
+      ? Object.entries(targetAudit.countsByKind as Record<string, unknown>)
+      : [];
+    lines.push(...(counts.length > 0
+      ? counts.map(([kind, count]) => `- ${kind}: ${String(count)}`)
+      : ["- None"]), "");
+    lines.push("### Top tags", "");
+    const topTags = Array.isArray(targetAudit.topTags) ? targetAudit.topTags : [];
+    lines.push(...(topTags.length > 0
+      ? topTags.map((tag) => `- ${String(tag.type)}:${String(tag.value)} — ${String(tag.entryCount)}`)
+      : ["- None"]), "");
+    const sections: Array<[string, unknown]> = [
+      ["Stale or progress-like", targetAudit.staleOrProgressCandidates],
+      ["Wrong-scope candidates", targetAudit.wrongScopeCandidates],
+      ["Documentation candidates", targetAudit.documentationCandidates],
+      ["Suspicious tags", targetAudit.suspiciousTagCandidates],
+    ];
+    for (const [heading, candidates] of sections) {
+      lines.push(`### ${heading}`, "");
+      if (!Array.isArray(candidates) || candidates.length === 0) {
+        lines.push("- None", "");
+        continue;
+      }
+      for (const candidate of candidates) {
+        lines.push(`- ${String(candidate.id)} — ${String(candidate.title).replace(/\r?\n/g, " ")} (${Array.isArray(candidate.reasons) ? candidate.reasons.join(", ") : "candidate"})`);
+      }
+      lines.push("");
+    }
+    lines.push("### Duplicate normalized titles", "");
+    const duplicateGroups = Array.isArray(targetAudit.duplicateTitleCandidates) ? targetAudit.duplicateTitleCandidates : [];
+    if (duplicateGroups.length === 0) {
+      lines.push("- None", "");
+    } else {
+      for (const group of duplicateGroups) {
+        const ids = Array.isArray(group.entries) ? group.entries.map((entry: { id?: unknown }) => String(entry.id)).join(", ") : "";
+        lines.push(`- ${String(group.normalizedTitle)} — ${ids}`);
+      }
+      lines.push("");
+    }
+  }
+  if (report.nextCursor) {
+    lines.push(`Next cursor: \`${String(report.nextCursor)}\``, "");
+  }
+  return `${lines.join("\n").trimEnd()}\n`;
 }
 
 export async function runWithMateMemoryCli(
@@ -892,12 +1275,19 @@ export async function runWithMateMemoryCli(
 ): Promise<number> {
   const stdout = deps.stdout ?? process.stdout;
   const stderr = deps.stderr ?? process.stderr;
-  const fetchImpl = deps.fetch ?? fetch;
 
   try {
     const request = await parseWithMateMemoryCliArgs(args, deps);
     if (request.command === "help") {
       stdout.write(WITHMATE_MEMORY_CLI_HELP);
+      return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
+    }
+    if (request.command === "mcp_server") {
+      await startWithMateMemoryMcpServer({
+        env: deps.env,
+        readFile: deps.readFile,
+        requestTimeoutMs: deps.requestTimeoutMs,
+      });
       return WITHMATE_MEMORY_CLI_EXIT_CODES.ok;
     }
     if (request.command === "schema") {
@@ -911,63 +1301,64 @@ export async function runWithMateMemoryCli(
     }
 
     const connection = await discoverWithMateMemoryApi({
+      adapter: "cli",
       env: deps.env,
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
       readFile: deps.readFile,
     });
     if (!connection) {
-      stdout.write(`${JSON.stringify(notRunningError())}\n`);
-      return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-    }
-
-    try {
-      const verifyAbortController = new AbortController();
-      const verifyTimeout = setTimeout(() => verifyAbortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
-      try {
-        if (!await verifyRuntimeIdentity(connection, fetchImpl, verifyAbortController.signal)) {
-          stdout.write(`${JSON.stringify(notRunningError())}\n`);
-          return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
-        }
-      } finally {
-        clearTimeout(verifyTimeout);
-      }
-    } catch (error) {
-      if (isMemoryErrorResponse(error)) {
-        throw error;
+      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
       return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
     }
 
     const route = routeByCommand[request.command];
-    let response: Response;
+    let response: Pick<Response, "ok" | "status">;
     let responseJson: unknown;
     const operationTimeoutMs = resolveRuntimeRequestTimeoutMs(request.command, deps);
     const abortController = new AbortController();
     const requestTimeout = setTimeout(() => abortController.abort(), operationTimeoutMs);
     try {
-      const headers: Record<string, string> = {};
-      if (route.method === "POST") {
-        headers["Content-Type"] = "application/json";
-      }
-      if (connection.apiSecret) {
-        headers[WITHMATE_MEMORY_API_SECRET_HEADER] = connection.apiSecret;
-      }
-      response = await fetchImpl(`${connection.baseUrl}${buildRoutePath(request)}`, {
+      const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
         method: route.method,
-        headers: Object.keys(headers).length > 0 ? headers : undefined,
-        body: route.method === "POST" ? JSON.stringify(request.body) : undefined,
-        redirect: "error",
-        signal: abortController.signal,
-      });
-      responseJson = await readJsonResponse(response);
+        path: buildRoutePath(request),
+        body: request.body,
+        ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
+      }, { signal: abortController.signal });
+      response = runtimeResponse;
+      responseJson = runtimeResponse.value;
     } catch (error) {
       if (isMemoryErrorResponse(error)) {
         throw error;
       }
-      if (isAbortError(error)) {
+      if (error instanceof WithMateMemoryRuntimeExchangeError && !error.dispatched) {
+        if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+          stdout.write(`${JSON.stringify(characterRuntimeUnavailable())}\n`);
+          return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+        }
+        stdout.write(`${JSON.stringify(notRunningError())}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.notRunning;
+      }
+      if (isAbortError(error) || error instanceof WithMateMemoryRuntimeExchangeError) {
+        if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+          const effect = error instanceof WithMateMemoryRuntimeExchangeError
+            && !error.dispatched
+            ? "none"
+            : CHARACTER_CONTEXT_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand)
+            ? "unknown"
+            : "none";
+          stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
+          return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+        }
         stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+        return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
+      }
+      if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+        stdout.write(`${JSON.stringify(characterRuntimeUnavailable("none"))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       stdout.write(`${JSON.stringify(notRunningError())}\n`);
@@ -976,7 +1367,16 @@ export async function runWithMateMemoryCli(
       clearTimeout(requestTimeout);
     }
 
-    stdout.write(`${JSON.stringify(responseJson)}\n`);
+    if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
+      responseJson = mapRuntimeHttpFailureToCharacterContext({
+        ok: response.ok,
+        status: response.status,
+        value: responseJson,
+      });
+    }
+    stdout.write(request.command === "audit"
+      ? formatAuditOutput(responseJson, request.outputFormat ?? "json")
+      : `${JSON.stringify(responseJson)}\n`);
     return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
   } catch (error) {
     const response = isMemoryErrorResponse(error)

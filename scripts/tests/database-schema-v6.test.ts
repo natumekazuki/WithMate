@@ -10,8 +10,12 @@ import {
   APP_DATABASE_V6_SCHEMA_VERSION,
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
+  CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
+  CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
+  CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
+  CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
@@ -102,6 +106,52 @@ function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
 }
 
 describe("database-schema-v6", () => {
+  it("ensureV6Schemaは既存sessionを保持してis_pinnedを既定falseで追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(CREATE_V6_CHARACTERS_TABLE_SQL);
+      db.exec(CREATE_V6_PROJECT_SCOPES_TABLE_SQL);
+      db.exec(CREATE_V6_SESSIONS_TABLE_SQL.replace(
+        "    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n",
+        "",
+      ));
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, session_kind, provider_id, catalog_revision, model_id,
+          reasoning_effort, custom_agent_name, approval_mode, codex_sandbox_mode,
+          allowed_additional_directories_json, runtime_policy_json, thread_id,
+          workspace_path, created_at, updated_at, last_active_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        "existing-session", "Existing", "active", "default", "codex", 1, "gpt-test",
+        "high", "", "never", "danger-full-access", "[]", "{}", "", "C:/workspace",
+        "2026-08-01T00:00:00.000Z", "2026-08-09T04:38:00.000Z", "2026-08-09T04:38:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      const row = db.prepare("SELECT id, is_pinned FROM sessions_v6").get() as {
+        id: string;
+        is_pinned: number;
+      };
+      assert.equal(row.id, "existing-session");
+      assert.equal(row.is_pinned, 0);
+      assert.equal(tableNames(db).includes("character_affect_events_v6"), true);
+      assert.equal(hasForeignKey(db, "character_affect_events_v6", "memory_entry_id", "memory_entries_v6"), true);
+      assert.equal(
+        hasForeignKey(db, "character_affect_events_v6", "supersedes_memory_entry_id", "memory_entries_v6"),
+        true,
+      );
+      assert.equal(
+        hasForeignKey(db, "character_affect_mutations_v6", "source_session_id", "sessions_v6"),
+        true,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it("withmate-v6.db 用の schema constants、fresh path、required tables を固定する", () => {
     assert.equal(APP_DATABASE_V6_FILENAME, "withmate-v6.db");
     assert.equal(APP_DATABASE_V6_SCHEMA_VERSION, 6);
@@ -152,6 +202,77 @@ describe("database-schema-v6", () => {
       legacyMixedDb.exec("CREATE TABLE IF NOT EXISTS project_memory_entries (id TEXT PRIMARY KEY);");
       legacyMixedDb.close();
 
+      const missingAffectProvenanceDir = join(dirPath, "missing-affect-provenance");
+      mkdirSync(missingAffectProvenanceDir);
+      const missingAffectProvenancePath = join(missingAffectProvenanceDir, APP_DATABASE_V6_FILENAME);
+      const missingAffectProvenanceDb = createV6Schema(missingAffectProvenancePath);
+      const mutationSql = tableSql(missingAffectProvenanceDb, "character_affect_mutations_v6");
+      missingAffectProvenanceDb.exec("PRAGMA foreign_keys = OFF;");
+      missingAffectProvenanceDb.exec(mutationSql
+        .replace("CREATE TABLE character_affect_mutations_v6", "CREATE TABLE character_affect_mutations_v6_rebuilt")
+        .replace("    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,\n", ""));
+      missingAffectProvenanceDb.exec("DROP TABLE character_affect_mutations_v6;");
+      missingAffectProvenanceDb.exec(
+        "ALTER TABLE character_affect_mutations_v6_rebuilt RENAME TO character_affect_mutations_v6;",
+      );
+      missingAffectProvenanceDb.exec(`
+        CREATE INDEX idx_v6_character_affect_mutations_scope
+        ON character_affect_mutations_v6(character_id, user_id, created_at DESC, id DESC)
+      `);
+      assert.equal(columnNames(missingAffectProvenanceDb, "character_affect_mutations_v6").includes("source_session_id"), true);
+      assert.equal(
+        hasForeignKey(missingAffectProvenanceDb, "character_affect_mutations_v6", "source_session_id", "sessions_v6"),
+        false,
+      );
+      missingAffectProvenanceDb.close();
+
+      const wrongAffectProvenanceDeleteDir = join(dirPath, "wrong-affect-provenance-delete");
+      mkdirSync(wrongAffectProvenanceDeleteDir);
+      const wrongAffectProvenanceDeletePath = join(
+        wrongAffectProvenanceDeleteDir,
+        APP_DATABASE_V6_FILENAME,
+      );
+      const wrongAffectProvenanceDeleteDb = createV6Schema(wrongAffectProvenanceDeletePath);
+      const wrongDeleteMutationSql = tableSql(wrongAffectProvenanceDeleteDb, "character_affect_mutations_v6");
+      wrongAffectProvenanceDeleteDb.exec("PRAGMA foreign_keys = OFF;");
+      wrongAffectProvenanceDeleteDb.exec(wrongDeleteMutationSql
+        .replace("CREATE TABLE character_affect_mutations_v6", "CREATE TABLE character_affect_mutations_v6_rebuilt")
+        .replace(
+          "FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL",
+          "FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE",
+        ));
+      wrongAffectProvenanceDeleteDb.exec("DROP TABLE character_affect_mutations_v6;");
+      wrongAffectProvenanceDeleteDb.exec(
+        "ALTER TABLE character_affect_mutations_v6_rebuilt RENAME TO character_affect_mutations_v6;",
+      );
+      wrongAffectProvenanceDeleteDb.exec(`
+        CREATE INDEX idx_v6_character_affect_mutations_scope
+        ON character_affect_mutations_v6(character_id, user_id, created_at DESC, id DESC)
+      `);
+      wrongAffectProvenanceDeleteDb.close();
+
+      const missingAffectStateCheckDir = join(dirPath, "missing-affect-state-check");
+      mkdirSync(missingAffectStateCheckDir);
+      const missingAffectStateCheckPath = join(missingAffectStateCheckDir, APP_DATABASE_V6_FILENAME);
+      const missingAffectStateCheckDb = createV6Schema(missingAffectStateCheckPath);
+      const affectEventsSql = tableSql(missingAffectStateCheckDb, "character_affect_events_v6");
+      missingAffectStateCheckDb.exec("PRAGMA foreign_keys = OFF;");
+      missingAffectStateCheckDb.exec(affectEventsSql
+        .replace("CREATE TABLE character_affect_events_v6", "CREATE TABLE character_affect_events_v6_rebuilt")
+        .replace("state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'corrected'))", "state TEXT NOT NULL DEFAULT 'active'"));
+      missingAffectStateCheckDb.exec("DROP TABLE character_affect_events_v6;");
+      missingAffectStateCheckDb.exec(
+        "ALTER TABLE character_affect_events_v6_rebuilt RENAME TO character_affect_events_v6;",
+      );
+      missingAffectStateCheckDb.exec(`
+        CREATE INDEX idx_v6_character_affect_events_effective
+        ON character_affect_events_v6(character_id, user_id, layer, session_id, state, occurred_at, id);
+
+        CREATE INDEX idx_v6_character_affect_events_target
+        ON character_affect_events_v6(character_id, user_id, target_type, target_id, occurred_at, id)
+      `);
+      missingAffectStateCheckDb.close();
+
       assert.equal(isValidV6Database(validDbPath), true);
       assert.equal(readV6DatabaseUserVersion(validDbPath), APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(isValidV6Database(wrongNameDbPath), false);
@@ -160,6 +281,9 @@ describe("database-schema-v6", () => {
       assert.equal(isValidV6Database(partialV6DbPath), false);
       assert.equal(isValidV6Database(malformedV6DbPath), false);
       assert.equal(isValidV6Database(legacyMixedV6DbPath), false);
+      assert.equal(isValidV6Database(missingAffectProvenancePath), false);
+      assert.equal(isValidV6Database(wrongAffectProvenanceDeletePath), false);
+      assert.equal(isValidV6Database(missingAffectStateCheckPath), false);
     } finally {
       rmSync(dirPath, { recursive: true, force: true });
     }
@@ -252,6 +376,7 @@ describe("database-schema-v6", () => {
         "character_snapshot_json",
         "project_scope_id",
         "workspace_path",
+        "is_pinned",
         "created_at",
         "updated_at",
         "last_active_at",
@@ -260,6 +385,7 @@ describe("database-schema-v6", () => {
       assert.equal(findForeignKey(db, "sessions_v6", "project_scope_id")?.table, "project_scopes_v6");
       assert.equal(tableSql(db, "sessions_v6").includes("json_valid(character_snapshot_json)"), true);
       assert.equal(tableSql(db, "sessions_v6").includes("allowed_additional_directories_json TEXT NOT NULL DEFAULT '[]'"), true);
+      assert.equal(tableSql(db, "sessions_v6").includes("is_pinned INTEGER NOT NULL DEFAULT 0"), true);
 
       assert.deepEqual(columnNames(db, "session_messages_v6"), [
         "id",
@@ -803,6 +929,7 @@ describe("database-schema-v6", () => {
       for (const statement of CREATE_V6_SCHEMA_SQL) {
         if (
           statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
+          && statement !== CREATE_V6_CHARACTER_AFFECT_TABLES_SQL
           && statement !== CREATE_V6_SESSION_TURNS_TABLE_SQL
           && statement !== CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
           && statement !== CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
@@ -886,6 +1013,9 @@ describe("database-schema-v6", () => {
       `);
 
       assert.throws(() => ensureV6Schema(db), /NOT NULL constraint failed/);
+
+      assert.equal(tableNames(db).includes("character_affect_events_v6"), false);
+      assert.equal(tableNames(db).includes("character_affect_idempotency_v6"), false);
 
       assert.deepEqual(columnNames(db, "auxiliary_sessions"), [
         "id",

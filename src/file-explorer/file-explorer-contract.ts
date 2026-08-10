@@ -20,11 +20,95 @@ export type SessionDirectoryEntry = {
 export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "binary";
 export type SessionFileEncoding = "utf-8" | "shift_jis" | "utf-16le" | "utf-16be";
 
-export type SessionFileResourceRequest = {
+export type SessionFileRootResourceRequest = {
   sessionId: string;
   rootId: string;
   relativePath: string;
 };
+
+export type SessionFileAbsoluteResourceRequest = {
+  sessionId: string;
+  absolutePath: string;
+};
+
+export type SessionFileResourceRequest =
+  | SessionFileRootResourceRequest
+  | SessionFileAbsoluteResourceRequest;
+
+export function isSessionFileAbsoluteResource(
+  resource: SessionFileResourceRequest,
+): resource is SessionFileAbsoluteResourceRequest {
+  return "absolutePath" in resource;
+}
+
+export function isSessionFileRootResource(
+  resource: SessionFileResourceRequest,
+): resource is SessionFileRootResourceRequest {
+  return "rootId" in resource;
+}
+
+export function getSessionFileResourceDisplayPath(resource: SessionFileResourceRequest): string {
+  return isSessionFileAbsoluteResource(resource) ? resource.absolutePath : resource.relativePath;
+}
+
+export function areSessionFileResourcesEqual(
+  left: SessionFileResourceRequest,
+  right: SessionFileResourceRequest,
+): boolean {
+  if (left.sessionId !== right.sessionId) {
+    return false;
+  }
+  if (isSessionFileAbsoluteResource(left) && isSessionFileAbsoluteResource(right)) {
+    return left.absolutePath === right.absolutePath;
+  }
+  return isSessionFileRootResource(left)
+    && isSessionFileRootResource(right)
+    && left.rootId === right.rootId
+    && left.relativePath === right.relativePath;
+}
+
+export type SessionFilePreviewWindowOpenRequest =
+  | { kind: "resource"; resource: SessionFileResourceRequest }
+  | {
+      kind: "link";
+      sessionId: string;
+      target: string;
+      baseResource?: SessionFileResourceRequest;
+    };
+
+export type SessionFilePreviewWindowPayload = {
+  resource: SessionFileResourceRequest;
+  ownerSessionId: string;
+};
+
+export type SessionFilePreviewWindowOpenResult =
+  | {
+      status: "opened";
+      targetType: "preview-window";
+      disposition: "created" | "focused";
+      resource: SessionFileResourceRequest;
+    }
+  | {
+      status: "opened";
+      targetType: "external-url" | "local-directory";
+      target: string;
+    }
+  | {
+      status: "not-found" | "not-previewable" | "failed";
+      targetType: "local-file" | "local-path" | "unknown";
+      target: string;
+      message: string;
+    };
+
+export type SessionFilePreviewTargetResolution =
+  | { type: "external-url"; target: string }
+  | { type: "directory"; targetPath: string }
+  | { type: "file"; resource: SessionFileResourceRequest }
+  | {
+      type: "not-found" | "not-previewable" | "failed";
+      targetPath: string;
+      message: string;
+    };
 
 export type SessionFilePreviewImagePoint = {
   x: number;
@@ -44,7 +128,7 @@ export type SessionFilePreviewImageContextMenuResult =
   | SessionFilePreviewImageCopyResult
   | { status: "dismissed" };
 
-export type SessionDirectoryRequest = SessionFileResourceRequest;
+export type SessionDirectoryRequest = SessionFileRootResourceRequest;
 
 export type SessionFileOpenRequest = SessionFileResourceRequest & {
   reveal?: boolean;

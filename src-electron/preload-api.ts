@@ -10,6 +10,7 @@ import type {
   WithMateWindowObservabilityApi,
   WithMateWindowAuxiliaryApi,
   WithMateWindowPickerApi,
+  WithMateWindowPromptTemplateApi,
   WithMateWindowSessionApi,
   WithMateWindowSettingsApi,
   WithMateWindowMateApi,
@@ -17,6 +18,7 @@ import type {
 } from "../src/withmate-window-api.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
+  WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
@@ -25,7 +27,9 @@ import {
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
@@ -70,6 +74,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
@@ -90,6 +96,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_LIVE_SESSION_RUN_EVENT,
@@ -128,7 +135,6 @@ import {
   WITHMATE_RESET_MATE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
-  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_RESOLVE_LIVE_APPROVAL_CHANNEL,
@@ -154,6 +160,8 @@ import {
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
+  WITHMATE_SET_SESSION_PINNED_CHANNEL,
   WITHMATE_SEARCH_MEMORY_V6_ENTRIES_CHANNEL,
   WITHMATE_GET_MEMORY_V6_ENTRY_CHANNEL,
   WITHMATE_FORGET_MEMORY_V6_ENTRY_CHANNEL,
@@ -239,6 +247,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openDiffWindow(diffPreview) {
       return ipcRenderer.invoke(WITHMATE_OPEN_DIFF_WINDOW_CHANNEL, diffPreview);
     },
+    openSessionFilePreviewWindow(request) {
+      return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL, request);
+    },
     openCompanionReviewWindow(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL, sessionId);
     },
@@ -309,6 +320,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     openSessionFile(request) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_FILE_CHANNEL, request);
     },
+    getSessionFilePreviewWindowPayload(token) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL, token);
+    },
     copySessionFilePreviewImage(request) {
       return ipcRenderer.invoke(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, request);
     },
@@ -329,6 +343,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     updateSession(session) {
       return ipcRenderer.invoke(WITHMATE_UPDATE_SESSION_CHANNEL, session);
+    },
+    setSessionPinned(request) {
+      return ipcRenderer.invoke(WITHMATE_SET_SESSION_PINNED_CHANNEL, request);
     },
     deleteSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_CHANNEL, sessionId);
@@ -558,9 +575,6 @@ function createCharacterApi(ipcRenderer: IpcRendererLike): WithMateWindowCharact
     archiveCharacter(characterId) {
       return ipcRenderer.invoke(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, characterId);
     },
-    setDefaultCharacter(characterId) {
-      return ipcRenderer.invoke(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, characterId);
-    },
     resolveLaunchCharacter(input) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, input ?? null);
     },
@@ -598,6 +612,26 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     deleteSessionsLastActiveBefore(request) {
       return ipcRenderer.invoke(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL, request);
+    },
+  };
+}
+
+function createPromptTemplateApi(ipcRenderer: IpcRendererLike): WithMateWindowPromptTemplateApi {
+  return {
+    listPromptTemplates() {
+      return ipcRenderer.invoke(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL);
+    },
+    createPromptTemplate(input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL, input);
+    },
+    updatePromptTemplate(input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL, input);
+    },
+    deletePromptTemplate(id) {
+      return ipcRenderer.invoke(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL, id);
+    },
+    subscribePromptTemplates(listener) {
+      return subscribe(ipcRenderer, WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT, listener);
     },
   };
 }
@@ -795,6 +829,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
     ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),
     ...createSettingsApi(ipcRenderer),
+    ...createPromptTemplateApi(ipcRenderer),
     ...createPickerApi(ipcRenderer),
     ...createSubscriptionApi(ipcRenderer),
     ...createMateApi(ipcRenderer),

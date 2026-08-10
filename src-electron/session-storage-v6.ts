@@ -51,6 +51,7 @@ type SessionV6Row = {
   character_id: string | null;
   character_snapshot_json: string | null;
   workspace_path: string;
+  is_pinned: number;
   updated_at: string;
   last_active_at: string;
 };
@@ -257,6 +258,15 @@ export class SessionStorageV6 {
     return row ? this.rowToSession(row) : null;
   }
 
+  setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
+    this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
+    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+    if (!row) {
+      throw new Error("対象セッションが見つからないよ。");
+    }
+    return this.rowToSessionSummary(row);
+  }
+
   getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
     const row = this.db.prepare(`
       SELECT role, body, artifact_body
@@ -445,11 +455,12 @@ export class SessionStorageV6 {
         character_id,
         character_snapshot_json,
         workspace_path,
+        is_pinned,
         created_at,
         updated_at,
         last_active_at
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ${conflictClause}
     `).run(
       session.id,
@@ -469,6 +480,7 @@ export class SessionStorageV6 {
       snapshot ? session.characterId : null,
       snapshot ? stringifyCharacterRuntimeSnapshot(snapshot) : null,
       session.workspacePath,
+      session.isPinned === true ? 1 : 0,
       session.updatedAt,
       session.updatedAt,
       session.updatedAt,
@@ -533,6 +545,7 @@ export class SessionStorageV6 {
       taskTitle: row.title,
       status: typeof runtimePolicy.appStatus === "string" ? runtimePolicy.appStatus : row.state === "active" ? "running" : "idle",
       updatedAt: row.updated_at || row.last_active_at,
+      isPinned: row.is_pinned === 1,
       provider: row.provider_id,
       catalogRevision: row.catalog_revision,
       workspaceLabel: runtimePolicy.workspaceLabel,

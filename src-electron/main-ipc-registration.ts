@@ -71,6 +71,11 @@ import {
 } from "../src/chat/chat-layout-preference.js";
 import type { AppSettings } from "../src/provider-settings-state.js";
 import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "../src/prompt-template.js";
+import type {
   SessionDirectoryEntry,
   SessionDirectoryRequest,
   SessionFileChunkRequest,
@@ -80,6 +85,9 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -87,8 +95,18 @@ import type {
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import {
+  areSessionFileResourcesEqual,
+  isSessionFileRootResource,
+} from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type {
+  CreateSessionRequest,
+  DiffPreviewPayload,
+  MessageArtifact,
+  Session,
+  SetSessionPinnedRequest,
+} from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
@@ -96,10 +114,12 @@ import {
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_UPDATE_MATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
+  WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL,
   WITHMATE_DISCARD_COMPANION_SESSION_CHANNEL,
   WITHMATE_EXPORT_MODEL_CATALOG_CHANNEL,
@@ -137,6 +157,8 @@ import {
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
+  WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
@@ -167,6 +189,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
   WITHMATE_OPEN_DIFF_WINDOW_CHANNEL,
@@ -205,7 +228,6 @@ import {
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_SET_MATE_AVATAR_CHANNEL,
-  WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL,
   WITHMATE_SAVE_PASTED_SESSION_FILE_CHANNEL,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
@@ -214,11 +236,13 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
+  WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_DEFINITION_CHANNEL,
   WITHMATE_UPDATE_CHARACTER_METADATA_CHANNEL,
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
+  WITHMATE_SET_SESSION_PINNED_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
@@ -257,6 +281,9 @@ export type MainIpcRegistrationDeps = {
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
+  isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   listSessionSummaries(): Awaitable<SessionSummary[]>;
@@ -313,6 +340,10 @@ export type MainIpcRegistrationDeps = {
   getAppSettings(): AppSettings;
   updateAppSettings(settings: AppSettings): Awaitable<AppSettings>;
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
+  listPromptTemplates(): Awaitable<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
@@ -336,6 +367,10 @@ export type MainIpcRegistrationDeps = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Awaitable<SessionFilePreviewWindowOpenResult>;
+  getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   copySessionFilePreviewImage(
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
@@ -373,6 +408,7 @@ export type MainIpcRegistrationDeps = {
   runCompanionSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<CompanionSession>;
   cancelCompanionSessionRun(sessionId: string): void;
   updateSession(session: Session): Awaitable<Session>;
+  setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;
   deleteSessionsLastActiveBefore(
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
@@ -392,7 +428,6 @@ export type MainIpcRegistrationDeps = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
-  setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -431,6 +466,8 @@ type MainIpcWindowDeps = Pick<
   | "openMemoryV6ReviewWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
+  | "isFilePreviewWindow"
+  | "isFilePreviewTokenWindow"
   | "openCompanionReviewWindow"
   | "openCompanionMergeWindow"
   | "openPathTarget"
@@ -519,6 +556,9 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveSessionWindow"
+  | "isFilePreviewWindow"
+  | "getFilePreviewWindowResource"
+  | "isFilePreviewTokenWindow"
   | "listSessionSummaries"
   | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
@@ -546,6 +586,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
+  | "openSessionFilePreviewWindow"
+  | "getSessionFilePreviewWindowPayload"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
   | "listFileRootChanges"
@@ -587,6 +629,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "resolveLiveElicitation"
   | "createSession"
   | "updateSession"
+  | "setSessionPinned"
   | "deleteSession"
   | "deleteSessionsLastActiveBefore"
   | "runSessionTurn"
@@ -613,7 +656,6 @@ type MainIpcCharacterDeps = Pick<
   | "updateCharacterMetadata"
   | "updateCharacterDefinition"
   | "archiveCharacter"
-  | "setDefaultCharacter"
   | "resolveLaunchCharacter"
   | "startCharacterAuthoringSession"
 >;
@@ -676,6 +718,31 @@ async function assertSessionFileExplorerSender(
   sessionId: string,
   deps: Pick<
     MainIpcRegistrationDeps,
+    | "resolveEventWindow"
+    | "resolveSessionWindow"
+    | "getSessionFileExplorerOwnerSessionId"
+    | "getFilePreviewWindowResource"
+  >,
+): Promise<SessionFileResourceRequest | null> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return null;
+  }
+  const currentResource = window
+    ? deps.getFilePreviewWindowResource(window, sessionId)
+    : null;
+  if (currentResource) {
+    return currentResource;
+  }
+  throw new Error("File Explorer IPC is only available from the owning Session window.");
+}
+
+async function assertOwningSessionFileExplorerSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<
+    MainIpcRegistrationDeps,
     "resolveEventWindow" | "resolveSessionWindow" | "getSessionFileExplorerOwnerSessionId"
   >,
 ): Promise<void> {
@@ -684,7 +751,103 @@ async function assertSessionFileExplorerSender(
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
     return;
   }
-  throw new Error("File Explorer IPC is only available from the owning Session window.");
+  throw new Error("File preview navigation is only available from the owning Session window.");
+}
+
+async function assertSessionFileResourceSender(
+  event: IpcMainInvokeEvent,
+  resource: SessionFileResourceRequest,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    | "resolveEventWindow"
+    | "resolveSessionWindow"
+    | "getSessionFileExplorerOwnerSessionId"
+    | "getFilePreviewWindowResource"
+  >,
+): Promise<void> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(resource.sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (
+    ownerSessionId
+    && window
+    && deps.resolveSessionWindow(ownerSessionId) === window
+    && isSessionFileRootResource(resource)
+  ) {
+    return;
+  }
+  const currentResource = window
+    ? deps.getFilePreviewWindowResource(window, resource.sessionId)
+    : null;
+  if (currentResource && areSessionFileResourcesEqual(currentResource, resource)) {
+    return;
+  }
+  throw new Error("File Preview IPC is only available for the current Preview resource.");
+}
+
+async function assertSessionFileLinkSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  baseResource: SessionFileResourceRequest | undefined,
+  deps: Pick<
+    MainIpcRegistrationDeps,
+    | "resolveEventWindow"
+    | "resolveSessionWindow"
+    | "getSessionFileExplorerOwnerSessionId"
+    | "getFilePreviewWindowResource"
+  >,
+): Promise<void> {
+  const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
+  const window = deps.resolveEventWindow(event);
+  if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return;
+  }
+  const currentResource = window
+    ? deps.getFilePreviewWindowResource(window, sessionId)
+    : null;
+  if (
+    currentResource
+    && baseResource
+    && areSessionFileResourcesEqual(currentResource, baseResource)
+  ) {
+    return;
+  }
+  throw new Error("File Preview navigation must use the current Preview resource as its base.");
+}
+
+function assertValidSessionFileResourceRequest(
+  input: unknown,
+  expectedSessionId?: string,
+): asserts input is SessionFileResourceRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File preview resource is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || (expectedSessionId !== undefined && candidate.sessionId !== expectedSessionId)
+  ) {
+    throw new TypeError("File preview resource is invalid.");
+  }
+  const hasAbsolutePath = Object.hasOwn(candidate, "absolutePath");
+  const hasRootFields = Object.hasOwn(candidate, "rootId") || Object.hasOwn(candidate, "relativePath");
+  if (
+    hasAbsolutePath === hasRootFields
+    || (
+      hasAbsolutePath
+      && (typeof candidate.absolutePath !== "string" || !candidate.absolutePath)
+    )
+    || (
+      hasRootFields
+      && (
+        typeof candidate.rootId !== "string"
+        || !candidate.rootId
+        || typeof candidate.relativePath !== "string"
+      )
+    )
+  ) {
+    throw new TypeError("File preview resource is invalid.");
+  }
 }
 
 function parseSessionFilePreviewImageActionRequest(
@@ -1029,6 +1192,19 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   });
 }
 
+function registerPromptTemplateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcRegistrationDeps): void {
+  ipcMain.handle(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL, () => deps.listPromptTemplates());
+  ipcMain.handle(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL, (_event, input: CreatePromptTemplateInput) =>
+    deps.createPromptTemplate(input),
+  );
+  ipcMain.handle(WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL, (_event, input: UpdatePromptTemplateInput) =>
+    deps.updatePromptTemplate(input),
+  );
+  ipcMain.handle(WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL, (_event, id: string) =>
+    deps.deletePromptTemplate(id),
+  );
+}
+
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
   ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
@@ -1098,38 +1274,63 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL, async (event, sessionId: string) => {
     if (typeof sessionId !== "string" || !sessionId) {
-      throw new TypeError("Session ID が不正だよ。");
+      throw new TypeError("Session ID is invalid.");
     }
     await assertSessionFileExplorerSender(event, sessionId, deps);
     return deps.listSessionFileRoots(sessionId);
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL, async (event, request: SessionDirectoryRequest) => {
     if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
+      throw new TypeError("File Explorer request is invalid.");
     }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.listSessionDirectory(request);
   });
   ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFileResourceRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    assertValidSessionFileResourceRequest(request);
+    await assertSessionFileResourceSender(event, request, deps);
     return deps.inspectSessionFile(request);
   });
   ipcMain.handle(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, async (event, request: SessionFileChunkRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    assertValidSessionFileResourceRequest(request);
+    await assertSessionFileResourceSender(event, request, deps);
     return deps.readSessionFileChunk(request);
   });
   ipcMain.handle(WITHMATE_OPEN_SESSION_FILE_CHANNEL, async (event, request: SessionFileOpenRequest) => {
-    if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
-      throw new TypeError("File Explorer request が不正だよ。");
-    }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    assertValidSessionFileResourceRequest(request);
+    await assertSessionFileResourceSender(event, request, deps);
     return deps.openSessionFile(request);
+  });
+  ipcMain.handle(
+    WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+    async (event, request: SessionFilePreviewWindowOpenRequest) => {
+      if (!request || (request.kind !== "resource" && request.kind !== "link")) {
+        throw new TypeError("File preview navigation request is invalid.");
+      }
+      if (request.kind === "resource") {
+        assertValidSessionFileResourceRequest(request.resource);
+        if (!isSessionFileRootResource(request.resource)) {
+          throw new TypeError("Direct file preview resources must be root-scoped.");
+        }
+        await assertOwningSessionFileExplorerSender(event, request.resource.sessionId, deps);
+      } else {
+        if (typeof request.sessionId !== "string" || !request.sessionId || typeof request.target !== "string") {
+          throw new TypeError("File preview navigation request is invalid.");
+        }
+        if (request.baseResource !== undefined) {
+          assertValidSessionFileResourceRequest(request.baseResource, request.sessionId);
+        }
+        await assertSessionFileLinkSender(event, request.sessionId, request.baseResource, deps);
+      }
+      return deps.openSessionFilePreviewWindow(request);
+    },
+  );
+  ipcMain.handle(WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL, (event, token: string) => {
+    const window = deps.resolveEventWindow(event);
+    if (!token || !window || !deps.isFilePreviewTokenWindow(window, token)) {
+      return null;
+    }
+    return deps.getSessionFilePreviewWindowPayload(token);
   });
   ipcMain.handle(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL, async (event, input: unknown) => {
     const request = parseSessionFilePreviewImageActionRequest(input);
@@ -1149,10 +1350,30 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       || typeof request.rootId !== "string"
       || !request.rootId
     ) {
-      throw new TypeError("File root changes request が不正だよ。");
+      throw new TypeError("File root changes request is invalid.");
     }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
-    return deps.listFileRootChanges(request);
+    const currentResource = await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    if (
+      currentResource
+      && (
+        !isSessionFileRootResource(currentResource)
+        || currentResource.rootId !== request.rootId
+      )
+    ) {
+      throw new Error("Git changes are only available for the current Preview resource.");
+    }
+    const result = await deps.listFileRootChanges(request);
+    if (!currentResource || result.status !== "ok") {
+      return result;
+    }
+    return {
+      ...result,
+      entries: result.entries.filter((entry) => areSessionFileResourcesEqual(currentResource, {
+        sessionId: request.sessionId,
+        rootId: request.rootId,
+        relativePath: entry.relativePath,
+      })),
+    };
   });
   ipcMain.handle(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, async (event, request: FileRootFileDiffRequest) => {
     if (
@@ -1165,9 +1386,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       || !request.relativePath
       || (request.scope !== "working-tree" && request.scope !== "staged")
     ) {
-      throw new TypeError("Git Diff request が不正だよ。");
+      throw new TypeError("Git Diff request is invalid.");
     }
-    await assertSessionFileExplorerSender(event, request.sessionId, deps);
+    await assertSessionFileResourceSender(event, {
+      sessionId: request.sessionId,
+      rootId: request.rootId,
+      relativePath: request.relativePath,
+    }, deps);
     return deps.getFileRootDiff(request);
   });
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
@@ -1283,6 +1508,10 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   );
   ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionRequest) => deps.createSession(input));
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
+  ipcMain.handle(
+    WITHMATE_SET_SESSION_PINNED_CHANNEL,
+    (_event, request: SetSessionPinnedRequest) => deps.setSessionPinned(request),
+  );
   ipcMain.handle(WITHMATE_DELETE_SESSION_CHANNEL, (event, sessionId: string) => {
     assertSessionDeleteSender(event, sessionId, deps);
     return deps.deleteSession(sessionId);
@@ -1333,9 +1562,6 @@ function registerCharacterHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCha
   ipcMain.handle(WITHMATE_ARCHIVE_CHARACTER_CHANNEL, (_event, characterId: string) =>
     deps.archiveCharacter(characterId),
   );
-  ipcMain.handle(WITHMATE_SET_DEFAULT_CHARACTER_CHANNEL, (_event, characterId: string) =>
-    deps.setDefaultCharacter(characterId),
-  );
   ipcMain.handle(WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL, (_event, input: ResolveLaunchCharacterInput | null) =>
     deps.resolveLaunchCharacter(input),
   );
@@ -1350,6 +1576,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerAuxiliaryHandlers(wrappedIpcMain, deps);
   registerCatalogHandlers(wrappedIpcMain, deps);
   registerSettingsHandlers(wrappedIpcMain, deps);
+  registerPromptTemplateHandlers(wrappedIpcMain, deps);
   registerSessionQueryHandlers(wrappedIpcMain, deps);
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);

@@ -75,6 +75,103 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("composeProviderPrompt", () => {
+  it("Conversation Timingをinput側のUser Input直前へ置き、system側へ入れない", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続きやろっか",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+      conversationTimingContext: {
+        observedAt: "2026-08-04T21:32:00.000+09:00",
+        observedDayOfWeek: "tuesday",
+        currentSession: {
+          lastCompletedAt: "2026-08-04T19:19:00.000+09:00",
+          elapsedMs: 2 * 60 * 60_000 + 13 * 60_000,
+        },
+        sameCharacterOtherSession: {
+          lastCompletedAt: "2026-08-01T16:20:00.000+09:00",
+          elapsedMs: 3 * 24 * 60 * 60_000 + 5 * 60 * 60_000,
+        },
+        sameCharacterSharedWork: {
+          todayCompletedTurnDurationMs: 84 * 60_000,
+          totalCompletedTurnDurationMs: 18 * 60 * 60_000 + 37 * 60_000,
+        },
+      },
+    });
+
+    assert.doesNotMatch(prompt.systemBodyText, /Conversation Timing|2026-08-04T21:32/);
+    assert.match(prompt.inputBodyText, /Observed local time: 2026-08-04T21:32:00\.000\+09:00 \(Tuesday\)/);
+    assert.match(prompt.inputBodyText, /2 hours 13 minutes ago/);
+    assert.match(prompt.inputBodyText, /3 days 5 hours ago/);
+    assert.match(prompt.inputBodyText, /1 hour 24 minutes today; 18 hours 37 minutes total/);
+    assert.match(prompt.inputBodyText, /does not reveal what was discussed there/);
+    assert.match(prompt.inputBodyText, /not continuous presence or conversation time/);
+    assert.match(prompt.inputBodyText, /Do not infer or judge the user's location, schedule, sleep/);
+    assertSectionOrder(prompt.inputBodyText, [
+      "# Conversation Timing",
+      "Use same-session timing",
+      "Prioritize the current user input and tone",
+      "Observed values:",
+      "- Observed local time:",
+      "# User Input",
+      "続きやろっか",
+    ]);
+  });
+
+  it("履歴と共同作業時間がない時も基準時刻だけを出し、未取得行は省略する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "開始",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+      conversationTimingContext: {
+        observedAt: "2026-08-04T09:00:00.000+09:00",
+        observedDayOfWeek: "tuesday",
+        currentSession: null,
+        sameCharacterOtherSession: null,
+        sameCharacterSharedWork: {
+          todayCompletedTurnDurationMs: 0,
+          totalCompletedTurnDurationMs: 0,
+        },
+      },
+    });
+
+    assert.match(prompt.inputBodyText, /# Conversation Timing/);
+    assert.doesNotMatch(
+      prompt.inputBodyText,
+      /^- (?:Previous completed exchange|Latest completed exchange|Completed turn execution time with this character:)/m,
+    );
+    assert.doesNotMatch(prompt.inputBodyText, /never/);
+  });
+
   it("User Input 境界を明示し、Memory は注入しない", () => {
     const session = buildNewSession({
       taskTitle: "task",

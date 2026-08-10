@@ -13,6 +13,7 @@ export function companionSessionToAuxiliaryParentSession(session: CompanionSessi
     taskTitle: session.taskTitle,
     status: session.runState === "running" ? "running" : "idle",
     updatedAt: session.updatedAt,
+    isPinned: false,
     provider: session.provider,
     catalogRevision: session.catalogRevision,
     workspaceLabel: session.repoRoot || session.worktreePath,

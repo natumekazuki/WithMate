@@ -52,6 +52,7 @@ const CREATE_CHARACTER_TABLE_SQL = `
     theme_main TEXT NOT NULL DEFAULT '#6f8cff',
     theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'archived')),
+    -- Legacy metadata retained until a future table-rebuild migration; runtime code does not read or write it.
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -74,7 +75,6 @@ type CharacterRow = {
   theme_main: string;
   theme_sub: string;
   state: CharacterCatalogState;
-  is_default: number;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -380,7 +380,6 @@ export class CharacterStorage {
         sub: row.theme_sub,
       },
       state: row.state,
-      isDefault: row.is_default === 1,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       archivedAt: row.archived_at,
@@ -390,7 +389,7 @@ export class CharacterStorage {
   private readCharacterRow(characterId: string): CharacterRow | null {
     return this.db.prepare(`
       SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
-        is_default, created_at, updated_at, archived_at
+        created_at, updated_at, archived_at
       FROM characters
       WHERE id = ?
     `).get(characterId) as CharacterRow | undefined ?? null;
@@ -448,16 +447,16 @@ export class CharacterStorage {
     const rows = options.includeArchived
       ? this.db.prepare(`
         SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
-          is_default, created_at, updated_at, archived_at
+          created_at, updated_at, archived_at
         FROM characters
-        ORDER BY is_default DESC, state ASC, updated_at DESC, name ASC
+        ORDER BY state ASC, updated_at DESC, name ASC
       `).all() as CharacterRow[]
       : this.db.prepare(`
         SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
-          is_default, created_at, updated_at, archived_at
+          created_at, updated_at, archived_at
         FROM characters
         WHERE state = 'active'
-        ORDER BY is_default DESC, updated_at DESC, name ASC
+        ORDER BY updated_at DESC, name ASC
       `).all() as CharacterRow[];
 
     return rows.map((row) => this.toEntry(row));
@@ -485,19 +484,14 @@ export class CharacterStorage {
     const createdAt = nowIso();
     const definitionMarkdown = input.definitionMarkdown ?? buildDefaultCharacterDefinition(name, description);
     const notesMarkdown = input.notesMarkdown ?? buildDefaultCharacterNotes();
-    const shouldSetDefault = input.setDefault ?? this.listCharacters().length === 0;
-
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       const iconFilePath = this.copyIconFromSourcePath(characterId, sourceIconFilePath);
-      if (shouldSetDefault) {
-        this.db.prepare("UPDATE characters SET is_default = 0 WHERE is_default = 1").run();
-      }
       this.db.prepare(`
         INSERT INTO characters (
           id, name, description, icon_file_path, theme_main, theme_sub,
-          state, is_default, created_at, updated_at, archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, NULL)
+          state, created_at, updated_at, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
       `).run(
         characterId,
         name,
@@ -505,7 +499,6 @@ export class CharacterStorage {
         iconFilePath,
         theme.main,
         theme.sub,
-        shouldSetDefault ? 1 : 0,
         createdAt,
         createdAt,
       );
@@ -585,37 +578,11 @@ export class CharacterStorage {
     }
 
     const archivedAt = nowIso();
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
-    try {
-      this.db.prepare(`
-        UPDATE characters
-        SET state = 'archived', is_default = 0, archived_at = ?, updated_at = ?
-        WHERE id = ?
-      `).run(archivedAt, archivedAt, characterId);
-
-      const activeDefault = this.db.prepare(`
-        SELECT id
-        FROM characters
-        WHERE state = 'active' AND is_default = 1
-        LIMIT 1
-      `).get() as { id: string } | undefined;
-      if (!activeDefault) {
-        const fallback = this.db.prepare(`
-          SELECT id
-          FROM characters
-          WHERE state = 'active'
-          ORDER BY updated_at DESC, name ASC
-          LIMIT 1
-        `).get() as { id: string } | undefined;
-        if (fallback) {
-          this.db.prepare("UPDATE characters SET is_default = 1 WHERE id = ?").run(fallback.id);
-        }
-      }
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
+    this.db.prepare(`
+      UPDATE characters
+      SET state = 'archived', archived_at = ?, updated_at = ?
+      WHERE id = ?
+    `).run(archivedAt, archivedAt, characterId);
 
     const archived = this.readCharacterRow(characterId);
     if (!archived) {
@@ -624,47 +591,13 @@ export class CharacterStorage {
     return this.toEntry(archived);
   }
 
-  setDefaultCharacter(characterId: string): CharacterCatalogEntry {
-    const current = this.readCharacterRow(characterId);
-    if (!current || current.state !== "active") {
-      throw new Error("Default にできる active Character が見つかりません。");
-    }
-
-    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
-    try {
-      this.db.prepare("UPDATE characters SET is_default = 0 WHERE is_default = 1").run();
-      this.db.prepare("UPDATE characters SET is_default = 1, updated_at = ? WHERE id = ?").run(nowIso(), characterId);
-      this.db.exec("COMMIT");
-    } catch (error) {
-      this.db.exec("ROLLBACK");
-      throw error;
-    }
-
-    const updated = this.readCharacterRow(characterId);
-    if (!updated) {
-      throw new Error("Default Character を読み込めませんでした。");
-    }
-    return this.toEntry(updated);
-  }
-
   resolveLaunchCharacter(input: ResolveLaunchCharacterInput = {}): CharacterDetail | null {
-    if (input.characterId) {
-      const preferred = this.getCharacter(input.characterId);
-      if (preferred?.state === "active") {
-        return preferred;
-      }
+    if (!input.characterId) {
+      return null;
     }
 
-    const row = this.db.prepare(`
-      SELECT id, name, description, icon_file_path, theme_main, theme_sub, state,
-        is_default, created_at, updated_at, archived_at
-      FROM characters
-      WHERE state = 'active'
-      ORDER BY is_default DESC, updated_at DESC, name ASC
-      LIMIT 1
-    `).get() as CharacterRow | undefined;
-
-    return row ? this.getCharacter(row.id) : null;
+    const preferred = this.getCharacter(input.characterId);
+    return preferred?.state === "active" ? preferred : null;
   }
 
   createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null {

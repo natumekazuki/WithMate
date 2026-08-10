@@ -124,6 +124,7 @@ import {
   buildComposerAttachmentItems,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
+  type ComposerReferenceInput,
 } from "./session-composer-paths.js";
 import {
   applyComposerDraftClearCommand,
@@ -146,11 +147,13 @@ import { persistChatLayoutPreference } from "./chat/chat-layout-preference.js";
 import type { SessionSidePane } from "./session-side-pane.js";
 import { SessionFileExplorerPane } from "./file-explorer/SessionFileExplorerPane.js";
 import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionFilePreview.js";
+import { PromptTemplateWorkspace } from "./prompt-templates/PromptTemplateWorkspace.js";
+import { insertComposerTextAtSelection } from "./chat/message-text-actions.js";
 import { FileRootChangesPane } from "./file-explorer/FileRootChangesPane.js";
 import type {
   FileRootFileDiffRequest,
   FileRootGitChangeScope,
-  SessionFileResourceRequest,
+  SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
@@ -209,12 +212,9 @@ import {
 } from "./chat/message-text-actions.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
-  applyRetryDetailsReset,
   applyRetryDraftRestoreCommand,
-  buildRetryStopSummary,
   createCancelRetryDraftReplaceHandler,
   createRetryDraftReplaceConfirmationHandler,
-  createRetryDetailsToggleHandler,
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerKind,
@@ -266,6 +266,7 @@ import {
 import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
+  applyComposerReferenceInsertionCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -454,12 +455,15 @@ export default function AgentSessionWindowApp() {
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
   const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [isSessionPinPending, setIsSessionPinPending] = useState(false);
   const [expandedArtifacts, setExpandedArtifacts] = useState<Record<string, boolean>>({});
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
-  const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileResourceRequest | null>(null);
+  const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileRootResourceRequest | null>(null);
+  const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
   const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
   const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
+  const [fileRootChangesRefreshRevision, setFileRootChangesRefreshRevision] = useState(0);
   const [fileRootDiffPreview, setFileRootDiffPreview] = useState<{
     sessionId: string;
     rootId: string;
@@ -497,7 +501,6 @@ export default function AgentSessionWindowApp() {
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
-  const [isRetryDetailsOpen, setIsRetryDetailsOpen] = useState(false);
   const [isRetryDraftReplacePending, setIsRetryDraftReplacePending] = useState(false);
   const [approvalActionRequestId, setApprovalActionRequestId] = useState<string | null>(null);
   const [elicitationActionRequestId, setElicitationActionRequestId] = useState<string | null>(null);
@@ -550,6 +553,7 @@ export default function AgentSessionWindowApp() {
   const auxiliarySessionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const auxiliaryLoadRevisionRef = useRef(0);
   const mainComposerCaretRef = useRef(0);
+  const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
@@ -684,8 +688,11 @@ export default function AgentSessionWindowApp() {
   });
   const activeRunSessionId = activeAuxiliarySession?.id ?? selectedSessionId;
   const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
-  const isCentralPreviewActive = selectedFilePreview !== null || fileRootDiffPreview !== null;
+  const isCentralPreviewActive = selectedFilePreview !== null
+    || fileRootDiffPreview !== null
+    || isPromptTemplateWorkspaceOpen;
   const beginCentralPreviewIfNeeded = useCallback(() => {
+    setIsPromptTemplateWorkspaceOpen(false);
     if (!isCentralPreviewActive && activeRunSessionId) {
       setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
     }
@@ -696,6 +703,7 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
+    setIsPromptTemplateWorkspaceOpen(false);
     setPreviewChatActivity(endPreviewChatActivity());
   }, []);
   useEffect(() => {
@@ -753,7 +761,7 @@ export default function AgentSessionWindowApp() {
       active = false;
     };
   }, [activeRunSessionId, selectedFilePreview, withmateApi]);
-  const handleOpenFileRootFile = useCallback((request: SessionFileResourceRequest) => {
+  const handleOpenFileRootFile = useCallback((request: SessionFileRootResourceRequest) => {
     fileRootDiffRequestRevisionRef.current += 1;
     beginCentralPreviewIfNeeded();
     setFileRootDiffLoadingScope(null);
@@ -1687,7 +1695,6 @@ export default function AgentSessionWindowApp() {
       return null;
     }
 
-    const stopSummary = buildRetryStopSummary(kind, selectedSessionLiveRun, latestTerminalAuditLog, lastAssistantMessage);
     switch (kind) {
       case "interrupted":
         return {
@@ -1699,7 +1706,6 @@ export default function AgentSessionWindowApp() {
             selectedSession.id,
             retryLastUserMessage.text,
           ]),
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       case "failed":
@@ -1712,7 +1718,6 @@ export default function AgentSessionWindowApp() {
             selectedSession.id,
             retryLastUserMessage.text,
           ]),
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       case "canceled":
@@ -1726,7 +1731,6 @@ export default function AgentSessionWindowApp() {
             retryLastUserMessage.text,
             latestTerminalAuditLog?.id,
           ]),
-          stopSummary,
           lastRequestText: retryLastUserMessage.text,
         };
       default:
@@ -1772,7 +1776,6 @@ export default function AgentSessionWindowApp() {
       isAgentPickerOpen,
       isSkillPickerOpen,
       isRetryDraftReplacePending,
-      !!retryBanner && !activeAuxiliarySession,
       composerSendability.feedbackTone === "blocked",
     ],
   });
@@ -1907,34 +1910,11 @@ export default function AgentSessionWindowApp() {
       }),
     [draft, selectedSessionRunState],
   );
-  const retryBannerIdentity = useMemo(() => {
-    if (!retryBanner || !selectedSession || !lastUserMessage) {
-      return null;
-    }
-
-    const lastUserMessageIdentity = `${
-      selectedSession.messages.filter((message) => message.role === "user").length
-    }:${lastUserMessage.text}`;
-    const canceledAuditLogIdentity =
-      retryBanner.kind === "canceled" && latestTerminalAuditLog
-        ? `${latestTerminalAuditLog.id}:${latestTerminalAuditLog.phase}:${latestTerminalAuditLog.createdAt}`
-        : "";
-
-    return [retryBanner.kind, lastUserMessageIdentity, canceledAuditLogIdentity].join("\u001f");
-  }, [lastUserMessage, latestTerminalAuditLog, retryBanner, selectedSession]);
-
   useEffect(() => {
     if (!retryBanner) {
       setIsRetryDraftReplacePending(false);
     }
   }, [retryBanner]);
-
-  useLayoutEffect(() => {
-    applyRetryDetailsReset({
-      retryBanner,
-      setRetryDetailsOpen: setIsRetryDetailsOpen,
-    });
-  }, [retryBanner?.kind, retryBannerIdentity, selectedSession?.id]);
 
   useEffect(() => {
     setForceComposerBlockedFeedback(false);
@@ -2250,6 +2230,26 @@ export default function AgentSessionWindowApp() {
     return savedSession;
   };
 
+  const handleToggleSessionPin = async () => {
+    if (!withmateApi || !selectedSession || isSessionPinPending) {
+      return;
+    }
+    setIsSessionPinPending(true);
+    try {
+      const saved = await withmateApi.setSessionPinned({
+        sessionId: selectedSession.id,
+        isPinned: selectedSession.isPinned !== true,
+      });
+      setSessions((current) => current.map((session) => (
+        session.id === saved.id ? { ...session, isPinned: saved.isPinned } : session
+      )));
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : "ピン止めの変更に失敗したよ。");
+    } finally {
+      setIsSessionPinPending(false);
+    }
+  };
+
   const handleChangeApproval = async (approvalMode: Session["approvalMode"]) => {
     if (
       !selectedSession ||
@@ -2528,10 +2528,6 @@ export default function AgentSessionWindowApp() {
     setRetryDraftReplacePending: setIsRetryDraftReplacePending,
   });
 
-  const handleToggleRetryDetails = createRetryDetailsToggleHandler({
-    setRetryDetailsOpen: setIsRetryDetailsOpen,
-  });
-
   const handleCloseWindow = () => {
     window.close();
   };
@@ -2576,14 +2572,19 @@ export default function AgentSessionWindowApp() {
   });
 
   const handleOpenInlinePath = async (target: string) => {
-    if (!withmateApi) {
+    if (!withmateApi || !activeRunSessionId) {
       return;
     }
-
-    setInlinePathFeedback(await resolveOpenPathFeedback(
-      () => withmateApi.openPath(target, { baseDirectory: selectedSession?.workspacePath ?? null }),
-      "The path could not be opened.",
-    ));
+    try {
+      const result = await withmateApi.openSessionFilePreviewWindow({
+        kind: "link",
+        sessionId: activeRunSessionId,
+        target,
+      });
+      setInlinePathFeedback(result.status === "opened" ? "" : result.message);
+    } catch (error) {
+      setInlinePathFeedback(error instanceof Error ? error.message : "The path could not be opened.");
+    }
   };
 
   const handleCancelAuxiliaryRun = async () => {
@@ -2847,6 +2848,35 @@ export default function AgentSessionWindowApp() {
     insertReferencePaths([selectedPath]);
   };
 
+  const insertPastedAttachments = (references: ComposerReferenceInput[]) => {
+    const textarea = composerTextareaRef.current;
+    const targetAuxiliarySession = activeAuxiliarySession;
+    const currentDraft = targetAuxiliarySession ? targetAuxiliarySession.composerDraft : draft;
+    applyComposerReferenceInsertionCommand({
+      draft: currentDraft,
+      fallbackCaret: composerCaret,
+      references,
+      textarea,
+      applyInsertion: ({ draft: nextDraft, caret: nextCaret }) => {
+        if (targetAuxiliarySession) {
+          void handleAuxiliaryDraftChange(nextDraft, nextCaret);
+          setComposerCaret(nextCaret);
+        } else {
+          applyComposerDraftChangeCommand({
+            value: nextDraft,
+            selectionStart: nextCaret,
+            setDraft,
+            setComposerCaret,
+            syncMainComposerCaret: (selectionStart) => {
+              mainComposerCaretRef.current = selectionStart;
+            },
+          });
+        }
+      },
+      restoreComposerTextareaFocusAndCaret,
+    });
+  };
+
   const handleRemoveAttachmentReference = createPathReferenceRemovalHandler({
     getDraft: () => activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft,
     applyRemoval: (nextState) => {
@@ -2985,7 +3015,7 @@ export default function AgentSessionWindowApp() {
       return withmateApi ? (request) => withmateApi.savePastedSessionFile(request) : null;
     },
     getSessionId: () => selectedSession?.id,
-    insertReferencePaths,
+    insertAttachments: insertPastedAttachments,
   });
 
   const handleAddAdditionalDirectory = async () => {
@@ -3226,6 +3256,53 @@ export default function AgentSessionWindowApp() {
   const renderedSession = displayedSession;
   const renderedMessages = messageListMessages;
   const renderedDraft = activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft;
+  const handleOpenPromptTemplates = () => {
+    if (isPromptTemplateWorkspaceOpen) {
+      closeCentralPreview();
+      return;
+    }
+    const textarea = composerTextareaRef.current;
+    const fallbackCaret = activeAuxiliarySession ? composerCaret : mainComposerCaretRef.current;
+    promptTemplateSelectionRef.current = {
+      start: textarea?.selectionStart ?? fallbackCaret,
+      end: textarea?.selectionEnd ?? fallbackCaret,
+    };
+    fileRootDiffRequestRevisionRef.current += 1;
+    setFileRootDiffLoadingScope(null);
+    setFileRootDiffPreview(null);
+    setSelectedFileDiffAvailabilityMessage("");
+    setSelectedFilePreview(null);
+    if (!isCentralPreviewActive && activeRunSessionId) {
+      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
+    }
+    setIsPromptTemplateWorkspaceOpen(true);
+  };
+  const handleInsertPromptTemplate = (prompt: string) => {
+    const insertion = insertComposerTextAtSelection(
+      renderedDraft,
+      prompt,
+      promptTemplateSelectionRef.current.start,
+      promptTemplateSelectionRef.current.end,
+    );
+    if (activeAuxiliarySession) {
+      void handleAuxiliaryDraftChange(insertion.draft, insertion.caret);
+    } else {
+      applyComposerDraftChangeCommand({
+        value: insertion.draft,
+        selectionStart: insertion.caret,
+        setDraft,
+        setComposerCaret,
+        syncMainComposerCaret: (caret) => {
+          mainComposerCaretRef.current = caret;
+        },
+        clearFeedback: () => setForceComposerBlockedFeedback(false),
+      });
+    }
+    closeCentralPreview();
+    window.requestAnimationFrame(() => {
+      restoreComposerTextareaFocusAndCaret(composerTextareaRef.current, insertion.caret);
+    });
+  };
   const renderedComposerSendability = activeAuxiliarySession ? auxiliaryComposerSendability : composerSendability;
   const renderedIsSendDisabled = activeAuxiliarySession
     ? auxiliaryComposerSendability.isSendDisabled || isAuxiliaryActionPending
@@ -3265,13 +3342,24 @@ export default function AgentSessionWindowApp() {
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
       onActiveTabChange={setFileExplorerTab}
-      onOpenFile={(request) => {
-        fileRootDiffRequestRevisionRef.current += 1;
-        beginCentralPreviewIfNeeded();
-        setFileRootDiffLoadingScope(null);
-        setFileRootDiffPreview(null);
-        setSelectedFileDiffAvailabilityMessage("");
-        setSelectedFilePreview(request);
+      onRefreshChanges={() => setFileRootChangesRefreshRevision((current) => current + 1)}
+      onOpenFile={(request, openInWindow) => {
+        if (openInWindow) {
+          if (!withmateApi) {
+            return;
+          }
+          void withmateApi.openSessionFilePreviewWindow({ kind: "resource", resource: request })
+            .then((result) => {
+              if (result.status !== "opened") {
+                window.alert(result.message);
+              }
+            })
+            .catch((error) => {
+              window.alert(error instanceof Error ? error.message : "The file preview could not be opened.");
+            });
+          return;
+        }
+        handleOpenFileRootFile(request);
       }}
       changesContent={(
         <FileRootChangesPane
@@ -3279,6 +3367,7 @@ export default function AgentSessionWindowApp() {
           sessionId={activeRunSessionId}
           enabled={isFilesPaneVisible && fileExplorerTab === "changes"}
           rootsRevision={fileExplorerRootsRevision}
+          refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
           onOpenDiff={handleShowFileRootDiff}
         />
@@ -3301,13 +3390,23 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New messages"
         : "";
-  const filePreviewContent = fileRootDiffPreview ? (
+  const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
+    <PromptTemplateWorkspace
+      api={withmateApi}
+      canInsert={activeAuxiliarySession
+        ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
+        : !isComposerDisabled}
+      onClose={closeCentralPreview}
+      onInsert={handleInsertPromptTemplate}
+    />
+  ) : fileRootDiffPreview ? (
     <SessionDiffPreview
       title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
       previewRevision={fileRootDiffPreview.generation}
       patch={fileRootDiffPreview.patch}
       onClose={closeCentralPreview}
       onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
       onReload={handleReloadFileRootDiff}
       reloadPending={fileRootDiffLoadingScope === fileRootDiffPreview.scope}
       chatNotice={previewChatNotice}
@@ -3318,6 +3417,7 @@ export default function AgentSessionWindowApp() {
       request={selectedFilePreview}
       onClose={closeCentralPreview}
       onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
       diffScopes={selectedFileDiffScopes}
       diffAvailabilityMessage={selectedFileDiffAvailabilityMessage}
       onOpenDiff={selectedFileDiffScopes.length > 0 ? handleOpenSelectedFileDiff : undefined}
@@ -3351,9 +3451,11 @@ export default function AgentSessionWindowApp() {
         onActivateDockPriority: handleActivateDockPriority,
         isSessionHeaderExpanded,
         isEditingTitle,
+        isSessionPinPending,
         titleDraft,
         isSelectedSessionRunning: renderedIsRunning,
         isSelectedSessionReadOnly: activeAuxiliarySession ? true : isSelectedSessionReadOnly,
+        isSelectedSessionPinned: selectedSession.isPinned === true,
         messageListRef,
         pendingRunIndicatorAnnouncement,
         pendingRunIndicatorText,
@@ -3369,13 +3471,13 @@ export default function AgentSessionWindowApp() {
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
-        isRetryDetailsOpen,
         isRetryActionDisabled,
         isRetryEditDisabled,
         isRetryDraftReplacePending,
         composerBlocked: !!composerBlockedReason,
         isAgentPickerOpen,
         isSkillPickerOpen,
+        isPromptTemplateWorkspaceOpen,
         isAdditionalDirectoryListOpen,
         selectedCustomAgentLabel: selectedCustomAgentDisplay.label,
         selectedCustomAgentTitle: selectedCustomAgentDisplay.title ?? "Copilot custom agent を選択",
@@ -3449,6 +3551,7 @@ export default function AgentSessionWindowApp() {
         onCancelTitleEdit: handleCancelTitleEdit,
         onStartTitleEdit: handleStartTitleEdit,
         onDeleteSession: () => void handleDeleteSession(),
+        onToggleSessionPin: () => void handleToggleSessionPin(),
         onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
@@ -3472,7 +3575,6 @@ export default function AgentSessionWindowApp() {
         getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
-        onToggleRetryDetails: handleToggleRetryDetails,
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
@@ -3486,6 +3588,7 @@ export default function AgentSessionWindowApp() {
         onPickSessionImage: () => void handlePickSessionImage(),
         onToggleAgentPicker: handleToggleAgentPicker,
         onToggleSkillPicker: handleToggleSkillPicker,
+        onOpenPromptTemplates: handleOpenPromptTemplates,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
         onJumpToMessageListBottom: handleJumpToMessageListBottom,

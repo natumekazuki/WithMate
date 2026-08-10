@@ -10,11 +10,11 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 ## Link Handling
 
 - `http://` / `https://` は外部ブラウザで開く
-- ローカル絶対パスは OS に関連付けられた既定動作で開く
-- Session 文脈では workspace 相対 path link も workspace root 基準で解決して開く
+- Session message のローカル絶対 path と workspace 相対 path は detached file preview で開く。外部 URL と directory は既存の OS 導線を維持する
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う。`:10` または `:10:4` 形式は、指定された path が存在しない場合だけ行番号または行番号と列番号として扱う
 - Markdown file preview の相対 link と相対 image は、その file の親 directory と同じ認可済み root の中で解決する
 - OS の既定アプリで file を開けない場合は理由を表示し、通常の Open から Explorer 表示へ自動で切り替えない
+- detached preview の navigation と root authorization は `docs/adr/020-file-preview-window-navigation.md` を正本とする
 
 ## Image Handling
 
@@ -33,6 +33,8 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 
 - message と file preview は同じ component mapping を使う
 - 呼び出し元は path open と local image resolution の context だけを注入する
+- Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
+- message の表示 mode は window mount 中だけ保持し、永続化しない。切替時は既存の selection を解除する
 - Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える
 
 ## Safety

@@ -108,6 +108,12 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         return null;
       },
     },
+    promptTemplates: {
+      listPromptTemplates: () => [],
+      createPromptTemplate: () => [],
+      updatePromptTemplate: () => [],
+      deletePromptTemplate: () => [],
+    },
     sessionQuery: {
       listSessionSummaries: () => [],
       listCompanionSessionSummaries: () => [],
@@ -209,9 +215,6 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         return {} as never;
       },
       async archiveCharacter() {
-        return {} as never;
-      },
-      async setDefaultCharacter() {
         return {} as never;
       },
       async resolveLaunchCharacter() {

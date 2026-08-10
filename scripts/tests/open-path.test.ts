@@ -154,6 +154,13 @@ describe("resolveOpenPathTarget", () => {
     });
   });
 
+  it("percent-encoded backslash 形式の Windows absolute path を local path に戻す", () => {
+    assert.deepEqual(resolveOpenPathTarget("C:%5Cworkspace%5Csession-files%5Creport.txt"), {
+      type: "local-path",
+      targetPath: "C:\\workspace\\session-files\\report.txt",
+    });
+  });
+
   it("absolute path の fragment は外して開く path にする", () => {
     assert.deepEqual(resolveOpenPathTarget("C:/workspace/project/src/App.tsx#L10"), {
       type: "local-path",

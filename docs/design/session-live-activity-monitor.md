@@ -82,12 +82,12 @@ current UI では表示しない。legacy v1 では `character reflection cycle`
 
 - SessionWindow 下端の full-width 操作面
 - 次を内包する
-  - retry banner
   - attachment / skill toolbar
   - attachment chips
   - textarea と `Send / Cancel`
   - `Approval / Model / Depth`
   - sendability feedback
+- terminal state の recovery action surface は Action Dock ではなく共通 chat layout の message stack が所有する
 
 ## Responsive Rules
 

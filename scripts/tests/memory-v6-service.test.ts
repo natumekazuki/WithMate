@@ -47,7 +47,6 @@ async function withService<T>(
       iconFilePath: "",
       theme: { main: "#111111", sub: "#222222" },
       state: "active",
-      isDefault: true,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
@@ -125,8 +124,8 @@ describe("MemoryV6Service", () => {
         id: "character-a",
         name: "Character A",
         description: "Test character",
-        isDefault: true,
       }]);
+      assert.equal("isDefault" in characters.characters[0], false);
       assert.equal("iconFilePath" in characters.characters[0], false);
       assert.equal("theme" in characters.characters[0], false);
 
@@ -876,5 +875,134 @@ describe("MemoryV6Service", () => {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });
     }
+  });
+
+  it("maintenance read APIはinventory、query-free listing、tag stats、auditをbody非公開で返す", async () => {
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      storage.appendEntry({
+        target: projectTarget,
+        kind: "context",
+        title: "PR opened",
+        body: "full body must stay hidden by default",
+        preview: "Next review is pending.",
+        tags: [tag("topic", "maintenance")],
+        source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+        id: "mem-maintenance",
+        now: "2026-01-01T00:00:00.000Z",
+      });
+
+      const targets = service.listTargets(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION });
+      assert.equal("error" in targets, false);
+      assert.equal(targets.items[0].entryCount, 1);
+
+      const listed = service.listEntries(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        limit: 100,
+      });
+      assert.equal("error" in listed, false);
+      assert.equal("body" in listed.items[0], false);
+      const listedWithBody = service.listEntries(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        includeBody: true,
+      });
+      assert.equal("error" in listedWithBody, false);
+      assert.equal(listedWithBody.items[0].body, "full body must stay hidden by default");
+
+      const tags = service.listTags(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }],
+        withCounts: true,
+        sampleLimit: 1,
+      });
+      assert.equal("error" in tags, false);
+      assert.equal(tags.tags[0].entryCount, 1);
+      assert.deepEqual(tags.tags[0].samples?.map((sample) => sample.id), ["mem-maintenance"]);
+
+      const audit = service.audit(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        allTargets: true,
+        staleBefore: "2026-06-01T00:00:00.000Z",
+      });
+      assert.equal("error" in audit, false);
+      assert.equal(audit.targets[0].staleOrProgressCandidates[0].id, "mem-maintenance");
+      assert.equal(JSON.stringify(audit).includes("full body must stay hidden"), false);
+    });
+  });
+
+  it("forget dry-runはpreviewだけを返し、move-entryは明示target間でretargetしてretry収束する", async () => {
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      storage.appendEntry({
+        target: projectTarget,
+        kind: "context",
+        title: "CLI-wide note",
+        body: "Move this note to user global.",
+        preview: "CLI-wide note.",
+        tags: [tag("topic", "cli")],
+        source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+        id: "mem-move",
+      });
+      const dryRun = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryIds: ["mem-move", "missing"],
+        dryRun: true,
+      });
+      assert.equal("error" in dryRun, false);
+      assert.equal(dryRun.dryRun, true);
+      assert.equal(dryRun.writeOccurred, false);
+      assert.equal(dryRun.results[0].entry?.title, "CLI-wide note");
+      assert.equal(storage.getEntry("mem-move")?.state, "active");
+
+      const replaySeed = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "user", scope: "global" },
+        entryIds: ["mem-move"],
+        idempotencyKey: "forget-after-move",
+      });
+      assert.equal("error" in replaySeed, false);
+      assert.equal(replaySeed.results[0].status, "not_found");
+
+      const request = {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "mem-move",
+        from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        to: { owner: "user", scope: "global" },
+        idempotencyKey: "move-cli-note",
+      };
+      const moved = service.moveEntry(principal, request);
+      assert.equal("error" in moved, false);
+      assert.equal(moved.entry.owner.type, "user");
+      const replayPreview = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: request.to,
+        entryIds: ["mem-move"],
+        idempotencyKey: "forget-after-move",
+        dryRun: true,
+      });
+      assert.equal("error" in replayPreview, false);
+      assert.equal(replayPreview.results[0].status, "not_found");
+      assert.equal(replayPreview.results[0].entry, undefined);
+      assert.equal(storage.getEntry("mem-move")?.state, "active");
+      const replay = service.moveEntry(principal, request);
+      assert.equal("error" in replay, false);
+      assert.equal(replay.entry.id, "mem-move");
+
+      const oldTarget = service.listEntries(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: request.from,
+      });
+      assert.equal("error" in oldTarget, false);
+      assert.deepEqual(oldTarget.items, []);
+      const newTarget = service.listEntries(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: request.to,
+      });
+      assert.equal("error" in newTarget, false);
+      assert.deepEqual(newTarget.items.map((entry) => entry.id), ["mem-move"]);
+    });
   });
 });

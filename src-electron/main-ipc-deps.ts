@@ -69,6 +69,9 @@ import type {
   SessionFilePreviewImageContextMenuResult,
   SessionFilePreviewImageCopyResult,
   SessionFileOpenRequest,
+  SessionFilePreviewWindowOpenRequest,
+  SessionFilePreviewWindowOpenResult,
+  SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -77,7 +80,13 @@ import type {
   FileRootFileDiffResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
-import type { CreateSessionRequest, DiffPreviewPayload, MessageArtifact, Session } from "../src/session-state.js";
+import type {
+  CreateSessionRequest,
+  DiffPreviewPayload,
+  MessageArtifact,
+  Session,
+  SetSessionPinnedRequest,
+} from "../src/session-state.js";
 import type {
   ImageFilePickerPurpose,
   OpenPathOptions,
@@ -95,6 +104,11 @@ import type {
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type {
+  CreatePromptTemplateInput,
+  PromptTemplate,
+  UpdatePromptTemplateInput,
+} from "../src/prompt-template.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
@@ -113,6 +127,9 @@ export type MainIpcWindowDepsArgs = {
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
+  isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
@@ -172,6 +189,13 @@ export type MainIpcSettingsDepsArgs = {
   resetAppDatabase(request: ResetAppDatabaseRequest | null | undefined): Promise<unknown>;
 };
 
+export type MainIpcPromptTemplateDepsArgs = {
+  listPromptTemplates(): Awaitable<PromptTemplate[]>;
+  createPromptTemplate(input: CreatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  updatePromptTemplate(input: UpdatePromptTemplateInput): Awaitable<PromptTemplate[]>;
+  deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
+};
+
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaries(): Awaitable<SessionSummary[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
@@ -222,6 +246,10 @@ export type MainIpcSessionQueryDepsArgs = {
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
+  openSessionFilePreviewWindow(
+    request: SessionFilePreviewWindowOpenRequest,
+  ): Awaitable<SessionFilePreviewWindowOpenResult>;
+  getSessionFilePreviewWindowPayload(token: string): SessionFilePreviewWindowPayload | null;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -270,6 +298,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): void;
   createSession(input: CreateSessionRequest): Awaitable<Session>;
   updateSession(session: Session): Awaitable<Session>;
+  setSessionPinned(request: SetSessionPinnedRequest): Awaitable<SessionSummary>;
   deleteSession(sessionId: string): Awaitable<void>;
   deleteSessionsLastActiveBefore(
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
@@ -294,7 +323,6 @@ export type MainIpcCharacterDepsArgs = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): Awaitable<CharacterDetail>;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): Awaitable<CharacterDetail>;
   archiveCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
-  setDefaultCharacter(characterId: string): Awaitable<CharacterCatalogEntry>;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
 };
@@ -303,6 +331,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   window: MainIpcWindowDepsArgs;
   catalog: MainIpcCatalogDepsArgs;
   settings: MainIpcSettingsDepsArgs;
+  promptTemplates: MainIpcPromptTemplateDepsArgs;
   sessionQuery: MainIpcSessionQueryDepsArgs;
   auxiliary?: MainIpcAuxiliaryDepsArgs;
   companion: MainIpcCompanionDepsArgs;
@@ -362,6 +391,9 @@ export function createMainIpcRegistrationDeps(
     openDiffWindow: async (diffPreview) => {
       await args.window.openDiffWindow(diffPreview);
     },
+    isFilePreviewWindow: args.window.isFilePreviewWindow,
+    getFilePreviewWindowResource: args.window.getFilePreviewWindowResource,
+    isFilePreviewTokenWindow: args.window.isFilePreviewTokenWindow,
     openCompanionReviewWindow: async (sessionId) => {
       await args.window.openCompanionReviewWindow(sessionId);
     },
@@ -407,6 +439,10 @@ export function createMainIpcRegistrationDeps(
     getMemoryV6Entry: args.settings.getMemoryV6Entry,
     forgetMemoryV6Entry: args.settings.forgetMemoryV6Entry,
     resetAppDatabase: args.settings.resetAppDatabase,
+    listPromptTemplates: args.promptTemplates.listPromptTemplates,
+    createPromptTemplate: args.promptTemplates.createPromptTemplate,
+    updatePromptTemplate: args.promptTemplates.updatePromptTemplate,
+    deletePromptTemplate: args.promptTemplates.deletePromptTemplate,
     listSessionSummaries: args.sessionQuery.listSessionSummaries,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
@@ -434,6 +470,8 @@ export function createMainIpcRegistrationDeps(
     inspectSessionFile: args.sessionQuery.inspectSessionFile,
     readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
     openSessionFile: args.sessionQuery.openSessionFile,
+    openSessionFilePreviewWindow: args.sessionQuery.openSessionFilePreviewWindow,
+    getSessionFilePreviewWindowPayload: args.sessionQuery.getSessionFilePreviewWindowPayload,
     listFileRootChanges: args.sessionQuery.listFileRootChanges,
     getFileRootDiff: args.sessionQuery.getFileRootDiff,
     getSessionMessageArtifact: args.sessionQuery.getSessionMessageArtifact,
@@ -470,6 +508,7 @@ export function createMainIpcRegistrationDeps(
     resolveLiveElicitation: args.sessionRuntime.resolveLiveElicitation,
     createSession: args.sessionRuntime.createSession,
     updateSession: args.sessionRuntime.updateSession,
+    setSessionPinned: args.sessionRuntime.setSessionPinned,
     deleteSession: args.sessionRuntime.deleteSession,
     deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
@@ -486,7 +525,6 @@ export function createMainIpcRegistrationDeps(
     updateCharacterMetadata: args.character.updateCharacterMetadata,
     updateCharacterDefinition: args.character.updateCharacterDefinition,
     archiveCharacter: args.character.archiveCharacter,
-    setDefaultCharacter: args.character.setDefaultCharacter,
     resolveLaunchCharacter: args.character.resolveLaunchCharacter,
     startCharacterAuthoringSession: args.character.startCharacterAuthoringSession,
   };

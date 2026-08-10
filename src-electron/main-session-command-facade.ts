@@ -1,5 +1,12 @@
 import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src/runtime-state.js";
-import type { CreateSessionInput, CreateSessionRequest, Session, SessionSummary } from "../src/session-state.js";
+import {
+  parseSetSessionPinnedRequest,
+  type CreateSessionInput,
+  type CreateSessionRequest,
+  type Session,
+  type SessionSummary,
+  type SetSessionPinnedRequest,
+} from "../src/session-state.js";
 import {
   resolveDeleteSessionsLastActiveBeforeCutoff,
   type DeleteSessionsLastActiveBeforeRequest,
@@ -99,6 +106,11 @@ export class MainSessionCommandFacade {
 
   async updateSession(session: Session): Promise<Session> {
     return this.deps.getSessionPersistenceService().updateSession(session);
+  }
+
+  async setSessionPinned(request: SetSessionPinnedRequest): Promise<SessionSummary> {
+    const normalized = parseSetSessionPinnedRequest(request);
+    return this.deps.getSessionPersistenceService().setSessionPinned(normalized.sessionId, normalized.isPinned);
   }
 
   async deleteSession(sessionId: string): Promise<void> {

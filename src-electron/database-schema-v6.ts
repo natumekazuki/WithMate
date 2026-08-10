@@ -8,6 +8,7 @@ export const V6_SCHEMA_STATUS = "foundation";
 
 export const REQUIRED_V6_TABLES = [
   "app_settings",
+  "prompt_templates",
   "model_catalog_revisions",
   "model_catalog_providers",
   "model_catalog_models",
@@ -26,7 +27,13 @@ export const REQUIRED_V6_TABLES = [
   "memory_mutation_events_v6",
   "memory_idempotency_keys_v6",
   "memory_idempotency_forget_results_v6",
+  "memory_move_events_v6",
   "memory_protected_objects_v6",
+  "character_affect_events_v6",
+  "character_affect_resets_v6",
+  "character_affect_idempotency_v6",
+  "character_affect_mutations_v6",
+  "character_affect_observations_v6",
 ] as const;
 
 export const FORBIDDEN_V6_TABLES = [
@@ -38,6 +45,7 @@ export const FORBIDDEN_V6_TABLES = [
 ] as const;
 
 const REQUIRED_V6_INDEXES = [
+  "idx_v6_prompt_templates_name",
   "idx_v6_characters_state_updated",
   "idx_v6_project_scopes_key",
   "idx_v6_sessions_last_active",
@@ -53,12 +61,20 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_mutation_events_result",
   "idx_v6_memory_idempotency_response_entry",
+  "idx_v6_memory_move_events_entry",
+  "idx_v6_memory_move_events_idempotency",
   "idx_v6_memory_protected_objects_state",
   "idx_v6_memory_protected_objects_entry",
+  "idx_v6_character_affect_events_effective",
+  "idx_v6_character_affect_events_target",
+  "idx_v6_character_affect_resets_scope",
+  "idx_v6_character_affect_mutations_scope",
+  "idx_v6_character_affect_observations_scope",
 ] as const;
 
 const REQUIRED_V6_TABLE_COLUMNS = {
   app_settings: ["setting_key", "setting_value", "updated_at"],
+  prompt_templates: ["id", "name", "prompt", "created_at", "updated_at"],
   model_catalog_revisions: ["revision", "source", "imported_at", "is_active"],
   model_catalog_providers: ["revision", "provider_id", "label", "default_model_id", "default_reasoning_effort", "sort_order"],
   model_catalog_models: ["revision", "provider_id", "model_id", "label", "reasoning_efforts_json", "sort_order"],
@@ -171,6 +187,22 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "result_status",
     "created_at",
   ],
+  memory_move_events_v6: [
+    "id",
+    "entry_id",
+    "from_owner_type",
+    "from_owner_id",
+    "from_scope_type",
+    "from_scope_id",
+    "to_owner_type",
+    "to_owner_id",
+    "to_scope_type",
+    "to_scope_id",
+    "binding_id_hash",
+    "idempotency_key",
+    "request_fingerprint",
+    "created_at",
+  ],
   memory_protected_objects_v6: [
     "object_id",
     "entry_id",
@@ -187,6 +219,74 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "created_at",
     "updated_at",
     "deleted_at",
+  ],
+  character_affect_events_v6: [
+    "id",
+    "character_id",
+    "user_id",
+    "session_id",
+    "source_session_id",
+    "layer",
+    "target_type",
+    "target_id",
+    "value_json",
+    "intensity",
+    "reason",
+    "evidence",
+    "occurred_at",
+    "idempotency_key",
+    "request_fingerprint",
+    "correction_of_event_id",
+    "state",
+    "memory_entry_id",
+    "supersedes_memory_entry_id",
+    "created_at",
+  ],
+  character_affect_resets_v6: [
+    "id",
+    "character_id",
+    "user_id",
+    "session_id",
+    "layer",
+    "reason",
+    "reset_at",
+    "idempotency_key",
+    "request_fingerprint",
+    "created_at",
+  ],
+  character_affect_idempotency_v6: [
+    "character_id",
+    "user_id",
+    "idempotency_key",
+    "operation",
+    "request_fingerprint",
+    "event_id",
+    "reset_id",
+    "created_at",
+  ],
+  character_affect_mutations_v6: [
+    "id",
+    "operation",
+    "character_id",
+    "user_id",
+    "session_id",
+    "source_session_id",
+    "event_id",
+    "reset_id",
+    "reason",
+    "created_at",
+  ],
+  character_affect_observations_v6: [
+    "id",
+    "kind",
+    "outcome",
+    "character_id",
+    "user_id",
+    "session_id",
+    "event_id",
+    "reset_id",
+    "reason",
+    "created_at",
   ],
 } as const satisfies Record<(typeof REQUIRED_V6_TABLES)[number], readonly string[]>;
 
@@ -306,12 +406,24 @@ function hasRequiredIndexes(db: DatabaseSync): boolean {
   return REQUIRED_V6_INDEXES.every((indexName) => indexes.has(indexName));
 }
 
-function hasForeignKey(db: DatabaseSync, tableName: string, fromColumn: string, targetTable: string): boolean {
+function hasForeignKey(
+  db: DatabaseSync,
+  tableName: string,
+  fromColumn: string,
+  targetTable: string,
+  targetColumn = "id",
+  onDelete?: "CASCADE" | "RESTRICT" | "SET NULL",
+): boolean {
   const keys = db.prepare(`PRAGMA foreign_key_list(${tableName})`).all() as Array<{
     from?: unknown;
+    on_delete?: unknown;
     table?: unknown;
+    to?: unknown;
   }>;
-  return keys.some((key) => key.from === fromColumn && key.table === targetTable);
+  return keys.some((key) => key.from === fromColumn
+    && key.table === targetTable
+    && key.to === targetColumn
+    && (onDelete === undefined || key.on_delete === onDelete));
 }
 
 function hasRequiredForeignKeys(db: DatabaseSync): boolean {
@@ -326,7 +438,83 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_idempotency_keys_v6", "response_entry_id", "memory_entries_v6")
-    && hasForeignKey(db, "memory_protected_objects_v6", "entry_id", "memory_entries_v6");
+    && hasForeignKey(db, "memory_protected_objects_v6", "entry_id", "memory_entries_v6")
+    && hasForeignKey(db, "character_affect_events_v6", "character_id", "characters", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_events_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_events_v6", "source_session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(
+      db,
+      "character_affect_events_v6",
+      "correction_of_event_id",
+      "character_affect_events_v6",
+      "id",
+      "SET NULL",
+    )
+    && hasForeignKey(db, "character_affect_events_v6", "memory_entry_id", "memory_entries_v6", "id", "SET NULL")
+    && hasForeignKey(
+      db,
+      "character_affect_events_v6",
+      "supersedes_memory_entry_id",
+      "memory_entries_v6",
+      "id",
+      "SET NULL",
+    )
+    && hasForeignKey(db, "character_affect_resets_v6", "character_id", "characters", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_resets_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_idempotency_v6", "character_id", "characters", "id", "CASCADE")
+    && hasForeignKey(
+      db,
+      "character_affect_idempotency_v6",
+      "event_id",
+      "character_affect_events_v6",
+      "id",
+      "CASCADE",
+    )
+    && hasForeignKey(
+      db,
+      "character_affect_idempotency_v6",
+      "reset_id",
+      "character_affect_resets_v6",
+      "id",
+      "CASCADE",
+    )
+    && hasForeignKey(db, "character_affect_mutations_v6", "character_id", "characters", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_mutations_v6", "session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(db, "character_affect_mutations_v6", "source_session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(
+      db,
+      "character_affect_mutations_v6",
+      "event_id",
+      "character_affect_events_v6",
+      "id",
+      "SET NULL",
+    )
+    && hasForeignKey(
+      db,
+      "character_affect_mutations_v6",
+      "reset_id",
+      "character_affect_resets_v6",
+      "id",
+      "SET NULL",
+    )
+    && hasForeignKey(db, "character_affect_observations_v6", "character_id", "characters", "id", "CASCADE")
+    && hasForeignKey(db, "character_affect_observations_v6", "session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(
+      db,
+      "character_affect_observations_v6",
+      "event_id",
+      "character_affect_events_v6",
+      "id",
+      "SET NULL",
+    )
+    && hasForeignKey(
+      db,
+      "character_affect_observations_v6",
+      "reset_id",
+      "character_affect_resets_v6",
+      "id",
+      "SET NULL",
+    );
 }
 
 function tableSql(db: DatabaseSync, tableName: string): string {
@@ -346,6 +534,11 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
   const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
   const protectedObjectsSql = tableSql(db, "memory_protected_objects_v6");
+  const affectEventsSql = tableSql(db, "character_affect_events_v6");
+  const affectResetsSql = tableSql(db, "character_affect_resets_v6");
+  const affectIdempotencySql = tableSql(db, "character_affect_idempotency_v6");
+  const affectMutationsSql = tableSql(db, "character_affect_mutations_v6");
+  const affectObservationsSql = tableSql(db, "character_affect_observations_v6");
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
@@ -364,7 +557,27 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && protectedObjectsSql.includes("state IN ('active', 'delete_pending', 'deleted')")
     && protectedObjectsSql.includes("role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other')")
     && protectedObjectsSql.includes("original_bytes >= 0")
-    && protectedObjectsSql.includes("stored_bytes >= 0");
+    && protectedObjectsSql.includes("stored_bytes >= 0")
+    && affectEventsSql.includes("layer IN ('relationship', 'session')")
+    && affectEventsSql.includes("target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')")
+    && affectEventsSql.includes("json_valid(value_json)")
+    && affectEventsSql.includes("intensity >= 0 AND intensity <= 1")
+    && affectEventsSql.includes("state IN ('active', 'corrected')")
+    && affectEventsSql.includes("user_id <> ''")
+    && affectEventsSql.includes("target_id <> ''")
+    && affectEventsSql.includes("layer <> 'relationship' OR target_type IN ('user', 'relationship')")
+    && affectEventsSql.includes("layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id")
+    && affectEventsSql.includes("layer = 'relationship' AND session_id IS NULL")
+    && affectResetsSql.includes("layer IN ('relationship', 'session')")
+    && affectResetsSql.includes("layer = 'session' AND session_id IS NOT NULL")
+    && affectResetsSql.includes("layer = 'relationship' AND session_id IS NULL")
+    && affectIdempotencySql.includes("operation IN ('record', 'correct', 'reset')")
+    && affectIdempotencySql.includes("PRIMARY KEY (character_id, user_id, idempotency_key)")
+    && affectIdempotencySql.includes("operation IN ('record', 'correct') AND event_id IS NOT NULL AND reset_id IS NULL")
+    && affectIdempotencySql.includes("operation = 'reset' AND event_id IS NULL AND reset_id IS NOT NULL")
+    && affectMutationsSql.includes("operation IN ('record', 'reject', 'correct', 'reset', 'episode_candidate', 'link_episode')")
+    && affectObservationsSql.includes("kind IN ('idempotency', 'concurrency')")
+    && affectObservationsSql.includes("outcome IN ('replayed', 'rejected', 'resolved')");
 }
 
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {
@@ -378,6 +591,19 @@ export const CREATE_V6_APP_SETTINGS_TABLE_SQL = `
     setting_value TEXT NOT NULL,
     updated_at TEXT NOT NULL
   );
+`;
+
+export const CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS prompt_templates (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    prompt TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_prompt_templates_name
+    ON prompt_templates(name COLLATE NOCASE);
 `;
 
 export const CREATE_V6_MODEL_CATALOG_TABLES_SQL = `
@@ -420,6 +646,7 @@ export const CREATE_V6_CHARACTERS_TABLE_SQL = `
     theme_main TEXT NOT NULL DEFAULT '#6f8cff',
     theme_sub TEXT NOT NULL DEFAULT '#6fb8c7',
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'archived')),
+    -- Legacy metadata retained until a future table-rebuild migration; runtime code does not read or write it.
     is_default INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -475,6 +702,7 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     character_snapshot_json TEXT DEFAULT NULL,
     project_scope_id TEXT,
     workspace_path TEXT NOT NULL DEFAULT '',
+    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_active_at TEXT NOT NULL,
@@ -868,8 +1096,161 @@ export const CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL = `
     ON memory_protected_objects_v6(entry_id, state);
 `;
 
+export const CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS memory_move_events_v6 (
+    id TEXT PRIMARY KEY,
+    entry_id TEXT NOT NULL,
+    from_owner_type TEXT NOT NULL,
+    from_owner_id TEXT NOT NULL,
+    from_scope_type TEXT NOT NULL,
+    from_scope_id TEXT NOT NULL,
+    to_owner_type TEXT NOT NULL,
+    to_owner_id TEXT NOT NULL,
+    to_scope_type TEXT NOT NULL,
+    to_scope_id TEXT NOT NULL,
+    binding_id_hash TEXT NOT NULL,
+    idempotency_key TEXT,
+    request_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (entry_id) REFERENCES memory_entries_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_memory_move_events_idempotency
+    ON memory_move_events_v6(binding_id_hash, idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+  CREATE INDEX IF NOT EXISTS idx_v6_memory_move_events_entry
+    ON memory_move_events_v6(entry_id, created_at DESC);
+`;
+
+export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS character_affect_events_v6 (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    source_session_id TEXT,
+    layer TEXT NOT NULL CHECK (layer IN ('relationship', 'session')),
+    target_type TEXT NOT NULL CHECK (target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')),
+    target_id TEXT NOT NULL,
+    value_json TEXT NOT NULL CHECK (json_valid(value_json)),
+    intensity REAL NOT NULL CHECK (intensity >= 0 AND intensity <= 1),
+    reason TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    occurred_at TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    correction_of_event_id TEXT,
+    state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'corrected')),
+    memory_entry_id TEXT,
+    supersedes_memory_entry_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (correction_of_event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (memory_entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (supersedes_memory_entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL,
+    UNIQUE (character_id, user_id, idempotency_key),
+    CHECK (user_id <> ''),
+    CHECK (target_id <> ''),
+    CHECK (layer <> 'relationship' OR target_type IN ('user', 'relationship')),
+    CHECK (
+      (layer = 'session' AND session_id IS NOT NULL AND source_session_id = session_id)
+      OR (layer = 'relationship' AND session_id IS NULL)
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_effective
+    ON character_affect_events_v6(character_id, user_id, layer, session_id, state, occurred_at, id);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_target
+    ON character_affect_events_v6(character_id, user_id, target_type, target_id, occurred_at, id);
+
+  CREATE TABLE IF NOT EXISTS character_affect_resets_v6 (
+    id TEXT PRIMARY KEY,
+    character_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    layer TEXT NOT NULL CHECK (layer IN ('relationship', 'session')),
+    reason TEXT NOT NULL,
+    reset_at TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    UNIQUE (character_id, user_id, idempotency_key),
+    CHECK ((layer = 'session' AND session_id IS NOT NULL) OR (layer = 'relationship' AND session_id IS NULL))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_resets_scope
+    ON character_affect_resets_v6(character_id, user_id, layer, session_id, reset_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS character_affect_idempotency_v6 (
+    character_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    operation TEXT NOT NULL CHECK (operation IN ('record', 'correct', 'reset')),
+    request_fingerprint TEXT NOT NULL,
+    event_id TEXT,
+    reset_id TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (character_id, user_id, idempotency_key),
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (reset_id) REFERENCES character_affect_resets_v6(id) ON DELETE CASCADE,
+    CHECK (
+      (operation IN ('record', 'correct') AND event_id IS NOT NULL AND reset_id IS NULL)
+      OR (operation = 'reset' AND event_id IS NULL AND reset_id IS NOT NULL)
+    )
+  );
+
+  CREATE TABLE IF NOT EXISTS character_affect_mutations_v6 (
+    id TEXT PRIMARY KEY,
+    operation TEXT NOT NULL CHECK (operation IN ('record', 'reject', 'correct', 'reset', 'episode_candidate', 'link_episode')),
+    character_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    source_session_id TEXT,
+    event_id TEXT,
+    reset_id TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (reset_id) REFERENCES character_affect_resets_v6(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_mutations_scope
+    ON character_affect_mutations_v6(character_id, user_id, created_at DESC, id DESC);
+
+  CREATE TABLE IF NOT EXISTS character_affect_observations_v6 (
+    id TEXT PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('idempotency', 'concurrency')),
+    outcome TEXT NOT NULL CHECK (outcome IN ('replayed', 'rejected', 'resolved')),
+    character_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    session_id TEXT,
+    event_id TEXT,
+    reset_id TEXT,
+    reason TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (event_id) REFERENCES character_affect_events_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (reset_id) REFERENCES character_affect_resets_v6(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_observations_scope
+    ON character_affect_observations_v6(character_id, user_id, created_at DESC, id DESC);
+`;
+
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
+  CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
   CREATE_V6_MODEL_CATALOG_TABLES_SQL,
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
@@ -886,7 +1267,9 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL,
+  CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
+  CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
   `PRAGMA user_version = ${APP_DATABASE_V6_SCHEMA_VERSION};`,
 ] as const;
 
@@ -1012,6 +1395,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       continue;
     }
     db.exec(statement);
+  }
+
+  const sessionColumns = tableColumnNames(db, "sessions_v6");
+  if (!sessionColumns.has("is_pinned")) {
+    db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
 
   if (!tableExists(db, "auxiliary_sessions")) {

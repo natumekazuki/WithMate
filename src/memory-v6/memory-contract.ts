@@ -19,9 +19,13 @@ export const MEMORY_ENTRY_KINDS = [
 export type MemoryEntryKind = typeof MEMORY_ENTRY_KINDS[number];
 
 export type MemoryPermission =
+  | "memory.list_targets"
+  | "memory.list_entries"
+  | "memory.audit"
   | "memory.search"
   | "memory.append"
   | "memory.forget"
+  | "memory.move_entry"
   | "memory.get_entry"
   | "memory.get_file"
   | "memory.export_files"
@@ -84,6 +88,42 @@ export type MemoryExportFilesRequest = {
 export type MemoryListTagsRequest = {
   schemaVersion: MemoryV6SchemaVersion;
   targets: MemoryTargetSelector[];
+  withCounts?: boolean;
+  sampleLimit?: number;
+};
+
+export type MemoryTargetOwner = MemoryTargetSelector["owner"];
+export type MemoryTargetScope = MemoryTargetSelector["scope"];
+
+export type MemoryListTargetsRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  owner?: MemoryTargetOwner;
+  scope?: MemoryTargetScope;
+  project?: ProjectTargetRef;
+  character?: CharacterTargetRef;
+  includeEmpty?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export type MemoryListEntriesRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  target: MemoryTargetSelector;
+  states?: MemoryEntryState[];
+  kinds?: MemoryEntryKind[];
+  tags?: NormalizedMemoryTag[];
+  includeBody?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export type MemoryAuditRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  allTargets?: boolean;
+  targets?: MemoryTargetSelector[];
+  staleBefore?: string;
+  limit?: number;
+  cursor?: string;
 };
 
 export const MEMORY_APPEND_FILE_ROLES = [
@@ -114,6 +154,7 @@ export type MemoryAppendRequest = {
   preview: string;
   tags: NormalizedMemoryTag[];
   supersedes?: string[];
+  mutationReason?: string;
   files?: MemoryAppendFileInput[];
   sourceMessageId?: string;
   idempotencyKey?: string;
@@ -134,6 +175,16 @@ export type MemoryForgetRequest = {
   target: MemoryTargetSelector;
   entryIds: string[];
   reason?: MemoryForgetReason;
+  sourceMessageId?: string;
+  idempotencyKey?: string;
+  dryRun?: boolean;
+};
+
+export type MemoryMoveEntryRequest = {
+  schemaVersion: MemoryV6SchemaVersion;
+  entryId: string;
+  from: MemoryTargetSelector;
+  to: MemoryTargetSelector;
   sourceMessageId?: string;
   idempotencyKey?: string;
 };

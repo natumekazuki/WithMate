@@ -15,6 +15,7 @@ V5以前のsession / legacy Memory / Growth互換を引き継がず、Character-
 - current DB構造の棚卸しは`docs/design/database-schema.md`を参照する。
 - V6 Memoryのdomain contractは`docs/design/v6-memory-foundation.md`を参照する。
 - V6 Session turn の final / interim / provider output / run context 分離は`docs/design/session-turn-storage-v6.md`を参照する。
+- Character affectの追加tableと投影判断は`src-electron/database-schema-v6.ts`、`src-electron/character-affect-storage.ts`、`docs/adr/018-character-affect-event-persistence.md`を参照する。
 - V5 Character catalog / definition / snapshotの意味はV5 source of truthを優先する。
 
 ## Migration Boundary

@@ -91,6 +91,19 @@ function readRow<T>(dbPath: string, sql: string, ...params: Array<string | numbe
   }
 }
 
+function insertEmptyProjectScope(dbPath: string, id: string): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.prepare(`
+      INSERT INTO project_scopes_v6 (
+        id, project_type, project_key, workspace_path, display_name, created_at, updated_at
+      ) VALUES (?, 'directory', ?, ?, ?, '2026-06-24T00:00:00.000Z', '2026-06-24T00:00:00.000Z')
+    `).run(id, id, `C:\\workspace\\${id}`, id);
+  } finally {
+    db.close();
+  }
+}
+
 function tableNames(dbPath: string): string[] {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
@@ -1186,6 +1199,289 @@ describe("MemoryV6Storage", () => {
       });
       assert.deepEqual(second.items.map((item) => item.id), ["mem-high-score-middle", "mem-low-score-old"]);
       assert.equal(second.nextCursor, undefined);
+    });
+  });
+
+  it("target inventoryとquery-free entry listingはuntagged entryを含めてpaginationする", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({ id: "mem-a", tags: [], now: "2026-06-24T00:00:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-b", target: characterTarget, now: "2026-06-24T00:01:00.000Z" }));
+
+      const firstTargets = storage.listTargets({ limit: 1 });
+      assert.equal(firstTargets.items.length, 1);
+      assert.equal(firstTargets.items[0].target.owner.type, "character");
+      assert.ok(firstTargets.nextCursor);
+      const secondTargets = storage.listTargets({ limit: 1, cursor: firstTargets.nextCursor });
+      assert.equal(secondTargets.items[0].target.owner.type, "project");
+      assert.equal(secondTargets.items[0].entryCount, 1);
+      assert.equal(secondTargets.items[0].tagCount, 0);
+
+      const entries = storage.listEntries({ target: projectTarget, limit: 100 });
+      assert.deepEqual(entries.items.map((entry) => entry.id), ["mem-a"]);
+      assert.equal(entries.items[0].body.length > 0, true);
+      assert.equal(entries.nextCursor, undefined);
+    });
+  });
+
+  it("includeEmpty inventory cursorは空targetをlimit 1で重複なく最後まで列挙する", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      insertEmptyProjectScope(dbPath, "empty-a");
+      insertEmptyProjectScope(dbPath, "empty-b");
+      insertEmptyProjectScope(dbPath, "empty-c");
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = storage.listTargets({ ownerType: "project", includeEmpty: true, limit: 1, cursor });
+        assert.equal(page.items.length, 1);
+        seen.push(page.items[0].project?.id ?? "");
+        cursor = page.nextCursor;
+      } while (cursor);
+      assert.deepEqual(seen, ["empty-a", "empty-b", "empty-c"]);
+    });
+  });
+
+  it("inventory cursor targetがpage間に更新されても先頭へ戻らない", async () => {
+    await withStorage(({ storage }) => {
+      const targets = ["project-a", "project-b", "project-c"].map((id) => ({
+        owner: { type: "project" as const, id },
+        scope: { type: "project" as const, id },
+      }));
+      storage.appendEntry(baseAppend({ id: "mem-a", target: targets[0], now: "2026-06-24T00:02:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-b", target: targets[1], now: "2026-06-24T00:01:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-c", target: targets[2], now: "2026-06-24T00:00:00.000Z" }));
+
+      const first = storage.listTargets({ ownerType: "project", limit: 1 });
+      assert.equal(first.items[0].target.owner.id, "project-a");
+      assert.ok(first.nextCursor);
+      storage.appendEntry(baseAppend({ id: "mem-a-new", target: targets[0], now: "2026-06-24T00:03:00.000Z" }));
+
+      const second = storage.listTargets({ ownerType: "project", limit: 1, cursor: first.nextCursor });
+      assert.equal(second.items[0].target.owner.id, "project-b");
+      const third = storage.listTargets({ ownerType: "project", limit: 1, cursor: second.nextCursor });
+      assert.equal(third.items[0].target.owner.id, "project-c");
+      assert.equal(third.nextCursor, undefined);
+    });
+  });
+
+  it("inventory cursorはtargetの最新時刻低下、消失、空target遷移でも既出targetを再列挙しない", async () => {
+    await withStorage(({ storage }) => {
+      const targets = ["project-a", "project-b", "project-c"].map((id) => ({
+        owner: { type: "project" as const, id },
+        scope: { type: "project" as const, id },
+      }));
+      storage.appendEntry(baseAppend({ id: "mem-a-old", target: targets[0], now: "2026-06-24T00:00:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-a-new", target: targets[0], now: "2026-06-24T00:03:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-b", target: targets[1], now: "2026-06-24T00:02:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-c", target: targets[2], now: "2026-06-24T00:01:00.000Z" }));
+
+      const first = storage.listTargets({ ownerType: "project", limit: 1 });
+      assert.equal(first.items[0].target.owner.id, "project-a");
+      assert.ok(first.nextCursor);
+      storage.forgetEntries({ target: targets[0], entryIds: ["mem-a-new"], reason: "outdated" });
+
+      const second = storage.listTargets({ ownerType: "project", limit: 10, cursor: first.nextCursor });
+      assert.deepEqual(second.items.map((item) => item.target.owner.id), ["project-b", "project-c"]);
+    });
+
+    await withStorage(({ storage }) => {
+      const targetA = { owner: { type: "project" as const, id: "project-a" }, scope: { type: "project" as const, id: "project-a" } };
+      const targetB = { owner: { type: "project" as const, id: "project-b" }, scope: { type: "project" as const, id: "project-b" } };
+      storage.appendEntry(baseAppend({ id: "mem-a", target: targetA }));
+      storage.appendEntry(baseAppend({ id: "mem-b", target: targetB }));
+
+      const first = storage.listTargets({ ownerType: "project", limit: 1 });
+      assert.ok(first.nextCursor);
+      storage.forgetEntries({ target: targetA, entryIds: ["mem-a"], reason: "outdated" });
+
+      const second = storage.listTargets({ ownerType: "project", limit: 10, cursor: first.nextCursor });
+      assert.deepEqual(second.items.map((item) => item.target.owner.id), ["project-b"]);
+    });
+
+    await withStorage(({ storage, dbPath }) => {
+      insertEmptyProjectScope(dbPath, "project-a");
+      insertEmptyProjectScope(dbPath, "project-b");
+      const targetA = { owner: { type: "project" as const, id: "project-a" }, scope: { type: "project" as const, id: "project-a" } };
+      storage.appendEntry(baseAppend({ id: "mem-a", target: targetA }));
+
+      const first = storage.listTargets({ ownerType: "project", includeEmpty: true, limit: 1 });
+      assert.equal(first.items[0].target.owner.id, "project-a");
+      assert.ok(first.nextCursor);
+      storage.forgetEntries({ target: targetA, entryIds: ["mem-a"], reason: "outdated" });
+
+      const second = storage.listTargets({ ownerType: "project", includeEmpty: true, limit: 10, cursor: first.nextCursor });
+      assert.deepEqual(second.items.map((item) => item.target.owner.id), ["project-b"]);
+    });
+  });
+
+  it("tag statisticsはcount、latest update、sampleを一度に返す", async () => {
+    await withStorage(({ storage }) => {
+      storage.appendEntry(baseAppend({ id: "mem-a", now: "2026-06-24T00:00:00.000Z" }));
+      storage.appendEntry(baseAppend({ id: "mem-b", now: "2026-06-24T00:01:00.000Z" }));
+      const [stat] = storage.listTagStatistics([projectTarget], 1);
+      assert.equal(stat.entryCount, 2);
+      assert.equal(stat.latestUpdatedAt, "2026-06-24T00:01:00.000Z");
+      assert.deepEqual(stat.samples.map((sample) => sample.id), ["mem-b"]);
+    });
+  });
+
+  it("forget previewはtarget照合結果を返すが永続状態と監査logを変更しない", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-project" }));
+      const beforeEvents = readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6");
+      const preview = storage.previewForgetEntries({ target: projectTarget, entryIds: ["mem-project", "missing"] });
+      assert.equal(preview[0].status, "forgotten");
+      assert.equal(preview[0].entry?.title, "CLI認証方針");
+      assert.deepEqual(preview[1], {
+        entryId: "missing",
+        status: "not_found",
+        warning: "target_mismatch_or_not_found",
+      });
+      assert.equal(storage.getEntry("mem-project")?.state, "active");
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6"), beforeEvents);
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_idempotency_keys_v6"), 0);
+    });
+  });
+
+  it("forget previewは既存idempotency replayとconflictをwriteせず再現する", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-project" }));
+      const forgetInput = {
+        target: userGlobalTarget,
+        entryIds: ["mem-project"],
+        idempotencyKey: "forget-after-move",
+        bindingIdHash: "local-user",
+      };
+      assert.equal(storage.forgetEntries(forgetInput)[0].status, "not_found");
+      storage.moveEntry({
+        entryId: "mem-project",
+        from: projectTarget,
+        to: userGlobalTarget,
+        requestFingerprint: "move-before-preview",
+      });
+      const eventCount = readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6");
+      assert.deepEqual(storage.previewForgetEntries(forgetInput), [{
+        entryId: "mem-project",
+        status: "not_found",
+        warning: "target_mismatch_or_not_found",
+      }]);
+      assert.throws(
+        () => storage.previewForgetEntries({ ...forgetInput, entryIds: ["different-entry"] }),
+        MemoryV6IdempotencyConflictError,
+      );
+      assert.equal(storage.getEntry("mem-project")?.state, "active");
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6"), eventCount);
+    });
+  });
+
+  it("moveはentry ID・relation・file attachmentを保ったまま原子的かつidempotentにretargetする", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-old" }));
+      storage.appendEntry(baseAppend({
+        id: "mem-project",
+        supersedes: ["mem-old"],
+        protectedObjects: [{
+          objectId: "a".repeat(32),
+          role: "reference",
+          mediaKind: "text",
+          contentType: "text/plain",
+          displayName: "note.txt",
+          summary: "move evidence",
+          originalBytes: 10,
+          storedBytes: 42,
+          sha256: "b".repeat(64),
+          keyId: "c".repeat(32),
+        }],
+      }));
+      const input = {
+        entryId: "mem-project",
+        from: projectTarget,
+        to: userGlobalTarget,
+        bindingIdHash: "local-user",
+        idempotencyKey: "move-project-global",
+        requestFingerprint: "fingerprint-a",
+        now: "2026-06-24T00:10:00.000Z",
+      };
+      const moved = storage.moveEntry(input);
+      assert.equal(moved.entry.id, "mem-project");
+      assert.equal(moved.entry.owner.type, "user");
+      assert.deepEqual(moved.entry.supersedes, ["mem-old"]);
+      assert.equal(moved.entry.files?.[0].objectId, "a".repeat(32));
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_move_events_v6"), 1);
+      assert.equal(readRow<{ entry_id: string }>(dbPath, "SELECT entry_id FROM memory_protected_objects_v6 WHERE object_id = ?", "a".repeat(32)).entry_id, "mem-project");
+      assert.deepEqual(
+        { ...readRow<{ from_entry_id: string; to_entry_id: string }>(dbPath, "SELECT source_entry_id AS from_entry_id, target_entry_id AS to_entry_id FROM memory_entry_relations_v6 WHERE relation_type = 'supersedes'") },
+        { from_entry_id: "mem-project", to_entry_id: "mem-old" },
+      );
+      assert.equal(readRow<{ superseded_by_id: string }>(dbPath, "SELECT superseded_by_id FROM memory_entries_v6 WHERE id = 'mem-old'").superseded_by_id, "mem-project");
+      assert.deepEqual(
+        { ...readRow<{
+          from_owner_type: string;
+          from_owner_id: string;
+          to_owner_type: string;
+          to_scope_type: string;
+          binding_id_hash: string;
+          idempotency_key: string;
+          request_fingerprint: string;
+        }>(dbPath, `
+          SELECT from_owner_type, from_owner_id, to_owner_type, to_scope_type,
+                 binding_id_hash, idempotency_key, request_fingerprint
+          FROM memory_move_events_v6
+        `) },
+        {
+          from_owner_type: "project",
+          from_owner_id: "project-a",
+          to_owner_type: "user",
+          to_scope_type: "global",
+          binding_id_hash: "local-user",
+          idempotency_key: "move-project-global",
+          request_fingerprint: "fingerprint-a",
+        },
+      );
+
+      const replay = storage.moveEntry(input);
+      assert.equal(replay.entry.owner.type, "user");
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_move_events_v6"), 1);
+      assert.throws(() => storage.moveEntry({ ...input, requestFingerprint: "fingerprint-b" }), MemoryV6IdempotencyConflictError);
+    });
+  });
+
+  it("move event挿入失敗時はentry target更新もrollbackする", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-project" }));
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.exec(`
+          CREATE TRIGGER fail_memory_move_event
+          BEFORE INSERT ON memory_move_events_v6
+          BEGIN
+            SELECT RAISE(ABORT, 'injected move event failure');
+          END;
+        `);
+      } finally {
+        db.close();
+      }
+      assert.throws(() => storage.moveEntry({
+        entryId: "mem-project",
+        from: projectTarget,
+        to: userGlobalTarget,
+        requestFingerprint: "rollback-move",
+      }), /injected move event failure/);
+      assert.equal(storage.getEntry("mem-project")?.owner.type, "project");
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_move_events_v6"), 0);
+    });
+  });
+
+  it("moveはfrom target不一致をnot-foundに畳みentryを変更しない", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      storage.appendEntry(baseAppend({ id: "mem-project" }));
+      assert.throws(() => storage.moveEntry({
+        entryId: "mem-project",
+        from: characterTarget,
+        to: userGlobalTarget,
+        requestFingerprint: "mismatch",
+      }), MemoryV6EntryNotFoundError);
+      assert.equal(storage.getEntry("mem-project")?.owner.type, "project");
+      assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_move_events_v6"), 0);
     });
   });
 });

@@ -2,6 +2,7 @@ import {
   MEMORY_V6_SCHEMA_VERSION,
   type MemoryError,
   type MemoryTag,
+  type MemoryTargetSelector,
   type MemoryV6SchemaVersion,
 } from "./memory-contract.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
@@ -53,14 +54,73 @@ export type MemoryExportFilesResponse = {
 
 export type MemoryListTagsResponse = {
   schemaVersion: MemoryV6SchemaVersion;
-  tags: MemoryTag[];
+  tags: Array<MemoryTag & {
+    entryCount?: number;
+    latestUpdatedAt?: string;
+    samples?: Array<{ id: string; title: string }>;
+  }>;
+};
+
+export type MemoryTargetInventoryItem = {
+  target: MemoryTargetSelector;
+  owner: MemoryTargetSelector["owner"];
+  scope: MemoryTargetSelector["scope"];
+  project?: { id: string; displayName: string; path?: string };
+  character?: { id: string; displayName: string };
+  entryCount: number;
+  tagCount: number;
+  lastUpdatedAt: string | null;
+};
+
+export type MemoryListTargetsResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  items: MemoryTargetInventoryItem[];
+  nextCursor?: string;
+};
+
+export type MemoryEntryListItem = MemoryEntrySummary & {
+  body?: string;
+  supersedes: string[];
+  supersededBy: string | null;
+};
+
+export type MemoryListEntriesResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  items: MemoryEntryListItem[];
+  nextCursor?: string;
+};
+
+export type MemoryAuditCandidate = {
+  id: string;
+  title: string;
+  preview: string;
+  updatedAt: string;
+  reasons: string[];
+};
+
+export type MemoryTargetAudit = {
+  target: MemoryTargetInventoryItem;
+  countsByKind: Partial<Record<MemoryEntrySummary["kind"], number>>;
+  topTags: Array<MemoryTag & { entryCount: number; latestUpdatedAt: string }>;
+  staleOrProgressCandidates: MemoryAuditCandidate[];
+  wrongScopeCandidates: MemoryAuditCandidate[];
+  duplicateTitleCandidates: Array<{ normalizedTitle: string; entries: MemoryAuditCandidate[] }>;
+  documentationCandidates: MemoryAuditCandidate[];
+  suspiciousTagCandidates: MemoryAuditCandidate[];
+};
+
+export type MemoryAuditResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  generatedAt: string;
+  staleBefore: string;
+  targets: MemoryTargetAudit[];
+  nextCursor?: string;
 };
 
 export type MemoryCharacterSummary = {
   id: string;
   name: string;
   description?: string;
-  isDefault?: boolean;
 };
 
 export type MemoryListCharactersResponse = {
@@ -109,11 +169,23 @@ export type MemoryForgetResultStatus = "forgotten" | "already_forgotten" | "not_
 export type MemoryForgetResult = {
   entryId: string;
   status: MemoryForgetResultStatus;
+  entry?: MemoryEntrySummary;
+  warning?: "target_mismatch_or_not_found";
 };
 
 export type MemoryForgetResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   results: MemoryForgetResult[];
+  dryRun?: true;
+  writeOccurred?: false;
+};
+
+export type MemoryMoveEntryResponse = {
+  schemaVersion: MemoryV6SchemaVersion;
+  entry: MemoryEntrySummary;
+  moved: boolean;
+  from: MemoryTargetSelector;
+  to: MemoryTargetSelector;
 };
 
 export type MemoryErrorResponse = {
@@ -189,10 +261,45 @@ export function createMemoryExportFilesResponse(input: {
   };
 }
 
-export function createMemoryListTagsResponse(tags: readonly MemoryTag[]): MemoryListTagsResponse {
+export function createMemoryListTagsResponse(tags: MemoryListTagsResponse["tags"]): MemoryListTagsResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-    tags: tags.map((tag) => ({ type: tag.type, value: tag.value })),
+    tags: tags.map((tag) => ({
+      type: tag.type,
+      value: tag.value,
+      ...(tag.entryCount === undefined ? {} : { entryCount: tag.entryCount }),
+      ...(tag.latestUpdatedAt === undefined ? {} : { latestUpdatedAt: tag.latestUpdatedAt }),
+      ...(tag.samples === undefined ? {} : { samples: tag.samples.map((sample) => ({ ...sample })) }),
+    })),
+  };
+}
+
+export function createMemoryListTargetsResponse(
+  items: readonly MemoryTargetInventoryItem[],
+  nextCursor?: string,
+): MemoryListTargetsResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    items: items.map((item) => ({ ...item })),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  };
+}
+
+export function createMemoryListEntriesResponse(
+  items: readonly MemoryEntryListItem[],
+  nextCursor?: string,
+): MemoryListEntriesResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    items: items.map((item) => ({ ...item })),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+  };
+}
+
+export function createMemoryAuditResponse(input: Omit<MemoryAuditResponse, "schemaVersion">): MemoryAuditResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    ...input,
   };
 }
 
@@ -205,7 +312,6 @@ export function createMemoryListCharactersResponse(characters: readonly Characte
         id: character.id,
         name: character.name,
         ...(description.length > 0 ? { description } : {}),
-        ...(character.isDefault ? { isDefault: true } : {}),
       };
     }),
   };
@@ -253,10 +359,29 @@ export function createMemoryAppendResponse(entry: MemoryEntryDetail, created: bo
   };
 }
 
-export function createMemoryForgetResponse(results: readonly MemoryForgetResult[]): MemoryForgetResponse {
+export function createMemoryForgetResponse(
+  results: readonly MemoryForgetResult[],
+  options: { dryRun?: boolean } = {},
+): MemoryForgetResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-    results: [...results],
+    results: results.map((result) => ({ ...result })),
+    ...(options.dryRun ? { dryRun: true as const, writeOccurred: false as const } : {}),
+  };
+}
+
+export function createMemoryMoveEntryResponse(input: {
+  entry: MemoryEntryDetail;
+  moved: boolean;
+  from: MemoryTargetSelector;
+  to: MemoryTargetSelector;
+}): MemoryMoveEntryResponse {
+  return {
+    schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+    entry: toMemoryEntrySummary(input.entry),
+    moved: input.moved,
+    from: input.from,
+    to: input.to,
   };
 }
 

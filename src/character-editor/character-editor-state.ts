@@ -37,7 +37,6 @@ export type CharacterEditorDraft = {
   theme: CharacterTheme;
   definitionMarkdown: string;
   notesMarkdown: string;
-  isDefault: boolean;
 };
 
 export type CharacterEditorValidationSummary = {
@@ -57,7 +56,6 @@ export function createNewCharacterEditorDraft(name = "New Character"): Character
     theme: { ...DEFAULT_CHARACTER_THEME },
     definitionMarkdown: buildDefaultCharacterDefinition(name),
     notesMarkdown: buildDefaultCharacterNotes(),
-    isDefault: false,
   };
 }
 
@@ -73,7 +71,6 @@ export function createCharacterEditorDraftFromDetail(detail: CharacterDetail): C
     theme: { ...detail.theme },
     definitionMarkdown: detail.definitionMarkdown,
     notesMarkdown: detail.notesMarkdown,
-    isDefault: detail.isDefault,
   };
 }
 
@@ -109,8 +106,7 @@ export function isCharacterEditorDraftDirty(
     || draft.theme.main !== persistedDetail.theme.main
     || draft.theme.sub !== persistedDetail.theme.sub
     || draft.definitionMarkdown !== persistedDetail.definitionMarkdown
-    || draft.notesMarkdown !== persistedDetail.notesMarkdown
-    || draft.isDefault !== persistedDetail.isDefault;
+    || draft.notesMarkdown !== persistedDetail.notesMarkdown;
 }
 
 export function shouldBlockCharacterEditorBeforeUnload(args: {
@@ -169,7 +165,7 @@ export function updateCharacterEditorDraft(
 
 export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft): CreateCharacterInput {
   const metadata = resolveCharacterDefinitionMetadata(draft.definitionMarkdown);
-  const input: CreateCharacterInput = {
+  return {
     name: metadata?.name || draft.name,
     description: metadata?.description ?? draft.description,
     iconFilePath: draft.iconFilePath,
@@ -177,12 +173,6 @@ export function buildCreateCharacterInputFromDraft(draft: CharacterEditorDraft):
     definitionMarkdown: draft.definitionMarkdown,
     notesMarkdown: draft.notesMarkdown,
   };
-
-  if (draft.isDefault) {
-    input.setDefault = true;
-  }
-
-  return input;
 }
 
 export function replaceCharacterDefinitionDraft(

@@ -37,7 +37,6 @@ function createCharacters(): CharacterCatalogEntry[] {
       iconFilePath: "",
       theme: { main: "#111111", sub: "#eeeeee" },
       state: "active",
-      isDefault: true,
       createdAt: "",
       updatedAt: "",
       archivedAt: null,
@@ -49,7 +48,6 @@ function createCharacters(): CharacterCatalogEntry[] {
       iconFilePath: "",
       theme: { main: "#222222", sub: "#dddddd" },
       state: "active",
-      isDefault: false,
       createdAt: "",
       updatedAt: "",
       archivedAt: null,
@@ -85,7 +83,8 @@ describe("home-launch-projection", () => {
 
     assert.deepEqual(projection.enabledLaunchProviders.map((provider) => provider.id), []);
     assert.equal(projection.selectedLaunchProvider, null);
-    assert.equal(projection.selectedCharacter?.id, "mia");
+    assert.equal(projection.selectedCharacter, null);
+    assert.equal(projection.randomCharacterSelected, true);
     assert.equal(projection.canStartSession, false);
   });
 
@@ -102,6 +101,7 @@ describe("home-launch-projection", () => {
       launchTitle: "task",
       launchWorkspace: { label: "demo", path: "F:/work/demo", branch: "" },
       launchCharacterId: "noa",
+      launchCharacterSelectionMode: "specific",
       characterEntries: createCharacters(),
       appSettings: settings,
       modelCatalog: createCatalog(),
@@ -162,6 +162,23 @@ describe("home-launch-projection", () => {
     assert.equal(projection.selectedCharacter, null);
     assert.equal(projection.randomCharacterSelected, true);
     assert.equal(projection.canStartSession, true);
+  });
+
+  it("specific Character がactive一覧に存在しない場合は開始不可にする", () => {
+    const projection = buildHomeLaunchProjection({
+      launchProviderId: "codex",
+      launchTitle: "task",
+      launchWorkspace: { label: "demo", path: "F:/work/demo", branch: "" },
+      launchCharacterId: "missing",
+      launchCharacterSelectionMode: "specific",
+      characterEntries: createCharacters(),
+      appSettings: createDefaultAppSettings(),
+      modelCatalog: createCatalog(),
+    });
+
+    assert.equal(projection.selectedCharacter, null);
+    assert.equal(projection.randomCharacterSelected, false);
+    assert.equal(projection.canStartSession, false);
   });
 
   it("Character catalog 読み込み前は開始不可にする", () => {

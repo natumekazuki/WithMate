@@ -33,7 +33,7 @@ export function buildHomeLaunchProjection({
   launchTitle,
   launchWorkspace,
   launchCharacterId,
-  launchCharacterSelectionMode = "specific",
+  launchCharacterSelectionMode = "random",
   characterEntries = [],
   charactersLoaded = true,
   appSettings,
@@ -61,6 +61,7 @@ export function buildHomeLaunchProjection({
   const selectedCharacter = launchCharacterSelectionMode === "random"
     ? null
     : activeCharacterEntries.find((character) => character.id === selectedCharacterId) ?? null;
+  const validCharacterSelection = launchCharacterSelectionMode === "random" || selectedCharacter !== null;
   const sessionFolderSelected = isSessionFolderLaunchWorkspace(launchWorkspace);
 
   return {
@@ -80,6 +81,7 @@ export function buildHomeLaunchProjection({
       !!launchTitle.trim() &&
       !!launchWorkspace &&
       !!selectedLaunchProvider &&
+      validCharacterSelection &&
       (launchMode !== "companion" || !sessionFolderSelected),
   };
 }

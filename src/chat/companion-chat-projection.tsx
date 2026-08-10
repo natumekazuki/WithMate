@@ -33,6 +33,7 @@ import {
   buildLiveSessionCommonComposerDockInput,
   buildLiveSessionCommonContextPaneProps,
   buildLiveSessionCommonMessageColumnProps,
+  buildLiveSessionRecoveryActions,
 } from "./live-session-projection.js";
 
 const getCompanionChangedFilesEmptyText = () => "差分はまだないよ。";
@@ -70,7 +71,6 @@ export type CompanionChatProjectionInput = {
   pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   isMessageListFollowing: boolean;
   retryBanner: SessionRetryBannerProps["retryBanner"];
-  isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
@@ -157,7 +157,6 @@ export type CompanionChatProjectionInput = {
   onOpenInlinePath: (target: string) => void;
   onCopyMessageText: SessionMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText: SessionMessageColumnProps["onQuoteMessageText"];
-  onToggleRetryDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
@@ -207,6 +206,16 @@ export type CompanionChatProjectionInput = {
 };
 
 export function buildCompanionChatWindowProps(input: CompanionChatProjectionInput): ChatWindowProps {
+  const recoveryActions = buildLiveSessionRecoveryActions({
+    retryBanner: input.retryBanner,
+    isRetryActionDisabled: input.isRetryActionDisabled,
+    isRetryEditDisabled: input.isRetryEditDisabled,
+    isRetryDraftReplacePending: input.isRetryDraftReplacePending,
+    onResendLastMessage: input.onResendLastMessage,
+    onEditLastMessage: input.onEditLastMessage,
+    onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
+    onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
+  });
   const headerProps: SessionHeaderProps = buildLiveSessionHeaderProps({
     taskTitle: input.session.taskTitle,
     isEditingTitle: input.isEditingTitle,
@@ -246,17 +255,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
 
   const composerDockProps = buildLiveSessionComposerDockProps(
     buildLiveSessionCommonComposerDockInput({
-      retryBanner: input.retryBanner,
-      isRetryDetailsOpen: input.isRetryDetailsOpen,
-      isRetryActionDisabled: input.isRetryActionDisabled,
-      isRetryEditDisabled: input.isRetryEditDisabled,
-      isRetryDraftReplacePending: input.isRetryDraftReplacePending,
-      onToggleDetails: input.onToggleRetryDetails,
-      onResendLastMessage: input.onResendLastMessage,
-      onEditLastMessage: input.onEditLastMessage,
-      onConfirmRetryDraftReplace: input.onConfirmRetryDraftReplace,
-      onCancelRetryDraftReplace: input.onCancelRetryDraftReplace,
-      onOpenPath: input.onOpenInlinePath,
       isRunning: input.isSelectedSessionRunning,
       ...COMPANION_PENDING_RUN_INDICATOR_TEXT,
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
@@ -401,6 +399,7 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onActivateDockPriority: input.onActivateDockPriority,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
+    recoveryActions,
     isActionDockExpanded: input.isActionDockExpanded,
     headerSplitterProps: {
       isPanelExpanded: input.isHeaderExpanded,

@@ -5,6 +5,7 @@ import type {
   MemoryEntryKind,
   MemoryAppendFileRole,
   MemoryForgetReason,
+  MemoryEntryState,
   NormalizedMemoryTag,
 } from "../src/memory-v6/memory-contract.js";
 import type {
@@ -43,6 +44,7 @@ type AppendMemoryEntryInput = {
   tags: readonly NormalizedMemoryTag[];
   source: MemoryV6StorageSource;
   supersedes?: readonly string[];
+  mutationReason?: string;
   id?: string;
   idempotencyKey?: string;
   bindingIdHash?: string;
@@ -75,6 +77,11 @@ export type MemoryV6ForgetResult = {
   status: MemoryV6ForgetResultStatus;
 };
 
+export type MemoryV6ForgetPreviewResult = MemoryV6ForgetResult & {
+  entry?: MemoryEntryDetail;
+  warning?: "target_mismatch_or_not_found";
+};
+
 export type MemoryV6SearchInput = {
   targets: readonly MemoryV6ResolvedTarget[];
   query: string;
@@ -88,6 +95,65 @@ export type MemoryV6SearchResult = {
   items: MemorySearchHit[];
   relatedTags?: NormalizedMemoryTag[];
   nextCursor?: string;
+};
+
+export type MemoryV6TagStatistic = NormalizedMemoryTag & {
+  entryCount: number;
+  latestUpdatedAt: string;
+  samples: Array<{ id: string; title: string }>;
+};
+
+export type MemoryV6TargetInventoryItem = {
+  target: MemoryV6ResolvedTarget;
+  project?: { id: string; displayName: string; path?: string };
+  character?: { id: string; displayName: string };
+  entryCount: number;
+  tagCount: number;
+  lastUpdatedAt: string | null;
+};
+
+export type MemoryV6ListTargetsInput = {
+  ownerType?: MemoryV6ResolvedTarget["owner"]["type"];
+  scopeType?: MemoryV6ResolvedTarget["scope"]["type"];
+  projectId?: string;
+  characterId?: string;
+  includeEmpty?: boolean;
+  limit?: number;
+  cursor?: string;
+};
+
+export type MemoryV6ListTargetsResult = {
+  items: MemoryV6TargetInventoryItem[];
+  nextCursor?: string;
+};
+
+export type MemoryV6ListEntriesInput = {
+  target: MemoryV6ResolvedTarget;
+  states?: readonly MemoryEntryState[];
+  kinds?: readonly MemoryEntryKind[];
+  tags?: readonly NormalizedMemoryTag[];
+  limit?: number;
+  cursor?: string;
+};
+
+export type MemoryV6ListEntriesResult = {
+  items: MemoryEntryDetail[];
+  nextCursor?: string;
+};
+
+export type MemoryV6MoveEntryInput = {
+  entryId: string;
+  from: MemoryV6ResolvedTarget;
+  to: MemoryV6ResolvedTarget;
+  bindingIdHash?: string;
+  idempotencyKey?: string;
+  requestFingerprint: string;
+  now?: string;
+};
+
+export type MemoryV6MoveEntryResult = {
+  entry: MemoryEntryDetail;
+  moved: boolean;
 };
 
 export type MemoryV6ReviewSearchInput = {
@@ -192,6 +258,8 @@ type IdempotencyRow = {
 
 const DEFAULT_SEARCH_LIMIT = 20;
 const MAX_SEARCH_LIMIT = 50;
+const MAX_MAINTENANCE_LIMIT = 200;
+const EMPTY_INVENTORY_UPDATED_AT = "__empty_target__";
 const PROTECTED_OBJECT_ID_PATTERN = /^[a-f0-9]{32}$/;
 const SHA256_HEX_PATTERN = /^[a-f0-9]{64}$/;
 const PROTECTED_OBJECT_MEDIA_KINDS = new Set<MemoryV6ProtectedObjectMediaKind>([
@@ -421,6 +489,28 @@ function hasValidTargetInvariant(row: MemoryV6EntryRow): boolean {
     && row.scope_id === "global";
 }
 
+function normalizeMaintenanceLimit(limit: number | undefined): number {
+  if (typeof limit !== "number" || !Number.isFinite(limit)) {
+    return DEFAULT_SEARCH_LIMIT;
+  }
+  return Math.max(1, Math.min(MAX_MAINTENANCE_LIMIT, Math.floor(limit)));
+}
+
+function isSupportedResolvedTarget(target: MemoryV6ResolvedTarget): boolean {
+  return (target.owner.type === "user" && target.owner.id === "local-user" && target.scope.type === "global" && target.scope.id === "global")
+    || (target.owner.type === "project" && target.scope.type === "project" && target.owner.id === target.scope.id)
+    || (target.owner.type === "character" && target.scope.type === "character" && target.owner.id === target.scope.id)
+    || (target.owner.type === "character" && target.scope.type === "project");
+}
+
+function compareInventoryItems(left: MemoryV6TargetInventoryItem, right: MemoryV6TargetInventoryItem): number {
+  return targetKey(left.target).localeCompare(targetKey(right.target));
+}
+
+function inventoryItemFollowsCursor(item: MemoryV6TargetInventoryItem, cursor: SearchCursor): boolean {
+  return targetKey(item.target).localeCompare(cursor.id) > 0;
+}
+
 function buildAppendFingerprint(input: AppendMemoryEntryInput): string {
   return fingerprint({
     operation: "append",
@@ -437,6 +527,7 @@ function buildAppendFingerprint(input: AppendMemoryEntryInput): string {
     })),
     source: input.source,
     supersedes: [...(input.supersedes ?? [])].sort(),
+    mutationReason: input.mutationReason ?? "",
     protectedObjects: (input.protectedObjects ?? []).map((object) => ({
       objectId: object.objectId,
       role: object.role,
@@ -628,10 +719,26 @@ export class MemoryV6Storage {
         `).run(entryId, createdAt, supersededRow.id);
 
         this.decrementTagCatalog(this.getEntryTags(supersededRow.id));
-        this.insertMutationEvent("supersede", supersededRow.id, bindingIdHash, input.source.sessionId, "success", "", createdAt);
+        this.insertMutationEvent(
+          "supersede",
+          supersededRow.id,
+          bindingIdHash,
+          input.source.sessionId,
+          "success",
+          input.mutationReason ?? "",
+          createdAt,
+        );
       }
 
-      this.insertMutationEvent("append", entryId, bindingIdHash, input.source.sessionId, "success", "", createdAt);
+      this.insertMutationEvent(
+        "append",
+        entryId,
+        bindingIdHash,
+        input.source.sessionId,
+        "success",
+        input.mutationReason ?? "",
+        createdAt,
+      );
 
       if (input.idempotencyKey) {
         this.insertIdempotencyKey({
@@ -657,6 +764,183 @@ export class MemoryV6Storage {
   getEntry(entryId: string): MemoryEntryDetail | null {
     const row = this.getEntryRow(entryId);
     return row ? this.rowToEntry(row) : null;
+  }
+
+  listTargets(input: MemoryV6ListTargetsInput = {}): MemoryV6ListTargetsResult {
+    type InventoryRow = {
+      owner_type: MemoryV6ResolvedTarget["owner"]["type"];
+      owner_id: string;
+      scope_type: MemoryV6ResolvedTarget["scope"]["type"];
+      scope_id: string;
+      entry_count: number;
+      tag_count: number;
+      last_updated_at: string | null;
+      project_id: string | null;
+      project_display_name: string | null;
+      project_path: string | null;
+      character_id: string | null;
+      character_display_name: string | null;
+    };
+
+    const rows = this.db.prepare(`
+      SELECT
+        e.owner_type,
+        e.owner_id,
+        e.scope_type,
+        e.scope_id,
+        COUNT(DISTINCT e.id) AS entry_count,
+        COUNT(DISTINCT t.tag_type_canonical || char(0) || t.tag_value_canonical) AS tag_count,
+        MAX(e.updated_at) AS last_updated_at,
+        p.id AS project_id,
+        p.display_name AS project_display_name,
+        p.workspace_path AS project_path,
+        c.id AS character_id,
+        c.name AS character_display_name
+      FROM memory_entries_v6 AS e
+      LEFT JOIN memory_entry_tags_v6 AS t ON t.entry_id = e.id
+      LEFT JOIN project_scopes_v6 AS p
+        ON p.id = CASE
+          WHEN e.owner_type = 'project' THEN e.owner_id
+          WHEN e.scope_type = 'project' THEN e.scope_id
+          ELSE NULL
+        END
+      LEFT JOIN characters AS c ON c.id = CASE WHEN e.owner_type = 'character' THEN e.owner_id ELSE NULL END
+      WHERE e.state = 'active'
+      GROUP BY e.owner_type, e.owner_id, e.scope_type, e.scope_id
+    `).all() as InventoryRow[];
+
+    const items = new Map<string, MemoryV6TargetInventoryItem>();
+    const add = (item: MemoryV6TargetInventoryItem): void => {
+      if (isSupportedResolvedTarget(item.target)) {
+        items.set(targetKey(item.target), item);
+      }
+    };
+    for (const row of rows) {
+      const target = {
+        owner: row.owner_type === "user"
+          ? { type: "user" as const, id: "local-user" as const }
+          : { type: row.owner_type, id: row.owner_id },
+        scope: row.scope_type === "global"
+          ? { type: "global" as const, id: "global" as const }
+          : { type: row.scope_type, id: row.scope_id },
+      } satisfies MemoryV6ResolvedTarget;
+      add({
+        target,
+        ...(row.project_id ? {
+          project: {
+            id: row.project_id,
+            displayName: row.project_display_name || row.project_id,
+            ...(row.project_path ? { path: row.project_path } : {}),
+          },
+        } : {}),
+        ...(row.character_id ? {
+          character: { id: row.character_id, displayName: row.character_display_name || row.character_id },
+        } : {}),
+        entryCount: Number(row.entry_count),
+        tagCount: Number(row.tag_count),
+        lastUpdatedAt: row.last_updated_at,
+      });
+    }
+
+    if (input.includeEmpty) {
+      const projects = this.db.prepare(`
+        SELECT id, display_name, workspace_path
+        FROM project_scopes_v6
+      `).all() as Array<{ id: string; display_name: string; workspace_path: string }>;
+      for (const project of projects) {
+        const target = { owner: { type: "project" as const, id: project.id }, scope: { type: "project" as const, id: project.id } };
+        if (!items.has(targetKey(target))) {
+          add({
+            target,
+            project: { id: project.id, displayName: project.display_name || project.id, ...(project.workspace_path ? { path: project.workspace_path } : {}) },
+            entryCount: 0,
+            tagCount: 0,
+            lastUpdatedAt: null,
+          });
+        }
+      }
+      const characters = this.db.prepare(`
+        SELECT id, name
+        FROM characters
+        WHERE state = 'active'
+      `).all() as Array<{ id: string; name: string }>;
+      for (const character of characters) {
+        const target = { owner: { type: "character" as const, id: character.id }, scope: { type: "character" as const, id: character.id } };
+        if (!items.has(targetKey(target))) {
+          add({
+            target,
+            character: { id: character.id, displayName: character.name || character.id },
+            entryCount: 0,
+            tagCount: 0,
+            lastUpdatedAt: null,
+          });
+        }
+      }
+      const userTarget = { owner: { type: "user" as const, id: "local-user" as const }, scope: { type: "global" as const, id: "global" as const } };
+      if (!items.has(targetKey(userTarget))) {
+        add({ target: userTarget, entryCount: 0, tagCount: 0, lastUpdatedAt: null });
+      }
+    }
+
+    const filtered = [...items.values()]
+      .filter((item) => input.ownerType === undefined || item.target.owner.type === input.ownerType)
+      .filter((item) => input.scopeType === undefined || item.target.scope.type === input.scopeType)
+      .filter((item) => input.projectId === undefined || item.project?.id === input.projectId || (item.target.scope.type === "project" && item.target.scope.id === input.projectId))
+      .filter((item) => input.characterId === undefined || item.character?.id === input.characterId || (item.target.owner.type === "character" && item.target.owner.id === input.characterId))
+      .sort(compareInventoryItems);
+    const cursor = decodeCursor(input.cursor);
+    const nextIndex = cursor ? filtered.findIndex((item) => inventoryItemFollowsCursor(item, cursor)) : 0;
+    const start = nextIndex < 0 ? filtered.length : nextIndex;
+    const limit = normalizeMaintenanceLimit(input.limit);
+    const page = filtered.slice(start, start + limit);
+    const last = page[page.length - 1];
+    return {
+      items: page,
+      ...(start + page.length < filtered.length && last
+        ? { nextCursor: encodeCursor({ updatedAt: last.lastUpdatedAt ?? EMPTY_INVENTORY_UPDATED_AT, id: targetKey(last.target) }) }
+        : {}),
+    };
+  }
+
+  listEntries(input: MemoryV6ListEntriesInput): MemoryV6ListEntriesResult {
+    const limit = normalizeMaintenanceLimit(input.limit);
+    const cursor = decodeCursor(input.cursor);
+    const clauses = ["e.owner_type = ?", "e.owner_id = ?", "e.scope_type = ?", "e.scope_id = ?"];
+    const params: SQLInputValue[] = [input.target.owner.type, input.target.owner.id, input.target.scope.type, input.target.scope.id];
+    const states = input.states && input.states.length > 0 ? input.states : ["active"];
+    clauses.push(`e.state IN (${states.map(() => "?").join(", ")})`);
+    params.push(...states);
+    if (input.kinds && input.kinds.length > 0) {
+      clauses.push(`e.kind IN (${input.kinds.map(() => "?").join(", ")})`);
+      params.push(...input.kinds);
+    }
+    for (const tag of input.tags ?? []) {
+      clauses.push(`EXISTS (
+        SELECT 1 FROM memory_entry_tags_v6 AS filter_tag
+        WHERE filter_tag.entry_id = e.id
+          AND filter_tag.tag_type_canonical = ?
+          AND filter_tag.tag_value_canonical = ?
+      )`);
+      params.push(tag.canonicalType, tag.canonicalValue);
+    }
+    if (cursor) {
+      clauses.push("(e.updated_at < ? OR (e.updated_at = ? AND e.id < ?))");
+      params.push(cursor.updatedAt, cursor.updatedAt, cursor.id);
+    }
+    const rows = this.db.prepare(`
+      SELECT ${MEMORY_V6_ENTRY_SELECT_COLUMNS}
+      FROM memory_entries_v6 AS e
+      WHERE ${clauses.join(" AND ")}
+      ORDER BY e.updated_at DESC, e.id DESC
+      LIMIT ?
+    `).all(...params, limit + 1) as MemoryV6EntryRow[];
+    const validRows = rows.filter(hasValidTargetInvariant);
+    const page = validRows.slice(0, limit);
+    const last = page[page.length - 1];
+    return {
+      items: page.map((row) => this.rowToEntry(row)),
+      ...(validRows.length > limit && last ? { nextCursor: encodeCursor({ updatedAt: last.updated_at, id: last.id }) } : {}),
+    };
   }
 
   searchEntries(input: MemoryV6SearchInput): MemoryV6SearchResult {
@@ -1106,6 +1390,81 @@ export class MemoryV6Storage {
     }));
   }
 
+  listTagStatistics(targets: readonly MemoryV6ResolvedTarget[], sampleLimit = 0): MemoryV6TagStatistic[] {
+    const targetWhere = targetWhereSql("e", targets);
+    const rows = this.db.prepare(`
+      SELECT
+        t.tag_type,
+        t.tag_value,
+        t.tag_type_canonical,
+        t.tag_value_canonical,
+        COUNT(*) AS active_usage_count,
+        MAX(e.updated_at) AS latest_entry_updated_at
+      FROM memory_entry_tags_v6 AS t
+      INNER JOIN memory_entries_v6 AS e ON e.id = t.entry_id
+      WHERE e.state = 'active'
+        AND (${targetWhere.sql})
+      GROUP BY t.tag_type_canonical, t.tag_value_canonical
+      ORDER BY active_usage_count DESC, latest_entry_updated_at DESC, t.tag_type_canonical ASC, t.tag_value_canonical ASC
+    `).all(...targetWhere.params) as Array<MemoryV6TagRow & { active_usage_count: number; latest_entry_updated_at: string }>;
+    return rows.map((row) => {
+      const samples = sampleLimit <= 0 ? [] : this.db.prepare(`
+        SELECT e.id, e.title
+        FROM memory_entry_tags_v6 AS t
+        INNER JOIN memory_entries_v6 AS e ON e.id = t.entry_id
+        WHERE e.state = 'active'
+          AND (${targetWhere.sql})
+          AND t.tag_type_canonical = ?
+          AND t.tag_value_canonical = ?
+        ORDER BY e.updated_at DESC, e.id DESC
+        LIMIT ?
+      `).all(...targetWhere.params, row.tag_type_canonical, row.tag_value_canonical, sampleLimit) as Array<{ id: string; title: string }>;
+      return {
+        type: row.tag_type,
+        value: row.tag_value,
+        canonicalType: row.tag_type_canonical,
+        canonicalValue: row.tag_value_canonical,
+        entryCount: Number(row.active_usage_count),
+        latestUpdatedAt: row.latest_entry_updated_at,
+        samples,
+      };
+    });
+  }
+
+  previewForgetEntries(input: Pick<ForgetMemoryEntriesInput, "target" | "entryIds" | "reason" | "idempotencyKey" | "bindingIdHash" | "requestFingerprint">): MemoryV6ForgetPreviewResult[] {
+    if (input.idempotencyKey) {
+      const replay = this.resolveForgetIdempotency(
+        input.target,
+        input.idempotencyKey,
+        input.bindingIdHash ?? "",
+        input.requestFingerprint ?? buildForgetFingerprint(input),
+      );
+      if (replay) {
+        return replay.map((result) => {
+          const row = this.getEntryRow(result.entryId);
+          return {
+            ...result,
+            ...(result.status !== "not_found" && row && this.rowMatchesTarget(row, input.target)
+              ? { entry: this.rowToEntry(row) }
+              : {}),
+            ...(result.status === "not_found" ? { warning: "target_mismatch_or_not_found" as const } : {}),
+          };
+        });
+      }
+    }
+    return uniqueIds(input.entryIds).map((entryId) => {
+      const row = this.getEntryRow(entryId);
+      if (!row || !this.rowMatchesTarget(row, input.target)) {
+        return { entryId, status: "not_found", warning: "target_mismatch_or_not_found" };
+      }
+      return {
+        entryId,
+        status: row.state === "forgotten" ? "already_forgotten" : "forgotten",
+        entry: this.rowToEntry(row),
+      };
+    });
+  }
+
   forgetEntries(input: ForgetMemoryEntriesInput): MemoryV6ForgetResult[] {
     const entryIds = uniqueIds(input.entryIds);
     const updatedAt = input.now ?? nowIso();
@@ -1203,6 +1562,88 @@ export class MemoryV6Storage {
       }
 
       return results;
+    });
+  }
+
+  moveEntry(input: MemoryV6MoveEntryInput): MemoryV6MoveEntryResult {
+    const movedAt = input.now ?? nowIso();
+    const bindingIdHash = input.bindingIdHash ?? "";
+    if (!isSupportedResolvedTarget(input.from) || !isSupportedResolvedTarget(input.to) || targetKey(input.from) === targetKey(input.to)) {
+      throw new MemoryV6EntryNotFoundError(input.entryId);
+    }
+
+    return this.transaction(() => {
+      if (input.idempotencyKey) {
+        const replay = this.db.prepare(`
+          SELECT entry_id, request_fingerprint
+          FROM memory_move_events_v6
+          WHERE binding_id_hash = ?
+            AND idempotency_key = ?
+        `).get(bindingIdHash, input.idempotencyKey) as { entry_id: string; request_fingerprint: string } | undefined;
+        if (replay) {
+          if (replay.request_fingerprint !== input.requestFingerprint) {
+            throw new MemoryV6IdempotencyConflictError();
+          }
+          const replayedEntry = this.getEntry(replay.entry_id);
+          if (!replayedEntry || replayedEntry.state !== "active" || !this.rowMatchesTarget(this.getEntryRow(replay.entry_id)!, input.to)) {
+            throw new MemoryV6EntryNotFoundError(replay.entry_id);
+          }
+          return { entry: replayedEntry, moved: true };
+        }
+      }
+
+      const row = this.getEntryRow(input.entryId);
+      if (!row || row.state !== "active" || !this.rowMatchesTarget(row, input.from)) {
+        throw new MemoryV6EntryNotFoundError(input.entryId);
+      }
+      this.db.prepare(`
+        UPDATE memory_entries_v6
+        SET owner_type = ?,
+            owner_id = ?,
+            scope_type = ?,
+            scope_id = ?,
+            updated_at = ?
+        WHERE id = ?
+          AND state = 'active'
+      `).run(input.to.owner.type, input.to.owner.id, input.to.scope.type, input.to.scope.id, movedAt, input.entryId);
+      this.db.prepare(`
+        INSERT INTO memory_move_events_v6 (
+          id,
+          entry_id,
+          from_owner_type,
+          from_owner_id,
+          from_scope_type,
+          from_scope_id,
+          to_owner_type,
+          to_owner_id,
+          to_scope_type,
+          to_scope_id,
+          binding_id_hash,
+          idempotency_key,
+          request_fingerprint,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        `memory-move-${randomUUID()}`,
+        input.entryId,
+        input.from.owner.type,
+        input.from.owner.id,
+        input.from.scope.type,
+        input.from.scope.id,
+        input.to.owner.type,
+        input.to.owner.id,
+        input.to.scope.type,
+        input.to.scope.id,
+        bindingIdHash,
+        input.idempotencyKey ?? null,
+        input.requestFingerprint,
+        movedAt,
+      );
+      const entry = this.getEntry(input.entryId);
+      if (!entry || entry.state !== "active") {
+        throw new MemoryV6EntryNotFoundError(input.entryId);
+      }
+      return { entry, moved: true };
     });
   }
 

@@ -18,7 +18,7 @@ import type {
   AuditLogSummary,
 } from "./app-state.js";
 import { DiffViewer } from "./DiffViewer.js";
-import { MessageRichText } from "./MessageRichText.js";
+import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
@@ -617,6 +617,8 @@ export type SessionHeaderProps = {
   titleDraft: string;
   isRunning: boolean;
   isReadOnly?: boolean;
+  isPinned?: boolean;
+  isPinPending?: boolean;
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
@@ -624,6 +626,7 @@ export type SessionHeaderProps = {
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
   actions?: ReactNode;
+  onTogglePin?: () => void;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onTitleDraftChange: (value: string) => void;
@@ -640,6 +643,8 @@ export function SessionHeader({
   titleDraft,
   isRunning,
   isReadOnly = false,
+  isPinned = false,
+  isPinPending = false,
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
@@ -647,6 +652,7 @@ export function SessionHeader({
   workspaceActions,
   sessionFilesActions,
   actions,
+  onTogglePin,
   onOpenAuditLog,
   onOpenTerminal,
   onTitleDraftChange,
@@ -703,20 +709,39 @@ export function SessionHeader({
               </div>
             ) : null}
             {actions}
-            {showRenameButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
-                Rename
-              </button>
-            ) : null}
-            {showAuditLogButton ? (
-              <button className="drawer-toggle compact secondary" type="button" onClick={onOpenAuditLog}>
-                Audit Log
-              </button>
-            ) : null}
-            {showDeleteButton ? (
-              <button className="drawer-toggle compact danger" type="button" onClick={onDeleteSession} disabled={isRunning}>
-                Delete
-              </button>
+            {onTogglePin || showRenameButton || showAuditLogButton || showDeleteButton ? (
+              <details className="session-header-more">
+                <summary aria-label="Session actions" title="Session actions">⋯</summary>
+                <div className="session-header-more-menu" role="menu">
+                  {onTogglePin ? (
+                    <button
+                      className={`session-pin-toggle${isPinned ? " is-active" : ""}`}
+                      type="button"
+                      role="menuitem"
+                      aria-pressed={isPinned}
+                      onClick={onTogglePin}
+                      disabled={isPinPending}
+                    >
+                      {isPinPending ? "変更中..." : isPinned ? "ピン解除" : "ピン止め"}
+                    </button>
+                  ) : null}
+                  {showRenameButton ? (
+                    <button type="button" role="menuitem" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
+                      Rename
+                    </button>
+                  ) : null}
+                  {showAuditLogButton ? (
+                    <button type="button" role="menuitem" onClick={onOpenAuditLog}>
+                      Audit Log
+                    </button>
+                  ) : null}
+                  {showDeleteButton ? (
+                    <button className="danger" type="button" role="menuitem" onClick={onDeleteSession} disabled={isRunning}>
+                      Delete
+                    </button>
+                  ) : null}
+                </div>
+              </details>
             ) : null}
           </div>
         ) : null}
@@ -764,6 +789,7 @@ export type SessionChatScreenProps = {
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
   mainContent?: ReactNode;
+  recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
   isActionDockExpanded: boolean;
@@ -791,6 +817,7 @@ export function SessionChatScreen({
   isHeaderVisible,
   messageColumn,
   mainContent,
+  recoveryActions = null,
   actionDock,
   actionDockSplitter,
   isActionDockExpanded,
@@ -859,6 +886,11 @@ export function SessionChatScreen({
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}
         </div>
+        {recoveryActions ? (
+          <div className="session-recovery-actions-slot">
+            {recoveryActions}
+          </div>
+        ) : null}
       </section>
 
       {splitter}
@@ -1976,57 +2008,47 @@ export type SessionRetryBannerProps = {
     kind: "interrupted" | "failed" | "canceled";
     badge: string;
     title: string;
-    stopSummary: string;
     lastRequestText: string;
   } | null;
-  isRetryDetailsOpen: boolean;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
   isRetryDraftReplacePending: boolean;
-  onToggleDetails: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
   onCancelRetryDraftReplace: () => void;
-  onOpenPath: (path: string) => void;
 };
 
 export function SessionRetryBanner({
   retryBanner,
-  isRetryDetailsOpen,
   isRetryActionDisabled,
   isRetryEditDisabled,
   isRetryDraftReplacePending,
-  onToggleDetails,
   onResendLastMessage,
   onEditLastMessage,
   onConfirmRetryDraftReplace,
   onCancelRetryDraftReplace,
-  onOpenPath,
 }: SessionRetryBannerProps) {
   if (!retryBanner) {
     return null;
   }
 
   return (
-    <div className={`resume-banner retry-banner ${retryBanner.kind}`}>
+    <section
+      className={`resume-banner retry-banner ${retryBanner.kind}`}
+      aria-label="完了できなかった依頼の操作"
+    >
       <div className="resume-banner-head">
         <div className="resume-banner-copy">
-          <span className={`resume-banner-badge ${retryBanner.kind}`}>{retryBanner.badge}</span>
-          <p className="resume-banner-title">{retryBanner.title}</p>
+          <span className={`resume-banner-badge ${retryBanner.kind}`} title={retryBanner.title}>
+            {retryBanner.badge}
+            <span className="sr-only">: {retryBanner.title}</span>
+          </span>
         </div>
-        <button
-          className="artifact-toggle resume-banner-details-toggle"
-          type="button"
-          onClick={onToggleDetails}
-          aria-expanded={isRetryDetailsOpen}
-        >
-          {isRetryDetailsOpen ? "Hide" : "Details"}
-        </button>
       </div>
       <div className="resume-banner-actions">
         <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>
-          同じ依頼を再送
+          再送
         </button>
         <button
           className="drawer-toggle secondary"
@@ -2034,7 +2056,7 @@ export function SessionRetryBanner({
           onClick={onEditLastMessage}
           disabled={isRetryEditDisabled}
         >
-          編集して再送
+          編集
         </button>
       </div>
       {isRetryDraftReplacePending ? (
@@ -2050,19 +2072,7 @@ export function SessionRetryBanner({
           </div>
         </div>
       ) : null}
-      {isRetryDetailsOpen ? (
-        <div className="resume-banner-details">
-          <p className="resume-banner-summary">
-            <strong>停止地点</strong>
-            <span>{retryBanner.stopSummary}</span>
-          </p>
-          <div className="resume-banner-request">
-            <span>前回の依頼</span>
-            <MessageRichText text={retryBanner.lastRequestText} onOpenPath={onOpenPath} />
-          </div>
-        </div>
-      ) : null}
-    </div>
+    </section>
   );
 }
 
@@ -2101,6 +2111,7 @@ export type SessionMessageColumnProps = {
   inlinePathFeedback?: string;
   onDismissInlinePathFeedback?: () => void;
   isContentActive?: boolean;
+  messageViewMode?: MessageViewMode;
 };
 
 function getNonBlankSelectionText(selection: Selection): string | null {
@@ -2223,22 +2234,27 @@ function MessageResponseActions({
   );
 }
 
-export type SelectionCopySurfaceProps = {
+export type SelectionTextActionSurfaceProps = {
   children: ReactNode;
   className?: string;
   onCopyText: (text: string) => void;
+  onQuoteText?: (text: string) => void;
+  selectAllText?: string;
   surfaceRef?: RefObject<HTMLDivElement | null>;
 };
 
-export function SelectionCopySurface({
+export function SelectionTextActionSurface({
   children,
   className = "",
   onCopyText,
+  onQuoteText,
+  selectAllText,
   surfaceRef: externalSurfaceRef,
-}: SelectionCopySurfaceProps) {
+}: SelectionTextActionSurfaceProps) {
   const internalSurfaceRef = useRef<HTMLDivElement | null>(null);
   const surfaceRef = externalSurfaceRef ?? internalSurfaceRef;
   const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const logicalSelectAllTextRef = useRef<string | null>(null);
   const [selectionToolbar, setSelectionToolbar] = useState<{ style: CSSProperties; text: string } | null>(null);
 
   const updateSelectionToolbar = useCallback(() => {
@@ -2255,7 +2271,7 @@ export function SelectionCopySurface({
       ? commonAncestor as Element
       : commonAncestor.parentElement;
     const selectableBody = commonElement?.closest("[data-selection-copy-body='true']") ?? null;
-    const selectedText = getNonBlankSelectionText(selection);
+    const selectedText = logicalSelectAllTextRef.current ?? getNonBlankSelectionText(selection);
     if (!selectableBody || !surface.contains(selectableBody) || selectedText === null) {
       setSelectionToolbar(null);
       return;
@@ -2275,10 +2291,79 @@ export function SelectionCopySurface({
       style: clampToolbarPosition({
         anchorRect: resolvedAnchorRect,
         boundaryRect,
-        toolbarRect: toolbarRef.current?.getBoundingClientRect() ?? { width: 72, height: 32 },
+        toolbarRect: toolbarRef.current?.getBoundingClientRect() ?? {
+          width: onQuoteText ? 112 : 72,
+          height: 32,
+        },
       }),
     });
+  }, [onQuoteText, surfaceRef]);
+
+  const clearLogicalSelectAll = useCallback((clearBrowserSelection = false) => {
+    const wasLogicalSelectAll = logicalSelectAllTextRef.current !== null;
+    logicalSelectAllTextRef.current = null;
+    if (wasLogicalSelectAll && clearBrowserSelection && typeof window !== "undefined") {
+      window.getSelection()?.removeAllRanges();
+    }
   }, []);
+
+  const handleKeyDown = useCallback((event: KeyboardEvent) => {
+    const target = event.target;
+    if (
+      event.defaultPrevented ||
+      !(event.ctrlKey || event.metaKey)
+      || event.key.toLocaleLowerCase() !== "a"
+      || (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable='true']"))
+    ) {
+      return;
+    }
+
+    const surface = surfaceRef.current;
+    const selectableBody = surface?.querySelector<HTMLElement>("[data-selection-copy-body='true']") ?? null;
+    const selection = typeof window === "undefined" ? null : window.getSelection();
+    if (!surface || !selectableBody || !selection) {
+      return;
+    }
+
+    const resolvedText = selectAllText
+      ?? (typeof selectableBody.innerText === "string" ? selectableBody.innerText : selectableBody.textContent ?? "");
+    event.preventDefault();
+    surface.focus({ preventScroll: true });
+    clearLogicalSelectAll();
+    selection.removeAllRanges();
+    if (!resolvedText.trim()) {
+      setSelectionToolbar(null);
+      return;
+    }
+
+    logicalSelectAllTextRef.current = resolvedText;
+    const range = document.createRange();
+    range.selectNodeContents(selectableBody);
+    selection.addRange(range);
+    updateSelectionToolbar();
+  }, [clearLogicalSelectAll, selectAllText, surfaceRef, updateSelectionToolbar]);
+
+  const handleCopy = useCallback<ClipboardEventHandler<HTMLDivElement>>((event) => {
+    const logicalText = logicalSelectAllTextRef.current;
+    if (logicalText === null) {
+      return;
+    }
+    event.preventDefault();
+    event.clipboardData.setData("text/plain", logicalText);
+  }, []);
+
+  useEffect(() => {
+    clearLogicalSelectAll();
+    setSelectionToolbar(null);
+  }, [clearLogicalSelectAll, selectAllText]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [handleKeyDown]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
@@ -2297,12 +2382,29 @@ export function SelectionCopySurface({
   }, [updateSelectionToolbar]);
 
   return (
-    <div ref={surfaceRef} className={className}>
+    <div
+      ref={surfaceRef}
+      className={className}
+      tabIndex={0}
+      onCopy={handleCopy}
+      onPointerDownCapture={(event) => {
+        if (!(event.target instanceof HTMLElement) || !event.target.closest(".message-response-actions")) {
+          clearLogicalSelectAll();
+        }
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          clearLogicalSelectAll(true);
+          setSelectionToolbar(null);
+        }
+      }}
+    >
       <div data-selection-copy-body="true">{children}</div>
       {selectionToolbar ? (
         <MessageResponseActions
           actionText={selectionToolbar.text}
           onCopyMessageText={onCopyText}
+          onQuoteMessageText={onQuoteText}
           style={selectionToolbar.style}
           toolbarRef={toolbarRef}
         />
@@ -2342,6 +2444,7 @@ export function SessionMessageColumn({
   inlinePathFeedback = "",
   onDismissInlinePathFeedback,
   isContentActive = true,
+  messageViewMode = "preview",
 }: SessionMessageColumnProps) {
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
@@ -2352,6 +2455,7 @@ export function SessionMessageColumn({
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const wasContentActiveRef = useRef(isContentActive);
+  const previousMessageViewModeRef = useRef(messageViewMode);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
@@ -2382,15 +2486,21 @@ export function SessionMessageColumn({
   const hasFindQuery = findQuery.trim().length > 0;
   const messageRenderedSearchTexts = useMemo(
     () => (hasFindQuery
-      ? messages.map((message) => projectMessageRenderedSearchText(message.text))
+      ? messages.map((message) => (
+          messageViewMode === "source"
+            ? message.text
+            : projectMessageRenderedSearchText(message.text)
+        ))
       : []),
-    [hasFindQuery, messages],
+    [hasFindQuery, messageViewMode, messages],
   );
   const pendingRenderedSearchText = useMemo(
     () => (hasFindQuery && isRunning && hasPendingMessageText
-      ? projectMessageRenderedSearchText(pendingMessageText)
+      ? messageViewMode === "source"
+        ? pendingMessageText
+        : projectMessageRenderedSearchText(pendingMessageText)
       : ""),
-    [hasFindQuery, hasPendingMessageText, isRunning, pendingMessageText],
+    [hasFindQuery, hasPendingMessageText, isRunning, messageViewMode, pendingMessageText],
   );
   const hasPendingInlineContent =
     liveApprovalRequest !== null ||
@@ -2451,6 +2561,14 @@ export function SessionMessageColumn({
     return messages.length > 0 ? messages.length - 1 : null;
   }, [messages.length, pendingMessageGroupEndIndex]);
   const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
+
+  useEffect(() => {
+    if (previousMessageViewModeRef.current === messageViewMode) {
+      return;
+    }
+    previousMessageViewModeRef.current = messageViewMode;
+    setSelectionToolbar(null);
+  }, [messageViewMode]);
 
   const handleMessageListScroll: UIEventHandler<HTMLDivElement> = (event) => {
     onMessageListScroll(event);
@@ -2730,6 +2848,7 @@ export function SessionMessageColumn({
             <MessageRichText
               text={pendingMessageText}
               forceFullRender={findOpen && hasFindQuery}
+              displayMode={messageViewMode}
               onOpenPath={onOpenPath}
             />
           </div>
@@ -2879,6 +2998,7 @@ export function SessionMessageColumn({
                     <MessageRichText
                       text={message.text}
                       forceFullRender={findOpen && hasFindQuery}
+                      displayMode={messageViewMode}
                       onOpenPath={onOpenPath}
                     />
                   </div>
@@ -3209,7 +3329,6 @@ type SessionComposerSendabilityView = {
 };
 
 export type SessionComposerExpandedProps = {
-  retryBanner: ReactNode;
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
@@ -3220,10 +3339,14 @@ export type SessionComposerExpandedProps = {
   showAttachmentControls?: boolean;
   showCustomAgentPicker?: boolean;
   showSkillPicker?: boolean;
+  showPromptTemplateButton?: boolean;
   showAdditionalDirectoryControls?: boolean;
   showExecutionModeControls?: boolean;
+  showMessageViewModeControls?: boolean;
+  messageViewMode?: MessageViewMode;
   isAgentPickerOpen: boolean;
   isSkillPickerOpen: boolean;
+  isPromptTemplateWorkspaceOpen?: boolean;
   isAdditionalDirectoryListOpen: boolean;
   selectedCustomAgentLabel: string;
   selectedCustomAgentTitle: string;
@@ -3261,6 +3384,7 @@ export type SessionComposerExpandedProps = {
   onPickSessionImage?: () => void;
   onToggleAgentPicker: () => void;
   onToggleSkillPicker: () => void;
+  onOpenPromptTemplates?: () => void;
   onAddAdditionalDirectory: () => void;
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
@@ -3280,10 +3404,10 @@ export type SessionComposerExpandedProps = {
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeModel: (value: string) => void;
   onChangeReasoningEffort: (value: string) => void;
+  onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
 
 export function SessionComposerExpanded({
-  retryBanner,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
@@ -3294,10 +3418,14 @@ export function SessionComposerExpanded({
   showAttachmentControls = true,
   showCustomAgentPicker = true,
   showSkillPicker = true,
+  showPromptTemplateButton = false,
   showAdditionalDirectoryControls = true,
   showExecutionModeControls = true,
+  showMessageViewModeControls = false,
+  messageViewMode = "preview",
   isAgentPickerOpen,
   isSkillPickerOpen,
+  isPromptTemplateWorkspaceOpen = false,
   isAdditionalDirectoryListOpen,
   selectedCustomAgentLabel,
   selectedCustomAgentTitle,
@@ -3335,6 +3463,7 @@ export function SessionComposerExpanded({
   onPickSessionImage = () => {},
   onToggleAgentPicker,
   onToggleSkillPicker,
+  onOpenPromptTemplates = () => {},
   onAddAdditionalDirectory,
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
@@ -3354,6 +3483,7 @@ export function SessionComposerExpanded({
   onChangeCodexSandboxMode,
   onChangeModel,
   onChangeReasoningEffort,
+  onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const skillListRef = useRef<HTMLDivElement | null>(null);
@@ -3389,7 +3519,9 @@ export function SessionComposerExpanded({
     showAttachmentControls ||
     showCustomAgentPicker ||
     showSkillPicker ||
+    showPromptTemplateButton ||
     showAdditionalDirectoryControls ||
+    showMessageViewModeControls ||
     showJumpToBottom ||
     !!modeLabel ||
     !!chatNotice ||
@@ -3397,7 +3529,6 @@ export function SessionComposerExpanded({
 
   return (
     <div className="composer">
-      {retryBanner}
       {showComposerToolbar ? (
         <div className="composer-attachments-toolbar">
           {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
@@ -3430,6 +3561,28 @@ export function SessionComposerExpanded({
               onPickSessionFolder={onPickSessionFolder}
               onPickSessionImage={onPickSessionImage}
             />
+          ) : null}
+          {showPromptTemplateButton ? (
+            <button
+              className={`drawer-toggle compact secondary composer-skill-button${isPromptTemplateWorkspaceOpen ? " is-open" : ""}`}
+              type="button"
+              onClick={() => {
+                setIsAttachmentMenuOpen(false);
+                if (isAgentPickerOpen) {
+                  onToggleAgentPicker();
+                }
+                if (isSkillPickerOpen) {
+                  onToggleSkillPicker();
+                }
+                if (isAdditionalDirectoryListOpen) {
+                  onToggleAdditionalDirectoryList();
+                }
+                onOpenPromptTemplates();
+              }}
+              aria-pressed={isPromptTemplateWorkspaceOpen}
+            >
+              Template
+            </button>
           ) : null}
           {showCustomAgentPicker ? (
             <div className="composer-agent-toolbar">
@@ -3502,15 +3655,6 @@ export function SessionComposerExpanded({
               />
             </div>
           ) : null}
-          {showJumpToBottom ? (
-            <button
-              className="drawer-toggle compact secondary message-jump-bottom-button"
-              type="button"
-              onClick={onJumpToBottom}
-            >
-              末尾へ移動
-            </button>
-          ) : null}
           {isRunning ? (
               <button
                 className="drawer-toggle compact danger composer-toolbar-cancel-button"
@@ -3520,6 +3664,39 @@ export function SessionComposerExpanded({
               >
                 Cancel
               </button>
+          ) : null}
+          {showJumpToBottom || showMessageViewModeControls ? (
+            <div className="composer-toolbar-view-actions">
+              {showJumpToBottom ? (
+                <button
+                  className="drawer-toggle compact secondary message-jump-bottom-button"
+                  type="button"
+                  onClick={onJumpToBottom}
+                >
+                  末尾へ移動
+                </button>
+              ) : null}
+              {showMessageViewModeControls ? (
+                <div className="composer-message-view-mode" role="group" aria-label="Message display mode">
+                  <button
+                    className="composer-message-view-mode-button"
+                    type="button"
+                    aria-pressed={messageViewMode === "preview"}
+                    onClick={() => onMessageViewModeChange("preview")}
+                  >
+                    Preview
+                  </button>
+                  <button
+                    className="composer-message-view-mode-button"
+                    type="button"
+                    aria-pressed={messageViewMode === "source"}
+                    onClick={() => onMessageViewModeChange("source")}
+                  >
+                    Source
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

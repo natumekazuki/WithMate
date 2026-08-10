@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 
 import {
   createMemoryAppendResponse,
+  createMemoryAuditResponse,
   createMemoryErrorResponse,
   createMemoryExportFilesResponse,
   createMemoryFileUsageResponse,
@@ -9,9 +10,13 @@ import {
   createMemoryGetEntryResponse,
   createMemoryGetFileResponse,
   createMemoryListCharactersResponse,
+  createMemoryListEntriesResponse,
   createMemoryListTagsResponse,
+  createMemoryListTargetsResponse,
+  createMemoryMoveEntryResponse,
   createMemorySearchResponse,
   type MemoryAppendResponse,
+  type MemoryAuditResponse,
   type MemoryErrorResponse,
   type MemoryExportFilesResponse,
   type MemoryFileUsageResponse,
@@ -19,22 +24,31 @@ import {
   type MemoryGetEntryResponse,
   type MemoryGetFileResponse,
   type MemoryListCharactersResponse,
+  type MemoryListEntriesResponse,
   type MemoryListTagsResponse,
+  type MemoryListTargetsResponse,
+  type MemoryTargetInventoryItem,
+  type MemoryMoveEntryResponse,
   type MemorySearchResponse,
 } from "../src/memory-v6/memory-response-contract.js";
 import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
-import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError } from "../src/memory-v6/memory-contract.js";
+import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryMoveEntryRequest, MemoryTargetSelector } from "../src/memory-v6/memory-contract.js";
 import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src/provider-settings-state.js";
 import {
   validateMemoryAppendRequest,
+  validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
   validateMemoryForgetRequest,
   validateMemoryGetEntryRequest,
   validateMemoryGetFileRequest,
   validateMemoryListTagsRequest,
+  validateMemoryListEntriesRequest,
+  validateMemoryListTargetsRequest,
+  validateMemoryMoveEntryRequest,
   validateMemorySearchRequest,
 } from "../src/memory-v6/memory-validation.js";
-import type { MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
+import { toMemoryEntrySummary, type MemoryEntryDetail } from "../src/memory-v6/memory-state.js";
+import { buildMemoryTargetAudit } from "./memory-v6-audit.js";
 import { resolveMemoryV6Target, type MemoryV6TargetResolverDeps } from "./memory-v6-context-resolver.js";
 import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import { requireMemoryPermission, type MemoryV6Principal } from "./memory-v6-permission.js";
@@ -44,6 +58,7 @@ import {
   MemoryV6IdempotencyConflictError,
   type MemoryV6AppendProtectedObjectInput,
   type MemoryV6ProtectedObjectExportMetadata,
+  type MemoryV6TargetInventoryItem,
   type MemoryV6Storage,
 } from "./memory-v6-storage.js";
 import {
@@ -111,6 +126,55 @@ function sameTarget(left: MemoryV6ResolvedTarget, right: MemoryV6ResolvedTarget)
     && left.owner.id === right.owner.id
     && left.scope.type === right.scope.type
     && left.scope.id === right.scope.id;
+}
+
+function selectorForResolvedTarget(target: MemoryV6ResolvedTarget): MemoryTargetSelector {
+  if (target.owner.type === "user" && target.scope.type === "global") {
+    return { owner: "user", scope: "global" };
+  }
+  if (target.owner.type === "project" && target.scope.type === "project") {
+    return { owner: "project", scope: "project", project: { type: "id", id: target.owner.id } };
+  }
+  if (target.owner.type === "character" && target.scope.type === "character") {
+    return { owner: "character", scope: "character", character: { type: "id", id: target.owner.id } };
+  }
+  if (target.owner.type === "character" && target.scope.type === "project") {
+    return {
+      owner: "character",
+      scope: "project",
+      character: { type: "id", id: target.owner.id },
+      project: { type: "id", id: target.scope.id },
+    };
+  }
+  throw new Error("Unsupported resolved Memory target.");
+}
+
+function toTargetInventoryItem(item: MemoryV6TargetInventoryItem): MemoryTargetInventoryItem {
+  const selector = selectorForResolvedTarget(item.target);
+  return {
+    target: selector,
+    owner: selector.owner,
+    scope: selector.scope,
+    ...(item.project ? { project: { ...item.project } } : {}),
+    ...(item.character ? { character: { ...item.character } } : {}),
+    entryCount: item.entryCount,
+    tagCount: item.tagCount,
+    lastUpdatedAt: item.lastUpdatedAt,
+  };
+}
+
+function buildMoveFingerprint(input: {
+  request: MemoryMoveEntryRequest;
+  from: MemoryV6ResolvedTarget;
+  to: MemoryV6ResolvedTarget;
+}): string {
+  return fingerprint({
+    operation: "move_entry",
+    entryId: input.request.entryId,
+    from: input.from,
+    to: input.to,
+    sourceMessageId: input.request.sourceMessageId ?? null,
+  });
 }
 
 function toMemoryErrorResponse(error: MemoryError): MemoryErrorResponse {
@@ -231,6 +295,142 @@ export class MemoryV6Service {
       ...this.deps.storage.getFileUsage(),
       ...(largestEntries === undefined ? {} : { largestEntries }),
     });
+  }
+
+  listTargets(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryListTargetsResponse> {
+    const permissionError = requirePrincipalPermission(principal, "memory.list_targets");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
+    }
+    const validated = validateMemoryListTargetsRequest(request);
+    if (!validated.ok) {
+      return toMemoryErrorResponse(validated.error);
+    }
+    let projectId: string | undefined;
+    if (validated.value.project) {
+      const resolved = resolveMemoryV6Target({ owner: "project", scope: "project", project: validated.value.project }, principal, this.deps);
+      if (!resolved.ok) {
+        return toMemoryErrorResponse(resolved.error);
+      }
+      projectId = resolved.target.owner.id;
+    }
+    let characterId: string | undefined;
+    if (validated.value.character) {
+      const resolved = resolveMemoryV6Target({ owner: "character", scope: "character", character: validated.value.character }, principal, this.deps);
+      if (!resolved.ok) {
+        return toMemoryErrorResponse(resolved.error);
+      }
+      characterId = resolved.target.owner.id;
+    }
+    const result = this.deps.storage.listTargets({
+      ownerType: validated.value.owner,
+      scopeType: validated.value.scope,
+      projectId,
+      characterId,
+      includeEmpty: validated.value.includeEmpty,
+      limit: validated.value.limit,
+      cursor: validated.value.cursor,
+    });
+    return createMemoryListTargetsResponse(result.items.map(toTargetInventoryItem), result.nextCursor);
+  }
+
+  listEntries(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryListEntriesResponse> {
+    const permissionError = requirePrincipalPermission(principal, "memory.list_entries");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
+    }
+    const validated = validateMemoryListEntriesRequest(request);
+    if (!validated.ok) {
+      return toMemoryErrorResponse(validated.error);
+    }
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    if (!resolved.ok) {
+      return toMemoryErrorResponse(resolved.error);
+    }
+    const result = this.deps.storage.listEntries({
+      target: resolved.target,
+      states: validated.value.states,
+      kinds: validated.value.kinds,
+      tags: validated.value.tags,
+      limit: validated.value.limit,
+      cursor: validated.value.cursor,
+    });
+    return createMemoryListEntriesResponse(result.items.map((entry) => ({
+      ...toMemoryEntrySummary(entry),
+      ...(validated.value.includeBody ? { body: entry.body } : {}),
+      supersedes: [...entry.supersedes],
+      supersededBy: entry.supersededBy,
+    })), result.nextCursor);
+  }
+
+  audit(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryAuditResponse> {
+    const permissionError = requirePrincipalPermission(principal, "memory.audit");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
+    }
+    const validated = validateMemoryAuditRequest(request);
+    if (!validated.ok) {
+      return toMemoryErrorResponse(validated.error);
+    }
+    const generatedAt = new Date().toISOString();
+    const staleBefore = validated.value.staleBefore
+      ?? new Date(Date.parse(generatedAt) - 90 * 24 * 60 * 60 * 1_000).toISOString();
+    let inventoryItems: MemoryV6TargetInventoryItem[];
+    let nextCursor: string | undefined;
+    if (validated.value.allTargets) {
+      const inventory = this.deps.storage.listTargets({ limit: validated.value.limit, cursor: validated.value.cursor });
+      inventoryItems = inventory.items;
+      nextCursor = inventory.nextCursor;
+    } else {
+      inventoryItems = [];
+      for (const selector of validated.value.targets ?? []) {
+        const resolved = resolveMemoryV6Target(selector, principal, this.deps);
+        if (!resolved.ok) {
+          return toMemoryErrorResponse(resolved.error);
+        }
+        const inventory = this.deps.storage.listTargets({
+          ownerType: resolved.target.owner.type,
+          scopeType: resolved.target.scope.type,
+          projectId: resolved.target.scope.type === "project" ? resolved.target.scope.id : undefined,
+          characterId: resolved.target.owner.type === "character" ? resolved.target.owner.id : undefined,
+          includeEmpty: true,
+          limit: 50,
+        }).items.find((item) => sameTarget(item.target, resolved.target));
+        inventoryItems.push(inventory ?? {
+          target: resolved.target,
+          entryCount: 0,
+          tagCount: 0,
+          lastUpdatedAt: null,
+        });
+      }
+    }
+
+    const targets = inventoryItems.map((inventory) => {
+      const entries: MemoryEntryDetail[] = [];
+      let cursor: string | undefined;
+      do {
+        const page = this.deps.storage.listEntries({ target: inventory.target, states: ["active"], limit: 50, cursor });
+        entries.push(...page.items);
+        cursor = page.nextCursor;
+      } while (cursor);
+      return buildMemoryTargetAudit({
+        target: toTargetInventoryItem(inventory),
+        resolvedTarget: inventory.target,
+        entries,
+        tagStatistics: this.deps.storage.listTagStatistics([inventory.target]),
+        staleBefore,
+      });
+    });
+    return createMemoryAuditResponse({ generatedAt, staleBefore, targets, ...(nextCursor ? { nextCursor } : {}) });
   }
 
   search(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemorySearchResponse> {
@@ -434,6 +634,15 @@ export class MemoryV6Service {
       resolvedTargets.push(resolved.target);
     }
 
+    if (validated.value.withCounts) {
+      return createMemoryListTagsResponse(this.deps.storage.listTagStatistics(resolvedTargets, validated.value.sampleLimit ?? 0).map((tag) => ({
+        type: tag.type,
+        value: tag.value,
+        entryCount: tag.entryCount,
+        latestUpdatedAt: tag.latestUpdatedAt,
+        ...(tag.samples.length > 0 ? { samples: tag.samples } : {}),
+      })));
+    }
     return createMemoryListTagsResponse(this.deps.storage.listTags(resolvedTargets));
   }
 
@@ -503,6 +712,7 @@ export class MemoryV6Service {
           preview: validated.value.preview,
           tags: validated.value.tags,
           supersedes: validated.value.supersedes,
+          mutationReason: validated.value.mutationReason,
           idempotencyKey: validated.value.idempotencyKey,
           bindingIdHash: bindingIdHashForPrincipal(principal),
           ...(hasFiles ? {
@@ -599,6 +809,21 @@ export class MemoryV6Service {
     }
 
     try {
+      if (validated.value.dryRun) {
+        const results = this.deps.storage.previewForgetEntries({
+          target: resolved.target,
+          entryIds: validated.value.entryIds,
+          reason: validated.value.reason,
+          idempotencyKey: validated.value.idempotencyKey,
+          bindingIdHash: bindingIdHashForPrincipal(principal),
+        }).map((result) => ({
+          entryId: result.entryId,
+          status: result.status,
+          ...(result.entry ? { entry: toMemoryEntrySummary(result.entry) } : {}),
+          ...(result.warning ? { warning: result.warning } : {}),
+        }));
+        return createMemoryForgetResponse(results, { dryRun: true });
+      }
       const results = this.deps.storage.forgetEntries({
         target: resolved.target,
         entryIds: validated.value.entryIds,
@@ -608,6 +833,53 @@ export class MemoryV6Service {
         sessionId: null,
       });
       return createMemoryForgetResponse(results);
+    } catch (error) {
+      return storageErrorResponse(error);
+    }
+  }
+
+  moveEntry(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryMoveEntryResponse> {
+    const permissionError = requirePrincipalPermission(principal, "memory.move_entry");
+    if (permissionError) {
+      return permissionError;
+    }
+    if (!principal) {
+      throw new Error("Memory principal permission check failed.");
+    }
+    const validated = validateMemoryMoveEntryRequest(request);
+    if (!validated.ok) {
+      return toMemoryErrorResponse(validated.error);
+    }
+    const from = resolveMemoryV6Target(validated.value.from, principal, this.deps);
+    if (!from.ok) {
+      return toMemoryErrorResponse(from.error);
+    }
+    const to = resolveMemoryV6Target(validated.value.to, principal, this.deps);
+    if (!to.ok) {
+      return toMemoryErrorResponse(to.error);
+    }
+    if (sameTarget(from.target, to.target)) {
+      return toMemoryErrorResponse({
+        code: "MEMORY_INVALID_FIELD",
+        message: "from and to must resolve to different targets.",
+        field: "to",
+      });
+    }
+    try {
+      const result = this.deps.storage.moveEntry({
+        entryId: validated.value.entryId,
+        from: from.target,
+        to: to.target,
+        bindingIdHash: bindingIdHashForPrincipal(principal),
+        idempotencyKey: validated.value.idempotencyKey,
+        requestFingerprint: buildMoveFingerprint({ request: validated.value, from: from.target, to: to.target }),
+      });
+      return createMemoryMoveEntryResponse({
+        entry: result.entry,
+        moved: result.moved,
+        from: validated.value.from,
+        to: validated.value.to,
+      });
     } catch (error) {
       return storageErrorResponse(error);
     }
@@ -640,6 +912,7 @@ function buildAppendRequestFingerprint(input: {
       appMessageId: null,
     },
     supersedes: [...(input.request.supersedes ?? [])].sort(),
+    mutationReason: input.request.mutationReason ?? "",
     files: (input.request.files ?? []).map((file) => ({
       path: file.path,
       summary: file.summary,

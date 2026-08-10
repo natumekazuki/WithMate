@@ -2,7 +2,7 @@ import { basename, dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { Session } from "../src/session-state.js";
+import type { Session, SessionSummary } from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
   CharacterCatalogEntry,
@@ -38,6 +38,7 @@ import { SessionStorageV3 } from "./session-storage-v3.js";
 import { SessionStorageV6 } from "./session-storage-v6.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
+import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
 
 type ClosableStore = {
   close(): void;
@@ -64,6 +65,9 @@ export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead;
+export type SessionPinStorage = {
+  setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
+};
 
 export type AuditLogStorageRead = AwaitableStorageMethods<
   AuditLogStorage,
@@ -73,7 +77,9 @@ export type AuditLogStorageRead = AwaitableStorageMethods<
   | "getSessionAuditLogDetail"
   | "getSessionAuditLogDetailSection"
   | "getSessionAuditLogOperationDetail"
-> & Pick<AuditLogStorage, "close">;
+> & Pick<AuditLogStorage, "close"> & {
+  getConversationTimingSnapshot?(sessionId: string, observedAt: string): Awaitable<ConversationTimingStorageSnapshot>;
+};
 export type AuditLogStorageWrite = AwaitableStorageMethods<
   AuditLogStorage,
   "createAuditLog" | "updateAuditLog" | "clearAuditLogs"
@@ -99,7 +105,6 @@ export type CharacterStorageAccess = {
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
   updateCharacterDefinition(input: UpdateCharacterDefinitionInput): CharacterDetail;
   archiveCharacter(characterId: string): CharacterCatalogEntry;
-  setDefaultCharacter(characterId: string): CharacterCatalogEntry;
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput): CharacterDetail | null;
   createRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
   getCharacterDirectory(characterId: string): string;
@@ -398,10 +403,6 @@ class LegacyCharacterStorage implements CharacterStorageAccess {
   }
 
   archiveCharacter(): CharacterCatalogEntry {
-    throw new Error("Character catalog は legacy DB では利用できません。");
-  }
-
-  setDefaultCharacter(): CharacterCatalogEntry {
     throw new Error("Character catalog は legacy DB では利用できません。");
   }
 

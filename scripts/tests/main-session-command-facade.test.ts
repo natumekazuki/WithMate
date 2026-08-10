@@ -89,6 +89,10 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
           calls.push(`update:${session.id}`);
           return session as never;
         },
+        setSessionPinned(sessionId, isPinned) {
+          calls.push(`pin:${sessionId}:${isPinned}`);
+          return { id: sessionId, isPinned } as never;
+        },
         deleteSession(sessionId) {
           calls.push(`delete:${sessionId}`);
           return {
@@ -142,12 +146,14 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     approvalMode: "untrusted",
   });
   facade.updateSession({ id: "s-1" } as never);
+  await facade.setSessionPinned({ sessionId: " s-1 ", isPinned: true });
   await facade.deleteSession("s-1");
   facade.cancelSessionRun("s-1");
 
   assert.deepEqual(calls, [
     "create:launch-test",
     "update:s-1",
+    "pin:s-1:true",
     "delete:s-1",
     "dismiss-notification:s-1",
     "cleanup-files:s-1",

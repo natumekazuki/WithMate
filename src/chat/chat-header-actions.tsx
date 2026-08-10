@@ -37,6 +37,8 @@ export type LiveSessionHeaderPropsInput = {
   titleDraft: string;
   isRunning: boolean;
   isReadOnly?: boolean;
+  isPinned?: boolean;
+  isPinPending?: boolean;
   isAuxiliaryMode?: boolean;
   canViewAuxiliaryAuditLog?: boolean;
   canDeleteSession: boolean;
@@ -52,6 +54,7 @@ export type LiveSessionHeaderPropsInput = {
   onCancelTitleEdit: () => void;
   onStartTitleEdit: () => void;
   onDeleteSession: () => void;
+  onTogglePin?: () => void;
   onOpenWorkspaceExplorer: () => void;
   isWorkspaceExplorerDisabled?: boolean;
   actions?: ReactNode;
@@ -125,6 +128,8 @@ export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput):
     titleDraft: input.titleDraft,
     isRunning: input.isRunning,
     isReadOnly: input.isReadOnly,
+    isPinned: input.isPinned,
+    isPinPending: input.isPinPending,
     ...resolveChatHeaderVisibility({
       isAuxiliaryMode: input.isAuxiliaryMode,
       canViewAuxiliaryAuditLog: input.canViewAuxiliaryAuditLog,
@@ -144,6 +149,7 @@ export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput):
     onCancelTitleEdit: input.onCancelTitleEdit,
     onStartTitleEdit: input.onStartTitleEdit,
     onDeleteSession: input.onDeleteSession,
+    onTogglePin: input.onTogglePin,
     actions: input.actions,
     workspaceActions: createWorkspaceExplorerAction({
       disabled: input.isWorkspaceExplorerDisabled,

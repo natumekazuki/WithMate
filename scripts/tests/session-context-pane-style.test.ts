@@ -52,6 +52,19 @@ test("Artifact result details は長い path と本文を折り返せる", async
   );
 });
 
+test("Session header menu は固定高の Header Dock に切られず中央領域へ重ねて表示する", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-header-dock-slot\s*{\s*position:\s*relative;\s*z-index:\s*30;\s*overflow:\s*visible;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-action-dock-slot\s*{\s*overflow:\s*hidden;\s*}/,
+  );
+});
+
 test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉する", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
@@ -104,7 +117,7 @@ test("splitter が選んだ優先軸に応じて side pane または上下 dock 
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 326px\)/,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 342px\)/,
   );
   assert.match(chatWindowSource, /session-action-dock-content session-action-dock-expanded-content/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
@@ -117,6 +130,30 @@ test("splitter が選んだ優先軸に応じて side pane または上下 dock 
 test("splitter の枠は各 track に収まり、modal より背面に残る", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\s*{[\s\S]*?--session-dock-splitter-size:\s*20px;[\s\S]*?grid-template-rows:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(280px,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\);/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\.layout-priority-side-pane\s*{[\s\S]*?grid-template-columns:[\s\S]*?var\(--session-dock-splitter-size\)[\s\S]*?minmax\(0,\s*1fr\)[\s\S]*?var\(--session-dock-splitter-size\);/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter\.edge-left,[\s\S]*?\.session-dock-splitter\.edge-right\s*{[\s\S]*?width:\s*var\(--session-dock-splitter-size\);/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter\.edge-top,[\s\S]*?\.session-dock-splitter\.edge-bottom\s*{[\s\S]*?height:\s*var\(--session-dock-splitter-size\);/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter::before\s*{[\s\S]*?inset:\s*8px;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-dock-splitter\.edge-top::before,[\s\S]*?\.session-dock-splitter\.edge-bottom::before\s*{[\s\S]*?inset:\s*8px;/,
+  );
   assert.match(
     stylesSource,
     /\.session-dock-splitter-chevron\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?width:\s*12px;[\s\S]*?height:\s*24px;/,
@@ -150,7 +187,7 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
   assert.match(stylesSource, /\.session-chat-layout\.is-header-visible\s*{[\s\S]*?--session-header-dock-row-height:\s*64px;/);
   assert.match(
     stylesSource,
-    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 326px\)/,
+    /\.session-chat-layout\.is-action-dock-expanded\s*{[\s\S]*?--session-action-dock-row-height:\s*max\([\s\S]*?min\([\s\S]*?var\(--session-action-dock-height, 320px\),[\s\S]*?40dvh,[\s\S]*?calc\(100dvh - var\(--session-header-dock-row-height\) - 342px\)/,
   );
   assert.match(chatWindowSource, /session-action-dock-content session-action-dock-expanded-content/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
@@ -203,6 +240,15 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
   assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
 });
 
+test("個別の file preview window は preview surface を外周まで広げる", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.file-preview-window-page\s*>\s*\.session-file-preview\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
+  );
+});
+
 test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast色を使う", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
@@ -213,6 +259,14 @@ test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast�
   assert.match(
     stylesSource,
     /\.session-file-markdown a,\s*\.session-file-markdown a:visited\s*{\s*color:\s*var\(--session-file-link\);\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown \.message-inline-code\s*{\s*background:\s*rgba\(255,\s*255,\s*255,\s*0\.08\);\s*color:\s*var\(--ink\);\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-file-markdown a \.message-inline-code\s*{\s*color:\s*inherit;\s*}/,
   );
   assert.match(
     stylesSource,

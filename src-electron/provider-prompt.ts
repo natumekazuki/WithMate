@@ -1,6 +1,62 @@
 import type { RunSessionTurnInput, ProviderPromptComposition } from "./provider-runtime.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { buildCharacterRuntimePromptSection } from "../src/character/character-runtime-snapshot.js";
+import type { ConversationTimingContext } from "./conversation-timing.js";
+
+function formatTimingDuration(durationMs: number): string {
+  const totalMinutes = Math.floor(durationMs / 60_000);
+  if (totalMinutes <= 0) {
+    return durationMs > 0 ? "less than 1 minute" : "0 minutes";
+  }
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) {
+    parts.push(`${days} ${days === 1 ? "day" : "days"}`);
+  }
+  if (hours > 0) {
+    parts.push(`${hours} ${hours === 1 ? "hour" : "hours"}`);
+  }
+  if (minutes > 0 && days === 0) {
+    parts.push(`${minutes} ${minutes === 1 ? "minute" : "minutes"}`);
+  }
+  return parts.slice(0, 2).join(" ");
+}
+
+function buildConversationTimingSection(context?: ConversationTimingContext): string {
+  if (!context) {
+    return "";
+  }
+  const dayLabel = `${context.observedDayOfWeek[0]?.toUpperCase() ?? ""}${context.observedDayOfWeek.slice(1)}`;
+  const timingLines = [
+    `- Observed local time: ${context.observedAt} (${dayLabel})`,
+    context.currentSession
+      ? `- Previous completed exchange in this session: ${context.currentSession.lastCompletedAt} (${formatTimingDuration(context.currentSession.elapsedMs)} ago)`
+      : "",
+    context.sameCharacterOtherSession
+      ? `- Latest completed exchange with this character in another session: ${context.sameCharacterOtherSession.lastCompletedAt} (${formatTimingDuration(context.sameCharacterOtherSession.elapsedMs)} ago)`
+      : "",
+    context.sameCharacterSharedWork && context.sameCharacterSharedWork.totalCompletedTurnDurationMs > 0
+      ? `- Completed turn execution time with this character: ${formatTimingDuration(context.sameCharacterSharedWork.todayCompletedTurnDurationMs)} today; ${formatTimingDuration(context.sameCharacterSharedWork.totalCompletedTurnDurationMs)} total`
+      : "",
+  ].filter(Boolean);
+
+  return [
+    "# Conversation Timing",
+    "",
+    "Use this app-observed timing metadata only as a soft signal for conversational pacing and familiarity.",
+    "",
+    "- Use same-session timing to decide whether to continue directly or briefly restore context. Other-session timing may adjust familiarity, but does not reveal what was discussed there.",
+    "- Use local time only as a weak signal for time-appropriate greetings and conversational tone. Do not infer or judge the user's location, schedule, sleep, work, holidays, or lifestyle.",
+    "- Work time is a rough measure of completed work with this character. It is wall-clock turn runtime, including provider execution, tools, and retries; it is not continuous presence or conversation time.",
+    "- Prioritize the current user input and tone. Do not routinely quote timing values, guilt the user about an absence, or invent events during a gap.",
+    "",
+    "Observed values:",
+    "",
+    ...timingLines,
+  ].join("\n");
+}
 
 function buildCharacterOutputBoundarySection(enabled: boolean): string {
   if (!enabled) {
@@ -13,6 +69,38 @@ function buildCharacterOutputBoundarySection(enabled: boolean): string {
     "Character 定義は、ユーザーへ返す自然言語の話し方・温度・反応にだけ使ってください。",
     "コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary には、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜないでください。",
     "成果物は repository instruction、既存文体、対象ファイルの目的を優先してください。",
+  ].join("\n");
+}
+
+function buildCharacterAffectContextSection(context: RunSessionTurnInput["characterContext"]): string {
+  if (!context) {
+    return "";
+  }
+  const snapshot = {
+    characterAffect: {
+      effective: context.affect.effective,
+      version: context.affect.version,
+      updatedAt: context.affect.updatedAt,
+      scope: context.scope,
+    },
+    relatedCharacterMemory: context.memory.items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      preview: item.preview,
+      tags: item.tags,
+      updatedAt: item.updatedAt,
+    })),
+    baselineRef: context.baseline,
+  };
+  return [
+    "# Character Affect Context",
+    "",
+    "This is a versioned, ephemeral state envelope for the current turn. It does not amend the Character Definition.",
+    "Use it only to adjust the Character's response tone and relevant recall. Do not present it as a diagnosis of the user or expose internal state unnecessarily.",
+    "",
+    "```json",
+    JSON.stringify(snapshot, null, 2),
+    "```",
   ].join("\n");
 }
 
@@ -44,12 +132,18 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   const toolCallPresenceBody = buildToolCallPresenceSection(
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
-  const systemPromptBody = [characterPromptBody, outputBoundaryBody, toolCallPresenceBody]
+  const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
+  const systemPromptBody = [characterPromptBody, characterAffectContextBody, outputBoundaryBody, toolCallPresenceBody]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
   const inputSections: string[] = [];
   const userMessageText = input.userMessage.trim();
+  const conversationTimingBody = buildConversationTimingSection(input.conversationTimingContext);
+
+  if (conversationTimingBody) {
+    inputSections.push(conversationTimingBody);
+  }
 
   if (userMessageText) {
     inputSections.push(`# User Input\n\n${userMessageText}`);

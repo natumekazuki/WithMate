@@ -182,6 +182,7 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     taskTitle: `benchmark session ${sessionIndex}`,
     status: "saved",
     updatedAt: nowIso(sessionIndex),
+    isPinned: false,
     provider: "codex",
     catalogRevision: 1,
     workspaceLabel: "benchmark",
