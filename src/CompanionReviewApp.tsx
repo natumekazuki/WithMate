@@ -716,6 +716,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const activeComposerText = activeAuxiliarySession?.composerDraft ?? composerText;
   const selectedSessionLiveRun =
     activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null;
+  const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
   const projectedAuxiliarySessions = useMessageListAuxiliarySessions(
     closedAuxiliarySessions,
     activeAuxiliarySession,
@@ -728,9 +729,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           projectedAuxiliarySessions,
           activeRunSessionId,
           snapshot?.session.id,
+          liveRunAssistantText,
         )
         : 0,
-    [activeRunSessionId, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
+    [activeRunSessionId, liveRunAssistantText, projectedAuxiliarySessions, snapshot?.session.id, snapshot?.session.messages],
   );
   const hasPersistedLiveAssistantBridge = useMemo(
     () =>
@@ -750,7 +752,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       return null;
     }
 
-    const liveRunAssistantText = selectedSessionLiveRun?.assistantText ?? "";
     const liveThreadId = selectedSessionLiveRun?.threadId ?? null;
     const bridgeMessageIndex =
       liveAssistantBridge?.sessionId === activeRunSessionId &&
@@ -782,7 +783,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     liveAssistantBridge,
     liveAssistantMessageIndex,
     selectedSessionLiveRun,
-    selectedSessionLiveRun?.assistantText,
+    liveRunAssistantText,
     selectedSessionLiveRun?.threadId,
   ]);
   const messageListProjection = useMemo(

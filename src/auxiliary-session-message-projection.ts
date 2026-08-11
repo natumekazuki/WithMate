@@ -260,13 +260,21 @@ export function resolveLiveAssistantMessageIndex(
   auxiliarySessions: AuxiliaryMessageLookupSession[],
   targetSessionId: string,
   sessionId = "session",
+  assistantText = "",
 ): number {
-  if (targetSessionId === sessionId) {
-    return sessionMessages.length;
+  const targetMessages = targetSessionId === sessionId
+    ? sessionMessages
+    : auxiliarySessions.find((auxiliarySession) => auxiliarySession.id === targetSessionId)?.messages ?? [];
+  const persistedTailIndex = targetMessages.length - 1;
+  const persistedTail = targetMessages[persistedTailIndex];
+  if (
+    assistantText.length > 0 &&
+    persistedTail?.role === "assistant"
+  ) {
+    return persistedTailIndex;
   }
 
-  const targetAuxiliarySession = auxiliarySessions.find((auxiliarySession) => auxiliarySession.id === targetSessionId);
-  return targetAuxiliarySession?.messages.length ?? 0;
+  return targetMessages.length;
 }
 
 export function shouldProjectLiveAssistantBridge({

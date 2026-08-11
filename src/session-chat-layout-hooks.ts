@@ -30,6 +30,7 @@ const SESSION_ACTION_DOCK_MIN_HEIGHT = 260;
 const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.4;
 const SESSION_CENTRAL_SURFACE_MIN_HEIGHT = 280;
 const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
+const SESSION_MESSAGE_BOTTOM_EPSILON = 1;
 
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
@@ -432,6 +433,7 @@ export function useSessionMessageListFollowing({
   const messageListSignatureRef = useRef("");
   const messageListOwnerKeyRef = useRef<string | null>(null);
   const messageListEnabledRef = useRef(enabled);
+  const previousMessageListScrollTopRef = useRef<number | null>(null);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
 
   const scrollMessageListToBottom = useCallback(() => {
@@ -441,6 +443,10 @@ export function useSessionMessageListFollowing({
     }
 
     scrollMessageListElementToBottom(messageListElement);
+    previousMessageListScrollTopRef.current = Math.max(
+      0,
+      messageListElement.scrollHeight - messageListElement.clientHeight,
+    );
   }, []);
 
   useLayoutEffect(() => {
@@ -453,6 +459,7 @@ export function useSessionMessageListFollowing({
     if (!enabled) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
+      previousMessageListScrollTopRef.current = null;
       return;
     }
 
@@ -460,12 +467,14 @@ export function useSessionMessageListFollowing({
     if (!messageListElement) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
+      previousMessageListScrollTopRef.current = null;
       return;
     }
 
     if (!wasEnabled) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
+      previousMessageListScrollTopRef.current = messageListElement.scrollTop;
       setIsMessageListFollowing(true);
       return;
     }
@@ -474,7 +483,7 @@ export function useSessionMessageListFollowing({
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       setIsMessageListFollowing(true);
-      scrollMessageListElementToBottom(messageListElement);
+      scrollMessageListToBottom();
       return;
     }
 
@@ -485,9 +494,9 @@ export function useSessionMessageListFollowing({
     messageListSignatureRef.current = currentSignature;
 
     if (isMessageListFollowing) {
-      scrollMessageListElementToBottom(messageListElement);
+      scrollMessageListToBottom();
     }
-  }, [enabled, isMessageListFollowing, ownerKey, scrollSignature]);
+  }, [enabled, isMessageListFollowing, ownerKey, scrollMessageListToBottom, scrollSignature]);
 
   const handleMessageListScroll = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -495,8 +504,14 @@ export function useSessionMessageListFollowing({
       return;
     }
 
-    const bottomGap = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight - messageListElement.scrollTop);
-    const nextFollowing = bottomGap <= bottomThreshold;
+    const currentScrollTop = messageListElement.scrollTop;
+    const maxScrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
+    const previousScrollTop = previousMessageListScrollTopRef.current ?? maxScrollTop;
+    previousMessageListScrollTopRef.current = currentScrollTop;
+    const bottomGap = Math.max(0, maxScrollTop - currentScrollTop);
+    const isScrollingUp = currentScrollTop < previousScrollTop;
+    const isAtBottom = bottomGap <= SESSION_MESSAGE_BOTTOM_EPSILON;
+    const nextFollowing = isAtBottom || (!isScrollingUp && bottomGap <= bottomThreshold);
 
     setIsMessageListFollowing((current) => (current === nextFollowing ? current : nextFollowing));
   }, [bottomThreshold]);

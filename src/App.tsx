@@ -1149,9 +1149,10 @@ export default function AgentSessionWindowApp() {
           projectedAuxiliarySessions,
           activeRunSessionId,
           selectedSession?.id,
+          liveRunAssistantText,
         )
         : 0,
-    [activeRunSessionId, displayedMessages, projectedAuxiliarySessions, selectedSession?.id],
+    [activeRunSessionId, displayedMessages, liveRunAssistantText, projectedAuxiliarySessions, selectedSession?.id],
   );
   const hasPersistedLiveAssistantBridge = useMemo(
     () =>

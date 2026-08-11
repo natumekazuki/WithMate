@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import React, { createRef, useState, type ComponentType } from "react";
+import React, { createRef, useState, type ComponentType, type ProfilerOnRenderCallback } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -11,6 +11,7 @@ import {
   SessionContextPane,
   SessionComposerExpanded,
   SessionMessageColumn,
+  shouldAdjustSessionMessageScrollPosition,
   type SessionMessageColumnProps,
 } from "../../src/session-components.js";
 import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
@@ -272,6 +273,7 @@ async function mountSessionMessageColumn(options: {
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
+  onRender?: ProfilerOnRenderCallback;
 }): Promise<MountedSessionMessageColumn> {
   const previousWindow = globalThis.window;
   const previousDocument = globalThis.document;
@@ -423,8 +425,7 @@ async function mountSessionMessageColumn(options: {
     messageViewMode?: SessionMessageColumnProps["messageViewMode"];
   }) => {
     await act(async () => {
-      root.render(
-        React.createElement(MessageColumn, {
+      const messageColumn = React.createElement(MessageColumn, {
           sessionId: "session-1",
           character,
           messages: callbacks.messages ?? options.messages,
@@ -453,8 +454,10 @@ async function mountSessionMessageColumn(options: {
           onCopyMessageText: callbacks.onCopyMessageText,
           onQuoteMessageText: callbacks.onQuoteMessageText,
           messageViewMode: callbacks.messageViewMode ?? options.messageViewMode,
-        }),
-      );
+        });
+      root.render(options.onRender
+        ? React.createElement(React.Profiler, { id: "session-message-column", onRender: options.onRender }, messageColumn)
+        : messageColumn);
     });
   };
 
@@ -961,7 +964,11 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
       mounted.container.querySelectorAll<HTMLElement>(".session-message-virtual-row"),
     );
     const rowAboveViewport = renderedRows.find((row) => {
-      const start = Number.parseFloat(row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1] ?? "0");
+      const start = Number.parseFloat(
+        row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1]
+          ?? row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1]
+          ?? "0",
+      );
       return start < messageList.scrollTop;
     });
     assert.ok(rowAboveViewport);
@@ -974,6 +981,24 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
   } finally {
     await mounted.cleanup();
   }
+});
+
+test("SessionMessageColumn は上方向scroll中のrow計測補正だけを抑止する", () => {
+  assert.equal(shouldAdjustSessionMessageScrollPosition({
+    itemStart: 1_000,
+    scrollOffset: 4_000,
+    scrollDirection: "backward",
+  }), false);
+  assert.equal(shouldAdjustSessionMessageScrollPosition({
+    itemStart: 1_000,
+    scrollOffset: 4_000,
+    scrollDirection: null,
+  }), true);
+  assert.equal(shouldAdjustSessionMessageScrollPosition({
+    itemStart: 5_000,
+    scrollOffset: 4_000,
+    scrollDirection: null,
+  }), false);
 });
 
 test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従する", async () => {
@@ -996,6 +1021,9 @@ test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従�
       isMessageListFollowing: true,
       messages: appendedMessages,
     });
+    await act(async () => {
+      await new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve()));
+    });
 
     assert.ok(messageList.scrollTop > followingScrollTop);
     assert.match(mounted.container.textContent ?? "", /appended at end/);
@@ -1011,6 +1039,41 @@ test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従�
     });
 
     assert.equal(messageList.scrollTop, nonFollowingScrollTop);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを再描画しない", async () => {
+  let renderCount = 0;
+  const messages = Array.from({ length: 100 }, (_, index) => ({
+    role: index % 2 === 0 ? "user" as const : "assistant" as const,
+    text: `message ${index + 1}`,
+  }));
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    onRender: () => {
+      renderCount += 1;
+    },
+  });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    await act(async () => {
+      messageList.scrollTop = 3_000;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    const rendersAfterFirstScroll = renderCount;
+
+    for (const scrollTop of [3_002, 3_004, 3_006, 3_008, 3_010]) {
+      await act(async () => {
+        messageList.scrollTop = scrollTop;
+        messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+      });
+    }
+
+    assert.equal(renderCount, rendersAfterFirstScroll);
   } finally {
     await mounted.cleanup();
   }

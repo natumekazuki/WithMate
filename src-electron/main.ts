@@ -1971,6 +1971,7 @@ function requireManagedMemorySkillService(): ManagedMemorySkillService {
       bundledSkillPath: bundledMemorySkillPath,
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getAppVersion: () => app.getVersion(),
+      isPackagedApp: () => app.isPackaged,
       shouldSyncSkillMarkdownOnly: () => requireMemoryCliShimService().isPathShimUsable(),
     });
   }

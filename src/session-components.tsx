@@ -495,6 +495,14 @@ const SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT = 720;
 const SESSION_MESSAGE_OVERSCAN = 6;
 const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 
+export function shouldAdjustSessionMessageScrollPosition(input: {
+  itemStart: number;
+  scrollOffset: number;
+  scrollDirection: "forward" | "backward" | null;
+}): boolean {
+  return input.scrollDirection !== "backward" && input.itemStart < input.scrollOffset;
+}
+
 type MessageArtifactFoldSection = "files" | "operation";
 
 function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
@@ -2466,16 +2474,24 @@ export function SessionMessageColumn({
     estimateSize: () => SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT,
     getItemKey: getMessageKey,
     overscan: SESSION_MESSAGE_OVERSCAN,
-    anchorTo: "end",
-    followOnAppend: true,
+    anchorTo: isMessageListFollowing ? "end" : "start",
+    followOnAppend: isMessageListFollowing,
     scrollEndThreshold: SESSION_MESSAGE_SCROLL_END_THRESHOLD,
     initialRect: { width: 0, height: SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT },
     initialOffset: Math.max(
       0,
       messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
-    useFlushSync: false,
+    directDomUpdates: true,
+    directDomUpdatesMode: "transform",
   });
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
+    shouldAdjustSessionMessageScrollPosition({
+      itemStart: item.start,
+      scrollOffset: instance.scrollOffset ?? 0,
+      scrollDirection: instance.scrollDirection,
+    })
+  );
   const virtualMessages = messageVirtualizer.getVirtualItems();
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
@@ -2884,8 +2900,9 @@ export function SessionMessageColumn({
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">
             <div
+              ref={messageVirtualizer.containerRef}
               className="session-message-list-window-items"
-              style={{ height: messageVirtualizer.getTotalSize(), position: "relative" }}
+              style={{ position: "relative" }}
             >
           {virtualMessages.map((virtualMessage) => {
             const absoluteIndex = virtualMessage.index;
@@ -2931,7 +2948,6 @@ export function SessionMessageColumn({
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
                 data-index={absoluteIndex}
-                style={{ transform: `translateY(${virtualMessage.start}px)` }}
               >
                 {isMessageGroupStart && messageGroup ? (
                   <div
