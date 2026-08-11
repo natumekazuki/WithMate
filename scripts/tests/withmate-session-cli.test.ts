@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -12,7 +11,16 @@ import {
   SESSION_RUNTIME_DISCOVERY_SCHEMA_VERSION,
   buildSessionRuntimeDiscoveryGenerationFileName,
 } from "../../src/session-runtime-discovery.js";
-import { SESSION_RUNTIME_RESULT_SCHEMA_VERSION } from "../../src/session-external-runtime-contract.js";
+import {
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+  SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+} from "../../src/session-external-runtime-contract.js";
+import {
+  SESSION_RUNTIME_CHALLENGE_HEADER,
+  SESSION_RUNTIME_INSTANCE_HEADER,
+  SESSION_RUNTIME_NONCE_HEADER,
+  createSessionRuntimeChallenge,
+} from "../../src/session-runtime-exchange.js";
 import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
 import {
   WITHMATE_SESSION_CLI_EXIT_CODES,
@@ -68,23 +76,13 @@ describe("withmate-session CLI", () => {
     }
   });
 
-  test("identity mismatchではoperation bodyをdispatchしない", async () => {
-    let operationRequests = 0;
+  test("identity mismatchではcredentialとoperation bodyをdispatchしない", async () => {
+    const observedHeaders: Array<Record<string, string | string[] | undefined>> = [];
+    let observedBytes = 0;
     const server = createServer((request, response) => {
-      if (request.url?.startsWith("/v1/status")) {
-        const nonce = new URL(request.url, "http://127.0.0.1").searchParams.get("nonce") ?? "";
-        response.setHeader("Content-Type", "application/json");
-        response.end(JSON.stringify({
-          ok: true,
-          runtimeInstanceId: "different-runtime",
-          challenge: {
-            nonce,
-            hmacSha256: createHmac("sha256", connection.apiSecret).update(`different-runtime\n${nonce}`).digest("base64url"),
-          },
-        }));
-        return;
-      }
-      operationRequests += 1;
+      observedHeaders.push(request.headers);
+      request.on("data", (chunk) => { observedBytes += Buffer.byteLength(chunk); });
+      response.writeHead(401, { "Content-Type": "application/json" });
       response.end("{}");
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -98,9 +96,98 @@ describe("withmate-session CLI", () => {
         ),
         (error) => error instanceof SessionRuntimeClientError && error.dispatched === false,
       );
-      assert.equal(operationRequests, 0);
+      assert.equal(observedHeaders.length, 1);
+      assert.equal(observedBytes, 0);
+      assert.equal(observedHeaders[0]["x-withmate-session-api-secret"], undefined);
+      assert.equal(observedHeaders[0]["x-withmate-session-adapter-secret"], undefined);
+      assert.equal(observedHeaders[0]["content-length"], undefined);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("challenge後に同じportのpeerが差し替わってもcredentialとoperationを再送しない", async () => {
+    let replacementRequests = 0;
+    let replacementServer: ReturnType<typeof createServer> | null = null;
+    let replacementListening: Promise<void> | null = null;
+    const firstHeaders: Array<Record<string, string | string[] | undefined>> = [];
+    const firstServer = createServer((request, response) => {
+      firstHeaders.push(request.headers);
+      const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
+      response.writeEarlyHints({
+        link: "</v1/operation>; rel=preconnect",
+        [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
+        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
+          connection.apiSecret,
+          connection.runtimeInstanceId,
+          typeof nonce === "string" ? nonce : "",
+        ),
+      }, () => {
+        request.socket.destroy();
+        firstServer.close(() => {
+          replacementServer = createServer((_request, replacementResponse) => {
+            replacementRequests += 1;
+            replacementResponse.end("{}");
+          });
+          replacementListening = listenServer(replacementServer, port).then(() => undefined);
+        });
+      });
+    });
+    const port = await listenServer(firstServer);
+    try {
+      await assert.rejects(
+        () => callSessionRuntime(
+          { ...connection, baseUrl: `http://127.0.0.1:${port}` },
+          { schemaVersion: "withmate-session-request-v1", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          AbortSignal.timeout(2_000),
+        ),
+        SessionRuntimeClientError,
+      );
+      if (replacementListening) await replacementListening;
+      assert.equal(replacementRequests, 0);
+      assert.equal(firstHeaders.length, 1);
+      assert.equal(firstHeaders[0]["x-withmate-session-api-secret"], undefined);
+      assert.equal(firstHeaders[0]["x-withmate-session-adapter-secret"], undefined);
+      assert.equal(firstHeaders[0]["content-length"], undefined);
+    } finally {
+      await closeServer(firstServer);
+      if (replacementListening) await replacementListening.catch(() => undefined);
+      if (replacementServer) await closeServer(replacementServer);
+    }
+  });
+
+  test("RL-01: response hard maximumを超えたpeer responseを全量受信せず拒否する", async () => {
+    const server = createServer((request, response) => {
+      const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
+      response.writeEarlyHints({
+        link: "</v1/operation>; rel=preconnect",
+        [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
+        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
+          connection.apiSecret,
+          connection.runtimeInstanceId,
+          typeof nonce === "string" ? nonce : "",
+        ),
+      });
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "Content-Type": "application/json" });
+        response.end("a".repeat(SESSION_RUNTIME_MAX_RESPONSE_BYTES + 1));
+      });
+    });
+    const port = await listenServer(server);
+    try {
+      await assert.rejects(
+        () => callSessionRuntime(
+          { ...connection, baseUrl: `http://127.0.0.1:${port}` },
+          { schemaVersion: "withmate-session-request-v1", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          AbortSignal.timeout(2_000),
+        ),
+        (error) => error instanceof SessionRuntimeClientError
+          && error.dispatched
+          && /response exceeds 8 MiB/.test(error.message),
+      );
+    } finally {
+      await closeServer(server);
     }
   });
 
@@ -286,3 +373,19 @@ describe("withmate-session CLI", () => {
     assert.equal(starts, 1);
   });
 });
+
+async function listenServer(server: ReturnType<typeof createServer>, port = 0): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
+  return (server.address() as AddressInfo).port;
+}
+
+async function closeServer(server: ReturnType<typeof createServer>): Promise<void> {
+  if (!server.listening) return;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+}

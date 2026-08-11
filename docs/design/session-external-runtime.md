@@ -188,6 +188,7 @@ sizeはUTF-8 byte数で判定する。入力で指定する`maxBytes`はserver h
 | transcript inline result | 1 MiB | 8 MiB |
 | transcript SessionFolder export | 64 MiB | 1 GiB |
 | loopback JSON request body | — | 8 MiB |
+| loopback JSON response body | — | 8 MiB |
 
 inline resultがlimitへ達した場合は切り詰めた成功を返さず、size limit errorを返す。SessionFolder exportはtemporary fileへstreaming writeし、完了後にatomic renameする。limit超過または生成失敗時はtemporary fileを除去し、partialな出力先を残さない。
 

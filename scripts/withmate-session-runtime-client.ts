@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import path from "node:path";
 
 import {
@@ -12,10 +12,8 @@ import {
   type SessionRuntimeDiscoveryPointer,
 } from "../src/session-runtime-discovery.js";
 import {
-  SESSION_RUNTIME_ADAPTER_HEADER,
-  SESSION_RUNTIME_ADAPTER_SECRET_HEADER,
-  SESSION_RUNTIME_API_SECRET_HEADER,
   SESSION_RUNTIME_CHALLENGE_HEADER,
+  SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
   SESSION_RUNTIME_INSTANCE_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
@@ -25,6 +23,7 @@ import type {
   SessionRuntimeAdapterKind,
   SessionRuntimeRequestEnvelope,
 } from "../src/session-external-runtime-contract.js";
+import { SESSION_RUNTIME_MAX_RESPONSE_BYTES } from "../src/session-external-runtime-contract.js";
 
 export type SessionRuntimeConnection = {
   adapter: SessionRuntimeAdapterKind;
@@ -135,37 +134,95 @@ export async function callSessionRuntime(
   envelope: SessionRuntimeRequestEnvelope,
   signal: AbortSignal,
 ): Promise<SessionRuntimeClientResponse> {
-  let identityVerified = false;
-  try {
-    identityVerified = await verifySessionRuntimeIdentity(connection, signal);
-  } catch (error) {
-    throw new SessionRuntimeClientError("Session runtime identity check failed.", false, { cause: error });
-  }
-  if (!identityVerified) {
-    throw new SessionRuntimeClientError("Session runtime identity mismatch.", false);
-  }
-
   const nonce = randomBytes(16).toString("base64url");
-  const body = JSON.stringify(envelope);
+  const body = JSON.stringify({
+    schemaVersion: SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+    apiSecret: connection.apiSecret,
+    adapter: connection.adapter,
+    adapterSecret: connection.adapterSecret,
+    envelope,
+  });
   const url = new URL(SESSION_RUNTIME_OPERATION_PATH, connection.baseUrl);
-  return requestJson(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Content-Length": String(Buffer.byteLength(body)),
-      [SESSION_RUNTIME_API_SECRET_HEADER]: connection.apiSecret,
-      [SESSION_RUNTIME_ADAPTER_HEADER]: connection.adapter,
-      [SESSION_RUNTIME_ADAPTER_SECRET_HEADER]: connection.adapterSecret,
-      [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
-      [SESSION_RUNTIME_NONCE_HEADER]: nonce,
-      [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
-        connection.apiSecret,
-        connection.runtimeInstanceId,
-        nonce,
-      ),
-    },
-    body,
-    signal,
+  return requestAuthenticatedJson(url, connection, nonce, body, signal);
+}
+
+function requestAuthenticatedJson(
+  url: URL,
+  connection: SessionRuntimeConnection,
+  nonce: string,
+  body: string,
+  signal: AbortSignal,
+): Promise<SessionRuntimeClientResponse> {
+  return new Promise((resolve, reject) => {
+    let dispatched = false;
+    let identityVerified = false;
+    let settled = false;
+    const fail = (message: string, cause?: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(new SessionRuntimeClientError(message, dispatched, cause === undefined ? undefined : { cause }));
+    };
+    const request = httpRequest({
+      protocol: url.protocol,
+      hostname: url.hostname,
+      port: url.port,
+      path: `${url.pathname}${url.search}`,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        [SESSION_RUNTIME_INSTANCE_HEADER]: connection.runtimeInstanceId,
+        [SESSION_RUNTIME_NONCE_HEADER]: nonce,
+      },
+      signal,
+    }, (response) => {
+      if (!identityVerified) {
+        response.destroy();
+        request.destroy();
+        fail("Session runtime returned a final response before identity verification.");
+        return;
+      }
+      void readJsonResponse(response).then(
+        (value) => {
+          if (settled) return;
+          settled = true;
+          resolve({
+            ok: response.statusCode !== undefined && response.statusCode >= 200 && response.statusCode < 300,
+            status: response.statusCode ?? 0,
+            value,
+          });
+        },
+        (error: Error) => {
+          response.destroy();
+          request.destroy();
+          fail(error.message, error);
+        },
+      );
+    });
+    request.on("information", (information) => {
+      if (settled || identityVerified || information.statusCode !== 103) return;
+      const runtimeInstanceId = information.headers[SESSION_RUNTIME_INSTANCE_HEADER];
+      const challenge = information.headers[SESSION_RUNTIME_CHALLENGE_HEADER];
+      const expected = createSessionRuntimeChallenge(connection.apiSecret, connection.runtimeInstanceId, nonce);
+      if (
+        runtimeInstanceId !== connection.runtimeInstanceId
+        || typeof challenge !== "string"
+        || !safeEqual(challenge, expected)
+      ) {
+        request.destroy();
+        fail("Session runtime identity mismatch.");
+        return;
+      }
+      identityVerified = true;
+      dispatched = true;
+      request.end(body);
+    });
+    request.once("error", (error) => fail("Session runtime request failed.", error));
+    try {
+      request.flushHeaders();
+    } catch (error) {
+      request.destroy();
+      fail("Session runtime request could not be dispatched.", error);
+    }
   });
 }
 
@@ -184,25 +241,47 @@ function requestJson(
       headers: options.headers,
       signal: options.signal,
     }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
-      response.once("end", () => {
-        try {
-          const text = Buffer.concat(chunks).toString("utf8");
-          resolve({
-            ok: response.statusCode !== undefined && response.statusCode >= 200 && response.statusCode < 300,
-            status: response.statusCode ?? 0,
-            value: text.trim() ? JSON.parse(text) : {},
-          });
-        } catch (error) {
-          reject(new SessionRuntimeClientError("Session runtime returned invalid JSON.", dispatched, { cause: error }));
-        }
-      });
+      void readJsonResponse(response).then(
+        (value) => resolve({
+          ok: response.statusCode !== undefined && response.statusCode >= 200 && response.statusCode < 300,
+          status: response.statusCode ?? 0,
+          value,
+        }),
+        (error: Error) => {
+          response.destroy();
+          request.destroy();
+          reject(new SessionRuntimeClientError(error.message, dispatched, { cause: error }));
+        },
+      );
     });
     request.once("finish", () => { dispatched = options.method === "POST"; });
     request.once("error", (error) => reject(new SessionRuntimeClientError("Session runtime request failed.", dispatched, { cause: error })));
     request.end(options.body);
   });
+}
+
+async function readJsonResponse(response: IncomingMessage): Promise<unknown> {
+  const declaredLength = Number(response.headers["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+    throw new Error("Session runtime response exceeds 8 MiB.");
+  }
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+  for await (const chunk of response) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    if (totalBytes > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+      throw new Error("Session runtime response exceeds 8 MiB.");
+    }
+    chunks.push(buffer);
+  }
+  const text = Buffer.concat(chunks, totalBytes).toString("utf8");
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text) as unknown;
+  } catch (error) {
+    throw new Error("Session runtime returned invalid JSON.", { cause: error });
+  }
 }
 
 function buildConnection(input: {

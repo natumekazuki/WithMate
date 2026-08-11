@@ -34,6 +34,7 @@ V5 Character Core に関しては `A2. V5 Character Core Source Of Truth` を優
 | `database-schema.md` | current 保存構造と DB 定義の正本。V6 DB再設計では `v6-database-foundation.md` を優先する |
 | `model-catalog.md` | model catalog 保存 / 解決ロジック |
 | `session-run-lifecycle.md` | session 実行 lifecycle と background task のつながり |
+| `session-external-runtime.md` | CLI / MCPから通常Sessionを操作する専用runtime境界の現行設計。選択理由はAccepted ADR 021、exact contractはshared typeとexecutable contractを参照する |
 
 ### A2. V5 Character Core Source Of Truth
 
@@ -101,7 +102,6 @@ V5 Character Core で採用済みの文書は `A2. V5 Character Core Source Of T
 | --- | --- |
 | `database-v2-migration.md` | V1 -> V2 migration と V2 schema 方針 |
 | `database-v3-blob-storage.md` | V3 DB と compressed blob store の方針 |
-| `session-external-runtime.md` | CLI / MCPから通常Sessionを操作する専用runtime境界のDraft。ADR 021がAcceptedになるまでcurrent runtimeの正本として扱わない |
 
 ### C. Archived Design Notes
 

@@ -171,9 +171,9 @@ describe("WithMate Session MCP contract", () => {
   });
 
   it("identity mismatchではoperation requestをdispatchしない", async () => {
-    let operationRequests = 0;
+    let operationBodyBytes = 0;
     const runtime = createServer((request, response) => {
-      if (request.method === "POST") operationRequests += 1;
+      request.on("data", (chunk) => { operationBodyBytes += Buffer.byteLength(chunk); });
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ runtimeInstanceId: "different-runtime", challenge: {} }));
     });
@@ -186,7 +186,7 @@ describe("WithMate Session MCP contract", () => {
         const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
         assert.equal(result.isError, true);
         assert.equal((result.structuredContent as any).error.effect, "not_applied");
-        assert.equal(operationRequests, 0);
+        assert.equal(operationBodyBytes, 0);
       });
     } finally {
       await new Promise<void>((resolve) => runtime.close(() => resolve()));

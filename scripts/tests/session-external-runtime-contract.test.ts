@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SessionRuntimeValidationError,
   parseSessionRuntimeRequestEnvelope,
+  projectSessionExecution,
 } from "../../src/session-external-runtime-contract.js";
 
 const turn = {
@@ -103,4 +105,23 @@ test("ID-02: turn.cancel requires an idempotency key", () => {
     executionId: "execution-1",
     idempotencyKey: "cancel-key-1",
   });
+});
+
+test("RL-01: public execution projection rejects inline assistant text over 8 MiB", () => {
+  assert.throws(
+    () => projectSessionExecution({
+      id: "execution-1",
+      sessionId: "session-1",
+      operation: "turn.run",
+      state: "completed",
+      result: { assistantText: "a".repeat(SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES + 1) },
+      errorCode: "",
+      reason: "",
+      createdAt: "2026-08-11T00:00:00.000Z",
+      admittedAt: "2026-08-11T00:00:00.000Z",
+      completedAt: "2026-08-11T00:00:01.000Z",
+      updatedAt: "2026-08-11T00:00:01.000Z",
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.code === "CONTENT_TOO_LARGE",
+  );
 });

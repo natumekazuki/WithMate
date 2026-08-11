@@ -3,6 +3,8 @@ import { createHash } from "node:crypto";
 import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+  SessionRuntimeProjectionLimitError,
   SessionRuntimeValidationError,
   createSessionRuntimeError,
   createSessionRuntimeResult,
@@ -68,7 +70,7 @@ export class SessionExternalApplicationService {
       const result = await this.executeValidated(request.operation, request.input);
       return createSessionRuntimeResult(request.operation, result);
     } catch (error) {
-      return mapApplicationError(error);
+      return mapApplicationError(error, operation);
     }
   }
 
@@ -138,12 +140,21 @@ export class SessionExternalApplicationService {
     const page = this.deps.executionService.listPage(input.sessionId, afterSequence, input.limit + 1);
     const hasMore = page.length > input.limit;
     const selected = hasMore ? page.slice(0, input.limit) : page;
-    const items = selected.map(projectSessionExecution);
     const lastSequence = selected.at(-1)?.sequence;
-    return {
-      items,
+    const resultBase = {
+      items: [] as SessionExecution[],
       ...(hasMore && lastSequence !== undefined ? { nextCursor: encodeListCursor(input.sessionId, lastSequence) } : {}),
     };
+    let responseBytes = Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("turn.list", resultBase)), "utf8");
+    for (const execution of selected) {
+      const item = projectSessionExecution(execution);
+      responseBytes += (resultBase.items.length > 0 ? 1 : 0) + Buffer.byteLength(JSON.stringify(item), "utf8");
+      if (responseBytes > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+        throw new SessionRuntimeProjectionLimitError("result.items");
+      }
+      resultBase.items.push(item);
+    }
+    return resultBase;
   }
 
   private requireCurrentCatalog(catalogRevision: number): void {
@@ -231,7 +242,17 @@ function decodeListCursor(cursor: string, sessionId: string): number {
   }
 }
 
-function mapApplicationError(error: unknown): SessionRuntimeError {
+function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string): SessionRuntimeError {
+  if (error instanceof SessionRuntimeProjectionLimitError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      effect: operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+        ? "applied"
+        : "not_applied",
+      details: error.details,
+    });
+  }
   if (error instanceof SessionRuntimeValidationError) {
     return createSessionRuntimeError({
       code: error.code,

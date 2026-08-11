@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 
 import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SessionRuntimeValidationError,
   createSessionRuntimeError,
   parseSessionRuntimeRequestEnvelope,
@@ -13,14 +14,13 @@ import {
   type SessionRuntimeResultEnvelope,
 } from "../src/session-external-runtime-contract.js";
 import {
-  SESSION_RUNTIME_ADAPTER_HEADER,
-  SESSION_RUNTIME_ADAPTER_SECRET_HEADER,
-  SESSION_RUNTIME_API_SECRET_HEADER,
   SESSION_RUNTIME_CHALLENGE_HEADER,
+  SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
   SESSION_RUNTIME_INSTANCE_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
+  type SessionRuntimeExchangePayload,
 } from "../src/session-runtime-exchange.js";
 
 export type SessionRuntimeHttpHandler = (
@@ -85,17 +85,33 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
         return;
       }
 
-      const adapter = authenticateRequest(request, { apiSecret, cliSecret, mcpSecret, runtimeInstanceId });
-      if (!adapter) {
+      const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
+      const expectedRuntimeInstanceId = request.headers[SESSION_RUNTIME_INSTANCE_HEADER];
+      if (
+        typeof nonce !== "string"
+        || typeof expectedRuntimeInstanceId !== "string"
+        || expectedRuntimeInstanceId !== runtimeInstanceId
+      ) {
         writeJson(response, 401, transportError("UNAUTHORIZED", "Session runtime request is not authorized."));
         return;
       }
+      response.writeEarlyHints({
+        link: `<${SESSION_RUNTIME_OPERATION_PATH}>; rel=preconnect`,
+        [SESSION_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+        [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(apiSecret, runtimeInstanceId, nonce),
+      });
       const declaredLength = parseContentLength(request.headers["content-length"]);
       if (declaredLength !== null && declaredLength > SESSION_RUNTIME_MAX_BODY_BYTES) {
         writeJson(response, 413, transportError("CONTENT_TOO_LARGE", "Session runtime request body exceeds 8 MiB."));
         return;
       }
-      const envelope = parseSessionRuntimeRequestEnvelope(await readJsonBody(request));
+      const payload = parseExchangePayload(await readJsonBody(request));
+      const adapter = authenticateExchange(payload, { apiSecret, cliSecret, mcpSecret });
+      if (!adapter) {
+        writeJson(response, 401, transportError("UNAUTHORIZED", "Session runtime request is not authorized."));
+        return;
+      }
+      const envelope = parseSessionRuntimeRequestEnvelope(payload.envelope);
       const result = await options.handle(envelope.operation, envelope.input, adapter);
       writeJson(response, statusForResponse(result), result);
     } catch (error) {
@@ -150,31 +166,47 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
   };
 }
 
-function authenticateRequest(
-  request: IncomingMessage,
-  expected: { apiSecret: string; cliSecret: string; mcpSecret: string; runtimeInstanceId: string },
+function authenticateExchange(
+  payload: SessionRuntimeExchangePayload,
+  expected: { apiSecret: string; cliSecret: string; mcpSecret: string },
 ): SessionRuntimeAdapterKind | null {
-  const adapter = request.headers[SESSION_RUNTIME_ADAPTER_HEADER];
-  const nonce = request.headers[SESSION_RUNTIME_NONCE_HEADER];
-  const challenge = request.headers[SESSION_RUNTIME_CHALLENGE_HEADER];
-  const runtimeInstanceId = request.headers[SESSION_RUNTIME_INSTANCE_HEADER];
-  const apiSecret = request.headers[SESSION_RUNTIME_API_SECRET_HEADER];
-  const adapterSecret = request.headers[SESSION_RUNTIME_ADAPTER_SECRET_HEADER];
   if (
-    (adapter !== "cli" && adapter !== "mcp")
-    || typeof nonce !== "string"
-    || typeof challenge !== "string"
-    || typeof runtimeInstanceId !== "string"
-    || typeof apiSecret !== "string"
-    || typeof adapterSecret !== "string"
-    || runtimeInstanceId !== expected.runtimeInstanceId
-    || !safeEqual(apiSecret, expected.apiSecret)
-    || !safeEqual(challenge, createSessionRuntimeChallenge(expected.apiSecret, expected.runtimeInstanceId, nonce))
+    (payload.adapter !== "cli" && payload.adapter !== "mcp")
+    || !safeEqual(payload.apiSecret, expected.apiSecret)
   ) {
     return null;
   }
-  const expectedAdapterSecret = adapter === "cli" ? expected.cliSecret : expected.mcpSecret;
-  return safeEqual(adapterSecret, expectedAdapterSecret) ? adapter : null;
+  const expectedAdapterSecret = payload.adapter === "cli" ? expected.cliSecret : expected.mcpSecret;
+  return safeEqual(payload.adapterSecret, expectedAdapterSecret) ? payload.adapter : null;
+}
+
+function parseExchangePayload(value: unknown): SessionRuntimeExchangePayload {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new SessionRuntimeValidationError("Session runtime exchange payload must be an object.");
+  }
+  const record = value as Record<string, unknown>;
+  const allowed = ["schemaVersion", "apiSecret", "adapter", "adapterSecret", "envelope"];
+  if (Object.keys(record).some((key) => !allowed.includes(key))) {
+    throw new SessionRuntimeValidationError("Session runtime exchange payload has an unknown field.");
+  }
+  if (
+    record.schemaVersion !== SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION
+    || typeof record.apiSecret !== "string"
+    || (record.adapter !== "cli" && record.adapter !== "mcp")
+    || typeof record.adapterSecret !== "string"
+    || !record.envelope
+    || typeof record.envelope !== "object"
+    || Array.isArray(record.envelope)
+  ) {
+    throw new SessionRuntimeValidationError("Session runtime exchange payload is invalid.");
+  }
+  return {
+    schemaVersion: SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+    apiSecret: record.apiSecret,
+    adapter: record.adapter,
+    adapterSecret: record.adapterSecret,
+    envelope: record.envelope as SessionRuntimeExchangePayload["envelope"],
+  };
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -224,13 +256,74 @@ function isSessionRuntimeError(value: unknown): value is SessionRuntimeError {
 }
 
 function writeJson(response: ServerResponse, status: number, value: unknown): void {
-  const body = JSON.stringify(value);
+  const body = encodeJsonWithinLimit(value, SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+  if (body === null) {
+    const operation = isSessionRuntimeResultEnvelope(value) ? value.operation : null;
+    writeJson(response, 413, createSessionRuntimeError({
+      code: "CONTENT_TOO_LARGE",
+      message: "Session runtime response exceeds 8 MiB.",
+      effect: operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+        ? "applied"
+        : "not_applied",
+    }));
+    return;
+  }
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
     "Content-Length": Buffer.byteLength(body),
   });
   response.end(body);
+}
+
+function isSessionRuntimeResultEnvelope(value: unknown): value is SessionRuntimeResultEnvelope {
+  return Boolean(value && typeof value === "object" && "operation" in value && "result" in value);
+}
+
+function encodeJsonWithinLimit(value: unknown, maxBytes: number): string | null {
+  const chunks: string[] = [];
+  const seen = new Set<object>();
+  let totalBytes = 0;
+  const append = (chunk: string): boolean => {
+    totalBytes += Buffer.byteLength(chunk, "utf8");
+    if (totalBytes > maxBytes) return false;
+    chunks.push(chunk);
+    return true;
+  };
+  const encode = (current: unknown, inArray: boolean): boolean => {
+    if (current === null || typeof current === "string" || typeof current === "boolean" || typeof current === "number") {
+      const encoded = JSON.stringify(current);
+      return append(encoded === undefined ? "null" : encoded);
+    }
+    if (current === undefined || typeof current === "function" || typeof current === "symbol") {
+      return inArray ? append("null") : true;
+    }
+    if (typeof current !== "object" || seen.has(current)) {
+      throw new TypeError("Session runtime response is not JSON serializable.");
+    }
+    seen.add(current);
+    if (Array.isArray(current)) {
+      if (!append("[")) return false;
+      for (let index = 0; index < current.length; index += 1) {
+        if (index > 0 && !append(",")) return false;
+        if (!encode(current[index], true)) return false;
+      }
+      seen.delete(current);
+      return append("]");
+    }
+    if (!append("{")) return false;
+    let first = true;
+    for (const [key, entry] of Object.entries(current)) {
+      if (entry === undefined || typeof entry === "function" || typeof entry === "symbol") continue;
+      if (!first && !append(",")) return false;
+      first = false;
+      if (!append(JSON.stringify(key)) || !append(":")) return false;
+      if (!encode(entry, false)) return false;
+    }
+    seen.delete(current);
+    return append("}");
+  };
+  return encode(value, false) ? chunks.join("") : null;
 }
 
 function safeEqual(left: string, right: string): boolean {

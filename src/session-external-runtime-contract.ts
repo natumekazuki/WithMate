@@ -7,6 +7,8 @@ export const SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-
 export const SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v1" as const;
 export const SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1" as const;
 export const SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
+export const SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES = 8 * 1024 * 1024;
+export const SESSION_RUNTIME_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 export const SESSION_RUNTIME_DEFAULT_LIST_LIMIT = 50;
 export const SESSION_RUNTIME_MAX_LIST_LIMIT = 500;
 export const SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -78,6 +80,17 @@ export class SessionRuntimeValidationError extends Error {
     this.name = "SessionRuntimeValidationError";
     this.code = code;
     this.details = details;
+  }
+}
+
+export class SessionRuntimeProjectionLimitError extends SessionRuntimeValidationError {
+  constructor(field: string) {
+    super(
+      "Session runtime inline response exceeds 8 MiB.",
+      { field, maxBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES },
+      "CONTENT_TOO_LARGE",
+    );
+    this.name = "SessionRuntimeProjectionLimitError";
   }
 }
 
@@ -166,7 +179,13 @@ function projectTurnResult(result: unknown): { assistantText: string } | null {
     return null;
   }
   const assistantText = (result as Record<string, unknown>).assistantText;
-  return typeof assistantText === "string" ? { assistantText } : null;
+  if (typeof assistantText !== "string") {
+    return null;
+  }
+  if (Buffer.byteLength(assistantText, "utf8") > SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES) {
+    throw new SessionRuntimeProjectionLimitError("result.assistantText");
+  }
+  return { assistantText };
 }
 
 function parseTurnRunInput(value: unknown): SessionRuntimeRunInput {

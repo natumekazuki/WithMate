@@ -239,3 +239,37 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Structure convergence gate: `ready-after-consolidation`。application mappingがruntime service実装へerror typeのためだけに依存する逆向き境界を、`session-turn-validation-error.ts`のstable ownerへ移した。移動後にfinding regression setとtypecheckを再実行してGreenを確認した
 - Hardening exclusions: stale discovery pointerの条件付き削除とCLI runtime client response body上限は、現行accepted contractへの到達可能な違反が確認されていないため本修正へ含めない
 - Remaining validation gaps: `npm run dist:win`、インストール済みalias、live ElectronでのCLI/MCP E2Eは未実施
+
+## Holistic Review Additional Finding Closure Plan
+
+- Gate: `ready`
+- Finding Promotion:
+  - A-01の本人確認後に別接続へcredentialとoperation bodyを送る経路は、loopback port差し替えでsecretとmutationが到達する再現証拠があり、同じSession runtime exchange owner内の`current-scope repair`とする
+  - RL-01のinline response無制限経路は、ADR 021の上書き不能なhard size limitへ違反し、shared response contract、HTTP server、CLI/MCP共通clientで閉じる`current-scope repair`とする
+  - KP-01のdocumentation map分類は、Accepted ADRとActive designの状態に反してcurrent authorityを誤案内するため、同じ設計情報配置scopeの`current-scope repair`とする
+- Sibling Sweep: A-01はCLI/MCPが共有するruntime clientとHTTP exchange、RL-01は単一execution projection、list aggregate、HTTP serialization、CLI/MCP受信、KP-01は同じ文書のstatusとmap entryを対象とする。Memory runtime、SessionFolder export、installerは対象外とする
+
+| ID | Invariant | Scope / owner | Failure mode | Consumer impact | Direct verification |
+| --- | --- | --- | --- | --- | --- |
+| A-01 | Session runtimeは同一HTTP exchange上でruntime identity challengeを証明した後だけcredentialとoperation bodyを送受信し、challenge前または接続切断後にsecret-bearing payloadを再送しない | Session runtime exchange、HTTP server、CLI/MCP共通client | status確認後にport所有者が差し替わり、別接続へcredentialとmutationを送る | API secret、adapter secret、操作本文が意図しないprocessへ漏れる | port差し替え反例でreplacement request 0件、challenge前header/bodyにsecretがないことを確認し、実runtimeへのpositive pathも確認 |
+| RL-01 | public inline textとloopback JSON responseはUTF-8で8 MiBの上書き不能なhard maximumを共有し、serverは超過successを`CONTENT_TOO_LARGE`へ置換し、clientは上限超過を全量buffering前に拒否する | shared Session runtime contract、public projection、HTTP server、runtime client | assistant textまたはlist aggregateを無制限にserialize・bufferする | ElectronまたはCLI/MCP processのmemory使用量が入力件数とresult sizeで無制限に増える | projection境界、HTTP aggregate response、client受信上限のcontract testでstable errorとbounded rejectionを確認 |
+| KP-01 | documentation mapはAccepted ADR 021とActiveな`session-external-runtime.md`をcurrent source-of-truthとして案内する | `docs/design/documentation-map.md` | active designをFuture Draftとして分類する | maintainerがcurrent contractを非正本と誤認する | status headerとdocumentation map entryの整合をdiffで確認 |
+
+- ADR gate: A-01とRL-01はAccepted ADR 021の既存decisionを実装するため追加ADRは不要
+- Architecture document gate: `session-external-runtime.md`のActive statusとexact limitの正本配置は維持し、documentation mapだけをcurrent分類へ修正する
+- Review lifecycle: complete-diff holistic reviewは既に一度実施済み。修正後は現Candidateのdirect checkとこのfinding family限定のfresh-context second passで閉じ、二度目のholistic reviewは行わない
+
+### Additional Finding Repair Evidence
+
+- Candidate: `session-external-runtime-final-c7`
+- Direct checks:
+  - A-01、RL-01、KP-01のtargeted regression set: 40 passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+  - `npm test`: 2402 tests、2401 passed、1 skipped、0 failed
+- A-01 closure: identity challengeとsecret-bearing payloadを同一HTTP exchangeへ統合した。port差し替え反例ではreplacement requestが0件で、challenge前のheaderとbodyにAPI secret、adapter secret、operation bodyが含まれないことを確認した
+- RL-01 closure: inline text、public response、client受信に共有の8 MiB上限を適用し、single resultとlist aggregateの超過をstable `CONTENT_TOO_LARGE`へ収束させた。clientはdeclared sizeとstreamed sizeの双方を全量buffering前に拒否する
+- KP-01 closure: `session-external-runtime.md`をcurrent source-of-truthへ移し、Accepted ADR 021とActive designのstatusをdocumentation map上で一致させた
+- Structure convergence gate: `ready-unchanged`。identity challengeとpayload送信はshared exchange、response上限はshared contractと共通client readerへ収束しており、新しいsemantic owner分散、canonical boundary迂回、slice間decision重複を示すevidenceはない
+- Fresh-context second pass: source、executable contract、resulting deltaをfinding familyへ限定して再確認し、A-01、RL-01、KP-01に未解決のblocking違反は確認しなかった。独立reviewerはこのsessionの実行制約により起動せず、二度目のcomplete-diff holistic reviewでも代替していない
+- Remaining validation gaps: `npm run dist:win`、インストール済みalias、live ElectronでのCLI/MCP E2E、生成bundle内の第三者依存を含む全行の手動意味reviewは未実施

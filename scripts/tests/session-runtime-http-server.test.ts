@@ -4,14 +4,12 @@ import { test } from "node:test";
 
 import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
 import {
-  SESSION_RUNTIME_ADAPTER_HEADER,
-  SESSION_RUNTIME_ADAPTER_SECRET_HEADER,
-  SESSION_RUNTIME_API_SECRET_HEADER,
-  SESSION_RUNTIME_CHALLENGE_HEADER,
+  SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
   SESSION_RUNTIME_INSTANCE_HEADER,
   SESSION_RUNTIME_NONCE_HEADER,
   SESSION_RUNTIME_OPERATION_PATH,
@@ -44,19 +42,15 @@ test("Session runtime authenticates identity and adapter before invoking handler
       operation: "turn.get",
       input: { sessionId: "session-1", executionId: "execution-1" },
     });
-    const unauthorized = await post(address.port, body, {});
+    const unauthorized = await post(address.port, exchangePayload("cli", body, { apiSecret: "wrong" }));
     assert.equal(unauthorized.status, 401);
     assert.deepEqual(calls, []);
 
-    const nonce = "nonce-1";
-    const authorized = await post(address.port, body, authHeaders("cli", nonce));
+    const authorized = await post(address.port, exchangePayload("cli", body));
     assert.equal(authorized.status, 200);
     assert.deepEqual(calls, ["cli:turn.get"]);
 
-    const wrongAdapter = await post(address.port, body, {
-      ...authHeaders("mcp", nonce),
-      [SESSION_RUNTIME_ADAPTER_SECRET_HEADER]: secrets.cliSecret,
-    });
+    const wrongAdapter = await post(address.port, exchangePayload("mcp", body, { adapterSecret: secrets.cliSecret }));
     assert.equal(wrongAdapter.status, 401);
     assert.deepEqual(calls, ["cli:turn.get"]);
   } finally {
@@ -77,8 +71,7 @@ test("Session runtime rejects a declared body over 8 MiB before handler invocati
   try {
     const address = server.address();
     assert.ok(address);
-    const response = await post(address.port, "{}", {
-      ...authHeaders("cli", "nonce-2"),
+    const response = await post(address.port, exchangePayload("cli", "{}"), {
       "Content-Length": String(SESSION_RUNTIME_MAX_BODY_BYTES + 1),
     }, false);
     assert.equal(response.status, 413);
@@ -110,25 +103,58 @@ test("Session runtime status proves the discovered runtime identity", async () =
   }
 });
 
-function authHeaders(adapter: "cli" | "mcp", nonce: string): Record<string, string> {
+test("RL-01: Session runtime replaces an oversized success response with a stable error", async () => {
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    handle: async (operation) => createSessionRuntimeResult(operation, {
+      assistantText: "a".repeat(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
+    }),
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.get",
+      input: { sessionId: "session-1", executionId: "execution-1" },
+    });
+    const response = await post(address.port, exchangePayload("cli", body));
+    assert.equal(response.status, 413);
+    const error = JSON.parse(response.body).error;
+    assert.equal(error.code, "CONTENT_TOO_LARGE");
+    assert.equal(error.effect, "not_applied");
+    assert.ok(Buffer.byteLength(response.body) <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+  } finally {
+    await server.stop();
+  }
+});
+
+function exchangePayload(
+  adapter: "cli" | "mcp",
+  envelopeBody: string,
+  overrides: { apiSecret?: string; adapterSecret?: string } = {},
+): string {
+  return JSON.stringify({
+    schemaVersion: SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
+    apiSecret: overrides.apiSecret ?? secrets.apiSecret,
+    adapter,
+    adapterSecret: overrides.adapterSecret ?? (adapter === "cli" ? secrets.cliSecret : secrets.mcpSecret),
+    envelope: JSON.parse(envelopeBody),
+  });
+}
+
+function challengeHeaders(nonce: string): Record<string, string> {
   return {
-    [SESSION_RUNTIME_API_SECRET_HEADER]: secrets.apiSecret,
-    [SESSION_RUNTIME_ADAPTER_HEADER]: adapter,
-    [SESSION_RUNTIME_ADAPTER_SECRET_HEADER]: adapter === "cli" ? secrets.cliSecret : secrets.mcpSecret,
     [SESSION_RUNTIME_INSTANCE_HEADER]: secrets.runtimeInstanceId,
     [SESSION_RUNTIME_NONCE_HEADER]: nonce,
-    [SESSION_RUNTIME_CHALLENGE_HEADER]: createSessionRuntimeChallenge(
-      secrets.apiSecret,
-      secrets.runtimeInstanceId,
-      nonce,
-    ),
   };
 }
 
 function post(
   port: number,
-  body: string,
-  headers: Record<string, string>,
+  payload: string,
+  headers: Record<string, string> = {},
   writeBody = true,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
@@ -139,22 +165,24 @@ function post(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(writeBody ? { "Content-Length": Buffer.byteLength(body).toString() } : {}),
+        ...challengeHeaders("nonce-1"),
         ...headers,
       },
     }, (response) => {
       const chunks: Buffer[] = [];
       response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-      response.on("end", () => resolve({
-        status: response.statusCode ?? 0,
-        body: Buffer.concat(chunks).toString("utf8"),
-      }));
+      response.on("end", () => {
+        request.destroy();
+        resolve({
+          status: response.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8"),
+        });
+      });
     });
     request.once("error", reject);
-    if (writeBody) {
-      request.end(body);
-    } else {
-      request.end();
-    }
+    request.once("information", (information) => {
+      if (information.statusCode === 103) request.end(writeBody ? payload : undefined);
+    });
+    request.flushHeaders();
   });
 }

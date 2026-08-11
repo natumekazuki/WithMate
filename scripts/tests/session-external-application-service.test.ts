@@ -183,6 +183,56 @@ test("Session application service binds list cursors to the requested Session", 
   assert.equal("error" in invalid && invalid.error.code, "INVALID_CURSOR");
 });
 
+test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async () => {
+  const largeResult = { assistantText: "a".repeat(5 * 1024 * 1024) };
+  const service = new SessionExternalApplicationService({
+    currentCatalogRevision: () => 4,
+    executionService: {
+      beginShutdown() {},
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() {
+        return [
+          { ...execution, id: "execution-1", sequence: 1, result: largeResult },
+          { ...execution, id: "execution-2", sequence: 2, result: largeResult },
+        ];
+      },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.list", { sessionId: "session-1", limit: 2 });
+
+  assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
+  assert.equal("error" in response && response.error.effect, "not_applied");
+});
+
+test("RL-01: applied turn.run reports an oversized inline result with applied effect", async () => {
+  const service = new SessionExternalApplicationService({
+    currentCatalogRevision: () => 4,
+    executionService: {
+      beginShutdown() {},
+      async run() {
+        return { ...execution, state: "completed", result: { assistantText: "a".repeat(8 * 1024 * 1024 + 1) } };
+      },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.run", mutationInput);
+
+  assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
+  assert.equal("error" in response && response.error.effect, "applied");
+});
+
 test("I-01: canonical replayはcatalog revision更新後もstale validationより先に解決する", async () => {
   let runInvoked = false;
   const service = new SessionExternalApplicationService({
