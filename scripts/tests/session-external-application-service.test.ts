@@ -33,7 +33,7 @@ const mutationInput = {
   },
 };
 
-test("Session application service forwards only the turn effect and returns an allowlisted projection", async () => {
+test("Session application service persists catalog revision with the turn and returns an allowlisted projection", async () => {
   const runInputs: unknown[] = [];
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 4,
@@ -62,7 +62,10 @@ test("Session application service forwards only the turn effect and returns an a
     { ...(runInputs[0] as Record<string, unknown>), requestFingerprint: "<fingerprint>" },
     {
       sessionId: "session-1",
-      request: mutationInput.turn,
+      request: {
+        catalogRevision: 4,
+        turn: mutationInput.turn,
+      },
       idempotencyKey: "key-1",
       requestFingerprint: "<fingerprint>",
     },

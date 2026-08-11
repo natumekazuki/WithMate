@@ -136,7 +136,7 @@ describe("WithMate Session MCP contract", () => {
         ok: true,
         status: 200,
         value: createSessionRuntimeResult("turn.get", {
-          execution: { id: "execution-1", state: "failed", errorCode: "PROVIDER_FAILED" },
+          execution: { id: "execution-1", state: "failed", errorCode: "PROVIDER_FAILURE" },
         }),
       }),
     }), async (client) => {

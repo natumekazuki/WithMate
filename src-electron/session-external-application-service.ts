@@ -99,7 +99,7 @@ export class SessionExternalApplicationService {
   private async run(input: SessionRuntimeRunInput): Promise<SessionExecution> {
     const mutation = {
       sessionId: input.sessionId,
-      request: input.turn,
+      request: { catalogRevision: input.catalogRevision, turn: input.turn },
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprintMutation(input),
     };
@@ -122,7 +122,7 @@ export class SessionExternalApplicationService {
   private async enqueue(input: SessionRuntimeEnqueueInput): Promise<SessionExecution> {
     const mutation = {
       sessionId: input.sessionId,
-      request: input.turn,
+      request: { catalogRevision: input.catalogRevision, turn: input.turn },
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprintMutation(input),
     };
@@ -259,7 +259,11 @@ function mapApplicationError(error: unknown): SessionRuntimeError {
     return createSessionRuntimeError({ code: error.code, message: error.message });
   }
   if (error instanceof SessionTurnValidationError) {
-    return createSessionRuntimeError({ code: error.code, message: error.message });
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      retryable: error.code === "CATALOG_REVISION_STALE",
+    });
   }
   if (error instanceof TypeError) {
     return createSessionRuntimeError({ code: "INVALID_INPUT", message: "The Session operation input is invalid." });

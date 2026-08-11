@@ -1,4 +1,4 @@
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
@@ -9,6 +9,10 @@ const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bm
 const TRAILING_PATH_PUNCTUATION = /[),.;:!?]+$/;
 
 type ComposerPreviewSessionContext = Pick<Session, "workspacePath" | "allowedAdditionalDirectories">;
+
+type ComposerAttachmentResolutionPolicy = {
+  rootRelativeOnly?: boolean;
+};
 
 function normalizeSlash(filePath: string): string {
   return filePath.replace(/\\/g, "/");
@@ -51,7 +55,17 @@ function toDisplayPath(workspacePath: string, absolutePath: string): string {
 async function resolveAttachmentCandidate(
   session: ComposerPreviewSessionContext,
   candidate: ComposerAttachmentInput,
+  policy: ComposerAttachmentResolutionPolicy,
 ): Promise<ComposerAttachment> {
+  const trimmedCandidatePath = trimCandidatePath(candidate.path);
+  if (policy.rootRelativeOnly) {
+    if (path.isAbsolute(trimmedCandidatePath)) {
+      throw new Error(`SessionFolder attachment must use a relative path: ${candidate.path}`);
+    }
+    if (trimmedCandidatePath.split(/[\\/]+/).includes("..")) {
+      throw new Error(`SessionFolder 外のパスは添付できないよ: ${candidate.path}`);
+    }
+  }
   const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path);
   if (!absolutePath) {
     throw new Error("空のパスは添付できないよ。");
@@ -74,6 +88,16 @@ async function resolveAttachmentCandidate(
 
   if ((kind === "file" || kind === "image") && !stats.isFile()) {
     throw new Error(`ファイルとして指定したパスがファイルじゃないよ: ${candidate.path}`);
+  }
+
+  if (policy.rootRelativeOnly) {
+    const [resolvedRootPath, resolvedAttachmentPath] = await Promise.all([
+      realpath(session.workspacePath),
+      realpath(absolutePath),
+    ]);
+    if (toWorkspaceRelativePath(resolvedRootPath, resolvedAttachmentPath) === null) {
+      throw new Error(`SessionFolder 外のパスは添付できないよ: ${candidate.path}`);
+    }
   }
 
   const workspaceRelativePath = toWorkspaceRelativePath(session.workspacePath, absolutePath);
@@ -100,6 +124,7 @@ async function resolveAttachmentCandidate(
 export async function resolveComposerPreview(
   session: ComposerPreviewSessionContext,
   userMessage: string,
+  policy: ComposerAttachmentResolutionPolicy = {},
 ): Promise<ComposerPreview> {
   const candidates = extractComposerAttachmentReferenceCandidates(userMessage);
   const attachments: ComposerAttachment[] = [];
@@ -108,7 +133,7 @@ export async function resolveComposerPreview(
 
   const resolvedCandidates = await Promise.all(candidates.map(async (candidate) => {
     try {
-      return { attachment: await resolveAttachmentCandidate(session, candidate) } as const;
+      return { attachment: await resolveAttachmentCandidate(session, candidate, policy) } as const;
     } catch (error) {
       return {
         error: error instanceof Error ? error.message : "添付の解決に失敗したよ。",

@@ -18,7 +18,11 @@ import { type CharacterProfile } from "../src/character-state.js";
 import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
 import { isReadOnlySession, type Session } from "../src/session-state.js";
-import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../src/model-catalog.js";
+import {
+  resolveModelSelection,
+  type ModelCatalogProvider,
+  type ModelCatalogSnapshot,
+} from "../src/model-catalog.js";
 import type { MateStorageState } from "../src/mate/mate-state.js";
 import {
   ProviderTurnError,
@@ -63,7 +67,11 @@ export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
-  resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
+  resolveComposerPreview(
+    session: Session,
+    userMessage: string,
+    scope?: "workspace" | "session-folder",
+  ): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
@@ -749,6 +757,22 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
+    return this.runSessionTurnWithCatalog(sessionId, request, null);
+  }
+
+  async runExternalSessionTurn(
+    sessionId: string,
+    catalogRevision: number,
+    request: RunSessionTurnRequest,
+  ): Promise<Session> {
+    return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision);
+  }
+
+  private async runSessionTurnWithCatalog(
+    sessionId: string,
+    request: RunSessionTurnRequest,
+    externalCatalogRevision: number | null,
+  ): Promise<Session> {
     if (this.isRunInFlight(sessionId)) {
       throw new Error("このセッションはまだ実行中だよ。");
     }
@@ -758,7 +782,12 @@ export class SessionRuntimeService {
     if (this.pendingSessionRunCancels.delete(sessionId)) {
       runAbortController.abort();
     }
-    const setupPromise = this.runSessionTurnInternal(sessionId, request, runAbortController);
+    const setupPromise = this.runSessionTurnInternal(
+      sessionId,
+      request,
+      runAbortController,
+      externalCatalogRevision,
+    );
     try {
       return await waitForSetupWithCancelDeadline(
         setupPromise,
@@ -813,10 +842,86 @@ export class SessionRuntimeService {
     }
   }
 
+  async validateExternalSessionTurn(
+    sessionId: string,
+    catalogRevision: number,
+    request: RunSessionTurnRequest,
+  ): Promise<void> {
+    const session = await this.deps.getSession(sessionId);
+    if (!session) {
+      throw new SessionTurnValidationError("SESSION_NOT_FOUND", "対象セッションが見つからないよ。");
+    }
+    if (session.sessionKind !== "default") {
+      throw new SessionTurnValidationError(
+        "SESSION_KIND_UNSUPPORTED",
+        "このSession種別は外部Turnに対応していないよ。",
+      );
+    }
+    if (isReadOnlySession(session)) {
+      throw new SessionTurnValidationError(
+        "SESSION_READ_ONLY",
+        "閲覧専用セッションには送信できないよ。新しいセッションを作成してください。",
+      );
+    }
+    if (!request.userMessage.trim()) {
+      throw new SessionTurnValidationError("INVALID_INPUT", "送信するメッセージが空だよ。");
+    }
+
+    let currentCatalog: ReturnType<SessionRuntimeServiceDeps["resolveProviderCatalog"]>;
+    try {
+      currentCatalog = this.deps.resolveProviderCatalog(session.provider, null);
+    } catch {
+      throw new SessionTurnValidationError("PROVIDER_UNAVAILABLE", "この provider は現在利用できないよ。");
+    }
+    const { snapshot, provider } = currentCatalog;
+    if (snapshot.revision !== catalogRevision) {
+      throw new SessionTurnValidationError(
+        "CATALOG_REVISION_STALE",
+        "The model catalog revision is stale.",
+      );
+    }
+    if (!request.model?.trim() || !request.reasoningEffort) {
+      throw new SessionTurnValidationError("INVALID_INPUT", "modelとreasoningEffortを指定してね。");
+    }
+    try {
+      resolveModelSelection(provider, request.model, request.reasoningEffort);
+    } catch {
+      throw new SessionTurnValidationError(
+        "INVALID_INPUT",
+        "指定されたmodelとreasoningEffortの組み合わせは利用できないよ。",
+      );
+    }
+
+    const requestedSession = applyTurnRuntimeOptions(session, request);
+    const providerSession = this.deps.resolveProviderSession?.(requestedSession) ?? requestedSession;
+    const composerPreview = await this.deps.resolveComposerPreview(
+      providerSession,
+      request.userMessage,
+      "session-folder",
+    );
+    if (composerPreview.errors.length > 0) {
+      throw new SessionTurnValidationError(
+        "PATH_OUTSIDE_SESSION_FOLDER",
+        composerPreview.errors[0] ?? "添付の解決に失敗したよ。",
+      );
+    }
+
+    const appSettings = this.deps.getAppSettings();
+    if (!getProviderAppSettings(appSettings, session.provider).enabled) {
+      throw new SessionTurnValidationError("PROVIDER_DISABLED", "この provider は Settings で無効になっているよ。");
+    }
+    try {
+      this.deps.getProviderCodingAdapter(provider.id);
+    } catch {
+      throw new SessionTurnValidationError("PROVIDER_UNAVAILABLE", "この provider は現在利用できないよ。");
+    }
+  }
+
   private async runSessionTurnInternal(
     sessionId: string,
     request: RunSessionTurnRequest,
     runAbortController: AbortController,
+    externalCatalogRevision: number | null,
   ): Promise<Session> {
     const observedAt = (this.deps.currentDate ?? (() => new Date()))();
     const investigationStartedAt = Date.now();
@@ -824,6 +929,12 @@ export class SessionRuntimeService {
     throwIfRunCanceled(runAbortController.signal);
     if (!storedSession) {
       throw new Error("対象セッションが見つからないよ。");
+    }
+    if (externalCatalogRevision !== null && storedSession.sessionKind !== "default") {
+      throw new SessionTurnValidationError(
+        "SESSION_KIND_UNSUPPORTED",
+        "このSession種別は外部Turnに対応していないよ。",
+      );
     }
     const resolvedSession = await Promise.resolve(
       this.deps.resolveRuntimeSessionForTurn?.(storedSession) ?? storedSession,
@@ -863,7 +974,11 @@ export class SessionRuntimeService {
 
     const turnSession = applyTurnRuntimeOptions(session, request);
     const providerSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
-    const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
+    const composerPreview = await this.deps.resolveComposerPreview(
+      providerSession,
+      request.userMessage,
+      externalCatalogRevision === null ? "workspace" : "session-folder",
+    );
     throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
@@ -874,7 +989,26 @@ export class SessionRuntimeService {
       throw new Error("この provider は Settings で無効になっているよ。");
     }
 
-    const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
+    const { snapshot, provider } = this.deps.resolveProviderCatalog(
+      session.provider,
+      externalCatalogRevision ?? session.catalogRevision,
+    );
+    if (externalCatalogRevision !== null) {
+      if (snapshot.revision !== externalCatalogRevision) {
+        throw new SessionTurnValidationError("CATALOG_REVISION_STALE", "The model catalog revision is stale.");
+      }
+      if (!request.model?.trim() || !request.reasoningEffort) {
+        throw new SessionTurnValidationError("INVALID_INPUT", "modelとreasoningEffortを指定してね。");
+      }
+      try {
+        resolveModelSelection(provider, request.model, request.reasoningEffort);
+      } catch {
+        throw new SessionTurnValidationError(
+          "INVALID_INPUT",
+          "指定されたmodelとreasoningEffortの組み合わせは利用できないよ。",
+        );
+      }
+    }
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);

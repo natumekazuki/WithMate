@@ -176,7 +176,7 @@ describe("SessionRuntimeService stale retry helpers", () => {
 });
 describe("SessionRuntimeService", () => {
 
-  it("各turnで最新Character contextを取得し、完了後appraisalを待ってから返す", async () => {
+  it("外部turnのcatalogと実行設定をproviderへ渡し、各turnで最新Character contextを取得する", async () => {
     let storedSession = createSession();
     const storedRuntimeDefaults = {
       model: storedSession.model,
@@ -189,6 +189,8 @@ describe("SessionRuntimeService", () => {
     let auditId = 0;
     const appraisalCorrelations: string[] = [];
     const callOrder: string[] = [];
+    const catalogRevisions: Array<number | null | undefined> = [];
+    const composerScopes: Array<"workspace" | "session-folder" | undefined> = [];
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -235,15 +237,17 @@ describe("SessionRuntimeService", () => {
         storedSession = next;
         return next;
       },
-      async resolveComposerPreview() {
+      async resolveComposerPreview(_session, _userMessage, scope) {
+        composerScopes.push(scope);
         return { attachments: [], errors: [] };
       },
       getAppSettings() {
         return normalizeAppSettings({});
       },
-      resolveProviderCatalog() {
+      resolveProviderCatalog(_providerId, revision) {
+        catalogRevisions.push(revision);
         const provider = createProviderCatalog();
-        return { snapshot: { revision: 1, providers: [provider] }, provider };
+        return { snapshot: { revision: revision ?? 1, providers: [provider] }, provider };
       },
       getProviderCodingAdapter() {
         return adapter;
@@ -292,9 +296,9 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(storedSession.id, {
+    await service.runExternalSessionTurn(storedSession.id, 7, {
       userMessage: "first",
-      model: "gpt-external",
+      model: "gpt-5.4",
       reasoningEffort: "medium",
       approvalMode: "never",
       codexSandboxMode: "read-only",
@@ -305,7 +309,7 @@ describe("SessionRuntimeService", () => {
       approvalMode: providerSessions[0]?.approvalMode,
       codexSandboxMode: providerSessions[0]?.codexSandboxMode,
     }, {
-      model: "gpt-external",
+      model: "gpt-5.4",
       reasoningEffort: "medium",
       approvalMode: "never",
       codexSandboxMode: "read-only",
@@ -320,6 +324,8 @@ describe("SessionRuntimeService", () => {
     await service.runSessionTurn(storedSession.id, { userMessage: "second" });
     callOrder.push("second-returned");
 
+    assert.deepEqual(catalogRevisions, [7, storedSession.catalogRevision]);
+    assert.deepEqual(composerScopes, ["session-folder", "workspace"]);
     assert.equal(contextVersion, 2);
     assert.deepEqual(appraisalCorrelations, [
       `turn:${storedSession.id}:audit:1`,

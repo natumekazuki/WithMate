@@ -274,7 +274,7 @@ export class SessionExecutionService {
       outcome = {
         state: "failed",
         result: null,
-        errorCode: "DISPATCH_FAILED",
+        errorCode: "PROVIDER_FAILURE",
         reason: "session_runtime_failed",
       };
     }

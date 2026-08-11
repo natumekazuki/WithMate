@@ -114,9 +114,11 @@ import { CompanionStorage } from "./companion-storage.js";
 import { CompanionStorageV3 } from "./companion-storage-v3.js";
 import { SessionRuntimeService } from "./session-runtime-service.js";
 import {
+  SessionExecutionShuttingDownError,
   SessionExecutionService,
   type SessionExecutionDispatchResult,
 } from "./session-execution-service.js";
+import { runSessionExecutionDispatch } from "./session-execution-dispatch.js";
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import {
@@ -1755,7 +1757,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       dismissSessionTurnNotification: (sessionId) =>
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       cleanupSessionFilesDirectory,
-      resumeSessionExecutionQueue: (sessionId) => requireSessionExecutionService().resumeQueue(sessionId),
+      resumeSessionExecutionQueue: (sessionId) => sessionExecutionService?.resumeQueue(sessionId),
     });
   }
 
@@ -2286,7 +2288,20 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
       ),
-      resolveComposerPreview,
+      resolveComposerPreview: (session, userMessage, scope) => {
+        if (scope === "session-folder") {
+          return resolveComposerPreview(
+            {
+              ...session,
+              workspacePath: resolveSessionFilesDirectory(app.getPath("userData"), session.id),
+              allowedAdditionalDirectories: [],
+            },
+            userMessage,
+            { rootRelativeOnly: true },
+          );
+        }
+        return resolveComposerPreview(session, userMessage);
+      },
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
@@ -2461,14 +2476,23 @@ async function stopSessionExternalRuntimeBestEffort(): Promise<void> {
 
 function requireSessionExecutionService(): SessionExecutionService {
   if (!sessionExecutionService) {
+    if (sessionExternalRuntimeShuttingDown) {
+      throw new SessionExecutionShuttingDownError();
+    }
     if (!dbPath) {
       throw new Error("DB path が初期化されていないよ。");
     }
     sessionExecutionStorage = new SessionExecutionStorageV6(dbPath);
     sessionExecutionService = new SessionExecutionService({
       storage: sessionExecutionStorage,
-      validateTurn: (sessionId, request) =>
-        requireSessionRuntimeService().validateSessionTurn(sessionId, parseSessionExecutionTurnRequest(request)),
+      validateTurn: (sessionId, request) => {
+        const parsed = parseSessionExecutionTurnRequest(request);
+        return requireSessionRuntimeService().validateExternalSessionTurn(
+          sessionId,
+          parsed.catalogRevision,
+          parsed.turn,
+        );
+      },
       dispatchTurn: dispatchSessionExecutionTurn,
       cancelRunningTurn: (sessionId, executionId) => {
         if (activeSessionExecutionIds.get(sessionId) !== executionId) {
@@ -2507,30 +2531,15 @@ async function dispatchSessionExecutionTurn(
 ): Promise<SessionExecutionDispatchResult> {
   activeSessionExecutionIds.set(sessionId, executionId);
   try {
-    const session = await requireSessionRuntimeService().runSessionTurn(
-      sessionId,
-      parseSessionExecutionTurnRequest(request),
-    );
-    if (canceledSessionExecutionIds.has(executionId)) {
-      return { state: "canceled", result: null, reason: "user_requested" };
-    }
-    if (session.runState === "error") {
-      return {
-        state: "failed",
-        result: null,
-        errorCode: "PROVIDER_FAILED",
-        reason: "provider_turn_failed",
-      };
-    }
-    const assistantText = [...session.messages]
-      .reverse()
-      .find((message) => message.role === "assistant")?.text ?? "";
-    return { state: "completed", result: { assistantText } };
-  } catch (error) {
-    if (canceledSessionExecutionIds.has(executionId)) {
-      return { state: "canceled", result: null, reason: "user_requested" };
-    }
-    throw error;
+    const parsed = parseSessionExecutionTurnRequest(request);
+    return await runSessionExecutionDispatch({
+      runTurn: () => requireSessionRuntimeService().runExternalSessionTurn(
+        sessionId,
+        parsed.catalogRevision,
+        parsed.turn,
+      ),
+      isCanceled: () => canceledSessionExecutionIds.has(executionId),
+    });
   } finally {
     if (activeSessionExecutionIds.get(sessionId) === executionId) {
       activeSessionExecutionIds.delete(sessionId);
@@ -2539,11 +2548,23 @@ async function dispatchSessionExecutionTurn(
   }
 }
 
-function parseSessionExecutionTurnRequest(request: unknown): RunSessionTurnRequest {
+type SessionExecutionTurnRequest = {
+  catalogRevision: number;
+  turn: RunSessionTurnRequest;
+};
+
+function parseSessionExecutionTurnRequest(request: unknown): SessionExecutionTurnRequest {
   if (typeof request !== "object" || request === null) {
     throw new TypeError("Session execution request must be an object.");
   }
-  const candidate = request as Partial<Record<keyof RunSessionTurnRequest, unknown>>;
+  const executionRequest = request as { catalogRevision?: unknown; turn?: unknown };
+  if (!Number.isSafeInteger(executionRequest.catalogRevision) || (executionRequest.catalogRevision as number) < 1) {
+    throw new TypeError("Session execution catalogRevision must be a positive integer.");
+  }
+  if (typeof executionRequest.turn !== "object" || executionRequest.turn === null) {
+    throw new TypeError("Session execution turn must be an object.");
+  }
+  const candidate = executionRequest.turn as Partial<Record<keyof RunSessionTurnRequest, unknown>>;
   if (typeof candidate.userMessage !== "string") {
     throw new TypeError("Session execution userMessage must be a string.");
   }
@@ -2552,7 +2573,10 @@ function parseSessionExecutionTurnRequest(request: unknown): RunSessionTurnReque
       throw new TypeError(`Session execution ${key} must be a string.`);
     }
   }
-  return candidate as RunSessionTurnRequest;
+  return {
+    catalogRevision: executionRequest.catalogRevision as number,
+    turn: candidate as RunSessionTurnRequest,
+  };
 }
 
 function requireSessionTurnNotificationService(): SessionTurnNotificationService<NativeImage> {
@@ -2627,7 +2651,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
         }
         return storedSession;
       },
-      resolveComposerPreview,
+      resolveComposerPreview: (session, userMessage) => resolveComposerPreview(session, userMessage),
       resolveProviderSession: (session) => {
         const auxiliarySession = requireAuxiliarySessionService().getAuxiliarySession(session.id);
         return appendSessionFilesDirectoryForSessionId(

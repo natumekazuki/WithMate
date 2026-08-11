@@ -22,6 +22,7 @@ const CREATED_AT = "2026-08-10T00:00:00.000Z";
 type DeferredDispatch = {
   promise: Promise<SessionExecutionDispatchResult>;
   resolve(result: SessionExecutionDispatchResult): void;
+  reject(error: Error): void;
 };
 
 async function createFixture() {
@@ -390,6 +391,22 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  it("EXT-ERROR-06: dispatch exceptionはstable PROVIDER_FAILUREへ収束する", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.run(createInput(1));
+      fixture.dispatches.get(running.id)?.reject(new Error("provider failed"));
+
+      const failed = await fixture.service.waitForTerminal("session-1", running.id);
+
+      assert.equal(failed.state, "failed");
+      assert.equal(failed.errorCode, "PROVIDER_FAILURE");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("P-01: public projectionはrequestとstorage sequenceを公開しない", async () => {
     const fixture = await createFixture();
     try {
@@ -448,10 +465,12 @@ describe("SessionExecutionService", () => {
 
 function createDeferredDispatch(): DeferredDispatch {
   let resolve!: (result: SessionExecutionDispatchResult) => void;
-  const promise = new Promise<SessionExecutionDispatchResult>((resolvePromise) => {
+  let reject!: (error: Error) => void;
+  const promise = new Promise<SessionExecutionDispatchResult>((resolvePromise, rejectPromise) => {
     resolve = resolvePromise;
+    reject = rejectPromise;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

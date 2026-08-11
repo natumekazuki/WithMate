@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -46,6 +46,65 @@ test("resolveComposerPreview は同じ画像のMarkdownと@pathを一つの添�
     );
     assert.deepEqual(preview.errors, []);
     assert.equal(preview.attachments.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("EXT-AUTH-01: SessionFolder policyはrelative pathだけをroot内の添付へ解決する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-session-folder-attachment-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const outsidePath = path.join(root, "outside.txt");
+  await mkdir(sessionFolderPath, { recursive: true });
+  await writeFile(path.join(sessionFolderPath, "inside.txt"), "inside", "utf8");
+  await writeFile(outsidePath, "outside", "utf8");
+
+  try {
+    const inside = await resolveComposerPreview(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      "@inside.txt",
+      { rootRelativeOnly: true },
+    );
+    assert.deepEqual(inside.errors, []);
+    assert.equal(inside.attachments[0]?.absolutePath, path.join(sessionFolderPath, "inside.txt"));
+
+    const absolute = await resolveComposerPreview(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [root] },
+      `@${outsidePath}`,
+      { rootRelativeOnly: true },
+    );
+    assert.equal(absolute.attachments.length, 0);
+    assert.match(absolute.errors[0] ?? "", /relative path/);
+
+    const traversal = await resolveComposerPreview(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [root] },
+      "@../outside.txt",
+      { rootRelativeOnly: true },
+    );
+    assert.equal(traversal.attachments.length, 0);
+    assert.match(traversal.errors[0] ?? "", /SessionFolder/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("EXT-AUTH-01: SessionFolder policyはsymlinkによるroot外escapeを拒否する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-session-folder-symlink-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const outsideDirectory = path.join(root, "outside");
+  await mkdir(sessionFolderPath, { recursive: true });
+  await mkdir(outsideDirectory, { recursive: true });
+  await writeFile(path.join(outsideDirectory, "secret.txt"), "secret", "utf8");
+  await symlink(outsideDirectory, path.join(sessionFolderPath, "linked"), "junction");
+
+  try {
+    const preview = await resolveComposerPreview(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      "@linked/secret.txt",
+      { rootRelativeOnly: true },
+    );
+    assert.equal(preview.attachments.length, 0);
+    assert.match(preview.errors[0] ?? "", /SessionFolder/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
