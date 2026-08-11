@@ -20197,6 +20197,11 @@ var executionInputSchema = object({
 	sessionId: nonEmptyStringSchema,
 	executionId: nonEmptyStringSchema
 }).strict();
+var cancelInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	executionId: nonEmptyStringSchema,
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
 var listInputSchema = object({
 	sessionId: nonEmptyStringSchema,
 	limit: number().int().min(1).max(500).default(50),
@@ -20390,7 +20395,7 @@ function createWithMateSessionMcpServer(deps = {}) {
 	server.registerTool("turn.cancel", {
 		...definitions.get("turn.cancel"),
 		annotations: annotations(definitions.get("turn.cancel")),
-		inputSchema: executionInputSchema,
+		inputSchema: cancelInputSchema,
 		outputSchema: createOutputSchema("turn.cancel")
 	}, async (input) => executeOperation("turn.cancel", input, deps));
 	return server;

@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { SessionExecution } from "../../src/session-execution.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
+import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 
 const execution: SessionExecution = {
   id: "execution-1",
@@ -37,6 +38,7 @@ test("Session application service forwards only the turn effect and returns an a
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 4,
     executionService: {
+      beginShutdown() {},
       async run(input) {
         runInputs.push(input);
         return {
@@ -46,8 +48,9 @@ test("Session application service forwards only the turn effect and returns an a
         } as SessionExecution;
       },
       async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
       get() { throw new Error("unused"); },
-      list() { return []; },
+      listPage() { return []; },
       async cancel() { throw new Error("unused"); },
       async waitForTerminal() { throw new Error("unused"); },
     },
@@ -76,10 +79,12 @@ test("Session application service rejects a stale catalog before creating an exe
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 5,
     executionService: {
+      beginShutdown() {},
       async run() { invoked = true; return execution; },
       async enqueue() { invoked = true; return execution; },
+      resolveReplay() { return null; },
       get() { throw new Error("unused"); },
-      list() { return []; },
+      listPage() { return []; },
       async cancel() { throw new Error("unused"); },
       async waitForTerminal() { throw new Error("unused"); },
     },
@@ -95,10 +100,12 @@ test("Session application service rejects an unknown operation before invoking e
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 4,
     executionService: {
+      beginShutdown() {},
       async run() { invoked = true; return execution; },
       async enqueue() { invoked = true; return execution; },
+      resolveReplay() { invoked = true; return null; },
       get() { invoked = true; return execution; },
-      list() { invoked = true; return []; },
+      listPage() { invoked = true; return []; },
       async cancel() { invoked = true; return execution; },
       async waitForTerminal() { invoked = true; return execution; },
     },
@@ -116,10 +123,12 @@ test("Session application service validates the operation payload before invokin
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 4,
     executionService: {
+      beginShutdown() {},
       async run() { invoked = true; return execution; },
       async enqueue() { invoked = true; return execution; },
+      resolveReplay() { invoked = true; return null; },
       get() { invoked = true; return execution; },
-      list() { invoked = true; return []; },
+      listPage() { invoked = true; return []; },
       async cancel() { invoked = true; return execution; },
       async waitForTerminal() { invoked = true; return execution; },
     },
@@ -136,14 +145,21 @@ test("Session application service binds list cursors to the requested Session", 
   const items = Array.from({ length: 3 }, (_, index) => ({
     ...execution,
     id: `execution-${index + 1}`,
+    sequence: index + 1,
   }));
+  const pageRequests: Array<{ afterSequence: number | null; limit: number }> = [];
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 4,
     executionService: {
+      beginShutdown() {},
       async run() { throw new Error("unused"); },
       async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
       get() { throw new Error("unused"); },
-      list() { return items; },
+      listPage(_sessionId, afterSequence, limit) {
+        pageRequests.push({ afterSequence, limit });
+        return items.filter((item) => afterSequence === null || item.sequence > afterSequence).slice(0, limit);
+      },
       async cancel() { throw new Error("unused"); },
       async waitForTerminal() { throw new Error("unused"); },
     },
@@ -151,6 +167,87 @@ test("Session application service binds list cursors to the requested Session", 
   const first = await service.execute("turn.list", { sessionId: "session-1", limit: 2 });
   assert.ok("result" in first);
   const cursor = (first.result as { nextCursor: string }).nextCursor;
+  assert.deepEqual(pageRequests, [{ afterSequence: null, limit: 3 }]);
+  items.push({ ...execution, id: "execution-4", sequence: 4 });
+  const second = await service.execute("turn.list", { sessionId: "session-1", limit: 2, cursor });
+  assert.deepEqual(
+    "result" in second
+      ? (second.result as { items: SessionExecution[] }).items.map((item) => item.id)
+      : [],
+    ["execution-3", "execution-4"],
+  );
   const invalid = await service.execute("turn.list", { sessionId: "session-2", limit: 2, cursor });
   assert.equal("error" in invalid && invalid.error.code, "INVALID_CURSOR");
+});
+
+test("I-01: canonical replayはcatalog revision更新後もstale validationより先に解決する", async () => {
+  let runInvoked = false;
+  const service = new SessionExternalApplicationService({
+    currentCatalogRevision: () => 5,
+    executionService: {
+      beginShutdown() {},
+      async run() { runInvoked = true; return execution; },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return execution; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.run", mutationInput);
+
+  assert.equal("result" in response, true);
+  assert.equal(runInvoked, false);
+});
+
+test("LC-01: shutdown admission後はapplication dependencyを呼ばずnot_appliedで拒否する", async () => {
+  let invoked = false;
+  let executionShutdownBegun = false;
+  const service = new SessionExternalApplicationService({
+    currentCatalogRevision: () => 4,
+    executionService: {
+      beginShutdown() { executionShutdownBegun = true; },
+      async run() { invoked = true; return execution; },
+      async enqueue() { invoked = true; return execution; },
+      resolveReplay() { invoked = true; return null; },
+      get() { invoked = true; return execution; },
+      listPage() { invoked = true; return []; },
+      async cancel() { invoked = true; return execution; },
+      async waitForTerminal() { invoked = true; return execution; },
+    },
+  });
+  service.beginShutdown();
+
+  const response = await service.execute("turn.run", mutationInput);
+
+  assert.equal(invoked, false);
+  assert.equal(executionShutdownBegun, true);
+  assert.equal("error" in response && response.error.code, "RUNTIME_SHUTTING_DOWN");
+  assert.equal("error" in response && response.error.effect, "not_applied");
+});
+
+test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ写像する", async () => {
+  const service = new SessionExternalApplicationService({
+    currentCatalogRevision: () => 4,
+    executionService: {
+      beginShutdown() {},
+      async run() {
+        throw new SessionTurnValidationError("SESSION_NOT_FOUND", "Session not found.");
+      },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.run", mutationInput);
+
+  assert.equal("error" in response && response.error.code, "SESSION_NOT_FOUND");
+  assert.equal("error" in response && response.error.retryable, false);
+  assert.equal("error" in response && response.error.effect, "not_applied");
 });

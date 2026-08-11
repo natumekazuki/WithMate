@@ -1,6 +1,7 @@
 export const SESSION_EXECUTION_QUEUE_LIMIT = 10;
 
 export type SessionExecutionOperation = "turn.run" | "turn.enqueue";
+export type SessionExecutionMutationOperation = SessionExecutionOperation | "turn.cancel";
 
 export type SessionExecutionState =
   | "queued"

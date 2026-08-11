@@ -43,6 +43,7 @@ export type SessionRuntimeRunInput = {
 
 export type SessionRuntimeEnqueueInput = Omit<SessionRuntimeRunInput, "responseMode" | "waitTimeoutMs">;
 export type SessionRuntimeExecutionInput = { sessionId: string; executionId: string };
+export type SessionRuntimeCancelInput = SessionRuntimeExecutionInput & { idempotencyKey: string };
 export type SessionRuntimeListInput = { sessionId: string; limit: number; cursor?: string };
 
 export type SessionRuntimeRequestEnvelope = {
@@ -109,8 +110,11 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "turn.list") {
     return parseTurnListInput(value);
   }
-  if (operation === "turn.get" || operation === "turn.cancel") {
+  if (operation === "turn.get") {
     return parseExecutionInput(value);
+  }
+  if (operation === "turn.cancel") {
+    return parseCancelInput(value);
   }
   throw invalid("operation", "Unsupported Session runtime operation.");
 }
@@ -218,6 +222,16 @@ function parseExecutionInput(value: unknown): SessionRuntimeExecutionInput {
   return {
     sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
     executionId: requireNonEmptyString(record.executionId, "executionId"),
+  };
+}
+
+function parseCancelInput(value: unknown): SessionRuntimeCancelInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "executionId", "idempotencyKey"], "input");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    executionId: requireNonEmptyString(record.executionId, "executionId"),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }
 

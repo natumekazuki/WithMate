@@ -209,3 +209,33 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Structure convergence gate: `ready-unchanged`。CLIとMCPは共通runtime clientへ収束し、tool schemaとtransport projectionはMCP adapterに凝集している。新しいsemantic owner分散、canonical boundary迂回、test couplingのevidenceはない
 - Full-review gate: `skip`。MCPのauthorityとprojection/failure timingは二つのspecialist lensで確認し、finding familyはtargeted closure、他lensへのdelta非影響も確認済み。complete diffにtargeted checkで直接検証できない新しいcross-cutting interactionは残っていない
 - Non-blocking validation gap: MCP credentialのpositive pathを実HTTP runtimeへ結合した単一testはない。sourceと既存runtime/MCP contract testでcredential分離を確認済みで、現行違反の証拠はないため現Candidateを拡張しない
+
+## Holistic Review Finding Closure Plan
+
+- Gate: `ready`
+- Review lifecycle: master merge-baseからのcomplete diffに対するholistic reviewはCandidate `session-external-runtime-holistic-c2-master`で一度実施済み。修正後は新Candidateのdirect checkとfinding family限定のtargeted closureで閉じ、complete diffを再探索しない
+- Accepted CLI exit mapping: CLI-03はsuccess=0、usage/validation=1、runtime未起動またはidentity不一致=2、application error=3、dispatch後transport failure=4。旧Review Briefの異なる対応表はaccepted contractではない
+
+| ID | Invariant | Scope / owner | Failure mode | Consumer impact | Direct verification |
+| --- | --- | --- | --- | --- | --- |
+| RT-01 | 外部turnのmodel、reasoning effort、approval、sandbox指定をprovider実行へ反映し、保存済みSession既定値は変更しない | Session runtime service | validationだけにoverrideを使いproviderへ保存済み設定を渡す | caller指定より広い権限または異なるmodelで実行される | runtime service testでprovider入力と保存値の非変更を確認 |
+| ID-01 | 同一operation、key、fingerprintのreplayは現行catalog revision検証より先にcanonical executionへ収束する | Session application serviceとexecution service | catalog更新後のretryをstaleとして拒否する | response loss後のretryが既存結果を取得できない | application service testでcatalog更新後のcanonical replayを確認 |
+| ID-02 | `turn.cancel`もoperation、key、fingerprintで永続idempotencyを持つ | execution storageとservice | response loss後のcancel retryが別mutationとして扱われる | callerがeffect certaintyを回復できない | queued/running cancel replay、schema migration、CLI/MCP input contract test |
+| LC-01 | quit admissionをstorage closeより先に閉じ、listener停止、discovery cleanup、store closeの順で終了する | app lifecycleとruntime quit barrier | shutdown競合窓で新規dispatchまたはstore再生成が起きる | 終了中にprovider effectまたは永続化破損が起きる | lifecycle、quit barrier、runtime stop orderのtest |
+| PG-01 | `turn.list`はstorage keyset paginationを使い、全履歴hydrateとoffset cursorを行わない | execution storageとapplication service | 履歴全件をparseし、並行追加でページ重複または欠落する | 長期利用でresource使用量とpagination不整合が増える | storage page queryとapplication cursor contract test |
+| ER-01 | provider dispatch前のSession validation failureはstable domain codeと`not_applied`を返す | Session turn validation errorとapplication mapping | generic runtime unavailable / indeterminateへ潰れる | callerが安全な入力修正とretry判断をできない | domain error mapping test |
+
+### Finding Repair Evidence
+
+- Candidate `session-external-runtime-final-c3`のtargeted closureで、次の二件を`current-scope repair`として追加確認した
+  - ID-02: Sessionごとのlockだけでは、異なるSessionから同一cancel keyを並行使用した際に両方のabort effectが先行できた。`turn.cancel`のoperation+key lockをsession lockの外側へ置き、異なるfingerprintの要求をabort前にconflictへ収束させる
+  - LC-01: 外部application admissionだけを閉じても、running completion後のqueue drainが次のprovider dispatchを開始できた。execution serviceのdispatch admissionを同時に閉じ、completion drainと`resumeQueue()`の両入口で新規admissionを止める
+- 上記の直接反例としてcross-Session cancel競合、shutdown後のqueued non-admission、SQLite keyset page query、terminal cancel replayをexecutable contractへ追加した
+- Finding regression set: 112 passed、0 failed
+- `npm run typecheck`: passed
+- `npm test`: 2368 tests、2367 passed、1 skipped、0 failed
+- `npm run build`: passed。既存のVite pseudo-element warningとchunk-size warningのみ
+- `git diff --check`: passed with line-ending warnings only
+- Structure convergence gate: `ready-after-consolidation`。application mappingがruntime service実装へerror typeのためだけに依存する逆向き境界を、`session-turn-validation-error.ts`のstable ownerへ移した。移動後にfinding regression setとtypecheckを再実行してGreenを確認した
+- Hardening exclusions: stale discovery pointerの条件付き削除とCLI runtime client response body上限は、現行accepted contractへの到達可能な違反が確認されていないため本修正へ含めない
+- Remaining validation gaps: `npm run dist:win`、インストール済みalias、live ElectronでのCLI/MCP E2Eは未実施

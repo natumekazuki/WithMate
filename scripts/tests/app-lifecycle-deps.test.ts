@@ -19,8 +19,8 @@ test("createAppLifecycleDeps は引数をそのまま AppLifecycleService 依存
     },
     shouldQuitWhenAllWindowsClosed: () => false,
     confirmQuitWhileRunning: () => true,
-    closePersistentStores() {
-      calls.push("close");
+    beginSessionRuntimeShutdown() {
+      calls.push("shutdown");
     },
   });
 
@@ -31,6 +31,6 @@ test("createAppLifecycleDeps は引数をそのまま AppLifecycleService 依存
   deps.quitApp();
   assert.equal(deps.shouldQuitWhenAllWindowsClosed(), false);
   assert.equal(deps.confirmQuitWhileRunning(), true);
-  deps.closePersistentStores();
-  assert.deepEqual(calls, ["set:true", "home", "quit", "close"]);
+  deps.beginSessionRuntimeShutdown();
+  assert.deepEqual(calls, ["set:true", "home", "quit", "shutdown"]);
 });

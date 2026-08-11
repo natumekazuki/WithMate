@@ -15,7 +15,7 @@ test("AppLifecycleService は activate で Home Window を開く", async () => {
     quitApp() {},
     shouldQuitWhenAllWindowsClosed: () => true,
     confirmQuitWhileRunning: () => false,
-    closePersistentStores() {},
+    beginSessionRuntimeShutdown() {},
   });
 
   await service.handleActivate();
@@ -35,7 +35,7 @@ test("AppLifecycleService は second-instance で Home Window を開く", async 
     quitApp() {},
     shouldQuitWhenAllWindowsClosed: () => false,
     confirmQuitWhileRunning: () => false,
-    closePersistentStores() {},
+    beginSessionRuntimeShutdown() {},
   });
 
   await service.handleSecondInstance();
@@ -57,7 +57,7 @@ test("AppLifecycleService は実行中 session があると window-all-closed �
     },
     shouldQuitWhenAllWindowsClosed: () => true,
     confirmQuitWhileRunning: () => false,
-    closePersistentStores() {},
+    beginSessionRuntimeShutdown() {},
   });
 
   service.handleWindowAllClosed();
@@ -80,7 +80,7 @@ test("AppLifecycleService は window-all-closed で終了不要なら app を終
     },
     shouldQuitWhenAllWindowsClosed: () => false,
     confirmQuitWhileRunning: () => false,
-    closePersistentStores() {},
+    beginSessionRuntimeShutdown() {},
   });
 
   service.handleWindowAllClosed();
@@ -103,8 +103,8 @@ test("AppLifecycleService は before-quit で実行中 session があり confirm
     },
     shouldQuitWhenAllWindowsClosed: () => true,
     confirmQuitWhileRunning: () => false,
-    closePersistentStores() {
-      calls.push("closePersistentStores");
+    beginSessionRuntimeShutdown() {
+      calls.push("beginSessionRuntimeShutdown");
     },
   });
 
@@ -133,8 +133,8 @@ test("AppLifecycleService は before-quit で confirm が true なら許可状�
     },
     shouldQuitWhenAllWindowsClosed: () => true,
     confirmQuitWhileRunning: () => true,
-    closePersistentStores() {
-      calls.push("closePersistentStores");
+    beginSessionRuntimeShutdown() {
+      calls.push("beginSessionRuntimeShutdown");
     },
   });
 
@@ -145,10 +145,10 @@ test("AppLifecycleService は before-quit で confirm が true なら許可状�
   });
 
   assert.equal(prevented, true);
-  assert.deepEqual(calls, ["setAllowQuit", "quitApp"]);
+  assert.deepEqual(calls, ["setAllowQuit", "beginSessionRuntimeShutdown", "quitApp"]);
 });
 
-test("AppLifecycleService は通常の before-quit で persistent stores を閉じる", () => {
+test("AppLifecycleService は通常の before-quit でSession runtime admissionを閉じる", () => {
   let prevented = false;
   const calls: string[] = [];
   const service = new AppLifecycleService({
@@ -163,8 +163,8 @@ test("AppLifecycleService は通常の before-quit で persistent stores を閉�
     },
     shouldQuitWhenAllWindowsClosed: () => true,
     confirmQuitWhileRunning: () => true,
-    closePersistentStores() {
-      calls.push("closePersistentStores");
+    beginSessionRuntimeShutdown() {
+      calls.push("beginSessionRuntimeShutdown");
     },
   });
 
@@ -175,5 +175,5 @@ test("AppLifecycleService は通常の before-quit で persistent stores を閉�
   });
 
   assert.equal(prevented, false);
-  assert.deepEqual(calls, ["closePersistentStores"]);
+  assert.deepEqual(calls, ["beginSessionRuntimeShutdown"]);
 });

@@ -123,7 +123,10 @@ import {
   startSessionExternalRuntime,
   type SessionExternalRuntimeHandle,
 } from "./session-external-runtime.js";
-import { SessionRuntimeQuitBarrier } from "./session-runtime-quit-barrier.js";
+import {
+  closeSessionRuntimeAdmission,
+  SessionRuntimeQuitBarrier,
+} from "./session-runtime-quit-barrier.js";
 import { resolveConversationTimingContext } from "./conversation-timing.js";
 import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
 import {
@@ -348,6 +351,7 @@ let sessionExecutionStorage: SessionExecutionStorageV6 | null = null;
 let sessionExecutionService: SessionExecutionService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
 let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
+let sessionExternalRuntimeShuttingDown = false;
 const activeSessionExecutionIds = new Map<string, string>();
 const canceledSessionExecutionIds = new Set<string>();
 let sessionTurnNotificationService: SessionTurnNotificationService<NativeImage> | null = null;
@@ -1304,7 +1308,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               return choice === 1;
             },
-            closePersistentStores,
+            beginSessionRuntimeShutdown: () => {
+              sessionExternalRuntimeShuttingDown = true;
+              closeSessionRuntimeAdmission({
+                executionService: sessionExecutionService,
+                applicationService: sessionExternalApplicationService,
+              });
+            },
           }),
         ),
       createMainBootstrapService: () =>
@@ -2482,6 +2492,9 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       executionService: requireSessionExecutionService(),
       currentCatalogRevision: () => getModelCatalog()?.revision ?? 0,
     });
+    if (sessionExternalRuntimeShuttingDown) {
+      sessionExternalApplicationService.beginShutdown();
+    }
   }
   return sessionExternalApplicationService;
 }
@@ -4045,6 +4058,7 @@ if (!hasSingleInstanceLock) {
 } else {
   const sessionRuntimeQuitBarrier = new SessionRuntimeQuitBarrier({
     stopRuntime: stopSessionExternalRuntimeBestEffort,
+    closePersistentStores,
     quitApp: () => app.quit(),
   });
   app.on("second-instance", () => {

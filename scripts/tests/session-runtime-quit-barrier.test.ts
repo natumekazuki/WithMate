@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { SessionRuntimeQuitBarrier } from "../../src-electron/session-runtime-quit-barrier.js";
+import {
+  closeSessionRuntimeAdmission,
+  SessionRuntimeQuitBarrier,
+} from "../../src-electron/session-runtime-quit-barrier.js";
+
+test("Session runtime admission closure reaches execution service without a lazy application service", () => {
+  const calls: string[] = [];
+
+  closeSessionRuntimeAdmission({
+    executionService: {
+      beginShutdown() {
+        calls.push("execution");
+      },
+    },
+    applicationService: null,
+  });
+
+  assert.deepEqual(calls, ["execution"]);
+});
 
 test("Session runtime quit barrier prevents quit until runtime cleanup completes", async () => {
   let releaseCleanup: (() => void) | undefined;
@@ -14,6 +32,9 @@ test("Session runtime quit barrier prevents quit until runtime cleanup completes
       calls.push("stopRuntime");
       await cleanup;
       calls.push("runtimeStopped");
+    },
+    closePersistentStores() {
+      calls.push("closePersistentStores");
     },
     quitApp() {
       calls.push("quitApp");
@@ -33,7 +54,7 @@ test("Session runtime quit barrier prevents quit until runtime cleanup completes
   await cleanup;
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(calls, ["stopRuntime", "runtimeStopped", "quitApp"]);
+  assert.deepEqual(calls, ["stopRuntime", "runtimeStopped", "closePersistentStores", "quitApp"]);
   barrier.handleWillQuit(event);
   assert.equal(prevented, 2);
 });
@@ -45,6 +66,9 @@ test("Session runtime quit barrier permits final quit after cleanup failure", as
       calls.push("stopRuntime");
       throw new Error("cleanup failed");
     },
+    closePersistentStores() {
+      calls.push("closePersistentStores");
+    },
     quitApp() {
       calls.push("quitApp");
     },
@@ -55,5 +79,5 @@ test("Session runtime quit barrier permits final quit after cleanup failure", as
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(prevented, true);
-  assert.deepEqual(calls, ["stopRuntime", "quitApp"]);
+  assert.deepEqual(calls, ["stopRuntime", "closePersistentStores", "quitApp"]);
 });

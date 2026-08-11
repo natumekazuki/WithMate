@@ -8,6 +8,7 @@ import {
   createSessionRuntimeResult,
   parseSessionRuntimeRequestEnvelope,
   projectSessionExecution,
+  type SessionRuntimeCancelInput,
   type SessionRuntimeEnqueueInput,
   type SessionRuntimeError,
   type SessionRuntimeExecutionInput,
@@ -17,9 +18,11 @@ import {
   type SessionRuntimeRunInput,
 } from "../src/session-external-runtime-contract.js";
 import type { SessionExecution } from "../src/session-execution.js";
+import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import {
   SessionExecutionNotFoundError,
   SessionExecutionOwnerMismatchError,
+  SessionExecutionShuttingDownError,
   type SessionExecutionService,
 } from "./session-execution-service.js";
 import {
@@ -30,16 +33,32 @@ import {
 } from "./session-execution-storage-v6.js";
 
 export type SessionExternalApplicationServiceDeps = {
-  executionService: Pick<SessionExecutionService, "run" | "enqueue" | "get" | "list" | "cancel" | "waitForTerminal">;
+  executionService: Pick<
+    SessionExecutionService,
+    "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
+  >;
   currentCatalogRevision(): number;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
 
 export class SessionExternalApplicationService {
+  private accepting = true;
+
   constructor(private readonly deps: SessionExternalApplicationServiceDeps) {}
 
+  beginShutdown(): void {
+    this.accepting = false;
+    this.deps.executionService.beginShutdown();
+  }
+
   async execute(operation: SessionRuntimeOperation | string, input: unknown): Promise<SessionExternalApplicationResponse> {
+    if (!this.accepting) {
+      return createSessionRuntimeError({
+        code: "RUNTIME_SHUTTING_DOWN",
+        message: "The Session runtime is shutting down.",
+      });
+    }
     try {
       const request = parseSessionRuntimeRequestEnvelope({
         schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
@@ -68,20 +87,27 @@ export class SessionExternalApplicationService {
       return projectSessionExecution(this.deps.executionService.get(request.sessionId, request.executionId));
     }
     if (operation === "turn.cancel") {
-      const request = input as SessionRuntimeExecutionInput;
-      return projectSessionExecution(await this.deps.executionService.cancel(request));
+      const request = input as SessionRuntimeCancelInput;
+      return projectSessionExecution(await this.deps.executionService.cancel({
+        ...request,
+        requestFingerprint: fingerprintCancel(request),
+      }));
     }
     throw new SessionRuntimeValidationError("Unsupported Session runtime operation.", { field: "operation" });
   }
 
   private async run(input: SessionRuntimeRunInput): Promise<SessionExecution> {
-    this.requireCurrentCatalog(input.catalogRevision);
-    const execution = await this.deps.executionService.run({
+    const mutation = {
       sessionId: input.sessionId,
       request: input.turn,
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprintMutation(input),
-    });
+    };
+    const replay = this.deps.executionService.resolveReplay("turn.run", mutation);
+    if (!replay) {
+      this.requireCurrentCatalog(input.catalogRevision);
+    }
+    const execution = replay ?? await this.deps.executionService.run(mutation);
     if (input.responseMode === "deferred") {
       return projectSessionExecution(execution);
     }
@@ -94,23 +120,29 @@ export class SessionExternalApplicationService {
   }
 
   private async enqueue(input: SessionRuntimeEnqueueInput): Promise<SessionExecution> {
-    this.requireCurrentCatalog(input.catalogRevision);
-    return projectSessionExecution(await this.deps.executionService.enqueue({
+    const mutation = {
       sessionId: input.sessionId,
       request: input.turn,
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprintMutation(input),
-    }));
+    };
+    const replay = this.deps.executionService.resolveReplay("turn.enqueue", mutation);
+    if (!replay) {
+      this.requireCurrentCatalog(input.catalogRevision);
+    }
+    return projectSessionExecution(replay ?? await this.deps.executionService.enqueue(mutation));
   }
 
   private list(input: SessionRuntimeListInput): { items: SessionExecution[]; nextCursor?: string } {
-    const offset = input.cursor ? decodeListCursor(input.cursor, input.sessionId) : 0;
-    const all = this.deps.executionService.list(input.sessionId);
-    const items = all.slice(offset, offset + input.limit).map(projectSessionExecution);
-    const nextOffset = offset + items.length;
+    const afterSequence = input.cursor ? decodeListCursor(input.cursor, input.sessionId) : null;
+    const page = this.deps.executionService.listPage(input.sessionId, afterSequence, input.limit + 1);
+    const hasMore = page.length > input.limit;
+    const selected = hasMore ? page.slice(0, input.limit) : page;
+    const items = selected.map(projectSessionExecution);
+    const lastSequence = selected.at(-1)?.sequence;
     return {
       items,
-      ...(nextOffset < all.length ? { nextCursor: encodeListCursor(input.sessionId, nextOffset) } : {}),
+      ...(hasMore && lastSequence !== undefined ? { nextCursor: encodeListCursor(input.sessionId, lastSequence) } : {}),
     };
   }
 
@@ -130,6 +162,13 @@ function fingerprintMutation(input: SessionRuntimeEnqueueInput): string {
     sessionId: input.sessionId,
     catalogRevision: input.catalogRevision,
     turn: input.turn,
+  }), "utf8").digest("hex");
+}
+
+function fingerprintCancel(input: SessionRuntimeCancelInput): string {
+  return createHash("sha256").update(stableJson({
+    sessionId: input.sessionId,
+    executionId: input.executionId,
   }), "utf8").digest("hex");
 }
 
@@ -167,8 +206,11 @@ function waitWithoutCancel(
   });
 }
 
-function encodeListCursor(sessionId: string, offset: number): string {
-  return Buffer.from(JSON.stringify({ version: 1, operation: "turn.list", sessionId, offset }), "utf8").toString("base64url");
+function encodeListCursor(sessionId: string, afterSequence: number): string {
+  return Buffer.from(
+    JSON.stringify({ version: 1, operation: "turn.list", sessionId, afterSequence }),
+    "utf8",
+  ).toString("base64url");
 }
 
 function decodeListCursor(cursor: string, sessionId: string): number {
@@ -178,12 +220,12 @@ function decodeListCursor(cursor: string, sessionId: string): number {
       value.version !== 1
       || value.operation !== "turn.list"
       || value.sessionId !== sessionId
-      || !Number.isSafeInteger(value.offset)
-      || (value.offset as number) < 0
+      || !Number.isSafeInteger(value.afterSequence)
+      || (value.afterSequence as number) < 1
     ) {
       throw new Error("invalid cursor");
     }
-    return value.offset as number;
+    return value.afterSequence as number;
   } catch {
     throw new SessionRuntimeValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
   }
@@ -212,6 +254,12 @@ function mapApplicationError(error: unknown): SessionRuntimeError {
   }
   if (error instanceof SessionExecutionStateConflictError) {
     return createSessionRuntimeError({ code: "EXECUTION_NOT_CANCELLABLE", message: "The Session execution cannot be canceled in its current state." });
+  }
+  if (error instanceof SessionExecutionShuttingDownError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
+  }
+  if (error instanceof SessionTurnValidationError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
   }
   if (error instanceof TypeError) {
     return createSessionRuntimeError({ code: "INVALID_INPUT", message: "The Session operation input is invalid." });

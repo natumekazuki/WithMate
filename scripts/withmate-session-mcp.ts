@@ -60,6 +60,11 @@ const executionInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   executionId: nonEmptyStringSchema,
 }).strict();
+const cancelInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  executionId: nonEmptyStringSchema,
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
 const listInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
@@ -242,7 +247,7 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
   server.registerTool("turn.cancel", {
     ...definitions.get("turn.cancel")!,
     annotations: annotations(definitions.get("turn.cancel")!),
-    inputSchema: executionInputSchema,
+    inputSchema: cancelInputSchema,
     outputSchema: createOutputSchema("turn.cancel"),
   }, async (input) => executeOperation("turn.cancel", input, deps));
 

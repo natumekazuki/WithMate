@@ -883,7 +883,7 @@ export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
 
 export const CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_execution_idempotency_v6 (
-    operation TEXT NOT NULL CHECK (operation IN ('turn.run', 'turn.enqueue')),
+    operation TEXT NOT NULL CHECK (operation IN ('turn.run', 'turn.enqueue', 'turn.cancel')),
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     execution_id TEXT NOT NULL,
@@ -899,6 +899,38 @@ export const CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_v6_session_execution_idempotency_expires
     ON session_execution_idempotency_v6(expires_at);
 `;
+
+function ensureSessionExecutionIdempotencyOperations(db: DatabaseSync): void {
+  if (tableSql(db, "session_execution_idempotency_v6").includes("'turn.cancel'")) {
+    return;
+  }
+  db.exec(`
+    ALTER TABLE session_execution_idempotency_v6
+      RENAME TO session_execution_idempotency_v6_legacy;
+  `);
+  db.exec(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL);
+  db.exec(`
+    INSERT INTO session_execution_idempotency_v6 (
+      operation,
+      idempotency_key,
+      request_fingerprint,
+      execution_id,
+      created_at,
+      expires_at
+    )
+    SELECT
+      operation,
+      idempotency_key,
+      request_fingerprint,
+      execution_id,
+      created_at,
+      expires_at
+    FROM session_execution_idempotency_v6_legacy;
+
+    DROP TABLE session_execution_idempotency_v6_legacy;
+  `);
+  db.exec(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL);
+}
 
 export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS audit_events_v6 (
@@ -1458,6 +1490,8 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   if (!sessionColumns.has("is_pinned")) {
     db.exec("ALTER TABLE sessions_v6 ADD COLUMN is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1));");
   }
+
+  ensureSessionExecutionIdempotencyOperations(db);
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);

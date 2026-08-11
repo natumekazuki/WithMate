@@ -1,6 +1,6 @@
 # Session External Runtime
 
-- 状態: Draft
+- 状態: Active
 - 作成日: 2026-08-10
 - 対象: 通常SessionをCLIまたはMCPから操作するruntime境界
 
@@ -10,7 +10,7 @@
 
 後戻り困難な選択理由はADR 021を正本とする。exact request、response、error、状態遷移、limitは、実装時に追加するtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。
 
-ADR 021が`Proposed`である間、この文書もDraftとして更新する。議論で確定した境界だけを本文へ移し、未確定事項は末尾へ分離する。
+ADR 021で確定した非局所的な境界を本文に置き、未確定事項は末尾へ分離する。
 
 ## 用語
 

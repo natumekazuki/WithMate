@@ -168,7 +168,11 @@ describe("withmate-session CLI", () => {
   test("application errorをsafe JSONとexit 3へ写像する", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([
-      "turn", "cancel", "--json", JSON.stringify({ sessionId: "session-1", executionId: "missing" }),
+      "turn", "cancel", "--json", JSON.stringify({
+        sessionId: "session-1",
+        executionId: "missing",
+        idempotencyKey: "cancel-missing",
+      }),
     ], {
       stdout: stdout.stream,
       discover: async () => connection,

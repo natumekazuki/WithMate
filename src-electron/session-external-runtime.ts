@@ -77,8 +77,8 @@ export async function startSessionExternalRuntime(
       runtimeInstanceId,
       async stop(): Promise<void> {
         const errors: unknown[] = [];
-        await publication?.cleanup().catch((error) => errors.push(error));
         await server?.stop().catch((error) => errors.push(error));
+        await publication?.cleanup().catch((error) => errors.push(error));
         if (errors.length > 0) {
           throw new AggregateError(errors, "Session runtime cleanup failed.");
         }

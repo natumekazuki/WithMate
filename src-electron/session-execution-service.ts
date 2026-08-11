@@ -26,21 +26,25 @@ export type CreateSessionExecutionInput = {
 export type CancelSessionExecutionInput = {
   sessionId: string;
   executionId: string;
+  idempotencyKey: string;
+  requestFingerprint: string;
 };
 
 export type SessionExecutionServiceDeps = {
   storage: Pick<
     SessionExecutionStorageV6,
     | "admitNextQueued"
-    | "cancelQueued"
+    | "cancelQueuedIdempotent"
     | "cleanupExpiredIdempotency"
     | "completeRunning"
     | "enqueue"
     | "get"
     | "interruptRunningForRestart"
     | "listSessionExecutions"
+    | "listSessionExecutionsPage"
     | "listQueuedSessionIds"
     | "resolveIdempotency"
+    | "recordIdempotency"
     | "startImmediate"
   >;
   validateTurn(sessionId: string, request: unknown): Promise<void> | void;
@@ -76,9 +80,15 @@ export class SessionExecutionOwnerMismatchError extends Error {
 
 export class SessionExecutionService {
   private readonly sessionLocks = new Map<string, Promise<void>>();
+  private readonly idempotencyLocks = new Map<string, Promise<void>>();
   private readonly dispatches = new Map<string, Promise<SessionExecution>>();
+  private acceptingDispatches = true;
 
   constructor(private readonly deps: SessionExecutionServiceDeps) {}
+
+  beginShutdown(): void {
+    this.acceptingDispatches = false;
+  }
 
   async run(input: CreateSessionExecutionInput): Promise<SessionExecution> {
     const replay = this.resolveReplay("turn.run", input);
@@ -87,6 +97,7 @@ export class SessionExecutionService {
     }
     await this.deps.validateTurn(input.sessionId, input.request);
     return this.withSessionLock(input.sessionId, () => {
+      this.requireDispatchAdmission();
       const replay = this.deps.storage.resolveIdempotency(
         "turn.run",
         input.idempotencyKey,
@@ -123,6 +134,7 @@ export class SessionExecutionService {
     }
     await this.deps.validateTurn(input.sessionId, input.request);
     const queued = await this.withSessionLock(input.sessionId, () => {
+      this.requireDispatchAdmission();
       const createdAt = this.deps.currentTimestamp();
       return this.deps.storage.enqueue({
         id: this.issueExecutionId(),
@@ -148,25 +160,71 @@ export class SessionExecutionService {
     return this.deps.storage.listSessionExecutions(sessionId).map(toPublicExecution);
   }
 
+  listPage(sessionId: string, afterSequence: number | null, limit: number): SessionExecutionStorageRecord[] {
+    return this.deps.storage.listSessionExecutionsPage(sessionId, afterSequence, limit);
+  }
+
+  resolveReplay(operation: SessionExecutionOperation, input: CreateSessionExecutionInput): SessionExecution | null {
+    const replay = this.deps.storage.resolveIdempotency(
+      operation,
+      input.idempotencyKey,
+      input.requestFingerprint,
+    );
+    return replay ? toPublicExecution(replay) : null;
+  }
+
   async cancel(input: CancelSessionExecutionInput): Promise<SessionExecution> {
-    return this.withSessionLock(input.sessionId, async () => {
+    const replay = this.deps.storage.resolveIdempotency(
+      "turn.cancel",
+      input.idempotencyKey,
+      input.requestFingerprint,
+    );
+    if (replay) {
+      return toPublicExecution(replay);
+    }
+    return this.withIdempotencyLock(`turn.cancel:${input.idempotencyKey}`, () => this.withSessionLock(input.sessionId, async () => {
+      const lockedReplay = this.deps.storage.resolveIdempotency(
+        "turn.cancel",
+        input.idempotencyKey,
+        input.requestFingerprint,
+      );
+      if (lockedReplay) {
+        return toPublicExecution(lockedReplay);
+      }
       const execution = this.getOwned(input.sessionId, input.executionId);
+      const createdAt = this.deps.currentTimestamp();
+      const expiresAt = this.deps.resolveIdempotencyExpiresAt(createdAt);
       if (execution.state === "queued") {
-        const canceledAt = this.deps.currentTimestamp();
         return toPublicExecution(
-          this.deps.storage.cancelQueued(
-            execution.id,
-            canceledAt,
-            this.deps.resolveIdempotencyExpiresAt(canceledAt),
-          ),
+          this.deps.storage.cancelQueuedIdempotent({
+            executionId: execution.id,
+            idempotencyKey: input.idempotencyKey,
+            requestFingerprint: input.requestFingerprint,
+            canceledAt: createdAt,
+            expiresAt,
+          }),
         );
       }
       if (execution.state === "running") {
         await this.deps.cancelRunningTurn(input.sessionId, input.executionId);
-        return toPublicExecution(this.getOwned(input.sessionId, input.executionId));
+        return toPublicExecution(this.deps.storage.recordIdempotency({
+          operation: "turn.cancel",
+          idempotencyKey: input.idempotencyKey,
+          requestFingerprint: input.requestFingerprint,
+          executionId: input.executionId,
+          createdAt,
+          expiresAt,
+        }));
       }
-      return toPublicExecution(execution);
-    });
+      return toPublicExecution(this.deps.storage.recordIdempotency({
+        operation: "turn.cancel",
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint: input.requestFingerprint,
+        executionId: input.executionId,
+        createdAt,
+        expiresAt,
+      }));
+    }));
   }
 
   async reconcileAfterRestart(): Promise<SessionExecution[]> {
@@ -243,6 +301,9 @@ export class SessionExecutionService {
 
   private async drainSession(sessionId: string): Promise<void> {
     await this.withSessionLock(sessionId, () => {
+      if (!this.acceptingDispatches) {
+        return;
+      }
       if (this.deps.isSessionRunInFlight(sessionId)) {
         return;
       }
@@ -264,24 +325,31 @@ export class SessionExecutionService {
     return execution;
   }
 
-  private resolveReplay(
-    operation: SessionExecutionOperation,
-    input: CreateSessionExecutionInput,
-  ): SessionExecution | null {
-    const replay = this.deps.storage.resolveIdempotency(
-      operation,
-      input.idempotencyKey,
-      input.requestFingerprint,
-    );
-    return replay ? toPublicExecution(replay) : null;
-  }
-
   private issueExecutionId(): string {
     const executionId = this.deps.createExecutionId().trim();
     if (!executionId) {
       throw new Error("Session execution ID is empty.");
     }
     return executionId;
+  }
+
+  private requireDispatchAdmission(): void {
+    if (!this.acceptingDispatches) {
+      throw new SessionExecutionShuttingDownError();
+    }
+  }
+
+  private withIdempotencyLock<T>(key: string, run: () => Promise<T> | T): Promise<T> {
+    const previous = this.idempotencyLocks.get(key) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(run);
+    const released = next.then(() => undefined, () => undefined);
+    this.idempotencyLocks.set(key, released);
+    void released.finally(() => {
+      if (this.idempotencyLocks.get(key) === released) {
+        this.idempotencyLocks.delete(key);
+      }
+    });
+    return next;
   }
 
   private withSessionLock<T>(sessionId: string, run: () => Promise<T> | T): Promise<T> {
@@ -295,6 +363,15 @@ export class SessionExecutionService {
       }
     });
     return next;
+  }
+}
+
+export class SessionExecutionShuttingDownError extends Error {
+  readonly code = "RUNTIME_SHUTTING_DOWN";
+
+  constructor() {
+    super("The Session runtime is shutting down.");
+    this.name = "SessionExecutionShuttingDownError";
   }
 }
 

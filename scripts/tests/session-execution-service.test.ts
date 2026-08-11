@@ -246,13 +246,31 @@ describe("SessionExecutionService", () => {
       const queued = await fixture.service.enqueue(createInput(2));
 
       await assert.rejects(
-        fixture.service.cancel({ sessionId: "session-2", executionId: queued.id }),
+        fixture.service.cancel({
+          sessionId: "session-2",
+          executionId: queued.id,
+          idempotencyKey: "cancel-wrong-owner",
+          requestFingerprint: "cancel-wrong-owner-fingerprint",
+        }),
         (error) => error instanceof SessionExecutionOwnerMismatchError
           && error.code === "EXECUTION_OWNER_MISMATCH",
       );
-      const canceled = await fixture.service.cancel({ sessionId: "session-1", executionId: queued.id });
+      const canceled = await fixture.service.cancel({
+        sessionId: "session-1",
+        executionId: queued.id,
+        idempotencyKey: "cancel-queued",
+        requestFingerprint: "cancel-queued-fingerprint",
+      });
       assert.equal(canceled.state, "canceled");
       assert.equal(canceled.completedAt === null, false);
+      const replay = await fixture.service.cancel({
+        sessionId: "session-1",
+        executionId: queued.id,
+        idempotencyKey: "cancel-queued",
+        requestFingerprint: "cancel-queued-fingerprint",
+      });
+      assert.equal(replay.id, canceled.id);
+      assert.equal(replay.state, "canceled");
 
       fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
       await fixture.service.waitForTerminal("session-1", running.id);
@@ -270,9 +288,20 @@ describe("SessionExecutionService", () => {
       const cancelResult = await fixture.service.cancel({
         sessionId: "session-1",
         executionId: running.id,
+        idempotencyKey: "cancel-running",
+        requestFingerprint: "cancel-running-fingerprint",
       });
 
       assert.equal(cancelResult.state, "running");
+      assert.deepEqual(fixture.canceledExecutions, [running.id]);
+
+      const replay = await fixture.service.cancel({
+        sessionId: "session-1",
+        executionId: running.id,
+        idempotencyKey: "cancel-running",
+        requestFingerprint: "cancel-running-fingerprint",
+      });
+      assert.equal(replay.id, running.id);
       assert.deepEqual(fixture.canceledExecutions, [running.id]);
 
       fixture.dispatches.get(running.id)?.resolve({
@@ -283,6 +312,78 @@ describe("SessionExecutionService", () => {
       const canceled = await fixture.service.waitForTerminal("session-1", running.id);
       assert.equal(canceled.state, "canceled");
       assert.equal(canceled.reason, "user_requested");
+      const terminalReplay = await fixture.service.cancel({
+        sessionId: "session-1",
+        executionId: running.id,
+        idempotencyKey: "cancel-running",
+        requestFingerprint: "cancel-running-fingerprint",
+      });
+      assert.equal(terminalReplay.state, "canceled");
+      assert.deepEqual(fixture.canceledExecutions, [running.id]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("ID-02: 異なるSessionの同一cancel key競合は一方のabort effect前に拒否する", async () => {
+    const fixture = await createFixture();
+    try {
+      const first = await fixture.service.run(createInput(1, "session-1"));
+      const second = await fixture.service.run(createInput(2, "session-2"));
+
+      const results = await Promise.allSettled([
+        fixture.service.cancel({
+          sessionId: "session-1",
+          executionId: first.id,
+          idempotencyKey: "shared-cancel-key",
+          requestFingerprint: "cancel-first",
+        }),
+        fixture.service.cancel({
+          sessionId: "session-2",
+          executionId: second.id,
+          idempotencyKey: "shared-cancel-key",
+          requestFingerprint: "cancel-second",
+        }),
+      ]);
+
+      assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+      assert.equal(results.filter(
+        (result) => result.status === "rejected"
+          && result.reason instanceof SessionExecutionIdempotencyConflictError,
+      ).length, 1);
+      assert.equal(fixture.canceledExecutions.length, 1);
+
+      fixture.dispatches.get(first.id)?.resolve({ state: "completed", result: null });
+      fixture.dispatches.get(second.id)?.resolve({ state: "completed", result: null });
+      await Promise.all([
+        fixture.service.waitForTerminal("session-1", first.id),
+        fixture.service.waitForTerminal("session-2", second.id),
+      ]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("LC-01: shutdown開始後はrunning完了時にqueued executionをadmitしない", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.enqueue(createInput(1));
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+      const queued = await fixture.service.enqueue(createInput(2));
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+
+      fixture.service.beginShutdown();
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", running.id);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(fixture.dispatchEvents.length, 1);
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      await fixture.service.resumeQueue("session-1");
+      assert.equal(fixture.dispatchEvents.length, 1);
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

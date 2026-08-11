@@ -2,6 +2,7 @@ import type { DatabaseSync } from "node:sqlite";
 
 import {
   SESSION_EXECUTION_QUEUE_LIMIT,
+  type SessionExecutionMutationOperation,
   type SessionExecutionOperation,
   type SessionExecutionState,
   type SessionExecutionStorageRecord,
@@ -69,7 +70,7 @@ export class SessionExecutionQueueFullError extends Error {
 export class SessionExecutionIdempotencyConflictError extends Error {
   readonly code = "IDEMPOTENCY_CONFLICT";
 
-  constructor(readonly operation: SessionExecutionOperation, readonly idempotencyKey: string) {
+  constructor(readonly operation: SessionExecutionMutationOperation, readonly idempotencyKey: string) {
     super(`Session execution idempotency key was reused with a different request: ${operation}`);
     this.name = "SessionExecutionIdempotencyConflictError";
   }
@@ -233,7 +234,7 @@ export class SessionExecutionStorageV6 {
   }
 
   resolveIdempotency(
-    operation: SessionExecutionOperation,
+    operation: SessionExecutionMutationOperation,
     idempotencyKey: string,
     requestFingerprint: string,
   ): SessionExecutionStorageRecord | null {
@@ -254,6 +255,29 @@ export class SessionExecutionStorageV6 {
       WHERE session_id = ?
       ORDER BY sequence ASC
     `).all(sessionId) as SessionExecutionRow[];
+    return rows.map(parseExecution);
+  }
+
+  listSessionExecutionsPage(
+    sessionId: string,
+    afterSequence: number | null,
+    limit: number,
+  ): SessionExecutionStorageRecord[] {
+    const rows = afterSequence === null
+      ? this.db.prepare(`
+          SELECT *
+          FROM session_executions_v6
+          WHERE session_id = ?
+          ORDER BY sequence ASC
+          LIMIT ?
+        `).all(sessionId, limit) as SessionExecutionRow[]
+      : this.db.prepare(`
+          SELECT *
+          FROM session_executions_v6
+          WHERE session_id = ? AND sequence > ?
+          ORDER BY sequence ASC
+          LIMIT ?
+        `).all(sessionId, afterSequence, limit) as SessionExecutionRow[];
     return rows.map(parseExecution);
   }
 
@@ -355,6 +379,66 @@ export class SessionExecutionStorageV6 {
     });
   }
 
+  cancelQueuedIdempotent(input: {
+    executionId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    canceledAt: string;
+    expiresAt: string;
+  }): SessionExecutionStorageRecord {
+    return this.transaction(() => {
+      const replay = this.resolveIdempotency("turn.cancel", input.idempotencyKey, input.requestFingerprint);
+      if (replay) {
+        return replay;
+      }
+      const execution = this.getRequired(input.executionId);
+      if (execution.state !== "queued") {
+        throw new SessionExecutionStateConflictError(execution.id, execution.state);
+      }
+      this.db.prepare(`
+        UPDATE session_executions_v6
+        SET state = 'canceled', completed_at = ?, updated_at = ?
+        WHERE id = ? AND state = 'queued'
+      `).run(input.canceledAt, input.canceledAt, input.executionId);
+      this.insertIdempotency(
+        "turn.cancel",
+        input.idempotencyKey,
+        input.requestFingerprint,
+        input.executionId,
+        input.canceledAt,
+        input.expiresAt,
+      );
+      this.updateIdempotencyExpiry(input.executionId, input.expiresAt);
+      return this.getRequired(input.executionId);
+    });
+  }
+
+  recordIdempotency(input: {
+    operation: SessionExecutionMutationOperation;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    executionId: string;
+    createdAt: string;
+    expiresAt: string;
+  }): SessionExecutionStorageRecord {
+    return this.transaction(() => {
+      const replay = this.resolveIdempotency(input.operation, input.idempotencyKey, input.requestFingerprint);
+      if (replay) {
+        return replay;
+      }
+      const execution = this.getRequired(input.executionId);
+      this.insertIdempotency(
+        input.operation,
+        input.idempotencyKey,
+        input.requestFingerprint,
+        input.executionId,
+        input.createdAt,
+        input.expiresAt,
+      );
+      return execution;
+    });
+  }
+
   interruptRunningForRestart(
     interruptedAt: string,
     expiresAt: string,
@@ -411,7 +495,7 @@ export class SessionExecutionStorageV6 {
   }
 
   private findIdempotency(
-    operation: SessionExecutionOperation,
+    operation: SessionExecutionMutationOperation,
     idempotencyKey: string,
   ): SessionExecutionIdempotencyRow | null {
     const row = this.db.prepare(`
@@ -420,6 +504,26 @@ export class SessionExecutionStorageV6 {
       WHERE operation = ? AND idempotency_key = ?
     `).get(operation, idempotencyKey) as SessionExecutionIdempotencyRow | undefined;
     return row ?? null;
+  }
+
+  private insertIdempotency(
+    operation: SessionExecutionMutationOperation,
+    idempotencyKey: string,
+    requestFingerprint: string,
+    executionId: string,
+    createdAt: string,
+    expiresAt: string,
+  ): void {
+    this.db.prepare(`
+      INSERT INTO session_execution_idempotency_v6 (
+        operation,
+        idempotency_key,
+        request_fingerprint,
+        execution_id,
+        created_at,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    `).run(operation, idempotencyKey, requestFingerprint, executionId, createdAt, expiresAt);
   }
 
   private updateIdempotencyExpiry(executionId: string, expiresAt: string): void {

@@ -34,6 +34,7 @@ operation inputはJSON objectとし、`--json`、`--file`、`--stdin`のいず�
 
 ```powershell
 withmate-session turn get --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID"}'
+withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID","idempotencyKey":"CANCEL_KEY"}'
 ```
 
 既定はJSON出力である。人が読む要約には`--format text`を使う。scriptはJSON出力を使い、messageではなく`ok`、`error.code`、`error.retryable`、`error.effect`を判定する。

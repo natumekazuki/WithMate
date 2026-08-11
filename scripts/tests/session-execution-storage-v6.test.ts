@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
+import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import {
   SessionExecutionBusyError,
   SessionExecutionIdempotencyConflictError,
@@ -63,6 +64,29 @@ function enqueueInput(index: number) {
 }
 
 describe("SessionExecutionStorageV6", () => {
+  it("PG-01: execution履歴をsequence keysetとlimitでページングする", async () => {
+    const fixture = await createFixture();
+    try {
+      for (let index = 1; index <= 3; index += 1) {
+        fixture.storage.enqueue(enqueueInput(index));
+      }
+
+      const first = fixture.storage.listSessionExecutionsPage("session-1", null, 2);
+      assert.deepEqual(first.map((item) => item.id), ["execution-1", "execution-2"]);
+
+      fixture.storage.enqueue(enqueueInput(4));
+      const second = fixture.storage.listSessionExecutionsPage(
+        "session-1",
+        first.at(-1)?.sequence ?? null,
+        2,
+      );
+      assert.deepEqual(second.map((item) => item.id), ["execution-3", "execution-4"]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("Q-01: 待機中executionを10件に制限し、runningは件数へ含めない", async () => {
     const fixture = await createFixture();
     try {
@@ -258,6 +282,58 @@ describe("SessionExecutionStorageV6", () => {
       }
     } finally {
       fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("ID-02: populatedな旧idempotency tableをcancel対応schemaへ移行して既存recordを保つ", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue(enqueueInput(1));
+      fixture.storage.close();
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        db.exec(`
+          DROP TABLE session_execution_idempotency_v6;
+          CREATE TABLE session_execution_idempotency_v6 (
+            operation TEXT NOT NULL CHECK (operation IN ('turn.run', 'turn.enqueue')),
+            idempotency_key TEXT NOT NULL,
+            request_fingerprint TEXT NOT NULL,
+            execution_id TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            PRIMARY KEY (operation, idempotency_key),
+            FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE
+          );
+        `);
+        db.prepare(`
+          INSERT INTO session_execution_idempotency_v6 (
+            operation, idempotency_key, request_fingerprint, execution_id, created_at, expires_at
+          ) VALUES ('turn.enqueue', ?, ?, ?, ?, ?)
+        `).run("key-1", "fingerprint-1", "execution-1", CREATED_AT, EXPIRES_AT);
+
+        ensureV6Schema(db);
+
+        const table = db.prepare(`
+          SELECT sql FROM sqlite_schema
+          WHERE type = 'table' AND name = 'session_execution_idempotency_v6'
+        `).get() as { sql: string };
+        assert.match(table.sql, /'turn\.cancel'/);
+        const preserved = db.prepare(`
+          SELECT execution_id FROM session_execution_idempotency_v6
+          WHERE operation = 'turn.enqueue' AND idempotency_key = 'key-1'
+        `).get() as { execution_id: string };
+        assert.equal(preserved.execution_id, "execution-1");
+        db.prepare(`
+          INSERT INTO session_execution_idempotency_v6 (
+            operation, idempotency_key, request_fingerprint, execution_id, created_at, expires_at
+          ) VALUES ('turn.cancel', ?, ?, ?, ?, ?)
+        `).run("cancel-key", "cancel-fingerprint", "execution-1", CREATED_AT, EXPIRES_AT);
+      } finally {
+        db.close();
+      }
+    } finally {
       await rm(fixture.directory, { recursive: true, force: true });
     }
   });

@@ -78,3 +78,29 @@ test("Session runtime list limit is rejected instead of clamped", () => {
     (error) => error instanceof SessionRuntimeValidationError && error.code === "LIMIT_EXCEEDED",
   );
 });
+
+test("ID-02: turn.cancel requires an idempotency key", () => {
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.cancel",
+      input: { sessionId: "session-1", executionId: "execution-1" },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError
+      && error.details.field === "idempotencyKey",
+  );
+  const parsed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "turn.cancel",
+    input: {
+      sessionId: "session-1",
+      executionId: "execution-1",
+      idempotencyKey: "cancel-key-1",
+    },
+  });
+  assert.deepEqual(parsed.input, {
+    sessionId: "session-1",
+    executionId: "execution-1",
+    idempotencyKey: "cancel-key-1",
+  });
+});

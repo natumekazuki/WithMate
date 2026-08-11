@@ -10,7 +10,7 @@ type AppLifecycleServiceDeps = {
   quitApp(): void;
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
-  closePersistentStores(): void;
+  beginSessionRuntimeShutdown(): void;
 };
 
 export class AppLifecycleService {
@@ -44,10 +44,11 @@ export class AppLifecycleService {
       }
 
       this.deps.setAllowQuitWithInFlightRuns(true);
+      this.deps.beginSessionRuntimeShutdown();
       this.deps.quitApp();
       return;
     }
 
-    this.deps.closePersistentStores();
+    this.deps.beginSessionRuntimeShutdown();
   }
 }

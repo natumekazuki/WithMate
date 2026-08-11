@@ -27,6 +27,7 @@ const connection: SessionRuntimeConnection = {
 };
 
 const executionInput = { sessionId: "session-1", executionId: "execution-1" };
+const cancelInput = { ...executionInput, idempotencyKey: "cancel-key-1" };
 
 async function withClient<T>(
   server: ReturnType<typeof createWithMateSessionMcpServer>,
@@ -151,7 +152,7 @@ describe("WithMate Session MCP contract", () => {
         discover: async () => connection,
         call: async () => { throw new SessionRuntimeClientError("private C:\\secret stack", dispatched); },
       }), async (client) => {
-        const result = await client.callTool({ name: "turn.cancel", arguments: executionInput });
+        const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
         assert.equal(result.isError, true);
         assert.equal((result.structuredContent as any).error.effect, expectedEffect);
         assert.doesNotMatch(JSON.stringify(result.structuredContent), /secret|stack/i);
@@ -182,7 +183,7 @@ describe("WithMate Session MCP contract", () => {
       await withClient(createWithMateSessionMcpServer({
         discover: async () => ({ ...connection, baseUrl: `http://127.0.0.1:${port}` }),
       }), async (client) => {
-        const result = await client.callTool({ name: "turn.cancel", arguments: executionInput });
+        const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
         assert.equal(result.isError, true);
         assert.equal((result.structuredContent as any).error.effect, "not_applied");
         assert.equal(operationRequests, 0);

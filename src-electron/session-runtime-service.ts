@@ -33,6 +33,7 @@ import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
+import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -40,6 +41,16 @@ const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 const DEFAULT_PROVIDER_CANCEL_GRACE_MS = 10_000;
 const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
 const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
+
+function applyTurnRuntimeOptions(session: Session, request: RunSessionTurnRequest): Session {
+  return {
+    ...session,
+    model: request.model?.trim() || session.model,
+    reasoningEffort: request.reasoningEffort ?? session.reasoningEffort,
+    approvalMode: request.approvalMode ?? session.approvalMode,
+    codexSandboxMode: request.codexSandboxMode ?? session.codexSandboxMode,
+  };
+}
 
 function logSessionRunStuckInvestigation(
   event: string,
@@ -768,34 +779,38 @@ export class SessionRuntimeService {
   async validateSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<void> {
     const session = await this.deps.getSession(sessionId);
     if (!session) {
-      throw new Error("対象セッションが見つからないよ。");
+      throw new SessionTurnValidationError("SESSION_NOT_FOUND", "対象セッションが見つからないよ。");
     }
     if (isReadOnlySession(session)) {
-      throw new Error("閲覧専用セッションには送信できないよ。新しいセッションを作成してください。");
+      throw new SessionTurnValidationError(
+        "SESSION_READ_ONLY",
+        "閲覧専用セッションには送信できないよ。新しいセッションを作成してください。",
+      );
     }
     if (!request.userMessage.trim()) {
-      throw new Error("送信するメッセージが空だよ。");
+      throw new SessionTurnValidationError("INVALID_INPUT", "送信するメッセージが空だよ。");
     }
 
-    const requestedSession = {
-      ...session,
-      model: request.model?.trim() || session.model,
-      reasoningEffort: request.reasoningEffort ?? session.reasoningEffort,
-      approvalMode: request.approvalMode ?? session.approvalMode,
-      codexSandboxMode: request.codexSandboxMode ?? session.codexSandboxMode,
-    };
+    const requestedSession = applyTurnRuntimeOptions(session, request);
     const providerSession = this.deps.resolveProviderSession?.(requestedSession) ?? requestedSession;
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     if (composerPreview.errors.length > 0) {
-      throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
+      throw new SessionTurnValidationError(
+        "INVALID_INPUT",
+        composerPreview.errors[0] ?? "添付の解決に失敗したよ。",
+      );
     }
 
     const appSettings = this.deps.getAppSettings();
     if (!getProviderAppSettings(appSettings, session.provider).enabled) {
-      throw new Error("この provider は Settings で無効になっているよ。");
+      throw new SessionTurnValidationError("PROVIDER_DISABLED", "この provider は Settings で無効になっているよ。");
     }
-    const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
-    this.deps.getProviderCodingAdapter(provider.id);
+    try {
+      const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
+      this.deps.getProviderCodingAdapter(provider.id);
+    } catch {
+      throw new SessionTurnValidationError("PROVIDER_UNAVAILABLE", "この provider は現在利用できないよ。");
+    }
   }
 
   private async runSessionTurnInternal(
@@ -846,7 +861,8 @@ export class SessionRuntimeService {
       throw new Error("送信するメッセージが空だよ。");
     }
 
-    const providerSession = this.deps.resolveProviderSession?.(session) ?? session;
+    const turnSession = applyTurnRuntimeOptions(session, request);
+    const providerSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
@@ -923,7 +939,7 @@ export class SessionRuntimeService {
       runningAuditEntry = buildRunningAuditEntry({
         sessionId,
         createdAt: new Date().toISOString(),
-        session: runningSession,
+        session: applyTurnRuntimeOptions(runningSession, request),
         logicalPrompt: promptForAudit.logicalPrompt,
       });
       const runningAuditCreateStartedAt = Date.now();
@@ -1046,7 +1062,8 @@ export class SessionRuntimeService {
     await syncRunningAuditFromLiveState(initialLiveState);
     const runProviderTurn = (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
-      const effectiveTurnSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
+      const runtimeOptionSession = applyTurnRuntimeOptions(turnSession, request);
+      const effectiveTurnSession = this.deps.resolveProviderSession?.(runtimeOptionSession) ?? runtimeOptionSession;
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         sessionMemory,
@@ -1156,7 +1173,7 @@ export class SessionRuntimeService {
           const resetAuditEntry = buildRunningAuditEntry({
             sessionId,
             createdAt: runningAuditLog.createdAt,
-            session: activeRunningSession,
+            session: applyTurnRuntimeOptions(activeRunningSession, request),
             logicalPrompt: promptForAudit.logicalPrompt,
             threadId: "",
           });
@@ -1270,7 +1287,7 @@ export class SessionRuntimeService {
         baseEntry: runningAuditEntry,
         phase: "completed",
         completedAt,
-        session: storedCompletedSession,
+        session: applyTurnRuntimeOptions(storedCompletedSession, request),
         threadId: pickPreferredThreadId(result.threadId, storedCompletedSession.threadId),
         logicalPrompt: result.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
@@ -1302,7 +1319,7 @@ export class SessionRuntimeService {
         baseEntry: runningAuditEntry,
         phase: "completed",
         completedAt,
-        session: storedCompletedSession,
+        session: applyTurnRuntimeOptions(storedCompletedSession, request),
         threadId: pickPreferredThreadId(result.threadId, storedCompletedSession.threadId),
       });
       const completedAuditUpdateStartedAt = Date.now();
@@ -1441,7 +1458,7 @@ export class SessionRuntimeService {
         baseEntry: runningAuditEntry,
         phase: canceled ? "canceled" : "failed",
         completedAt,
-        session: activeRunningSession,
+        session: applyTurnRuntimeOptions(activeRunningSession, request),
         threadId: failedAuditThreadId,
         logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
         transportPayload: appendTransportPayloadFields(
@@ -1472,7 +1489,7 @@ export class SessionRuntimeService {
         baseEntry: runningAuditEntry,
         phase: canceled ? "canceled" : "failed",
         completedAt,
-        session: activeRunningSession,
+        session: applyTurnRuntimeOptions(activeRunningSession, request),
         threadId: failedAuditThreadId,
         errorMessage: failureMessage,
       });

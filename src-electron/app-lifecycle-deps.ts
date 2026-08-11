@@ -8,7 +8,7 @@ type CreateAppLifecycleDepsArgs = {
   quitApp(): void;
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
-  closePersistentStores(): void;
+  beginSessionRuntimeShutdown(): void;
 };
 
 export function createAppLifecycleDeps(
@@ -22,6 +22,6 @@ export function createAppLifecycleDeps(
     quitApp: args.quitApp,
     shouldQuitWhenAllWindowsClosed: args.shouldQuitWhenAllWindowsClosed,
     confirmQuitWhileRunning: args.confirmQuitWhileRunning,
-    closePersistentStores: args.closePersistentStores,
+    beginSessionRuntimeShutdown: args.beginSessionRuntimeShutdown,
   };
 }

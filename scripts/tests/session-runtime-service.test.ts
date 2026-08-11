@@ -178,6 +178,13 @@ describe("SessionRuntimeService", () => {
 
   it("各turnで最新Character contextを取得し、完了後appraisalを待ってから返す", async () => {
     let storedSession = createSession();
+    const storedRuntimeDefaults = {
+      model: storedSession.model,
+      reasoningEffort: storedSession.reasoningEffort,
+      approvalMode: storedSession.approvalMode,
+      codexSandboxMode: storedSession.codexSandboxMode,
+    };
+    const providerSessions: Session[] = [];
     let contextVersion = 0;
     let auditId = 0;
     const appraisalCorrelations: string[] = [];
@@ -197,7 +204,8 @@ describe("SessionRuntimeService", () => {
       },
       invalidateSessionThread() {},
       invalidateAllSessionThreads() {},
-      async runSessionTurn() {
+      async runSessionTurn(input) {
+        providerSessions.push(input.session);
         return createPartialResult({ assistantText: "完了" });
       },
     };
@@ -284,7 +292,30 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(storedSession.id, { userMessage: "first" });
+    await service.runSessionTurn(storedSession.id, {
+      userMessage: "first",
+      model: "gpt-external",
+      reasoningEffort: "medium",
+      approvalMode: "never",
+      codexSandboxMode: "read-only",
+    });
+    assert.deepEqual({
+      model: providerSessions[0]?.model,
+      reasoningEffort: providerSessions[0]?.reasoningEffort,
+      approvalMode: providerSessions[0]?.approvalMode,
+      codexSandboxMode: providerSessions[0]?.codexSandboxMode,
+    }, {
+      model: "gpt-external",
+      reasoningEffort: "medium",
+      approvalMode: "never",
+      codexSandboxMode: "read-only",
+    });
+    assert.deepEqual({
+      model: storedSession.model,
+      reasoningEffort: storedSession.reasoningEffort,
+      approvalMode: storedSession.approvalMode,
+      codexSandboxMode: storedSession.codexSandboxMode,
+    }, storedRuntimeDefaults);
     callOrder.push("first-returned");
     await service.runSessionTurn(storedSession.id, { userMessage: "second" });
     callOrder.push("second-returned");

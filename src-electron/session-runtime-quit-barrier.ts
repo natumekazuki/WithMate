@@ -4,8 +4,21 @@ type QuitEventLike = {
 
 type SessionRuntimeQuitBarrierDeps = {
   stopRuntime(): Promise<void>;
+  closePersistentStores(): void;
   quitApp(): void;
 };
+
+type SessionRuntimeShutdownParticipant = {
+  beginShutdown(): void;
+};
+
+export function closeSessionRuntimeAdmission(args: {
+  executionService: SessionRuntimeShutdownParticipant | null;
+  applicationService: SessionRuntimeShutdownParticipant | null;
+}): void {
+  args.executionService?.beginShutdown();
+  args.applicationService?.beginShutdown();
+}
 
 export class SessionRuntimeQuitBarrier {
   private state: "idle" | "stopping" | "stopped" = "idle";
@@ -27,6 +40,7 @@ export class SessionRuntimeQuitBarrier {
       .then(() => this.deps.stopRuntime())
       .catch(() => undefined)
       .finally(() => {
+        this.deps.closePersistentStores();
         this.state = "stopped";
         this.deps.quitApp();
       });
