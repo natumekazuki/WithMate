@@ -23,7 +23,10 @@ import type {
   SessionRuntimeAdapterKind,
   SessionRuntimeRequestEnvelope,
 } from "../src/session-external-runtime-contract.js";
-import { SESSION_RUNTIME_MAX_RESPONSE_BYTES } from "../src/session-external-runtime-contract.js";
+import {
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+  assertSessionRuntimeRequestBodySize,
+} from "../src/session-external-runtime-contract.js";
 
 export type SessionRuntimeConnection = {
   adapter: SessionRuntimeAdapterKind;
@@ -142,6 +145,7 @@ export async function callSessionRuntime(
     adapterSecret: connection.adapterSecret,
     envelope,
   });
+  assertSessionRuntimeRequestBodySize(Buffer.byteLength(body, "utf8"));
   const url = new URL(SESSION_RUNTIME_OPERATION_PATH, connection.baseUrl);
   return requestAuthenticatedJson(url, connection, nonce, body, signal);
 }

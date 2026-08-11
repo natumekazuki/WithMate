@@ -14,6 +14,7 @@ import { SessionRuntimeClientError, type SessionRuntimeConnection } from "../wit
 import {
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
   SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+  SessionRuntimeValidationError,
   createSessionRuntimeError,
   createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
@@ -166,6 +167,24 @@ describe("WithMate Session MCP contract", () => {
       call: async () => { throw new SessionRuntimeClientError("response lost", true); },
     }), async (client) => {
       const result = await client.callTool({ name: "turn.get", arguments: executionInput });
+      assert.equal((result.structuredContent as any).error.effect, "not_applied");
+    });
+  });
+
+  it("CLI-INPUT-LIMIT-01: shared request limit failureはCONTENT_TOO_LARGE/not_appliedを返す", async () => {
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async () => {
+        throw new SessionRuntimeValidationError(
+          "Session runtime request body exceeds 8 MiB.",
+          { maxBytes: 8 * 1024 * 1024 },
+          "CONTENT_TOO_LARGE",
+        );
+      },
+    }), async (client) => {
+      const result = await client.callTool({ name: "turn.get", arguments: executionInput });
+      assert.equal(result.isError, true);
+      assert.equal((result.structuredContent as any).error.code, "CONTENT_TOO_LARGE");
       assert.equal((result.structuredContent as any).error.effect, "not_applied");
     });
   });

@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { describe, test } from "node:test";
 
 import {
@@ -13,7 +14,9 @@ import {
 } from "../../src/session-runtime-discovery.js";
 import {
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+  SESSION_RUNTIME_MAX_BODY_BYTES,
   SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+  SessionRuntimeValidationError,
 } from "../../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_CHALLENGE_HEADER,
@@ -322,6 +325,83 @@ describe("withmate-session CLI", () => {
     assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
     assert.equal(called, false);
     assert.equal(stdout.json().error.code, "INVALID_INPUT");
+  });
+
+  test("CLI-INPUT-LIMIT-01: oversized file inputは全量parse前にCONTENT_TOO_LARGEへ収束する", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "withmate-session-cli-input-"));
+    const inputPath = join(directory, "oversized.json");
+    try {
+      await writeFile(inputPath, Buffer.alloc(SESSION_RUNTIME_MAX_BODY_BYTES + 1, 0x20));
+      const stdout = capture();
+      let discovered = false;
+      const exitCode = await runWithMateSessionCli(["turn", "get", "--file", inputPath], {
+        stdout: stdout.stream,
+        discover: async () => {
+          discovered = true;
+          return connection;
+        },
+      });
+      assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+      assert.equal(stdout.json().error.code, "CONTENT_TOO_LARGE");
+      assert.equal(stdout.json().error.effect, "not_applied");
+      assert.equal(discovered, false);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  test("CLI-INPUT-LIMIT-01: oversized stdin inputはEOF前にCONTENT_TOO_LARGEへ収束する", async () => {
+    const stdout = capture();
+    const stdin = Readable.from([
+      Buffer.alloc(SESSION_RUNTIME_MAX_BODY_BYTES, 0x20),
+      Buffer.from(" "),
+      Buffer.from("unread-tail"),
+    ]);
+    let discovered = false;
+    const exitCode = await runWithMateSessionCli(["turn", "get", "--stdin"], {
+      stdin: stdin as NodeJS.ReadStream,
+      stdout: stdout.stream,
+      discover: async () => {
+        discovered = true;
+        return connection;
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.equal(stdout.json().error.code, "CONTENT_TOO_LARGE");
+    assert.equal(stdout.json().error.effect, "not_applied");
+    assert.equal(discovered, false);
+  });
+
+  test("CLI-INPUT-LIMIT-01: exchange envelope超過はnetwork dispatch前に拒否する", async () => {
+    await assert.rejects(
+      callSessionRuntime(
+        { ...connection, baseUrl: "http://127.0.0.1:1" },
+        {
+          schemaVersion: "withmate-session-request-v1",
+          operation: "turn.get",
+          input: { payload: "a".repeat(SESSION_RUNTIME_MAX_BODY_BYTES) },
+        },
+        AbortSignal.timeout(2_000),
+      ),
+      (error) => error instanceof SessionRuntimeValidationError && error.code === "CONTENT_TOO_LARGE",
+    );
+  });
+
+  test("CLI-INPUT-LIMIT-01: exchange envelope超過をpublic CLIでCONTENT_TOO_LARGEへ投影する", async () => {
+    const emptyInput = JSON.stringify({ payload: "" });
+    const input = JSON.stringify({
+      payload: "a".repeat(SESSION_RUNTIME_MAX_BODY_BYTES - Buffer.byteLength(emptyInput, "utf8")),
+    });
+    assert.equal(Buffer.byteLength(input, "utf8"), SESSION_RUNTIME_MAX_BODY_BYTES);
+    const stdout = capture();
+    const exitCode = await runWithMateSessionCli(["turn", "get", "--json", input], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      verify: async () => true,
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.equal(stdout.json().error.code, "CONTENT_TOO_LARGE");
+    assert.equal(stdout.json().error.effect, "not_applied");
   });
 
   test("file input failureはprivate pathやraw Errorを出力しない", async () => {

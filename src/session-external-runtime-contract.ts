@@ -94,6 +94,15 @@ export class SessionRuntimeProjectionLimitError extends SessionRuntimeValidation
   }
 }
 
+export function assertSessionRuntimeRequestBodySize(actualBytes: number, field = "requestBody"): void {
+  if (actualBytes <= SESSION_RUNTIME_MAX_BODY_BYTES) return;
+  throw new SessionRuntimeValidationError(
+    "Session runtime request body exceeds 8 MiB.",
+    { field, actualBytes, maxBytes: SESSION_RUNTIME_MAX_BODY_BYTES },
+    "CONTENT_TOO_LARGE",
+  );
+}
+
 export function parseSessionRuntimeRequestEnvelope(value: unknown): SessionRuntimeRequestEnvelope {
   const record = requireObject(value, "request");
   assertKeys(record, ["schemaVersion", "operation", "input"], "request");

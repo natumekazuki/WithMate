@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { request as httpRequest } from "node:http";
+import { request as httpRequest, type ClientRequest } from "node:http";
+import { connect as connectSocket, type Socket } from "node:net";
 import { test } from "node:test";
 
 import {
@@ -130,6 +131,179 @@ test("RL-01: Session runtime replaces an oversized success response with a stabl
   }
 });
 
+test("HTTP-PREAUTH-01: unfinished pre-auth requestはdeadlineで破棄される", async () => {
+  let invoked = false;
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    preAuthTimeoutMs: 30,
+    handle: async (operation) => {
+      invoked = true;
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const request = await openPreAuthRequest(address.port);
+    await waitForRequestClose(request, 500);
+    assert.equal(invoked, false);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("HTTP-PREAUTH-01: stopはunfinished pre-auth socketを待たずに破棄する", async () => {
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    preAuthTimeoutMs: 30_000,
+    shutdownGraceMs: 50,
+    handle: async (operation) => createSessionRuntimeResult(operation, {}),
+  });
+  await server.start();
+  const address = server.address();
+  assert.ok(address);
+  const request = await openPreAuthRequest(address.port);
+  const startedAt = Date.now();
+  await server.stop();
+  assert.ok(Date.now() - startedAt < 250);
+  await waitForRequestClose(request, 500);
+});
+
+test("HTTP-PREAUTH-01: aggregate pre-auth byte budget超過はhandler前にstable errorへ収束する", async () => {
+  let invoked = false;
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    maxPreAuthAggregateBytes: 64,
+    handle: async (operation) => {
+      invoked = true;
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.get",
+      input: { sessionId: "session-1", executionId: "execution-1" },
+    });
+    const response = await post(address.port, exchangePayload("cli", body));
+    assert.equal(response.status, 503);
+    const error = JSON.parse(response.body).error;
+    assert.equal(error.code, "RUNTIME_UNAVAILABLE");
+    assert.equal(error.retryable, true);
+    assert.equal(error.effect, "not_applied");
+    assert.equal(invoked, false);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("HTTP-PREAUTH-01: 複数requestのaggregate byte budgetを共有し解放後に再受付する", async () => {
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    maxPreAuthAggregateBytes: 1_024,
+    handle: async (operation) => createSessionRuntimeResult(operation, {}),
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const first = await openPartialPreAuthRequest(address.port, 900);
+    const second = await openPartialPreAuthRequest(address.port, 200);
+    const rejected = await second.response;
+    assert.equal(rejected.status, 503);
+    assert.equal(JSON.parse(rejected.body).error.code, "RUNTIME_UNAVAILABLE");
+    first.request.destroy();
+    await waitForRequestClose(first.request, 500);
+
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.get",
+      input: { sessionId: "session-1", executionId: "execution-1" },
+    });
+    assert.ok(Buffer.byteLength(exchangePayload("cli", body)) > 1_024 - 900);
+    const accepted = await post(address.port, exchangePayload("cli", body));
+    assert.equal(accepted.status, 200);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("HTTP-PREAUTH-01: live pre-auth connection数をhard limitする", async () => {
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    maxPreAuthConnections: 1,
+    handle: async (operation) => createSessionRuntimeResult(operation, {}),
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const heldRequest = await openPreAuthRequest(address.port);
+    await assert.rejects(Promise.race([
+      openPreAuthRequest(address.port),
+      new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("connection limit was not enforced")), 500)),
+    ]));
+    heldRequest.destroy();
+  } finally {
+    await server.stop();
+  }
+});
+
+test("HTTP-PREAUTH-01: stopはsocket強制close後もauthenticated handlerの完了を待つ", async () => {
+  const handlerStarted = createDeferred();
+  const releaseHandler = createDeferred();
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    shutdownGraceMs: 20,
+    handle: async (operation) => {
+      handlerStarted.resolve();
+      await releaseHandler.promise;
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  const address = server.address();
+  assert.ok(address);
+  const body = JSON.stringify({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "turn.get",
+    input: { sessionId: "session-1", executionId: "execution-1" },
+  });
+  const response = post(address.port, exchangePayload("cli", body)).catch(() => undefined);
+  await handlerStarted.promise;
+  let firstStopped = false;
+  let secondStopped = false;
+  const firstStopping = server.stop().then(() => { firstStopped = true; });
+  const secondStopping = server.stop().then(() => { secondStopped = true; });
+  await new Promise<void>((resolve) => setTimeout(resolve, 50));
+  assert.equal(firstStopped, false);
+  assert.equal(secondStopped, false);
+  releaseHandler.resolve();
+  await Promise.all([firstStopping, secondStopping]);
+  await response;
+});
+
+test("HTTP-PREAUTH-01: stopはheader未完了socketをgrace内に破棄する", async () => {
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    shutdownGraceMs: 30,
+    handle: async (operation) => createSessionRuntimeResult(operation, {}),
+  });
+  await server.start();
+  const address = server.address();
+  assert.ok(address);
+  const socket = await openSlowHeaderSocket(address.port);
+  const closed = waitForSocketClose(socket, 500);
+  const startedAt = Date.now();
+  await server.stop();
+  await closed;
+  assert.ok(Date.now() - startedAt < 250);
+});
+
 function exchangePayload(
   adapter: "cli" | "mcp",
   envelopeBody: string,
@@ -185,4 +359,90 @@ function post(
     });
     request.flushHeaders();
   });
+}
+
+function openPreAuthRequest(port: number): Promise<ClientRequest> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest({
+      host: "127.0.0.1",
+      port,
+      path: SESSION_RUNTIME_OPERATION_PATH,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...challengeHeaders("held-nonce"),
+      },
+    });
+    request.once("error", reject);
+    request.once("information", (information) => {
+      if (information.statusCode === 103) resolve(request);
+    });
+    request.flushHeaders();
+  });
+}
+
+function openPartialPreAuthRequest(
+  port: number,
+  bytes: number,
+): Promise<{ request: ClientRequest; response: Promise<{ status: number; body: string }> }> {
+  return new Promise((resolve, reject) => {
+    let resolveResponse = (_value: { status: number; body: string }) => undefined;
+    const response = new Promise<{ status: number; body: string }>((nextResolve) => { resolveResponse = nextResolve; });
+    const request = httpRequest({
+      host: "127.0.0.1",
+      port,
+      path: SESSION_RUNTIME_OPERATION_PATH,
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...challengeHeaders(`partial-${bytes}`),
+      },
+    }, (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      incoming.on("end", () => resolveResponse({
+        status: incoming.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8"),
+      }));
+    });
+    request.once("error", reject);
+    request.once("information", (information) => {
+      if (information.statusCode !== 103) return;
+      request.write(Buffer.alloc(bytes, 0x20));
+      resolve({ request, response });
+    });
+    request.flushHeaders();
+  });
+}
+
+function openSlowHeaderSocket(port: number): Promise<Socket> {
+  return new Promise((resolve, reject) => {
+    const socket = connectSocket({ host: "127.0.0.1", port }, () => {
+      socket.write(`POST ${SESSION_RUNTIME_OPERATION_PATH} HTTP/1.1\r\nHost: 127.0.0.1\r\n`);
+      resolve(socket);
+    });
+    socket.once("error", reject);
+  });
+}
+
+async function waitForRequestClose(request: ClientRequest, timeoutMs: number): Promise<void> {
+  if (request.destroyed) return;
+  await Promise.race([
+    new Promise<void>((resolve) => request.once("close", resolve)),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("request did not close")), timeoutMs)),
+  ]);
+}
+
+async function waitForSocketClose(socket: Socket, timeoutMs: number): Promise<void> {
+  if (socket.destroyed) return;
+  await Promise.race([
+    new Promise<void>((resolve) => socket.once("close", resolve)),
+    new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("socket did not close")), timeoutMs)),
+  ]);
+}
+
+function createDeferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve = () => undefined;
+  const promise = new Promise<void>((nextResolve) => { resolve = nextResolve; });
+  return { promise, resolve };
 }

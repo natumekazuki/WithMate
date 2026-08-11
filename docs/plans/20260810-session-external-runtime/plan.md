@@ -289,3 +289,39 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Candidate c8 targeted closure: `REV-C8-RL-01`でclosed。Candidate verificationは`verified`、blocking findingなし。独立実行した関連test 33件もpassed
 - Targeted closure validation gap: process-level heap計測とSQLite row-step instrumentationは未実施。generator contractがconsumerのshort-circuitを直接検証し、storage sourceがlazy row iterationを所有するためnon-blockingとする
 - Residual risk: `nextCursor`判定のためlookahead一件はparseするが、requested page sizeに依存しないbounded memoryであり、指摘されたmulti-gigabyte eager hydration経路は再現しない
+
+## Admission and Pre-Authentication Resource Closure
+
+- Gate: `ready`
+- Finding Promotion: settings credential更新とcatalog importのexternal admission競合、未認証HTTP requestによるshutdown停止とresource枯渇、CLI入力のdispatch前unbounded bufferingは、いずれも既存owner内の`current-scope repair`とする
+- Sibling Sweep: settingsはcredential変更branchとcatalog import、HTTPはpre-auth/body/socket/shutdown、CLI入力は`--json`、`--file`、`--stdin`とCLI/MCP共通exchange serializationを対象とする。GUI/Auxiliary/Companion run admissionの共通化、新operation、installerは対象外とする
+
+| ID | Invariant | Scope / owner | Failure mode | Consumer impact | Direct verification |
+| --- | --- | --- | --- | --- | --- |
+| SET-CAT-ADMISSION-01 | Session snapshotを置換するsettings/catalog mutationはsnapshot取得前にexternal admissionを閉じ、既受付operationのdrainとrollback完了まで再開しない | `SettingsCatalogService`、`SessionExecutionAdmissionGate` | 実行中判定後に外部Turnが開始し、古いsnapshotでSession状態を巻き戻す | execution消失、会話履歴・thread metadataの巻き戻り | credential変更とcatalog importの最初のrun状態確認で新規admissionが拒否されることを確認 |
+| HTTP-PREAUTH-01 | pre-auth requestは接続数、aggregate retained bytes、absolute deadlineをhard limitし、shutdownはunfinished requestを破棄しつつauthenticated handlerのquiescenceを待つ | Session runtime HTTP server | body未完了socketがquitを無期限停止し、並列接続やbufferでMain process資源を枯渇させる | アプリ終了不能、memory/socket exhaustion、store closeとの競合 | slow body、shutdown、aggregate budget、connection limit、handler drainの直接testで確認 |
+| CLI-INPUT-LIMIT-01 | operation inputと最終exchange bodyはUTF-8で8 MiBを上限とし、超過をnetwork dispatch前の`CONTENT_TOO_LARGE / not_applied`へ収束させる | shared Session runtime contract、CLI input reader、CLI/MCP共通client | file/stdinを全量展開した後にだけserver上限を判定する | CLI/MCP processのmemory exhaustion、stable error不一致 | oversized file/stdinとexchange overhead超過でdiscovery/network dispatch前に拒否することを確認 |
+
+- ADR gate: Accepted ADR 021の既存security、lifecycle、resource-limit decisionを実装するため追加ADRは不要
+- Architecture document gate: exact limitとcleanup invariantはshared contract、source、executable contractを正本とし、恒久設計文書へ局所実装を複製しない
+- Structure convergence gate: `ready-unchanged`。各repairは既存のadmission、HTTP lifecycle、shared request contract ownerへ収束し、新しいsemantic owner分散またはcanonical boundary迂回を作らない
+- Review lifecycle: complete-diff holistic reviewは既に一度実施済み。現Candidateでは3 finding familyとresulting deltaに限定したtargeted closureのみ行う
+
+### Direct Evidence
+
+- `SET-CAT-ADMISSION-01`、`HTTP-PREAUTH-01`、`CLI-INPUT-LIMIT-01`のtargeted regression set: 54 passed、0 failed
+- `npm run typecheck`: passed
+- `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+- `npm test`: 2418 tests、2417 passed、1 skipped、0 failed
+- `git diff --check`: passed with line-ending warnings only
+- Remaining validation gaps: `npm run dist:win`、インストール済みalias、live ElectronでのCLI/MCP E2Eは未実施。GUI/Auxiliary/Companionのrun admissionは今回のexternal admission findingのsupported scope外とする
+
+### Targeted Closure
+
+- Candidate c10のtargeted closureで、`SET-CAT-ADMISSION-01`はblocking findingなしでclosedした
+- `CLI-INPUT-LIMIT-01`では、最終exchange超過がpublic CLI境界で`INVALID_INPUT`へ誤投影される反例を確認した。CLI outer boundaryで`SessionRuntimeValidationError`をstable codeへ写像し、8 MiBのraw inputがenvelope追加後に超過する公開CLI regression testを追加した
+- `HTTP-PREAUTH-01`では、aggregate budgetとheader未完了socket cleanupの直接contract不足を確認した。複数partial requestの合算超過、reservation解放後の再受付、header未完了socketのshutdown grace内closeをexecutable contractへ追加した
+- Candidate c11のHTTP closureで、解放後の正常requestがreservation leak時にも上限内へ収まるtest識別力不足を確認した。保持900 bytes、合算超過200 bytes、後続payloadが124 bytes超となる組へ変更し、disconnect時に900 bytesが解放されなければ必ず後続requestが失敗するdirect contractへ修正した
+- Candidate c12では上記識別条件を含むHTTP server test 11件がpassed。production sourceの追加変更はなく、同一finding familyの探索reviewを重ねずdirect checkで最終closure evidenceを揃えた
+- Finding Promotionは二件とも既存owner内の`current-scope repair`。新しいpublic contract、semantic owner、subsystemは追加していない
+- Holistic review countは1のまま維持し、最終Candidateでは二件のfinding familyとresulting deltaに限定したtargeted closure、およびsettings cellへのdelta非影響確認だけを行う

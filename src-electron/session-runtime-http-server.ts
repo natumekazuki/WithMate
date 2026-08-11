@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 
 import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
@@ -37,6 +37,10 @@ export type SessionRuntimeHttpServerOptions = {
   handle: SessionRuntimeHttpHandler;
   host?: string;
   port?: number;
+  preAuthTimeoutMs?: number;
+  shutdownGraceMs?: number;
+  maxPreAuthConnections?: number;
+  maxPreAuthAggregateBytes?: number;
 };
 
 export type SessionRuntimeHttpServer = {
@@ -47,6 +51,10 @@ export type SessionRuntimeHttpServer = {
 
 const DEFAULT_HOST = "127.0.0.1";
 const STATUS_PATH = "/v1/status";
+const DEFAULT_PRE_AUTH_TIMEOUT_MS = 30_000;
+const DEFAULT_SHUTDOWN_GRACE_MS = 1_000;
+const DEFAULT_MAX_PRE_AUTH_CONNECTIONS = 32;
+const DEFAULT_MAX_PRE_AUTH_AGGREGATE_BYTES = 32 * 1024 * 1024;
 
 export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServerOptions): SessionRuntimeHttpServer {
   const host = options.host ?? DEFAULT_HOST;
@@ -55,8 +63,64 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
   const cliSecret = requireSecret(options.cliSecret, "cliSecret");
   const mcpSecret = requireSecret(options.mcpSecret, "mcpSecret");
   const runtimeInstanceId = requireSecret(options.runtimeInstanceId, "runtimeInstanceId");
+  const preAuthTimeoutMs = requirePositiveInteger(options.preAuthTimeoutMs ?? DEFAULT_PRE_AUTH_TIMEOUT_MS, "preAuthTimeoutMs");
+  const shutdownGraceMs = requirePositiveInteger(options.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS, "shutdownGraceMs");
+  const maxPreAuthConnections = requirePositiveInteger(
+    options.maxPreAuthConnections ?? DEFAULT_MAX_PRE_AUTH_CONNECTIONS,
+    "maxPreAuthConnections",
+  );
+  const maxPreAuthAggregateBytes = requirePositiveInteger(
+    options.maxPreAuthAggregateBytes ?? DEFAULT_MAX_PRE_AUTH_AGGREGATE_BYTES,
+    "maxPreAuthAggregateBytes",
+  );
+  const liveSockets = new Set<Socket>();
+  const preAuthRequests = new Map<IncomingMessage, { bytes: number; timeout: NodeJS.Timeout }>();
+  const handlerDrainWaiters = new Set<() => void>();
+  let preAuthAggregateBytes = 0;
+  let activeHandlers = 0;
+  let stopping = false;
+  let stopPromise: Promise<void> | null = null;
+
+  const releasePreAuth = (request: IncomingMessage): void => {
+    const state = preAuthRequests.get(request);
+    if (!state) return;
+    clearTimeout(state.timeout);
+    preAuthAggregateBytes -= state.bytes;
+    preAuthRequests.delete(request);
+  };
+
+  const beginPreAuth = (request: IncomingMessage): boolean => {
+    if (stopping || preAuthRequests.size >= maxPreAuthConnections) {
+      return false;
+    }
+    const timeout = setTimeout(() => {
+      releasePreAuth(request);
+      request.destroy(new Error("Session runtime pre-auth request timed out."));
+    }, preAuthTimeoutMs);
+    timeout.unref();
+    preAuthRequests.set(request, { bytes: 0, timeout });
+    return true;
+  };
+
+  const retainPreAuthBytes = (request: IncomingMessage, bytes: number): void => {
+    const state = preAuthRequests.get(request);
+    if (!state) {
+      throw transportError("RUNTIME_UNAVAILABLE", "Session runtime request is no longer admitted.", true);
+    }
+    state.bytes += bytes;
+    preAuthAggregateBytes += bytes;
+    if (preAuthAggregateBytes > maxPreAuthAggregateBytes) {
+      throw transportError("RUNTIME_UNAVAILABLE", "Session runtime request capacity is unavailable.", true);
+    }
+  };
+
+  const waitForHandlersToDrain = async (): Promise<void> => {
+    if (activeHandlers === 0) return;
+    await new Promise<void>((resolve) => handlerDrainWaiters.add(resolve));
+  };
 
   const server = createServer(async (request, response) => {
+    let registeredPreAuth = false;
     try {
       if (!isLoopbackRemoteAddress(request.socket.remoteAddress) || hasBrowserHeaders(request)) {
         writeJson(response, 403, transportError("FORBIDDEN", "Session runtime only accepts local non-browser requests."));
@@ -95,6 +159,15 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
         writeJson(response, 401, transportError("UNAUTHORIZED", "Session runtime request is not authorized."));
         return;
       }
+      registeredPreAuth = beginPreAuth(request);
+      if (!registeredPreAuth) {
+        writeJsonAndClose(request, response, 503, transportError(
+          "RUNTIME_UNAVAILABLE",
+          "Session runtime request capacity is unavailable.",
+          true,
+        ));
+        return;
+      }
       response.writeEarlyHints({
         link: `<${SESSION_RUNTIME_OPERATION_PATH}>; rel=preconnect`,
         [SESSION_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
@@ -102,17 +175,34 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
       });
       const declaredLength = parseContentLength(request.headers["content-length"]);
       if (declaredLength !== null && declaredLength > SESSION_RUNTIME_MAX_BODY_BYTES) {
-        writeJson(response, 413, transportError("CONTENT_TOO_LARGE", "Session runtime request body exceeds 8 MiB."));
+        writeJsonAndClose(
+          request,
+          response,
+          413,
+          transportError("CONTENT_TOO_LARGE", "Session runtime request body exceeds 8 MiB."),
+        );
         return;
       }
-      const payload = parseExchangePayload(await readJsonBody(request));
+      const payload = parseExchangePayload(await readJsonBody(request, (bytes) => retainPreAuthBytes(request, bytes)));
       const adapter = authenticateExchange(payload, { apiSecret, cliSecret, mcpSecret });
       if (!adapter) {
         writeJson(response, 401, transportError("UNAUTHORIZED", "Session runtime request is not authorized."));
         return;
       }
+      releasePreAuth(request);
+      registeredPreAuth = false;
       const envelope = parseSessionRuntimeRequestEnvelope(payload.envelope);
-      const result = await options.handle(envelope.operation, envelope.input, adapter);
+      activeHandlers += 1;
+      let result: SessionRuntimeResultEnvelope | SessionRuntimeError;
+      try {
+        result = await options.handle(envelope.operation, envelope.input, adapter);
+      } finally {
+        activeHandlers -= 1;
+        if (activeHandlers === 0) {
+          for (const resolve of handlerDrainWaiters) resolve();
+          handlerDrainWaiters.clear();
+        }
+      }
       writeJson(response, statusForResponse(result), result);
     } catch (error) {
       if (error instanceof SessionRuntimeValidationError) {
@@ -133,7 +223,18 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
         retryable: true,
         effect: "indeterminate",
       }));
+    } finally {
+      if (registeredPreAuth) {
+        releasePreAuth(request);
+      }
     }
+  });
+  server.headersTimeout = 5_000;
+  server.requestTimeout = preAuthTimeoutMs;
+  server.maxConnections = maxPreAuthConnections;
+  server.on("connection", (socket) => {
+    liveSockets.add(socket);
+    socket.once("close", () => liveSockets.delete(socket));
   });
 
   return {
@@ -144,6 +245,7 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
       if (!isLoopbackListenHost(host)) {
         throw new Error("Session runtime host must be loopback.");
       }
+      stopping = false;
       await new Promise<void>((resolve, reject) => {
         const onError = (error: Error) => reject(error);
         server.once("error", onError);
@@ -154,10 +256,38 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
       });
     },
     async stop(): Promise<void> {
+      if (stopPromise) {
+        return stopPromise;
+      }
       if (!server.listening) {
         return;
       }
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      stopPromise = (async () => {
+        stopping = true;
+        for (const request of preAuthRequests.keys()) {
+          releasePreAuth(request);
+          request.destroy();
+        }
+        server.closeIdleConnections();
+        await new Promise<void>((resolve, reject) => {
+          const forceClose = setTimeout(() => {
+            server.closeAllConnections();
+            for (const socket of liveSockets) socket.destroy();
+          }, shutdownGraceMs);
+          forceClose.unref();
+          server.close((error) => {
+            clearTimeout(forceClose);
+            if (error) reject(error);
+            else resolve();
+          });
+        });
+        await waitForHandlersToDrain();
+      })();
+      try {
+        await stopPromise;
+      } finally {
+        stopPromise = null;
+      }
     },
     address(): AddressInfo | null {
       const address = server.address();
@@ -209,7 +339,7 @@ function parseExchangePayload(value: unknown): SessionRuntimeExchangePayload {
   };
 }
 
-async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+async function readJsonBody(request: IncomingMessage, retainBytes: (bytes: number) => void): Promise<unknown> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
   for await (const chunk of request) {
@@ -218,6 +348,7 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
     if (totalBytes > SESSION_RUNTIME_MAX_BODY_BYTES) {
       throw transportError("CONTENT_TOO_LARGE", "Session runtime request body exceeds 8 MiB.");
     }
+    retainBytes(buffer.byteLength);
     chunks.push(buffer);
   }
   try {
@@ -227,8 +358,8 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-function transportError(code: string, message: string): SessionRuntimeError {
-  return createSessionRuntimeError({ code, message });
+function transportError(code: string, message: string, retryable = false): SessionRuntimeError {
+  return createSessionRuntimeError({ code, message, retryable });
 }
 
 function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeError): number {
@@ -256,6 +387,7 @@ function isSessionRuntimeError(value: unknown): value is SessionRuntimeError {
 }
 
 function writeJson(response: ServerResponse, status: number, value: unknown): void {
+  if (response.destroyed || response.writableEnded) return;
   const body = encodeJsonWithinLimit(value, SESSION_RUNTIME_MAX_RESPONSE_BYTES);
   if (body === null) {
     const operation = isSessionRuntimeResultEnvelope(value) ? value.operation : null;
@@ -274,6 +406,16 @@ function writeJson(response: ServerResponse, status: number, value: unknown): vo
     "Content-Length": Buffer.byteLength(body),
   });
   response.end(body);
+}
+
+function writeJsonAndClose(
+  request: IncomingMessage,
+  response: ServerResponse,
+  status: number,
+  value: unknown,
+): void {
+  response.once("finish", () => request.destroy());
+  writeJson(response, status, value);
 }
 
 function isSessionRuntimeResultEnvelope(value: unknown): value is SessionRuntimeResultEnvelope {
@@ -366,4 +508,11 @@ function requireSecret(value: string, name: string): string {
     throw new Error(`Session runtime ${name} must be non-empty.`);
   }
   return trimmed;
+}
+
+function requirePositiveInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`Session runtime ${name} must be a positive integer.`);
+  }
+  return value;
 }

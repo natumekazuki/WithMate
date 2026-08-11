@@ -10,6 +10,7 @@ import type { CompanionSession } from "../../src/companion-state.js";
 import { createDefaultAppSettings, type AppSettings } from "../../src/provider-settings-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
+import { SessionExecutionAdmissionGate } from "../../src-electron/session-execution-admission-gate.js";
 import { SettingsCatalogService as SettingsCatalogServiceImpl } from "../../src-electron/settings-catalog-service.js";
 
 class SettingsCatalogService extends SettingsCatalogServiceImpl {
@@ -152,6 +153,54 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
+  it("SET-CAT-ADMISSION-01: credential変更は実行中判定より前にexternal admissionを閉じる", async () => {
+    const gate = new SessionExecutionAdmissionGate();
+    const previousSettings = createDefaultAppSettings();
+    const service = new SettingsCatalogServiceImpl({
+      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      runSessionExecutionMaintenance: async (operation) => await gate.runMaintenance(operation),
+      hasInFlightSessionRuns: () => false,
+      isSessionRunInFlight: () => true,
+      isRunningSession: () => true,
+      listSessions() {
+        assert.equal(gate.tryAdmit(), null);
+        return [createSession()];
+      },
+      getAppSettings: () => previousSettings,
+    } as never);
+
+    await assert.rejects(
+      service.updateAppSettings({
+        ...previousSettings,
+        codingProviderSettings: {
+          ...previousSettings.codingProviderSettings,
+          codex: {
+            ...previousSettings.codingProviderSettings.codex,
+            apiKey: "changed-key",
+          },
+        },
+      }),
+      /実行中の session/,
+    );
+  });
+
+  it("SET-CAT-ADMISSION-01: catalog importは実行中判定より前にexternal admissionを閉じる", async () => {
+    const gate = new SessionExecutionAdmissionGate();
+    const service = new SettingsCatalogServiceImpl({
+      runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      runSessionExecutionMaintenance: async (operation) => await gate.runMaintenance(operation),
+      hasInFlightSessionRuns() {
+        assert.equal(gate.tryAdmit(), null);
+        return true;
+      },
+    } as never);
+
+    await assert.rejects(
+      service.importModelCatalogDocument({ providers: createCatalogSnapshot(2).providers }),
+      /session 実行中/,
+    );
+  });
+
   it("DB-MAINT-07: DB resetは実行中判定より前にexternal admission maintenanceへ入る", async () => {
     const events: string[] = [];
     const service = new SettingsCatalogServiceImpl({
@@ -252,12 +301,11 @@ describe("SettingsCatalogService", () => {
     );
   });
 
-  it("待機中の通常 settings 更新は並行して保存された chat layout を巻き戻さない", async () => {
+  it("通常 settings 更新はSession snapshotを読み書きしない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-settings-catalog-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
     const storage = new AppSettingsStorage(dbPath);
-    const auxiliarySessionsRequested = createDeferred();
-    const resumeAuxiliarySessions = createDeferred();
+    let sessionSnapshotAccesses = 0;
 
     try {
       const previousSettings = storage.getSettings();
@@ -272,11 +320,11 @@ describe("SettingsCatalogService", () => {
           return false;
         },
         listSessions() {
+          sessionSnapshotAccesses += 1;
           return [];
         },
-        async listAuxiliarySessions() {
-          auxiliarySessionsRequested.resolve();
-          await resumeAuxiliarySessions.promise;
+        listAuxiliarySessions() {
+          sessionSnapshotAccesses += 1;
           return [];
         },
         getAppSettings() {
@@ -298,9 +346,11 @@ describe("SettingsCatalogService", () => {
           return { providers: createCatalogSnapshot().providers };
         },
         replaceAllSessions(nextSessions) {
+          sessionSnapshotAccesses += 1;
           return nextSessions;
         },
         replaceAuxiliarySessions(nextSessions) {
+          sessionSnapshotAccesses += 1;
           return nextSessions;
         },
         clearProviderQuotaTelemetry() {},
@@ -311,27 +361,13 @@ describe("SettingsCatalogService", () => {
         broadcastModelCatalog() {},
       });
 
-      const updating = service.updateAppSettings({
+      const updated = await service.updateAppSettings({
         ...previousSettings,
         launchAtLoginEnabled: true,
       });
-      await auxiliarySessionsRequested.promise;
-      storage.updateChatLayoutPreference({ target: "header", value: "visible" });
-      storage.updateChatLayoutPreference({ target: "actionDock", value: "expanded" });
-      storage.updateChatLayoutPreference({ target: "sidePane", value: "context" });
-      storage.updateChatLayoutPreference({ target: "priority", value: "dock-first" });
-      resumeAuxiliarySessions.resolve();
-
-      const updated = await updating;
 
       assert.equal(updated.launchAtLoginEnabled, true);
-      assert.deepEqual(updated.chatLayoutPreference, {
-        header: "visible",
-        actionDock: "expanded",
-        sidePane: "context",
-        priority: "dock-first",
-      });
-      assert.deepEqual(storage.getSettings().chatLayoutPreference, updated.chatLayoutPreference);
+      assert.equal(sessionSnapshotAccesses, 0);
     } finally {
       storage.close();
       await rm(tempDirectory, { recursive: true, force: true });

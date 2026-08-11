@@ -1,9 +1,12 @@
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
 import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SESSION_RUNTIME_OPERATIONS,
+  SESSION_RUNTIME_MAX_BODY_BYTES,
+  SessionRuntimeValidationError,
+  assertSessionRuntimeRequestBodySize,
   type SessionRuntimeError,
   type SessionRuntimeOperation,
   type SessionRuntimeRequestEnvelope,
@@ -49,9 +52,12 @@ type CliOutput = {
 };
 
 class SessionCliUsageError extends Error {
-  constructor(message: string) {
+  readonly code: string;
+
+  constructor(message: string, code = "INVALID_INPUT") {
     super(message);
     this.name = "SessionCliUsageError";
+    this.code = code;
   }
 }
 
@@ -151,9 +157,14 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
         ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate
         : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
     }
+    if (error instanceof SessionRuntimeValidationError) {
+      writeOutput(stdout, format, localError(command, error.code, error.message));
+      return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
+    }
+    const code = error instanceof SessionCliUsageError ? error.code : "INVALID_INPUT";
     writeOutput(stdout, format, localError(
       command,
-      "INVALID_INPUT",
+      code,
       error instanceof SessionCliUsageError ? error.message : "Invalid CLI input.",
     ));
     return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
@@ -211,10 +222,19 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   }
   let input: unknown;
   try {
-    if (json !== undefined) input = JSON.parse(json);
-    else if (file !== undefined) input = JSON.parse(await (deps.read ?? readFile)(file, "utf8"));
+    if (json !== undefined) {
+      assertSessionRuntimeRequestBodySize(Buffer.byteLength(json, "utf8"), "input");
+      input = JSON.parse(json);
+    } else if (file !== undefined) {
+      const text = deps.read ? await deps.read(file, "utf8") : await readFileWithinLimit(file);
+      assertSessionRuntimeRequestBodySize(Buffer.byteLength(text, "utf8"), "input");
+      input = JSON.parse(text);
+    }
     else if (useStdin) input = JSON.parse(await readStdin(deps.stdin ?? process.stdin));
-  } catch {
+  } catch (error) {
+    if (error instanceof SessionRuntimeValidationError) {
+      throw new SessionCliUsageError(error.message, error.code);
+    }
     throw new SessionCliUsageError("Operation input must be readable valid JSON.");
   }
   return { command, ...(sources ? { input } : {}), format, ...(apiUrl ? { apiUrl } : {}), ...(discoveryFilePath ? { discoveryFilePath } : {}), timeoutMs };
@@ -222,8 +242,33 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
 
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
   const chunks: Buffer[] = [];
-  for await (const chunk of stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-  return Buffer.concat(chunks).toString("utf8");
+  let totalBytes = 0;
+  for await (const chunk of stdin) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+    assertSessionRuntimeRequestBodySize(totalBytes, "input");
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, totalBytes).toString("utf8");
+}
+
+async function readFileWithinLimit(filePath: string): Promise<string> {
+  const handle = await open(filePath, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let totalBytes = 0;
+    while (true) {
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) break;
+      totalBytes += bytesRead;
+      assertSessionRuntimeRequestBodySize(totalBytes, "input");
+      chunks.push(buffer.subarray(0, bytesRead));
+    }
+    return Buffer.concat(chunks, totalBytes).toString("utf8");
+  } finally {
+    await handle.close();
+  }
 }
 
 function projectRuntimeResponse(command: string, response: SessionRuntimeClientResponse): CliOutput {

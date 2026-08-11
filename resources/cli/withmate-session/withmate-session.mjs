@@ -1,5 +1,5 @@
 // Generated from scripts/withmate-session.ts. Do not edit directly.
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { request } from "node:http";
@@ -67,6 +67,7 @@ var CODEX_SANDBOX_MODE_VALUES = [
 var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v1";
 var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v1";
 var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1";
+var SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
 	"turn.run",
@@ -75,6 +76,24 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"turn.get",
 	"turn.cancel"
 ];
+var SessionRuntimeValidationError = class extends Error {
+	code;
+	details;
+	constructor(message, details = {}, code = "INVALID_INPUT") {
+		super(message);
+		this.name = "SessionRuntimeValidationError";
+		this.code = code;
+		this.details = details;
+	}
+};
+function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody") {
+	if (actualBytes <= 8388608) return;
+	throw new SessionRuntimeValidationError("Session runtime request body exceeds 8 MiB.", {
+		field,
+		actualBytes,
+		maxBytes: SESSION_RUNTIME_MAX_BODY_BYTES
+	}, "CONTENT_TOO_LARGE");
+}
 function createSessionRuntimeError(input) {
 	return {
 		schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
@@ -174,6 +193,7 @@ async function callSessionRuntime(connection, envelope, signal) {
 		adapterSecret: connection.adapterSecret,
 		envelope
 	});
+	assertSessionRuntimeRequestBodySize(Buffer.byteLength(body, "utf8"));
 	return requestAuthenticatedJson(new URL(SESSION_RUNTIME_OPERATION_PATH, connection.baseUrl), connection, nonce, body, signal);
 }
 function requestAuthenticatedJson(url, connection, nonce, body, signal) {
@@ -20413,6 +20433,12 @@ async function executeOperation(operation, input, deps) {
 		if (result) return toolResult(result, false);
 		return toolResult(createTransportError(operation, true, "Session runtime returned an invalid public response."), true);
 	} catch (error) {
+		if (error instanceof SessionRuntimeValidationError) return toolResult(createSessionRuntimeError({
+			code: error.code,
+			message: error.message,
+			effect: "not_applied",
+			details: error.details
+		}), true);
 		const dispatched = error instanceof SessionRuntimeClientError && error.dispatched;
 		return toolResult(createTransportError(operation, dispatched, dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable."), true);
 	}
@@ -20479,9 +20505,11 @@ var WITHMATE_SESSION_CLI_EXIT_CODES = {
 	transportIndeterminate: 4
 };
 var SessionCliUsageError = class extends Error {
-	constructor(message) {
+	code;
+	constructor(message, code = "INVALID_INPUT") {
 		super(message);
 		this.name = "SessionCliUsageError";
+		this.code = code;
 	}
 };
 var commandMap = /* @__PURE__ */ new Map([
@@ -20578,7 +20606,12 @@ async function runWithMateSessionCli(args, deps = {}) {
 			writeOutput(stdout, format, localError(command, "RUNTIME_UNAVAILABLE", error.dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable.", true, indeterminate ? "indeterminate" : "not_applied"));
 			return error.dispatched ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
 		}
-		writeOutput(stdout, format, localError(command, "INVALID_INPUT", error instanceof SessionCliUsageError ? error.message : "Invalid CLI input."));
+		if (error instanceof SessionRuntimeValidationError) {
+			writeOutput(stdout, format, localError(command, error.code, error.message));
+			return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
+		}
+		const code = error instanceof SessionCliUsageError ? error.code : "INVALID_INPUT";
+		writeOutput(stdout, format, localError(command, code, error instanceof SessionCliUsageError ? error.message : "Invalid CLI input."));
 		return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
 	}
 }
@@ -20617,10 +20650,16 @@ async function parseArgs(args, deps) {
 	if (!commandMap.has(command) && sources !== 0) throw new SessionCliUsageError(`${command} does not accept an operation input.`);
 	let input;
 	try {
-		if (json !== void 0) input = JSON.parse(json);
-		else if (file !== void 0) input = JSON.parse(await (deps.read ?? readFile)(file, "utf8"));
-		else if (useStdin) input = JSON.parse(await readStdin(deps.stdin ?? process.stdin));
-	} catch {
+		if (json !== void 0) {
+			assertSessionRuntimeRequestBodySize(Buffer.byteLength(json, "utf8"), "input");
+			input = JSON.parse(json);
+		} else if (file !== void 0) {
+			const text = deps.read ? await deps.read(file, "utf8") : await readFileWithinLimit(file);
+			assertSessionRuntimeRequestBodySize(Buffer.byteLength(text, "utf8"), "input");
+			input = JSON.parse(text);
+		} else if (useStdin) input = JSON.parse(await readStdin(deps.stdin ?? process.stdin));
+	} catch (error) {
+		if (error instanceof SessionRuntimeValidationError) throw new SessionCliUsageError(error.message, error.code);
 		throw new SessionCliUsageError("Operation input must be readable valid JSON.");
 	}
 	return {
@@ -20634,8 +20673,32 @@ async function parseArgs(args, deps) {
 }
 async function readStdin(stdin) {
 	const chunks = [];
-	for await (const chunk of stdin) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-	return Buffer.concat(chunks).toString("utf8");
+	let totalBytes = 0;
+	for await (const chunk of stdin) {
+		const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+		totalBytes += buffer.byteLength;
+		assertSessionRuntimeRequestBodySize(totalBytes, "input");
+		chunks.push(buffer);
+	}
+	return Buffer.concat(chunks, totalBytes).toString("utf8");
+}
+async function readFileWithinLimit(filePath) {
+	const handle = await open(filePath, "r");
+	try {
+		const chunks = [];
+		let totalBytes = 0;
+		while (true) {
+			const buffer = Buffer.allocUnsafe(64 * 1024);
+			const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+			if (bytesRead === 0) break;
+			totalBytes += bytesRead;
+			assertSessionRuntimeRequestBodySize(totalBytes, "input");
+			chunks.push(buffer.subarray(0, bytesRead));
+		}
+		return Buffer.concat(chunks, totalBytes).toString("utf8");
+	} finally {
+		await handle.close();
+	}
 }
 function projectRuntimeResponse(command, response) {
 	if (response.value && typeof response.value === "object" && "error" in response.value) return {

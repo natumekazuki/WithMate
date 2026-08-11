@@ -11,6 +11,7 @@ import {
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+  SessionRuntimeValidationError,
   createSessionRuntimeError,
   type SessionRuntimeEffect,
   type SessionRuntimeOperation,
@@ -197,6 +198,14 @@ async function executeOperation(
     if (result) return toolResult(result, false);
     return toolResult(createTransportError(operation, true, "Session runtime returned an invalid public response."), true);
   } catch (error) {
+    if (error instanceof SessionRuntimeValidationError) {
+      return toolResult(createSessionRuntimeError({
+        code: error.code,
+        message: error.message,
+        effect: "not_applied",
+        details: error.details,
+      }), true);
+    }
     const dispatched = error instanceof SessionRuntimeClientError && error.dispatched;
     return toolResult(createTransportError(operation, dispatched, dispatched
       ? "Session runtime response was not received after dispatch."

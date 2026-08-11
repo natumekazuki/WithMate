@@ -181,24 +181,59 @@ export class SettingsCatalogService {
 
   async updateAppSettings(nextSettingsInput: AppSettings): Promise<AppSettings> {
     return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.updateAppSettingsExclusive(nextSettingsInput),
+      async () => {
+        const previousSettings = this.deps.getAppSettings();
+        const nextSettings = normalizeAppSettings(nextSettingsInput);
+        const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
+        if (providersWithApiKeyChange.length === 0) {
+          return this.updateAppSettingsWithoutCredentialChange(previousSettings, nextSettings);
+        }
+        return this.deps.runSessionExecutionMaintenance(
+          () => this.updateAppSettingsWithCredentialChange(
+            previousSettings,
+            nextSettings,
+            providersWithApiKeyChange,
+          ),
+        );
+      },
     );
   }
 
-  private async updateAppSettingsExclusive(nextSettingsInput: AppSettings): Promise<AppSettings> {
-    const previousSettings = this.deps.getAppSettings();
-    const nextSettings = normalizeAppSettings(nextSettingsInput);
-    const providersWithApiKeyChange = getProvidersWithApiKeyChange(previousSettings, nextSettings);
-
-    if (providersWithApiKeyChange.length > 0) {
-      const blockedSessions = (await this.deps.listSessions()).filter(
-        (session) =>
-          providersWithApiKeyChange.includes(session.provider) &&
-          (this.deps.isSessionRunInFlight(session.id) || this.deps.isRunningSession(session)),
-      );
-      if (blockedSessions.length > 0) {
-        throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
+  private async updateAppSettingsWithoutCredentialChange(
+    previousSettings: AppSettings,
+    nextSettings: AppSettings,
+  ): Promise<AppSettings> {
+    let savedSettings: AppSettings | null = null;
+    try {
+      savedSettings = await this.deps.updateAppSettings(nextSettings);
+      const currentSettings = this.deps.getAppSettings();
+      this.deps.broadcastAppSettings(currentSettings);
+      return currentSettings;
+    } catch (error) {
+      if (!savedSettings) {
+        throw error;
       }
+      try {
+        await this.deps.updateAppSettings(previousSettings);
+      } catch (rollbackError) {
+        throw new AggregateError([error, rollbackError], "app settings の更新を rollback できなかったよ。");
+      }
+      throw error;
+    }
+  }
+
+  private async updateAppSettingsWithCredentialChange(
+    previousSettings: AppSettings,
+    nextSettings: AppSettings,
+    providersWithApiKeyChange: string[],
+  ): Promise<AppSettings> {
+    const blockedSessions = (await this.deps.listSessions()).filter(
+      (session) =>
+        providersWithApiKeyChange.includes(session.provider) &&
+        (this.deps.isSessionRunInFlight(session.id) || this.deps.isRunningSession(session)),
+    );
+    if (blockedSessions.length > 0) {
+      throw new Error("Coding Agent credential を変更する provider に実行中の session があるため、完了まで待ってね。");
     }
 
     const previousSessions = await this.deps.listSessions();
@@ -301,7 +336,9 @@ export class SettingsCatalogService {
 
   async importModelCatalogDocument(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot> {
     return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.importModelCatalogDocumentExclusive(document),
+      () => this.deps.runSessionExecutionMaintenance(
+        () => this.importModelCatalogDocumentExclusive(document),
+      ),
     );
   }
 
