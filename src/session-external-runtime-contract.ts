@@ -16,6 +16,10 @@ export const SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 300_000;
 
 export const SESSION_RUNTIME_OPERATIONS = [
   "runtime.catalog",
+  "session.create",
+  "session.list",
+  "session.get",
+  "session.rename",
   "turn.run",
   "turn.enqueue",
   "turn.list",
@@ -40,6 +44,51 @@ export type SessionRuntimeCatalogResult = {
       reasoningEfforts: ModelReasoningEffort[];
     }>;
   }>;
+};
+
+export type SessionRuntimeCreateWorkspace =
+  | { kind: "directory"; path: string }
+  | { kind: "session_folder" };
+
+export type SessionRuntimeCreateInput = {
+  title: string;
+  provider: "codex";
+  catalogRevision: number;
+  workspace: SessionRuntimeCreateWorkspace;
+  idempotencyKey: string;
+};
+
+export type SessionRuntimeSessionInput = { sessionId: string };
+export type SessionRuntimeSessionListInput = { limit: number; cursor?: string };
+export type SessionRuntimeRenameInput = SessionRuntimeSessionInput & {
+  title: string;
+  idempotencyKey: string;
+};
+
+export type SessionRuntimePublicCharacter = { id: string; name: string };
+export type SessionRuntimePublicWorkspace = {
+  kind: "directory" | "session_folder";
+  label: string;
+  path: string;
+  branch: string;
+};
+export type SessionRuntimePublicSessionFolder = { path: string; isWorkspace: boolean };
+export type SessionRuntimeSessionSummary = {
+  sessionId: string;
+  title: string;
+  sessionKind: "default";
+  provider: { id: string; catalogRevision: number };
+  character: SessionRuntimePublicCharacter;
+  workspace: { kind: "directory" | "session_folder"; label: string; branch: string };
+  updatedAt: string;
+};
+export type SessionRuntimeSessionDetail = Omit<SessionRuntimeSessionSummary, "workspace"> & {
+  workspace: SessionRuntimePublicWorkspace;
+  sessionFolder: SessionRuntimePublicSessionFolder;
+};
+export type SessionRuntimeSessionListResult = {
+  items: SessionRuntimeSessionSummary[];
+  nextCursor?: string;
 };
 
 export type SessionRuntimeTurnRequest = {
@@ -144,6 +193,18 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
     assertKeys(record, [], "input");
     return {};
   }
+  if (operation === "session.create") {
+    return parseSessionCreateInput(value);
+  }
+  if (operation === "session.list") {
+    return parseSessionListInput(value);
+  }
+  if (operation === "session.get") {
+    return parseSessionInput(value);
+  }
+  if (operation === "session.rename") {
+    return parseSessionRenameInput(value);
+  }
   if (operation === "turn.run") {
     return parseTurnRunInput(value);
   }
@@ -160,6 +221,56 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
     return parseCancelInput(value);
   }
   throw invalid("operation", "Unsupported Session runtime operation.");
+}
+
+function parseSessionCreateInput(value: unknown): SessionRuntimeCreateInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
+  return {
+    title: requireNonEmptyString(record.title, "title"),
+    provider: requireEnum(record.provider, ["codex"] as const, "provider"),
+    catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
+    workspace: parseSessionCreateWorkspace(record.workspace),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseSessionCreateWorkspace(value: unknown): SessionRuntimeCreateWorkspace {
+  const record = requireObject(value, "workspace");
+  const kind = requireEnum(record.kind, ["directory", "session_folder"] as const, "workspace.kind");
+  if (kind === "session_folder") {
+    assertKeys(record, ["kind"], "workspace");
+    return { kind };
+  }
+  assertKeys(record, ["kind", "path"], "workspace");
+  return { kind, path: requireNonEmptyString(record.path, "workspace.path") };
+}
+
+function parseSessionListInput(value: unknown): SessionRuntimeSessionListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["limit", "cursor"], "input");
+  return {
+    limit: record.limit === undefined
+      ? SESSION_RUNTIME_DEFAULT_LIST_LIMIT
+      : requireInteger(record.limit, "limit", 1, SESSION_RUNTIME_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function parseSessionInput(value: unknown): SessionRuntimeSessionInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId"], "input");
+  return { sessionId: requireNonEmptyString(record.sessionId, "sessionId") };
+}
+
+function parseSessionRenameInput(value: unknown): SessionRuntimeRenameInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "title", "idempotencyKey"], "input");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    title: requireNonEmptyString(record.title, "title"),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
 }
 
 export function createSessionRuntimeResult(

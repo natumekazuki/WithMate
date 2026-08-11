@@ -60,6 +60,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - 引き継ぐpromptはagentが作業結果と次の目的に合わせて自然文で生成する。runtimeはpromptの意味内容を組み立てず、宛先検証、永続化、FIFO admission、execution identityだけを所有する。
 - 引き継ぎ先は呼び出し元または親Sessionに固定しない。統括SessionがSession Bを作成し、BへSession CのIDを渡して、Bが完了後にCへ競合確認を依頼する構成を許可する。
 - 初期promptへ呼び出し元Sessionを自動注入する`runtime.context`は設けない。必要なSession IDはSession作成resultまたは明示的な指示から渡す。
+- 通常Sessionのprovider promptには実行対象自身のSession IDだけを含める。これはagentが自分のSessionを識別するための実行文脈であり、呼び出し元または親Sessionを伝える`runtime.context`とは分ける。
 - agentが`turn.enqueue`を呼ぶ前に失敗または中断した場合、引き継ぎは作成されない。統括側は保持したexecution IDを`turn.get`で確認できる。terminal failureを別Sessionへ自動enqueueする機能は初期surfaceに含めない。
 
 ### mutationをidempotencyで収束させる

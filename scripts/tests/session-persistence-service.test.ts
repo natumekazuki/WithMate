@@ -80,6 +80,41 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("SessionPersistenceService", () => {
+  it("外部CRUDで保存済みSessionをcacheへ反映し対象IDだけbroadcastする", () => {
+    const existing = createSession({ id: "existing", taskTitle: "Existing" });
+    let cachedSessions = [existing];
+    const broadcasts: string[][] = [];
+    const service = new SessionPersistenceService({
+      getSessions: () => cachedSessions,
+      setSessions: (next) => { cachedSessions = next; },
+      getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+      isSessionRunInFlight: () => false,
+      upsertStoredSession: (session) => session,
+      replaceStoredSessions: () => undefined,
+      listStoredSessions: () => cachedSessions,
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
+    });
+    const created = createSession({ id: "external", taskTitle: "Created externally" });
+
+    service.publishStoredSession(created);
+    service.publishStoredSessionSummary({
+      ...projectSessionSummary(created),
+      taskTitle: "Renamed externally",
+      updatedAt: "2026-08-11T00:10:00.000Z",
+    });
+
+    assert.deepEqual(cachedSessions.map((session) => session.id), ["external", "existing"]);
+    assert.equal(cachedSessions[0]?.taskTitle, "Renamed externally");
+    assert.deepEqual(broadcasts, [["external"], ["external"]]);
+  });
+
   it("setSessionPinnedは実行状態とupdatedAtを変えずにcacheとbroadcastを更新する", async () => {
     const session = createSession({
       id: "pin-target",

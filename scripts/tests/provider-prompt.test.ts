@@ -75,6 +75,35 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("composeProviderPrompt", () => {
+  it("normal Session の provider prompt に対象自身の Session ID を含める", () => {
+    const session = buildNewSession({
+      id: "session-self-1",
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /# WithMate Session Context/);
+    assert.match(prompt.systemBodyText, /Current Session ID: `session-self-1`/);
+    assert.equal(prompt.systemBodyText.match(/Current Session ID:/g)?.length, 1);
+  });
+
   it("Conversation Timingをinput側のUser Input直前へ置き、system側へ入れない", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -209,7 +238,8 @@ describe("composeProviderPrompt", () => {
       attachments: [],
     });
 
-    assert.equal(prompt.systemBodyText, "");
+    assert.match(prompt.systemBodyText, /# WithMate Session Context/);
+    assert.ok(prompt.systemBodyText.includes(`Current Session ID: \`${session.id}\``));
     assert.doesNotMatch(prompt.systemBodyText, /# Character/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
     assert.doesNotMatch(prompt.logicalPrompt.systemText, /# Character/);
@@ -255,11 +285,11 @@ describe("composeProviderPrompt", () => {
 
     assert.equal(prompt.inputBodyText, "");
     assert.equal(prompt.logicalPrompt.inputText, "");
-    assert.equal(prompt.logicalPrompt.composedText, "");
+    assert.equal(prompt.logicalPrompt.composedText, prompt.systemBodyText);
     assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
   });
 
-  it("共通 system prompt を空文字にする", () => {
+  it("CharacterなしでもSession Contextだけをsystem promptへ置く", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -282,9 +312,9 @@ describe("composeProviderPrompt", () => {
       attachments: [],
     });
 
-    assert.equal(prompt.systemBodyText, "");
+    assert.match(prompt.systemBodyText, /# WithMate Session Context/);
+    assert.ok(prompt.systemBodyText.includes(`Current Session ID: \`${session.id}\``));
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.equal(prompt.logicalPrompt.systemText, "");
     assert.doesNotMatch(prompt.inputBodyText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /あなたは丁寧に説明する。/);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
@@ -413,6 +443,7 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.systemBodyText, /ユーザー向け自然言語レスポンスの話し方・温度・反応パターンに反映してください。/);
     assert.doesNotMatch(prompt.systemBodyText, /通常のcoding agentとして正確に扱い、Character定義で置き換えないでください。/);
     assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
+    assert.doesNotMatch(prompt.systemBodyText, /# WithMate Session Context/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# Character Definition Snapshot",
       "# User Input",

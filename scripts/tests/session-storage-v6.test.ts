@@ -10,7 +10,10 @@ import type { CharacterRuntimeSnapshot } from "../../src/character/character-cat
 import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { buildNewSession, type MessageArtifact } from "../../src/session-state.js";
 import { resolveCharacterAuthoringRuntimeSessionForTurn } from "../../src-electron/character-authoring-service.js";
-import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import {
+  SessionCrudIdempotencyConflictError,
+  SessionStorageV6,
+} from "../../src-electron/session-storage-v6.js";
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
@@ -195,6 +198,117 @@ function listSessionTurnSummaries(dbPath: string): string[] {
 }
 
 describe("SessionStorageV6", () => {
+  it("SESSION-CREATE-IDEMPOTENCY-02: create/renameを永続replayし、一覧を安定順序でページングする", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const makeSession = (id: string, title: string, updatedAt: string) => ({
+        ...buildNewSession({
+          id,
+          taskTitle: title,
+          workspaceLabel: "workspace",
+          workspacePath: "C:/workspace",
+          branch: "main",
+          characterId: "char-a",
+          character: "A",
+          characterIconPath: "",
+          characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+          approvalMode: DEFAULT_APPROVAL_MODE,
+        }),
+        updatedAt,
+      });
+      const first = storage.insertSessionIdempotently(
+        makeSession("session-a", "A", "2026-08-11T00:00:00.000Z"),
+        {
+          operation: "session.create",
+          idempotencyKey: "create-key",
+          requestFingerprint: "fingerprint-a",
+          createdAt: "2026-08-11T00:00:00.000Z",
+          expiresAt: "2026-08-12T00:00:00.000Z",
+          projectResult: (session) => ({ sessionId: session.id, title: session.taskTitle }),
+        },
+      );
+      assert.equal(first.replayed, false);
+
+      storage.close();
+      storage = new SessionStorageV6(dbPath);
+      const replay = storage.insertSessionIdempotently(
+        makeSession("must-not-be-created", "Different object", "2026-08-11T00:01:00.000Z"),
+        {
+          operation: "session.create",
+          idempotencyKey: "create-key",
+          requestFingerprint: "fingerprint-a",
+          createdAt: "2026-08-11T00:01:00.000Z",
+          expiresAt: "2026-08-12T00:01:00.000Z",
+          projectResult: () => ({ unexpected: true }),
+        },
+      );
+      assert.equal(replay.replayed, true);
+      assert.deepEqual(replay.result, { sessionId: "session-a", title: "A" });
+      assert.equal(storage.getSession("must-not-be-created"), null);
+      assert.throws(
+        () => storage?.resolveSessionCrudIdempotency(
+          "session.create",
+          "create-key",
+          "different-fingerprint",
+          "2026-08-11T00:02:00.000Z",
+        ),
+        SessionCrudIdempotencyConflictError,
+      );
+
+      storage.insertSession(makeSession("session-c", "C", "2026-08-11T00:03:00.000Z"));
+      storage.insertSession(makeSession("session-b", "B", "2026-08-11T00:03:00.000Z"));
+      const firstPage = storage.listSessionSummaryPage(2);
+      assert.deepEqual(firstPage.map((entry) => entry.summary.id), ["session-c", "session-b"]);
+      const renamed = storage.renameSessionIdempotently({
+        operation: "session.rename",
+        sessionId: "session-a",
+        title: "Renamed",
+        idempotencyKey: "rename-key",
+        requestFingerprint: "rename-fingerprint",
+        createdAt: "2026-08-11T00:04:00.000Z",
+        expiresAt: "2026-08-12T00:04:00.000Z",
+        projectResult: (session) => ({ sessionId: session.id, title: session.taskTitle }),
+      });
+      assert.equal(renamed?.session.taskTitle, "Renamed");
+      const secondPage = storage.listSessionSummaryPage(2, {
+        lastActiveAt: firstPage[1]!.lastActiveAt,
+        sessionId: firstPage[1]!.summary.id,
+      });
+      assert.deepEqual(secondPage.map((entry) => entry.summary.id), ["session-a"]);
+
+      assert.deepEqual(renamed?.result, { sessionId: "session-a", title: "Renamed" });
+      const renamedReplay = storage.renameSessionIdempotently({
+        operation: "session.rename",
+        sessionId: "session-a",
+        title: "Renamed",
+        idempotencyKey: "rename-key",
+        requestFingerprint: "rename-fingerprint",
+        createdAt: "2026-08-11T00:05:00.000Z",
+        expiresAt: "2026-08-12T00:05:00.000Z",
+        projectResult: () => ({ unexpected: true }),
+      });
+      assert.equal(renamedReplay?.replayed, true);
+      assert.deepEqual(renamedReplay?.result, { sessionId: "session-a", title: "Renamed" });
+      assert.equal(storage.cleanupSessionCrudIdempotency("2026-08-13T00:00:00.000Z"), 2);
+      assert.deepEqual(
+        storage.resolveSessionCrudIdempotency(
+          "session.create",
+          "create-key",
+          "different-fingerprint",
+          "2026-08-13T00:00:00.000Z",
+        ),
+        { kind: "absent" },
+      );
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("pin stateだけを更新し、updatedAtと本文を維持して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

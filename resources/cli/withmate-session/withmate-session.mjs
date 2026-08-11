@@ -1,7 +1,7 @@
 // Generated from scripts/withmate-session.ts. Do not edit directly.
 import { open, readFile } from "node:fs/promises";
+import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { request } from "node:http";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -71,6 +71,10 @@ var SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
 	"runtime.catalog",
+	"session.create",
+	"session.list",
+	"session.get",
+	"session.rename",
 	"turn.run",
 	"turn.enqueue",
 	"turn.list",
@@ -20292,6 +20296,26 @@ var listInputSchema = object({
 	limit: number().int().min(1).max(500).default(50),
 	cursor: nonEmptyStringSchema.optional()
 }).strict();
+var sessionCreateInputSchema = object({
+	title: nonEmptyStringSchema,
+	provider: literal("codex"),
+	catalogRevision: number().int().min(1),
+	workspace: discriminatedUnion("kind", [object({
+		kind: literal("directory"),
+		path: nonEmptyStringSchema
+	}).strict(), object({ kind: literal("session_folder") }).strict()]),
+	idempotencyKey: nonEmptyStringSchema.optional()
+}).strict();
+var sessionListInputSchema = object({
+	limit: number().int().min(1).max(500).default(50),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var sessionGetInputSchema = object({ sessionId: nonEmptyStringSchema }).strict();
+var sessionRenameInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	title: nonEmptyStringSchema,
+	idempotencyKey: nonEmptyStringSchema.optional()
+}).strict();
 var publicDetailsSchema = record(string(), union([
 	string(),
 	number(),
@@ -20340,6 +20364,34 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "session.create",
+		title: "Create Session",
+		description: "Create a normal Session with an explicit workspace.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "session.list",
+		title: "List Sessions",
+		description: "List normal Sessions with keyset pagination.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "session.get",
+		title: "Get Session",
+		description: "Read one normal Session.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "session.rename",
+		title: "Rename Session",
+		description: "Rename one normal Session.",
+		readOnly: false,
+		destructive: false
+	},
+	{
 		name: "turn.run",
 		title: "Run Session turn",
 		description: "Start one turn immediately in the specified Session.",
@@ -20384,7 +20436,16 @@ function annotations(definition) {
 	};
 }
 function isMutation(operation) {
-	return operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+	return operation === "session.create" || operation === "session.rename" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+}
+function normalizeMutationInput$1(operation, input) {
+	if (operation !== "session.create" && operation !== "session.rename") return input;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+	const record = input;
+	return {
+		...record,
+		idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID()
+	};
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
@@ -20432,7 +20493,7 @@ async function executeOperation(operation, input, deps) {
 	const envelope = {
 		schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
 		operation,
-		input
+		input: normalizeMutationInput$1(operation, input)
 	};
 	try {
 		const response = await (deps.call ?? callSessionRuntime)(connection, envelope, AbortSignal.timeout(deps.requestTimeoutMs ?? 305e3));
@@ -20472,6 +20533,30 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: runtimeCatalogInputSchema,
 		outputSchema: createOutputSchema("runtime.catalog")
 	}, async (input) => executeOperation("runtime.catalog", input, deps));
+	server.registerTool("session.create", {
+		...definitions.get("session.create"),
+		annotations: annotations(definitions.get("session.create")),
+		inputSchema: sessionCreateInputSchema,
+		outputSchema: createOutputSchema("session.create")
+	}, async (input) => executeOperation("session.create", input, deps));
+	server.registerTool("session.list", {
+		...definitions.get("session.list"),
+		annotations: annotations(definitions.get("session.list")),
+		inputSchema: sessionListInputSchema,
+		outputSchema: createOutputSchema("session.list")
+	}, async (input) => executeOperation("session.list", input, deps));
+	server.registerTool("session.get", {
+		...definitions.get("session.get"),
+		annotations: annotations(definitions.get("session.get")),
+		inputSchema: sessionGetInputSchema,
+		outputSchema: createOutputSchema("session.get")
+	}, async (input) => executeOperation("session.get", input, deps));
+	server.registerTool("session.rename", {
+		...definitions.get("session.rename"),
+		annotations: annotations(definitions.get("session.rename")),
+		inputSchema: sessionRenameInputSchema,
+		outputSchema: createOutputSchema("session.rename")
+	}, async (input) => executeOperation("session.rename", input, deps));
 	server.registerTool("turn.run", {
 		...definitions.get("turn.run"),
 		annotations: annotations(definitions.get("turn.run")),
@@ -20529,6 +20614,10 @@ var SessionCliUsageError = class extends Error {
 };
 var commandMap = /* @__PURE__ */ new Map([
 	["runtime catalog", "runtime.catalog"],
+	["session create", "session.create"],
+	["session list", "session.list"],
+	["session get", "session.get"],
+	["session rename", "session.rename"],
 	["turn run", "turn.run"],
 	["turn enqueue", "turn.enqueue"],
 	["turn list", "turn.list"],
@@ -20611,7 +20700,7 @@ async function runWithMateSessionCli(args, deps = {}) {
 		const envelope = {
 			schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
 			operation,
-			input: parsed.input
+			input: normalizeMutationInput(operation, parsed.input)
 		};
 		const response = await (deps.call ?? callSessionRuntime)(connection, envelope, AbortSignal.timeout(parsed.timeoutMs));
 		const output = projectRuntimeResponse(command, response);
@@ -20633,12 +20722,21 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command) {
-	return command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+	return command === "session create" || command === "session rename" || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+}
+function normalizeMutationInput(operation, input) {
+	if (operation !== "session.create" && operation !== "session.rename") return input;
+	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+	const record = input;
+	return {
+		...record,
+		idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID()
+	};
 }
 async function parseArgs(args, deps) {
-	const namespacedCommand = args[0] === "turn" || args[0] === "runtime";
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
 	const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
 	const optionStart = namespacedCommand ? 2 : 1;
 	let json;
 	let file;
@@ -20752,10 +20850,31 @@ function writeOutput(stdout, format, output) {
 		stdout.write(`${JSON.stringify(output)}\n`);
 		return;
 	}
-	if (output.ok) stdout.write(`${output.command}: ok\n${formatTextResult(output.result)}\n`);
+	if (output.ok) stdout.write(`${output.command}: ok\n${formatTextResult(output.command, output.result)}\n`);
 	else stdout.write(`${output.command}: ${output.error?.code ?? "ERROR"}: ${output.error?.message ?? "Operation failed."}\n`);
 }
-function formatTextResult(value) {
+function formatTextResult(command, value) {
+	if (command === "session create" || command === "session get" || command === "session rename") {
+		const result = value && typeof value === "object" && "result" in value ? value.result : value;
+		if (result && typeof result === "object" && !Array.isArray(result)) {
+			const record = result;
+			return JSON.stringify({
+				...record.sessionId !== void 0 ? { sessionId: record.sessionId } : {},
+				...record.title !== void 0 ? { title: record.title } : {}
+			}, null, 2);
+		}
+	}
+	if (command === "session list") {
+		const result = value && typeof value === "object" && "result" in value ? value.result : value;
+		if (result && typeof result === "object" && !Array.isArray(result)) {
+			const record = result;
+			const items = Array.isArray(record.items) ? record.items : [];
+			return JSON.stringify({
+				count: items.length,
+				...record.nextCursor !== void 0 ? { nextCursor: record.nextCursor } : {}
+			}, null, 2);
+		}
+	}
 	if (value && typeof value === "object" && "result" in value) return JSON.stringify(value.result, null, 2);
 	return JSON.stringify(value, null, 2);
 }

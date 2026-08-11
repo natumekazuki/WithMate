@@ -12,6 +12,7 @@ import {
   projectSessionExecution,
   type SessionRuntimeCancelInput,
   type SessionRuntimeCatalogResult,
+  type SessionRuntimeCreateInput,
   type SessionRuntimeEnqueueInput,
   type SessionRuntimeError,
   type SessionRuntimeExecutionInput,
@@ -19,6 +20,9 @@ import {
   type SessionRuntimeOperation,
   type SessionRuntimeResultEnvelope,
   type SessionRuntimeRunInput,
+  type SessionRuntimeRenameInput,
+  type SessionRuntimeSessionInput,
+  type SessionRuntimeSessionListInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { SessionExecution } from "../src/session-execution.js";
@@ -35,12 +39,14 @@ import {
   SessionExecutionQueueFullError,
   SessionExecutionStateConflictError,
 } from "./session-execution-storage-v6.js";
+import { SessionCrudError, type SessionCrudService } from "./session-crud-service.js";
 
 export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
   >;
+  crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
   currentModelCatalog(): ModelCatalogSnapshot | null;
 };
 
@@ -79,6 +85,18 @@ export class SessionExternalApplicationService {
   private async executeValidated(operation: SessionRuntimeOperation, input: unknown): Promise<unknown> {
     if (operation === "runtime.catalog") {
       return projectRuntimeCatalog(this.requireCurrentModelCatalog());
+    }
+    if (operation === "session.create") {
+      return this.deps.crudService.create(input as SessionRuntimeCreateInput);
+    }
+    if (operation === "session.list") {
+      return this.deps.crudService.list(input as SessionRuntimeSessionListInput);
+    }
+    if (operation === "session.get") {
+      return this.deps.crudService.get((input as SessionRuntimeSessionInput).sessionId);
+    }
+    if (operation === "session.rename") {
+      return this.deps.crudService.rename(input as SessionRuntimeRenameInput);
     }
     if (operation === "turn.run") {
       return this.run(input as SessionRuntimeRunInput);
@@ -286,11 +304,23 @@ function decodeListCursor(cursor: string, sessionId: string): number {
 }
 
 function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string): SessionRuntimeError {
+  if (error instanceof SessionCrudError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      details: error.details,
+    });
+  }
   if (error instanceof SessionRuntimeProjectionLimitError) {
     return createSessionRuntimeError({
       code: error.code,
       message: error.message,
-      effect: operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+      effect: operation === "session.create"
+        || operation === "session.rename"
+        || operation === "turn.run"
+        || operation === "turn.enqueue"
+        || operation === "turn.cancel"
         ? "applied"
         : "not_applied",
       details: error.details,

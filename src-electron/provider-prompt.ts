@@ -121,6 +121,18 @@ function buildToolCallPresenceSection(enabled: boolean): string {
   ].join("\n");
 }
 
+function buildSessionContextSection(input: RunSessionTurnInput): string {
+  if (input.session.sessionKind !== "default") {
+    return "";
+  }
+
+  return [
+    "# WithMate Session Context",
+    "",
+    `- Current Session ID: \`${input.session.id}\``,
+  ].join("\n");
+}
+
 export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromptComposition {
   const isCharacterAuthoringSession = input.session.sessionKind === "character-authoring";
   const characterPromptBody = buildCharacterRuntimePromptSection(input.session.characterRuntimeSnapshot, {
@@ -133,7 +145,8 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
   const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
-  const systemPromptBody = [characterPromptBody, characterAffectContextBody, outputBoundaryBody, toolCallPresenceBody]
+  const sessionContextBody = buildSessionContextSection(input);
+  const systemPromptBody = [sessionContextBody, characterPromptBody, characterAffectContextBody, outputBoundaryBody, toolCallPresenceBody]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");

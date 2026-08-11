@@ -16,6 +16,7 @@ import {
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SCHEMA_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
@@ -165,6 +166,7 @@ describe("database-schema-v6", () => {
       const names = tableNames(db).sort();
       assert.deepEqual(names, [
         ...REQUIRED_V6_TABLES,
+        "session_crud_idempotency_v6",
         "session_executions_v6",
         "session_execution_idempotency_v6",
       ].sort());
@@ -172,12 +174,13 @@ describe("database-schema-v6", () => {
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL), true);
     } finally {
       db.close();
     }
   });
 
-  it("既存V6 DBを有効と判定したままexecution tablesをadditiveに適用する", () => {
+  it("既存V6 DBを有効と判定したままexternal runtime tablesをadditiveに適用する", () => {
     const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-execution-schema-"));
     const dbPath = join(dirPath, APP_DATABASE_V6_FILENAME);
     try {
@@ -187,6 +190,7 @@ describe("database-schema-v6", () => {
           if (
             statement !== CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL
             && statement !== CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL
+            && statement !== CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL
           ) {
             oldDb.exec(statement);
           }
@@ -203,6 +207,9 @@ describe("database-schema-v6", () => {
         ensureV6Schema(upgradedDb);
         assert.equal(tableNames(upgradedDb).includes("session_executions_v6"), true);
         assert.equal(tableNames(upgradedDb).includes("session_execution_idempotency_v6"), true);
+        assert.equal(tableNames(upgradedDb).includes("session_crud_idempotency_v6"), true);
+        ensureV6Schema(upgradedDb);
+        assert.equal(tableNames(upgradedDb).filter((name) => name === "session_crud_idempotency_v6").length, 1);
       } finally {
         upgradedDb.close();
       }

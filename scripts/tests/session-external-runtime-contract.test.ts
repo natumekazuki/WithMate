@@ -34,6 +34,57 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
   );
 });
 
+test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () => {
+  const create = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.create",
+    input: {
+      title: "Review session",
+      provider: "codex",
+      catalogRevision: 4,
+      workspace: { kind: "session_folder" },
+      idempotencyKey: "create-key-1",
+    },
+  });
+  assert.deepEqual(create.input, {
+    title: "Review session",
+    provider: "codex",
+    catalogRevision: 4,
+    workspace: { kind: "session_folder" },
+    idempotencyKey: "create-key-1",
+  });
+
+  const list = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.list",
+    input: {},
+  });
+  assert.deepEqual(list.input, { limit: 50 });
+
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "session.create",
+      input: {
+        title: "Review session",
+        provider: "codex",
+        catalogRevision: 4,
+        workspace: { kind: "session_folder", path: "must-not-pass" },
+        idempotencyKey: "create-key-1",
+      },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.details.field === "workspace.path",
+  );
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "session.rename",
+      input: { sessionId: "session-1", title: "Renamed", idempotencyKey: "key-1", provider: "codex" },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.provider",
+  );
+});
+
 test("Session runtime validator accepts an explicit deferred turn.run contract", () => {
   const parsed = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,

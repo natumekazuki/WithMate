@@ -104,6 +104,7 @@ import {
 } from "./open-path.js";
 import { launchTerminalAtPath } from "./open-terminal.js";
 import { SessionStorage } from "./session-storage.js";
+import { SessionStorageV6 } from "./session-storage-v6.js";
 import { SessionMemoryStorage } from "./session-memory-storage.js";
 import { ProjectMemoryStorage } from "./project-memory-storage.js";
 import { CompanionReviewService } from "./companion-review-service.js";
@@ -124,6 +125,7 @@ import { SessionExecutionAdmissionGate } from "./session-execution-admission-gat
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
 import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
+import { SessionCrudService } from "./session-crud-service.js";
 import {
   startSessionExternalRuntime,
   type SessionExternalRuntimeHandle,
@@ -354,6 +356,7 @@ const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionExecutionStorage: SessionExecutionStorageV6 | null = null;
 let sessionExecutionService: SessionExecutionService | null = null;
+let sessionCrudService: SessionCrudService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
 let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
 let sessionExternalRuntimeShuttingDown = false;
@@ -1633,6 +1636,15 @@ function requireSessionStorageForWrite(): SessionStorage {
   throw new Error("session storage は V2 DB の読み取り専用のため書き込み不可です。");
 }
 
+function requireSessionStorageV6(): SessionStorageV6 {
+  const storage = requireSessionStorage();
+  if (storage instanceof SessionStorageV6) {
+    return storage;
+  }
+
+  throw new Error("Session CRUD は V6 DB でのみ利用できます。");
+}
+
 function requireSessionPinStorage(): SessionPinStorage {
   const storage = requireSessionStorage();
   const candidate = storage as Partial<SessionPinStorage>;
@@ -2530,6 +2542,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
   if (!sessionExternalApplicationService) {
     sessionExternalApplicationService = new SessionExternalApplicationService({
       executionService: requireSessionExecutionService(),
+      crudService: requireSessionCrudService(),
       currentModelCatalog: () => getModelCatalog(),
     });
     if (sessionExternalRuntimeShuttingDown) {
@@ -2537,6 +2550,35 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
     }
   }
   return sessionExternalApplicationService;
+}
+
+function requireSessionCrudService(): SessionCrudService {
+  if (!sessionCrudService) {
+    sessionCrudService = new SessionCrudService({
+      storage: requireSessionStorageV6(),
+      resolveLaunchSelection: (providerId) => requireSessionLaunchSelectionService().resolve(providerId),
+      listCharacters: () => requireCharacterService().listCharacters(),
+      listSessionSummaries: () => requireSessionStorageV6().listSessionSummaries(),
+      listOpenSessionWindowIds: () => requireSessionWindowBridge().listOpenSessionWindowIds(),
+      createCharacterRuntimeSnapshot: (characterId) =>
+        requireCharacterService().createRuntimeSnapshot(characterId),
+      createSessionId: () => `launch-${crypto.randomUUID()}`,
+      createSessionFilesDirectory: (sessionId) =>
+        createSessionFilesDirectory(app.getPath("userData"), sessionId),
+      resolveSessionFilesDirectory: (sessionId) =>
+        resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+      publishCreatedSession: (session) => {
+        requireSessionPersistenceService().publishStoredSession(session);
+      },
+      publishRenamedSession: (session) => {
+        requireSessionPersistenceService().publishStoredSessionSummary(session);
+      },
+      reportPublicationError: (operation, error) => {
+        console.warn(`${operation} のGUI同期に失敗しました:`, error);
+      },
+    });
+  }
+  return sessionCrudService;
 }
 
 async function dispatchSessionExecutionTurn(
@@ -3202,6 +3244,7 @@ function closeSessionExecutionRuntime(): void {
   sessionExecutionStorage?.close();
   sessionExecutionStorage = null;
   sessionExecutionService = null;
+  sessionCrudService = null;
   sessionExternalApplicationService = null;
   activeSessionExecutionIds.clear();
   canceledSessionExecutionIds.clear();

@@ -1,4 +1,5 @@
 import { open, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -63,6 +64,10 @@ class SessionCliUsageError extends Error {
 
 const commandMap = new Map<string, SessionRuntimeOperation>([
   ["runtime catalog", "runtime.catalog"],
+  ["session create", "session.create"],
+  ["session list", "session.list"],
+  ["session get", "session.get"],
+  ["session rename", "session.rename"],
   ["turn run", "turn.run"],
   ["turn enqueue", "turn.enqueue"],
   ["turn list", "turn.list"],
@@ -139,7 +144,7 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
     const envelope: SessionRuntimeRequestEnvelope = {
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation,
-      input: parsed.input,
+      input: normalizeMutationInput(operation, parsed.input),
     };
     const response = await (deps.call ?? callSessionRuntime)(connection, envelope, AbortSignal.timeout(parsed.timeoutMs));
     const output = projectRuntimeResponse(command, response);
@@ -174,7 +179,15 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
 }
 
 function isMutationCommand(command: string): boolean {
-  return command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+  return command === "session create" || command === "session rename"
+    || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+}
+
+function normalizeMutationInput(operation: SessionRuntimeOperation, input: unknown): unknown {
+  if (operation !== "session.create" && operation !== "session.rename") return input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const record = input as Record<string, unknown>;
+  return { ...record, idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID() };
 }
 
 async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
@@ -185,10 +198,10 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   discoveryFilePath?: string;
   timeoutMs: number;
 }> {
-  const namespacedCommand = args[0] === "turn" || args[0] === "runtime";
+  const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
   const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
   }
   const optionStart = namespacedCommand ? 2 : 1;
   let json: string | undefined;
@@ -317,13 +330,28 @@ function writeOutput(stdout: Writable, format: OutputFormat, output: CliOutput):
     return;
   }
   if (output.ok) {
-    stdout.write(`${output.command}: ok\n${formatTextResult(output.result)}\n`);
+    stdout.write(`${output.command}: ok\n${formatTextResult(output.command, output.result)}\n`);
   } else {
     stdout.write(`${output.command}: ${output.error?.code ?? "ERROR"}: ${output.error?.message ?? "Operation failed."}\n`);
   }
 }
 
-function formatTextResult(value: unknown): string {
+function formatTextResult(command: string, value: unknown): string {
+  if (command === "session create" || command === "session get" || command === "session rename") {
+    const result = value && typeof value === "object" && "result" in value ? (value as { result: unknown }).result : value;
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      const record = result as Record<string, unknown>;
+      return JSON.stringify({ ...(record.sessionId !== undefined ? { sessionId: record.sessionId } : {}), ...(record.title !== undefined ? { title: record.title } : {}) }, null, 2);
+    }
+  }
+  if (command === "session list") {
+    const result = value && typeof value === "object" && "result" in value ? (value as { result: unknown }).result : value;
+    if (result && typeof result === "object" && !Array.isArray(result)) {
+      const record = result as Record<string, unknown>;
+      const items = Array.isArray(record.items) ? record.items : [];
+      return JSON.stringify({ count: items.length, ...(record.nextCursor !== undefined ? { nextCursor: record.nextCursor } : {}) }, null, 2);
+    }
+  }
   if (value && typeof value === "object" && "result" in value) {
     return JSON.stringify((value as { result: unknown }).result, null, 2);
   }

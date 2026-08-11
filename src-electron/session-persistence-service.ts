@@ -68,7 +68,7 @@ function upsertSessionInList(sessions: Session[], stored: Session): Session[] {
   return [stored, ...sessions.filter((session) => session.id !== stored.id)];
 }
 
-function toCachedSession(session: Session): Session {
+function toCachedSession(session: Session | SessionSummary): Session {
   return sessionSummaryToSession(projectSessionSummary(session));
 }
 
@@ -147,6 +147,28 @@ export class SessionPersistenceService {
       ),
     });
     return this.upsertSession(created, "create");
+  }
+
+  publishStoredSession(stored: Session): Session {
+    this.syncStoredSession(stored);
+    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    this.deps.broadcastSessions([stored.id]);
+    return cloneSessions([stored])[0];
+  }
+
+  publishStoredSessionSummary(stored: SessionSummary): SessionSummary {
+    const current = this.deps.getSession(stored.id);
+    if (current) {
+      this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), {
+        ...current,
+        taskTitle: stored.taskTitle,
+        updatedAt: stored.updatedAt,
+      }));
+    } else {
+      this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    }
+    this.deps.broadcastSessions([stored.id]);
+    return { ...stored };
   }
 
   async updateSession(nextSession: Session): Promise<Session> {

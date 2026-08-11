@@ -288,6 +288,39 @@ describe("withmate-session CLI", () => {
     });
   });
 
+  test("session CRUD commandはdotted operationへ写像し、mutation keyを一度だけ補う", async () => {
+    const requests: any[] = [];
+    const stdout = capture();
+    const exitCode = await runWithMateSessionCli(["session", "create", "--json", JSON.stringify({
+      title: "Demo", provider: "codex", catalogRevision: 1, workspace: { kind: "session_folder" },
+    })], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: { schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation: "session.create", result: { sessionId: "s1", title: "Demo" } } } as any;
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.equal(requests[0].operation, "session.create");
+    assert.match(requests[0].input.idempotencyKey, /^[0-9a-f-]{36}$/);
+  });
+
+  test("session renameは明示idempotency keyを維持する", async () => {
+    const stdout = capture();
+    let request: any;
+    const exitCode = await runWithMateSessionCli(["session", "rename", "--json", JSON.stringify({ sessionId: "s1", title: "Renamed", idempotencyKey: "fixed" })], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        request = envelope;
+        return { ok: true, status: 200, value: { schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation: "session.rename", result: { sessionId: "s1", title: "Renamed" } } } as any;
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.equal(request.input.idempotencyKey, "fixed");
+  });
+
   test("application errorをsafe JSONとexit 3へ写像する", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([

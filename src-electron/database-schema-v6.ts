@@ -845,6 +845,23 @@ export const CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL = `
     ON session_turn_provider_outputs_v6(turn_id, kind, seq);
 `;
 
+export const CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_crud_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation IN ('session.create', 'session.rename')),
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    result_json TEXT NOT NULL CHECK (json_valid(result_json)),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, idempotency_key),
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_crud_idempotency_expires
+    ON session_crud_idempotency_v6(expires_at);
+`;
+
 export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_executions_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1343,6 +1360,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
+  CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,

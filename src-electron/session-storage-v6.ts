@@ -71,6 +71,26 @@ type SessionIdRow = {
   id: string;
 };
 
+type SessionCrudIdempotencyRow = {
+  request_fingerprint: string;
+  session_id: string;
+  result_json: string;
+};
+
+export type SessionCrudOperation = "session.create" | "session.rename";
+export type SessionCrudReplayResult =
+  | { kind: "absent" }
+  | { kind: "replay"; sessionId: string; result: unknown };
+export type SessionSummaryPagePosition = { lastActiveAt: string; sessionId: string };
+export type SessionSummaryPageEntry = { summary: SessionSummary; lastActiveAt: string };
+
+export class SessionCrudIdempotencyConflictError extends Error {
+  constructor() {
+    super("The idempotency key was already used with different input.");
+    this.name = "SessionCrudIdempotencyConflictError";
+  }
+}
+
 type DecodedSessionV6RuntimeState = {
   runtimePolicy: Record<string, unknown>;
   characterId: string;
@@ -258,6 +278,145 @@ export class SessionStorageV6 {
     return row ? this.rowToSession(row) : null;
   }
 
+  getSessionSummary(sessionId: string): SessionSummary | null {
+    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+    return row ? this.rowToSessionSummary(row) : null;
+  }
+
+  listSessionSummaryPage(
+    limit: number,
+    position?: SessionSummaryPagePosition,
+  ): SessionSummaryPageEntry[] {
+    const rows = (position
+      ? this.db.prepare(`
+          SELECT *
+          FROM sessions_v6
+          WHERE session_kind = 'default'
+            AND (last_active_at < ? OR (last_active_at = ? AND id < ?))
+          ORDER BY last_active_at DESC, id DESC
+          LIMIT ?
+        `).all(position.lastActiveAt, position.lastActiveAt, position.sessionId, limit)
+      : this.db.prepare(`
+          SELECT *
+          FROM sessions_v6
+          WHERE session_kind = 'default'
+          ORDER BY last_active_at DESC, id DESC
+          LIMIT ?
+        `).all(limit)) as SessionV6Row[];
+    return rows.map((row) => ({
+      summary: this.rowToSessionSummary(row),
+      lastActiveAt: row.last_active_at,
+    }));
+  }
+
+  resolveSessionCrudIdempotency(
+    operation: SessionCrudOperation,
+    idempotencyKey: string,
+    requestFingerprint: string,
+    nowIso: string,
+  ): SessionCrudReplayResult {
+    this.cleanupSessionCrudIdempotency(nowIso);
+    return this.resolveSessionCrudIdempotencyWithoutCleanup(operation, idempotencyKey, requestFingerprint);
+  }
+
+  insertSessionIdempotently(
+    session: Session,
+    input: {
+      operation: "session.create";
+      idempotencyKey: string;
+      requestFingerprint: string;
+      createdAt: string;
+      expiresAt: string;
+      projectResult(session: Session): unknown;
+    },
+  ): { session: Session; result: unknown; replayed: boolean } {
+    const normalized = normalizeSessionForStorage(session);
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
+        input.operation,
+        input.idempotencyKey,
+        input.requestFingerprint,
+      );
+      if (replay.kind === "replay") {
+        const stored = this.getSession(replay.sessionId);
+        if (!stored) {
+          throw new Error("Idempotent Session create result is missing its Session.");
+        }
+        this.db.exec("COMMIT");
+        return { session: stored, result: replay.result, replayed: true };
+      }
+
+      this.writeSession(normalized, "create");
+      const stored = this.getSession(normalized.id) ?? normalized;
+      const result = input.projectResult(stored);
+      this.insertSessionCrudIdempotency(input, stored.id, result);
+      this.db.exec("COMMIT");
+      return { session: stored, result, replayed: false };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  renameSessionIdempotently(input: {
+    operation: "session.rename";
+    sessionId: string;
+    title: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    createdAt: string;
+    expiresAt: string;
+    projectResult(session: SessionSummary): unknown;
+  }): { session: SessionSummary; result: unknown; replayed: boolean } | null {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
+        input.operation,
+        input.idempotencyKey,
+        input.requestFingerprint,
+      );
+      if (replay.kind === "replay") {
+        const stored = this.getSessionSummary(replay.sessionId);
+        if (!stored) {
+          throw new Error("Idempotent Session rename result is missing its Session.");
+        }
+        this.db.exec("COMMIT");
+        return { session: stored, result: replay.result, replayed: true };
+      }
+
+      const current = this.getSessionSummary(input.sessionId);
+      if (!current || current.sessionKind !== "default") {
+        this.db.exec("COMMIT");
+        return null;
+      }
+      this.db.prepare(`
+        UPDATE sessions_v6
+        SET title = ?, updated_at = ?
+        WHERE id = ? AND session_kind = 'default'
+      `).run(input.title, input.createdAt, input.sessionId);
+      const stored = this.getSessionSummary(input.sessionId);
+      if (!stored) {
+        throw new Error("Renamed Session could not be read back.");
+      }
+      const result = input.projectResult(stored);
+      this.insertSessionCrudIdempotency(input, stored.id, result);
+      this.db.exec("COMMIT");
+      return { session: stored, result, replayed: false };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  cleanupSessionCrudIdempotency(nowIso: string): number {
+    const result = this.db.prepare(`
+      DELETE FROM session_crud_idempotency_v6
+      WHERE expires_at <= ?
+    `).run(nowIso);
+    return Number(result.changes);
+  }
+
   setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
     this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
     const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
@@ -396,6 +555,61 @@ export class SessionStorageV6 {
 
   close(): void {
     this.db.close();
+  }
+
+  private resolveSessionCrudIdempotencyWithoutCleanup(
+    operation: SessionCrudOperation,
+    idempotencyKey: string,
+    requestFingerprint: string,
+  ): SessionCrudReplayResult {
+    const row = this.db.prepare(`
+      SELECT request_fingerprint, session_id, result_json
+      FROM session_crud_idempotency_v6
+      WHERE operation = ? AND idempotency_key = ?
+    `).get(operation, idempotencyKey) as SessionCrudIdempotencyRow | undefined;
+    if (!row) {
+      return { kind: "absent" };
+    }
+    if (row.request_fingerprint !== requestFingerprint) {
+      throw new SessionCrudIdempotencyConflictError();
+    }
+    return {
+      kind: "replay",
+      sessionId: row.session_id,
+      result: JSON.parse(row.result_json) as unknown,
+    };
+  }
+
+  private insertSessionCrudIdempotency(
+    input: {
+      operation: SessionCrudOperation;
+      idempotencyKey: string;
+      requestFingerprint: string;
+      createdAt: string;
+      expiresAt: string;
+    },
+    sessionId: string,
+    result: unknown,
+  ): void {
+    this.db.prepare(`
+      INSERT INTO session_crud_idempotency_v6 (
+        operation,
+        idempotency_key,
+        request_fingerprint,
+        session_id,
+        result_json,
+        created_at,
+        expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      input.operation,
+      input.idempotencyKey,
+      input.requestFingerprint,
+      sessionId,
+      JSON.stringify(result),
+      input.createdAt,
+      input.expiresAt,
+    );
   }
 
   private writeSession(session: Session, operation: "create" | "upsert" = "upsert"): void {

@@ -47,7 +47,7 @@ async function withClient<T>(
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("6 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("10 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -62,7 +62,32 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(result.tools.find((tool) => tool.name === "turn.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "runtime.catalog")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.cancel")?.annotations?.destructiveHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "session.list")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "session.get")?.annotations?.readOnlyHint, true);
     });
+  });
+
+  it("session.createはoptional keyをadapter内で生成し、session.list/getはread-onlyでdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, { sessionId: "s1", title: "Demo", items: [] }) } as any;
+      },
+    }), async (client) => {
+      const created = await client.callTool({ name: "session.create", arguments: {
+        title: "Demo", provider: "codex", catalogRevision: 1, workspace: { kind: "session_folder" },
+      } });
+      assert.equal(created.isError, undefined);
+      const listed = await client.callTool({ name: "session.list", arguments: {} });
+      assert.equal(listed.isError, undefined);
+      const fetched = await client.callTool({ name: "session.get", arguments: { sessionId: "s1" } });
+      assert.equal(fetched.isError, undefined);
+    });
+    assert.equal(requests[0].operation, "session.create");
+    assert.match(requests[0].input.idempotencyKey, /^[0-9a-f-]{36}$/);
+    assert.deepEqual(requests.slice(1).map((request) => request.operation), ["session.list", "session.get"]);
   });
 
   it("RUNTIME-CATALOG-02: runtime.catalogを空inputのread-only operationとしてdispatchする", async () => {

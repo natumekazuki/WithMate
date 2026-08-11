@@ -344,3 +344,88 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Failure timing: validation failureとtransport failureはいずれも`not_applied`。Session永続化、execution queue、provider dispatchへの副作用はない
 - Targeted checks: shared contract、application service、CLI、MCPの各test、typecheck、生成bundle build
 - Review gate: public schema/projectionのcross-surface sliceなので、implementation-complete Candidateをcontract/projection lensのtargeted reviewへ一度渡す。complete-diff holistic reviewは統合Brief全sliceの最終Candidateまで行わない
+
+## MCP / CLI Integration Slice 2: Session CRUD
+
+- Status: `completed`
+
+### Task Brief
+
+- Goal: 通常Sessionの`session.create`、`session.list`、`session.get`、`session.rename`を共通application境界へ追加し、CLI/MCPからGUIと同じ永続Sessionを操作できるようにする
+- Accepted anchors: ADR 005、ADR 021、`docs/design/session-external-runtime.md`、本sliceで合意した公開projectionとGUI非干渉契約
+- Included: strict public schema、Main ProcessでのCharacter random解決、Workspace/SessionFolder作成、CRUD専用永続idempotency、keyset pagination、current Session IDのprovider prompt注入、CLI/MCP adapterと配布bundle、直接test
+- Excluded: delete/archive、Character selector、Session kind/model/reasoning/approval/sandboxのcreate入力、generic patch、Windowの作成/表示/focus/close、Turn option、interaction、transcript、Session file API
+- Done: sourceとexecutable contractが一致し、migrationのempty/populated/rerun、create/rename replayとconflict、list/get projection、GUIと外部Turnのself identity、Window非生成を直接検証し、triggerしたspecialist reviewを一回ずつ閉じる
+
+### Pre-Implementation Closure Plan
+
+- Gate: `ready`
+- Unresolved contract decisions: なし。公開field、Character policy、idempotency ownership、pagination、Window非干渉は本slice開始前の合意とAccepted ADRから確定している
+- Canonical owners:
+  - public request/result/error: `src/session-external-runtime-contract.ts`
+  - Session create/rename orchestrationとGUI共通のprovider/Character/Workspace決定: Main ProcessのSession command/persistence境界
+  - durable mutation replay/conflict/cleanupとatomic Session write: V6 Session storage
+  - list/get public projectionとcursor: Session CRUD application境界
+  - adapter内のidempotency key自動生成: CLI/MCP adapter。明示keyはcross-call recovery用overrideとして維持する
+  - current Session self identity: provider prompt composition
+- Sibling channels: GUI IPC、Session HTTP runtime、CLI、MCP。GUIだけがcreate成功後にWindowを明示的に開く既存actionを持ち、外部CRUD/Turnはそのactionを通らない
+- Trigger matrices: Public API / Validation / Projection、Coupled Invariant / Versioned Selection、Mutation / External Side Effect、Owner / Scope / Projection、Limit / Concurrency / Resource、Migration / Repair / Existing Data
+- High-risk axes not selected: auth/secret transportとprocess listener lifecycleは既存runtime境界を変更しない。Session deleteとorphan cleanupは本sliceの公開surface外
+
+### Closure Map
+
+- Accepted contract / exact anchor:
+  - ADR 021「操作対象を明示したSession」「mutationをidempotencyで収束」「public projectionを明示的に構成」
+  - ADR 005のSession ID発行、exclusive directory作成、insert-only永続化、failure順序
+  - `session-external-runtime.md`のSession作成と選択、24時間idempotency、pagination、stable error表
+- Supported scope / excluded scope: 通常Sessionの4操作と全normal Session Turnのself identityだけを対象とし、Auxiliary/Companion/Character Authoring、delete/archive、Window lifecycleを除外する
+- Coupled invariants / valid combinations:
+  - createは`title + provider=codex + catalogRevision + workspace(kind,path?) + operation/idempotencyKey/fingerprint`を一組として扱う
+  - Workspaceは`directory`ならcaller pathをMainでcanonicalizeしてlabel/branchを導出し、`session_folder`ならMainがSession IDからpathを作る
+  - CharacterはGUIと同じactive/open-window/recency policyで一度だけ解決し、idempotent replayでは再抽選しない
+  - renameは`sessionId + title + operation/idempotencyKey/fingerprint`だけをatomic updateし、他metadataを変更しない
+- Failure timing:
+  - validation、catalog stale、unsupported kind、not found、cursor/limit不正はeffect前に`not_applied`
+  - SessionFolder mkdir失敗ではSession/idempotency rowを作らない。DB commit後のresponse lossは同じkeyでcanonical resultへ収束する
+  - same operation/keyでfingerprintが異なる場合はeffect前に`IDEMPOTENCY_CONFLICT`
+- Consumer impacts / projections:
+  - create/getは許可したSession/Character/Workspace/SessionFolder metadataだけを返し、listはabsolute path、runtime snapshot、thread ID、prompt、messageを返さない
+  - external create/renameはHome/session listと既存broadcastへ反映するが、SessionWindowを作成、表示、focus、closeしない
+  - normal Sessionのprovider promptは実行対象自身のSession IDだけを含み、caller/parent IDを自動注入しない
+- Direct verification: shared contract、Session CRUD service/storage、schema migration、Main composition、provider prompt、CLI、MCP、生成bundleのtargeted tests。typecheck、build、full testを主要回帰確認とする
+
+### Invariant Matrix
+
+| ID | Sibling channel / coupled values | State / evidence order | Failure mode / timing | Consumer impact / public projection | Owner / effect certainty | Direct verification | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SESSION-CRUD-SCHEMA-01 | HTTP/CLI/MCPの4 operation、strict input、stable error | adapter normalize後にshared parser、application dispatch | unknown field、stale revision、invalid cursor/limitがeffectへ到達 | surface間の契約分岐、誤retry | shared runtime contract / `not_applied` | raw/shared/CLI/MCP contract tests | covered |
+| SESSION-CREATE-IDEMPOTENCY-02 | provider/revision/workspace/random Character/session row/idempotency row | validate→replay/conflict確認→ID→mkdir→Session+record atomic commit→broadcast | retryでCharacter/SessionFolderを再作成、部分commit | Session重複、orphan増加、canonical result喪失 | Main persistence + V6 storage / committed replay | replay/conflict、publication failure、24h cleanup、ADR 005 failure tests | covered。永続化呼出し後のSessionFolder保持はADR 005のanchored exception |
+| SESSION-RENAME-ATOMICITY-03 | sessionId/title/idempotencyと不変metadata | resolve→replay/conflict→title+record atomic commit→broadcast | generic updateでprovider/Character/workspaceも変わる | 外部surfaceが不変metadataを破壊 | V6 storage + persistence / committed replay | title-only delta、replay/conflict/not-found、publication failure tests | covered |
+| SESSION-PROJECTION-PAGE-04 | list/get、`last_active_at DESC,id DESC`、cursor/filter | bounded summary query→allowlist projection→opaque cursor | full hydrate、offset drift、path/private field leak | 長期利用のresource増加、private情報露出 | Session CRUD query/projection / read-only | limit、tie、page間rename、cursor misuse、allowlist、label衝突 tests | covered |
+| SESSION-SELF-IDENTITY-05 | GUI/CLI/MCP起点のnormal Session Turn、execution target ID | provider prompt composition時にtarget Sessionから導出 | caller/parent ID注入、ID不在でCharacter/workspaceから推測 | agentが別Sessionを操作する | provider prompt / read-only context | target-only、normal/non-normal tests | covered |
+| SESSION-WINDOW-VISIBILITY-06 | create/rename/turnとHome/Monitor/既存Window broadcast | durable update→cache/broadcast。Window openはGUI actionだけ | CLI/MCPでWindowを勝手に生成/focus/close、またはGUIへ更新が出ない | 操作中断、見えない状態差分 | application composition / storage effectのみ | Window command非依存、broadcast、best-effort publication tests | covered |
+| SESSION-CRUD-MIGRATION-07 | empty/populated/current V6、schema rerun、expiry index | additive table/index作成→existing row保持→rerun |既存Session消失、partial schema、cleanup不能 | 起動不能、履歴消失、record無制限増加 | `ensureV6Schema` / atomic schema transaction | populated additive ensure、rerun、expiry cleanup tests | covered |
+
+### Implementation Checklist
+
+- [x] shared Character selection policyとMain CRUD orchestrationを既存GUI/persistence ownerへ収束し、create/rename/list/getのstorage contractを追加する
+- [x] shared public contract、application dispatch、CLI/MCP schema/command、生成bundle/runbookを接続する
+- [x] provider promptへcurrent Session IDを追加し、ADR 021の`runtime.context`非採用との違いを明確化する
+- [x] targeted tests、typecheck、build、full testを実行し、Matrixを`covered`または根拠付きの残状態へ更新する
+- [x] Candidateを凍結し、`contract-schema-projection`、`lifecycle-effect-concurrency`、`resource-cleanup-platform`の3 specialist lensへ同時に一度だけ渡す
+
+### Review Convergence
+
+- specialist reviewは1 lensにつき1回、同じCandidateへ最大3名までとする。同じlensへ別reviewerを重ねない
+- findingはrootがFinding Promotionを行い、accepted contract違反かつ到達可能な`current-scope repair`だけを本sliceへ戻す
+- 修正後は対象familyのdirect checkと一度のtargeted closure、他lensのdelta非影響確認だけを行い、探索reviewを再開しない
+- Full-review gateの既定は`skip`。specialistとdirect checkで直接検証できない具体的なcross-cutting interactionが残る場合だけ`run`とし、holistic complete-diff reviewは最大1回とする
+
+### Completion Evidence
+
+- Structural convergence: `ready-unchanged`。Character選択、CRUD orchestration、storage、public projection、adapterのsemantic ownerは一つずつで、追加の構造変更は不要
+- Direct checks: CRUD/storage/application/persistence targeted 53件、typecheck、build、全体test 2434件成功、1件skip
+- Specialist Candidate: `session-crud-c1`を3 lensで一度ずつ確認。pagination中rename、workspace label衝突、commit後publication error mappingを`current-scope repair`へ分類
+- Finding Promotion: SessionFolderの永続化呼出し後failureでdirectoryを保持する指摘は、ADR 005がデータ消失回避のaccepted behaviorとorphan riskを明示するため`accepted risk`。failure injection testで現行境界を固定
+- Targeted closure: `session-crud-c2`で`F-PROJECTION-PAGINATION`と`F-PUBLICATION-EFFECT`をそれぞれ一度確認し、blocking findingなしでclosed
+- Full-review gate: `skip`。triggerしたmatrix cellはdirect checkとspecialist/targeted closureで閉じ、未確認のcross-cutting interactionを残していない

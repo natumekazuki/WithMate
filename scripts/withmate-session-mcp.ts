@@ -1,5 +1,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { APPROVAL_MODE_VALUES } from "../src/approval-mode.js";
@@ -72,6 +73,26 @@ const listInputSchema = z.object({
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
   cursor: nonEmptyStringSchema.optional(),
 }).strict();
+const sessionCreateInputSchema = z.object({
+  title: nonEmptyStringSchema,
+  provider: z.literal("codex"),
+  catalogRevision: z.number().int().min(1),
+  workspace: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("directory"), path: nonEmptyStringSchema }).strict(),
+    z.object({ kind: z.literal("session_folder") }).strict(),
+  ]),
+  idempotencyKey: nonEmptyStringSchema.optional(),
+}).strict();
+const sessionListInputSchema = z.object({
+  limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const sessionGetInputSchema = z.object({ sessionId: nonEmptyStringSchema }).strict();
+const sessionRenameInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  title: nonEmptyStringSchema,
+  idempotencyKey: nonEmptyStringSchema.optional(),
+}).strict();
 
 const publicDetailsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 const errorSchema = z.object({
@@ -117,6 +138,10 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
+  { name: "session.create", title: "Create Session", description: "Create a normal Session with an explicit workspace.", readOnly: false, destructive: false },
+  { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
+  { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
+  { name: "session.rename", title: "Rename Session", description: "Rename one normal Session.", readOnly: false, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: false },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: false },
   { name: "turn.list", title: "List Session executions", description: "List execution records for the specified Session.", readOnly: true, destructive: false },
@@ -134,7 +159,15 @@ function annotations(definition: (typeof SESSION_MCP_TOOL_DEFINITIONS)[number]) 
 }
 
 function isMutation(operation: SessionRuntimeOperation): boolean {
-  return operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+  return operation === "session.create" || operation === "session.rename"
+    || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+}
+
+function normalizeMutationInput(operation: SessionRuntimeOperation, input: unknown): unknown {
+  if (operation !== "session.create" && operation !== "session.rename") return input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const record = input as Record<string, unknown>;
+  return { ...record, idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID() };
 }
 
 function safeRuntimeError(value: unknown): ReturnType<typeof createSessionRuntimeError> | null {
@@ -186,7 +219,7 @@ async function executeOperation(
   const envelope: SessionRuntimeRequestEnvelope = {
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation,
-    input,
+    input: normalizeMutationInput(operation, input),
   };
   try {
     const response = await (deps.call ?? callSessionRuntime)(
@@ -237,6 +270,30 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: runtimeCatalogInputSchema,
     outputSchema: createOutputSchema("runtime.catalog"),
   }, async (input) => executeOperation("runtime.catalog", input, deps));
+  server.registerTool("session.create", {
+    ...definitions.get("session.create")!,
+    annotations: annotations(definitions.get("session.create")!),
+    inputSchema: sessionCreateInputSchema,
+    outputSchema: createOutputSchema("session.create"),
+  }, async (input) => executeOperation("session.create", input, deps));
+  server.registerTool("session.list", {
+    ...definitions.get("session.list")!,
+    annotations: annotations(definitions.get("session.list")!),
+    inputSchema: sessionListInputSchema,
+    outputSchema: createOutputSchema("session.list"),
+  }, async (input) => executeOperation("session.list", input, deps));
+  server.registerTool("session.get", {
+    ...definitions.get("session.get")!,
+    annotations: annotations(definitions.get("session.get")!),
+    inputSchema: sessionGetInputSchema,
+    outputSchema: createOutputSchema("session.get"),
+  }, async (input) => executeOperation("session.get", input, deps));
+  server.registerTool("session.rename", {
+    ...definitions.get("session.rename")!,
+    annotations: annotations(definitions.get("session.rename")!),
+    inputSchema: sessionRenameInputSchema,
+    outputSchema: createOutputSchema("session.rename"),
+  }, async (input) => executeOperation("session.rename", input, deps));
   server.registerTool("turn.run", {
     ...definitions.get("turn.run")!,
     annotations: annotations(definitions.get("turn.run")!),

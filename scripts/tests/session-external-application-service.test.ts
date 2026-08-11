@@ -3,7 +3,9 @@ import { test } from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { SessionExecution } from "../../src/session-execution.js";
+import { SessionRuntimeProjectionLimitError } from "../../src/session-external-runtime-contract.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
+import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 
 const execution: SessionExecution = {
@@ -33,6 +35,77 @@ const mutationInput = {
     codexSandboxMode: "workspace-write" as const,
   },
 };
+
+test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable errorを保つ", async () => {
+  const calls: Array<{ operation: string; input: unknown }> = [];
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() { throw new Error("unused"); },
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create(input) { calls.push({ operation: "create", input }); return { sessionId: "session-1" } as never; },
+      async list(input) { calls.push({ operation: "list", input }); return { items: [] }; },
+      async get(sessionId) { calls.push({ operation: "get", input: { sessionId } }); throw new SessionCrudError("SESSION_NOT_FOUND", "missing"); },
+      async rename(input) { calls.push({ operation: "rename", input }); return { sessionId: input.sessionId } as never; },
+    },
+  });
+
+  const listResponse = await service.execute("session.list", {});
+  assert.deepEqual(calls, [{ operation: "list", input: { limit: 50 } }]);
+  assert.equal("result" in listResponse, true);
+
+  const getResponse = await service.execute("session.get", { sessionId: "missing" });
+  assert.equal("error" in getResponse && getResponse.error.code, "SESSION_NOT_FOUND");
+  assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
+});
+
+test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過をappliedとして返す", async () => {
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() { throw new Error("unused"); },
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new SessionRuntimeProjectionLimitError("result"); },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { throw new SessionRuntimeProjectionLimitError("result"); },
+    },
+  });
+
+  const createResponse = await service.execute("session.create", {
+    title: "New Session",
+    provider: "codex",
+    catalogRevision: 4,
+    workspace: { kind: "session_folder" },
+    idempotencyKey: "create-key",
+  });
+  const renameResponse = await service.execute("session.rename", {
+    sessionId: "session-1",
+    title: "Renamed Session",
+    idempotencyKey: "rename-key",
+  });
+
+  assert.equal("error" in createResponse && createResponse.error.code, "CONTENT_TOO_LARGE");
+  assert.equal("error" in createResponse && createResponse.error.effect, "applied");
+  assert.equal("error" in renameResponse && renameResponse.error.code, "CONTENT_TOO_LARGE");
+  assert.equal("error" in renameResponse && renameResponse.error.effect, "applied");
+});
 
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
   let executionInvoked = false;
