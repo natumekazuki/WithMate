@@ -191,7 +191,7 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.text().includes("api-secret"), false);
   });
 
-  test("runtime未起動とdispatch後transport failureを別exit codeへ写像する", async () => {
+  test("CLI-EFFECT-09: readのresponse lossはnot_applied、mutationだけindeterminateへ写像する", async () => {
     const unavailable = capture();
     assert.equal(await runWithMateSessionCli(["status"], {
       stdout: unavailable.stream,
@@ -199,15 +199,29 @@ describe("withmate-session CLI", () => {
     }), WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable);
     assert.equal(unavailable.json().error.effect, "not_applied");
 
-    const indeterminate = capture();
+    const readFailure = capture();
     assert.equal(await runWithMateSessionCli([
       "turn", "get", "--json", JSON.stringify({ sessionId: "session-1", executionId: "execution-1" }),
     ], {
-      stdout: indeterminate.stream,
+      stdout: readFailure.stream,
       discover: async () => connection,
       call: async () => { throw new SessionRuntimeClientError("lost", true); },
     }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
-    assert.equal(indeterminate.json().error.effect, "indeterminate");
+    assert.equal(readFailure.json().error.effect, "not_applied");
+
+    const mutationFailure = capture();
+    assert.equal(await runWithMateSessionCli([
+      "turn", "cancel", "--json", JSON.stringify({
+        sessionId: "session-1",
+        executionId: "execution-1",
+        idempotencyKey: "cancel-response-loss",
+      }),
+    ], {
+      stdout: mutationFailure.stream,
+      discover: async () => connection,
+      call: async () => { throw new SessionRuntimeClientError("lost", true); },
+    }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
+    assert.equal(mutationFailure.json().error.effect, "indeterminate");
   });
 
   test("usage failureはoperationを呼ばずexit 1を返す", async () => {

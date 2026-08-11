@@ -20511,12 +20511,16 @@ async function runWithMateSessionCli(args, deps = {}) {
 		return output.ok ? WITHMATE_SESSION_CLI_EXIT_CODES.ok : WITHMATE_SESSION_CLI_EXIT_CODES.applicationError;
 	} catch (error) {
 		if (error instanceof SessionRuntimeClientError) {
-			writeOutput(stdout, format, localError(command, "RUNTIME_UNAVAILABLE", error.dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable.", true, error.dispatched ? "indeterminate" : "not_applied"));
+			const indeterminate = error.dispatched && isMutationCommand(command);
+			writeOutput(stdout, format, localError(command, "RUNTIME_UNAVAILABLE", error.dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable.", true, indeterminate ? "indeterminate" : "not_applied"));
 			return error.dispatched ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
 		}
 		writeOutput(stdout, format, localError(command, "INVALID_INPUT", error instanceof SessionCliUsageError ? error.message : "Invalid CLI input."));
 		return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
 	}
+}
+function isMutationCommand(command) {
+	return command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
 async function parseArgs(args, deps) {
 	const command = args[0] === "turn" ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";

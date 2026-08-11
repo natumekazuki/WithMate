@@ -14,6 +14,7 @@ import {
 import {
   SessionExecutionBusyError,
   SessionExecutionIdempotencyConflictError,
+  SessionExecutionStateConflictError,
   SessionExecutionStorageV6,
 } from "../../src-electron/session-execution-storage-v6.js";
 
@@ -321,6 +322,37 @@ describe("SessionExecutionService", () => {
       });
       assert.equal(terminalReplay.state, "canceled");
       assert.deepEqual(fixture.canceledExecutions, [running.id]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("CANCEL-STATE-10: terminal executionへの新規cancelはidempotency effect前に拒否する", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.run(createInput(1));
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", running.id);
+
+      await assert.rejects(
+        fixture.service.cancel({
+          sessionId: "session-1",
+          executionId: running.id,
+          idempotencyKey: "cancel-after-completion",
+          requestFingerprint: "cancel-after-completion-fingerprint",
+        }),
+        (error) => error instanceof SessionExecutionStateConflictError
+          && error.state === "completed",
+      );
+      assert.equal(
+        fixture.storage.resolveIdempotency(
+          "turn.cancel",
+          "cancel-after-completion",
+          "cancel-after-completion-fingerprint",
+        ),
+        null,
+      );
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

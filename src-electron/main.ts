@@ -67,6 +67,7 @@ import type {
   OpenPathResult,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
+import { createSessionRuntimeError } from "../src/session-external-runtime-contract.js";
 import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
@@ -119,7 +120,9 @@ import {
   type SessionExecutionDispatchResult,
 } from "./session-execution-service.js";
 import { runSessionExecutionDispatch } from "./session-execution-dispatch.js";
+import { SessionExecutionAdmissionGate } from "./session-execution-admission-gate.js";
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
+import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import {
   startSessionExternalRuntime,
@@ -356,6 +359,7 @@ let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
 let sessionExternalRuntimeShuttingDown = false;
 const activeSessionExecutionIds = new Map<string, string>();
 const canceledSessionExecutionIds = new Set<string>();
+const sessionExecutionAdmissionGate = new SessionExecutionAdmissionGate();
 let sessionTurnNotificationService: SessionTurnNotificationService<NativeImage> | null = null;
 let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
@@ -1743,6 +1747,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
         providerRuntimeOperationCoordinator.runExclusive(operation),
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
+      cancelSessionRun: (sessionId) => cancelSessionRunFromAnySurface(sessionId),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
       refreshProviderQuotaTelemetry: (providerId) => refreshProviderQuotaTelemetry(providerId),
@@ -2434,7 +2439,21 @@ async function startSessionExternalRuntimeBestEffort(): Promise<void> {
   }
   try {
     sessionExternalRuntime = await startSessionExternalRuntime({
-      handle: (operation, input) => requireSessionExternalApplicationService().execute(operation, input),
+      handle: async (operation, input) => {
+        const admission = sessionExecutionAdmissionGate.tryAdmit();
+        if (!admission) {
+          return createSessionRuntimeError({
+            code: "RUNTIME_UNAVAILABLE",
+            message: "The Session runtime is temporarily unavailable during maintenance.",
+            retryable: true,
+          });
+        }
+        try {
+          return await requireSessionExternalApplicationService().execute(operation, input);
+        } finally {
+          admission.release();
+        }
+      },
     });
     writeAppLog({
       level: "info",
@@ -2495,11 +2514,7 @@ function requireSessionExecutionService(): SessionExecutionService {
       },
       dispatchTurn: dispatchSessionExecutionTurn,
       cancelRunningTurn: (sessionId, executionId) => {
-        if (activeSessionExecutionIds.get(sessionId) !== executionId) {
-          throw new Error("対象executionのprovider実行が見つからないよ。");
-        }
-        canceledSessionExecutionIds.add(executionId);
-        requireSessionRuntimeService().cancelRun(sessionId);
+        cancelSessionRunFromAnySurface(sessionId, executionId);
       },
       isSessionRunInFlight: (sessionId) => requireSessionRuntimeService().isRunInFlight(sessionId),
       createExecutionId: () => `execution-${crypto.randomUUID()}`,
@@ -2577,6 +2592,14 @@ function parseSessionExecutionTurnRequest(request: unknown): SessionExecutionTur
     catalogRevision: executionRequest.catalogRevision as number,
     turn: candidate as RunSessionTurnRequest,
   };
+}
+
+function cancelSessionRunFromAnySurface(sessionId: string, expectedExecutionId?: string): void {
+  cancelSessionRun({
+    getActiveExecutionId: (targetSessionId) => activeSessionExecutionIds.get(targetSessionId),
+    markExecutionCanceled: (executionId) => canceledSessionExecutionIds.add(executionId),
+    cancelRuntimeRun: (targetSessionId) => requireSessionRuntimeService().cancelRun(targetSessionId),
+  }, sessionId, expectedExecutionId);
 }
 
 function requireSessionTurnNotificationService(): SessionTurnNotificationService<NativeImage> {
@@ -2870,6 +2893,8 @@ function requireSettingsCatalogService(): SettingsCatalogService {
     settingsCatalogService = new SettingsCatalogService({
       runProviderRuntimeOperationExclusive: (operation) =>
         providerRuntimeOperationCoordinator.runExclusive(operation),
+      runSessionExecutionMaintenance: (operation) =>
+        sessionExecutionAdmissionGate.runMaintenance(operation),
       hasInFlightSessionRuns,
       isSessionRunInFlight,
       isRunningSession,

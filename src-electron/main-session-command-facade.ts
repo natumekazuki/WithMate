@@ -26,6 +26,7 @@ type MainSessionCommandFacadeDeps = {
   resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
   getSessionPersistenceService(): SessionPersistenceService;
   getSessionRuntimeService(): SessionRuntimeService;
+  cancelSessionRun(sessionId: string): void;
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
   refreshProviderQuotaTelemetry(providerId: string): Promise<ProviderQuotaTelemetry | null>;
@@ -138,7 +139,7 @@ export class MainSessionCommandFacade {
   }
 
   cancelSessionRun(sessionId: string): void {
-    this.deps.getSessionRuntimeService().cancelRun(sessionId);
+    this.deps.cancelSessionRun(sessionId);
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {

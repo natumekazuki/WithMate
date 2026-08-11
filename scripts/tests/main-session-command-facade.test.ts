@@ -56,10 +56,10 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
 }
 
 type MainSessionCommandFacadeTestDeps =
-  Omit<ConstructorParameters<typeof MainSessionCommandFacade>[0], "dismissSessionTurnNotification">
+  Omit<ConstructorParameters<typeof MainSessionCommandFacade>[0], "dismissSessionTurnNotification" | "cancelSessionRun">
   & Partial<Pick<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification"
+    "dismissSessionTurnNotification" | "cancelSessionRun"
   >>;
 
 function createMainSessionCommandFacade(
@@ -67,6 +67,7 @@ function createMainSessionCommandFacade(
 ): MainSessionCommandFacade {
   return new MainSessionCommandFacade({
     dismissSessionTurnNotification: () => undefined,
+    cancelSessionRun: (sessionId) => deps.getSessionRuntimeService().cancelRun(sessionId),
     ...deps,
   });
 }
@@ -111,12 +112,15 @@ test("MainSessionCommandFacade は create/update/delete/cancel を各 service �
     getSessionRuntimeService: () =>
       ({
         cancelRun(sessionId) {
-          calls.push(`cancel:${sessionId}`);
+          calls.push(`runtime-cancel:${sessionId}`);
         },
         isRunInFlight() {
           return false;
         },
       }) as never,
+    cancelSessionRun(sessionId) {
+      calls.push(`cancel:${sessionId}`);
+    },
     getProviderQuotaTelemetry: () => null,
     isProviderQuotaTelemetryStale: () => false,
     refreshProviderQuotaTelemetry: async () => null,

@@ -216,14 +216,7 @@ export class SessionExecutionService {
           expiresAt,
         }));
       }
-      return toPublicExecution(this.deps.storage.recordIdempotency({
-        operation: "turn.cancel",
-        idempotencyKey: input.idempotencyKey,
-        requestFingerprint: input.requestFingerprint,
-        executionId: input.executionId,
-        createdAt,
-        expiresAt,
-      }));
+      throw new SessionExecutionStateConflictError(execution.id, execution.state);
     }));
   }
 

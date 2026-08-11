@@ -31,6 +31,7 @@ import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-op
 
 export type SettingsCatalogServiceDeps = {
   runProviderRuntimeOperationExclusive: RunProviderRuntimeOperationExclusive;
+  runSessionExecutionMaintenance<T>(operation: () => T | Promise<T>): Promise<T>;
   hasInFlightSessionRuns(): boolean;
   isSessionRunInFlight(sessionId: string): boolean;
   isRunningSession(session: Session): boolean;
@@ -389,7 +390,9 @@ export class SettingsCatalogService {
 
   async resetAppDatabase(request?: ResetAppDatabaseRequest | null): Promise<ResetAppDatabaseResult> {
     return this.deps.runProviderRuntimeOperationExclusive(
-      () => this.resetAppDatabaseExclusive(request),
+      () => this.deps.runSessionExecutionMaintenance(
+        () => this.resetAppDatabaseExclusive(request),
+      ),
     );
   }
 

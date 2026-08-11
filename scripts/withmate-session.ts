@@ -139,12 +139,13 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
     return output.ok ? WITHMATE_SESSION_CLI_EXIT_CODES.ok : WITHMATE_SESSION_CLI_EXIT_CODES.applicationError;
   } catch (error) {
     if (error instanceof SessionRuntimeClientError) {
+      const indeterminate = error.dispatched && isMutationCommand(command);
       writeOutput(stdout, format, localError(
         command,
         "RUNTIME_UNAVAILABLE",
         error.dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable.",
         true,
-        error.dispatched ? "indeterminate" : "not_applied",
+        indeterminate ? "indeterminate" : "not_applied",
       ));
       return error.dispatched
         ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate
@@ -157,6 +158,10 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
     ));
     return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
   }
+}
+
+function isMutationCommand(command: string): boolean {
+  return command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
 
 async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{

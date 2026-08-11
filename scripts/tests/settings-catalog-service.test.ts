@@ -16,6 +16,7 @@ class SettingsCatalogService extends SettingsCatalogServiceImpl {
   constructor(deps: ConstructorParameters<typeof SettingsCatalogServiceImpl>[0]) {
     super({
       runProviderRuntimeOperationExclusive: async (operation) => await operation(),
+      runSessionExecutionMaintenance: async (operation) => await operation(),
       ...deps,
     });
   }
@@ -151,6 +152,40 @@ function createCatalogSnapshot(revision = 1): ModelCatalogSnapshot {
 }
 
 describe("SettingsCatalogService", () => {
+  it("DB-MAINT-07: DB resetは実行中判定より前にexternal admission maintenanceへ入る", async () => {
+    const events: string[] = [];
+    const service = new SettingsCatalogServiceImpl({
+      async runProviderRuntimeOperationExclusive(operation) {
+        events.push("provider:enter");
+        return await operation();
+      },
+      async runSessionExecutionMaintenance(operation) {
+        events.push("maintenance:enter");
+        try {
+          return await operation();
+        } finally {
+          events.push("maintenance:exit");
+        }
+      },
+      listSessions() {
+        events.push("sessions:list");
+        return [];
+      },
+      hasInFlightSessionRuns: () => false,
+    } as never);
+
+    await assert.rejects(
+      service.resetAppDatabase({ targets: [] }),
+      /初期化対象が選ばれていない/,
+    );
+    assert.deepEqual(events, [
+      "provider:enter",
+      "maintenance:enter",
+      "sessions:list",
+      "maintenance:exit",
+    ]);
+  });
+
   it("API key 変更対象 provider に実行中 session があると settings 更新を拒否する", async () => {
     const previousSettings = createDefaultAppSettings();
     const service = new SettingsCatalogService({
