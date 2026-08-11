@@ -137,22 +137,31 @@ export class SessionExternalApplicationService {
 
   private list(input: SessionRuntimeListInput): { items: SessionExecution[]; nextCursor?: string } {
     const afterSequence = input.cursor ? decodeListCursor(input.cursor, input.sessionId) : null;
-    const page = this.deps.executionService.listPage(input.sessionId, afterSequence, input.limit + 1);
-    const hasMore = page.length > input.limit;
-    const selected = hasMore ? page.slice(0, input.limit) : page;
-    const lastSequence = selected.at(-1)?.sequence;
-    const resultBase = {
+    const resultBase: { items: SessionExecution[]; nextCursor?: string } = {
       items: [] as SessionExecution[],
-      ...(hasMore && lastSequence !== undefined ? { nextCursor: encodeListCursor(input.sessionId, lastSequence) } : {}),
     };
     let responseBytes = Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("turn.list", resultBase)), "utf8");
-    for (const execution of selected) {
+    let lastSequence: number | undefined;
+    for (const execution of this.deps.executionService.listPage(input.sessionId, afterSequence, input.limit + 1)) {
+      if (resultBase.items.length >= input.limit) {
+        if (lastSequence !== undefined) {
+          resultBase.nextCursor = encodeListCursor(input.sessionId, lastSequence);
+          if (
+            Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("turn.list", resultBase)), "utf8")
+            > SESSION_RUNTIME_MAX_RESPONSE_BYTES
+          ) {
+            throw new SessionRuntimeProjectionLimitError("result.items");
+          }
+        }
+        break;
+      }
       const item = projectSessionExecution(execution);
       responseBytes += (resultBase.items.length > 0 ? 1 : 0) + Buffer.byteLength(JSON.stringify(item), "utf8");
       if (responseBytes > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
         throw new SessionRuntimeProjectionLimitError("result.items");
       }
       resultBase.items.push(item);
+      lastSequence = execution.sequence;
     }
     return resultBase;
   }

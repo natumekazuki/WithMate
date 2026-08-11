@@ -185,6 +185,7 @@ test("Session application service binds list cursors to the requested Session", 
 
 test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async () => {
   const largeResult = { assistantText: "a".repeat(5 * 1024 * 1024) };
+  let materialized = 0;
   const service = new SessionExternalApplicationService({
     currentCatalogRevision: () => 4,
     executionService: {
@@ -193,11 +194,13 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
       async enqueue() { throw new Error("unused"); },
       resolveReplay() { return null; },
       get() { throw new Error("unused"); },
-      listPage() {
-        return [
-          { ...execution, id: "execution-1", sequence: 1, result: largeResult },
-          { ...execution, id: "execution-2", sequence: 2, result: largeResult },
-        ];
+      *listPage() {
+        materialized += 1;
+        yield { ...execution, id: "execution-1", sequence: 1, result: largeResult };
+        materialized += 1;
+        yield { ...execution, id: "execution-2", sequence: 2, result: largeResult };
+        materialized += 1;
+        throw new Error("records after the response budget must not be materialized");
       },
       async cancel() { throw new Error("unused"); },
       async waitForTerminal() { throw new Error("unused"); },
@@ -208,6 +211,7 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
 
   assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in response && response.error.effect, "not_applied");
+  assert.equal(materialized, 2);
 });
 
 test("RL-01: applied turn.run reports an oversized inline result with applied effect", async () => {

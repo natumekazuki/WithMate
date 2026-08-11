@@ -263,6 +263,14 @@ export class SessionExecutionStorageV6 {
     afterSequence: number | null,
     limit: number,
   ): SessionExecutionStorageRecord[] {
+    return Array.from(this.iterateSessionExecutionsPage(sessionId, afterSequence, limit));
+  }
+
+  *iterateSessionExecutionsPage(
+    sessionId: string,
+    afterSequence: number | null,
+    limit: number,
+  ): IterableIterator<SessionExecutionStorageRecord> {
     const rows = afterSequence === null
       ? this.db.prepare(`
           SELECT *
@@ -270,15 +278,17 @@ export class SessionExecutionStorageV6 {
           WHERE session_id = ?
           ORDER BY sequence ASC
           LIMIT ?
-        `).all(sessionId, limit) as SessionExecutionRow[]
+        `).iterate(sessionId, limit) as IterableIterator<SessionExecutionRow>
       : this.db.prepare(`
           SELECT *
           FROM session_executions_v6
           WHERE session_id = ? AND sequence > ?
           ORDER BY sequence ASC
           LIMIT ?
-        `).all(sessionId, afterSequence, limit) as SessionExecutionRow[];
-    return rows.map(parseExecution);
+        `).iterate(sessionId, afterSequence, limit) as IterableIterator<SessionExecutionRow>;
+    for (const row of rows) {
+      yield parseExecution(row);
+    }
   }
 
   listQueuedSessionIds(): string[] {

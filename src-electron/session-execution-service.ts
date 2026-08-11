@@ -42,6 +42,7 @@ export type SessionExecutionServiceDeps = {
     | "interruptRunningForRestart"
     | "listSessionExecutions"
     | "listSessionExecutionsPage"
+    | "iterateSessionExecutionsPage"
     | "listQueuedSessionIds"
     | "resolveIdempotency"
     | "recordIdempotency"
@@ -160,8 +161,8 @@ export class SessionExecutionService {
     return this.deps.storage.listSessionExecutions(sessionId).map(toPublicExecution);
   }
 
-  listPage(sessionId: string, afterSequence: number | null, limit: number): SessionExecutionStorageRecord[] {
-    return this.deps.storage.listSessionExecutionsPage(sessionId, afterSequence, limit);
+  listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {
+    return this.deps.storage.iterateSessionExecutionsPage(sessionId, afterSequence, limit);
   }
 
   resolveReplay(operation: SessionExecutionOperation, input: CreateSessionExecutionInput): SessionExecution | null {

@@ -271,5 +271,21 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - RL-01 closure: inline text、public response、client受信に共有の8 MiB上限を適用し、single resultとlist aggregateの超過をstable `CONTENT_TOO_LARGE`へ収束させた。clientはdeclared sizeとstreamed sizeの双方を全量buffering前に拒否する
 - KP-01 closure: `session-external-runtime.md`をcurrent source-of-truthへ移し、Accepted ADR 021とActive designのstatusをdocumentation map上で一致させた
 - Structure convergence gate: `ready-unchanged`。identity challengeとpayload送信はshared exchange、response上限はshared contractと共通client readerへ収束しており、新しいsemantic owner分散、canonical boundary迂回、slice間decision重複を示すevidenceはない
-- Fresh-context second pass: source、executable contract、resulting deltaをfinding familyへ限定して再確認し、A-01、RL-01、KP-01に未解決のblocking違反は確認しなかった。独立reviewerはこのsessionの実行制約により起動せず、二度目のcomplete-diff holistic reviewでも代替していない
+- Candidate c7 targeted closure: A-01とKP-01はclosed。RL-01はlist aggregateの取得境界にblocking findingが残り、Candidate c8の修正対象へ昇格した
 - Remaining validation gaps: `npm run dist:win`、インストール済みalias、live ElectronでのCLI/MCP E2E、生成bundle内の第三者依存を含む全行の手動意味reviewは未実施
+
+### Additional Finding Targeted Closure
+
+- Candidate `session-external-runtime-final-c7`のtargeted closureで、A-01とKP-01はclosed、RL-01はlist aggregateのbyte budget適用前に`listPage(limit + 1)`が全recordをhydrateする反例を`current-scope repair`として確認した
+- RL-01のsemantic ownerはexecution storageのpage retrievalとapplication projectionのまま変わらず、別subsystemまたはboundary prerequisiteへscopeを広げない
+- Candidate `session-external-runtime-final-c8`ではstorage page retrievalをlazy iteratorへ変更し、application projectionがresponse budget超過を検出した時点で後続recordの取得とJSON parseを停止する
+- Final direct checks:
+  - A-01、RL-01、KP-01とstorage paginationのtargeted regression set: 50 passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+  - `npm test`: 2402 tests、2401 passed、1 skipped、0 failed
+- Structure convergence gate: `ready-after-consolidation`。既存のarray page APIは互換用にiteratorから構築し、external application経路だけがlazy iteratorを利用する。pagination owner、public projection owner、shared response limit ownerを移動または重複していない
+- Holistic review countは1のまま維持し、二度目のcomplete-diff探索は行わない。Candidate c8はRL-01 finding familyとresulting deltaのtargeted closureだけで閉じる
+- Candidate c8 targeted closure: `REV-C8-RL-01`でclosed。Candidate verificationは`verified`、blocking findingなし。独立実行した関連test 33件もpassed
+- Targeted closure validation gap: process-level heap計測とSQLite row-step instrumentationは未実施。generator contractがconsumerのshort-circuitを直接検証し、storage sourceがlazy row iterationを所有するためnon-blockingとする
+- Residual risk: `nextCursor`判定のためlookahead一件はparseするが、requested page sizeに依存しないbounded memoryであり、指摘されたmulti-gigabyte eager hydration経路は再現しない
