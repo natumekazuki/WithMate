@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { SessionExecution } from "../../src/session-execution.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
@@ -33,10 +34,89 @@ const mutationInput = {
   },
 };
 
+test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
+  let executionInvoked = false;
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({
+      revision: 7,
+      providers: [{
+        id: "codex",
+        label: "Codex",
+        defaultModelId: "gpt-5.4",
+        defaultReasoningEffort: "high",
+        models: [{
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          reasoningEfforts: ["medium", "high"],
+          privateModelMetadata: "hidden",
+        }],
+        privateProviderMetadata: "hidden",
+      }],
+      privateCatalogMetadata: "hidden",
+    }) as ModelCatalogSnapshot,
+    executionService: {
+      beginShutdown() { executionInvoked = true; },
+      async run() { executionInvoked = true; return execution; },
+      async enqueue() { executionInvoked = true; return execution; },
+      resolveReplay() { executionInvoked = true; return null; },
+      get() { executionInvoked = true; return execution; },
+      listPage() { executionInvoked = true; return []; },
+      async cancel() { executionInvoked = true; return execution; },
+      async waitForTerminal() { executionInvoked = true; return execution; },
+    },
+  });
+
+  const response = await service.execute("runtime.catalog", {});
+
+  assert.equal(executionInvoked, false);
+  assert.deepEqual(response, {
+    schemaVersion: "withmate-session-result-v1",
+    operation: "runtime.catalog",
+    result: {
+      revision: 7,
+      providers: [{
+        id: "codex",
+        label: "Codex",
+        defaultModelId: "gpt-5.4",
+        defaultReasoningEffort: "high",
+        models: [{
+          id: "gpt-5.4",
+          label: "GPT-5.4",
+          reasoningEfforts: ["medium", "high"],
+        }],
+      }],
+    },
+  });
+});
+
+test("RUNTIME-CATALOG-01: catalog欠落時はread-only errorへ収束しseedやexecutionへ触れない", async () => {
+  let executionInvoked = false;
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => null,
+    executionService: {
+      beginShutdown() { executionInvoked = true; },
+      async run() { executionInvoked = true; return execution; },
+      async enqueue() { executionInvoked = true; return execution; },
+      resolveReplay() { executionInvoked = true; return null; },
+      get() { executionInvoked = true; return execution; },
+      listPage() { executionInvoked = true; return []; },
+      async cancel() { executionInvoked = true; return execution; },
+      async waitForTerminal() { executionInvoked = true; return execution; },
+    },
+  });
+
+  const response = await service.execute("runtime.catalog", {});
+
+  assert.equal(executionInvoked, false);
+  assert.equal("error" in response && response.error.code, "RUNTIME_UNAVAILABLE");
+  assert.equal("error" in response && response.error.retryable, true);
+  assert.equal("error" in response && response.error.effect, "not_applied");
+});
+
 test("Session application service persists catalog revision with the turn and returns an allowlisted projection", async () => {
   const runInputs: unknown[] = [];
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run(input) {
@@ -80,7 +160,7 @@ test("Session application service persists catalog revision with the turn and re
 test("Session application service rejects a stale catalog before creating an execution", async () => {
   let invoked = false;
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 5,
+    currentModelCatalog: () => ({ revision: 5, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() { invoked = true; return execution; },
@@ -101,7 +181,7 @@ test("Session application service rejects a stale catalog before creating an exe
 test("Session application service rejects an unknown operation before invoking execution dependencies", async () => {
   let invoked = false;
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() { invoked = true; return execution; },
@@ -124,7 +204,7 @@ test("Session application service rejects an unknown operation before invoking e
 test("Session application service validates the operation payload before invoking execution dependencies", async () => {
   let invoked = false;
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() { invoked = true; return execution; },
@@ -152,7 +232,7 @@ test("Session application service binds list cursors to the requested Session", 
   }));
   const pageRequests: Array<{ afterSequence: number | null; limit: number }> = [];
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() { throw new Error("unused"); },
@@ -187,7 +267,7 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
   const largeResult = { assistantText: "a".repeat(5 * 1024 * 1024) };
   let materialized = 0;
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() { throw new Error("unused"); },
@@ -216,7 +296,7 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
 
 test("RL-01: applied turn.run reports an oversized inline result with applied effect", async () => {
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() {
@@ -240,7 +320,7 @@ test("RL-01: applied turn.run reports an oversized inline result with applied ef
 test("I-01: canonical replayはcatalog revision更新後もstale validationより先に解決する", async () => {
   let runInvoked = false;
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 5,
+    currentModelCatalog: () => ({ revision: 5, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() { runInvoked = true; return execution; },
@@ -263,7 +343,7 @@ test("LC-01: shutdown admission後はapplication dependencyを呼ばずnot_appli
   let invoked = false;
   let executionShutdownBegun = false;
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() { executionShutdownBegun = true; },
       async run() { invoked = true; return execution; },
@@ -287,7 +367,7 @@ test("LC-01: shutdown admission後はapplication dependencyを呼ばずnot_appli
 
 test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ写像する", async () => {
   const service = new SessionExternalApplicationService({
-    currentCatalogRevision: () => 4,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
       async run() {

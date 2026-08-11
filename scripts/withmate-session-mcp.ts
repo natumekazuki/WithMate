@@ -34,6 +34,7 @@ type McpRuntimeDeps = {
 
 const reasoningEffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const nonEmptyStringSchema = z.string().trim().min(1);
+const runtimeCatalogInputSchema = z.object({}).strict();
 const turnSchema = z.object({
   userMessage: nonEmptyStringSchema,
   model: nonEmptyStringSchema,
@@ -115,6 +116,7 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 ].join(" ");
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
+  { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: false },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: false },
   { name: "turn.list", title: "List Session executions", description: "List execution records for the specified Session.", readOnly: true, destructive: false },
@@ -229,6 +231,12 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
   );
   const definitions = new Map(SESSION_MCP_TOOL_DEFINITIONS.map((definition) => [definition.name, definition]));
 
+  server.registerTool("runtime.catalog", {
+    ...definitions.get("runtime.catalog")!,
+    annotations: annotations(definitions.get("runtime.catalog")!),
+    inputSchema: runtimeCatalogInputSchema,
+    outputSchema: createOutputSchema("runtime.catalog"),
+  }, async (input) => executeOperation("runtime.catalog", input, deps));
   server.registerTool("turn.run", {
     ...definitions.get("turn.run")!,
     annotations: annotations(definitions.get("turn.run")!),

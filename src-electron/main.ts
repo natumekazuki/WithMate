@@ -2530,7 +2530,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
   if (!sessionExternalApplicationService) {
     sessionExternalApplicationService = new SessionExternalApplicationService({
       executionService: requireSessionExecutionService(),
-      currentCatalogRevision: () => getModelCatalog()?.revision ?? 0,
+      currentModelCatalog: () => getModelCatalog(),
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();

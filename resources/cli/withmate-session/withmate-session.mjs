@@ -70,6 +70,7 @@ var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1";
 var SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
+	"runtime.catalog",
 	"turn.run",
 	"turn.enqueue",
 	"turn.list",
@@ -20251,6 +20252,7 @@ var reasoningEffortSchema = _enum([
 	"ultra"
 ]);
 var nonEmptyStringSchema = string().trim().min(1);
+var runtimeCatalogInputSchema = object({}).strict();
 var turnSchema = object({
 	userMessage: nonEmptyStringSchema,
 	model: nonEmptyStringSchema,
@@ -20330,6 +20332,13 @@ var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode."
 ].join(" ");
 var SESSION_MCP_TOOL_DEFINITIONS = [
+	{
+		name: "runtime.catalog",
+		title: "Get runtime catalog",
+		description: "Read the current public Provider and model catalog.",
+		readOnly: true,
+		destructive: false
+	},
 	{
 		name: "turn.run",
 		title: "Run Session turn",
@@ -20457,6 +20466,12 @@ function createWithMateSessionMcpServer(deps = {}) {
 		version: "1.0.0"
 	}, { instructions: SESSION_MCP_SERVER_INSTRUCTIONS });
 	const definitions = new Map(SESSION_MCP_TOOL_DEFINITIONS.map((definition) => [definition.name, definition]));
+	server.registerTool("runtime.catalog", {
+		...definitions.get("runtime.catalog"),
+		annotations: annotations(definitions.get("runtime.catalog")),
+		inputSchema: runtimeCatalogInputSchema,
+		outputSchema: createOutputSchema("runtime.catalog")
+	}, async (input) => executeOperation("runtime.catalog", input, deps));
 	server.registerTool("turn.run", {
 		...definitions.get("turn.run"),
 		annotations: annotations(definitions.get("turn.run")),
@@ -20513,12 +20528,14 @@ var SessionCliUsageError = class extends Error {
 	}
 };
 var commandMap = /* @__PURE__ */ new Map([
+	["runtime catalog", "runtime.catalog"],
 	["turn run", "turn.run"],
 	["turn enqueue", "turn.enqueue"],
 	["turn list", "turn.list"],
 	["turn get", "turn.get"],
 	["turn cancel", "turn.cancel"]
 ]);
+var inputlessOperationCommands = /* @__PURE__ */ new Set(["runtime catalog"]);
 async function runWithMateSessionCli(args, deps = {}) {
 	const stdout = deps.stdout ?? process.stdout;
 	let format = "json";
@@ -20619,9 +20636,10 @@ function isMutationCommand(command) {
 	return command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
 async function parseArgs(args, deps) {
-	const command = args[0] === "turn" ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
-	const optionStart = args[0] === "turn" ? 2 : 1;
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime";
+	const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+	const optionStart = namespacedCommand ? 2 : 1;
 	let json;
 	let file;
 	let useStdin = false;
@@ -20646,7 +20664,8 @@ async function parseArgs(args, deps) {
 		else throw new SessionCliUsageError(`Unknown or invalid option: ${option}.`);
 	}
 	const sources = Number(json !== void 0) + Number(file !== void 0) + Number(useStdin);
-	if (commandMap.has(command) && sources !== 1) throw new SessionCliUsageError("Operation commands require exactly one of --json, --file, or --stdin.");
+	if (inputlessOperationCommands.has(command) && sources !== 0) throw new SessionCliUsageError(`${command} does not accept an operation input.`);
+	if (commandMap.has(command) && !inputlessOperationCommands.has(command) && sources !== 1) throw new SessionCliUsageError("Operation commands require exactly one of --json, --file, or --stdin.");
 	if (!commandMap.has(command) && sources !== 0) throw new SessionCliUsageError(`${command} does not accept an operation input.`);
 	let input;
 	try {
@@ -20664,7 +20683,7 @@ async function parseArgs(args, deps) {
 	}
 	return {
 		command,
-		...sources ? { input } : {},
+		...inputlessOperationCommands.has(command) ? { input: {} } : sources ? { input } : {},
 		format,
 		...apiUrl ? { apiUrl } : {},
 		...discoveryFilePath ? { discoveryFilePath } : {},

@@ -255,6 +255,39 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.json().ok, true);
   });
 
+  test("RUNTIME-CATALOG-02: runtime catalogはinput sourceなしで共通operationへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const exitCode = await runWithMateSessionCli(["runtime", "catalog"], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: {
+            schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+            operation: "runtime.catalog",
+            result: { revision: 7, providers: [] },
+          },
+        };
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v1",
+      operation: "runtime.catalog",
+      input: {},
+    }]);
+    assert.deepEqual(stdout.json().result, {
+      schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+      operation: "runtime.catalog",
+      result: { revision: 7, providers: [] },
+    });
+  });
+
   test("application errorをsafe JSONとexit 3へ写像する", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([

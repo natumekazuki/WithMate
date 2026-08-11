@@ -47,7 +47,7 @@ async function withClient<T>(
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("5 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("6 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -60,7 +60,32 @@ describe("WithMate Session MCP contract", () => {
         assert.equal(tool.annotations?.idempotentHint, true);
       }
       assert.equal(result.tools.find((tool) => tool.name === "turn.list")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "runtime.catalog")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.cancel")?.annotations?.destructiveHint, true);
+    });
+  });
+
+  it("RUNTIME-CATALOG-02: runtime.catalogを空inputのread-only operationとしてdispatchする", async () => {
+    const requests: unknown[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("runtime.catalog", { revision: 7, providers: [] }),
+        };
+      },
+    }), async (client) => {
+      const result = await client.callTool({ name: "runtime.catalog", arguments: {} });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(requests, [{
+        schemaVersion: "withmate-session-request-v1",
+        operation: "runtime.catalog",
+        input: {},
+      }]);
+      assert.deepEqual((result.structuredContent as any).result, { revision: 7, providers: [] });
     });
   });
 

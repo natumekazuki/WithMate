@@ -17,6 +17,23 @@ const turn = {
   codexSandboxMode: "workspace-write",
 };
 
+test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input", () => {
+  const parsed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "runtime.catalog",
+    input: {},
+  });
+  assert.deepEqual(parsed.input, {});
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "runtime.catalog",
+      input: { revision: 4 },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.revision",
+  );
+});
+
 test("Session runtime validator accepts an explicit deferred turn.run contract", () => {
   const parsed = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,

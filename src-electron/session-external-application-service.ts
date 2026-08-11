@@ -11,6 +11,7 @@ import {
   parseSessionRuntimeRequestEnvelope,
   projectSessionExecution,
   type SessionRuntimeCancelInput,
+  type SessionRuntimeCatalogResult,
   type SessionRuntimeEnqueueInput,
   type SessionRuntimeError,
   type SessionRuntimeExecutionInput,
@@ -19,6 +20,7 @@ import {
   type SessionRuntimeResultEnvelope,
   type SessionRuntimeRunInput,
 } from "../src/session-external-runtime-contract.js";
+import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { SessionExecution } from "../src/session-execution.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import {
@@ -39,7 +41,7 @@ export type SessionExternalApplicationServiceDeps = {
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
   >;
-  currentCatalogRevision(): number;
+  currentModelCatalog(): ModelCatalogSnapshot | null;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
@@ -75,6 +77,9 @@ export class SessionExternalApplicationService {
   }
 
   private async executeValidated(operation: SessionRuntimeOperation, input: unknown): Promise<unknown> {
+    if (operation === "runtime.catalog") {
+      return projectRuntimeCatalog(this.requireCurrentModelCatalog());
+    }
     if (operation === "turn.run") {
       return this.run(input as SessionRuntimeRunInput);
     }
@@ -167,7 +172,7 @@ export class SessionExternalApplicationService {
   }
 
   private requireCurrentCatalog(catalogRevision: number): void {
-    if (catalogRevision !== this.deps.currentCatalogRevision()) {
+    if (catalogRevision !== this.requireCurrentModelCatalog().revision) {
       throw new SessionRuntimeValidationError(
         "The model catalog revision is stale.",
         { field: "catalogRevision", catalogRevision },
@@ -175,6 +180,35 @@ export class SessionExternalApplicationService {
       );
     }
   }
+
+  private requireCurrentModelCatalog(): ModelCatalogSnapshot {
+    const snapshot = this.deps.currentModelCatalog();
+    if (!snapshot) {
+      throw new SessionRuntimeValidationError(
+        "The model catalog is unavailable.",
+        {},
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    return snapshot;
+  }
+}
+
+function projectRuntimeCatalog(snapshot: ModelCatalogSnapshot): SessionRuntimeCatalogResult {
+  return {
+    revision: snapshot.revision,
+    providers: snapshot.providers.map((provider) => ({
+      id: provider.id,
+      label: provider.label,
+      defaultModelId: provider.defaultModelId,
+      defaultReasoningEffort: provider.defaultReasoningEffort,
+      models: provider.models.map((model) => ({
+        id: model.id,
+        label: model.label,
+        reasoningEfforts: [...model.reasoningEfforts],
+      })),
+    })),
+  };
 }
 
 function fingerprintMutation(input: SessionRuntimeEnqueueInput): string {
@@ -266,7 +300,7 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
     return createSessionRuntimeError({
       code: error.code,
       message: error.message,
-      retryable: error.code === "CATALOG_REVISION_STALE",
+      retryable: error.code === "CATALOG_REVISION_STALE" || error.code === "RUNTIME_UNAVAILABLE",
       details: error.details,
     });
   }

@@ -325,3 +325,22 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Candidate c12では上記識別条件を含むHTTP server test 11件がpassed。production sourceの追加変更はなく、同一finding familyの探索reviewを重ねずdirect checkで最終closure evidenceを揃えた
 - Finding Promotionは二件とも既存owner内の`current-scope repair`。新しいpublic contract、semantic owner、subsystemは追加していない
 - Holistic review countは1のまま維持し、最終Candidateでは二件のfinding familyとresulting deltaに限定したtargeted closure、およびsettings cellへのdelta非影響確認だけを行う
+
+## MCP / CLI Integration Slice 1: Runtime Catalog
+
+### Pre-Implementation Closure Plan
+
+- Gate: `ready`
+- Goal: current model catalogを共通application境界からread-onlyに公開し、CLIの`runtime catalog`とMCPの`runtime.catalog`を同じoperationへ接続する
+- Accepted contract: ADR 021と`withmate-session-mcp-codex-integration-brief.md`が定める、catalog/model候補をcallerが推測せずruntimeから取得する契約
+- Knowledge placement: operation名、厳密な空input、public result fieldsはshared type/parserとexecutable contractへ置く。既存ADRのdecisionを実装するため追加ADRは作らない
+- Sibling Sweep: shared request contract、application projection、HTTP operation dispatch、CLI command、MCP tool registrationを対象とする。Session CRUD、turn options、interaction、transcript、Session file、managed Skillは後続sliceへ分離する
+
+| ID | Invariant | Scope / owner | Failure mode | Consumer impact | Direct verification |
+| --- | --- | --- | --- | --- | --- |
+| RUNTIME-CATALOG-01 | `runtime.catalog`は厳密な空objectだけを受け、current revisionとpublicなprovider/model/reasoning候補だけを返す | shared Session runtime contract、external application projection | callerがcatalogをローカル推測する、unknown inputを黙認する、内部metadataを公開する | staleまたは非対応tupleで後続operationを構築する、private stateが漏れる | contract testとapplication testでstrict input、exact projection、execution dependency非呼出しを確認 |
+| RUNTIME-CATALOG-02 | CLIとMCPは同じ`runtime.catalog` operationを使い、CLIはinput source不要、MCPはread-only toolとして公開する | CLI/MCP adapter | adapterごとに別契約を持つ、read-only operationをmutation扱いする | automationのschemaとeffect分類がsurface間で分岐する | CLI dispatch test、MCP list/call/annotation testでoperationと空inputのparityを確認 |
+
+- Failure timing: validation failureとtransport failureはいずれも`not_applied`。Session永続化、execution queue、provider dispatchへの副作用はない
+- Targeted checks: shared contract、application service、CLI、MCPの各test、typecheck、生成bundle build
+- Review gate: public schema/projectionのcross-surface sliceなので、implementation-complete Candidateをcontract/projection lensのtargeted reviewへ一度渡す。complete-diff holistic reviewは統合Brief全sliceの最終Candidateまで行わない

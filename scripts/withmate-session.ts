@@ -62,12 +62,14 @@ class SessionCliUsageError extends Error {
 }
 
 const commandMap = new Map<string, SessionRuntimeOperation>([
+  ["runtime catalog", "runtime.catalog"],
   ["turn run", "turn.run"],
   ["turn enqueue", "turn.enqueue"],
   ["turn list", "turn.list"],
   ["turn get", "turn.get"],
   ["turn cancel", "turn.cancel"],
 ]);
+const inputlessOperationCommands = new Set(["runtime catalog"]);
 
 export async function runWithMateSessionCli(args: readonly string[], deps: CliDeps = {}): Promise<number> {
   const stdout = deps.stdout ?? process.stdout;
@@ -183,11 +185,12 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   discoveryFilePath?: string;
   timeoutMs: number;
 }> {
-  const command = args[0] === "turn" ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+  const namespacedCommand = args[0] === "turn" || args[0] === "runtime";
+  const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
   }
-  const optionStart = args[0] === "turn" ? 2 : 1;
+  const optionStart = namespacedCommand ? 2 : 1;
   let json: string | undefined;
   let file: string | undefined;
   let useStdin = false;
@@ -214,7 +217,10 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     else throw new SessionCliUsageError(`Unknown or invalid option: ${option}.`);
   }
   const sources = Number(json !== undefined) + Number(file !== undefined) + Number(useStdin);
-  if (commandMap.has(command) && sources !== 1) {
+  if (inputlessOperationCommands.has(command) && sources !== 0) {
+    throw new SessionCliUsageError(`${command} does not accept an operation input.`);
+  }
+  if (commandMap.has(command) && !inputlessOperationCommands.has(command) && sources !== 1) {
     throw new SessionCliUsageError("Operation commands require exactly one of --json, --file, or --stdin.");
   }
   if (!commandMap.has(command) && sources !== 0) {
@@ -237,7 +243,14 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     }
     throw new SessionCliUsageError("Operation input must be readable valid JSON.");
   }
-  return { command, ...(sources ? { input } : {}), format, ...(apiUrl ? { apiUrl } : {}), ...(discoveryFilePath ? { discoveryFilePath } : {}), timeoutMs };
+  return {
+    command,
+    ...(inputlessOperationCommands.has(command) ? { input: {} } : sources ? { input } : {}),
+    format,
+    ...(apiUrl ? { apiUrl } : {}),
+    ...(discoveryFilePath ? { discoveryFilePath } : {}),
+    timeoutMs,
+  };
 }
 
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {

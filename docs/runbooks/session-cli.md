@@ -22,7 +22,13 @@ withmate-session schema
 
 ## Turn操作
 
-初期CLIは次のcommandを公開する。
+current model catalogを確認する。入力JSONは不要である。
+
+```powershell
+withmate-session runtime catalog
+```
+
+CLIは次のTurn commandを公開する。
 
 - `turn run`
 - `turn enqueue`
@@ -59,4 +65,4 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`で、入力shapeはMCPの`tools/list`を正本とする。application errorはversioned `structuredContent`と`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは`runtime.catalog`、`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`で、入力shapeはMCPの`tools/list`を正本とする。application errorはversioned `structuredContent`と`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。

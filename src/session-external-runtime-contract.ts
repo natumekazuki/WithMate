@@ -15,6 +15,7 @@ export const SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 export const SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 300_000;
 
 export const SESSION_RUNTIME_OPERATIONS = [
+  "runtime.catalog",
   "turn.run",
   "turn.enqueue",
   "turn.list",
@@ -25,6 +26,21 @@ export const SESSION_RUNTIME_OPERATIONS = [
 export type SessionRuntimeOperation = (typeof SESSION_RUNTIME_OPERATIONS)[number];
 export type SessionRuntimeAdapterKind = "cli" | "mcp";
 export type SessionRuntimeEffect = "not_applied" | "applied" | "indeterminate";
+
+export type SessionRuntimeCatalogResult = {
+  revision: number;
+  providers: Array<{
+    id: string;
+    label: string;
+    defaultModelId: string;
+    defaultReasoningEffort: ModelReasoningEffort;
+    models: Array<{
+      id: string;
+      label: string;
+      reasoningEfforts: ModelReasoningEffort[];
+    }>;
+  }>;
+};
 
 export type SessionRuntimeTurnRequest = {
   userMessage: string;
@@ -122,6 +138,11 @@ export function parseSessionRuntimeRequestEnvelope(value: unknown): SessionRunti
 export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOperation, value: unknown): unknown {
   if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) {
     throw invalid("operation", "Unsupported Session runtime operation.");
+  }
+  if (operation === "runtime.catalog") {
+    const record = requireObject(value, "input");
+    assertKeys(record, [], "input");
+    return {};
   }
   if (operation === "turn.run") {
     return parseTurnRunInput(value);
