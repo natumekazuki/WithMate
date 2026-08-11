@@ -1746,11 +1746,16 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(baseSession.id, { userMessage: "お願いします" });
+    const result = await service.runExternalSessionTurn(baseSession.id, 1, {
+      userMessage: "お願いします",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+    });
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    assert.equal(result.runState, "idle");
-    assert.match(result.messages.at(-1)?.text ?? "", /キャンセル/);
+    assert.equal(result.terminalState, "canceled");
+    assert.equal(result.session.runState, "idle");
+    assert.match(result.session.messages.at(-1)?.text ?? "", /キャンセル/);
     assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");

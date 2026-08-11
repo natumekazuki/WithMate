@@ -1,13 +1,17 @@
 import type { Session } from "../src/session-state.js";
 import type { SessionExecutionDispatchResult } from "./session-execution-service.js";
+import type { ExternalSessionTurnResult } from "./session-runtime-service.js";
 
 export async function runSessionExecutionDispatch(input: {
-  runTurn(): Promise<Session>;
+  runTurn(): Promise<ExternalSessionTurnResult>;
   isCanceled(): boolean;
 }): Promise<SessionExecutionDispatchResult> {
   try {
-    const session = await input.runTurn();
-    if (session.runState === "error") {
+    const outcome = await input.runTurn();
+    if (outcome.terminalState === "canceled") {
+      return { state: "canceled", result: null, reason: "user_requested" };
+    }
+    if (outcome.terminalState === "failed") {
       return {
         state: "failed",
         result: null,
@@ -15,6 +19,7 @@ export async function runSessionExecutionDispatch(input: {
         reason: "provider_turn_failed",
       };
     }
+    const session: Session = outcome.session;
     const assistantText = [...session.messages]
       .reverse()
       .find((message) => message.role === "assistant")?.text ?? "";

@@ -32,11 +32,27 @@ describe("runSessionExecutionDispatch", () => {
     });
 
     const outcome = await runSessionExecutionDispatch({
-      runTurn: async () => session,
+      runTurn: async () => ({ session, terminalState: "completed" }),
       isCanceled: () => true,
     });
 
     assert.deepEqual(outcome, { state: "completed", result: { assistantText: "completed" } });
+  });
+
+  it("EXT-TERMINAL-CANCEL-07: runtimeが確定したcancel終端をexecutionへ投影する", async () => {
+    const session = createSession({
+      messages: [
+        { role: "user", text: "hello" },
+        { role: "assistant", text: "キャンセルしたよ。" },
+      ],
+    });
+
+    const outcome = await runSessionExecutionDispatch({
+      runTurn: async () => ({ session, terminalState: "canceled" }),
+      isCanceled: () => false,
+    });
+
+    assert.deepEqual(outcome, { state: "canceled", result: null, reason: "user_requested" });
   });
 
   it("EXT-TERMINAL-05: completion前にabortされたfailureだけをcanceledへ収束する", async () => {
@@ -50,7 +66,10 @@ describe("runSessionExecutionDispatch", () => {
 
   it("EXT-ERROR-06: provider terminal failureはstable PROVIDER_FAILUREを返す", async () => {
     const outcome = await runSessionExecutionDispatch({
-      runTurn: async () => createSession({ runState: "error" }),
+      runTurn: async () => ({
+        session: createSession({ runState: "error" }),
+        terminalState: "failed",
+      }),
       isCanceled: () => false,
     });
 

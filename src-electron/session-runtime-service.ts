@@ -46,6 +46,11 @@ const DEFAULT_PROVIDER_CANCEL_GRACE_MS = 10_000;
 const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
 const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
 
+export type ExternalSessionTurnResult = {
+  session: Session;
+  terminalState: "completed" | "canceled" | "failed";
+};
+
 function applyTurnRuntimeOptions(session: Session, request: RunSessionTurnRequest): Session {
   return {
     ...session,
@@ -757,14 +762,14 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
-    return this.runSessionTurnWithCatalog(sessionId, request, null);
+    return (await this.runSessionTurnWithCatalog(sessionId, request, null)).session;
   }
 
   async runExternalSessionTurn(
     sessionId: string,
     catalogRevision: number,
     request: RunSessionTurnRequest,
-  ): Promise<Session> {
+  ): Promise<ExternalSessionTurnResult> {
     return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision);
   }
 
@@ -772,7 +777,7 @@ export class SessionRuntimeService {
     sessionId: string,
     request: RunSessionTurnRequest,
     externalCatalogRevision: number | null,
-  ): Promise<Session> {
+  ): Promise<ExternalSessionTurnResult> {
     if (this.isRunInFlight(sessionId)) {
       throw new Error("このセッションはまだ実行中だよ。");
     }
@@ -922,7 +927,7 @@ export class SessionRuntimeService {
     request: RunSessionTurnRequest,
     runAbortController: AbortController,
     externalCatalogRevision: number | null,
-  ): Promise<Session> {
+  ): Promise<ExternalSessionTurnResult> {
     const observedAt = (this.deps.currentDate ?? (() => new Date()))();
     const investigationStartedAt = Date.now();
     const storedSession = await this.deps.getSession(sessionId);
@@ -1463,7 +1468,7 @@ export class SessionRuntimeService {
             .then(() => this.deps.updateAuditLog(runningAuditLog.id, minimalCompletedAuditEntry))
             .then(() => this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry))
             .catch((error) => console.warn("Detached completed audit update failed", error));
-          return storedCompletedSession;
+          return { session: storedCompletedSession, terminalState: "completed" };
         }
         const minimalCompletedAuditUpdateResult = await waitForAuditEnrichment(
           Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, minimalCompletedAuditEntry)),
@@ -1488,7 +1493,7 @@ export class SessionRuntimeService {
             auditLogId: runningAuditLog.id,
             timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
           });
-          return storedCompletedSession;
+          return { session: storedCompletedSession, terminalState: "completed" };
         }
         logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
           sessionId,
@@ -1524,7 +1529,7 @@ export class SessionRuntimeService {
               auditLogId: runningAuditLog.id,
               timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
             });
-            return storedCompletedSession;
+            return { session: storedCompletedSession, terminalState: "completed" };
           }
           logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded", {
             sessionId,
@@ -1545,7 +1550,7 @@ export class SessionRuntimeService {
           });
         }
       }
-      return storedCompletedSession;
+      return { session: storedCompletedSession, terminalState: "completed" };
     } catch (error: unknown) {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
       const canceled = providerTurnError ? providerTurnError.canceled : isCanceledRunError(error);
@@ -1708,7 +1713,10 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
-      return storedFailedSession;
+      return {
+        session: storedFailedSession,
+        terminalState: canceled ? "canceled" : "failed",
+      };
     } finally {
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);

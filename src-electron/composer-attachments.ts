@@ -1,4 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
@@ -12,6 +12,12 @@ type ComposerPreviewSessionContext = Pick<Session, "workspacePath" | "allowedAdd
 
 type ComposerAttachmentResolutionPolicy = {
   rootRelativeOnly?: boolean;
+};
+
+type ManagedRootIdentity = {
+  dev: number;
+  ino: number;
+  canonicalPath: string;
 };
 
 function normalizeSlash(filePath: string): string {
@@ -48,6 +54,33 @@ function inferFileKindFromPath(filePath: string): ComposerAttachmentKind {
   return IMAGE_EXTENSIONS.has(path.extname(filePath).toLowerCase()) ? "image" : "file";
 }
 
+async function inspectManagedAttachmentRoot(rootPath: string): Promise<ManagedRootIdentity> {
+  let rootStatsBefore;
+  try {
+    rootStatsBefore = await lstat(rootPath);
+  } catch {
+    throw new Error("SessionFolderが見つからないよ。");
+  }
+  if (!rootStatsBefore.isDirectory() || rootStatsBefore.isSymbolicLink()) {
+    throw new Error("SessionFolderが実体ディレクトリではないため添付できないよ。");
+  }
+  const canonicalPath = await realpath(rootPath);
+  const rootStatsAfter = await lstat(rootPath);
+  if (
+    !rootStatsAfter.isDirectory()
+    || rootStatsAfter.isSymbolicLink()
+    || rootStatsBefore.dev !== rootStatsAfter.dev
+    || rootStatsBefore.ino !== rootStatsAfter.ino
+  ) {
+    throw new Error("SessionFolderが添付の解決中に変更されたため添付できないよ。");
+  }
+  return {
+    dev: rootStatsAfter.dev,
+    ino: rootStatsAfter.ino,
+    canonicalPath,
+  };
+}
+
 function toDisplayPath(workspacePath: string, absolutePath: string): string {
   return toWorkspaceRelativePath(workspacePath, absolutePath) ?? normalizeSlash(absolutePath);
 }
@@ -66,6 +99,9 @@ async function resolveAttachmentCandidate(
       throw new Error(`SessionFolder 外のパスは添付できないよ: ${candidate.path}`);
     }
   }
+  const managedRootIdentity = policy.rootRelativeOnly
+    ? await inspectManagedAttachmentRoot(session.workspacePath)
+    : null;
   const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path);
   if (!absolutePath) {
     throw new Error("空のパスは添付できないよ。");
@@ -91,11 +127,17 @@ async function resolveAttachmentCandidate(
   }
 
   if (policy.rootRelativeOnly) {
-    const [resolvedRootPath, resolvedAttachmentPath] = await Promise.all([
-      realpath(session.workspacePath),
-      realpath(absolutePath),
-    ]);
-    if (toWorkspaceRelativePath(resolvedRootPath, resolvedAttachmentPath) === null) {
+    const resolvedAttachmentPath = await realpath(absolutePath);
+    const verifiedRootIdentity = await inspectManagedAttachmentRoot(session.workspacePath);
+    if (
+      managedRootIdentity === null
+      || managedRootIdentity.dev !== verifiedRootIdentity.dev
+      || managedRootIdentity.ino !== verifiedRootIdentity.ino
+      || managedRootIdentity.canonicalPath !== verifiedRootIdentity.canonicalPath
+    ) {
+      throw new Error("SessionFolderが添付の解決中に変更されたため添付できないよ。");
+    }
+    if (toWorkspaceRelativePath(managedRootIdentity.canonicalPath, resolvedAttachmentPath) === null) {
       throw new Error(`SessionFolder 外のパスは添付できないよ: ${candidate.path}`);
     }
   }

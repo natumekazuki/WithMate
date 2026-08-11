@@ -109,3 +109,24 @@ test("EXT-AUTH-01: SessionFolder policyはsymlinkによるroot外escapeを拒否
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("EXT-AUTH-ROOT-02: SessionFolder policyはroot自体がjunctionなら添付を拒否する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-session-folder-root-junction-"));
+  const managedSessionFolderPath = path.join(root, "session-folder");
+  const outsideDirectory = path.join(root, "outside");
+  await mkdir(outsideDirectory, { recursive: true });
+  await writeFile(path.join(outsideDirectory, "secret.txt"), "secret", "utf8");
+  await symlink(outsideDirectory, managedSessionFolderPath, "junction");
+
+  try {
+    const preview = await resolveComposerPreview(
+      { workspacePath: managedSessionFolderPath, allowedAdditionalDirectories: [] },
+      "@secret.txt",
+      { rootRelativeOnly: true },
+    );
+    assert.equal(preview.attachments.length, 0);
+    assert.match(preview.errors[0] ?? "", /SessionFolder/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
