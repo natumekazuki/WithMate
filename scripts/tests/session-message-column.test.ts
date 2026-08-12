@@ -1297,6 +1297,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     let isCollapsed = true;
     let anchorRect = createRect({ left: 100, top: 100, width: 60, height: 20 });
     let selectionNode: Node = container;
+    let resolveSelectionNode: (() => Node | null) | null = null;
     const selection = {
       get isCollapsed() {
         return isCollapsed;
@@ -1306,7 +1307,9 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       },
       getRangeAt() {
         return {
-          commonAncestorContainer: selectionNode,
+          get commonAncestorContainer() {
+            return resolveSelectionNode?.() ?? selectionNode;
+          },
           getBoundingClientRect: () => anchorRect,
           getClientRects: () => [anchorRect],
         };
@@ -1327,6 +1330,12 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       const textNode = target?.firstChild;
       assert.ok(textNode);
       selectionNode = textNode;
+      resolveSelectionNode = targetSelector
+        ? () => container
+          .querySelector("[data-message-text-actions='true']")
+          ?.querySelector(targetSelector)
+          ?.firstChild ?? null
+        : null;
       selectedText = text;
       isCollapsed = false;
       anchorRect = rect;
@@ -1342,8 +1351,12 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       });
     };
 
-    const assistantBody = container.querySelector("[data-message-text-actions=\"true\"]");
-    assert.ok(assistantBody);
+    const getAssistantBody = () => {
+      const body = container.querySelector("[data-message-text-actions=\"true\"]");
+      assert.ok(body);
+      return body;
+    };
+    let assistantBody = getAssistantBody();
     await selectText(assistantBody, "  assistant result\n", anchorRect);
 
     let toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
@@ -1387,14 +1400,16 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(toolbar.style.left, "224px");
     assert.equal(toolbar.style.top, "220px");
 
-    const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
-    assert.ok(nestedScrollOwner);
+    assistantBody = getAssistantBody();
     await selectText(
       assistantBody,
       "nested code text",
       createRect({ left: 180, top: 280, width: 80, height: 20 }),
       ".message-code-block code",
     );
+    assistantBody = getAssistantBody();
+    const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
+    assert.ok(nestedScrollOwner);
     anchorRect = createRect({ left: 120, top: 280, width: 80, height: 20 });
     await act(async () => {
       nestedScrollOwner.dispatchEvent(new dom.window.Event("scroll", { bubbles: false }));
@@ -1410,6 +1425,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     });
     assert.equal(container.querySelector(".message-response-actions"), null);
 
+    assistantBody = getAssistantBody();
     await selectText(assistantBody, "assistant result", createRect({ left: 100, top: 100, width: 60, height: 20 }));
     assert.ok(container.querySelector(".message-response-actions"));
     await mounted.rerender({

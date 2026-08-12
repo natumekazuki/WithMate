@@ -223,7 +223,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - expanded 時は上部操作列と下部設定・送信列の高さを固定し、drag では中央の textarea 領域だけを伸縮させる
   - default では通常送信の直後に compact へ戻す
   - この auto close は Settings の checkbox で ON / OFF を切り替えられ、初期値は ON とする
-  - skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。recovery action surface は dock の状態へ影響しない
+  - skill picker、`@path` 候補、blocked feedback がある時は expanded を維持する。skill pickerの候補panelは中央work surfaceのほぼ全体へ一時表示し、composerはtriggerとprompt挿入先を担う。recovery action surface は dock の状態へ影響しない
 - Agent の `File Explorer`
   - `Workspace`、`Session Folder`、`Add Directory` で許可した directory を root として表示する
   - dotfile や ignore 対象を除外せず、展開した directory の直下だけを Main process から取得する

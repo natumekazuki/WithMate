@@ -82,6 +82,7 @@ import {
   useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
@@ -498,6 +499,7 @@ export default function AgentSessionWindowApp() {
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
+  const [skillListError, setSkillListError] = useState<string | null>(null);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
@@ -1077,32 +1079,50 @@ export default function AgentSessionWindowApp() {
 
   useEffect(() => {
     let active = true;
+    const skillDiscoveryRequest = resolveSkillDiscoveryRequest({
+      parentProviderId: selectedSession?.provider,
+      parentWorkspacePath: selectedSession?.workspacePath,
+      auxiliaryProviderId: activeAuxiliarySession?.provider,
+    });
 
-    if (!withmateApi || !activeRunSessionId) {
+    if (!withmateApi || !skillDiscoveryRequest) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
+      setSkillListError(null);
       return () => {
         active = false;
       };
     }
 
     setIsSkillListLoading(true);
-    void withmateApi.listSessionSkills(activeRunSessionId).then((skills) => {
+    setSkillListError(null);
+    void withmateApi.listWorkspaceSkills(
+      skillDiscoveryRequest.providerId,
+      skillDiscoveryRequest.workspacePath,
+    ).then((skills) => {
       if (active) {
         setAvailableSkills(skills);
         setIsSkillListLoading(false);
+        setSkillListError(null);
       }
     }).catch(() => {
       if (active) {
         setAvailableSkills([]);
         setIsSkillListLoading(false);
+        setSkillListError("Skill候補を読み込めませんでした。Settingsまたはworkspaceを確認してください。");
       }
     });
 
     return () => {
       active = false;
     };
-  }, [activeRunSessionId, appSettings, withmateApi]);
+  }, [
+    activeAuxiliarySession?.provider,
+    appSettings,
+    selectedSession?.provider,
+    selectedSession?.workspacePath,
+    withmateApi,
+  ]);
 
   useEffect(() => {
     setIsAgentPickerOpen(false);
@@ -1862,6 +1882,7 @@ export default function AgentSessionWindowApp() {
           primaryLabel: skillDisplay.primaryLabel,
           secondaryLabel: skillDisplay.secondaryLabel,
           title: skillDisplay.title,
+          searchText: `${skill.name}\n${skill.description}`,
         };
       }),
     [availableSkills],
@@ -3477,6 +3498,7 @@ export default function AgentSessionWindowApp() {
         canCollapseActionDock,
         isCustomAgentListLoading,
         isSkillListLoading,
+        skillListError,
         customAgentItems,
         skillItems,
         composerAttachmentItems,

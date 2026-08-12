@@ -118,6 +118,7 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     canCollapseActionDock: true,
     isCustomAgentListLoading: false,
     isSkillListLoading: false,
+    skillListError: null,
     customAgentItems: [],
     skillItems: [],
     composerAttachmentItems: [],
@@ -436,6 +437,41 @@ test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠�
 
   assert.equal(props.composerProps.canSelectCustomAgent, false);
   assert.equal(props.composerProps.showCustomAgentPicker, false);
+});
+
+test("buildAgentSessionChatWindowProps は Skill 候補を chat shell の一時 surface へ投影する", () => {
+  const onSelectSkill = () => {};
+  const onToggleSkillPicker = () => {};
+  const skillItems = [{
+    key: "skill-review",
+    skillId: "review",
+    primaryLabel: "review",
+    secondaryLabel: "Workspace",
+    title: "review",
+  }];
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isSkillPickerOpen: true,
+    skillItems,
+    skillListError: "",
+    onSelectSkill,
+    onToggleSkillPicker,
+  }));
+
+  assert.deepEqual(props.skillPickerProps?.items, skillItems);
+  assert.equal(props.skillPickerProps?.isOpen, true);
+  assert.equal(props.skillPickerProps?.onSelectSkill, onSelectSkill);
+  assert.equal(props.skillPickerProps?.onDismiss, onToggleSkillPicker);
+  assert.equal("skillItems" in props.composerProps, false);
+});
+
+test("buildAgentSessionChatWindowProps は Character Authoring で Skill panel を開かない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    selectedSession: { ...createSession(), sessionKind: "character-authoring" },
+    isSkillPickerOpen: true,
+  }));
+
+  assert.equal(props.composerProps.showSkillPicker, false);
+  assert.equal(props.skillPickerProps?.isOpen, false);
 });
 
 test("buildAgentSessionChatWindowProps は selected session running boolean を composer dock に渡す", () => {
