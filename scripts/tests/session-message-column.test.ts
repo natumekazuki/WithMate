@@ -1297,6 +1297,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     let isCollapsed = true;
     let anchorRect = createRect({ left: 100, top: 100, width: 60, height: 20 });
     let selectionNode: Node = container;
+    let resolveSelectionNode: (() => Node | null) | null = null;
     const selection = {
       get isCollapsed() {
         return isCollapsed;
@@ -1306,7 +1307,9 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       },
       getRangeAt() {
         return {
-          commonAncestorContainer: selectionNode,
+          get commonAncestorContainer() {
+            return resolveSelectionNode?.() ?? selectionNode;
+          },
           getBoundingClientRect: () => anchorRect,
           getClientRects: () => [anchorRect],
         };
@@ -1327,6 +1330,12 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       const textNode = target?.firstChild;
       assert.ok(textNode);
       selectionNode = textNode;
+      resolveSelectionNode = targetSelector
+        ? () => container
+          .querySelector("[data-message-text-actions='true']")
+          ?.querySelector(targetSelector)
+          ?.firstChild ?? null
+        : null;
       selectedText = text;
       isCollapsed = false;
       anchorRect = rect;
@@ -1400,10 +1409,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     );
     assistantBody = getAssistantBody();
     const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
-    const nestedSelectionNode = nestedScrollOwner?.querySelector("code")?.firstChild;
     assert.ok(nestedScrollOwner);
-    assert.ok(nestedSelectionNode);
-    selectionNode = nestedSelectionNode;
     anchorRect = createRect({ left: 120, top: 280, width: 80, height: 20 });
     await act(async () => {
       nestedScrollOwner.dispatchEvent(new dom.window.Event("scroll", { bubbles: false }));
