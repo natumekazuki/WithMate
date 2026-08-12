@@ -37,6 +37,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - message と file preview は同じ component mapping を使う
 - 呼び出し元は path open と local image resolution の context だけを注入する
 - Quote を提供する共通 chat window は Preview を既定とし、ActionDock の表示切替で message column 全体を Source にできる。Source は元 Markdown を plain text として表示し、選択、Quote、検索は表示中の source text を対象にする
+- assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `scripts/tests/session-message-column.test.ts` を正本とする
 - message の表示 mode は window mount 中だけ保持し、永続化しない。切替時は既存の selection を解除する
 - Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える
 
