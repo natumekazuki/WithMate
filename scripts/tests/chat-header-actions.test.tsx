@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { JSDOM } from "jsdom";
 import React from "react";
+import { act } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SessionHeader } from "../../src/session-components.js";
@@ -11,9 +14,9 @@ import {
   createWorkspaceExplorerAction,
   resolveAuxiliaryHeaderActionState,
 } from "../../src/chat/chat-header-actions.js";
-import { SessionHeader } from "../../src/session-components.js";
-
 const noop = () => {};
+
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 test("SessionHeader は低頻度の管理操作を menu にまとめる", () => {
   const html = renderToStaticMarkup(
@@ -35,11 +38,110 @@ test("SessionHeader は低頻度の管理操作を menu にまとめる", () => 
   );
 
   assert.match(html, /<summary aria-label="Session actions"/);
+  assert.match(html, /aria-haspopup="menu"/);
+  assert.match(html, /aria-expanded="false"/);
   assert.match(html, /role="menu"/);
   assert.match(html, /role="menuitem" aria-pressed="false">ピン止め<\/button>/);
   assert.match(html, /role="menuitem">Rename<\/button>/);
   assert.match(html, /role="menuitem">Audit Log<\/button>/);
   assert.match(html, /role="menuitem">Delete<\/button>/);
+});
+
+test("SessionHeader menu は外側操作、Escape、項目実行、trigger 再クリックで閉じる", async () => {
+  const previousGlobals = {
+    window: globalThis.window,
+    document: globalThis.document,
+    Node: globalThis.Node,
+    HTMLElement: globalThis.HTMLElement,
+    Event: globalThis.Event,
+    MouseEvent: globalThis.MouseEvent,
+    KeyboardEvent: globalThis.KeyboardEvent,
+    PointerEvent: globalThis.PointerEvent,
+  };
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div><button id=\"outside\">Outside</button></body></html>", {
+    pretendToBeVisual: true,
+  });
+  const container = dom.window.document.getElementById("root") as HTMLElement;
+  const root = createRoot(container);
+  const actions: string[] = [];
+
+  Object.defineProperties(globalThis, {
+    window: { configurable: true, value: dom.window },
+    document: { configurable: true, value: dom.window.document },
+    Node: { configurable: true, value: dom.window.Node },
+    HTMLElement: { configurable: true, value: dom.window.HTMLElement },
+    Event: { configurable: true, value: dom.window.Event },
+    MouseEvent: { configurable: true, value: dom.window.MouseEvent },
+    KeyboardEvent: { configurable: true, value: dom.window.KeyboardEvent },
+    PointerEvent: { configurable: true, value: dom.window.PointerEvent ?? dom.window.MouseEvent },
+  });
+
+  try {
+    await act(async () => root.render(
+      <SessionHeader
+        taskTitle="Session"
+        isEditingTitle={false}
+        titleDraft="Session"
+        isRunning={false}
+        onOpenAuditLog={() => actions.push("audit")}
+        onOpenTerminal={noop}
+        onTitleDraftChange={noop}
+        onTitleInputKeyDown={noop}
+        onSaveTitle={noop}
+        onCancelTitleEdit={noop}
+        onStartTitleEdit={() => actions.push("rename")}
+        onDeleteSession={() => actions.push("delete")}
+        onTogglePin={() => actions.push("pin")}
+      />,
+    ));
+
+    const details = container.querySelector<HTMLDetailsElement>("details.session-header-more");
+    const trigger = container.querySelector<HTMLElement>("summary[aria-label=\"Session actions\"]");
+    assert.ok(details);
+    assert.ok(trigger);
+
+    await act(async () => trigger.click());
+    assert.equal(details.open, true);
+    await act(async () => trigger.click());
+    assert.equal(details.open, false);
+
+    await act(async () => trigger.click());
+    await act(async () => {
+      dom.window.document.getElementById("outside")?.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+    });
+    assert.equal(details.open, false);
+
+    await act(async () => trigger.click());
+    container.querySelector<HTMLButtonElement>("[role=\"menuitem\"]")?.focus();
+    await act(async () => {
+      details.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    assert.equal(details.open, false);
+    assert.equal(dom.window.document.activeElement, trigger);
+
+    for (const [label, action] of [["ピン止め", "pin"], ["Rename", "rename"], ["Audit Log", "audit"], ["Delete", "delete"]]) {
+      await act(async () => trigger.click());
+      const item = [...container.querySelectorAll<HTMLButtonElement>("[role=\"menuitem\"]")]
+        .find((button) => button.textContent === label);
+      assert.ok(item);
+      await act(async () => item.click());
+      assert.equal(details.open, false);
+      assert.equal(actions.at(-1), action);
+    }
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.defineProperties(globalThis, {
+      window: { configurable: true, value: previousGlobals.window },
+      document: { configurable: true, value: previousGlobals.document },
+      Node: { configurable: true, value: previousGlobals.Node },
+      HTMLElement: { configurable: true, value: previousGlobals.HTMLElement },
+      Event: { configurable: true, value: previousGlobals.Event },
+      MouseEvent: { configurable: true, value: previousGlobals.MouseEvent },
+      KeyboardEvent: { configurable: true, value: previousGlobals.KeyboardEvent },
+      PointerEvent: { configurable: true, value: previousGlobals.PointerEvent },
+    });
+  }
 });
 
 test("createWorkspaceExplorerAction は共通の workspace Explorer action を描画する", () => {

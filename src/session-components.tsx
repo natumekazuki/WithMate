@@ -670,6 +670,30 @@ export function SessionHeader({
   onStartTitleEdit,
   onDeleteSession,
 }: SessionHeaderProps) {
+  const sessionActionsRef = useRef<HTMLDetailsElement | null>(null);
+  const sessionActionsTriggerRef = useRef<HTMLElement | null>(null);
+  const [isSessionActionsOpen, setIsSessionActionsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isSessionActionsOpen) {
+      return;
+    }
+
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      if (event.target && !sessionActionsRef.current?.contains(event.target as Node)) {
+        setIsSessionActionsOpen(false);
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnOutsidePointerDown);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointerDown);
+  }, [isSessionActionsOpen]);
+
+  const runSessionAction = (action: () => void) => {
+    setIsSessionActionsOpen(false);
+    action();
+  };
+
   return (
     <header className="session-window-bar session-top-bar rise-1">
       <div className={`session-top-bar-row${isEditingTitle ? " is-editing-title" : ""}`}>
@@ -718,8 +742,33 @@ export function SessionHeader({
             ) : null}
             {actions}
             {onTogglePin || showRenameButton || showAuditLogButton || showDeleteButton ? (
-              <details className="session-header-more">
-                <summary aria-label="Session actions" title="Session actions">⋯</summary>
+              <details
+                ref={sessionActionsRef}
+                className="session-header-more"
+                open={isSessionActionsOpen}
+                onKeyDown={(event) => {
+                  if (event.key !== "Escape" || !isSessionActionsOpen) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setIsSessionActionsOpen(false);
+                  sessionActionsTriggerRef.current?.focus();
+                }}
+              >
+                <summary
+                  ref={sessionActionsTriggerRef}
+                  aria-label="Session actions"
+                  aria-haspopup="menu"
+                  aria-expanded={isSessionActionsOpen}
+                  title="Session actions"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    setIsSessionActionsOpen((open) => !open);
+                  }}
+                >
+                  ⋯
+                </summary>
                 <div className="session-header-more-menu" role="menu">
                   {onTogglePin ? (
                     <button
@@ -727,24 +776,24 @@ export function SessionHeader({
                       type="button"
                       role="menuitem"
                       aria-pressed={isPinned}
-                      onClick={onTogglePin}
+                      onClick={() => runSessionAction(onTogglePin)}
                       disabled={isPinPending}
                     >
                       {isPinPending ? "変更中..." : isPinned ? "ピン解除" : "ピン止め"}
                     </button>
                   ) : null}
                   {showRenameButton ? (
-                    <button type="button" role="menuitem" onClick={onStartTitleEdit} disabled={isRunning || isReadOnly}>
+                    <button type="button" role="menuitem" onClick={() => runSessionAction(onStartTitleEdit)} disabled={isRunning || isReadOnly}>
                       Rename
                     </button>
                   ) : null}
                   {showAuditLogButton ? (
-                    <button type="button" role="menuitem" onClick={onOpenAuditLog}>
+                    <button type="button" role="menuitem" onClick={() => runSessionAction(onOpenAuditLog)}>
                       Audit Log
                     </button>
                   ) : null}
                   {showDeleteButton ? (
-                    <button className="danger" type="button" role="menuitem" onClick={onDeleteSession} disabled={isRunning}>
+                    <button className="danger" type="button" role="menuitem" onClick={() => runSessionAction(onDeleteSession)} disabled={isRunning}>
                       Delete
                     </button>
                   ) : null}
