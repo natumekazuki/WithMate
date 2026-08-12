@@ -247,9 +247,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
-  - viewport bottom gap が 80px 以下で、上方向へ読み始めていないときは末尾追従を許可する
-  - 上方向への scroll を検出した時点で追従を止め、80px 以内でも遅延描画や行高再計測によって末尾側へ戻さない
-  - 80px を超えて上へ読んでいる間も位置を維持する
+  - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する
+  - 上方向への wheel intent を scroll event より先に追従停止へ反映し、遅延描画や行高再計測による `scrollTop` 変化を追従再開として扱わない
+  - 追従停止後は、user が末尾方向へ戻すか実際の末尾へ到達するまで位置を維持する
   - `selectedSession.id` 切替時は follow / unread state をリセットする
   - 追従停止中は `新着あり` / `読み返し中` の最小 banner を表示し、`末尾へ移動` で復帰できる
 - pending 中の live activity / streaming response
