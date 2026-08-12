@@ -217,7 +217,7 @@ import {
   createRetryDraftReplaceConfirmationHandler,
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
-  resolveRetryBannerKind,
+  resolveRetryBannerSource,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
@@ -1577,16 +1577,11 @@ export default function AgentSessionWindowApp() {
         : null,
     [selectedSession],
   );
-  const lastAssistantMessage = useMemo(
-    () =>
-      selectedSession
-        ? [...selectedSession.messages].reverse().find((message) => message.role === "assistant") ?? null
-        : null,
-    [selectedSession],
-  );
   const latestTerminalAuditLog = useMemo(
-    () => selectedSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
-    [selectedSessionAuditLogs],
+    () => selectedSessionAuditLogs.find((entry) =>
+      entry.sessionId === activeRunSessionId && isTerminalAuditLogPhase(entry.phase)
+    ) ?? null,
+    [activeRunSessionId, selectedSessionAuditLogs],
   );
   const latestCommandProjection = useMemo(
     () => buildLatestCommandProjection({
@@ -1682,19 +1677,17 @@ export default function AgentSessionWindowApp() {
       return null;
     }
 
-    const retryLastUserMessage = lastUserMessage;
-    if (!retryLastUserMessage) {
-      return null;
-    }
-
-    const kind = resolveRetryBannerKind({
+    const source = resolveRetryBannerSource({
+      sessionId: selectedSession.id,
+      messages: selectedSession.messages,
+      auditLogs: selectedSessionAuditLogs,
       runState: selectedSessionRunState,
-      latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
     });
-
-    if (!kind) {
+    if (!source) {
       return null;
     }
+
+    const { kind, lastRequestText, terminalAuditLog } = source;
 
     switch (kind) {
       case "interrupted":
@@ -1705,9 +1698,9 @@ export default function AgentSessionWindowApp() {
             "retry",
             "interrupted",
             selectedSession.id,
-            retryLastUserMessage.text,
+            lastRequestText,
           ]),
-          lastRequestText: retryLastUserMessage.text,
+          lastRequestText,
         };
       case "failed":
         return {
@@ -1717,9 +1710,9 @@ export default function AgentSessionWindowApp() {
             "retry",
             "failed",
             selectedSession.id,
-            retryLastUserMessage.text,
+            lastRequestText,
           ]),
-          lastRequestText: retryLastUserMessage.text,
+          lastRequestText,
         };
       case "canceled":
         return {
@@ -1729,23 +1722,22 @@ export default function AgentSessionWindowApp() {
             "retry",
             "canceled",
             selectedSession.id,
-            retryLastUserMessage.text,
-            latestTerminalAuditLog?.id,
+            lastRequestText,
+            terminalAuditLog?.id,
           ]),
-          lastRequestText: retryLastUserMessage.text,
+          lastRequestText,
         };
       default:
         return null;
     }
   }, [
-    lastAssistantMessage,
     lastUserMessage,
-    latestTerminalAuditLog,
     appSettings.userMicrocopyCatalog,
     selectedSession,
+    selectedSessionAuditLogs,
     selectedSessionCharacter?.name,
+    selectedSessionRunState,
     isSelectedSessionReadOnly,
-    selectedSessionLiveRun,
     activeAuxiliarySession,
   ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });

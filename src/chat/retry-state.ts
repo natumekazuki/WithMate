@@ -1,4 +1,6 @@
 import type { AuditLogSummary } from "../runtime-state.js";
+import type { Message } from "../session-state.js";
+import { isTerminalAuditLogPhase } from "../audit-log-phase.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
 export type RetryBannerKind = "interrupted" | "failed" | "canceled";
@@ -8,6 +10,12 @@ export type RetryBannerState = {
   badge: string;
   title: string;
   lastRequestText: string;
+};
+
+export type RetryBannerSource = {
+  kind: RetryBannerKind;
+  lastRequestText: string;
+  terminalAuditLog: AuditLogSummary | null;
 };
 
 export type RetryDraftRestoreState = {
@@ -139,6 +147,46 @@ export function resolveRetryBannerKind(input: {
   }
 
   return null;
+}
+
+export function resolveRetryBannerSource(input: {
+  sessionId: string | null | undefined;
+  messages: readonly Message[];
+  auditLogs: readonly AuditLogSummary[];
+  runState: string | null | undefined;
+}): RetryBannerSource | null {
+  if (!input.sessionId || input.runState === "running") {
+    return null;
+  }
+
+  let lastUserMessageSeq = -1;
+  for (let index = input.messages.length - 1; index >= 0; index -= 1) {
+    if (input.messages[index]?.role === "user") {
+      lastUserMessageSeq = index;
+      break;
+    }
+  }
+  if (lastUserMessageSeq < 0) {
+    return null;
+  }
+
+  const terminalAuditLog = input.auditLogs.find((entry) =>
+    entry.sessionId === input.sessionId
+    && entry.userMessageSeq === lastUserMessageSeq
+    && isTerminalAuditLogPhase(entry.phase)
+  ) ?? null;
+  const kind = resolveRetryBannerKind({
+    runState: input.runState,
+    latestTerminalAuditLogPhase: terminalAuditLog?.phase,
+  });
+
+  return kind
+    ? {
+        kind,
+        lastRequestText: input.messages[lastUserMessageSeq]?.text ?? "",
+        terminalAuditLog,
+      }
+    : null;
 }
 
 export function shouldProtectRetryEditDraft(input: {
