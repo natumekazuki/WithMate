@@ -1,6 +1,7 @@
 import {
   memo,
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -27,7 +28,9 @@ import {
   type SessionHeaderProps,
   type SessionMessageColumnProps,
   type SessionSelectOption,
+  type SessionSkillItem,
 } from "../session-components.js";
+import { focusRovingItemByKey } from "../a11y.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
@@ -41,8 +44,18 @@ export type ChatWindowProps = Omit<
   recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
+  skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   mainContent?: ChatScreenProps["mainContent"];
+};
+
+export type ChatSkillPickerPanelProps = {
+  isOpen: boolean;
+  isLoading: boolean;
+  errorMessage?: string | null;
+  items: SessionSkillItem[];
+  onSelectSkill: (skillId: string) => void;
+  onDismiss: () => void;
 };
 export type ChatSelectOption = SessionSelectOption;
 export type ChatHeaderHandleProps = ComponentProps<typeof SessionHeaderHandle>;
@@ -86,6 +99,135 @@ function useStableOptionalCallback<T extends Callback>(callback: T | undefined):
 
 const MemoizedSessionMessageColumn = memo(SessionMessageColumn);
 
+export function filterChatSkillItems(items: SessionSkillItem[], searchQuery: string): SessionSkillItem[] {
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  if (!normalizedQuery) {
+    return items;
+  }
+
+  return items.filter((item) => (
+    item.searchText ?? `${item.primaryLabel}\n${item.secondaryLabel}`
+  ).toLocaleLowerCase().includes(normalizedQuery));
+}
+
+export function ChatSkillPickerPanel({
+  isOpen,
+  isLoading,
+  errorMessage,
+  items,
+  onSelectSkill,
+  onDismiss,
+}: ChatSkillPickerPanelProps) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+
+  useEffect(() => {
+    if (!isOpen) {
+      return;
+    }
+
+    setSearchQuery("");
+    searchInputRef.current?.focus();
+  }, [isOpen]);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  const filteredItems = filterChatSkillItems(items, searchQuery);
+  const hasItems = !isLoading && !errorMessage && filteredItems.length > 0;
+  return (
+    <div className="chat-skill-picker-layer">
+      <div
+        id="composer-skill-picker-list"
+        ref={panelRef}
+        className="chat-skill-picker-panel"
+        role="dialog"
+        aria-label="Skill 候補"
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.preventDefault();
+            onDismiss();
+            return;
+          }
+          if (event.key === "Enter" && document.activeElement?.getAttribute("role") === "option") {
+            event.preventDefault();
+            (document.activeElement as HTMLElement).click();
+            return;
+          }
+          if (hasItems && document.activeElement?.getAttribute("role") === "option") {
+            focusRovingItemByKey(event, { orientation: "vertical", selector: "[role=\"option\"]" });
+          }
+        }}
+      >
+        <div className="chat-skill-picker-header">
+          <span>Skill</span>
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowDown" || !hasItems) {
+                return;
+              }
+              event.preventDefault();
+              event.stopPropagation();
+              panelRef.current?.querySelector<HTMLElement>("[role=\"option\"]")?.focus();
+            }}
+            className="chat-skill-picker-search"
+            aria-label="Skillを検索"
+            placeholder="Skillを検索"
+            autoComplete="off"
+          />
+          <button type="button" onClick={onDismiss} aria-label="Skill候補を閉じる">×</button>
+        </div>
+        <div
+          className="chat-skill-picker-content"
+          role={hasItems ? "listbox" : "status"}
+          aria-label={hasItems ? "Skill 候補" : undefined}
+          aria-orientation={hasItems ? "vertical" : undefined}
+          aria-busy={isLoading || undefined}
+        >
+          {isLoading ? (
+            <div className="chat-skill-picker-state">
+              <span className="chat-skill-picker-spinner" aria-hidden="true" />
+              <span className="visually-hidden">Skill候補を読み込んでいます。</span>
+            </div>
+          ) : errorMessage ? (
+            <p className="chat-skill-picker-state error">{errorMessage}</p>
+          ) : filteredItems.length > 0 ? (
+            filteredItems.map((item, index) => (
+              <button
+                key={item.key}
+                type="button"
+                role="option"
+                aria-selected="false"
+                tabIndex={index === 0 ? 0 : -1}
+                className="composer-path-match"
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => onSelectSkill(item.skillId)}
+                title={item.title}
+              >
+                <span className="composer-path-match-primary">{item.primaryLabel}</span>
+                <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
+              </button>
+            ))
+          ) : items.length > 0 ? (
+            <p className="chat-skill-picker-state">検索条件に一致する Skill はありません。</p>
+          ) : (
+            <p className="chat-skill-picker-state">
+              使える Skill がありません。SettingsのSkill RootまたはworkspaceのSKILL.mdを確認してください。
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onMessageListScroll = useStableOptionalCallback(props.onMessageListScroll);
   const onToggleArtifact = useStableOptionalCallback(props.onToggleArtifact);
@@ -123,15 +265,26 @@ export function ChatWindow({
   recoveryActions,
   isActionDockExpanded,
   composerProps,
+  skillPickerProps,
   compactActionDockProps,
   ...screenProps
 }: ChatWindowProps) {
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
+  const skillButtonRef = useRef<HTMLButtonElement | null>(null);
+  const wasSkillPickerOpenRef = useRef(false);
   const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
   const handleMessageViewModeChange = useCallback((mode: MessageViewMode) => {
     window.getSelection()?.removeAllRanges();
     setMessageViewMode(mode);
   }, []);
+
+  useEffect(() => {
+    const isOpen = skillPickerProps?.isOpen ?? false;
+    if (wasSkillPickerOpenRef.current && !isOpen) {
+      skillButtonRef.current?.focus();
+    }
+    wasSkillPickerOpenRef.current = isOpen;
+  }, [skillPickerProps?.isOpen]);
 
   return (
     <SessionChatScreen
@@ -140,6 +293,7 @@ export function ChatWindow({
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
       recoveryActions={recoveryActions}
+      workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
         <StableSessionMessageColumn
           {...messageColumnProps}
@@ -157,6 +311,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              skillButtonRef={skillButtonRef}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
               onMessageViewModeChange={handleMessageViewModeChange}

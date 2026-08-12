@@ -84,8 +84,9 @@ export type AgentSessionChatProjectionInput = {
   canCollapseActionDock: boolean;
   isCustomAgentListLoading: boolean;
   isSkillListLoading: boolean;
+  skillListError: string | null;
   customAgentItems: SessionComposerExpandedProps["customAgentItems"];
-  skillItems: SessionComposerExpandedProps["skillItems"];
+  skillItems: NonNullable<ChatWindowProps["skillPickerProps"]>["items"];
   composerAttachmentItems: SessionComposerExpandedProps["attachmentItems"];
   additionalDirectoryItems: SessionComposerExpandedProps["additionalDirectoryItems"];
   draft: string;
@@ -177,7 +178,7 @@ export type AgentSessionChatProjectionInput = {
   onToggleAdditionalDirectoryList: () => void;
   onJumpToMessageListBottom: () => void;
   onSelectCustomAgent: SessionComposerExpandedProps["onSelectCustomAgent"];
-  onSelectSkill: SessionComposerExpandedProps["onSelectSkill"];
+  onSelectSkill: NonNullable<ChatWindowProps["skillPickerProps"]>["onSelectSkill"];
   onRemoveAttachment: SessionComposerExpandedProps["onRemoveAttachment"];
   onRemoveAdditionalDirectory: SessionComposerExpandedProps["onRemoveAdditionalDirectory"];
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
@@ -272,9 +273,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       additionalDirectoryCount: input.selectedSession.allowedAdditionalDirectories.length,
       isMessageListFollowing: input.isMessageListFollowing,
       isCustomAgentListLoading: input.isCustomAgentListLoading,
-      isSkillListLoading: input.isSkillListLoading,
       customAgentItems: input.customAgentItems,
-      skillItems: input.skillItems,
       attachmentItems: input.composerAttachmentItems,
       additionalDirectoryItems: input.additionalDirectoryItems,
       draft: input.draft,
@@ -311,7 +310,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onExpandActionDock: input.onToggleActionDock,
       onJumpToBottom: input.onJumpToMessageListBottom,
       onSelectCustomAgent: input.onSelectCustomAgent,
-      onSelectSkill: input.onSelectSkill,
       onRemoveAttachment: input.onRemoveAttachment,
       onRemoveAdditionalDirectory: input.onRemoveAdditionalDirectory,
       onDraftChange: input.onDraftChange,
@@ -426,6 +424,14 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
+    skillPickerProps: {
+      isOpen: !isCharacterAuthoringSession && input.isSkillPickerOpen,
+      isLoading: input.isSkillListLoading,
+      errorMessage: input.skillListError,
+      items: input.skillItems,
+      onSelectSkill: input.onSelectSkill,
+      onDismiss: input.onToggleSkillPicker,
+    },
     compactActionDockProps: chatBodyProps.compactActionDockProps,
     splitterProps: chatBodyProps.splitterProps,
     leftPane: input.leftPane,

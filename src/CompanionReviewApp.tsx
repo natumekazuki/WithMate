@@ -88,6 +88,7 @@ import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-resul
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
 import { ChatHeaderHandle, ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveCompanionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDialog.js";
@@ -506,6 +507,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   const [availableCustomAgents, setAvailableCustomAgents] = useState<DiscoveredCustomAgent[]>([]);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
+  const [skillListError, setSkillListError] = useState<string | null>(null);
   const [isCustomAgentListLoading, setIsCustomAgentListLoading] = useState(false);
   const [isAgentPickerOpen, setIsAgentPickerOpen] = useState(false);
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
@@ -998,32 +1000,48 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
-    const session = displayedSession;
-    if (!withmateApi || !session || isMergeView) {
+    const skillDiscoveryRequest = resolveSkillDiscoveryRequest({
+      parentProviderId: snapshot?.session.provider,
+      parentWorkspacePath: snapshot?.session.worktreePath,
+      auxiliaryProviderId: activeAuxiliarySession?.provider,
+    });
+    if (!withmateApi || !skillDiscoveryRequest || isMergeView) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
+      setSkillListError(null);
       return () => {
         active = false;
       };
     }
 
     setIsSkillListLoading(true);
-    void withmateApi.listWorkspaceSkills(session.provider, session.worktreePath).then((skills) => {
+    setSkillListError(null);
+    void withmateApi.listWorkspaceSkills(
+      skillDiscoveryRequest.providerId,
+      skillDiscoveryRequest.workspacePath,
+    ).then((skills) => {
       if (active) {
         setAvailableSkills(skills);
         setIsSkillListLoading(false);
+        setSkillListError(null);
       }
     }).catch(() => {
       if (active) {
         setAvailableSkills([]);
         setIsSkillListLoading(false);
+        setSkillListError("Skill候補を読み込めませんでした。Settingsまたはworkspaceを確認してください。");
       }
     });
 
     return () => {
       active = false;
     };
-  }, [displayedSession, isMergeView]);
+  }, [
+    activeAuxiliarySession?.provider,
+    isMergeView,
+    snapshot?.session.provider,
+    snapshot?.session.worktreePath,
+  ]);
 
   useEffect(() => {
     let active = true;
@@ -1451,6 +1469,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           primaryLabel: skillDisplay.primaryLabel,
           secondaryLabel: skillDisplay.secondaryLabel,
           title: skillDisplay.title,
+          searchText: `${skill.name}\n${skill.description}`,
         };
       }),
     [availableSkills],
@@ -3040,6 +3059,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         canCollapseActionDock,
         isCustomAgentListLoading,
         isSkillListLoading,
+        skillListError,
         customAgentItems,
         skillItems,
         attachmentItems: composerAttachmentItems,

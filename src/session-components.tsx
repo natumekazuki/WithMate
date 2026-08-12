@@ -847,6 +847,7 @@ export type SessionChatScreenProps = {
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
   mainContent?: ReactNode;
+  workSurfaceOverlay?: ReactNode;
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
@@ -891,6 +892,7 @@ export function SessionChatScreen({
   isHeaderVisible,
   messageColumn,
   mainContent,
+  workSurfaceOverlay = null,
   recoveryActions = null,
   actionDock,
   actionDockSplitter,
@@ -961,6 +963,7 @@ export function SessionChatScreen({
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}
         </div>
+        {workSurfaceOverlay}
         {recoveryActions ? (
           <div className="session-recovery-actions-slot">
             {recoveryActions}
@@ -3414,12 +3417,13 @@ type SessionCustomAgentItem = {
   isSelected: boolean;
 };
 
-type SessionSkillItem = {
+export type SessionSkillItem = {
   key: string;
   skillId: string;
   primaryLabel: string;
   secondaryLabel: string;
   title: string;
+  searchText?: string;
 };
 
 type SessionAttachmentItem = {
@@ -3474,14 +3478,13 @@ export type SessionComposerExpandedProps = {
   additionalDirectoryCount: number;
   showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
-  isSkillListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
-  skillItems: SessionSkillItem[];
   attachmentItems: SessionAttachmentItem[];
   additionalDirectoryItems: SessionAdditionalDirectoryItem[];
   draft: string;
   placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
+  skillButtonRef?: RefObject<HTMLButtonElement | null>;
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
@@ -3510,7 +3513,6 @@ export type SessionComposerExpandedProps = {
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
-  onSelectSkill: (skillId: string) => void;
   onRemoveAttachment: (targets: string[]) => void;
   onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
@@ -3553,14 +3555,13 @@ export function SessionComposerExpanded({
   additionalDirectoryCount,
   showJumpToBottom,
   isCustomAgentListLoading,
-  isSkillListLoading,
   customAgentItems,
-  skillItems,
   attachmentItems,
   additionalDirectoryItems,
   draft,
   placeholder,
   composerTextareaRef,
+  skillButtonRef,
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
@@ -3589,7 +3590,6 @@ export function SessionComposerExpanded({
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
   onSelectCustomAgent,
-  onSelectSkill,
   onRemoveAttachment,
   onRemoveAdditionalDirectory,
   onDraftChange,
@@ -3607,7 +3607,6 @@ export function SessionComposerExpanded({
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
-  const skillListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -3626,15 +3625,6 @@ export function SessionComposerExpanded({
       customAgentListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
     nextFocusTarget?.focus();
   }, [customAgentItems, isAgentPickerOpen]);
-
-  useEffect(() => {
-    if (!isSkillPickerOpen) {
-      return;
-    }
-
-    const nextFocusTarget = skillListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
-    nextFocusTarget?.focus();
-  }, [isSkillPickerOpen, skillItems]);
 
   const showComposerToolbar =
     showAttachmentControls ||
@@ -3712,6 +3702,9 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
+                  if (isAdditionalDirectoryListOpen) {
+                    onToggleAdditionalDirectoryList();
+                  }
                   onToggleAgentPicker();
                 }}
                 disabled={!canSelectCustomAgent || isRunning || composerBlocked}
@@ -3727,10 +3720,14 @@ export function SessionComposerExpanded({
           ) : null}
           {showSkillPicker ? (
             <button
+              ref={skillButtonRef}
               className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
               type="button"
               onClick={() => {
                 setIsAttachmentMenuOpen(false);
+                if (isAdditionalDirectoryListOpen) {
+                  onToggleAdditionalDirectoryList();
+                }
                 onToggleSkillPicker();
               }}
               disabled={isRunning || composerBlocked}
@@ -3748,6 +3745,15 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
+                  if (isAgentPickerOpen) {
+                    onToggleAgentPicker();
+                  }
+                  if (isSkillPickerOpen) {
+                    onToggleSkillPicker();
+                  }
+                  if (isAdditionalDirectoryListOpen) {
+                    onToggleAdditionalDirectoryList();
+                  }
                   onAddAdditionalDirectory();
                 }}
                 disabled={isRunning || composerBlocked}
@@ -3759,6 +3765,12 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
+                  if (isAgentPickerOpen) {
+                    onToggleAgentPicker();
+                  }
+                  if (isSkillPickerOpen) {
+                    onToggleSkillPicker();
+                  }
                   onToggleAdditionalDirectoryList();
                 }}
                 disabled={additionalDirectoryCount === 0}
@@ -3856,47 +3868,6 @@ export function SessionComposerExpanded({
           ) : (
             <p className="composer-skill-empty">
               使える custom agent がまだないよ。`~/.copilot/agents` か workspace の `.github/agents` を確認してね。
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {showSkillPicker && isSkillPickerOpen ? (
-        <div
-          id="composer-skill-picker-list"
-          ref={skillListRef}
-          className="composer-path-match-list composer-skill-picker-list"
-          role={skillItems.length > 0 ? "listbox" : "status"}
-          aria-label="Skill 候補"
-          aria-orientation={skillItems.length > 0 ? "vertical" : undefined}
-          onKeyDown={(event) => {
-            if (skillItems.length > 0) {
-              focusRovingItemByKey(event, { orientation: "vertical" });
-            }
-          }}
-        >
-          {isSkillListLoading ? (
-            <p className="composer-skill-empty">Skill を読み込み中だよ。</p>
-          ) : skillItems.length > 0 ? (
-            skillItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="option"
-                tabIndex={item === skillItems[0] ? 0 : -1}
-                className="composer-path-match"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onSelectSkill(item.skillId)}
-                title={item.title}
-              >
-                <span className="composer-path-match-primary">{item.primaryLabel}</span>
-                <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
-              </button>
-            ))
-          ) : (
-            <p className="composer-skill-empty">
-              使える skill がまだないよ。Home の Settings で Skill Root を設定するか、workspace 配下に
-              `SKILL.md` を配置してね。
             </p>
           )}
         </div>

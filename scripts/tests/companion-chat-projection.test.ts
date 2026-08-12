@@ -118,6 +118,7 @@ function createProjectionInput(
     canCollapseActionDock: true,
     isCustomAgentListLoading: false,
     isSkillListLoading: false,
+    skillListError: null,
     customAgentItems: [],
     skillItems: [],
     attachmentItems: [],
@@ -491,6 +492,29 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
   assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+});
+
+test("buildCompanionChatWindowProps は Auxiliary を含む Skill 状態を shared chat shell へ投影する", () => {
+  const skillItems = [{
+    key: "skill-review",
+    skillId: "review",
+    primaryLabel: "review",
+    secondaryLabel: "Workspace",
+    title: "review",
+  }];
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    isAuxiliaryMode: true,
+    isSkillPickerOpen: true,
+    isSkillListLoading: false,
+    skillListError: "Skill error",
+    skillItems,
+  }));
+
+  assert.equal(props.skillPickerProps?.isOpen, true);
+  assert.equal(props.skillPickerProps?.isLoading, false);
+  assert.equal(props.skillPickerProps?.errorMessage, "Skill error");
+  assert.deepEqual(props.skillPickerProps?.items, skillItems);
+  assert.equal("skillItems" in props.composerProps, false);
 });
 
 test("Companion の optimistic running state は user prompt と pending live run を同じ session に紐づける", () => {
