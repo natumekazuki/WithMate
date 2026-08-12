@@ -186,6 +186,200 @@ test("RUNTIME-CATALOG-01: catalog欠落時はread-only errorへ収束しseedやe
   assert.equal("error" in response && response.error.effect, "not_applied");
 });
 
+test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だけを返す", async () => {
+  let executionInvoked = false;
+  let catalogReads = 0;
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => {
+      catalogReads += 1;
+      return {
+        revision: 9,
+        providers: [{
+          id: "codex",
+          label: "Codex",
+          defaultModelId: "gpt-5.4",
+          defaultReasoningEffort: "high",
+          models: [{
+            id: "gpt-5.4",
+            label: "GPT-5.4",
+            reasoningEfforts: ["medium", "high"],
+            privateModelMetadata: "hidden",
+          }],
+          privateProviderMetadata: "hidden",
+        }],
+      } as ModelCatalogSnapshot;
+    },
+    isProviderEnabled: () => true,
+    executionService: {
+      beginShutdown() { executionInvoked = true; },
+      async run() { executionInvoked = true; return execution; },
+      async enqueue() { executionInvoked = true; return execution; },
+      resolveReplay() { executionInvoked = true; return null; },
+      get() { executionInvoked = true; return execution; },
+      listPage() { executionInvoked = true; return []; },
+      async cancel() { executionInvoked = true; return execution; },
+      async waitForTerminal() { executionInvoked = true; return execution; },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get(sessionId) {
+        return {
+          sessionId,
+          provider: { id: "codex", catalogRevision: 2 },
+          workspace: { path: "private-path" },
+          privateSessionMetadata: "hidden",
+        } as never;
+      },
+      async rename() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.options", { sessionId: "session-1" });
+
+  assert.equal(executionInvoked, false);
+  assert.equal(catalogReads, 1);
+  assert.deepEqual(response, {
+    schemaVersion: "withmate-session-result-v1",
+    operation: "turn.options",
+    result: {
+      sessionId: "session-1",
+      provider: { id: "codex" },
+      catalogRevision: 9,
+      models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] }],
+      approvalModes: [
+        { id: "never", label: "never" },
+        { id: "on-request", label: "on-request" },
+        { id: "on-failure", label: "on-failure" },
+        { id: "untrusted", label: "untrusted" },
+      ],
+      codexSandboxModes: [
+        { id: "read-only", label: "read-only" },
+        { id: "workspace-write", label: "workspace-write" },
+        { id: "workspace-write-network", label: "workspace-write + network" },
+        { id: "danger-full-access", label: "danger-full-access" },
+      ],
+    },
+  });
+});
+
+test("TURN-OPTIONS: 対象Session欠落とprovider欠落をread-only errorへ写像する", async () => {
+  const createService = (get: () => Promise<never>) => new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 9, providers: [] }),
+    isProviderEnabled: () => true,
+    executionService: {
+      beginShutdown() { throw new Error("unused"); },
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      get,
+      async rename() { throw new Error("unused"); },
+    },
+  });
+
+  const missing = await createService(async () => {
+    throw new SessionCrudError("SESSION_NOT_FOUND", "missing");
+  }).execute("turn.options", { sessionId: "missing" });
+  const providerMissing = await createService(async () => ({
+    sessionId: "session-1",
+    provider: { id: "codex", catalogRevision: 2 },
+  } as never)).execute("turn.options", { sessionId: "session-1" });
+
+  assert.equal("error" in missing && missing.error.code, "SESSION_NOT_FOUND");
+  assert.equal("error" in missing && missing.error.effect, "not_applied");
+  assert.equal("error" in providerMissing && providerMissing.error.code, "RUNTIME_UNAVAILABLE");
+  assert.equal("error" in providerMissing && providerMissing.error.effect, "not_applied");
+});
+
+test("TURN-OPTIONS-PROJECTION-05: public projectionの8 MiB超過を副作用なしで拒否する", async () => {
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({
+      revision: 9,
+      providers: [{
+        id: "codex",
+        label: "Codex",
+        defaultModelId: "gpt-5.4",
+        defaultReasoningEffort: "high",
+        models: [{ id: "gpt-5.4", label: "x".repeat(8 * 1024 * 1024), reasoningEfforts: ["high"] }],
+      }],
+    }),
+    isProviderEnabled: () => true,
+    executionService: {
+      beginShutdown() { throw new Error("unused"); },
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() {
+        return { sessionId: "session-1", provider: { id: "codex", catalogRevision: 2 } } as never;
+      },
+      async rename() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.options", { sessionId: "session-1" });
+
+  assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
+  assert.equal("error" in response && response.error.effect, "not_applied");
+});
+
+test("TURN-OPTIONS-CAPABILITY-04: 非対応providerとdisabled providerを候補投影前に拒否する", async () => {
+  const createService = (providerId: string, enabled: boolean) => new SessionExternalApplicationService({
+    currentModelCatalog: () => ({
+      revision: 9,
+      providers: [{
+        id: providerId,
+        label: providerId,
+        defaultModelId: "model-1",
+        defaultReasoningEffort: "high",
+        models: [{ id: "model-1", label: "Model 1", reasoningEfforts: ["high"] }],
+      }],
+    }),
+    isProviderEnabled: () => enabled,
+    executionService: {
+      beginShutdown() { throw new Error("unused"); },
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() {
+        return { sessionId: "session-1", provider: { id: providerId, catalogRevision: 2 } } as never;
+      },
+      async rename() { throw new Error("unused"); },
+    },
+  });
+
+  const unsupported = await createService("copilot", true).execute("turn.options", { sessionId: "session-1" });
+  const disabled = await createService("codex", false).execute("turn.options", { sessionId: "session-1" });
+
+  assert.equal("error" in unsupported && unsupported.error.code, "RUNTIME_UNAVAILABLE");
+  assert.equal("error" in unsupported && unsupported.error.effect, "not_applied");
+  assert.equal("error" in disabled && disabled.error.code, "PROVIDER_DISABLED");
+  assert.equal("error" in disabled && disabled.error.effect, "not_applied");
+});
+
 test("Session application service persists catalog revision with the turn and returns an allowlisted projection", async () => {
   const runInputs: unknown[] = [];
   const service = new SessionExternalApplicationService({

@@ -306,6 +306,37 @@ describe("withmate-session CLI", () => {
     assert.match(requests[0].input.idempotencyKey, /^[0-9a-f-]{36}$/);
   });
 
+  test("TURN-OPTIONS: turn optionsはread-onlyの共通operationへdispatchする", async () => {
+    const requests: unknown[] = [];
+    const stdout = capture();
+    const exitCode = await runWithMateSessionCli([
+      "turn", "options", "--json", JSON.stringify({ sessionId: "session-1" }),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: {
+            schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
+            operation: "turn.options",
+            result: { sessionId: "session-1", catalogRevision: 9, models: [] },
+          },
+        } as any;
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v1",
+      operation: "turn.options",
+      input: { sessionId: "session-1" },
+    }]);
+    assert.equal(stdout.json().result.operation, "turn.options");
+  });
+
   test("session renameは明示idempotency keyを維持する", async () => {
     const stdout = capture();
     let request: any;

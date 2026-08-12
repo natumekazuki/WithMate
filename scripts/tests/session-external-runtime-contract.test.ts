@@ -85,6 +85,32 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
   );
 });
 
+test("TURN-OPTIONS-SCHEMA-01: turn.options accepts only an explicit Session identifier", () => {
+  const parsed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "turn.options",
+    input: { sessionId: " session-1 " },
+  });
+  assert.deepEqual(parsed.input, { sessionId: "session-1" });
+
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.options",
+      input: { sessionId: "session-1", catalogRevision: 4 },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.catalogRevision",
+  );
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "turn.options",
+      input: { sessionId: "   " },
+    }),
+    SessionRuntimeValidationError,
+  );
+});
+
 test("Session runtime validator accepts an explicit deferred turn.run contract", () => {
   const parsed = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,

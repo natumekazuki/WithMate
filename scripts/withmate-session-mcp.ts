@@ -142,6 +142,7 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
   { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
   { name: "session.rename", title: "Rename Session", description: "Rename one normal Session.", readOnly: false, destructive: false },
+  { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: false },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: false },
   { name: "turn.list", title: "List Session executions", description: "List execution records for the specified Session.", readOnly: true, destructive: false },
@@ -294,6 +295,12 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: sessionRenameInputSchema,
     outputSchema: createOutputSchema("session.rename"),
   }, async (input) => executeOperation("session.rename", input, deps));
+  server.registerTool("turn.options", {
+    ...definitions.get("turn.options")!,
+    annotations: annotations(definitions.get("turn.options")!),
+    inputSchema: sessionGetInputSchema,
+    outputSchema: createOutputSchema("turn.options"),
+  }, async (input) => executeOperation("turn.options", input, deps));
   server.registerTool("turn.run", {
     ...definitions.get("turn.run")!,
     annotations: annotations(definitions.get("turn.run")!),

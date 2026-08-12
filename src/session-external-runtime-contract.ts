@@ -20,6 +20,7 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "session.list",
   "session.get",
   "session.rename",
+  "turn.options",
   "turn.run",
   "turn.enqueue",
   "turn.list",
@@ -97,6 +98,19 @@ export type SessionRuntimeTurnRequest = {
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
   codexSandboxMode: CodexSandboxMode;
+};
+
+export type SessionRuntimeTurnOptionsResult = {
+  sessionId: string;
+  provider: { id: string };
+  catalogRevision: number;
+  models: Array<{
+    id: string;
+    label: string;
+    reasoningEfforts: ModelReasoningEffort[];
+  }>;
+  approvalModes: Array<{ id: ApprovalMode; label: string }>;
+  codexSandboxModes: Array<{ id: CodexSandboxMode; label: string }>;
 };
 
 export type SessionRuntimeRunInput = {
@@ -204,6 +218,9 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   }
   if (operation === "session.rename") {
     return parseSessionRenameInput(value);
+  }
+  if (operation === "turn.options") {
+    return parseSessionInput(value);
   }
   if (operation === "turn.run") {
     return parseTurnRunInput(value);

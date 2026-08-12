@@ -75,6 +75,7 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"session.list",
 	"session.get",
 	"session.rename",
+	"turn.options",
 	"turn.run",
 	"turn.enqueue",
 	"turn.list",
@@ -20392,6 +20393,13 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "turn.options",
+		title: "Get Session turn options",
+		description: "Read valid turn options for one normal Session.",
+		readOnly: true,
+		destructive: false
+	},
+	{
 		name: "turn.run",
 		title: "Run Session turn",
 		description: "Start one turn immediately in the specified Session.",
@@ -20557,6 +20565,12 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: sessionRenameInputSchema,
 		outputSchema: createOutputSchema("session.rename")
 	}, async (input) => executeOperation("session.rename", input, deps));
+	server.registerTool("turn.options", {
+		...definitions.get("turn.options"),
+		annotations: annotations(definitions.get("turn.options")),
+		inputSchema: sessionGetInputSchema,
+		outputSchema: createOutputSchema("turn.options")
+	}, async (input) => executeOperation("turn.options", input, deps));
 	server.registerTool("turn.run", {
 		...definitions.get("turn.run"),
 		annotations: annotations(definitions.get("turn.run")),
@@ -20618,6 +20632,7 @@ var commandMap = /* @__PURE__ */ new Map([
 	["session list", "session.list"],
 	["session get", "session.get"],
 	["session rename", "session.rename"],
+	["turn options", "turn.options"],
 	["turn run", "turn.run"],
 	["turn enqueue", "turn.enqueue"],
 	["turn list", "turn.list"],
@@ -20736,7 +20751,7 @@ function normalizeMutationInput(operation, input) {
 async function parseArgs(args, deps) {
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
 	const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
 	const optionStart = namespacedCommand ? 2 : 1;
 	let json;
 	let file;

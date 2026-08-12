@@ -47,7 +47,7 @@ async function withClient<T>(
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("10 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("11 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -64,6 +64,7 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(result.tools.find((tool) => tool.name === "turn.cancel")?.annotations?.destructiveHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.get")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "turn.options")?.annotations?.readOnlyHint, true);
     });
   });
 
@@ -111,6 +112,37 @@ describe("WithMate Session MCP contract", () => {
         input: {},
       }]);
       assert.deepEqual((result.structuredContent as any).result, { revision: 7, providers: [] });
+    });
+  });
+
+  it("TURN-OPTIONS: turn.optionsをstrict read-only operationとしてdispatchする", async () => {
+    const requests: unknown[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("turn.options", {
+            sessionId: "session-1",
+            catalogRevision: 9,
+            models: [],
+          }),
+        };
+      },
+    }), async (client) => {
+      const result = await client.callTool({
+        name: "turn.options",
+        arguments: { sessionId: "session-1" },
+      });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(requests, [{
+        schemaVersion: "withmate-session-request-v1",
+        operation: "turn.options",
+        input: { sessionId: "session-1" },
+      }]);
+      assert.equal((result.structuredContent as any).operation, "turn.options");
     });
   });
 

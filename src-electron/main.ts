@@ -215,6 +215,7 @@ import {
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
+  getProviderAppSettings,
   resolveProviderSkillRootPath,
   type AppSettings,
 } from "../src/provider-settings-state.js";
@@ -2544,6 +2545,10 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
       currentModelCatalog: () => getModelCatalog(),
+      isProviderEnabled: (providerId) => getProviderAppSettings(
+        requireSettingsCatalogService().getAppSettings(),
+        providerId,
+      ).enabled,
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();

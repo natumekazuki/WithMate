@@ -68,6 +68,7 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["session list", "session.list"],
   ["session get", "session.get"],
   ["session rename", "session.rename"],
+  ["turn options", "turn.options"],
   ["turn run", "turn.run"],
   ["turn enqueue", "turn.enqueue"],
   ["turn list", "turn.list"],
@@ -201,7 +202,7 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
   const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
   }
   const optionStart = namespacedCommand ? 2 : 1;
   let json: string | undefined;

@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
 
+import { approvalModeOptions } from "../src/approval-mode.js";
+import { codexSandboxModeOptions } from "../src/codex-sandbox-mode.js";
+
 import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS,
@@ -23,6 +26,7 @@ import {
   type SessionRuntimeRenameInput,
   type SessionRuntimeSessionInput,
   type SessionRuntimeSessionListInput,
+  type SessionRuntimeTurnOptionsResult,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { SessionExecution } from "../src/session-execution.js";
@@ -48,6 +52,7 @@ export type SessionExternalApplicationServiceDeps = {
   >;
   crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
   currentModelCatalog(): ModelCatalogSnapshot | null;
+  isProviderEnabled(providerId: string): boolean;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
@@ -98,6 +103,9 @@ export class SessionExternalApplicationService {
     if (operation === "session.rename") {
       return this.deps.crudService.rename(input as SessionRuntimeRenameInput);
     }
+    if (operation === "turn.options") {
+      return this.turnOptions((input as SessionRuntimeSessionInput).sessionId);
+    }
     if (operation === "turn.run") {
       return this.run(input as SessionRuntimeRunInput);
     }
@@ -142,6 +150,52 @@ export class SessionExternalApplicationService {
       timeoutMs,
       execution,
     ));
+  }
+
+  private async turnOptions(sessionId: string): Promise<SessionRuntimeTurnOptionsResult> {
+    const session = await this.deps.crudService.get(sessionId);
+    const snapshot = this.requireCurrentModelCatalog();
+    const provider = snapshot.providers.find((candidate) => candidate.id === session.provider.id);
+    if (!provider) {
+      throw new SessionRuntimeValidationError(
+        "The Session provider is unavailable in the current model catalog.",
+        { providerId: session.provider.id },
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    if (provider.id !== "codex") {
+      throw new SessionRuntimeValidationError(
+        "Turn options are unavailable for this Session provider.",
+        { providerId: provider.id },
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    if (!this.deps.isProviderEnabled(provider.id)) {
+      throw new SessionRuntimeValidationError(
+        "The Session provider is disabled.",
+        { providerId: provider.id },
+        "PROVIDER_DISABLED",
+      );
+    }
+    const result: SessionRuntimeTurnOptionsResult = {
+      sessionId: session.sessionId,
+      provider: { id: provider.id },
+      catalogRevision: snapshot.revision,
+      models: provider.models.map((model) => ({
+        id: model.id,
+        label: model.label,
+        reasoningEfforts: [...model.reasoningEfforts],
+      })),
+      approvalModes: approvalModeOptions.map((option) => ({ ...option })),
+      codexSandboxModes: codexSandboxModeOptions.map((option) => ({ ...option })),
+    };
+    if (
+      Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("turn.options", result)), "utf8")
+      > SESSION_RUNTIME_MAX_RESPONSE_BYTES
+    ) {
+      throw new SessionRuntimeProjectionLimitError("result");
+    }
+    return result;
   }
 
   private async enqueue(input: SessionRuntimeEnqueueInput): Promise<SessionExecution> {
