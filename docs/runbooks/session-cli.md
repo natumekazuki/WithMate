@@ -50,13 +50,13 @@ withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EX
 通常Sessionの作成、一覧、取得、名前変更を公開する。
 
 ```powershell
-withmate-session session create --json '{"title":"作業","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"}}'
+withmate-session session create --json '{"title":"作業","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"},"idempotencyKey":"create-20260812-001"}'
 withmate-session session list --json '{}'
 withmate-session session get --json '{"sessionId":"SESSION_ID"}'
-withmate-session session rename --json '{"sessionId":"SESSION_ID","title":"新しい名前"}'
+withmate-session session rename --json '{"sessionId":"SESSION_ID","title":"新しい名前","idempotencyKey":"rename-20260812-001"}'
 ```
 
-`session.create`と`session.rename`の`idempotencyKey`は省略でき、省略時はCLI/MCP adapterが一度だけUUIDを生成する。再送時は同じkeyを明示する。
+`session.create`と`session.rename`の`idempotencyKey`は必須で、callerが生成して保持する。response loss後の再送では同じkeyを使う。
 
 既定はJSON出力である。人が読む要約には`--format text`を使う。scriptはJSON出力を使い、messageではなく`ok`、`error.code`、`error.retryable`、`error.effect`を判定する。
 

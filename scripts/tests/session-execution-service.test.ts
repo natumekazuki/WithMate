@@ -423,6 +423,29 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  it("EXECUTION-DRAIN-01: shutdown drainはterminal永続化まで待ってqueuedをadmitしない", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.enqueue(createInput(1));
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+      const queued = await fixture.service.enqueue(createInput(2));
+      let drained = false;
+      const drain = fixture.service.drainForShutdown().then(() => { drained = true; });
+
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      assert.equal(drained, false);
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: { ok: true } });
+      await drain;
+
+      assert.equal(fixture.storage.get(running.id)?.state, "completed");
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      assert.equal(fixture.dispatchEvents.length, 1);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("EXT-ERROR-06: dispatch exceptionはstable PROVIDER_FAILUREへ収束する", async () => {
     const fixture = await createFixture();
     try {

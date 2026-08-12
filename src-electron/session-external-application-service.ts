@@ -81,7 +81,9 @@ export class SessionExternalApplicationService {
         input,
       });
       const result = await this.executeValidated(request.operation, request.input);
-      return createSessionRuntimeResult(request.operation, result);
+      const response = createSessionRuntimeResult(request.operation, result);
+      assertApplicationResponseSize(request.operation, result, response);
+      return response;
     } catch (error) {
       return mapApplicationError(error, operation);
     }
@@ -283,6 +285,39 @@ function projectRuntimeCatalog(snapshot: ModelCatalogSnapshot): SessionRuntimeCa
   };
 }
 
+function assertApplicationResponseSize(
+  operation: SessionRuntimeOperation,
+  result: unknown,
+  response: SessionRuntimeResultEnvelope,
+): void {
+  if (Buffer.byteLength(JSON.stringify(response), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+    return;
+  }
+  throw new SessionRuntimeProjectionLimitError("result", projectionResourceDetails(operation, result));
+}
+
+function projectionResourceDetails(
+  operation: SessionRuntimeOperation,
+  result: unknown,
+): Record<string, string> {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return {};
+  }
+  const record = result as Record<string, unknown>;
+  const sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
+  const executionId = typeof record.id === "string" ? record.id : null;
+  if (operation === "session.create" || operation === "session.rename") {
+    return sessionId ? { sessionId } : {};
+  }
+  if (operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel") {
+    return {
+      ...(sessionId ? { sessionId } : {}),
+      ...(executionId ? { executionId } : {}),
+    };
+  }
+  return {};
+}
+
 function fingerprintMutation(input: SessionRuntimeEnqueueInput): string {
   return createHash("sha256").update(stableJson({
     sessionId: input.sessionId,
@@ -420,6 +455,14 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
     code: "RUNTIME_UNAVAILABLE",
     message: "The Session operation could not be completed.",
     retryable: true,
-    effect: "indeterminate",
+    effect: isMutationOperation(operation) ? "indeterminate" : "not_applied",
   });
+}
+
+function isMutationOperation(operation: SessionRuntimeOperation | string): boolean {
+  return operation === "session.create"
+    || operation === "session.rename"
+    || operation === "turn.run"
+    || operation === "turn.enqueue"
+    || operation === "turn.cancel";
 }

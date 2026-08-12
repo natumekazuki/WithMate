@@ -216,6 +216,9 @@ test("RL-01: public execution projection rejects inline assistant text over 8 Mi
       completedAt: "2026-08-11T00:00:01.000Z",
       updatedAt: "2026-08-11T00:00:01.000Z",
     }),
-    (error) => error instanceof SessionRuntimeValidationError && error.code === "CONTENT_TOO_LARGE",
+    (error) => error instanceof SessionRuntimeValidationError
+      && error.code === "CONTENT_TOO_LARGE"
+      && error.details.sessionId === "session-1"
+      && error.details.executionId === "execution-1",
   );
 });

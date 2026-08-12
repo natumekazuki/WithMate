@@ -28,6 +28,7 @@ import { createSessionRuntimeHttpServer } from "../../src-electron/session-runti
 import {
   WITHMATE_SESSION_CLI_EXIT_CODES,
   WITHMATE_SESSION_CLI_SCHEMA_VERSION,
+  resolveSessionCliTransportTimeoutMs,
   runWithMateSessionCli,
 } from "../withmate-session.js";
 import {
@@ -55,6 +56,18 @@ function capture() {
 }
 
 describe("withmate-session CLI", () => {
+  test("CLI-WAIT-TIMEOUT-01: wait transport timeoutはapplication waitより5秒長い", () => {
+    assert.equal(resolveSessionCliTransportTimeoutMs("turn run", {
+      responseMode: "wait",
+      waitTimeoutMs: 300_000,
+    }), 305_000);
+    assert.equal(resolveSessionCliTransportTimeoutMs("turn run", { responseMode: "wait" }), 35_000);
+    assert.equal(resolveSessionCliTransportTimeoutMs("turn run", {
+      responseMode: "wait",
+      waitTimeoutMs: 1_000,
+    }), 35_000);
+    assert.equal(resolveSessionCliTransportTimeoutMs("turn run", { responseMode: "deferred" }), 35_000);
+  });
   test("discovery pointerからCLI generationだけを解決する", async () => {
     const directory = await mkdtemp(join(tmpdir(), "withmate-session-cli-"));
     const pointerPath = join(directory, "session.current.json");
@@ -288,7 +301,7 @@ describe("withmate-session CLI", () => {
     });
   });
 
-  test("session CRUD commandはdotted operationへ写像し、mutation keyを一度だけ補う", async () => {
+  test("session CRUD commandはcaller-owned idempotency keyを必須にする", async () => {
     const requests: any[] = [];
     const stdout = capture();
     const exitCode = await runWithMateSessionCli(["session", "create", "--json", JSON.stringify({
@@ -301,9 +314,9 @@ describe("withmate-session CLI", () => {
         return { ok: true, status: 200, value: { schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation: "session.create", result: { sessionId: "s1", title: "Demo" } } } as any;
       },
     });
-    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
-    assert.equal(requests[0].operation, "session.create");
-    assert.match(requests[0].input.idempotencyKey, /^[0-9a-f-]{36}$/);
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.equal(stdout.json().error.code, "INVALID_INPUT");
+    assert.deepEqual(requests, []);
   });
 
   test("TURN-OPTIONS: turn optionsはread-onlyの共通operationへdispatchする", async () => {
@@ -376,6 +389,40 @@ describe("withmate-session CLI", () => {
     assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.applicationError);
     assert.equal(stdout.json().error.code, "EXECUTION_NOT_FOUND");
     assert.equal(stdout.text().includes("api-secret"), false);
+  });
+
+  test("APPLIED-ID-01: text errorもapplied resource IDを保持する", async () => {
+    const stdout = capture();
+    const exitCode = await runWithMateSessionCli([
+      "session", "create", "--format", "text", "--json", JSON.stringify({
+        title: "Large projection",
+        provider: "codex",
+        catalogRevision: 1,
+        workspace: { kind: "session_folder" },
+        idempotencyKey: "create-large-projection",
+      }),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async () => ({
+        ok: false,
+        status: 413,
+        value: {
+          schemaVersion: "withmate-session-error-v1",
+          error: {
+            code: "CONTENT_TOO_LARGE",
+            message: "Projection too large.",
+            retryable: false,
+            effect: "applied",
+            details: { sessionId: "session-created" },
+          },
+        },
+      }),
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.applicationError);
+    assert.match(stdout.text(), /"effect": "applied"/);
+    assert.match(stdout.text(), /"sessionId": "session-created"/);
   });
 
   test("CLI-EFFECT-09: readのresponse lossはnot_applied、mutationだけindeterminateへ写像する", async () => {

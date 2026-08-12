@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
+import { access, mkdtemp, open, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -12,6 +12,7 @@ import {
 import {
   publishSessionRuntimeDiscovery,
   resolveSessionRuntimeGenerationFilePath,
+  writeSessionRuntimeDiscoveryFile,
 } from "../../src-electron/session-external-runtime.js";
 
 test("Session discovery publishes separate CLI and MCP credentials under a Session-only schema", async () => {
@@ -92,6 +93,81 @@ test("Session discovery cleans prepared generations when atomic publication fail
       beforeCommit: async () => { throw new Error("commit failed"); },
     }));
     assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("DISCOVERY-CLEANUP-01: credential fileのpermission確定失敗は部分fileを残さない", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-write-failure-"));
+  const filePath = path.join(directory, "generation.json");
+  try {
+    await assert.rejects(() => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
+      platform: "linux",
+      chmodFile: async () => { throw new Error("chmod failed"); },
+    }));
+    await assert.rejects(() => access(filePath));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("DISCOVERY-CLEANUP-01: credential fileのwrite失敗は部分fileを残さない", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-write-failure-"));
+  const filePath = path.join(directory, "generation.json");
+  try {
+    await assert.rejects(() => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
+      openFile: async (...args) => {
+        const file = await open(...args);
+        const writeFile = file.writeFile.bind(file);
+        file.writeFile = (async (...writeArgs) => {
+          await writeFile(...writeArgs);
+          throw new Error("write failed");
+        }) as typeof file.writeFile;
+        return file;
+      },
+    }));
+    await assert.rejects(() => access(filePath));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("DISCOVERY-CLEANUP-01: credential fileのclose失敗は再close後に部分fileを除去する", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-close-failure-"));
+  const filePath = path.join(directory, "generation.json");
+  try {
+    await assert.rejects(() => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
+      openFile: async (...args) => {
+        const file = await open(...args);
+        const close = file.close.bind(file);
+        let closeCalls = 0;
+        file.close = (async () => {
+          closeCalls += 1;
+          if (closeCalls === 1) throw new Error("close failed");
+          await close();
+        }) as typeof file.close;
+        return file;
+      },
+    }));
+    await assert.rejects(() => access(filePath));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("DISCOVERY-CLEANUP-01: credential fileのcleanup失敗を元の失敗と共に通知する", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-cleanup-failure-"));
+  const filePath = path.join(directory, "generation.json");
+  try {
+    await assert.rejects(
+      () => writeSessionRuntimeDiscoveryFile(filePath, "secret", {
+        platform: "linux",
+        chmodFile: async () => { throw new Error("chmod failed"); },
+        removeFile: async () => { throw new Error("remove failed"); },
+      }),
+      (error) => error instanceof AggregateError && error.errors.length === 2,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

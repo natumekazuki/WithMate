@@ -223,7 +223,7 @@ flowchart LR
 
 SessionFolderはSessionに従属し、Session IDなしでは操作できない。初期surfaceではSessionFolderに対するlist、UTF-8 text read、UTF-8 text writeだけを提供する。SessionFolderだけのglobal list、delete、rename、arbitrary path copy、binary uploadは提供しない。
 
-Session詳細はWorkspaceとSessionFolderを別々に返し、SessionFolderがWorkspaceでもある場合はその関係を示す。Session一覧のsummaryにはabsolute pathを含めない。
+Session詳細はWorkspaceとSessionFolderを別々に返し、SessionFolderがWorkspaceでもある場合はその関係を示す。Session一覧はWorkspace pathを返し、branchは返さない。`session.get`はdirectory Workspaceの現在branchをGitからbest effortで解決し、非Git directory、detached HEAD、SessionFolder、解決失敗では`null`を返す。
 
 対象Sessionのprovider runtimeは、SessionFolderを常にeffective allowed directoryへ含める。レビューbriefなどの小さいtextはcallerがSessionFolderへ書き、Turnの添付として指定できる。画像、PDF、archiveなどの成果物は、callerがfileを運搬するのではなく、対象Sessionへ生成を指示することを基本とする。
 

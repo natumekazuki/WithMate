@@ -107,16 +107,18 @@ async function resolveAttachmentCandidate(
     throw new Error("空のパスは添付できないよ。");
   }
 
+  let resolvedAttachmentPath: string;
   let stats;
   try {
-    stats = await stat(absolutePath);
+    resolvedAttachmentPath = await realpath(absolutePath);
+    stats = await stat(resolvedAttachmentPath);
   } catch {
     throw new Error(`${candidate.source === "text" ? "@" : "添付"} のパスが見つからないよ: ${candidate.path}`);
   }
 
   const kind =
     candidate.kind ??
-    (stats.isDirectory() ? "folder" : inferFileKindFromPath(absolutePath));
+    (stats.isDirectory() ? "folder" : inferFileKindFromPath(resolvedAttachmentPath));
 
   if (kind === "folder" && !stats.isDirectory()) {
     throw new Error(`フォルダとして指定したパスがフォルダじゃないよ: ${candidate.path}`);
@@ -127,7 +129,6 @@ async function resolveAttachmentCandidate(
   }
 
   if (policy.rootRelativeOnly) {
-    const resolvedAttachmentPath = await realpath(absolutePath);
     const verifiedRootIdentity = await inspectManagedAttachmentRoot(session.workspacePath);
     if (
       managedRootIdentity === null
@@ -142,21 +143,28 @@ async function resolveAttachmentCandidate(
     }
   }
 
-  const workspaceRelativePath = toWorkspaceRelativePath(session.workspacePath, absolutePath);
-  const allowedAdditionalDirectories = normalizeAllowedAdditionalDirectories(
+  const canonicalWorkspacePath = managedRootIdentity?.canonicalPath ?? await realpath(session.workspacePath);
+  const workspaceRelativePath = toWorkspaceRelativePath(canonicalWorkspacePath, resolvedAttachmentPath);
+  const allowedAdditionalDirectories = await Promise.all(normalizeAllowedAdditionalDirectories(
     session.workspacePath,
     session.allowedAdditionalDirectories,
-  );
-  if (workspaceRelativePath === null && !isPathWithinAnyDirectory(absolutePath, allowedAdditionalDirectories)) {
+  ).map(async (directoryPath) => {
+    try {
+      return await realpath(directoryPath);
+    } catch {
+      return directoryPath;
+    }
+  }));
+  if (workspaceRelativePath === null && !isPathWithinAnyDirectory(resolvedAttachmentPath, allowedAdditionalDirectories)) {
     throw new Error(`ワークスペース外のパスは追加ディレクトリで許可してから添付してね: ${candidate.path}`);
   }
-  const displayPath = toDisplayPath(session.workspacePath, absolutePath);
+  const displayPath = toDisplayPath(canonicalWorkspacePath, resolvedAttachmentPath);
 
   return {
-    id: `${kind}:${normalizeSlash(absolutePath).toLowerCase()}`,
+    id: `${kind}:${normalizeSlash(resolvedAttachmentPath).toLowerCase()}`,
     kind,
     source: candidate.source,
-    absolutePath,
+    absolutePath: resolvedAttachmentPath,
     displayPath,
     workspaceRelativePath,
     isOutsideWorkspace: workspaceRelativePath === null,

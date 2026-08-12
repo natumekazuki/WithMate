@@ -26,12 +26,21 @@ test("Session runtime quit barrier prevents quit until runtime cleanup completes
   const cleanup = new Promise<void>((resolve) => {
     releaseCleanup = resolve;
   });
+  let releaseDispatch: (() => void) | undefined;
+  const dispatch = new Promise<void>((resolve) => {
+    releaseDispatch = resolve;
+  });
   const calls: string[] = [];
   const barrier = new SessionRuntimeQuitBarrier({
     async stopRuntime() {
       calls.push("stopRuntime");
       await cleanup;
       calls.push("runtimeStopped");
+    },
+    async drainExecutions() {
+      calls.push("drainExecutions");
+      await dispatch;
+      calls.push("executionsDrained");
     },
     closePersistentStores() {
       calls.push("closePersistentStores");
@@ -54,7 +63,19 @@ test("Session runtime quit barrier prevents quit until runtime cleanup completes
   await cleanup;
   await new Promise((resolve) => setImmediate(resolve));
 
-  assert.deepEqual(calls, ["stopRuntime", "runtimeStopped", "closePersistentStores", "quitApp"]);
+  assert.deepEqual(calls, ["stopRuntime", "runtimeStopped", "drainExecutions"]);
+  releaseDispatch?.();
+  await dispatch;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.deepEqual(calls, [
+    "stopRuntime",
+    "runtimeStopped",
+    "drainExecutions",
+    "executionsDrained",
+    "closePersistentStores",
+    "quitApp",
+  ]);
   barrier.handleWillQuit(event);
   assert.equal(prevented, 2);
 });
@@ -65,6 +86,9 @@ test("Session runtime quit barrier permits final quit after cleanup failure", as
     async stopRuntime() {
       calls.push("stopRuntime");
       throw new Error("cleanup failed");
+    },
+    async drainExecutions() {
+      calls.push("drainExecutions");
     },
     closePersistentStores() {
       calls.push("closePersistentStores");
@@ -79,5 +103,5 @@ test("Session runtime quit barrier permits final quit after cleanup failure", as
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(prevented, true);
-  assert.deepEqual(calls, ["stopRuntime", "closePersistentStores", "quitApp"]);
+  assert.deepEqual(calls, ["stopRuntime", "drainExecutions", "closePersistentStores", "quitApp"]);
 });

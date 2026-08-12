@@ -126,6 +126,7 @@ import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
 import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import { SessionCrudService } from "./session-crud-service.js";
+import { resolveCurrentGitBranch } from "./session-workspace-git.js";
 import {
   startSessionExternalRuntime,
   type SessionExternalRuntimeHandle,
@@ -2557,6 +2558,20 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
   return sessionExternalApplicationService;
 }
 
+async function drainSessionExecutionsBestEffort(): Promise<void> {
+  try {
+    await sessionExecutionService?.drainForShutdown();
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "session.execution.cleanup-failed",
+      process: "main",
+      message: "Session execution drain failed during shutdown",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
 function requireSessionCrudService(): SessionCrudService {
   if (!sessionCrudService) {
     sessionCrudService = new SessionCrudService({
@@ -2581,6 +2596,7 @@ function requireSessionCrudService(): SessionCrudService {
       reportPublicationError: (operation, error) => {
         console.warn(`${operation} のGUI同期に失敗しました:`, error);
       },
+      resolveCurrentWorkspaceBranch: resolveCurrentGitBranch,
     });
   }
   return sessionCrudService;
@@ -4156,6 +4172,7 @@ if (!hasSingleInstanceLock) {
 } else {
   const sessionRuntimeQuitBarrier = new SessionRuntimeQuitBarrier({
     stopRuntime: stopSessionExternalRuntimeBestEffort,
+    drainExecutions: drainSessionExecutionsBestEffort,
     closePersistentStores,
     quitApp: () => app.quit(),
   });

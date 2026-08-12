@@ -1,5 +1,4 @@
 import { open, readFile } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -8,6 +7,7 @@ import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
   SessionRuntimeValidationError,
   assertSessionRuntimeRequestBodySize,
+  parseSessionRuntimeOperationInput,
   type SessionRuntimeError,
   type SessionRuntimeOperation,
   type SessionRuntimeRequestEnvelope,
@@ -142,10 +142,15 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
     if (!operation) {
       throw new Error("Unsupported command.");
     }
-    const envelope: SessionRuntimeRequestEnvelope = {
+    const rawEnvelope: SessionRuntimeRequestEnvelope = {
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
       operation,
-      input: normalizeMutationInput(operation, parsed.input),
+      input: parsed.input,
+    };
+    assertSessionRuntimeRequestBodySize(Buffer.byteLength(JSON.stringify(rawEnvelope), "utf8"));
+    const envelope: SessionRuntimeRequestEnvelope = {
+      ...rawEnvelope,
+      input: parseSessionRuntimeOperationInput(operation, parsed.input),
     };
     const response = await (deps.call ?? callSessionRuntime)(connection, envelope, AbortSignal.timeout(parsed.timeoutMs));
     const output = projectRuntimeResponse(command, response);
@@ -184,13 +189,6 @@ function isMutationCommand(command: string): boolean {
     || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
 
-function normalizeMutationInput(operation: SessionRuntimeOperation, input: unknown): unknown {
-  if (operation !== "session.create" && operation !== "session.rename") return input;
-  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
-  const record = input as Record<string, unknown>;
-  return { ...record, idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID() };
-}
-
 async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   command: string;
   input?: unknown;
@@ -212,6 +210,7 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
   let timeoutMs = 35_000;
+  let timeoutExplicit = false;
   for (let index = optionStart; index < args.length; index += 1) {
     const option = args[index];
     if (option === "--stdin") {
@@ -227,7 +226,10 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     else if (option === "--format" && (value === "json" || value === "text")) format = value;
     else if (option === "--api-url") apiUrl = value;
     else if (option === "--discovery-file") discoveryFilePath = value;
-    else if (option === "--timeout-ms" && Number.isSafeInteger(Number(value)) && Number(value) > 0) timeoutMs = Number(value);
+    else if (option === "--timeout-ms" && Number.isSafeInteger(Number(value)) && Number(value) > 0) {
+      timeoutMs = Number(value);
+      timeoutExplicit = true;
+    }
     else throw new SessionCliUsageError(`Unknown or invalid option: ${option}.`);
   }
   const sources = Number(json !== undefined) + Number(file !== undefined) + Number(useStdin);
@@ -263,8 +265,20 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     format,
     ...(apiUrl ? { apiUrl } : {}),
     ...(discoveryFilePath ? { discoveryFilePath } : {}),
-    timeoutMs,
+    timeoutMs: timeoutExplicit ? timeoutMs : resolveSessionCliTransportTimeoutMs(command, input),
   };
+}
+
+export function resolveSessionCliTransportTimeoutMs(command: string, input: unknown): number {
+  if (command !== "turn run" || !input || typeof input !== "object" || Array.isArray(input)) {
+    return 35_000;
+  }
+  const record = input as Record<string, unknown>;
+  if (record.responseMode !== "wait") return 35_000;
+  const waitTimeoutMs = typeof record.waitTimeoutMs === "number" && Number.isSafeInteger(record.waitTimeoutMs)
+    ? record.waitTimeoutMs
+    : 30_000;
+  return Math.max(35_000, waitTimeoutMs + 5_000);
 }
 
 async function readStdin(stdin: NodeJS.ReadStream): Promise<string> {
@@ -333,7 +347,15 @@ function writeOutput(stdout: Writable, format: OutputFormat, output: CliOutput):
   if (output.ok) {
     stdout.write(`${output.command}: ok\n${formatTextResult(output.command, output.result)}\n`);
   } else {
-    stdout.write(`${output.command}: ${output.error?.code ?? "ERROR"}: ${output.error?.message ?? "Operation failed."}\n`);
+    const error = output.error;
+    stdout.write(`${output.command}: ${error?.code ?? "ERROR"}: ${error?.message ?? "Operation failed."}\n`);
+    if (error) {
+      stdout.write(`${JSON.stringify({
+        effect: error.effect,
+        retryable: error.retryable,
+        details: error.details,
+      }, null, 2)}\n`);
+    }
   }
 }
 

@@ -91,6 +91,17 @@ export class SessionExecutionService {
     this.acceptingDispatches = false;
   }
 
+  async drainForShutdown(): Promise<void> {
+    this.beginShutdown();
+    while (this.dispatches.size > 0) {
+      await Promise.allSettled([...this.dispatches.values()]);
+    }
+    await Promise.allSettled([
+      ...this.sessionLocks.values(),
+      ...this.idempotencyLocks.values(),
+    ]);
+  }
+
   async run(input: CreateSessionExecutionInput): Promise<SessionExecution> {
     const replay = this.resolveReplay("turn.run", input);
     if (replay) {

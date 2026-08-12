@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { APPROVAL_MODE_VALUES } from "../src/approval-mode.js";
@@ -81,7 +80,7 @@ const sessionCreateInputSchema = z.object({
     z.object({ kind: z.literal("directory"), path: nonEmptyStringSchema }).strict(),
     z.object({ kind: z.literal("session_folder") }).strict(),
   ]),
-  idempotencyKey: nonEmptyStringSchema.optional(),
+  idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const sessionListInputSchema = z.object({
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
@@ -91,7 +90,7 @@ const sessionGetInputSchema = z.object({ sessionId: nonEmptyStringSchema }).stri
 const sessionRenameInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   title: nonEmptyStringSchema,
-  idempotencyKey: nonEmptyStringSchema.optional(),
+  idempotencyKey: nonEmptyStringSchema,
 }).strict();
 
 const publicDetailsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
@@ -132,7 +131,7 @@ function createOutputSchema(operation: SessionRuntimeOperation) {
 
 export const SESSION_MCP_SERVER_INSTRUCTIONS = [
   "Operate only the WithMate Session explicitly identified in each tool input.",
-  "Use idempotency keys when retrying effect-bearing operations.",
+  "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
 ].join(" ");
 
@@ -162,13 +161,6 @@ function annotations(definition: (typeof SESSION_MCP_TOOL_DEFINITIONS)[number]) 
 function isMutation(operation: SessionRuntimeOperation): boolean {
   return operation === "session.create" || operation === "session.rename"
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
-}
-
-function normalizeMutationInput(operation: SessionRuntimeOperation, input: unknown): unknown {
-  if (operation !== "session.create" && operation !== "session.rename") return input;
-  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
-  const record = input as Record<string, unknown>;
-  return { ...record, idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID() };
 }
 
 function safeRuntimeError(value: unknown): ReturnType<typeof createSessionRuntimeError> | null {
@@ -220,7 +212,7 @@ async function executeOperation(
   const envelope: SessionRuntimeRequestEnvelope = {
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
     operation,
-    input: normalizeMutationInput(operation, input),
+    input,
   };
   try {
     const response = await (deps.call ?? callSessionRuntime)(

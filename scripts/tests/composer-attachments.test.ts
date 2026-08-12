@@ -110,6 +110,29 @@ test("EXT-AUTH-01: SessionFolder policyはsymlinkによるroot外escapeを拒否
   }
 });
 
+test("ATTACHMENT-REALPATH-01: SessionFolder内aliasは検証済みcanonical pathとして返す", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-session-folder-canonical-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const imagePath = path.join(sessionFolderPath, "images", "actual.png");
+  const aliasPath = path.join(sessionFolderPath, "alias");
+  await mkdir(path.dirname(imagePath), { recursive: true });
+  await writeFile(imagePath, new Uint8Array([1, 2, 3]));
+  await symlink(path.dirname(imagePath), aliasPath, "junction");
+
+  try {
+    const preview = await resolveComposerPreview(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      "@alias/actual.png",
+      { rootRelativeOnly: true },
+    );
+    assert.deepEqual(preview.errors, []);
+    assert.equal(preview.attachments[0]?.absolutePath, imagePath);
+    assert.equal(preview.attachments[0]?.workspaceRelativePath, "images/actual.png");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("EXT-AUTH-ROOT-02: SessionFolder policyはroot自体がjunctionなら添付を拒否する", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "withmate-session-folder-root-junction-"));
   const managedSessionFolderPath = path.join(root, "session-folder");

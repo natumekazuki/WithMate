@@ -16,6 +16,7 @@ import {
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
 } from "../../src/session-runtime-exchange.js";
+import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
 import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
 
 const secrets = {
@@ -130,6 +131,134 @@ test("RL-01: Session runtime replaces an oversized success response with a stabl
     await server.stop();
   }
 });
+
+test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectとresource IDを返す", async () => {
+  const createResult = createBoundarySessionResult("session-created");
+  const renameResult = createBoundarySessionResult("session-1");
+  const executionBase = {
+    id: "execution-1",
+    sessionId: "session-1",
+    operation: "turn.run" as const,
+    state: "completed" as const,
+    result: { assistantText: "" },
+    errorCode: "",
+    reason: "",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    admittedAt: "2026-08-11T00:00:00.000Z",
+    completedAt: "2026-08-11T00:00:01.000Z",
+    updatedAt: "2026-08-11T00:00:01.000Z",
+  };
+  const execution = {
+    ...executionBase,
+    result: {
+      assistantText: "a".repeat(
+        SESSION_RUNTIME_MAX_RESPONSE_BYTES - Buffer.byteLength(JSON.stringify(executionBase), "utf8"),
+      ),
+    },
+  };
+  for (const [operation, result] of [
+    ["session.create", createResult],
+    ["session.rename", renameResult],
+    ["turn.run", execution],
+  ] as const) {
+    assert.ok(Buffer.byteLength(JSON.stringify(result), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(createSessionRuntimeResult(operation, result)), "utf8")
+        > SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+    );
+  }
+  const application = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    executionService: {
+      beginShutdown() {},
+      async run() { return execution; },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { return createResult as never; },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { return renameResult as never; },
+    },
+  });
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    handle: (operation, input) => application.execute(operation, input),
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const requests = [
+      {
+        operation: "session.create",
+        input: {
+          title: "New Session",
+          provider: "codex",
+          catalogRevision: 4,
+          workspace: { kind: "session_folder" },
+          idempotencyKey: "create-key",
+        },
+      },
+      {
+        operation: "session.rename",
+        input: { sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
+      },
+      {
+        operation: "turn.run",
+        input: {
+          sessionId: "session-1",
+          catalogRevision: 4,
+          idempotencyKey: "run-key",
+          responseMode: "deferred",
+          turn: {
+            userMessage: "hello",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            approvalMode: "on-request",
+            codexSandboxMode: "workspace-write",
+          },
+        },
+      },
+    ] as const;
+
+    const responses = [];
+    for (const request of requests) {
+      const body = JSON.stringify({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        ...request,
+      });
+      responses.push(await post(address.port, exchangePayload("cli", body)));
+    }
+
+    const errors = responses.map((response) => JSON.parse(response.body).error);
+    assert.deepEqual(responses.map((response) => response.status), [413, 413, 413]);
+    assert.deepEqual(errors.map((error) => error.effect), ["applied", "applied", "applied"]);
+    assert.equal(errors[0].details.sessionId, "session-created");
+    assert.equal(errors[1].details.sessionId, "session-1");
+    assert.equal(errors[2].details.sessionId, "session-1");
+    assert.equal(errors[2].details.executionId, "execution-1");
+    assert.ok(responses.every((response) => Buffer.byteLength(response.body) <= SESSION_RUNTIME_MAX_RESPONSE_BYTES));
+  } finally {
+    await server.stop();
+  }
+});
+
+function createBoundarySessionResult(sessionId: string): { sessionId: string; padding: string } {
+  const empty = { sessionId, padding: "" };
+  return {
+    ...empty,
+    padding: "a".repeat(
+      SESSION_RUNTIME_MAX_RESPONSE_BYTES - Buffer.byteLength(JSON.stringify(empty), "utf8"),
+    ),
+  };
+}
 
 test("HTTP-PREAUTH-01: unfinished pre-auth requestはdeadlineで破棄される", async () => {
   let invoked = false;

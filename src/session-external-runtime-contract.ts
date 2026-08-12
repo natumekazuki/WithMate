@@ -71,7 +71,6 @@ export type SessionRuntimePublicWorkspace = {
   kind: "directory" | "session_folder";
   label: string;
   path: string;
-  branch: string;
 };
 export type SessionRuntimePublicSessionFolder = { path: string; isWorkspace: boolean };
 export type SessionRuntimeSessionSummary = {
@@ -80,12 +79,14 @@ export type SessionRuntimeSessionSummary = {
   sessionKind: "default";
   provider: { id: string; catalogRevision: number };
   character: SessionRuntimePublicCharacter;
-  workspace: { kind: "directory" | "session_folder"; label: string; branch: string };
+  workspace: SessionRuntimePublicWorkspace;
   updatedAt: string;
 };
-export type SessionRuntimeSessionDetail = Omit<SessionRuntimeSessionSummary, "workspace"> & {
-  workspace: SessionRuntimePublicWorkspace;
+export type SessionRuntimeSessionDetail = SessionRuntimeSessionSummary & {
   sessionFolder: SessionRuntimePublicSessionFolder;
+};
+export type SessionRuntimeSessionGetResult = Omit<SessionRuntimeSessionDetail, "workspace"> & {
+  workspace: SessionRuntimePublicWorkspace & { branch: string | null };
 };
 export type SessionRuntimeSessionListResult = {
   items: SessionRuntimeSessionSummary[];
@@ -163,10 +164,10 @@ export class SessionRuntimeValidationError extends Error {
 }
 
 export class SessionRuntimeProjectionLimitError extends SessionRuntimeValidationError {
-  constructor(field: string) {
+  constructor(field: string, details: Record<string, string | number | boolean> = {}) {
     super(
       "Session runtime inline response exceeds 8 MiB.",
-      { field, maxBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES },
+      { field, maxBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES, ...details },
       "CONTENT_TOO_LARGE",
     );
     this.name = "SessionRuntimeProjectionLimitError";
@@ -317,19 +318,29 @@ export function createSessionRuntimeError(input: {
 }
 
 export function projectSessionExecution(execution: SessionExecution): SessionExecution {
-  return {
-    id: execution.id,
-    sessionId: execution.sessionId,
-    operation: execution.operation,
-    state: execution.state,
-    result: projectTurnResult(execution.result),
-    errorCode: execution.errorCode,
-    reason: execution.reason,
-    createdAt: execution.createdAt,
-    admittedAt: execution.admittedAt,
-    completedAt: execution.completedAt,
-    updatedAt: execution.updatedAt,
-  };
+  try {
+    return {
+      id: execution.id,
+      sessionId: execution.sessionId,
+      operation: execution.operation,
+      state: execution.state,
+      result: projectTurnResult(execution.result),
+      errorCode: execution.errorCode,
+      reason: execution.reason,
+      createdAt: execution.createdAt,
+      admittedAt: execution.admittedAt,
+      completedAt: execution.completedAt,
+      updatedAt: execution.updatedAt,
+    };
+  } catch (error) {
+    if (error instanceof SessionRuntimeProjectionLimitError) {
+      throw new SessionRuntimeProjectionLimitError(String(error.details.field), {
+        sessionId: execution.sessionId,
+        executionId: execution.id,
+      });
+    }
+    throw error;
+  }
 }
 
 function projectTurnResult(result: unknown): { assistantText: string } | null {

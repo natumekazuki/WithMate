@@ -74,7 +74,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 ### SessionFolderを対象Sessionのmanaged file boundaryとする
 
 - SessionFolderは独立したtop-level resourceにせず、Sessionに従属するmanaged directoryとして扱う。
-- Session詳細はWorkspaceとSessionFolderを区別して投影し、SessionFolderがWorkspaceでもあるかを示す。Session一覧のsummaryにはabsolute pathを含めない。
+- Session詳細はWorkspaceとSessionFolderを区別して投影し、SessionFolderがWorkspaceでもあるかを示す。Session一覧は対象を選択できるようWorkspace pathを返すが、時間とともに変わるbranchは返さない。`session.get`だけがdirectory Workspaceの現在branchをGitからbest effortで解決し、非Git directory、detached HEAD、SessionFolder、解決失敗では`null`を返す。
 - 外部surfaceのfile操作はSession IDとSessionFolder内のrelative pathを要求する。absolute path、`..`、symlink escapeを拒否する。
 - 初期surfaceはlist、UTF-8 text read、UTF-8 text writeに限定する。delete、rename、任意host pathからのcopy、binary uploadは公開しない。
 - `turn.run`の添付はSessionFolderをrootとしたrelative pathで指定できる。serverが対象Sessionのrootへ解決し、root containmentを検証する。

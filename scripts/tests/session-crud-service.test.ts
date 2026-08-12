@@ -93,6 +93,7 @@ describe("SessionCrudService", () => {
         },
         publishRenamedSession: () => undefined,
         reportPublicationError: (operation) => publicationErrors.push(operation),
+        resolveCurrentWorkspaceBranch: async () => "feature/current",
         now: () => new Date("2026-08-11T00:00:00.000Z"),
         random: () => 0,
       });
@@ -106,6 +107,23 @@ describe("SessionCrudService", () => {
         idempotencyKey: "create-key-1",
       };
       const created = await service.create(input);
+      const replayDb = new DatabaseSync(dbPath);
+      const replayRow = replayDb.prepare(`
+        SELECT result_json
+        FROM session_crud_idempotency_v6
+        WHERE operation = ? AND idempotency_key = ?
+      `).get("session.create", input.idempotencyKey) as { result_json: string };
+      const legacyReplayResult = JSON.parse(replayRow.result_json) as Record<string, unknown>;
+      legacyReplayResult.workspace = {
+        ...(legacyReplayResult.workspace as Record<string, unknown>),
+        branch: "stale/persisted-branch",
+      };
+      replayDb.prepare(`
+        UPDATE session_crud_idempotency_v6
+        SET result_json = ?
+        WHERE operation = ? AND idempotency_key = ?
+      `).run(JSON.stringify(legacyReplayResult), "session.create", input.idempotencyKey);
+      replayDb.close();
       catalogRevision = 5;
       const replay = await service.create(input);
 
@@ -116,7 +134,6 @@ describe("SessionCrudService", () => {
         kind: "session_folder",
         label: "SessionFolder",
         path: path.join(sessionFilesRoot, "session-1"),
-        branch: "",
       });
       assert.deepEqual(created.sessionFolder, {
         path: path.join(sessionFilesRoot, "session-1"),
@@ -130,8 +147,9 @@ describe("SessionCrudService", () => {
 
       const listed = await service.list({ limit: 50 });
       assert.equal(listed.items.length, 1);
-      assert.equal("path" in listed.items[0]!.workspace, false);
-      assert.equal(JSON.stringify(listed).includes(sessionFilesRoot), false);
+      assert.equal(listed.items[0]!.workspace.path, path.join(sessionFilesRoot, "session-1"));
+      assert.equal("branch" in listed.items[0]!.workspace, false);
+      assert.equal((await service.get(created.sessionId)).workspace.branch, null);
 
       const ordinarySessionFolderName = path.join(tempDirectory, "external", "SessionFolder");
       await mkdir(ordinarySessionFolderName, { recursive: true });
@@ -146,6 +164,9 @@ describe("SessionCrudService", () => {
         (session) => session.sessionId === ordinaryDirectory.sessionId,
       );
       assert.equal(listedOrdinaryDirectory?.workspace.kind, "directory");
+      assert.equal(listedOrdinaryDirectory?.workspace.path, ordinaryDirectory.workspace.path);
+      assert.equal("branch" in listedOrdinaryDirectory!.workspace, false);
+      assert.equal((await service.get(ordinaryDirectory.sessionId)).workspace.branch, "feature/current");
     } finally {
       storage.close();
       await removeDirectory(tempDirectory);

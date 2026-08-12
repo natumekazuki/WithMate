@@ -1,7 +1,7 @@
 // Generated from scripts/withmate-session.ts. Do not edit directly.
 import { open, readFile } from "node:fs/promises";
-import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { request } from "node:http";
 import path from "node:path";
 import { tmpdir } from "node:os";
@@ -62,6 +62,18 @@ var CODEX_SANDBOX_MODE_VALUES = [
 	"workspace-write-network",
 	"danger-full-access"
 ];
+var REASONING_EFFORT_SET = /* @__PURE__ */ new Set([
+	"minimal",
+	"low",
+	"medium",
+	"high",
+	"xhigh",
+	"max",
+	"ultra"
+]);
+function isModelReasoningEffort(value) {
+	return typeof value === "string" && REASONING_EFFORT_SET.has(value);
+}
 //#endregion
 //#region src/session-external-runtime-contract.ts
 var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v1";
@@ -100,6 +112,80 @@ function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody")
 		maxBytes: SESSION_RUNTIME_MAX_BODY_BYTES
 	}, "CONTENT_TOO_LARGE");
 }
+function parseSessionRuntimeOperationInput(operation, value) {
+	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
+	if (operation === "runtime.catalog") {
+		assertKeys(requireObject(value, "input"), [], "input");
+		return {};
+	}
+	if (operation === "session.create") return parseSessionCreateInput(value);
+	if (operation === "session.list") return parseSessionListInput(value);
+	if (operation === "session.get") return parseSessionInput(value);
+	if (operation === "session.rename") return parseSessionRenameInput(value);
+	if (operation === "turn.options") return parseSessionInput(value);
+	if (operation === "turn.run") return parseTurnRunInput(value);
+	if (operation === "turn.enqueue") return parseTurnEnqueueInput(value);
+	if (operation === "turn.list") return parseTurnListInput(value);
+	if (operation === "turn.get") return parseExecutionInput(value);
+	if (operation === "turn.cancel") return parseCancelInput(value);
+	throw invalid("operation", "Unsupported Session runtime operation.");
+}
+function parseSessionCreateInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"title",
+		"provider",
+		"catalogRevision",
+		"workspace",
+		"idempotencyKey"
+	], "input");
+	return {
+		title: requireNonEmptyString(record.title, "title"),
+		provider: requireEnum(record.provider, ["codex"], "provider"),
+		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
+		workspace: parseSessionCreateWorkspace(record.workspace),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionCreateWorkspace(value) {
+	const record = requireObject(value, "workspace");
+	const kind = requireEnum(record.kind, ["directory", "session_folder"], "workspace.kind");
+	if (kind === "session_folder") {
+		assertKeys(record, ["kind"], "workspace");
+		return { kind };
+	}
+	assertKeys(record, ["kind", "path"], "workspace");
+	return {
+		kind,
+		path: requireNonEmptyString(record.path, "workspace.path")
+	};
+}
+function parseSessionListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["limit", "cursor"], "input");
+	return {
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseSessionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["sessionId"], "input");
+	return { sessionId: requireNonEmptyString(record.sessionId, "sessionId") };
+}
+function parseSessionRenameInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"title",
+		"idempotencyKey"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		title: requireNonEmptyString(record.title, "title"),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
 function createSessionRuntimeError(input) {
 	return {
 		schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
@@ -111,6 +197,118 @@ function createSessionRuntimeError(input) {
 			details: input.details ?? {}
 		}
 	};
+}
+function parseTurnRunInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"catalogRevision",
+		"idempotencyKey",
+		"responseMode",
+		"waitTimeoutMs",
+		"turn"
+	], "input");
+	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
+	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
+	return {
+		...parseTurnMutationBase(record),
+		responseMode,
+		...record.waitTimeoutMs === void 0 ? {} : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }
+	};
+}
+function parseTurnEnqueueInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"catalogRevision",
+		"idempotencyKey",
+		"turn"
+	], "input");
+	return parseTurnMutationBase(record);
+}
+function parseTurnMutationBase(record) {
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		turn: parseTurnRequest(record.turn)
+	};
+}
+function parseTurnRequest(value) {
+	const record = requireObject(value, "turn");
+	assertKeys(record, [
+		"userMessage",
+		"model",
+		"reasoningEffort",
+		"approvalMode",
+		"codexSandboxMode"
+	], "turn");
+	const reasoningEffort = record.reasoningEffort;
+	if (!isModelReasoningEffort(reasoningEffort)) throw invalid("reasoningEffort", "reasoningEffort is invalid.");
+	return {
+		userMessage: requireNonEmptyString(record.userMessage, "userMessage"),
+		model: requireNonEmptyString(record.model, "model"),
+		reasoningEffort,
+		approvalMode: requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "approvalMode"),
+		codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode")
+	};
+}
+function parseExecutionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["sessionId", "executionId"], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		executionId: requireNonEmptyString(record.executionId, "executionId")
+	};
+}
+function parseCancelInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"executionId",
+		"idempotencyKey"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		executionId: requireNonEmptyString(record.executionId, "executionId"),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseTurnListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function requireObject(value, field) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(field, `${field} must be an object.`);
+	return value;
+}
+function assertKeys(record, allowed, field) {
+	const unknownKey = Object.keys(record).find((key) => !allowed.includes(key));
+	if (unknownKey) throw invalid(`${field}.${unknownKey}`, `Unknown field: ${unknownKey}.`);
+}
+function requireNonEmptyString(value, field) {
+	if (typeof value !== "string" || !value.trim()) throw invalid(field, `${field} must be a non-empty string.`);
+	return value.trim();
+}
+function requireInteger(value, field, min, max, code = "INVALID_INPUT") {
+	if (!Number.isSafeInteger(value) || value < min || value > max) throw invalid(field, `${field} must be an integer from ${min} through ${max}.`, code);
+	return value;
+}
+function requireEnum(value, values, field) {
+	if (typeof value !== "string" || !values.includes(value)) throw invalid(field, `${field} is invalid.`);
+	return value;
+}
+function invalid(field, message, code = "INVALID_INPUT") {
+	return new SessionRuntimeValidationError(message, { field }, code);
 }
 var SESSION_RUNTIME_DISCOVERY_FILE_NAME = "session.current.json";
 function buildSessionRuntimeDiscoveryGenerationFileName(adapter, runtimeInstanceId) {
@@ -20305,7 +20503,7 @@ var sessionCreateInputSchema = object({
 		kind: literal("directory"),
 		path: nonEmptyStringSchema
 	}).strict(), object({ kind: literal("session_folder") }).strict()]),
-	idempotencyKey: nonEmptyStringSchema.optional()
+	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var sessionListInputSchema = object({
 	limit: number().int().min(1).max(500).default(50),
@@ -20315,7 +20513,7 @@ var sessionGetInputSchema = object({ sessionId: nonEmptyStringSchema }).strict()
 var sessionRenameInputSchema = object({
 	sessionId: nonEmptyStringSchema,
 	title: nonEmptyStringSchema,
-	idempotencyKey: nonEmptyStringSchema.optional()
+	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var publicDetailsSchema = record(string(), union([
 	string(),
@@ -20353,7 +20551,7 @@ function createOutputSchema(operation) {
 }
 var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Operate only the WithMate Session explicitly identified in each tool input.",
-	"Use idempotency keys when retrying effect-bearing operations.",
+	"Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
 	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode."
 ].join(" ");
 var SESSION_MCP_TOOL_DEFINITIONS = [
@@ -20446,15 +20644,6 @@ function annotations(definition) {
 function isMutation(operation) {
 	return operation === "session.create" || operation === "session.rename" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
 }
-function normalizeMutationInput$1(operation, input) {
-	if (operation !== "session.create" && operation !== "session.rename") return input;
-	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
-	const record = input;
-	return {
-		...record,
-		idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID()
-	};
-}
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
 	return parsed.success ? parsed.data : null;
@@ -20501,7 +20690,7 @@ async function executeOperation(operation, input, deps) {
 	const envelope = {
 		schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
 		operation,
-		input: normalizeMutationInput$1(operation, input)
+		input
 	};
 	try {
 		const response = await (deps.call ?? callSessionRuntime)(connection, envelope, AbortSignal.timeout(deps.requestTimeoutMs ?? 305e3));
@@ -20712,10 +20901,15 @@ async function runWithMateSessionCli(args, deps = {}) {
 		}
 		const operation = commandMap.get(command);
 		if (!operation) throw new Error("Unsupported command.");
-		const envelope = {
+		const rawEnvelope = {
 			schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
 			operation,
-			input: normalizeMutationInput(operation, parsed.input)
+			input: parsed.input
+		};
+		assertSessionRuntimeRequestBodySize(Buffer.byteLength(JSON.stringify(rawEnvelope), "utf8"));
+		const envelope = {
+			...rawEnvelope,
+			input: parseSessionRuntimeOperationInput(operation, parsed.input)
 		};
 		const response = await (deps.call ?? callSessionRuntime)(connection, envelope, AbortSignal.timeout(parsed.timeoutMs));
 		const output = projectRuntimeResponse(command, response);
@@ -20739,15 +20933,6 @@ async function runWithMateSessionCli(args, deps = {}) {
 function isMutationCommand(command) {
 	return command === "session create" || command === "session rename" || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
-function normalizeMutationInput(operation, input) {
-	if (operation !== "session.create" && operation !== "session.rename") return input;
-	if (!input || typeof input !== "object" || Array.isArray(input)) return input;
-	const record = input;
-	return {
-		...record,
-		idempotencyKey: typeof record.idempotencyKey === "string" && record.idempotencyKey.trim() ? record.idempotencyKey : randomUUID()
-	};
-}
 async function parseArgs(args, deps) {
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
 	const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
@@ -20760,6 +20945,7 @@ async function parseArgs(args, deps) {
 	let apiUrl;
 	let discoveryFilePath;
 	let timeoutMs = 35e3;
+	let timeoutExplicit = false;
 	for (let index = optionStart; index < args.length; index += 1) {
 		const option = args[index];
 		if (option === "--stdin") {
@@ -20773,8 +20959,10 @@ async function parseArgs(args, deps) {
 		else if (option === "--format" && (value === "json" || value === "text")) format = value;
 		else if (option === "--api-url") apiUrl = value;
 		else if (option === "--discovery-file") discoveryFilePath = value;
-		else if (option === "--timeout-ms" && Number.isSafeInteger(Number(value)) && Number(value) > 0) timeoutMs = Number(value);
-		else throw new SessionCliUsageError(`Unknown or invalid option: ${option}.`);
+		else if (option === "--timeout-ms" && Number.isSafeInteger(Number(value)) && Number(value) > 0) {
+			timeoutMs = Number(value);
+			timeoutExplicit = true;
+		} else throw new SessionCliUsageError(`Unknown or invalid option: ${option}.`);
 	}
 	const sources = Number(json !== void 0) + Number(file !== void 0) + Number(useStdin);
 	if (inputlessOperationCommands.has(command) && sources !== 0) throw new SessionCliUsageError(`${command} does not accept an operation input.`);
@@ -20800,8 +20988,15 @@ async function parseArgs(args, deps) {
 		format,
 		...apiUrl ? { apiUrl } : {},
 		...discoveryFilePath ? { discoveryFilePath } : {},
-		timeoutMs
+		timeoutMs: timeoutExplicit ? timeoutMs : resolveSessionCliTransportTimeoutMs(command, input)
 	};
+}
+function resolveSessionCliTransportTimeoutMs(command, input) {
+	if (command !== "turn run" || !input || typeof input !== "object" || Array.isArray(input)) return 35e3;
+	const record = input;
+	if (record.responseMode !== "wait") return 35e3;
+	const waitTimeoutMs = typeof record.waitTimeoutMs === "number" && Number.isSafeInteger(record.waitTimeoutMs) ? record.waitTimeoutMs : 3e4;
+	return Math.max(35e3, waitTimeoutMs + 5e3);
 }
 async function readStdin(stdin) {
 	const chunks = [];
@@ -20866,7 +21061,15 @@ function writeOutput(stdout, format, output) {
 		return;
 	}
 	if (output.ok) stdout.write(`${output.command}: ok\n${formatTextResult(output.command, output.result)}\n`);
-	else stdout.write(`${output.command}: ${output.error?.code ?? "ERROR"}: ${output.error?.message ?? "Operation failed."}\n`);
+	else {
+		const error = output.error;
+		stdout.write(`${output.command}: ${error?.code ?? "ERROR"}: ${error?.message ?? "Operation failed."}\n`);
+		if (error) stdout.write(`${JSON.stringify({
+			effect: error.effect,
+			retryable: error.retryable,
+			details: error.details
+		}, null, 2)}\n`);
+	}
 }
 function formatTextResult(command, value) {
 	if (command === "session create" || command === "session get" || command === "session rename") {
@@ -20895,4 +21098,4 @@ function formatTextResult(command, value) {
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) process.exitCode = await runWithMateSessionCli(process.argv.slice(2));
 //#endregion
-export { WITHMATE_SESSION_CLI_EXIT_CODES, WITHMATE_SESSION_CLI_SCHEMA_VERSION, runWithMateSessionCli };
+export { WITHMATE_SESSION_CLI_EXIT_CODES, WITHMATE_SESSION_CLI_SCHEMA_VERSION, resolveSessionCliTransportTimeoutMs, runWithMateSessionCli };

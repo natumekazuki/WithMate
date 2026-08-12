@@ -68,7 +68,7 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
-  it("session.createはoptional keyをadapter内で生成し、session.list/getはread-onlyでdispatchする", async () => {
+  it("session.createはcaller-owned keyを必須にし、session.list/getはread-onlyでdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
@@ -80,14 +80,22 @@ describe("WithMate Session MCP contract", () => {
       const created = await client.callTool({ name: "session.create", arguments: {
         title: "Demo", provider: "codex", catalogRevision: 1, workspace: { kind: "session_folder" },
       } });
-      assert.equal(created.isError, undefined);
+      assert.equal(created.isError, true);
+      const createdWithKey = await client.callTool({ name: "session.create", arguments: {
+        title: "Demo",
+        provider: "codex",
+        catalogRevision: 1,
+        workspace: { kind: "session_folder" },
+        idempotencyKey: "create-key-1",
+      } });
+      assert.equal(createdWithKey.isError, undefined);
       const listed = await client.callTool({ name: "session.list", arguments: {} });
       assert.equal(listed.isError, undefined);
       const fetched = await client.callTool({ name: "session.get", arguments: { sessionId: "s1" } });
       assert.equal(fetched.isError, undefined);
     });
     assert.equal(requests[0].operation, "session.create");
-    assert.match(requests[0].input.idempotencyKey, /^[0-9a-f-]{36}$/);
+    assert.equal(requests[0].input.idempotencyKey, "create-key-1");
     assert.deepEqual(requests.slice(1).map((request) => request.operation), ["session.list", "session.get"]);
   });
 

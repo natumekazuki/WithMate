@@ -12,6 +12,7 @@ import type {
   SessionRuntimePublicWorkspace,
   SessionRuntimeRenameInput,
   SessionRuntimeSessionDetail,
+  SessionRuntimeSessionGetResult,
   SessionRuntimeSessionListInput,
   SessionRuntimeSessionListResult,
   SessionRuntimeSessionSummary,
@@ -74,6 +75,7 @@ export type SessionCrudServiceDeps = {
   publishCreatedSession(session: Session): void;
   publishRenamedSession(session: SessionSummary): void;
   reportPublicationError?(operation: "session.create" | "session.rename", error: unknown): void;
+  resolveCurrentWorkspaceBranch?(workspacePath: string): Promise<string | null>;
   now?(): Date;
   random?(): number;
 };
@@ -103,10 +105,14 @@ export class SessionCrudService {
     });
   }
 
-  async get(sessionId: string): Promise<SessionRuntimeSessionDetail> {
+  async get(sessionId: string): Promise<SessionRuntimeSessionGetResult> {
     const session = this.requireDefaultSession(sessionId);
+    const detail = projectSessionDetail(session, this.deps.resolveSessionFilesDirectory(session.id));
+    const branch = detail.workspace.kind === "directory"
+      ? await resolveCurrentWorkspaceBranch(this.deps.resolveCurrentWorkspaceBranch, detail.workspace.path)
+      : null;
     return assertCrudProjectionSize(
-      projectSessionDetail(session, this.deps.resolveSessionFilesDirectory(session.id)),
+      { ...detail, workspace: { ...detail.workspace, branch } },
     );
   }
 
@@ -130,7 +136,8 @@ export class SessionCrudService {
         now.toISOString(),
       );
       if (replay.kind === "replay") {
-        return assertCrudProjectionSize(replay.result as SessionRuntimeSessionDetail);
+        const result = normalizeSessionDetailProjection(replay.result as SessionRuntimeSessionDetail);
+        return assertCrudProjectionSize(result, { sessionId: result.sessionId });
       }
     } catch (error) {
       throw mapStorageMutationError(error);
@@ -197,7 +204,10 @@ export class SessionCrudService {
       if (!stored.replayed) {
         this.publishCommittedMutation("session.create", () => this.deps.publishCreatedSession(stored.session));
       }
-      return assertCrudProjectionSize(stored.result as SessionRuntimeSessionDetail);
+      return assertCrudProjectionSize(
+        normalizeSessionDetailProjection(stored.result as SessionRuntimeSessionDetail),
+        { sessionId: stored.session.id },
+      );
     } catch (error) {
       throw mapStorageMutationError(error);
     }
@@ -214,7 +224,8 @@ export class SessionCrudService {
         now.toISOString(),
       );
       if (replay.kind === "replay") {
-        return assertCrudProjectionSize(replay.result as SessionRuntimeSessionDetail);
+        const result = normalizeSessionDetailProjection(replay.result as SessionRuntimeSessionDetail);
+        return assertCrudProjectionSize(result, { sessionId: result.sessionId });
       }
       this.requireDefaultSession(input.sessionId);
       const renamed = this.deps.storage.renameSessionIdempotently({
@@ -238,7 +249,10 @@ export class SessionCrudService {
       if (!renamed.replayed) {
         this.publishCommittedMutation("session.rename", () => this.deps.publishRenamedSession(renamed.session));
       }
-      return assertCrudProjectionSize(renamed.result as SessionRuntimeSessionDetail);
+      return assertCrudProjectionSize(
+        normalizeSessionDetailProjection(renamed.result as SessionRuntimeSessionDetail),
+        { sessionId: renamed.session.id },
+      );
     } catch (error) {
       if (error instanceof SessionCrudError) throw error;
       throw mapStorageMutationError(error);
@@ -372,7 +386,7 @@ function projectSessionSummary(
     workspace: {
       kind: workspaceKind,
       label: session.workspaceLabel,
-      branch: workspaceKind === "session_folder" ? "" : session.branch,
+      path: session.workspacePath,
     },
     updatedAt: session.updatedAt,
   };
@@ -387,10 +401,50 @@ function projectSessionDetail(
   const workspace: SessionRuntimePublicWorkspace = {
     ...summary.workspace,
     kind: isWorkspace ? "session_folder" : "directory",
-    path: session.workspacePath,
   };
   const sessionFolder: SessionRuntimePublicSessionFolder = { path: sessionFolderPath, isWorkspace };
   return { ...summary, workspace, sessionFolder };
+}
+
+function normalizeSessionDetailProjection(
+  detail: SessionRuntimeSessionDetail,
+): SessionRuntimeSessionDetail {
+  return {
+    sessionId: detail.sessionId,
+    title: detail.title,
+    sessionKind: "default",
+    provider: {
+      id: detail.provider.id,
+      catalogRevision: detail.provider.catalogRevision,
+    },
+    character: {
+      id: detail.character.id,
+      name: detail.character.name,
+    },
+    workspace: {
+      kind: detail.workspace.kind,
+      label: detail.workspace.label,
+      path: detail.workspace.path,
+    },
+    updatedAt: detail.updatedAt,
+    sessionFolder: {
+      path: detail.sessionFolder.path,
+      isWorkspace: detail.sessionFolder.isWorkspace,
+    },
+  };
+}
+
+async function resolveCurrentWorkspaceBranch(
+  resolver: SessionCrudServiceDeps["resolveCurrentWorkspaceBranch"],
+  workspacePath: string,
+): Promise<string | null> {
+  if (!resolver) return null;
+  try {
+    const branch = await resolver(workspacePath);
+    return typeof branch === "string" && branch.trim() ? branch.trim() : null;
+  } catch {
+    return null;
+  }
 }
 
 function samePath(left: string, right: string): boolean {
@@ -427,9 +481,12 @@ function mapStorageMutationError(error: unknown): Error {
   );
 }
 
-function assertCrudProjectionSize<T>(result: T): T {
+function assertCrudProjectionSize<T>(
+  result: T,
+  details: Record<string, string | number | boolean> = {},
+): T {
   if (Buffer.byteLength(JSON.stringify(result), "utf8") > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
-    throw new SessionRuntimeProjectionLimitError("result");
+    throw new SessionRuntimeProjectionLimitError("result", details);
   }
   return result;
 }

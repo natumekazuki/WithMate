@@ -3,7 +3,11 @@ import { test } from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { SessionExecution } from "../../src/session-execution.js";
-import { SessionRuntimeProjectionLimitError } from "../../src/session-external-runtime-contract.js";
+import {
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+  SessionRuntimeProjectionLimitError,
+  createSessionRuntimeResult,
+} from "../../src/session-external-runtime-contract.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
@@ -81,10 +85,10 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
       async waitForTerminal() { throw new Error("unused"); },
     },
     crudService: {
-      async create() { throw new SessionRuntimeProjectionLimitError("result"); },
+      async create() { throw new SessionRuntimeProjectionLimitError("result", { sessionId: "session-created" }); },
       async list() { throw new Error("unused"); },
       async get() { throw new Error("unused"); },
-      async rename() { throw new SessionRuntimeProjectionLimitError("result"); },
+      async rename() { throw new SessionRuntimeProjectionLimitError("result", { sessionId: "session-1" }); },
     },
   });
 
@@ -103,8 +107,117 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
 
   assert.equal("error" in createResponse && createResponse.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in createResponse && createResponse.error.effect, "applied");
+  assert.equal("error" in createResponse && createResponse.error.details.sessionId, "session-created");
   assert.equal("error" in renameResponse && renameResponse.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in renameResponse && renameResponse.error.effect, "applied");
+  assert.equal("error" in renameResponse && renameResponse.error.details.sessionId, "session-1");
+});
+
+test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとresource IDを保つ", async () => {
+  const createResult = createBoundarySessionResult("session-created");
+  const renameResult = createBoundarySessionResult("session-1");
+  const executionBase = {
+    ...execution,
+    state: "completed" as const,
+    result: { assistantText: "" },
+  };
+  const oversizedExecution = {
+    ...executionBase,
+    result: {
+      assistantText: "a".repeat(
+        SESSION_RUNTIME_MAX_RESPONSE_BYTES - Buffer.byteLength(JSON.stringify(executionBase), "utf8"),
+      ),
+    },
+  };
+  for (const [operation, result] of [
+    ["session.create", createResult],
+    ["session.rename", renameResult],
+    ["turn.run", oversizedExecution],
+  ] as const) {
+    assert.ok(Buffer.byteLength(JSON.stringify(result), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+    assert.ok(
+      Buffer.byteLength(JSON.stringify(createSessionRuntimeResult(operation, result)), "utf8")
+        > SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+    );
+  }
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run() { return oversizedExecution; },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { return createResult as never; },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { return renameResult as never; },
+    },
+  });
+
+  const createResponse = await service.execute("session.create", {
+    title: "New Session",
+    provider: "codex",
+    catalogRevision: 4,
+    workspace: { kind: "session_folder" },
+    idempotencyKey: "create-key",
+  });
+  const renameResponse = await service.execute("session.rename", {
+    sessionId: "session-1",
+    title: "Renamed Session",
+    idempotencyKey: "rename-key",
+  });
+  const runResponse = await service.execute("turn.run", mutationInput);
+
+  assert.deepEqual(
+    [createResponse, renameResponse, runResponse].map((response) => "error" in response && response.error.effect),
+    ["applied", "applied", "applied"],
+  );
+  assert.equal("error" in createResponse && createResponse.error.details.sessionId, "session-created");
+  assert.equal("error" in renameResponse && renameResponse.error.details.sessionId, "session-1");
+  assert.equal("error" in runResponse && runResponse.error.details.sessionId, "session-1");
+  assert.equal("error" in runResponse && runResponse.error.details.executionId, "execution-1");
+});
+
+function createBoundarySessionResult(sessionId: string): { sessionId: string; padding: string } {
+  const empty = { sessionId, padding: "" };
+  return {
+    ...empty,
+    padding: "a".repeat(
+      SESSION_RUNTIME_MAX_RESPONSE_BYTES - Buffer.byteLength(JSON.stringify(empty), "utf8"),
+    ),
+  };
+}
+
+test("READ-EFFECT-01: read-only operationの予期しない例外はnot_appliedへ収束する", async () => {
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("database unavailable"); },
+      listPage() { throw new Error("database unavailable"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("database unavailable"); },
+      async get() { throw new Error("database unavailable"); },
+      async rename() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("session.get", { sessionId: "session-1" });
+  assert.equal("error" in response && response.error.code, "RUNTIME_UNAVAILABLE");
+  assert.equal("error" in response && response.error.effect, "not_applied");
 });
 
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
@@ -582,6 +695,8 @@ test("RL-01: applied turn.run reports an oversized inline result with applied ef
 
   assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in response && response.error.effect, "applied");
+  assert.equal("error" in response && response.error.details.sessionId, "session-1");
+  assert.equal("error" in response && response.error.details.executionId, "execution-1");
 });
 
 test("I-01: canonical replayはcatalog revision更新後もstale validationより先に解決する", async () => {

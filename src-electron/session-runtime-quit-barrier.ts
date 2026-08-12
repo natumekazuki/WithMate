@@ -4,6 +4,7 @@ type QuitEventLike = {
 
 type SessionRuntimeQuitBarrierDeps = {
   stopRuntime(): Promise<void>;
+  drainExecutions(): Promise<void>;
   closePersistentStores(): void;
   quitApp(): void;
 };
@@ -38,6 +39,8 @@ export class SessionRuntimeQuitBarrier {
     this.state = "stopping";
     void Promise.resolve()
       .then(() => this.deps.stopRuntime())
+      .catch(() => undefined)
+      .then(() => this.deps.drainExecutions())
       .catch(() => undefined)
       .finally(() => {
         this.deps.closePersistentStores();

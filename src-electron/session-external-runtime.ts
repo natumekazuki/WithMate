@@ -117,8 +117,8 @@ export async function publishSessionRuntimeDiscovery(options: PublishSessionRunt
         runtimeInstanceId,
         publishedAt: new Date().toISOString(),
       };
-      await writeExclusive(generationFilePath, `${JSON.stringify(document)}\n`);
       generationFilePaths.push(generationFilePath);
+      await writeExclusive(generationFilePath, `${JSON.stringify(document)}\n`);
     }
     pointerTemporaryFilePath = `${discoveryFilePath}.${runtimeInstanceId}.tmp`;
     const pointer: SessionRuntimeDiscoveryPointer = {
@@ -130,11 +130,11 @@ export async function publishSessionRuntimeDiscovery(options: PublishSessionRunt
     await rename(pointerTemporaryFilePath, discoveryFilePath);
     pointerTemporaryFilePath = null;
   } catch (error) {
-    await Promise.all([
+    const cleanupResults = await Promise.allSettled([
       ...generationFilePaths.map((filePath) => rm(filePath, { force: true })),
       ...(pointerTemporaryFilePath ? [rm(pointerTemporaryFilePath, { force: true })] : []),
     ]);
-    throw error;
+    throwWithCleanupFailures(error, cleanupResults, "Session runtime publication cleanup failed.");
   }
   return {
     discoveryFilePath,
@@ -178,16 +178,59 @@ async function ensureSecureRuntimeDirectory(runtimeDirectoryPath: string): Promi
   }
 }
 
-async function writeExclusive(filePath: string, content: string): Promise<void> {
-  const file = await open(filePath, "wx", 0o600);
+type SessionRuntimeDiscoveryFileDeps = {
+  openFile?: typeof open;
+  chmodFile?: typeof chmod;
+  removeFile?: typeof rm;
+  platform?: NodeJS.Platform;
+};
+
+export async function writeSessionRuntimeDiscoveryFile(
+  filePath: string,
+  content: string,
+  deps: SessionRuntimeDiscoveryFileDeps = {},
+): Promise<void> {
+  let file: Awaited<ReturnType<typeof open>> | null = null;
   try {
+    file = await (deps.openFile ?? open)(filePath, "wx", 0o600);
     await file.writeFile(content, "utf8");
-  } finally {
     await file.close();
+    file = null;
+    if ((deps.platform ?? process.platform) !== "win32") {
+      await (deps.chmodFile ?? chmod)(filePath, 0o600);
+    }
+  } catch (error) {
+    const cleanupResults: PromiseSettledResult<unknown>[] = [];
+    if (file) {
+      try {
+        await file.close();
+        cleanupResults.push({ status: "fulfilled", value: undefined });
+      } catch (cleanupError) {
+        cleanupResults.push({ status: "rejected", reason: cleanupError });
+      }
+    }
+    try {
+      await (deps.removeFile ?? rm)(filePath, { force: true });
+      cleanupResults.push({ status: "fulfilled", value: undefined });
+    } catch (cleanupError) {
+      cleanupResults.push({ status: "rejected", reason: cleanupError });
+    }
+    throwWithCleanupFailures(error, cleanupResults, "Session runtime credential file cleanup failed.");
   }
-  if (process.platform !== "win32") {
-    await chmod(filePath, 0o600);
+}
+
+const writeExclusive = writeSessionRuntimeDiscoveryFile;
+
+function throwWithCleanupFailures(
+  originalError: unknown,
+  cleanupResults: PromiseSettledResult<unknown>[],
+  message: string,
+): never {
+  const cleanupErrors = cleanupResults.flatMap((result) => result.status === "rejected" ? [result.reason] : []);
+  if (cleanupErrors.length > 0) {
+    throw new AggregateError([originalError, ...cleanupErrors], message);
   }
+  throw originalError;
 }
 
 function createSecret(): string {
