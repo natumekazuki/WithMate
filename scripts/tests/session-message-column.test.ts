@@ -1001,25 +1001,18 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
   }
 });
 
-test("SessionMessageColumn は上方向scroll中のrow計測補正だけを抑止する", () => {
+test("SessionMessageColumn は上方向scroll中も上側rowのvisible anchorを補正する", () => {
   assert.equal(shouldAdjustSessionMessageScrollPosition({
     itemStart: 1_000,
     scrollOffset: 4_000,
-    scrollDirection: "backward",
-  }), false);
-  assert.equal(shouldAdjustSessionMessageScrollPosition({
-    itemStart: 1_000,
-    scrollOffset: 4_000,
-    scrollDirection: null,
   }), true);
   assert.equal(shouldAdjustSessionMessageScrollPosition({
     itemStart: 5_000,
     scrollOffset: 4_000,
-    scrollDirection: null,
   }), false);
 });
 
-test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従する", async () => {
+test("SessionMessageColumn はappend時の末尾移動をfollow ownerへ委ねる", async () => {
   const initialMessages = createMessages(20);
   const mounted = await mountSessionMessageColumn({
     messages: initialMessages,
@@ -1043,7 +1036,7 @@ test("SessionMessageColumn は末尾追従中だけappend後も末尾へ追従�
       await new Promise<void>((resolve) => mounted.dom.window.requestAnimationFrame(() => resolve()));
     });
 
-    assert.ok(messageList.scrollTop > followingScrollTop);
+    assert.equal(messageList.scrollTop, followingScrollTop);
     assert.match(mounted.container.textContent ?? "", /appended at end/);
 
     await act(async () => {
@@ -1097,7 +1090,7 @@ test("SessionMessageColumn は同じ仮想範囲内の連続scrollでmessageを�
   }
 });
 
-test("SessionMessageColumn は非表示から復帰したとき仮想リストの末尾へ移動する", async () => {
+test("SessionMessageColumn は非表示から復帰したとき独自に末尾へ移動しない", async () => {
   const mounted = await mountSessionMessageColumn({
     messages: createMessages(100),
   });
@@ -1117,11 +1110,7 @@ test("SessionMessageColumn は非表示から復帰したとき仮想リスト�
       isMessageListFollowing: false,
     });
 
-    assert.equal(
-      messageList.scrollTop,
-      messageList.scrollHeight - messageList.clientHeight,
-    );
-    assert.match(mounted.container.textContent ?? "", /message 100(?:\D|$)/);
+    assert.equal(messageList.scrollTop, 0);
   } finally {
     await mounted.cleanup();
   }

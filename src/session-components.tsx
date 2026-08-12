@@ -500,9 +500,8 @@ const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 export function shouldAdjustSessionMessageScrollPosition(input: {
   itemStart: number;
   scrollOffset: number;
-  scrollDirection: "forward" | "backward" | null;
 }): boolean {
-  return input.scrollDirection !== "backward" && input.itemStart < input.scrollOffset;
+  return input.itemStart < input.scrollOffset;
 }
 
 type MessageArtifactFoldSection = "files" | "operation";
@@ -2532,7 +2531,6 @@ export function SessionMessageColumn({
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
-  const wasContentActiveRef = useRef(isContentActive);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
@@ -2545,7 +2543,7 @@ export function SessionMessageColumn({
     getItemKey: getMessageKey,
     overscan: SESSION_MESSAGE_OVERSCAN,
     anchorTo: isMessageListFollowing ? "end" : "start",
-    followOnAppend: isMessageListFollowing,
+    followOnAppend: false,
     scrollEndThreshold: SESSION_MESSAGE_SCROLL_END_THRESHOLD,
     initialRect: { width: 0, height: SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT },
     initialOffset: Math.max(
@@ -2559,7 +2557,6 @@ export function SessionMessageColumn({
     shouldAdjustSessionMessageScrollPosition({
       itemStart: item.start,
       scrollOffset: instance.scrollOffset ?? 0,
-      scrollDirection: instance.scrollDirection,
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
@@ -2865,15 +2862,6 @@ export function SessionMessageColumn({
     pendingMessageGroupEndIndex,
     visibleMessageSignature,
   ]);
-
-  useLayoutEffect(() => {
-    const wasContentActive = wasContentActiveRef.current;
-    wasContentActiveRef.current = isContentActive;
-
-    if (isContentActive && (!wasContentActive || isMessageListFollowing)) {
-      messageVirtualizer.scrollToEnd();
-    }
-  }, [isContentActive, isMessageListFollowing, messageVirtualizer]);
 
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
