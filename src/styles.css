@@ -162,6 +162,7 @@ button:disabled {
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
+  isolation: isolate;
   grid-template-rows:
     var(--session-header-dock-row-height)
     var(--session-dock-splitter-size)
@@ -171,6 +172,13 @@ button:disabled {
   transition:
     grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing),
     grid-template-columns var(--session-dock-motion-duration) var(--session-dock-motion-easing);
+}
+
+.session-selection-action-overlay {
+  position: fixed;
+  z-index: 35;
+  inset: 0;
+  pointer-events: none;
 }
 
 .session-chat-layout.layout-priority-side-pane {
@@ -6091,6 +6099,7 @@ button:disabled {
 .message-response-actions {
   position: fixed;
   z-index: 3;
+  box-sizing: border-box;
   display: inline-flex;
   justify-content: flex-end;
   gap: 6px;
