@@ -44,6 +44,7 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
@@ -149,6 +150,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
@@ -708,6 +710,51 @@ test("画像copy IPCはowning Session windowと非負の整数座標だけを受
     () => handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>,
     /owning Session window/,
   );
+});
+
+test("Markdown link context menu IPCはtarget文字列と非負の整数座標を変換せず渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sourceWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  let currentWindow: ReturnType<typeof createWindowStub> | null = sourceWindow;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    showMarkdownLinkContextMenu: async (_event: unknown, request: unknown) => {
+      requests.push(request);
+      return { status: "copied" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    target: "file:///C:/tmp/candidate-source%20final.json",
+    point: { x: 24, y: 48 },
+  };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "copied" },
+  );
+  assert.deepEqual(requests, [request]);
+
+  for (const invalidRequest of [
+    null,
+    { target: "", point: { x: 1, y: 2 } },
+    { target: "docs/review-brief.md", point: { x: -1, y: 2 } },
+    { target: "docs/review-brief.md", point: { x: 1.5, y: 2 } },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /Markdown link context menu request is invalid/,
+    );
+  }
+  assert.deepEqual(requests, [request]);
+
+  currentWindow = null;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /only available from a WithMate window/,
+  );
+  assert.deepEqual(requests, [request]);
 });
 
 test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {

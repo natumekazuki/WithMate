@@ -10356,6 +10356,28 @@ button:disabled {
   color: #933c3c;
 }
 
+.message-link-copy-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 50;
+  max-width: min(520px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.message-link-copy-toast.success {
+  border-color: var(--teal);
+}
+
+.message-link-copy-toast.error {
+  border-color: var(--danger, #fca5a5);
+}
+
 .companion-review-toast {
   border-color: rgba(203, 213, 225, 0.12);
   background: rgba(15, 19, 26, 0.96);

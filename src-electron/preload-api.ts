@@ -78,6 +78,7 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -258,6 +259,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openPath(target, options) {
       return ipcRenderer.invoke(WITHMATE_OPEN_PATH_CHANNEL, target, options ?? null);
+    },
+    showMarkdownLinkContextMenu(request) {
+      return ipcRenderer.invoke(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, request);
     },
     openAppLogFolder() {
       return ipcRenderer.invoke(WITHMATE_OPEN_APP_LOG_FOLDER_CHANNEL);

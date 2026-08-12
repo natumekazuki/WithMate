@@ -43,6 +43,10 @@ import type {
 } from "./companion-review-state.js";
 import type { ModelCatalogDocument, ModelCatalogSnapshot } from "./model-catalog.js";
 import type { RendererLogInput } from "./app-log-types.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "./markdown-link-context-menu.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
@@ -116,6 +120,9 @@ export type WithMateWindowNavigationApi = {
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   openPath(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
+  showMarkdownLinkContextMenu(
+    request: MarkdownLinkContextMenuRequest,
+  ): Promise<MarkdownLinkContextMenuResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;

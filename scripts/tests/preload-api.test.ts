@@ -265,6 +265,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:show-session-file-preview-image-context-menu",
     args: [imageActionRequest],
   });
+  const markdownLinkRequest = {
+    target: "docs/review-brief%20final.md",
+    point: { x: 80, y: 160 },
+  };
+  assert.deepEqual(await api.showMarkdownLinkContextMenu(markdownLinkRequest), {
+    channel: "withmate:show-markdown-link-context-menu",
+    args: [markdownLinkRequest],
+  });
   assert.deepEqual(await api.listFileRootChanges({ sessionId: "session-1", rootId: "workspace" }), {
     channel: "withmate:list-file-root-changes",
     args: [{ sessionId: "session-1", rootId: "workspace" }],
@@ -439,6 +447,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "setMateAvatar",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
+    "showMarkdownLinkContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
