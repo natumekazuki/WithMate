@@ -40,6 +40,7 @@ describe("home-launch-handlers", () => {
       createCharacterEntry({ id: "new-character", name: "New Character" }),
     ];
     const feedback: string[] = [];
+    const scheduledWorkspacePaths: string[] = [];
     let refreshCount = 0;
 
     const handlers = buildHomeLaunchHandlers({
@@ -64,7 +65,9 @@ describe("home-launch-handlers", () => {
       setLaunchDraft: (updater) => {
         draft = typeof updater === "function" ? updater(draft) : updater;
       },
-      pickWorkspaceDirectory: async () => null,
+      pickWorkspaceDirectory: async () => "C:\\browse workspace\\",
+      scheduleWorkspaceValidation: (targetPath) => scheduledWorkspacePaths.push(targetPath),
+      cancelWorkspaceValidation: () => {},
       openSessionWindow: async () => undefined,
       openCompanionReviewWindow: async () => undefined,
       createSession: async () => null,
@@ -93,6 +96,15 @@ describe("home-launch-handlers", () => {
 
     handlers.onSelectSessionFolder();
     assert.deepEqual(draft.workspace, { kind: "session-folder" });
+    assert.equal(draft.workspacePathInput, "");
+
+    handlers.onChangeWorkspacePath("\\\\server\\share\\manual workspace\\");
+    handlers.onBrowseWorkspace();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(scheduledWorkspacePaths, [
+      "\\\\server\\share\\manual workspace\\",
+      "C:\\browse workspace\\",
+    ]);
 
     handlers.onChangeMode("companion");
     assert.equal(draft.mode, "companion");
@@ -128,6 +140,8 @@ describe("home-launch-handlers", () => {
         draft = typeof updater === "function" ? updater(draft) : updater;
       },
       pickWorkspaceDirectory: async () => null,
+      scheduleWorkspaceValidation: () => {},
+      cancelWorkspaceValidation: () => {},
       openSessionWindow: async () => undefined,
       openCompanionReviewWindow: async () => undefined,
       createSession: async () => null,

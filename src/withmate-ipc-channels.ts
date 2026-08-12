@@ -20,6 +20,7 @@ export const WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL =
 export const WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL = "withmate:copy-session-file-preview-image";
 export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
   "withmate:show-session-file-preview-image-context-menu";
+export const WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL = "withmate:show-markdown-link-context-menu";
 export const WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL = "withmate:list-file-root-changes";
 export const WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL = "withmate:get-file-root-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";
@@ -74,6 +75,7 @@ export const WITHMATE_ARCHIVE_CHARACTER_CHANNEL = "withmate:archive-character";
 export const WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL = "withmate:resolve-launch-character";
 export const WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL = "withmate:start-character-authoring-session";
 export const WITHMATE_PICK_DIRECTORY_CHANNEL = "withmate:pick-directory";
+export const WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL = "withmate:validate-workspace-directory";
 export const WITHMATE_PICK_FILE_CHANNEL = "withmate:pick-file";
 export const WITHMATE_PICK_FILES_CHANNEL = "withmate:pick-files";
 export const WITHMATE_PICK_SESSION_FILES_CHANNEL = "withmate:pick-session-files";

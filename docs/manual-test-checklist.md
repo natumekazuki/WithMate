@@ -111,7 +111,8 @@ npm run electron:start
 | MT-023C1 | Session narrow layout reachability | viewport を `1400px` 未満まで狭めた Session Window を開く | 保存された layout priority にかかわらず、Header、File Explorer（active 時）、中央 surface、Context pane（active 時）、ActionDock の順で縦 stack になり、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | Header、中央 surface、active side pane、ActionDock へ scroll を含めて到達でき、最小幅でも window が不自然に固定されない |
 | MT-023D | Session header hidden state | Session Window を開いて上 splitter を見る | 通常 state では Header が hidden で、中央 surface の上に再表示用 splitter だけが残る |
-| MT-023D1 | Session header expanded state | 上 splitter を押して Header を展開し、splitter をドラッグする | Header が1行分の固定高の full-width strip として表示され、`Rename / Audit Log / Terminal / Delete` が見える。`Close` と `More` は出ず、drag しても高さは変わらない |
+| MT-023D1 | Session header expanded state | 上 splitter を押して Header を展開し、splitter をドラッグする | Header が1行分の固定高の full-width strip として表示され、Workspace / Session 操作と `Session actions` の `⋯` menuへ到達できる。`Close` は出ず、drag しても高さは変わらない |
+| MT-023D1A | Session header actions menu dismiss | expanded Header の `⋯` menuを開き、外側をpointer操作する。もう一度開いて`Escape`、triggerの再クリック、各menu項目の実行も試す | 外側操作、triggerの再クリック、項目実行でmenuが閉じる。`Escape`ではmenuが閉じてtriggerへfocusが戻り、pin / rename / audit / deleteの各操作は従来どおり実行される |
 | MT-023D2 | Session terminal launch | expanded header の `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D3 | Session header recollapse | expanded Header の上 splitterを押す | Header が閉じ、中央 surface の上に再表示用 splitterだけが残る |
 | MT-023D4 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
@@ -188,3 +189,5 @@ npm run electron:start
 | MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
 | MT-067 | Window error recovery | Home / Character Editor / Session / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
+| MT-068 | Windows notification Session activation | Windows で通常の完了通知と返答 preview 通知をそれぞれ発生させる。WithMate 以外を前面にした状態で、対象 Session Window が通常表示、最小化、非表示、未作成の各状態から live toast または Action Center の通知をクリックする | 既存 Window は同じ位置のまま可視化され、最小化時は復元されて前面へ focus する。未作成なら対象 Session の Window が1つだけ新規表示される。別 Session WindowやHomeが開かず、同じ通知を再度activateしても追加のWindowは開かない |
+| MT-068A | Windows notification stale / fallback | 同じ Session の通知を連続して発生させ、置き換え前の通知が操作可能なら古い通知と最新通知を順にクリックする。続けて通知後に対象 Session を削除する場合と、開く処理を失敗させる開発用条件を確認する | 古い通知や同じ通知の多重activationはSessionを再openせず、最新通知の最初のactivationだけが対象を開く。削除済みまたはopen失敗ではHomeが表示・focusされ、失敗が記録される |

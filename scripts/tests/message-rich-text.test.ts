@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   handleMarkdownLinkClick,
+  handleMarkdownLinkContextMenu,
   MessageRichText,
   resolveMessageMarkdownRenderMode,
 } from "../../src/MessageRichText.js";
@@ -33,6 +34,31 @@ function clickMarkdownLink(target: string) {
   );
 
   return { defaultPrevented, opened };
+}
+
+async function openMarkdownLinkContextMenu(target: string) {
+  const requests: Array<{ target: string; point: { x: number; y: number } }> = [];
+  let defaultPrevented = false;
+
+  const result = await handleMarkdownLinkContextMenu(
+    {
+      clientX: 120,
+      clientY: 240,
+      currentTarget: {
+        getBoundingClientRect: () => ({ left: 10, bottom: 20 }),
+      },
+      preventDefault: () => {
+        defaultPrevented = true;
+      },
+    },
+    target,
+    async (request) => {
+      requests.push(request);
+      return { status: "copied" };
+    },
+  );
+
+  return { defaultPrevented, requests, result };
 }
 
 function installDomGlobals(dom: JSDOM): () => void {
@@ -135,6 +161,111 @@ test("handleMarkdownLinkClick は encoded local link を decode せず openPath 
 
   assert.equal(defaultPrevented, true);
   assert.deepEqual(opened, ["docs/my%20file-%E4%BB%95%E6%A7%98.md"]);
+});
+
+test("handleMarkdownLinkContextMenu は openPath と同じ各種targetを変換せずmenuへ渡す", async () => {
+  const targets = [
+    "https://example.test/docs/my%20file.md?raw=%2F#intro",
+    "mailto:alice+docs@example.test",
+    "docs/review-brief%20final.md",
+    "file:///C:/tmp/candidate-source%20final.json",
+    "C:%5Cworkspace%5Creview-brief.md",
+  ];
+
+  for (const target of targets) {
+    const { defaultPrevented, requests, result } = await openMarkdownLinkContextMenu(target);
+    assert.equal(defaultPrevented, true);
+    assert.deepEqual(requests, [{ target, point: { x: 120, y: 240 } }]);
+    assert.deepEqual(result, { status: "copied" });
+  }
+});
+
+test("handleMarkdownLinkContextMenu は unsafe link と同一ページanchorをcopy対象にしない", async () => {
+  for (const target of ["javascript:alert(1)", "#message-footnote-example-fn-1", ""]) {
+    const { defaultPrevented, requests, result } = await openMarkdownLinkContextMenu(target);
+    assert.equal(defaultPrevented, false);
+    assert.deepEqual(requests, []);
+    assert.equal(result, null);
+  }
+});
+
+test("handleMarkdownLinkContextMenu はkeyboard起点のmenu位置をanchorから解決する", async () => {
+  let request: { target: string; point: { x: number; y: number } } | null = null;
+  await handleMarkdownLinkContextMenu(
+    {
+      clientX: 0,
+      clientY: 0,
+      currentTarget: {
+        getBoundingClientRect: () => ({ left: 32.4, bottom: 48.6 }),
+      },
+      preventDefault: () => undefined,
+    },
+    "docs/review-brief.md",
+    async (input) => {
+      request = input;
+      return { status: "dismissed" };
+    },
+  );
+
+  assert.deepEqual(request, {
+    target: "docs/review-brief.md",
+    point: { x: 32, y: 49 },
+  });
+});
+
+test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡しfeedbackを表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const requests: Array<{ target: string; point: { x: number; y: number } }> = [];
+  Object.defineProperty(dom.window, "withmate", {
+    configurable: true,
+    value: {
+      async showMarkdownLinkContextMenu(request: { target: string; point: { x: number; y: number } }) {
+        requests.push(request);
+        return { status: "copied" } as const;
+      },
+    },
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        text: "[candidate](docs/candidate-source%20final.json)",
+        forceFullRender: true,
+      }));
+    });
+    const anchor = container.querySelector("a");
+    assert.ok(anchor);
+
+    await act(async () => {
+      anchor.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 80,
+        clientY: 160,
+      }));
+      await Promise.resolve();
+    });
+
+    assert.deepEqual(requests, [{
+      target: "docs/candidate-source%20final.json",
+      point: { x: 80, y: 160 },
+    }]);
+    assert.equal(container.querySelector(".message-link-copy-toast")?.textContent, "リンクをコピーしました。");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
 });
 
 test("MessageRichText は local/file href の encode を保持して render する", () => {

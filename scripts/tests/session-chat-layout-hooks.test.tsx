@@ -381,6 +381,7 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
     Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 1_000 });
     Object.defineProperty(messageList, "clientHeight", { configurable: true, value: 200 });
     await act(async () => {
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
       messageList.scrollTop = 800;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
       messageList.scrollTop = 760;
@@ -389,15 +390,37 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
     assert.equal(following.textContent, "false");
 
     await act(async () => {
+      messageList.scrollTop = 780;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(
+      following.textContent,
+      "false",
+      "上方向wheel中のrow計測補正を末尾へ戻るuser intentとして扱わない",
+    );
+
+    await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "while-reading" }));
     });
     assert.equal(scrollToBottomCount, 1);
 
     await act(async () => {
-      messageList.scrollTop = 800;
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 120 }));
+      messageList.scrollTop = 780;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
     assert.equal(following.textContent, "true");
+
+    Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 900 });
+    await act(async () => {
+      messageList.scrollTop = 680;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(
+      following.textContent,
+      "true",
+      "上側rowの縮小補正でbottom gapが変わらない場合は末尾追従を維持する",
+    );
 
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "at-bottom-update" }));
@@ -418,7 +441,7 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "preview-update" }));
     });
-    assert.equal(scrollToBottomCount, 2);
+    assert.equal(scrollToBottomCount, 3);
     assert.equal(following.textContent, "true");
   } finally {
     await act(async () => root?.unmount());

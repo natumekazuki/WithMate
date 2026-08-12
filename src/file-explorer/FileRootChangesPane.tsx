@@ -170,6 +170,19 @@ export function FileRootChangesPane({
   return (
     <div className="workspace-changes-pane" aria-busy={loading}>
       {message ? <p className="workspace-changes-message" role="alert">{message}</p> : null}
+      {loading ? (
+        <div
+          className="workspace-changes-loading"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span className="workspace-changes-spinner" aria-hidden="true" />
+          <span className="visually-hidden">
+            {rootChanges.length > 0 ? "Refreshing changes" : "Loading changes"}
+          </span>
+        </div>
+      ) : null}
       {rootChanges.length > 0 ? (
         <div className="workspace-changes-groups" role="list" aria-label="File root changes">
           {rootChanges.map((rootChange) => (
@@ -184,7 +197,7 @@ export function FileRootChangesPane({
             />
           ))}
         </div>
-      ) : !loading ? (
+      ) : !loading && !message ? (
         <p className="workspace-changes-empty">No Git repositories.</p>
       ) : null}
     </div>

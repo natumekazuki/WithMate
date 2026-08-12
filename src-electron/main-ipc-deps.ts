@@ -20,6 +20,10 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "../src/markdown-link-context-menu.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
@@ -104,6 +108,7 @@ import type {
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
 import type {
   CreatePromptTemplateInput,
   PromptTemplate,
@@ -133,6 +138,7 @@ export type MainIpcWindowDepsArgs = {
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
@@ -155,6 +161,10 @@ export type MainIpcWindowDepsArgs = {
     event: IpcMainInvokeEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  showMarkdownLinkContextMenu(
+    event: IpcMainInvokeEvent,
+    request: MarkdownLinkContextMenuRequest,
+  ): Awaitable<MarkdownLinkContextMenuResult>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -401,6 +411,7 @@ export function createMainIpcRegistrationDeps(
       await args.window.openCompanionMergeWindow(sessionId);
     },
     pickDirectory: args.window.pickDirectory,
+    validateWorkspaceDirectory: args.window.validateWorkspaceDirectory,
     pickFile: args.window.pickFile,
     pickFiles: args.window.pickFiles,
     pickSessionFiles: args.window.pickSessionFiles,
@@ -413,6 +424,7 @@ export function createMainIpcRegistrationDeps(
     openSessionFilesTerminal: args.window.openSessionFilesTerminal,
     copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
     showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
+    showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
     openCrashDumpFolder: args.window.openCrashDumpFolder,

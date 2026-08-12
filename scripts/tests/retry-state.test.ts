@@ -11,6 +11,7 @@ import {
   createRetryDraftReplaceConfirmationHandler,
   createRetryEditHandler,
   isRetryActionDisabled,
+  resolveRetryBannerSource,
   resolveRetryBannerKind,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
@@ -209,6 +210,98 @@ test("resolveRetryBannerKind は session state と terminal audit log から ret
   assert.equal(resolveRetryBannerKind({ runState: "error" }), "failed");
   assert.equal(resolveRetryBannerKind({ runState: "idle", latestTerminalAuditLogPhase: "canceled" }), "canceled");
   assert.equal(resolveRetryBannerKind({ runState: "idle", latestTerminalAuditLogPhase: "completed" }), null);
+});
+
+test("resolveRetryBannerSource は最後の未完了依頼と同じ session / message seq の terminal event だけを使う", () => {
+  const canceled = {
+    id: 10,
+    sessionId: "session-1",
+    createdAt: "2026-08-12T10:00:00.000Z",
+    phase: "canceled" as const,
+    provider: "codex",
+    model: "gpt-5.6",
+    reasoningEffort: "medium" as const,
+    approvalMode: "never" as const,
+    userMessageSeq: 0,
+    assistantMessageSeq: 1,
+    threadId: "thread-1",
+    assistantTextPreview: "キャンセル",
+    operations: [],
+    usage: null,
+    errorMessage: "canceled",
+    detailAvailable: true,
+  };
+  const completed = {
+    ...canceled,
+    id: 11,
+    phase: "completed" as const,
+    userMessageSeq: 2,
+    assistantMessageSeq: 3,
+    assistantTextPreview: "完了",
+    errorMessage: "",
+  };
+  const nextMessages = [
+    { role: "user" as const, text: "古い依頼" },
+    { role: "assistant" as const, text: "キャンセルしたよ" },
+    { role: "user" as const, text: "新しい依頼" },
+  ];
+
+  assert.deepEqual(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: nextMessages.slice(0, 2),
+    auditLogs: [canceled],
+    runState: "idle",
+  }), {
+    kind: "canceled",
+    lastRequestText: "古い依頼",
+    terminalAuditLog: canceled,
+  });
+
+  assert.equal(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: nextMessages,
+    auditLogs: [canceled],
+    runState: "running",
+  }), null);
+
+  assert.equal(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
+    auditLogs: [completed, canceled],
+    runState: "idle",
+  }), null);
+
+  assert.equal(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
+    auditLogs: [completed, { ...canceled, phase: "failed" }],
+    runState: "idle",
+  }), null);
+
+  assert.equal(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: [...nextMessages, { role: "assistant", text: "完了したよ" }],
+    auditLogs: [canceled],
+    runState: "idle",
+  }), null);
+
+  assert.equal(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: nextMessages,
+    auditLogs: [{ ...canceled, sessionId: "auxiliary-1", userMessageSeq: 2 }],
+    runState: "idle",
+  }), null);
+
+  assert.deepEqual(resolveRetryBannerSource({
+    sessionId: "session-1",
+    messages: nextMessages,
+    auditLogs: [],
+    runState: "error",
+  }), {
+    kind: "failed",
+    lastRequestText: "新しい依頼",
+    terminalAuditLog: null,
+  });
 });
 
 test("shouldProtectRetryEditDraft は既存 draft の暗黙上書きを避ける", () => {

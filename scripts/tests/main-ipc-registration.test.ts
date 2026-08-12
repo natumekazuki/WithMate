@@ -12,6 +12,7 @@ import {
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
+  WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
   WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
@@ -44,12 +45,14 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
@@ -137,6 +140,17 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function createSessionRequest(workspace: Record<string, unknown>) {
+  return {
+    taskTitle: "Task",
+    characterId: "character-1",
+    character: "Character",
+    characterIconPath: "",
+    characterThemeColors: { main: "#111111", sub: "#222222" },
+    workspace,
+  };
+}
+
 test("registerMainIpcHandlers は保持する public IPC だけを登録する", () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const { deps } = createDeps();
@@ -146,9 +160,11 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_SESSION_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
@@ -203,6 +219,125 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow = homeWindow;
+  const validatedPaths: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validatedPaths.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL);
+
+  assert.deepEqual(await handler?.({}, "C:\\workspace"), { valid: true });
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handler?.({}, "C:\\private") as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.deepEqual(validatedPaths, ["C:\\workspace"]);
+});
+
+test("Session/Companion 作成 IPC は Home だけを許可し、作成直前に同じ workspace validation を通す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  let eventWindow = homeWindow;
+  const validatedPaths: unknown[] = [];
+  const created: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validatedPaths.push(targetPath);
+      return targetPath === "C:\\valid" ? { valid: true } : { valid: false, reason: "missing" };
+    },
+    createSession: async () => {
+      created.push("session");
+      return {};
+    },
+    createCompanionSession: async () => {
+      created.push("companion");
+      return {};
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const createSession = handlers.get(WITHMATE_CREATE_SESSION_CHANNEL);
+  const createCompanion = handlers.get(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL);
+  const validSession = createSessionRequest({
+    kind: "directory",
+    label: "valid",
+    path: "C:\\valid",
+    branch: "main",
+  });
+
+  await createSession?.({}, validSession);
+  await createCompanion?.({}, { workspacePath: "C:\\valid" });
+  assert.deepEqual(created, ["session", "companion"]);
+
+  await assert.rejects(
+    () => createSession?.({}, createSessionRequest({
+      kind: "directory",
+      label: "missing",
+      path: "C:\\missing",
+      branch: "",
+    })) as Promise<unknown>,
+    /Path not found\./,
+  );
+  await assert.rejects(
+    () => createCompanion?.({}, { workspacePath: "C:\\missing" }) as Promise<unknown>,
+    /Path not found\./,
+  );
+  assert.deepEqual(created, ["session", "companion"]);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => createSession?.({}, validSession) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  await assert.rejects(
+    () => createCompanion?.({}, { workspacePath: "C:\\valid" }) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.deepEqual(validatedPaths, ["C:\\valid", "C:\\valid", "C:\\missing", "C:\\missing"]);
+  assert.deepEqual(created, ["session", "companion"]);
+});
+
+test("SessionFolder 作成 IPC は filesystem validation を行わず Home から作成できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  let validationCount = 0;
+  let creationCount = 0;
+  const { deps } = createDeps({
+    resolveEventWindow: () => homeWindow,
+    resolveHomeWindow: () => homeWindow,
+    validateWorkspaceDirectory: async () => {
+      validationCount += 1;
+      return { valid: true };
+    },
+    createSession: async () => {
+      creationCount += 1;
+      return {};
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_CREATE_SESSION_CHANNEL)?.(
+    {},
+    createSessionRequest({ kind: "session-folder" }),
+  );
+
+  assert.equal(validationCount, 0);
+  assert.equal(creationCount, 1);
 });
 
 test("prompt template IPC は CRUD payload を専用 dependency へ渡す", async () => {
@@ -708,6 +843,51 @@ test("画像copy IPCはowning Session windowと非負の整数座標だけを受
     () => handlers.get(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL)?.({}, request) as Promise<unknown>,
     /owning Session window/,
   );
+});
+
+test("Markdown link context menu IPCはtarget文字列と非負の整数座標を変換せず渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sourceWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  let currentWindow: ReturnType<typeof createWindowStub> | null = sourceWindow;
+  const requests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    showMarkdownLinkContextMenu: async (_event: unknown, request: unknown) => {
+      requests.push(request);
+      return { status: "copied" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const request = {
+    target: "file:///C:/tmp/candidate-source%20final.json",
+    point: { x: 24, y: 48 },
+  };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "copied" },
+  );
+  assert.deepEqual(requests, [request]);
+
+  for (const invalidRequest of [
+    null,
+    { target: "", point: { x: 1, y: 2 } },
+    { target: "docs/review-brief.md", point: { x: -1, y: 2 } },
+    { target: "docs/review-brief.md", point: { x: 1.5, y: 2 } },
+  ]) {
+    await assert.rejects(
+      () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
+      /Markdown link context menu request is invalid/,
+    );
+  }
+  assert.deepEqual(requests, [request]);
+
+  currentWindow = null;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
+    /only available from a WithMate window/,
+  );
+  assert.deepEqual(requests, [request]);
 });
 
 test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {

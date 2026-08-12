@@ -5,6 +5,9 @@ import type { CharacterCatalogEntry } from "../../src/character/character-catalo
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionRequestFromLaunchDraft,
+  applyLaunchWorkspacePathValidation,
+  beginLaunchWorkspacePathValidation,
+  markLaunchWorkspacePathValidationPending,
   closeLaunchDraft,
   createClosedLaunchDraft,
   openLaunchDraft,
@@ -73,6 +76,9 @@ describe("home-launch-state", () => {
       open: true,
       mode: "session",
       title: "",
+      workspacePathInput: "",
+      workspaceValidation: "idle",
+      workspaceValidationMessage: "",
       workspace: null,
       providerId: "codex",
       characterSelectionMode: "random",
@@ -83,6 +89,9 @@ describe("home-launch-state", () => {
       open: false,
       mode: "session",
       title: "",
+      workspacePathInput: "",
+      workspaceValidation: "idle",
+      workspaceValidationMessage: "",
       workspace: null,
       providerId: "",
       characterSelectionMode: "random",
@@ -98,6 +107,82 @@ describe("home-launch-state", () => {
       path: "F:/work/demo",
       branch: "",
     });
+    assert.equal(draft.workspacePathInput, "F:/work/demo");
+    assert.equal(draft.workspaceValidation, "valid");
+  });
+
+  it("manual workspace は valid response のときだけ raw path から canonical tuple を作る", () => {
+    const targetPath = "C:\\work space\\demo\\";
+    const debouncing = beginLaunchWorkspacePathValidation(createClosedLaunchDraft(), targetPath);
+    assert.equal(debouncing.workspace, null);
+    assert.equal(debouncing.workspaceValidation, "debouncing");
+    const pending = markLaunchWorkspacePathValidationPending(debouncing, targetPath);
+    assert.equal(pending.workspaceValidation, "pending");
+
+    const invalid = applyLaunchWorkspacePathValidation(pending, targetPath, {
+      valid: false,
+      reason: "not-directory",
+    });
+    assert.equal(invalid.workspace, null);
+    assert.equal(invalid.workspaceValidationMessage, "Not a directory.");
+
+    const valid = applyLaunchWorkspacePathValidation(pending, targetPath, { valid: true });
+    assert.deepEqual(valid.workspace, {
+      label: "demo",
+      path: targetPath,
+      branch: "",
+    });
+  });
+
+  it("manual workspace validation は別入力の stale response を無視する", () => {
+    const current = beginLaunchWorkspacePathValidation(createClosedLaunchDraft(), "C:\\new");
+    assert.equal(
+      markLaunchWorkspacePathValidationPending(current, "C:\\old"),
+      current,
+    );
+    assert.equal(
+      applyLaunchWorkspacePathValidation(current, "C:\\old", { valid: true }),
+      current,
+    );
+  });
+
+  it("validated manual workspace は session / companion request に同じ path を投影する", () => {
+    const targetPath = "\\\\server\\share\\work space\\";
+    const draft = {
+      ...applyLaunchWorkspacePathValidation(
+        markLaunchWorkspacePathValidationPending(
+          beginLaunchWorkspacePathValidation(createClosedLaunchDraft(), targetPath),
+          targetPath,
+        ),
+        targetPath,
+        { valid: true } as const,
+      ),
+      open: true,
+      title: "task",
+      providerId: "codex",
+    };
+
+    const sessionRequest = buildCreateSessionRequestFromLaunchDraft({
+      draft,
+      mateProfile: null,
+      selectedProviderId: "codex",
+    });
+    const companionRequest = buildCreateCompanionSessionInputFromLaunchDraft({
+      draft: { ...draft, mode: "companion" },
+      mateProfile: null,
+      selectedProviderId: "codex",
+    });
+
+    assert.equal(sessionRequest?.workspace.kind, "directory");
+    if (sessionRequest?.workspace.kind === "directory") {
+      assert.deepEqual(sessionRequest.workspace, {
+        kind: "directory",
+        label: "work space",
+        path: targetPath,
+        branch: "",
+      });
+    }
+    assert.equal(companionRequest?.workspacePath, targetPath);
   });
 
   it("provider 選択時に launch draft の providerId を更新する", () => {

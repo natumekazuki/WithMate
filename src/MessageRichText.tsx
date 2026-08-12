@@ -1,4 +1,15 @@
-import { Children, isValidElement, memo, useEffect, useId, useMemo, useState, type MouseEvent, type ReactNode } from "react";
+import {
+  Children,
+  isValidElement,
+  memo,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
@@ -8,6 +19,10 @@ import type { PluggableList } from "unified";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { toLocalFileUrl } from "./local-file-url.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "./markdown-link-context-menu.js";
 
 export type MessageViewMode = "preview" | "source";
 
@@ -193,6 +208,50 @@ export function handleMarkdownLinkClick(
 
   event.preventDefault();
   openMarkdownLink(target, onOpenPath);
+}
+
+type MarkdownLinkContextMenuEvent = {
+  clientX: number;
+  clientY: number;
+  currentTarget: {
+    getBoundingClientRect(): Pick<DOMRect, "bottom" | "left">;
+  };
+  preventDefault(): void;
+};
+
+type ShowMarkdownLinkContextMenu = (
+  request: MarkdownLinkContextMenuRequest,
+) => Promise<MarkdownLinkContextMenuResult>;
+
+export async function handleMarkdownLinkContextMenu(
+  event: MarkdownLinkContextMenuEvent,
+  target: string,
+  showContextMenu?: ShowMarkdownLinkContextMenu,
+): Promise<MarkdownLinkContextMenuResult | null> {
+  if (!target || target.startsWith("#") || hasUnsupportedUrlScheme(target)) {
+    return null;
+  }
+
+  const showMenu = showContextMenu ?? getWithMateApi()?.showMarkdownLinkContextMenu;
+  if (!showMenu) {
+    return null;
+  }
+
+  const anchorRect = event.currentTarget.getBoundingClientRect();
+  const keyboardTriggered = event.clientX === 0 && event.clientY === 0;
+  const point = keyboardTriggered
+    ? { x: Math.max(0, Math.round(anchorRect.left)), y: Math.max(0, Math.round(anchorRect.bottom)) }
+    : { x: Math.max(0, Math.round(event.clientX)), y: Math.max(0, Math.round(event.clientY)) };
+
+  event.preventDefault();
+  try {
+    return await showMenu({ target, point });
+  } catch (error) {
+    return {
+      status: "failed",
+      message: error instanceof Error ? error.message : "リンクのメニューを開けませんでした。",
+    };
+  }
 }
 
 function replaceFootnoteLabelReference(value: unknown, footnoteLabelId: string) {
@@ -499,6 +558,7 @@ function createMarkdownComponents(
   onOpenPath?: (target: string) => void,
   options?: {
     enableMermaid?: boolean;
+    onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
     resolveImageSource?: (target: string) => Promise<string | null>;
   },
 ): Components {
@@ -519,9 +579,16 @@ function createMarkdownComponents(
       const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
         handleMarkdownLinkClick(event, target, onOpenPath);
       };
+      const handleContextMenu = (event: MouseEvent<HTMLAnchorElement>) => {
+        void handleMarkdownLinkContextMenu(event, target).then((result) => {
+          if (result && result.status !== "dismissed") {
+            options?.onLinkContextMenuResult?.(result);
+          }
+        });
+      };
 
       return (
-        <a {...props} href={href} onClick={handleClick}>
+        <a {...props} href={href} onClick={handleClick} onContextMenu={handleContextMenu}>
           {children}
         </a>
       );
@@ -552,15 +619,30 @@ function MessageMarkdownPreview({
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
   const shouldDefer = !forceFullRender && shouldDeferRichMarkdownRender();
+  const [linkCopyFeedback, setLinkCopyFeedback] = useState<{
+    message: string;
+    tone: "error" | "success";
+  } | null>(null);
   const [renderState, setRenderState] = useState<{ text: string; mode: MarkdownRenderMode }>(() => ({
     text,
     mode: shouldDefer ? "light" : "full",
   }));
   const renderMode = resolveMessageMarkdownRenderMode(forceFullRender, text, renderState, shouldDefer);
   const isFullRender = renderMode === "full";
+  const handleLinkContextMenuResult = useCallback((result: MarkdownLinkContextMenuResult) => {
+    setLinkCopyFeedback(result.status === "copied"
+      ? { message: "リンクをコピーしました。", tone: "success" }
+      : result.status === "failed"
+        ? { message: result.message, tone: "error" }
+        : null);
+  }, []);
   const components = useMemo(
-    () => createMarkdownComponents(onOpenPath, { enableMermaid: isFullRender, resolveImageSource }),
-    [isFullRender, onOpenPath, resolveImageSource],
+    () => createMarkdownComponents(onOpenPath, {
+      enableMermaid: isFullRender,
+      onLinkContextMenuResult: handleLinkContextMenuResult,
+      resolveImageSource,
+    }),
+    [handleLinkContextMenuResult, isFullRender, onOpenPath, resolveImageSource],
   );
   const rehypePlugins = useMemo<PluggableList>(
     () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
@@ -587,6 +669,14 @@ function MessageMarkdownPreview({
     });
   }, [shouldDefer, text]);
 
+  useEffect(() => {
+    if (!linkCopyFeedback) {
+      return;
+    }
+    const timeout = window.setTimeout(() => setLinkCopyFeedback(null), 2_400);
+    return () => window.clearTimeout(timeout);
+  }, [linkCopyFeedback]);
+
   return (
     <div className={`${className} rich-text`.trim()} data-markdown-render-mode={renderMode}>
       <ReactMarkdown
@@ -598,6 +688,16 @@ function MessageMarkdownPreview({
       >
         {text}
       </ReactMarkdown>
+      {linkCopyFeedback ? (
+        <span
+          className={`message-link-copy-toast ${linkCopyFeedback.tone}`}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          {linkCopyFeedback.message}
+        </span>
+      ) : null}
     </div>
   );
 }

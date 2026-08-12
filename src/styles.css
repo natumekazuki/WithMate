@@ -162,6 +162,7 @@ button:disabled {
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
+  isolation: isolate;
   grid-template-rows:
     var(--session-header-dock-row-height)
     var(--session-dock-splitter-size)
@@ -171,6 +172,13 @@ button:disabled {
   transition:
     grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing),
     grid-template-columns var(--session-dock-motion-duration) var(--session-dock-motion-easing);
+}
+
+.session-selection-action-overlay {
+  position: fixed;
+  z-index: 35;
+  inset: 0;
+  pointer-events: none;
 }
 
 .session-chat-layout.layout-priority-side-pane {
@@ -1705,6 +1713,69 @@ button:disabled {
 .home-page .launch-field-input:focus {
   border-color: rgba(111, 140, 255, 0.34);
   box-shadow: 0 0 0 3px rgba(111, 140, 255, 0.14);
+}
+
+.home-page .launch-field-input[aria-invalid="true"] {
+  border-color: rgba(248, 113, 113, 0.62);
+}
+
+.launch-field-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.home-page .launch-field-error {
+  display: block;
+  min-width: 0;
+  max-width: 72%;
+  height: 1rem;
+  color: #fca5a5;
+  font-size: 0.78rem;
+  line-height: 1rem;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-field-input-shell {
+  position: relative;
+}
+
+.workspace-validation-input .launch-field-input {
+  padding-right: 44px;
+}
+
+.workspace-validation-spinner {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 15px;
+  height: 15px;
+  margin-top: -8px;
+  border: 2px solid rgba(203, 213, 225, 0.28);
+  border-top-color: #cbd5e1;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: workspace-validation-spin 0.7s linear infinite;
+}
+
+@keyframes workspace-validation-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-validation-spinner {
+    animation: none;
+  }
 }
 
 .home-page .launch-provider-list .choice-chip.active {
@@ -4008,7 +4079,9 @@ button:disabled {
 }
 
 .session-work-surface {
+  position: relative;
   min-height: 0;
+  overflow: hidden;
 }
 
 .session-left-pane-slot,
@@ -4074,6 +4147,128 @@ button:disabled {
 
 .session-central-surface[hidden] {
   display: none;
+}
+
+.chat-skill-picker-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: grid;
+  padding: clamp(6px, 1vw, 12px);
+  pointer-events: none;
+}
+
+.chat-skill-picker-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(203, 213, 225, 0.2);
+  border-radius: 12px;
+  background: var(--surface-deep);
+  color: var(--ink);
+  box-shadow: 0 24px 56px rgba(0, 0, 0, 0.42);
+  pointer-events: auto;
+}
+
+.chat-skill-picker-panel:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
+  outline-offset: -2px;
+}
+
+.chat-skill-picker-header {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 520px) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 10px 8px 14px;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.14);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.chat-skill-picker-search {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 4px 10px;
+  border: 1px solid rgba(203, 213, 225, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 500;
+}
+
+.chat-skill-picker-search::placeholder {
+  color: var(--muted);
+}
+
+.chat-skill-picker-search:focus-visible {
+  border-color: rgba(125, 211, 252, 0.72);
+  outline: 2px solid color-mix(in srgb, var(--character-main) 48%, transparent);
+  outline-offset: 1px;
+}
+
+.chat-skill-picker-header button {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.chat-skill-picker-header button:hover,
+.chat-skill-picker-header button:focus-visible {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+}
+
+.chat-skill-picker-header button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 70%, white 30%);
+  outline-offset: 1px;
+}
+
+.chat-skill-picker-content {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px;
+  scrollbar-gutter: stable;
+}
+
+.chat-skill-picker-state {
+  min-height: 104px;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  line-height: 1.6;
+  text-align: center;
+}
+
+.chat-skill-picker-state.error {
+  color: #fca5a5;
+}
+
+.chat-skill-picker-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid color-mix(in srgb, var(--ink) 24%, transparent);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: workspace-changes-spin 720ms linear infinite;
 }
 
 .prompt-template-workspace {
@@ -4919,6 +5114,7 @@ button:disabled {
 }
 
 .workspace-changes-pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4926,6 +5122,34 @@ button:disabled {
   height: 100%;
   overflow: hidden;
   padding: 8px;
+}
+
+.workspace-changes-loading {
+  position: absolute;
+  inset: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface-deep) 72%, transparent);
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.workspace-changes-spinner {
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border: 3px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: workspace-changes-spin 720ms linear infinite;
+}
+
+@keyframes workspace-changes-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workspace-changes-group-header {
@@ -6091,6 +6315,7 @@ button:disabled {
 .message-response-actions {
   position: fixed;
   z-index: 3;
+  box-sizing: border-box;
   display: inline-flex;
   justify-content: flex-end;
   gap: 6px;
@@ -10356,6 +10581,28 @@ button:disabled {
   color: #933c3c;
 }
 
+.message-link-copy-toast {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 50;
+  max-width: min(520px, calc(100vw - 36px));
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  background: var(--surface-strong);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+.message-link-copy-toast.success {
+  border-color: var(--teal);
+}
+
+.message-link-copy-toast.error {
+  border-color: var(--danger, #fca5a5);
+}
+
 .companion-review-toast {
   border-color: rgba(203, 213, 225, 0.12);
   background: rgba(15, 19, 26, 0.96);
@@ -11105,6 +11352,10 @@ button:disabled {
   .session-chat-layout {
     --session-dock-motion-duration: 0ms;
   }
+
+  .workspace-changes-spinner {
+    animation: none;
+  }
 }
 
 @media (max-width: 1080px) {
@@ -11294,6 +11545,10 @@ button:disabled {
 
   .session-page .session-work-surface {
     padding: 0;
+  }
+
+  .chat-skill-picker-layer {
+    padding: 4px;
   }
 
   .app-badge,

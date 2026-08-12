@@ -82,6 +82,7 @@ import {
   useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
@@ -217,7 +218,7 @@ import {
   createRetryDraftReplaceConfirmationHandler,
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
-  resolveRetryBannerKind,
+  resolveRetryBannerSource,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
@@ -498,6 +499,7 @@ export default function AgentSessionWindowApp() {
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
+  const [skillListError, setSkillListError] = useState<string | null>(null);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
@@ -1077,32 +1079,50 @@ export default function AgentSessionWindowApp() {
 
   useEffect(() => {
     let active = true;
+    const skillDiscoveryRequest = resolveSkillDiscoveryRequest({
+      parentProviderId: selectedSession?.provider,
+      parentWorkspacePath: selectedSession?.workspacePath,
+      auxiliaryProviderId: activeAuxiliarySession?.provider,
+    });
 
-    if (!withmateApi || !activeRunSessionId) {
+    if (!withmateApi || !skillDiscoveryRequest) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
+      setSkillListError(null);
       return () => {
         active = false;
       };
     }
 
     setIsSkillListLoading(true);
-    void withmateApi.listSessionSkills(activeRunSessionId).then((skills) => {
+    setSkillListError(null);
+    void withmateApi.listWorkspaceSkills(
+      skillDiscoveryRequest.providerId,
+      skillDiscoveryRequest.workspacePath,
+    ).then((skills) => {
       if (active) {
         setAvailableSkills(skills);
         setIsSkillListLoading(false);
+        setSkillListError(null);
       }
     }).catch(() => {
       if (active) {
         setAvailableSkills([]);
         setIsSkillListLoading(false);
+        setSkillListError("Skill候補を読み込めませんでした。Settingsまたはworkspaceを確認してください。");
       }
     });
 
     return () => {
       active = false;
     };
-  }, [activeRunSessionId, appSettings, withmateApi]);
+  }, [
+    activeAuxiliarySession?.provider,
+    appSettings,
+    selectedSession?.provider,
+    selectedSession?.workspacePath,
+    withmateApi,
+  ]);
 
   useEffect(() => {
     setIsAgentPickerOpen(false);
@@ -1577,16 +1597,11 @@ export default function AgentSessionWindowApp() {
         : null,
     [selectedSession],
   );
-  const lastAssistantMessage = useMemo(
-    () =>
-      selectedSession
-        ? [...selectedSession.messages].reverse().find((message) => message.role === "assistant") ?? null
-        : null,
-    [selectedSession],
-  );
   const latestTerminalAuditLog = useMemo(
-    () => selectedSessionAuditLogs.find((entry) => isTerminalAuditLogPhase(entry.phase)) ?? null,
-    [selectedSessionAuditLogs],
+    () => selectedSessionAuditLogs.find((entry) =>
+      entry.sessionId === activeRunSessionId && isTerminalAuditLogPhase(entry.phase)
+    ) ?? null,
+    [activeRunSessionId, selectedSessionAuditLogs],
   );
   const latestCommandProjection = useMemo(
     () => buildLatestCommandProjection({
@@ -1682,19 +1697,17 @@ export default function AgentSessionWindowApp() {
       return null;
     }
 
-    const retryLastUserMessage = lastUserMessage;
-    if (!retryLastUserMessage) {
-      return null;
-    }
-
-    const kind = resolveRetryBannerKind({
+    const source = resolveRetryBannerSource({
+      sessionId: selectedSession.id,
+      messages: selectedSession.messages,
+      auditLogs: selectedSessionAuditLogs,
       runState: selectedSessionRunState,
-      latestTerminalAuditLogPhase: latestTerminalAuditLog?.phase,
     });
-
-    if (!kind) {
+    if (!source) {
       return null;
     }
+
+    const { kind, lastRequestText, terminalAuditLog } = source;
 
     switch (kind) {
       case "interrupted":
@@ -1705,9 +1718,9 @@ export default function AgentSessionWindowApp() {
             "retry",
             "interrupted",
             selectedSession.id,
-            retryLastUserMessage.text,
+            lastRequestText,
           ]),
-          lastRequestText: retryLastUserMessage.text,
+          lastRequestText,
         };
       case "failed":
         return {
@@ -1717,9 +1730,9 @@ export default function AgentSessionWindowApp() {
             "retry",
             "failed",
             selectedSession.id,
-            retryLastUserMessage.text,
+            lastRequestText,
           ]),
-          lastRequestText: retryLastUserMessage.text,
+          lastRequestText,
         };
       case "canceled":
         return {
@@ -1729,23 +1742,22 @@ export default function AgentSessionWindowApp() {
             "retry",
             "canceled",
             selectedSession.id,
-            retryLastUserMessage.text,
-            latestTerminalAuditLog?.id,
+            lastRequestText,
+            terminalAuditLog?.id,
           ]),
-          lastRequestText: retryLastUserMessage.text,
+          lastRequestText,
         };
       default:
         return null;
     }
   }, [
-    lastAssistantMessage,
     lastUserMessage,
-    latestTerminalAuditLog,
     appSettings.userMicrocopyCatalog,
     selectedSession,
+    selectedSessionAuditLogs,
     selectedSessionCharacter?.name,
+    selectedSessionRunState,
     isSelectedSessionReadOnly,
-    selectedSessionLiveRun,
     activeAuxiliarySession,
   ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
@@ -1870,6 +1882,7 @@ export default function AgentSessionWindowApp() {
           primaryLabel: skillDisplay.primaryLabel,
           secondaryLabel: skillDisplay.secondaryLabel,
           title: skillDisplay.title,
+          searchText: `${skill.name}\n${skill.description}`,
         };
       }),
     [availableSkills],
@@ -3485,6 +3498,7 @@ export default function AgentSessionWindowApp() {
         canCollapseActionDock,
         isCustomAgentListLoading,
         isSkillListLoading,
+        skillListError,
         customAgentItems,
         skillItems,
         composerAttachmentItems,
