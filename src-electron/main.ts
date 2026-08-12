@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   app,
   BrowserWindow,
+  clipboard,
   crashReporter,
   dialog,
   ipcMain,
@@ -144,6 +145,7 @@ import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
+import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
@@ -276,6 +278,10 @@ const bundledMemorySkillPath = app.isPackaged
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
+});
+const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+  writeText: (target) => clipboard.writeText(target),
 });
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
@@ -1349,6 +1355,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     event.sender,
                     request.point,
+                  ),
+                showMarkdownLinkContextMenu: (event, request) =>
+                  markdownLinkContextMenuService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
                   ),
                 openPathTarget,
                 openAppLogFolder: () => openDirectory(appLogsPath),

@@ -1,6 +1,10 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "../src/markdown-link-context-menu.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
@@ -161,6 +165,7 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -379,6 +384,10 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  showMarkdownLinkContextMenu(
+    event: IpcSenderEvent,
+    request: MarkdownLinkContextMenuRequest,
+  ): Awaitable<MarkdownLinkContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -590,6 +599,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionFilePreviewWindowPayload"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
+  | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
   | "getFileRootDiff"
   | "getSessionMessageArtifact"
@@ -872,6 +882,30 @@ function parseSessionFilePreviewImageActionRequest(
   }
   return {
     sessionId: candidate.sessionId,
+    point: { x: point.x, y: point.y },
+  };
+}
+
+function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContextMenuRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Markdown link context menu request is invalid.");
+  }
+  const candidate = input as Partial<MarkdownLinkContextMenuRequest>;
+  const point = candidate.point;
+  if (
+    typeof candidate.target !== "string"
+    || !candidate.target
+    || !point
+    || typeof point !== "object"
+    || !Number.isSafeInteger(point.x)
+    || point.x < 0
+    || !Number.isSafeInteger(point.y)
+    || point.y < 0
+  ) {
+    throw new TypeError("Markdown link context menu request is invalid.");
+  }
+  return {
+    target: candidate.target,
     point: { x: point.x, y: point.y },
   };
 }
@@ -1341,6 +1375,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     const request = parseSessionFilePreviewImageActionRequest(input);
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.showSessionFilePreviewImageContextMenu(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
+    const request = parseMarkdownLinkContextMenuRequest(input);
+    if (!deps.resolveEventWindow(event)) {
+      throw new TypeError("Markdown link context menu is only available from a WithMate window.");
+    }
+    return deps.showMarkdownLinkContextMenu(event, request);
   });
   ipcMain.handle(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, async (event, request: FileRootChangesRequest) => {
     if (

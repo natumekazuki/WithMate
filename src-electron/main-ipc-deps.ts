@@ -20,6 +20,10 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "../src/markdown-link-context-menu.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
@@ -155,6 +159,10 @@ export type MainIpcWindowDepsArgs = {
     event: IpcMainInvokeEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  showMarkdownLinkContextMenu(
+    event: IpcMainInvokeEvent,
+    request: MarkdownLinkContextMenuRequest,
+  ): Awaitable<MarkdownLinkContextMenuResult>;
   openPathTarget(target: string, options?: OpenPathOptions): Promise<OpenPathResult>;
   openAppLogFolder(): Promise<void>;
   openCrashDumpFolder(): Promise<void>;
@@ -413,6 +421,7 @@ export function createMainIpcRegistrationDeps(
     openSessionFilesTerminal: args.window.openSessionFilesTerminal,
     copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
     showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
+    showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,
     openCrashDumpFolder: args.window.openCrashDumpFolder,
