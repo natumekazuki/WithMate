@@ -113,6 +113,11 @@ import type {
 } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
+  resolveWorkspaceDirectoryValidationMessage,
+  type WorkspaceDirectoryValidationResult,
+} from "../src/workspace-directory-validation.js";
+import { parseCreateSessionRequest } from "./create-session-request.js";
+import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
@@ -215,6 +220,7 @@ import {
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_FILES_CHANNEL,
   WITHMATE_PICK_SESSION_FILES_CHANNEL,
@@ -440,6 +446,7 @@ export type MainIpcRegistrationDeps = {
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
@@ -485,6 +492,7 @@ type MainIpcWindowDeps = Pick<
   | "openSessionTerminal"
   | "openTerminalAtPath"
   | "pickDirectory"
+  | "validateWorkspaceDirectory"
   | "pickFile"
   | "pickFiles"
   | "pickSessionFiles"
@@ -609,6 +617,9 @@ type MainIpcSessionQueryDeps = Pick<
 
 type MainIpcCompanionDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
+  | "validateWorkspaceDirectory"
   | "createCompanionSession"
   | "getCompanionSession"
   | "getCompanionMessageArtifact"
@@ -629,6 +640,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveHomeWindow"
+  | "validateWorkspaceDirectory"
   | "resolveSessionWindow"
   | "isSettingsWindow"
   | "getLiveSessionRun"
@@ -645,6 +657,16 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "runSessionTurn"
   | "cancelSessionRun"
 >;
+
+async function assertUsableWorkspaceDirectory(
+  targetPath: unknown,
+  deps: Pick<MainIpcRegistrationDeps, "validateWorkspaceDirectory">,
+): Promise<void> {
+  const result = await deps.validateWorkspaceDirectory(targetPath);
+  if (!result.valid) {
+    throw new Error(resolveWorkspaceDirectoryValidationMessage(result));
+  }
+}
 
 type MainIpcMateDeps = Pick<
   MainIpcRegistrationDeps,
@@ -697,6 +719,17 @@ function assertSettingsWindowSender(
     return;
   }
   throw new Error("Settings IPC is only available from the Settings window.");
+}
+
+function assertHomeWindowSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveHomeWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.resolveHomeWindow() === window) {
+    return;
+  }
+  throw new Error("Workspace validation IPC is only available from the Home window.");
 }
 
 function assertSessionDeleteSender(
@@ -1008,6 +1041,10 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickDirectory(resolveTargetWindow(event, deps), initialPath),
   );
+  ipcMain.handle(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL, async (event, targetPath: unknown) => {
+    assertHomeWindowSender(event, deps);
+    return deps.validateWorkspaceDirectory(targetPath);
+  });
   ipcMain.handle(WITHMATE_PICK_FILE_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickFile(resolveTargetWindow(event, deps), initialPath),
   );
@@ -1496,9 +1533,11 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
   ipcMain.handle(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
     deps.previewCompanionComposerInput(sessionId, userMessage),
   );
-  ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
-    deps.createCompanionSession(input),
-  );
+  ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (event, input: CreateCompanionSessionInput) => {
+    assertHomeWindowSender(event, deps);
+    await assertUsableWorkspaceDirectory(input?.workspacePath, deps);
+    return deps.createCompanionSession(input);
+  });
   ipcMain.handle(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runCompanionSessionTurn(sessionId, request),
   );
@@ -1547,7 +1586,14 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
       deps.resolveLiveElicitation(sessionId, requestId, response);
     },
   );
-  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionRequest) => deps.createSession(input));
+  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, async (event, input: CreateSessionRequest) => {
+    assertHomeWindowSender(event, deps);
+    const { workspace } = parseCreateSessionRequest(input);
+    if (workspace.kind === "directory") {
+      await assertUsableWorkspaceDirectory(workspace.path, deps);
+    }
+    return deps.createSession(input);
+  });
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
   ipcMain.handle(
     WITHMATE_SET_SESSION_PINNED_CHANNEL,

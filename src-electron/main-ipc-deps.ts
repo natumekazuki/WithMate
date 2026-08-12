@@ -108,6 +108,7 @@ import type {
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
 import type {
   CreatePromptTemplateInput,
   PromptTemplate,
@@ -137,6 +138,7 @@ export type MainIpcWindowDepsArgs = {
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
@@ -409,6 +411,7 @@ export function createMainIpcRegistrationDeps(
       await args.window.openCompanionMergeWindow(sessionId);
     },
     pickDirectory: args.window.pickDirectory,
+    validateWorkspaceDirectory: args.window.validateWorkspaceDirectory,
     pickFile: args.window.pickFile,
     pickFiles: args.window.pickFiles,
     pickSessionFiles: args.window.pickSessionFiles,

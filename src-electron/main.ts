@@ -142,6 +142,7 @@ import { SessionApprovalService } from "./session-approval-service.js";
 import { SessionElicitationService } from "./session-elicitation-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
+import { WorkspaceDirectoryValidationService } from "./workspace-directory-validation-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
@@ -361,6 +362,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
@@ -1335,6 +1337,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openCompanionMergeWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
+                validateWorkspaceDirectory: (targetPath) =>
+                  workspaceDirectoryValidationService.validate(targetPath),
                 pickFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickFile(targetWindow, initialPath),
                 pickFiles: (targetWindow, initialPath) =>
