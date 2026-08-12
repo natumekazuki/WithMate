@@ -56,6 +56,10 @@ class FakeNotification implements SessionTurnNotificationHandle {
   timeout(): void {
     this.closeListener?.("timedOut");
   }
+
+  closeWithoutReason(): void {
+    this.closeListener?.();
+  }
 }
 
 function createSession(overrides?: Partial<Session>): Session {
@@ -540,6 +544,55 @@ describe("SessionTurnNotificationService", () => {
 
     assert.equal(openFailureHarness.homeOpenCount, 1);
     assert.equal(openFailureHarness.warnings[0]?.event, "target-open-failed");
+  });
+
+  it("同じ通知の click が多重発火しても対象 Session は一度だけ開く", async () => {
+    const harness = createHarness();
+    harness.service.notifyTurnCompleted(harness.session);
+
+    harness.notifications[0]?.click();
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+
+    assert.deepEqual(harness.openedSessions, [harness.session.id]);
+    assert.equal(harness.homeOpenCount, 0);
+  });
+
+  it("置き換え済み通知の遅延 click は無視し、現在の通知だけが対象 Session を開く", async () => {
+    const harness = createHarness();
+    harness.service.notifyTurnCompleted(harness.session);
+    harness.service.notifyTurnCompleted(harness.session);
+
+    harness.notifications[0]?.click();
+    harness.notifications[1]?.click();
+    await flushAsyncListeners();
+
+    assert.deepEqual(harness.openedSessions, [harness.session.id]);
+    assert.equal(harness.homeOpenCount, 0);
+  });
+
+  it("system timeout 後も現在の通知なら Action Center から対象 Session を開く", async () => {
+    const harness = createHarness();
+    harness.service.notifyTurnCompleted(harness.session);
+
+    harness.notifications[0]?.timeout();
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+
+    assert.deepEqual(harness.openedSessions, [harness.session.id]);
+    assert.equal(harness.homeOpenCount, 0);
+  });
+
+  it("reason 不明の close 後に遅延 click が届いても対象を開かない", async () => {
+    const harness = createHarness();
+    harness.service.notifyTurnCompleted(harness.session);
+
+    harness.notifications[0]?.closeWithoutReason();
+    harness.notifications[0]?.click();
+    await flushAsyncListeners();
+
+    assert.deepEqual(harness.openedSessions, []);
+    assert.equal(harness.homeOpenCount, 0);
   });
 
   it("delivery failure 後は active notification から外し、次の通知時に閉じ直さない", () => {

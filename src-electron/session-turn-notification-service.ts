@@ -189,11 +189,13 @@ export class SessionTurnNotificationService<TIcon> {
     notification: SessionTurnNotificationHandle,
   ): void {
     notification.onClick(() => {
-      this.clearIfCurrent(sessionId, notification);
+      if (!this.clearIfCurrent(sessionId, notification)) {
+        return;
+      }
       void this.openNotificationTarget(sessionId);
     });
     notification.onClose((reason) => {
-      if (reason === "userCanceled" || reason === "applicationHidden") {
+      if (reason !== "timedOut") {
         this.clearIfCurrent(sessionId, notification);
       }
     });
@@ -288,10 +290,16 @@ export class SessionTurnNotificationService<TIcon> {
     }
   }
 
-  private clearIfCurrent(sessionId: string, notification: SessionTurnNotificationHandle): void {
-    if (this.trackedNotifications.get(sessionId) === notification) {
-      this.trackedNotifications.delete(sessionId);
+  private clearIfCurrent(
+    sessionId: string,
+    notification: SessionTurnNotificationHandle,
+  ): boolean {
+    if (this.trackedNotifications.get(sessionId) !== notification) {
+      return false;
     }
+
+    this.trackedNotifications.delete(sessionId);
+    return true;
   }
 
   private async openNotificationTarget(sessionId: string): Promise<void> {
