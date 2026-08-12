@@ -1707,6 +1707,69 @@ button:disabled {
   box-shadow: 0 0 0 3px rgba(111, 140, 255, 0.14);
 }
 
+.home-page .launch-field-input[aria-invalid="true"] {
+  border-color: rgba(248, 113, 113, 0.62);
+}
+
+.launch-field-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.home-page .launch-field-error {
+  display: block;
+  min-width: 0;
+  max-width: 72%;
+  height: 1rem;
+  color: #fca5a5;
+  font-size: 0.78rem;
+  line-height: 1rem;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.launch-field-input-shell {
+  position: relative;
+}
+
+.workspace-validation-input .launch-field-input {
+  padding-right: 44px;
+}
+
+.workspace-validation-spinner {
+  position: absolute;
+  top: 50%;
+  right: 16px;
+  width: 15px;
+  height: 15px;
+  margin-top: -8px;
+  border: 2px solid rgba(203, 213, 225, 0.28);
+  border-top-color: #cbd5e1;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: workspace-validation-spin 0.7s linear infinite;
+}
+
+@keyframes workspace-validation-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace-validation-spinner {
+    animation: none;
+  }
+}
+
 .home-page .launch-provider-list .choice-chip.active {
   border-color: rgba(143, 169, 255, 0.48);
   background: rgba(111, 140, 255, 0.24);

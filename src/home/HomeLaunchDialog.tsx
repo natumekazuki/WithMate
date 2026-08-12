@@ -7,13 +7,16 @@ import { buildCharacterThemeStyle } from "../theme-utils.js";
 import { CharacterAvatar } from "../ui-utils.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
+import type { HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
   title: string;
-  workspaceSelected: boolean;
   sessionFolderSelected: boolean;
   launchWorkspacePathLabel: string;
+  workspacePathInput: string;
+  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidationMessage: string;
   enabledLaunchProviders: Array<{ id: string; label: string }>;
   selectedLaunchProviderId: string | null;
   characterOptions: CharacterCatalogEntry[];
@@ -25,6 +28,7 @@ export type HomeLaunchDialogProps = {
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
+  onChangeWorkspacePath: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
   onSelectProvider: (providerId: string) => void;
@@ -36,9 +40,11 @@ export type HomeLaunchDialogProps = {
 export function HomeLaunchDialog({
   open,
   title,
-  workspaceSelected,
   sessionFolderSelected,
   launchWorkspacePathLabel,
+  workspacePathInput,
+  workspaceValidation,
+  workspaceValidationMessage,
   enabledLaunchProviders,
   selectedLaunchProviderId,
   characterOptions,
@@ -50,6 +56,7 @@ export function HomeLaunchDialog({
   launchStarting,
   onClose,
   onChangeTitle,
+  onChangeWorkspacePath,
   onBrowseWorkspace,
   onSelectSessionFolder,
   onSelectProvider,
@@ -67,6 +74,8 @@ export function HomeLaunchDialog({
   if (!open) {
     return null;
   }
+
+  const workspaceValidationActive = workspaceValidation === "debouncing" || workspaceValidation === "pending";
 
   return (
     <LaunchDialogShell
@@ -100,6 +109,43 @@ export function HomeLaunchDialog({
       </section>
 
       <section className="launch-section workspace-picker minimal">
+        <div className="launch-field">
+          <div className="launch-field-heading">
+            <label className="launch-field-label" htmlFor="launch-workspace-path">
+              Workspace
+            </label>
+            <span
+              id="launch-workspace-path-error"
+              className="launch-field-error"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              title={workspaceValidationMessage || undefined}
+            >
+              {workspaceValidationMessage}
+            </span>
+          </div>
+          <div className="launch-field-input-shell workspace-validation-input" aria-busy={workspaceValidationActive}>
+            <input
+              id="launch-workspace-path"
+              className="launch-field-input"
+              type="text"
+              value={workspacePathInput}
+              placeholder="C:\\path\\to\\workspace"
+              aria-invalid={workspaceValidation === "invalid"}
+              aria-describedby={workspaceValidationMessage ? "launch-workspace-path-error" : undefined}
+              onChange={(event) => onChangeWorkspacePath(event.target.value)}
+            />
+            {workspaceValidationActive ? (
+              <span className="workspace-validation-spinner" aria-hidden="true" />
+            ) : null}
+          </div>
+          {workspaceValidationActive ? (
+            <span className="visually-hidden" role="status" aria-live="polite">
+              Workspace パスを確認しています
+            </span>
+          ) : null}
+        </div>
         <div className="section-head compact-actions workspace-picker-actions">
           <button className="browse-button" type="button" onClick={onBrowseWorkspace}>
             Browse
@@ -113,7 +159,9 @@ export function HomeLaunchDialog({
             SessionFolder
           </button>
         </div>
-        <p className={`launch-path${workspaceSelected ? " selected" : ""}`}>{launchWorkspacePathLabel}</p>
+        {sessionFolderSelected ? (
+          <p className="launch-path selected">{launchWorkspacePathLabel}</p>
+        ) : null}
       </section>
 
       <ProviderLaunchField
