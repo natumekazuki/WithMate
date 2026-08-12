@@ -162,6 +162,7 @@ button:disabled {
   --session-action-dock-row-height: var(--session-action-dock-compact-height, 54px);
   --session-left-pane-track-width: 0px;
   --session-right-pane-track-width: 0px;
+  isolation: isolate;
   grid-template-rows:
     var(--session-header-dock-row-height)
     var(--session-dock-splitter-size)
@@ -171,6 +172,13 @@ button:disabled {
   transition:
     grid-template-rows var(--session-dock-motion-duration) var(--session-dock-motion-easing),
     grid-template-columns var(--session-dock-motion-duration) var(--session-dock-motion-easing);
+}
+
+.session-selection-action-overlay {
+  position: fixed;
+  z-index: 35;
+  inset: 0;
+  pointer-events: none;
 }
 
 .session-chat-layout.layout-priority-side-pane {
@@ -4982,6 +4990,7 @@ button:disabled {
 }
 
 .workspace-changes-pane {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
@@ -4989,6 +4998,34 @@ button:disabled {
   height: 100%;
   overflow: hidden;
   padding: 8px;
+}
+
+.workspace-changes-loading {
+  position: absolute;
+  inset: 8px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface-deep) 72%, transparent);
+  color: var(--ink);
+  pointer-events: none;
+}
+
+.workspace-changes-spinner {
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border: 3px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: workspace-changes-spin 720ms linear infinite;
+}
+
+@keyframes workspace-changes-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .workspace-changes-group-header {
@@ -6154,6 +6191,7 @@ button:disabled {
 .message-response-actions {
   position: fixed;
   z-index: 3;
+  box-sizing: border-box;
   display: inline-flex;
   justify-content: flex-end;
   gap: 6px;
@@ -11189,6 +11227,10 @@ button:disabled {
 @media (prefers-reduced-motion: reduce) {
   .session-chat-layout {
     --session-dock-motion-duration: 0ms;
+  }
+
+  .workspace-changes-spinner {
+    animation: none;
   }
 }
 

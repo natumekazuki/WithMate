@@ -1,4 +1,5 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { Component, Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type {
@@ -47,6 +48,7 @@ import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
+import { resolveSelectionActionOverlayPosition } from "./chat/selection-action-overlay.js";
 import {
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
@@ -865,6 +867,22 @@ export type SessionChatScreenProps = {
   modals?: ReactNode;
 };
 
+const SelectionActionOverlayContext = createContext<HTMLDivElement | null>(null);
+
+function SelectionActionOverlayBoundary({ children }: { children: ReactNode }) {
+  const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
+
+  return (
+    <SelectionActionOverlayContext.Provider value={overlayElement}>
+      {children}
+      <div
+        ref={setOverlayElement}
+        className="session-selection-action-overlay"
+      />
+    </SelectionActionOverlayContext.Provider>
+  );
+}
+
 export function SessionChatScreen({
   mode,
   className = "",
@@ -915,6 +933,7 @@ export function SessionChatScreen({
       style={layoutStyle}
       data-session-mode={mode}
     >
+      <SelectionActionOverlayBoundary>
       <div
         id={SESSION_HEADER_DOCK_ID}
         ref={headerDockRef}
@@ -970,6 +989,7 @@ export function SessionChatScreen({
       </div>
 
       {modals}
+      </SelectionActionOverlayBoundary>
     </div>
   );
 }
@@ -2503,6 +2523,7 @@ export function SessionMessageColumn({
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
+  const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
@@ -2642,28 +2663,45 @@ export function SessionMessageColumn({
   const updateSelectionToolbar = useCallback(() => {
     const messageListElement = messageListRef.current;
     const selectionDetails = getSelectionDetailsWithinMessageList(messageListElement);
-    const boundaryRect = messageListElement?.getBoundingClientRect() ?? null;
+    const sourceRect = messageListElement?.getBoundingClientRect() ?? null;
+    const overlayRect = selectionActionOverlay?.getBoundingClientRect() ?? null;
+    const actionDockRect = document.getElementById(SESSION_ACTION_DOCK_ID)?.getBoundingClientRect() ?? null;
     const toolbarRect =
       selectionToolbarRef.current?.getBoundingClientRect() ??
       { width: 112, height: 32 };
     if (
       !selectionDetails ||
-      !boundaryRect ||
-      !rectsIntersect(selectionDetails.anchorRect, boundaryRect)
+      !sourceRect ||
+      !overlayRect ||
+      !rectsIntersect(selectionDetails.anchorRect, sourceRect)
     ) {
       setSelectionToolbar(null);
       return;
     }
 
+    const style = resolveSelectionActionOverlayPosition({
+      actionDockRect,
+      anchorRect: selectionDetails.anchorRect,
+      overlayRect,
+      sourceRect,
+      toolbarRect,
+    });
+    if (!style) {
+      setSelectionToolbar(null);
+      return;
+    }
+
     setSelectionToolbar({
-      style: clampToolbarPosition({
-        anchorRect: selectionDetails.anchorRect,
-        boundaryRect,
-        toolbarRect,
-      }),
+      style,
       text: selectionDetails.text,
     });
-  }, [messageListRef]);
+  }, [messageListRef, selectionActionOverlay]);
+
+  useLayoutEffect(() => {
+    if (selectionToolbar) {
+      updateSelectionToolbar();
+    }
+  }, [selectionToolbar?.text, updateSelectionToolbar]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
@@ -2673,14 +2711,43 @@ export function SessionMessageColumn({
     document.addEventListener("selectionchange", updateSelectionToolbar);
     window.addEventListener("resize", updateSelectionToolbar);
     const messageListElement = messageListRef.current;
-    messageListElement?.addEventListener("scroll", updateSelectionToolbar, { passive: true });
+    messageListElement?.addEventListener("scroll", updateSelectionToolbar, {
+      capture: true,
+      passive: true,
+    });
+    const actionDockElement = document.getElementById(SESSION_ACTION_DOCK_ID);
+    const resizeObserver = typeof window.ResizeObserver === "undefined"
+      ? null
+      : new window.ResizeObserver(updateSelectionToolbar);
+    if (messageListElement) {
+      resizeObserver?.observe(messageListElement);
+    }
+    if (selectionActionOverlay) {
+      resizeObserver?.observe(selectionActionOverlay);
+    }
+    if (actionDockElement) {
+      resizeObserver?.observe(actionDockElement);
+    }
+    const mutationObserver = messageListElement && typeof window.MutationObserver !== "undefined"
+      ? new window.MutationObserver(updateSelectionToolbar)
+      : null;
+    if (messageListElement) {
+      mutationObserver?.observe(messageListElement, {
+        attributeFilter: ["data-index", "style"],
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+    }
 
     return () => {
       document.removeEventListener("selectionchange", updateSelectionToolbar);
       window.removeEventListener("resize", updateSelectionToolbar);
-      messageListElement?.removeEventListener("scroll", updateSelectionToolbar);
+      messageListElement?.removeEventListener("scroll", updateSelectionToolbar, { capture: true });
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
     };
-  }, [messageListRef, updateSelectionToolbar]);
+  }, [messageListRef, selectionActionOverlay, updateSelectionToolbar]);
 
   useEffect(() => {
     setCurrentFindMatch(0);
@@ -3206,14 +3273,15 @@ export function SessionMessageColumn({
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
-        {selectionToolbar ? (
+        {selectionToolbar && selectionActionOverlay ? createPortal(
           <MessageResponseActions
             actionText={selectionToolbar.text}
             onCopyMessageText={onCopyMessageText}
             onQuoteMessageText={onQuoteMessageText}
             style={selectionToolbar.style}
             toolbarRef={selectionToolbarRef}
-          />
+          />,
+          selectionActionOverlay,
         ) : null}
       </div>
     </div>

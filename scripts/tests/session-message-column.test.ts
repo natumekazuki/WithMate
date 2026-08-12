@@ -10,6 +10,7 @@ import {
   SessionActionDockCompactRow,
   SessionContextPane,
   SessionComposerExpanded,
+  SessionChatScreen,
   SessionMessageColumn,
   shouldAdjustSessionMessageScrollPosition,
   type SessionMessageColumnProps,
@@ -19,6 +20,7 @@ import { useCompanionCharacterProfile } from "../../src/companion-character-prof
 import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
+import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -360,6 +362,9 @@ async function mountSessionMessageColumn(options: {
   };
 
   dom.window.HTMLElement.prototype.getBoundingClientRect = function getBoundingClientRect() {
+    if (this.classList.contains("session-selection-action-overlay")) {
+      return createRect({ left: 0, top: 0, width: 960, height: 720 });
+    }
     if (this.classList.contains("session-message-list")) {
       return createRect({ left: 0, top: 0, width: 960, height: 720 });
     }
@@ -455,9 +460,22 @@ async function mountSessionMessageColumn(options: {
           onQuoteMessageText: callbacks.onQuoteMessageText,
           messageViewMode: callbacks.messageViewMode ?? options.messageViewMode,
         });
-      root.render(options.onRender
+      const profiledMessageColumn = options.onRender
         ? React.createElement(React.Profiler, { id: "session-message-column", onRender: options.onRender }, messageColumn)
-        : messageColumn);
+        : messageColumn;
+      root.render(React.createElement(SessionChatScreen, {
+        mode: "agent",
+        header: null,
+        headerSplitter: null,
+        isHeaderVisible: false,
+        messageColumn: profiledMessageColumn,
+        actionDock: null,
+        actionDockSplitter: null,
+        isActionDockExpanded: false,
+        layoutPriority: "dock-first",
+        splitter: null,
+        rightPane: null,
+      }));
     });
   };
 
@@ -1213,6 +1231,41 @@ test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示�
   assert.match(html, /snapshot files/);
 });
 
+test("selection action geometry は viewport と ActionDock 境界内で flip と左右 clamp を行う", () => {
+  const overlayRect = createRect({ left: 0, top: 0, width: 360, height: 640 });
+  const sourceRect = createRect({ left: 12, top: 80, width: 336, height: 500 });
+  const actionDockRect = createRect({ left: 12, top: 580, width: 336, height: 48 });
+  const toolbarRect = { width: 112, height: 32 };
+
+  const nearDock = resolveSelectionActionOverlayPosition({
+    anchorRect: createRect({ left: 150, top: 566, width: 60, height: 12 }),
+    actionDockRect,
+    overlayRect,
+    sourceRect,
+    toolbarRect,
+  });
+  assert.deepEqual(nearDock, { left: 124, maxWidth: 320, top: 526 });
+  assert.ok((nearDock?.top as number) + toolbarRect.height < actionDockRect.top);
+
+  const leftEdge = resolveSelectionActionOverlayPosition({
+    anchorRect: createRect({ left: -20, top: 120, width: 20, height: 20 }),
+    actionDockRect,
+    overlayRect,
+    sourceRect,
+    toolbarRect,
+  });
+  assert.equal(leftEdge?.left, 20);
+
+  const rightEdge = resolveSelectionActionOverlayPosition({
+    anchorRect: createRect({ left: 350, top: 120, width: 20, height: 20 }),
+    actionDockRect,
+    overlayRect,
+    sourceRect,
+    toolbarRect,
+  });
+  assert.equal(rightEdge?.left, 228);
+});
+
 test("SessionMessageColumn は未選択時に response action を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: [
@@ -1232,9 +1285,10 @@ test("SessionMessageColumn は未選択時に response action を描画しない
 test("SessionMessageColumn は選択範囲にだけ response action toolbar を表示する", async () => {
   const copiedTexts: string[] = [];
   const quotedTexts: string[] = [];
+  const assistantMessage = "assistant result text\n\n```text\nnested code text\n```";
   const mounted = await mountSessionMessageColumn({
     messages: [
-      { role: "assistant", text: "assistant result text" },
+      { role: "assistant", text: assistantMessage },
       { role: "user", text: "user prompt text" },
     ],
     onCopyMessageText: (text) => copiedTexts.push(text),
@@ -1277,10 +1331,13 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       value: () => selection,
     });
 
-    const selectText = async (body: Element, text: string, rect: DOMRect) => {
-      const paragraph = body.querySelector(".message-paragraph");
-      assert.ok(paragraph?.firstChild);
-      selectionNode = paragraph.firstChild;
+    const selectText = async (body: Element, text: string, rect: DOMRect, targetSelector?: string) => {
+      const target = targetSelector
+        ? body.querySelector(targetSelector)
+        : body.querySelector(".message-paragraph") ?? body.querySelector(".message-body");
+      const textNode = target?.firstChild;
+      assert.ok(textNode);
+      selectionNode = textNode;
       selectedText = text;
       isCollapsed = false;
       anchorRect = rect;
@@ -1302,6 +1359,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
 
     let toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
     assert.ok(toolbar);
+    assert.ok(toolbar.parentElement?.classList.contains("session-selection-action-overlay"));
     assert.equal(toolbar.style.left, "74px");
     assert.equal(toolbar.style.top, "60px");
 
@@ -1340,6 +1398,23 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(toolbar.style.left, "224px");
     assert.equal(toolbar.style.top, "220px");
 
+    const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
+    assert.ok(nestedScrollOwner);
+    await selectText(
+      assistantBody,
+      "nested code text",
+      createRect({ left: 180, top: 280, width: 80, height: 20 }),
+      ".message-code-block code",
+    );
+    anchorRect = createRect({ left: 120, top: 280, width: 80, height: 20 });
+    await act(async () => {
+      nestedScrollOwner.dispatchEvent(new dom.window.Event("scroll", { bubbles: false }));
+    });
+    toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
+    assert.ok(toolbar);
+    assert.equal(toolbar.style.left, "104px");
+    assert.equal(toolbar.style.top, "240px");
+
     anchorRect = createRect({ left: 520, top: 520, width: 40, height: 20 });
     await act(async () => {
       messageList.dispatchEvent(new dom.window.Event("scroll"));
@@ -1356,8 +1431,25 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(container.querySelector(".message-response-actions"), null);
     assert.equal(
       container.querySelector("[data-message-text-actions='true']")?.textContent,
-      "assistant result text",
+      assistantMessage,
     );
+
+    const currentAssistantBody = container.querySelector("[data-message-text-actions='true']");
+    assert.ok(currentAssistantBody);
+    await selectText(
+      currentAssistantBody,
+      "assistant result",
+      createRect({ left: 100, top: 100, width: 60, height: 20 }),
+    );
+    assert.ok(container.querySelector(".message-response-actions"));
+    await mounted.rerender({
+      messages: [],
+      onCopyMessageText: (text) => copiedTexts.push(text),
+      onQuoteMessageText: (text) => quotedTexts.push(text),
+      messageViewMode: "source",
+    });
+    await act(async () => Promise.resolve());
+    assert.equal(container.querySelector(".message-response-actions"), null);
     await clearSelection();
   } finally {
     mounted.cleanup();
