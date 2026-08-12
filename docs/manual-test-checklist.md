@@ -111,7 +111,8 @@ npm run electron:start
 | MT-023C1 | Session narrow layout reachability | viewport を `1400px` 未満まで狭めた Session Window を開く | 保存された layout priority にかかわらず、Header、File Explorer（active 時）、中央 surface、Context pane（active 時）、ActionDock の順で縦 stack になり、`Latest Command` と provider に応じた `Tasks` / `Context` へ到達できる |
 | MT-023C2 | Session minimum width guardrail | Session Window を最小幅近くまで縮める | Header、中央 surface、active side pane、ActionDock へ scroll を含めて到達でき、最小幅でも window が不自然に固定されない |
 | MT-023D | Session header hidden state | Session Window を開いて上 splitter を見る | 通常 state では Header が hidden で、中央 surface の上に再表示用 splitter だけが残る |
-| MT-023D1 | Session header expanded state | 上 splitter を押して Header を展開し、splitter をドラッグする | Header が1行分の固定高の full-width strip として表示され、`Rename / Audit Log / Terminal / Delete` が見える。`Close` と `More` は出ず、drag しても高さは変わらない |
+| MT-023D1 | Session header expanded state | 上 splitter を押して Header を展開し、splitter をドラッグする | Header が1行分の固定高の full-width strip として表示され、Workspace / Session 操作と `Session actions` の `⋯` menuへ到達できる。`Close` は出ず、drag しても高さは変わらない |
+| MT-023D1A | Session header actions menu dismiss | expanded Header の `⋯` menuを開き、外側をpointer操作する。もう一度開いて`Escape`、triggerの再クリック、各menu項目の実行も試す | 外側操作、triggerの再クリック、項目実行でmenuが閉じる。`Escape`ではmenuが閉じてtriggerへfocusが戻り、pin / rename / audit / deleteの各操作は従来どおり実行される |
 | MT-023D2 | Session terminal launch | expanded header の `Terminal` を押す | session の `workspacePath` を作業ディレクトリにした外部 terminal が開く |
 | MT-023D3 | Session header recollapse | expanded Header の上 splitterを押す | Header が閉じ、中央 surface の上に再表示用 splitterだけが残る |
 | MT-023D4 | Additional directory manage UI | Session Window の composer toolbar を確認し、`Add Directory` と `Dirs` を操作する | `Add Directory` が `Skill` と同じ列に並ぶ。`Dirs` は既定では閉じており、開いた後に現在の許可リストが表示され、provider が `Codex` の時だけ `×` で削除できる |
