@@ -1392,14 +1392,18 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(toolbar.style.top, "220px");
 
     assistantBody = getAssistantBody();
-    const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
-    assert.ok(nestedScrollOwner);
     await selectText(
       assistantBody,
       "nested code text",
       createRect({ left: 180, top: 280, width: 80, height: 20 }),
       ".message-code-block code",
     );
+    assistantBody = getAssistantBody();
+    const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
+    const nestedSelectionNode = nestedScrollOwner?.querySelector("code")?.firstChild;
+    assert.ok(nestedScrollOwner);
+    assert.ok(nestedSelectionNode);
+    selectionNode = nestedSelectionNode;
     anchorRect = createRect({ left: 120, top: 280, width: 80, height: 20 });
     await act(async () => {
       nestedScrollOwner.dispatchEvent(new dom.window.Event("scroll", { bubbles: false }));
