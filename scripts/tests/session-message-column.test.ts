@@ -1342,8 +1342,12 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
       });
     };
 
-    const assistantBody = container.querySelector("[data-message-text-actions=\"true\"]");
-    assert.ok(assistantBody);
+    const getAssistantBody = () => {
+      const body = container.querySelector("[data-message-text-actions=\"true\"]");
+      assert.ok(body);
+      return body;
+    };
+    let assistantBody = getAssistantBody();
     await selectText(assistantBody, "  assistant result\n", anchorRect);
 
     let toolbar = container.querySelector(".message-response-actions") as HTMLElement | null;
@@ -1387,6 +1391,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(toolbar.style.left, "224px");
     assert.equal(toolbar.style.top, "220px");
 
+    assistantBody = getAssistantBody();
     const nestedScrollOwner = assistantBody.querySelector(".message-code-block");
     assert.ok(nestedScrollOwner);
     await selectText(
@@ -1410,6 +1415,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     });
     assert.equal(container.querySelector(".message-response-actions"), null);
 
+    assistantBody = getAssistantBody();
     await selectText(assistantBody, "assistant result", createRect({ left: 100, top: 100, width: 60, height: 20 }));
     assert.ok(container.querySelector(".message-response-actions"));
     await mounted.rerender({
