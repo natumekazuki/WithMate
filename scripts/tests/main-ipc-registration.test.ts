@@ -903,6 +903,45 @@ test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC �
   assert.deepEqual(calls, ["runSessionTurn:session-1,[object Object]"]);
 });
 
+test("run-session-turn IPC拒否ログは本文を含めずclient request IDを相関情報として渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const errors: Array<{ channel: string; clientRequestId?: string }> = [];
+  const { deps } = createDeps({
+    runSessionTurn: async () => {
+      throw new Error("このセッションはまだ実行中だよ。");
+    },
+    logIpcError: (input: { channel: string; clientRequestId?: string }) => {
+      errors.push(input);
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", {
+      userMessage: "ログへ出してはいけない本文",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+    }) as Promise<unknown>,
+    /まだ実行中/,
+  );
+
+  assert.deepEqual(errors.map(({ channel, clientRequestId }) => ({ channel, clientRequestId })), [{
+    channel: WITHMATE_RUN_SESSION_TURN_CHANNEL,
+    clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+  }]);
+  assert.doesNotMatch(JSON.stringify(errors), /ログへ出してはいけない本文/);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", {
+      userMessage: "please use secretprompt",
+      clientRequestId: "secretprompt",
+      submitSource: "secretprompt",
+    }) as Promise<unknown>,
+    /まだ実行中/,
+  );
+  assert.equal(errors.at(-1)?.clientRequestId, undefined);
+  assert.doesNotMatch(JSON.stringify(errors.at(-1)), /secretprompt/);
+});
+
 test("Memory V6 Review IPC は memory-review window からだけ呼び出せる", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const reviewWindow = createWindowStub("http://localhost:5173/?mode=memory-review");
