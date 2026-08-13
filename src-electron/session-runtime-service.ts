@@ -849,7 +849,7 @@ export class SessionRuntimeService {
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
-      throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
+      throw new Error(composerPreview.errors[0] ?? "Failed to resolve attachment.");
     }
 
     const appSettings = this.deps.getAppSettings();

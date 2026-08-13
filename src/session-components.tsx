@@ -848,6 +848,7 @@ export type SessionChatScreenProps = {
   messageColumn: ReactNode;
   mainContent?: ReactNode;
   workSurfaceOverlay?: ReactNode;
+  errorSurface?: ReactNode;
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
@@ -893,6 +894,7 @@ export function SessionChatScreen({
   messageColumn,
   mainContent,
   workSurfaceOverlay = null,
+  errorSurface = null,
   recoveryActions = null,
   actionDock,
   actionDockSplitter,
@@ -969,6 +971,7 @@ export function SessionChatScreen({
             {recoveryActions}
           </div>
         ) : null}
+        {errorSurface}
       </section>
 
       {splitter}
@@ -2194,8 +2197,6 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
-  inlinePathFeedback?: string;
-  onDismissInlinePathFeedback?: () => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
 };
@@ -2527,8 +2528,6 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
-  inlinePathFeedback = "",
-  onDismissInlinePathFeedback,
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
@@ -2997,14 +2996,6 @@ export function SessionMessageColumn({
 
   return (
     <div className="session-message-column">
-      {inlinePathFeedback ? (
-        <div className="session-inline-path-feedback" role="alert">
-          <span>{inlinePathFeedback}</span>
-          {onDismissInlinePathFeedback ? (
-            <button type="button" onClick={onDismissInlinePathFeedback} aria-label="Dismiss path open result">×</button>
-          ) : null}
-        </div>
-      ) : null}
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
@@ -3500,6 +3491,7 @@ export type SessionComposerExpandedProps = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
+  externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
@@ -3577,6 +3569,7 @@ export function SessionComposerExpanded({
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
+  externalErrorDescriptionIds,
   sendButtonTitle,
   isComposerBlockedFeedbackActive,
   approvalOptions,
@@ -3955,10 +3948,12 @@ export function SessionComposerExpanded({
             onCompositionStart={onDraftCompositionStart}
             onCompositionEnd={onDraftCompositionEnd}
             disabled={isComposerDisabled}
-            aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
+            aria-describedby={externalErrorDescriptionIds || (
+              composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined
+            )}
             aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
           />
-          {composerSendability.shouldShowFeedback ? (
+          {composerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
               className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}

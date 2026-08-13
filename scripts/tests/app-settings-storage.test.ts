@@ -12,6 +12,33 @@ import {
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
+  it("保存済みの旧 path error 既定値を読み込み時に現在の既定値へ移行する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      initialStorage.close();
+
+      const legacyDatabase = new DatabaseSync(dbPath);
+      const legacyCatalog = createDefaultAppSettings().userMicrocopyCatalog;
+      legacyCatalog["composer.error.path_not_found"] = ["指定したパスが見つかりません: {path}"];
+      legacyDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run(JSON.stringify(legacyCatalog), "user_microcopy_catalog");
+      legacyDatabase.close();
+
+      const migratedStorage = new AppSettingsStorage(dbPath);
+      assert.deepEqual(
+        migratedStorage.getSettings().userMicrocopyCatalog["composer.error.path_not_found"],
+        ["Path not found: {path}"],
+      );
+      migratedStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("legacy right pane visibility を canonical side pane へ一度だけ移行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
