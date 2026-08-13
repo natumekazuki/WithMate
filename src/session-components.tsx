@@ -2554,7 +2554,7 @@ export function SessionMessageColumn({
       messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
     directDomUpdates: true,
-    directDomUpdatesMode: "transform",
+    directDomUpdatesMode: "position",
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
