@@ -347,11 +347,40 @@ export type ComposerPreview = {
 
 export type RunSessionTurnRequest = {
   userMessage: string;
+  clientRequestId?: string;
+  submitSource?: "composer" | "retry";
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   approvalMode?: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
 };
+
+const SESSION_TURN_CLIENT_REQUEST_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function normalizeSessionTurnClientRequestId(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return SESSION_TURN_CLIENT_REQUEST_ID_PATTERN.test(normalized) ? normalized : null;
+}
+
+export function normalizeSessionTurnSubmitSource(value: unknown): RunSessionTurnRequest["submitSource"] | null {
+  return value === "composer" || value === "retry" ? value : null;
+}
+
+export function normalizeSessionTurnCorrelation(
+  request: Partial<Pick<RunSessionTurnRequest, "userMessage" | "clientRequestId" | "submitSource">> | null | undefined,
+): { clientRequestId: string | null; submitSource: RunSessionTurnRequest["submitSource"] | null } {
+  const normalizedClientRequestId = normalizeSessionTurnClientRequestId(request?.clientRequestId);
+  const userMessage = typeof request?.userMessage === "string" ? request.userMessage.trim().toLocaleLowerCase() : "";
+  return {
+    clientRequestId: normalizedClientRequestId && !userMessage.includes(normalizedClientRequestId.toLocaleLowerCase())
+      ? normalizedClientRequestId
+      : null,
+    submitSource: normalizeSessionTurnSubmitSource(request?.submitSource),
+  };
+}
 
 export function makeDiffRows(
   rows: Array<[DiffRow["kind"], number | undefined, string | undefined, number | undefined, string | undefined]>,

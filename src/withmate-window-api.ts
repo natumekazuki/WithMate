@@ -48,6 +48,7 @@ import type {
   MarkdownLinkContextMenuResult,
 } from "./markdown-link-context-menu.js";
 import type { AppBootStatus } from "./app-boot-state.js";
+import type { WorkspaceDirectoryValidationResult } from "./workspace-directory-validation.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import type { MemoryV6ReviewApi } from "./memory-v6/memory-review-state.js";
@@ -269,6 +270,7 @@ export type WithMateWindowPromptTemplateApi = {
 };
 
 export type WithMateWindowPickerApi = {
+  validateWorkspaceDirectory(targetPath: string): Promise<WorkspaceDirectoryValidationResult>;
   pickDirectory(initialPath?: string | null): Promise<string | null>;
   pickFile(initialPath?: string | null): Promise<string | null>;
   pickFiles(initialPath?: string | null): Promise<string[]>;

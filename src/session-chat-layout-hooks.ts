@@ -31,6 +31,7 @@ const SESSION_ACTION_DOCK_MAX_HEIGHT_RATIO = 0.4;
 const SESSION_CENTRAL_SURFACE_MIN_HEIGHT = 280;
 const SESSION_VERTICAL_SPLITTER_TOTAL_HEIGHT = 40;
 const SESSION_MESSAGE_BOTTOM_EPSILON = 1;
+const SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS = 180;
 
 function scrollMessageListElementToBottom(messageListElement: HTMLDivElement): void {
   const bottomAnchor = messageListElement.querySelector<HTMLElement>(".message-list-bottom-anchor");
@@ -420,21 +421,111 @@ export type UseSessionMessageListFollowingArgs = {
   ownerKey: string | null;
   scrollSignature: string;
   enabled?: boolean;
-  bottomThreshold?: number;
+  bottomTolerance?: number;
 };
 
 export function useSessionMessageListFollowing({
   ownerKey,
   scrollSignature,
   enabled = true,
-  bottomThreshold = 80,
+  bottomTolerance = SESSION_MESSAGE_BOTTOM_EPSILON,
 }: UseSessionMessageListFollowingArgs) {
   const messageListRef = useRef<HTMLDivElement | null>(null);
   const messageListSignatureRef = useRef("");
   const messageListOwnerKeyRef = useRef<string | null>(null);
   const messageListEnabledRef = useRef(enabled);
-  const previousMessageListScrollTopRef = useRef<number | null>(null);
+  const isMessageListFollowingRef = useRef(true);
+  const canResumeMessageListFollowingRef = useRef(false);
+  const messageListScrollIntentTimerRef = useRef<number | null>(null);
+  const messageListPointerIdRef = useRef<number | null>(null);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
+
+  useLayoutEffect(() => {
+    const messageListElement = messageListRef.current;
+    const ownerWindow = messageListElement?.ownerDocument.defaultView;
+    if (!enabled || !messageListElement || !ownerWindow) {
+      return;
+    }
+
+    const clearScrollIntentTimer = () => {
+      if (messageListScrollIntentTimerRef.current !== null) {
+        ownerWindow.clearTimeout(messageListScrollIntentTimerRef.current);
+        messageListScrollIntentTimerRef.current = null;
+      }
+    };
+    const keepResumeIntentUntilScrollSettles = () => {
+      canResumeMessageListFollowingRef.current = true;
+      clearScrollIntentTimer();
+      messageListScrollIntentTimerRef.current = ownerWindow.setTimeout(() => {
+        canResumeMessageListFollowingRef.current = false;
+        messageListScrollIntentTimerRef.current = null;
+      }, SESSION_MESSAGE_SCROLL_INTENT_SETTLE_MS);
+    };
+    const handleWheel = (event: WheelEvent) => {
+      if (event.deltaY < 0) {
+        canResumeMessageListFollowingRef.current = false;
+        isMessageListFollowingRef.current = false;
+        setIsMessageListFollowing(false);
+        return;
+      }
+      if (event.deltaY > 0) {
+        keepResumeIntentUntilScrollSettles();
+      }
+    };
+    const handlePointerDown = (event: PointerEvent) => {
+      messageListPointerIdRef.current = event.pointerId;
+      canResumeMessageListFollowingRef.current = true;
+    };
+    const handlePointerEnd = (event: PointerEvent) => {
+      if (messageListPointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      messageListPointerIdRef.current = null;
+      keepResumeIntentUntilScrollSettles();
+    };
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (messageListPointerIdRef.current !== event.pointerId) {
+        return;
+      }
+      messageListPointerIdRef.current = null;
+      canResumeMessageListFollowingRef.current = false;
+      clearScrollIntentTimer();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (
+        target instanceof ownerWindow.HTMLElement
+        && target.closest("input, textarea, select, [contenteditable]:not([contenteditable=\"false\"])")
+      ) {
+        return;
+      }
+      if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+        canResumeMessageListFollowingRef.current = false;
+        isMessageListFollowingRef.current = false;
+        setIsMessageListFollowing(false);
+        return;
+      }
+      if (["ArrowDown", "PageDown", "End"].includes(event.key) || event.key === " ") {
+        keepResumeIntentUntilScrollSettles();
+      }
+    };
+
+    messageListElement.addEventListener("wheel", handleWheel, { passive: true });
+    messageListElement.addEventListener("pointerdown", handlePointerDown, { passive: true });
+    ownerWindow.addEventListener("pointerup", handlePointerEnd, { passive: true });
+    ownerWindow.addEventListener("pointercancel", handlePointerCancel, { passive: true });
+    messageListElement.addEventListener("keydown", handleKeyDown);
+    return () => {
+      messageListElement.removeEventListener("wheel", handleWheel);
+      messageListElement.removeEventListener("pointerdown", handlePointerDown);
+      ownerWindow.removeEventListener("pointerup", handlePointerEnd);
+      ownerWindow.removeEventListener("pointercancel", handlePointerCancel);
+      messageListElement.removeEventListener("keydown", handleKeyDown);
+      clearScrollIntentTimer();
+      canResumeMessageListFollowingRef.current = false;
+      messageListPointerIdRef.current = null;
+    };
+  }, [enabled, ownerKey]);
 
   const scrollMessageListToBottom = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -443,11 +534,24 @@ export function useSessionMessageListFollowing({
     }
 
     scrollMessageListElementToBottom(messageListElement);
-    previousMessageListScrollTopRef.current = Math.max(
-      0,
-      messageListElement.scrollHeight - messageListElement.clientHeight,
-    );
   }, []);
+
+  const followMessageListLatest = useCallback(() => {
+    canResumeMessageListFollowingRef.current = false;
+    isMessageListFollowingRef.current = true;
+    setIsMessageListFollowing(true);
+    scrollMessageListToBottom();
+
+    const ownerWindow = messageListRef.current?.ownerDocument.defaultView;
+    if (!ownerWindow) {
+      return;
+    }
+    ownerWindow.requestAnimationFrame(() => {
+      if (isMessageListFollowingRef.current) {
+        scrollMessageListToBottom();
+      }
+    });
+  }, [scrollMessageListToBottom]);
 
   useLayoutEffect(() => {
     const currentSignature = scrollSignature;
@@ -459,7 +563,6 @@ export function useSessionMessageListFollowing({
     if (!enabled) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
-      previousMessageListScrollTopRef.current = null;
       return;
     }
 
@@ -467,23 +570,20 @@ export function useSessionMessageListFollowing({
     if (!messageListElement) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
-      previousMessageListScrollTopRef.current = null;
       return;
     }
 
     if (!wasEnabled) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
-      previousMessageListScrollTopRef.current = messageListElement.scrollTop;
-      setIsMessageListFollowing(true);
+      followMessageListLatest();
       return;
     }
 
     if (!wasSameOwner) {
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
-      setIsMessageListFollowing(true);
-      scrollMessageListToBottom();
+      followMessageListLatest();
       return;
     }
 
@@ -493,10 +593,30 @@ export function useSessionMessageListFollowing({
 
     messageListSignatureRef.current = currentSignature;
 
-    if (isMessageListFollowing) {
+    if (isMessageListFollowingRef.current) {
       scrollMessageListToBottom();
     }
-  }, [enabled, isMessageListFollowing, ownerKey, scrollMessageListToBottom, scrollSignature]);
+  }, [enabled, followMessageListLatest, ownerKey, scrollMessageListToBottom, scrollSignature]);
+
+  useLayoutEffect(() => {
+    const messageListElement = messageListRef.current;
+    const ownerWindow = messageListElement?.ownerDocument.defaultView;
+    if (!enabled || !messageListElement || !ownerWindow?.ResizeObserver) {
+      return;
+    }
+
+    const observer = new ownerWindow.ResizeObserver(() => {
+      if (isMessageListFollowingRef.current) {
+        scrollMessageListToBottom();
+      }
+    });
+    observer.observe(messageListElement);
+    const messageListContent = messageListElement.querySelector<HTMLElement>(".session-message-list-window");
+    if (messageListContent) {
+      observer.observe(messageListContent);
+    }
+    return () => observer.disconnect();
+  }, [enabled, ownerKey, scrollMessageListToBottom, scrollSignature]);
 
   const handleMessageListScroll = useCallback(() => {
     const messageListElement = messageListRef.current;
@@ -506,27 +626,23 @@ export function useSessionMessageListFollowing({
 
     const currentScrollTop = messageListElement.scrollTop;
     const maxScrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
-    const previousScrollTop = previousMessageListScrollTopRef.current ?? maxScrollTop;
-    previousMessageListScrollTopRef.current = currentScrollTop;
     const bottomGap = Math.max(0, maxScrollTop - currentScrollTop);
-    const isScrollingUp = currentScrollTop < previousScrollTop;
-    const isAtBottom = bottomGap <= SESSION_MESSAGE_BOTTOM_EPSILON;
-    const nextFollowing = isAtBottom || (!isScrollingUp && bottomGap <= bottomThreshold);
+    const isAtBottom = bottomGap <= bottomTolerance;
+    const nextFollowing = isAtBottom
+      ? isMessageListFollowingRef.current || canResumeMessageListFollowingRef.current
+      : false;
+    isMessageListFollowingRef.current = nextFollowing;
+    setIsMessageListFollowing((current) => current === nextFollowing ? current : nextFollowing);
+  }, [bottomTolerance]);
 
-    setIsMessageListFollowing((current) => (current === nextFollowing ? current : nextFollowing));
-  }, [bottomThreshold]);
-
-  const handleJumpToMessageListBottom = useCallback(() => {
-    setIsMessageListFollowing(true);
-    scrollMessageListToBottom();
-    window.requestAnimationFrame(scrollMessageListToBottom);
-  }, [scrollMessageListToBottom]);
+  const handleJumpToMessageListBottom = followMessageListLatest;
 
   return {
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
     handleJumpToMessageListBottom,
+    followMessageListLatest,
   };
 }
 

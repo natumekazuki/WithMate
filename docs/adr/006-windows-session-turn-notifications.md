@@ -24,7 +24,7 @@ Session のターン完了まで時間がかかる場合、ユーザーは WithM
 - Session ID から安定した Windows notification ID を生成する。同一 Session の未処理通知がある場合は閉じ、プロセス再起動をまたぐ場合も Windows の Tag と Group によって新しい完了通知へ置き換える。
 - Windows の system timeout 後も元の notification instance を Session 単位で保持する。同じ Session の新しい通知へ置き換える場合、または Session の単体削除、cutoff 一括削除、Sessions を含む DB 初期化が成功した場合は、その instance の `close()` を呼び、Action Center からの撤去を試みる。削除されなかった Session と、実行中のため一括削除から除外された Session の通知は閉じない。
 - 通知の撤去失敗は記録するが、完了済みの Session 削除を失敗へ変更しない。削除結果を巻き戻せず、通知の再試行にも利用できる追加 API がないため、一括削除では削除済みの全 Session について通知撤去を先に試み、その後に workspace の cleanup へ進む。
-- Electron の通知 instance が click を受け取れる間は、クリック時点で対象 Session が存在すれば Session Window を開き、削除済みまたは読み込み・表示に失敗した場合は Home Window を開く。
+- Electron の通知 instance が click を受け取れる間は、Session ごとに現在追跡中の最新 instance の最初の click だけを受け付ける。同じ click の多重発火、置き換え・撤去済み instance の遅延 click は無視する。`timedOut` で閉じた instance だけは Action Center からの click に備えて保持し、その他の close reason と reason が通知されない close では追跡を終了する。受け付けたクリック時点で対象 Session が存在すれば Session Window を開き、削除済みまたは読み込み・表示に失敗した場合は Home Window を開く。
 - WithMate のプロセス終了後、または通知 instance が破棄された後に Action Center から通知をクリックした場合、Windows によるアプリ起動は許容するが、対象 Session への復帰は保証しない。
 - 通知可否の判定、icon 読み込み、通知生成、表示、click 処理の失敗は記録するが、ターン結果を失敗へ変更せず、通知の再試行もしない。
 

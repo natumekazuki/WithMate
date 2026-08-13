@@ -189,6 +189,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:pick-files",
     args: ["C:/seed"],
   });
+  assert.deepEqual(await api.validateWorkspaceDirectory("C:/workspace"), {
+    channel: "withmate:validate-workspace-directory",
+    args: ["C:/workspace"],
+  });
   assert.deepEqual(await api.pickSessionFiles("session-1"), {
     channel: "withmate:pick-session-files",
     args: ["session-1"],
@@ -419,6 +423,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openSettingsWindow",
     "openMemoryV6ReviewWindow",
     "openTerminalAtPath",
+    "validateWorkspaceDirectory",
     "pickDirectory",
     "pickFile",
     "pickFiles",

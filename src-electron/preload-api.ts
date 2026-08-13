@@ -121,6 +121,7 @@ import {
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_FILES_CHANNEL,
   WITHMATE_PICK_SESSION_FILES_CHANNEL,
@@ -668,6 +669,9 @@ function createMemoryV6ReviewApi(ipcRenderer: IpcRendererLike): Pick<
 
 function createPickerApi(ipcRenderer: IpcRendererLike): WithMateWindowPickerApi {
   return {
+    validateWorkspaceDirectory(targetPath) {
+      return ipcRenderer.invoke(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL, targetPath);
+    },
     pickDirectory(initialPath) {
       return ipcRenderer.invoke(WITHMATE_PICK_DIRECTORY_CHANNEL, initialPath ?? null);
     },

@@ -125,6 +125,67 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(broadcasts, [[session.id]]);
   });
 
+  it("pin変更の後にstaleなrunning・retry・terminal保存が続いても最新のpinを維持する", async () => {
+    const runningSession = createSession({
+      id: "pin-during-run",
+      status: "running",
+      runState: "running",
+      isPinned: false,
+    });
+    let cachedSessions = [runningSession];
+    let storedSession = runningSession;
+    const service = new SessionPersistenceService({
+      getSessions: () => cachedSessions,
+      setSessions: (next) => { cachedSessions = next; },
+      getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+      isSessionRunInFlight: () => true,
+      upsertStoredSession: (next) => {
+        storedSession = next;
+        return next;
+      },
+      replaceStoredSessions: () => undefined,
+      setStoredSessionPinned: (sessionId, isPinned) => {
+        storedSession = { ...storedSession, isPinned };
+        return { ...projectSessionSummary(storedSession), id: sessionId, isPinned };
+      },
+      listStoredSessions: () => [storedSession],
+      getAppSettings: () => normalizeAppSettings({}),
+      getModelCatalogSnapshot: createSnapshot,
+      syncSessionDependencies: () => undefined,
+      clearSessionContextTelemetry: () => undefined,
+      clearSessionBackgroundActivities: () => undefined,
+      invalidateProviderSessionThread: () => undefined,
+      closeSessionWindow: () => undefined,
+      broadcastSessions: () => undefined,
+    });
+    const staleCompletedSession = createSession({
+      ...runningSession,
+      status: "idle",
+      runState: "idle",
+      isPinned: false,
+      messages: [...runningSession.messages, { role: "assistant", text: "done" }],
+    });
+
+    const pinWrite = service.setSessionPinned(runningSession.id, true);
+    const staleRunningWrite = service.upsertSessionPreservingPin({
+      ...runningSession,
+      threadId: "thread-stale",
+      isPinned: false,
+    });
+    const staleRetryWrite = service.upsertSessionPreservingPin({
+      ...runningSession,
+      threadId: "",
+      isPinned: false,
+    });
+    const terminalWrite = service.upsertTerminalSession(staleCompletedSession);
+    await Promise.all([pinWrite, staleRunningWrite, staleRetryWrite, terminalWrite]);
+
+    assert.equal(storedSession.isPinned, true);
+    assert.equal(storedSession.runState, "idle");
+    assert.equal(storedSession.messages.at(-1)?.text, "done");
+    assert.equal(cachedSessions[0]?.isPinned, true);
+  });
+
   it("createSession は有効な provider と model を解決して保存する", async () => {
     const storedSessions: Session[] = [];
     const syncedSessionIds: string[] = [];

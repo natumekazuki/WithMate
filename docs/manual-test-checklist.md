@@ -189,3 +189,5 @@ npm run electron:start
 | MT-066 | Copilot selected agent visibility | provider を `GitHub Copilot` にした session で custom agent を選択し、composer の `Agent` ボタンを見る | `Agent` ボタン自体が現在値を表示し、`Default Agent` と custom agent 名を見分けられる |
 | MT-067 | Window error recovery | Home / Character Editor / Session / Diff のいずれかで renderer render error を再現する | window-level fallback が出て、`再試行` で再描画を試せる。復帰しない場合も `再読み込み` が使える |
 | MT-067A | Right pane error recovery | `Session Window` の right pane だけで render error を再現する | pane 専用 fallback が出て、`右ペインを再描画` と `Window を再読み込み` の両方が表示される |
+| MT-068 | Windows notification Session activation | Windows で通常の完了通知と返答 preview 通知をそれぞれ発生させる。WithMate 以外を前面にした状態で、対象 Session Window が通常表示、最小化、非表示、未作成の各状態から live toast または Action Center の通知をクリックする | 既存 Window は同じ位置のまま可視化され、最小化時は復元されて前面へ focus する。未作成なら対象 Session の Window が1つだけ新規表示される。別 Session WindowやHomeが開かず、同じ通知を再度activateしても追加のWindowは開かない |
+| MT-068A | Windows notification stale / fallback | 同じ Session の通知を連続して発生させ、置き換え前の通知が操作可能なら古い通知と最新通知を順にクリックする。続けて通知後に対象 Session を削除する場合と、開く処理を失敗させる開発用条件を確認する | 古い通知や同じ通知の多重activationはSessionを再openせず、最新通知の最初のactivationだけが対象を開く。削除済みまたはopen失敗ではHomeが表示・focusされ、失敗が記録される |

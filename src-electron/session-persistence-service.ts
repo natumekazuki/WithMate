@@ -299,6 +299,22 @@ export class SessionPersistenceService {
     return this.enqueueSessionMutation(() => this.upsertSessionNow(nextSession, operation));
   }
 
+  async upsertTerminalSession(nextSession: Session): Promise<Session> {
+    return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession));
+  }
+
+  async upsertSessionPreservingPin(nextSession: Session): Promise<Session> {
+    return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession));
+  }
+
+  private upsertSessionPreservingPinNow(nextSession: Session): Promise<Session> {
+    const currentSession = this.deps.getSession(nextSession.id);
+    return this.upsertSessionNow({
+      ...nextSession,
+      isPinned: currentSession?.isPinned ?? nextSession.isPinned,
+    }, "upsert");
+  }
+
   private async upsertSessionNow(
     nextSession: Session,
     operation: "create" | "upsert",

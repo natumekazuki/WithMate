@@ -51,6 +51,14 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().upsertSession(session);
   }
 
+  async upsertTerminalSession(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertTerminalSession(session);
+  }
+
+  async upsertSessionPreservingPin(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertSessionPreservingPin(session);
+  }
+
   async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {
     return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
   }

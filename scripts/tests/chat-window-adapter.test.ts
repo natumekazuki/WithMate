@@ -604,9 +604,7 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     canCollapseActionDock: false,
     showJumpToBottom: false,
     isCustomAgentListLoading: false,
-    isSkillListLoading: false,
     customAgentItems: [],
-    skillItems: [],
     attachmentItems: [],
     additionalDirectoryItems: [],
     draft: "",
@@ -640,7 +638,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     onCollapse: () => {},
     onJumpToBottom: () => {},
     onSelectCustomAgent: () => {},
-    onSelectSkill: () => {},
     onRemoveAttachment: () => {},
     onRemoveAdditionalDirectory: () => {},
     onDraftChange: () => {},
@@ -703,9 +700,7 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     canCollapseActionDock: true,
     isMessageListFollowing: false,
     isCustomAgentListLoading: false,
-    isSkillListLoading: false,
     customAgentItems: [],
-    skillItems: [],
     attachmentItems: [],
     additionalDirectoryItems: [],
     draft: "draft",
@@ -741,7 +736,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     onExpandActionDock,
     onJumpToBottom,
     onSelectCustomAgent: () => {},
-    onSelectSkill: () => {},
     onRemoveAttachment: () => {},
     onRemoveAdditionalDirectory: () => {},
     onDraftChange: () => {},
@@ -957,9 +951,7 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       canCollapseActionDock: true,
       showJumpToBottom: true,
       isCustomAgentListLoading: false,
-      isSkillListLoading: false,
       customAgentItems: [],
-      skillItems: [],
       attachmentItems: [],
       additionalDirectoryItems: [],
       draft: "draft",
@@ -993,7 +985,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onCollapse: () => {},
       onJumpToBottom: () => {},
       onSelectCustomAgent: () => {},
-      onSelectSkill: () => {},
       onRemoveAttachment: () => {},
       onRemoveAdditionalDirectory: () => {},
       onDraftChange: () => {},
@@ -1146,7 +1137,6 @@ test("createHiddenControlsChatComposerProps は composer の非対応操作を�
   assert.equal(composerProps.showExecutionModeControls, false);
   assert.equal(composerProps.canSelectCustomAgent, false);
   assert.deepEqual(composerProps.customAgentItems, []);
-  assert.deepEqual(composerProps.skillItems, []);
   assert.deepEqual(composerProps.attachmentItems, []);
   assert.deepEqual(composerProps.additionalDirectoryItems, []);
   assert.equal(composerProps.selectedCustomAgentLabel, "Agent");

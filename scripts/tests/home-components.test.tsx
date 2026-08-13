@@ -6,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { HomeLaunchDialog } from "../../src/home/HomeLaunchDialog.js";
+import type { HomeLaunchWorkspaceValidationState } from "../../src/home/home-launch-state.js";
 import { filterCharactersByName } from "../../src/home/HomeCharactersPanel.js";
 import { HomeMonitorContent } from "../../src/home/HomeMonitorContent.js";
 import { HomeRecentSessionsPanel } from "../../src/home/HomeRecentSessionsPanel.js";
@@ -553,13 +554,16 @@ describe("HomeLaunchDialog", () => {
     options = characterOptions,
     charactersLoaded = true,
     randomCharacterSelected = false,
+    workspaceValidation: HomeLaunchWorkspaceValidationState = "idle",
   ) => renderToStaticMarkup(
     <HomeLaunchDialog
       open={true}
       title="demo"
-      workspaceSelected={false}
       sessionFolderSelected={false}
       launchWorkspacePathLabel="workspace"
+      workspacePathInput="C:\\work space\\"
+      workspaceValidation={workspaceValidation}
+      workspaceValidationMessage={workspaceValidation === "invalid" ? "Path not found." : ""}
       enabledLaunchProviders={[{ id: "codex", label: "Codex" }]}
       selectedLaunchProviderId="codex"
       characterOptions={options}
@@ -571,6 +575,7 @@ describe("HomeLaunchDialog", () => {
       launchStarting={false}
       onClose={noOp}
       onChangeTitle={noOp}
+      onChangeWorkspacePath={noOp}
       onBrowseWorkspace={noOp}
       onSelectSessionFolder={noOp}
       onSelectProvider={noOp}
@@ -593,6 +598,8 @@ describe("HomeLaunchDialog", () => {
   it("ダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog();
 
+    assert.ok(html.includes("launch-dialog panel home-launch-dialog"));
+    assert.ok(html.includes("launch-section minimal home-launch-character-section"));
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
     assert.ok(!html.includes(">Default</span>"));
@@ -601,6 +608,32 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
     assert.ok(html.includes("最近使っていないCharacterを優先"));
     assert.ok(html.indexOf("Browse") < html.indexOf("SessionFolder"));
+  });
+
+  it("Workspace input と invalid 理由を field 近傍へ表示する", () => {
+    const idle = renderHomeLaunchDialog();
+    const html = renderHomeLaunchDialog(characterOptions, true, false, "invalid");
+
+    assert.match(idle, /<span id="launch-workspace-path-error"[^>]*><\/span>/);
+    assert.ok(html.includes("launch-workspace-path"));
+    assert.ok(html.includes('value="C:'));
+    assert.ok(html.includes("work space"));
+    assert.ok(html.includes('aria-invalid="true"'));
+    assert.ok(html.includes("Path not found."));
+  });
+
+  it("Workspace validation は debounce 開始から filesystem 確認完了まで spinner を表示する", () => {
+    const debouncing = renderHomeLaunchDialog(characterOptions, true, false, "debouncing");
+    const pending = renderHomeLaunchDialog(characterOptions, true, false, "pending");
+
+    assert.ok(debouncing.includes("workspace-validation-spinner"));
+    assert.ok(debouncing.includes('aria-busy="true"'));
+    assert.ok(debouncing.includes("Workspace パスを確認しています"));
+    assert.ok(!debouncing.includes("確認中"));
+    assert.ok(pending.includes("workspace-validation-spinner"));
+    assert.ok(pending.includes('aria-busy="true"'));
+    assert.ok(pending.includes("Workspace パスを確認しています"));
+    assert.ok(!pending.includes(">確認中<"));
   });
 
   it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {

@@ -142,6 +142,7 @@ import { SessionApprovalService } from "./session-approval-service.js";
 import { SessionElicitationService } from "./session-elicitation-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
+import { WorkspaceDirectoryValidationService } from "./workspace-directory-validation-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
@@ -361,6 +362,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
@@ -791,6 +793,23 @@ function attachWindowLogHandlers(window: BrowserWindow): void {
       },
     });
   });
+  window.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+    writeAppLog({
+      level: "info",
+      kind: "renderer.navigation-started",
+      process: "main",
+      message: "Renderer main-frame navigation started",
+      windowId: window.id,
+      data: {
+        url,
+        isInPlace,
+        windowTitle: readWindowTitle(window),
+      },
+    });
+  });
 }
 
 function readWindowTitle(window: BrowserWindow): string {
@@ -809,16 +828,23 @@ function readWindowUrl(window: BrowserWindow): string {
   }
 }
 
-function writeIpcErrorLog(input: { channel: string; durationMs: number; error: unknown }): void {
+function writeIpcErrorLog(input: {
+  channel: string;
+  durationMs: number;
+  error: unknown;
+  clientRequestId?: string;
+}): void {
   writeAppLog({
     level: "error",
     kind: "ipc.error",
     process: "main",
     message: `IPC failed: ${input.channel}`,
+    requestId: input.clientRequestId,
     data: {
       channel: input.channel,
       durationMs: input.durationMs,
       success: false,
+      clientRequestId: input.clientRequestId,
     },
     error: appLogService.errorToLogError(input.error),
   });
@@ -1339,6 +1365,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openCompanionMergeWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
+                validateWorkspaceDirectory: (targetPath) =>
+                  workspaceDirectoryValidationService.validate(targetPath),
                 pickFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickFile(targetWindow, initialPath),
                 pickFiles: (targetWindow, initialPath) =>
@@ -2266,7 +2294,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
-      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
+      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+      upsertTerminalSession: (session) => requireMainSessionPersistenceFacade().upsertTerminalSession(session),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),

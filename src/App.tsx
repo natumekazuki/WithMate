@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type SetStateAction,
+} from "react";
 
 import {
   type ComposerPreview,
@@ -82,6 +91,7 @@ import {
   useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
 import {
@@ -164,13 +174,24 @@ import {
 } from "./file-explorer/preview-chat-activity.js";
 import {
   applyOptimisticSessionRunUpdate,
-  applyResolvedSessionRunUpdate,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
-  rollbackOptimisticSessionRunUpdate,
   resolveSessionRunErrorMessage,
   type OwnedLiveSessionRunState,
 } from "./session-live-run-state.js";
+import {
+  LatestRequestRevision,
+  SessionSubmitCoordinator,
+  StateMutationRevision,
+  convergeRejectedLiveRunState,
+  convergeRejectedSessionSnapshot,
+  convergeResolvedSessionProjection,
+  createSessionTurnClientRequestId,
+  fingerprintSessionDraft,
+  mergeRefetchedSessionProjection,
+  mergeRejectedSessionDraft,
+  recoverRejectedSessionSnapshot,
+} from "./session-submit-coordinator.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
@@ -447,10 +468,21 @@ function buildLiveRunScrollSignature(liveRun: LiveSessionRunState | null): strin
 export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessionsBase] = useState<Session[]>([]);
+  const sessionMutationRevisionRef = useRef(new StateMutationRevision());
+  const sessionProjectionRevisionRef = useRef(new StateMutationRevision());
+  const setAuthoritativeSessions = useCallback((update: SetStateAction<Session[]>) => {
+    sessionMutationRevisionRef.current.advance();
+    setSessionsBase(update);
+  }, []);
+  const setSessionProjection = useCallback((update: SetStateAction<Session[]>) => {
+    sessionProjectionRevisionRef.current.advance();
+    setSessionsBase(update);
+  }, []);
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
+  const [pendingSubmitSessionId, setPendingSubmitSessionId] = useState<string | null>(null);
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -475,7 +507,12 @@ export default function AgentSessionWindowApp() {
   const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
   const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
   const [inlinePathFeedback, setInlinePathFeedback] = useState("");
-  const [liveRunState, setLiveRunState] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
+  const [liveRunState, setLiveRunStateBase] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
+  const liveRunRevisionRef = useRef(0);
+  const setLiveRunState = useCallback((update: SetStateAction<OwnedLiveSessionRunState>) => {
+    liveRunRevisionRef.current += 1;
+    setLiveRunStateBase(update);
+  }, []);
   const [liveAssistantBridge, setLiveAssistantBridge] = useState<LiveAssistantProjection | null>(null);
   const [providerQuotaTelemetryState, setProviderQuotaTelemetryState] = useState<ProviderOwnedQuotaTelemetry>({
     ownerProviderId: null,
@@ -498,6 +535,7 @@ export default function AgentSessionWindowApp() {
   const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
   const [isAdditionalDirectoryListOpen, setIsAdditionalDirectoryListOpen] = useState(false);
   const [isSkillListLoading, setIsSkillListLoading] = useState(false);
+  const [skillListError, setSkillListError] = useState<string | null>(null);
   const [isComposerImeComposing, setIsComposerImeComposing] = useState(false);
   const [isActivityMonitorFollowing, setIsActivityMonitorFollowing] = useState(true);
   const [hasActivityMonitorUnread, setHasActivityMonitorUnread] = useState(false);
@@ -555,6 +593,8 @@ export default function AgentSessionWindowApp() {
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
+  const sessionRefetchRevisionRef = useRef(new LatestRequestRevision());
+  const sessionSubmitCoordinatorRef = useRef(new SessionSubmitCoordinator());
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -567,20 +607,63 @@ export default function AgentSessionWindowApp() {
     }
 
     if (!selectedId) {
-      setSessions([]);
+      setAuthoritativeSessions([]);
       return () => {
         active = false;
       };
     }
 
     const hydrateSelectedSession = () => {
-      void withmateApi.getSession(selectedId).then((session) => {
-        if (!active) {
-          return;
-        }
-
-        setSessions(session ? [session] : []);
+      const requestRevision = sessionRefetchRevisionRef.current.start();
+      const mutationRevision = sessionMutationRevisionRef.current.capture();
+      const projectionRevision = sessionProjectionRevisionRef.current.capture();
+      withmateApi.reportRendererLog({
+        level: "info",
+        kind: "renderer.session-refetch.started",
+        message: "Session refetch started",
+        data: { sessionId: selectedId },
       });
+      void withmateApi.getSession(selectedId)
+        .then((session) => {
+          if (
+            !active
+            || !sessionRefetchRevisionRef.current.isCurrent(requestRevision)
+            || !sessionMutationRevisionRef.current.isCurrent(mutationRevision)
+          ) {
+            return;
+          }
+
+          setAuthoritativeSessions((current) => session
+            ? [mergeRefetchedSessionProjection(
+              current.find((candidate) => candidate.id === session.id) ?? null,
+              session,
+              !sessionProjectionRevisionRef.current.isCurrent(projectionRevision),
+            )]
+            : []);
+          withmateApi.reportRendererLog({
+            level: "info",
+            kind: "renderer.session-refetch.completed",
+            message: "Session refetch completed",
+            data: {
+              sessionId: selectedId,
+              found: !!session,
+              runState: session?.runState ?? null,
+              status: session?.status ?? null,
+            },
+          });
+        })
+        .catch((error) => {
+          withmateApi.reportRendererLog({
+            level: "error",
+            kind: "renderer.session-refetch.failed",
+            message: "Session refetch failed",
+            data: { sessionId: selectedId },
+            error: {
+              name: error instanceof Error ? error.name : "UnknownError",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          });
+        });
     };
 
     hydrateSelectedSession();
@@ -597,7 +680,7 @@ export default function AgentSessionWindowApp() {
       active = false;
       unsubscribe();
     };
-  }, [selectedId, withmateApi]);
+  }, [selectedId, setAuthoritativeSessions, withmateApi]);
 
   useEffect(() => {
     return startCompanionSessionSummariesSubscription({
@@ -1029,7 +1112,9 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession]);
-  const composerBlockedReason = sessionExecutionBlockedReason;
+  const composerBlockedReason = pendingSubmitSessionId === selectedSession?.id
+    ? "送信処理を開始しているよ。少し待ってね。"
+    : sessionExecutionBlockedReason;
 
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {
@@ -1077,32 +1162,50 @@ export default function AgentSessionWindowApp() {
 
   useEffect(() => {
     let active = true;
+    const skillDiscoveryRequest = resolveSkillDiscoveryRequest({
+      parentProviderId: selectedSession?.provider,
+      parentWorkspacePath: selectedSession?.workspacePath,
+      auxiliaryProviderId: activeAuxiliarySession?.provider,
+    });
 
-    if (!withmateApi || !activeRunSessionId) {
+    if (!withmateApi || !skillDiscoveryRequest) {
       setAvailableSkills([]);
       setIsSkillListLoading(false);
+      setSkillListError(null);
       return () => {
         active = false;
       };
     }
 
     setIsSkillListLoading(true);
-    void withmateApi.listSessionSkills(activeRunSessionId).then((skills) => {
+    setSkillListError(null);
+    void withmateApi.listWorkspaceSkills(
+      skillDiscoveryRequest.providerId,
+      skillDiscoveryRequest.workspacePath,
+    ).then((skills) => {
       if (active) {
         setAvailableSkills(skills);
         setIsSkillListLoading(false);
+        setSkillListError(null);
       }
     }).catch(() => {
       if (active) {
         setAvailableSkills([]);
         setIsSkillListLoading(false);
+        setSkillListError("Skill候補を読み込めませんでした。Settingsまたはworkspaceを確認してください。");
       }
     });
 
     return () => {
       active = false;
     };
-  }, [activeRunSessionId, appSettings, withmateApi]);
+  }, [
+    activeAuxiliarySession?.provider,
+    appSettings,
+    selectedSession?.provider,
+    selectedSession?.workspacePath,
+    withmateApi,
+  ]);
 
   useEffect(() => {
     setIsAgentPickerOpen(false);
@@ -1357,7 +1460,7 @@ export default function AgentSessionWindowApp() {
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
-    handleJumpToMessageListBottom,
+    followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
     scrollSignature: messageListScrollSignature,
@@ -1862,6 +1965,7 @@ export default function AgentSessionWindowApp() {
           primaryLabel: skillDisplay.primaryLabel,
           secondaryLabel: skillDisplay.secondaryLabel,
           title: skillDisplay.title,
+          searchText: `${skill.name}\n${skill.description}`,
         };
       }),
     [availableSkills],
@@ -1921,14 +2025,31 @@ export default function AgentSessionWindowApp() {
     setForceComposerBlockedFeedback(true);
   };
 
-  const sendMessage = async (messageText: string, options?: { clearDraft?: boolean; collapseActionDock?: boolean }) => {
+  const sendMessage = async (
+    messageText: string,
+    options?: { clearDraft?: boolean; collapseActionDock?: boolean; submitSource?: "composer" | "retry" },
+  ) => {
     if (!withmateApi || !selectedSession) {
       return;
     }
 
+    const sessionId = selectedSession.id;
+    const submitLease = sessionSubmitCoordinatorRef.current.tryAcquire(sessionId);
+    if (!submitLease) {
+      setForceComposerBlockedFeedback(true);
+      return;
+    }
+    setPendingSubmitSessionId(sessionId);
+
+    const clientRequestId = createSessionTurnClientRequestId();
+    const draftFingerprint = fingerprintSessionDraft(messageText);
+
     const investigationStartedAt = Date.now();
     logSessionRunStuckInvestigation("renderer.send.start", {
-      sessionId: selectedSession.id,
+      sessionId,
+      clientRequestId,
+      submitSource: options?.submitSource ?? "composer",
+      draftFingerprint,
       runState: selectedSession.runState,
       status: selectedSession.status,
       messageCount: selectedSession.messages.length,
@@ -1936,107 +2057,163 @@ export default function AgentSessionWindowApp() {
       draftChars: messageText.length,
     });
 
-    if (composerBlockedReason) {
-      setForceComposerBlockedFeedback(true);
-      return;
-    }
-
-    if (isSelectedSessionReadOnly) {
-      setForceComposerBlockedFeedback(true);
-      return;
-    }
-
-    const previewRequest = createComposerPreviewRequest({
-      api: withmateApi,
-      mode: "session",
-      sessionId: selectedSession.id,
-    });
-    if (!previewRequest) {
-      return;
-    }
-
-    const nextMessage = messageText.trim();
-    const preview = await previewRequest(messageText);
-    const displayPreview = resolveComposerPreviewDisplay(preview, appSettings.userMicrocopyCatalog);
-    logSessionRunStuckInvestigation("renderer.composer-preview.done", {
-      sessionId: selectedSession.id,
-      elapsedMs: Date.now() - investigationStartedAt,
-      attachmentCount: preview.attachments.length,
-      errorCount: preview.errors.length,
-    });
-    setComposerPreview(displayPreview);
-    const { blockedMessage } = resolveComposerSendPreflight({
-      runState: selectedSessionRunState,
-      blockedReason: composerBlockedReason,
-      inputErrors: displayPreview.errors,
-      draftText: messageText,
-    });
-    if (blockedMessage) {
-      setForceComposerBlockedFeedback(true);
-      return;
-    }
-
-    if (options?.collapseActionDock) {
-      setIsActionDockPinnedExpanded(false);
-    }
-    if (options?.clearDraft ?? true) {
-      applyComposerDraftClearCommand({
-        setDraft,
-      });
-    }
-    const updatedSession = applyOptimisticSessionRunUpdate({
-      session: selectedSession,
-      userMessage: nextMessage,
-      updatedAt: currentTimestampLabel(),
-      status: "running",
-      updateLiveRunState: (update) => setLiveRunState(update),
-      applyRunningSession: (runningSession) => setSessions([runningSession]),
-    });
-    if (isCentralPreviewActive) {
-      setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
-        current,
-        updatedSession.id,
-        updatedSession.messages.length,
-      ));
-    }
-    logSessionRunStuckInvestigation("renderer.optimistic-running-applied", {
-      sessionId: updatedSession.id,
-      elapsedMs: Date.now() - investigationStartedAt,
-      messageCount: updatedSession.messages.length,
-      runState: updatedSession.runState,
-      status: updatedSession.status,
-    });
-
     try {
-      const request: RunSessionTurnRequest = {
-        userMessage: messageText,
-      };
-      const savedSession = await withmateApi.runSessionTurn(selectedSession.id, request);
-      logSessionRunStuckInvestigation("renderer.run-session-turn.resolved", {
-        sessionId: savedSession.id,
+      if (sessionExecutionBlockedReason || isSelectedSessionReadOnly) {
+        setForceComposerBlockedFeedback(true);
+        return;
+      }
+
+      const previewRequest = createComposerPreviewRequest({
+        api: withmateApi,
+        mode: "session",
+        sessionId,
+      });
+      if (!previewRequest) {
+        return;
+      }
+
+      const nextMessage = messageText.trim();
+      const preview = await previewRequest(messageText);
+      const displayPreview = resolveComposerPreviewDisplay(preview, appSettings.userMicrocopyCatalog);
+      logSessionRunStuckInvestigation("renderer.composer-preview.done", {
+        sessionId,
+        clientRequestId,
         elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: savedSession.messages.length,
-        runState: savedSession.runState,
-        status: savedSession.status,
-        hasLiveRun: !!selectedSessionLiveRun,
+        attachmentCount: preview.attachments.length,
+        errorCount: preview.errors.length,
       });
-      applyResolvedSessionRunUpdate({
-        savedSession,
-        applySavedSession: (nextSession) => setSessions([nextSession]),
+      setComposerPreview(displayPreview);
+      const { blockedMessage } = resolveComposerSendPreflight({
+        runState: selectedSessionRunState,
+        blockedReason: sessionExecutionBlockedReason,
+        inputErrors: displayPreview.errors,
+        draftText: messageText,
       });
-    } catch (error) {
-      logSessionRunStuckInvestigation("renderer.run-session-turn.failed", {
+      if (blockedMessage) {
+        setForceComposerBlockedFeedback(true);
+        return;
+      }
+
+      if (options?.collapseActionDock) {
+        setIsActionDockPinnedExpanded(false);
+      }
+      const shouldClearDraft = options?.clearDraft ?? true;
+      if (shouldClearDraft) {
+        setDraft((current) => current === messageText ? "" : current);
+      }
+      const updatedSession = applyOptimisticSessionRunUpdate({
+        session: selectedSession,
+        userMessage: nextMessage,
+        updatedAt: currentTimestampLabel(),
+        status: "running",
+        updateLiveRunState: (update) => setLiveRunState(update),
+        applyRunningSession: (runningSession) => setAuthoritativeSessions([runningSession]),
+      });
+      const optimisticSessionMutationRevision = sessionMutationRevisionRef.current.capture();
+      const optimisticSessionProjectionRevision = sessionProjectionRevisionRef.current.capture();
+      const optimisticLiveRunRevision = liveRunRevisionRef.current;
+      if (isCentralPreviewActive) {
+        setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
+          current,
+          updatedSession.id,
+          updatedSession.messages.length,
+        ));
+      }
+      logSessionRunStuckInvestigation("renderer.optimistic-running-applied", {
         sessionId: updatedSession.id,
+        clientRequestId,
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: updatedSession.messages.length,
-        errorMessage: error instanceof Error ? error.message : String(error),
+        runState: updatedSession.runState,
+        status: updatedSession.status,
       });
-      console.error(error);
-      rollbackOptimisticSessionRunUpdate({
-        sessionId: updatedSession.id,
-        updateLiveRunState: (update) => setLiveRunState(update),
-        restoreSession: () => setSessions([selectedSession]),
-      });
+
+      const request: RunSessionTurnRequest = {
+        userMessage: messageText,
+        clientRequestId,
+        submitSource: options?.submitSource ?? "composer",
+      };
+      try {
+        const savedSession = await withmateApi.runSessionTurn(sessionId, request);
+        logSessionRunStuckInvestigation("renderer.run-session-turn.resolved", {
+          sessionId: savedSession.id,
+          clientRequestId,
+          elapsedMs: Date.now() - investigationStartedAt,
+          messageCount: savedSession.messages.length,
+          runState: savedSession.runState,
+          status: savedSession.status,
+          hasLiveRun: !!selectedSessionLiveRun,
+        });
+        const preserveCurrentPin = !sessionProjectionRevisionRef.current.isCurrent(
+          optimisticSessionProjectionRevision,
+        );
+        setAuthoritativeSessions((current) => [convergeResolvedSessionProjection(
+          current.find((session) => session.id === savedSession.id) ?? null,
+          savedSession,
+          preserveCurrentPin,
+        )]);
+      } catch (error) {
+        logSessionRunStuckInvestigation("renderer.run-session-turn.failed", {
+          sessionId: updatedSession.id,
+          clientRequestId,
+          elapsedMs: Date.now() - investigationStartedAt,
+          messageCount: updatedSession.messages.length,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        console.error(error);
+        if (shouldClearDraft) {
+          setDraft((current) => mergeRejectedSessionDraft(messageText, current));
+        }
+
+        const [refreshedSessionResult, refreshedLiveRunResult] = await Promise.allSettled([
+          withmateApi.getSession(sessionId),
+          withmateApi.getLiveSessionRun(sessionId),
+        ]);
+        const canReplaceOptimisticBody = sessionMutationRevisionRef.current.isCurrent(
+          optimisticSessionMutationRevision,
+        );
+        const preserveCurrentPin = !sessionProjectionRevisionRef.current.isCurrent(
+          optimisticSessionProjectionRevision,
+        );
+        if (refreshedSessionResult.status === "fulfilled" && canReplaceOptimisticBody) {
+          setAuthoritativeSessions((current) => {
+            const currentSession = current.find((session) => session.id === sessionId) ?? null;
+            const converged = convergeRejectedSessionSnapshot(
+              currentSession,
+              updatedSession,
+              refreshedSessionResult.value,
+              true,
+              preserveCurrentPin,
+            );
+            return converged ? [converged] : [];
+          });
+        } else if (
+          canReplaceOptimisticBody
+          && (
+            refreshedLiveRunResult.status === "rejected"
+            || refreshedLiveRunResult.value === null
+          )
+        ) {
+          setAuthoritativeSessions((current) => {
+            const currentSession = current.find((session) => session.id === sessionId) ?? null;
+            const recovered = recoverRejectedSessionSnapshot(currentSession, updatedSession, true);
+            return recovered ? [recovered] : current;
+          });
+        }
+        if (liveRunRevisionRef.current === optimisticLiveRunRevision) {
+          setLiveRunState((current) => convergeRejectedLiveRunState(
+            current,
+            sessionId,
+            refreshedLiveRunResult.status === "fulfilled" ? refreshedLiveRunResult.value : null,
+            optimisticLiveRunRevision,
+            optimisticLiveRunRevision,
+          ));
+        }
+        throw error;
+      }
+    } finally {
+      submitLease.release();
+      setPendingSubmitSessionId((current) => current === sessionId ? null : current);
     }
   };
 
@@ -2067,6 +2244,7 @@ export default function AgentSessionWindowApp() {
       await sendMessage(draft, {
         clearDraft: true,
         collapseActionDock: appSettings.autoCollapseActionDockOnSend,
+        submitSource: "composer",
       });
     } catch (error) {
       window.alert(resolveSessionRunErrorMessage(error, "送信に失敗したよ。"));
@@ -2219,7 +2397,7 @@ export default function AgentSessionWindowApp() {
     }
 
     const savedSession = await withmateApi.updateSession(nextSession);
-    setSessions([savedSession]);
+    setAuthoritativeSessions([savedSession]);
     return savedSession;
   };
 
@@ -2233,7 +2411,7 @@ export default function AgentSessionWindowApp() {
         sessionId: selectedSession.id,
         isPinned: selectedSession.isPinned !== true,
       });
-      setSessions((current) => current.map((session) => (
+      setSessionProjection((current) => current.map((session) => (
         session.id === saved.id ? { ...session, isPinned: saved.isPinned } : session
       )));
     } catch (error) {
@@ -2484,7 +2662,7 @@ export default function AgentSessionWindowApp() {
     await runRetryResendCommand({
       isDisabled: !!composerBlockedReason || isSelectedSessionReadOnly,
       messageText: lastUserMessage?.text,
-      resendMessage: (messageText) => sendMessage(messageText, { clearDraft: false }),
+      resendMessage: (messageText) => sendMessage(messageText, { clearDraft: false, submitSource: "retry" }),
     });
   };
 
@@ -3477,6 +3655,7 @@ export default function AgentSessionWindowApp() {
         canCollapseActionDock,
         isCustomAgentListLoading,
         isSkillListLoading,
+        skillListError,
         customAgentItems,
         skillItems,
         composerAttachmentItems,
@@ -3584,7 +3763,7 @@ export default function AgentSessionWindowApp() {
         onOpenPromptTemplates: handleOpenPromptTemplates,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onJumpToMessageListBottom: handleJumpToMessageListBottom,
+        onJumpToMessageListBottom: followMessageListLatest,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
           if (activeAuxiliarySession) {

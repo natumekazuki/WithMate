@@ -1,4 +1,5 @@
-import { Component, Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { Component, Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
 import type {
@@ -47,6 +48,7 @@ import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
+import { resolveSelectionActionOverlayPosition } from "./chat/selection-action-overlay.js";
 import {
   isMessageRenderedSearchTextNode,
   projectMessageRenderedSearchText,
@@ -498,9 +500,8 @@ const SESSION_MESSAGE_SCROLL_END_THRESHOLD = 80;
 export function shouldAdjustSessionMessageScrollPosition(input: {
   itemStart: number;
   scrollOffset: number;
-  scrollDirection: "forward" | "backward" | null;
 }): boolean {
-  return input.scrollDirection !== "backward" && input.itemStart < input.scrollOffset;
+  return input.itemStart < input.scrollOffset;
 }
 
 type MessageArtifactFoldSection = "files" | "operation";
@@ -846,6 +847,7 @@ export type SessionChatScreenProps = {
   isHeaderVisible: boolean;
   messageColumn: ReactNode;
   mainContent?: ReactNode;
+  workSurfaceOverlay?: ReactNode;
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
@@ -865,6 +867,22 @@ export type SessionChatScreenProps = {
   modals?: ReactNode;
 };
 
+const SelectionActionOverlayContext = createContext<HTMLDivElement | null>(null);
+
+function SelectionActionOverlayBoundary({ children }: { children: ReactNode }) {
+  const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
+
+  return (
+    <SelectionActionOverlayContext.Provider value={overlayElement}>
+      {children}
+      <div
+        ref={setOverlayElement}
+        className="session-selection-action-overlay"
+      />
+    </SelectionActionOverlayContext.Provider>
+  );
+}
+
 export function SessionChatScreen({
   mode,
   className = "",
@@ -874,6 +892,7 @@ export function SessionChatScreen({
   isHeaderVisible,
   messageColumn,
   mainContent,
+  workSurfaceOverlay = null,
   recoveryActions = null,
   actionDock,
   actionDockSplitter,
@@ -915,6 +934,7 @@ export function SessionChatScreen({
       style={layoutStyle}
       data-session-mode={mode}
     >
+      <SelectionActionOverlayBoundary>
       <div
         id={SESSION_HEADER_DOCK_ID}
         ref={headerDockRef}
@@ -943,6 +963,7 @@ export function SessionChatScreen({
         <div className="session-central-surface" hidden={mainContent === undefined}>
           {mainContent}
         </div>
+        {workSurfaceOverlay}
         {recoveryActions ? (
           <div className="session-recovery-actions-slot">
             {recoveryActions}
@@ -970,6 +991,7 @@ export function SessionChatScreen({
       </div>
 
       {modals}
+      </SelectionActionOverlayBoundary>
     </div>
   );
 }
@@ -1655,6 +1677,13 @@ export class SessionPaneErrorBoundary extends Component<
   };
 
   private handleReload = () => {
+    getWithMateApi()?.reportRendererLog({
+      level: "warn",
+      kind: "renderer.reload-requested",
+      message: "Session pane reload requested from error boundary",
+      url: window.location.href,
+      data: { boundary: "session-pane" },
+    });
     window.location.reload();
   };
 
@@ -2503,6 +2532,7 @@ export function SessionMessageColumn({
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
+  const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
   const [loadedArtifactDetails, setLoadedArtifactDetails] = useState<Record<string, MessageArtifact>>({});
   const [loadingArtifactDetails, setLoadingArtifactDetails] = useState<Record<string, boolean>>({});
@@ -2511,7 +2541,6 @@ export function SessionMessageColumn({
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
-  const wasContentActiveRef = useRef(isContentActive);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
@@ -2524,7 +2553,7 @@ export function SessionMessageColumn({
     getItemKey: getMessageKey,
     overscan: SESSION_MESSAGE_OVERSCAN,
     anchorTo: isMessageListFollowing ? "end" : "start",
-    followOnAppend: isMessageListFollowing,
+    followOnAppend: false,
     scrollEndThreshold: SESSION_MESSAGE_SCROLL_END_THRESHOLD,
     initialRect: { width: 0, height: SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT },
     initialOffset: Math.max(
@@ -2532,13 +2561,12 @@ export function SessionMessageColumn({
       messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
     directDomUpdates: true,
-    directDomUpdatesMode: "transform",
+    directDomUpdatesMode: "position",
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
       itemStart: item.start,
       scrollOffset: instance.scrollOffset ?? 0,
-      scrollDirection: instance.scrollDirection,
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
@@ -2548,6 +2576,7 @@ export function SessionMessageColumn({
     liveElicitationRequest === null &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
+  const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
   const messageRenderedSearchTexts = useMemo(
     () => (hasFindQuery
@@ -2642,28 +2671,45 @@ export function SessionMessageColumn({
   const updateSelectionToolbar = useCallback(() => {
     const messageListElement = messageListRef.current;
     const selectionDetails = getSelectionDetailsWithinMessageList(messageListElement);
-    const boundaryRect = messageListElement?.getBoundingClientRect() ?? null;
+    const sourceRect = messageListElement?.getBoundingClientRect() ?? null;
+    const overlayRect = selectionActionOverlay?.getBoundingClientRect() ?? null;
+    const actionDockRect = document.getElementById(SESSION_ACTION_DOCK_ID)?.getBoundingClientRect() ?? null;
     const toolbarRect =
       selectionToolbarRef.current?.getBoundingClientRect() ??
       { width: 112, height: 32 };
     if (
       !selectionDetails ||
-      !boundaryRect ||
-      !rectsIntersect(selectionDetails.anchorRect, boundaryRect)
+      !sourceRect ||
+      !overlayRect ||
+      !rectsIntersect(selectionDetails.anchorRect, sourceRect)
     ) {
       setSelectionToolbar(null);
       return;
     }
 
+    const style = resolveSelectionActionOverlayPosition({
+      actionDockRect,
+      anchorRect: selectionDetails.anchorRect,
+      overlayRect,
+      sourceRect,
+      toolbarRect,
+    });
+    if (!style) {
+      setSelectionToolbar(null);
+      return;
+    }
+
     setSelectionToolbar({
-      style: clampToolbarPosition({
-        anchorRect: selectionDetails.anchorRect,
-        boundaryRect,
-        toolbarRect,
-      }),
+      style,
       text: selectionDetails.text,
     });
-  }, [messageListRef]);
+  }, [messageListRef, selectionActionOverlay]);
+
+  useLayoutEffect(() => {
+    if (selectionToolbar) {
+      updateSelectionToolbar();
+    }
+  }, [selectionToolbar?.text, updateSelectionToolbar]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
@@ -2673,14 +2719,43 @@ export function SessionMessageColumn({
     document.addEventListener("selectionchange", updateSelectionToolbar);
     window.addEventListener("resize", updateSelectionToolbar);
     const messageListElement = messageListRef.current;
-    messageListElement?.addEventListener("scroll", updateSelectionToolbar, { passive: true });
+    messageListElement?.addEventListener("scroll", updateSelectionToolbar, {
+      capture: true,
+      passive: true,
+    });
+    const actionDockElement = document.getElementById(SESSION_ACTION_DOCK_ID);
+    const resizeObserver = typeof window.ResizeObserver === "undefined"
+      ? null
+      : new window.ResizeObserver(updateSelectionToolbar);
+    if (messageListElement) {
+      resizeObserver?.observe(messageListElement);
+    }
+    if (selectionActionOverlay) {
+      resizeObserver?.observe(selectionActionOverlay);
+    }
+    if (actionDockElement) {
+      resizeObserver?.observe(actionDockElement);
+    }
+    const mutationObserver = messageListElement && typeof window.MutationObserver !== "undefined"
+      ? new window.MutationObserver(updateSelectionToolbar)
+      : null;
+    if (messageListElement) {
+      mutationObserver?.observe(messageListElement, {
+        attributeFilter: ["data-index", "style"],
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+    }
 
     return () => {
       document.removeEventListener("selectionchange", updateSelectionToolbar);
       window.removeEventListener("resize", updateSelectionToolbar);
-      messageListElement?.removeEventListener("scroll", updateSelectionToolbar);
+      messageListElement?.removeEventListener("scroll", updateSelectionToolbar, { capture: true });
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
     };
-  }, [messageListRef, updateSelectionToolbar]);
+  }, [messageListRef, selectionActionOverlay, updateSelectionToolbar]);
 
   useEffect(() => {
     setCurrentFindMatch(0);
@@ -2799,15 +2874,6 @@ export function SessionMessageColumn({
     visibleMessageSignature,
   ]);
 
-  useLayoutEffect(() => {
-    const wasContentActive = wasContentActiveRef.current;
-    wasContentActiveRef.current = isContentActive;
-
-    if (isContentActive && (!wasContentActive || isMessageListFollowing)) {
-      messageVirtualizer.scrollToEnd();
-    }
-  }, [isContentActive, isMessageListFollowing, messageVirtualizer]);
-
   const isArtifactFoldOpen = (artifactKey: string, section: MessageArtifactFoldSection, index?: number) =>
     Boolean(openArtifactFolds[messageArtifactFoldKey(artifactKey, section, index)]);
 
@@ -2909,7 +2975,11 @@ export function SessionMessageColumn({
           />
         ) : null}
         {hasPendingMessageText ? (
-          <div data-pending-message-body="true">
+          <div
+            data-message-body="true"
+            data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
+            data-pending-message-body="true"
+          >
             <MessageRichText
               text={pendingMessageText}
               forceFullRender={findOpen && hasFindQuery}
@@ -3206,14 +3276,15 @@ export function SessionMessageColumn({
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
-        {selectionToolbar ? (
+        {selectionToolbar && selectionActionOverlay ? createPortal(
           <MessageResponseActions
             actionText={selectionToolbar.text}
             onCopyMessageText={onCopyMessageText}
             onQuoteMessageText={onQuoteMessageText}
             style={selectionToolbar.style}
             toolbarRef={selectionToolbarRef}
-          />
+          />,
+          selectionActionOverlay,
         ) : null}
       </div>
     </div>
@@ -3358,12 +3429,13 @@ type SessionCustomAgentItem = {
   isSelected: boolean;
 };
 
-type SessionSkillItem = {
+export type SessionSkillItem = {
   key: string;
   skillId: string;
   primaryLabel: string;
   secondaryLabel: string;
   title: string;
+  searchText?: string;
 };
 
 type SessionAttachmentItem = {
@@ -3418,14 +3490,13 @@ export type SessionComposerExpandedProps = {
   additionalDirectoryCount: number;
   showJumpToBottom: boolean;
   isCustomAgentListLoading: boolean;
-  isSkillListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
-  skillItems: SessionSkillItem[];
   attachmentItems: SessionAttachmentItem[];
   additionalDirectoryItems: SessionAdditionalDirectoryItem[];
   draft: string;
   placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
+  skillButtonRef?: RefObject<HTMLButtonElement | null>;
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
@@ -3454,7 +3525,6 @@ export type SessionComposerExpandedProps = {
   onToggleAdditionalDirectoryList: () => void;
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
-  onSelectSkill: (skillId: string) => void;
   onRemoveAttachment: (targets: string[]) => void;
   onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
@@ -3497,14 +3567,13 @@ export function SessionComposerExpanded({
   additionalDirectoryCount,
   showJumpToBottom,
   isCustomAgentListLoading,
-  isSkillListLoading,
   customAgentItems,
-  skillItems,
   attachmentItems,
   additionalDirectoryItems,
   draft,
   placeholder,
   composerTextareaRef,
+  skillButtonRef,
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
@@ -3533,7 +3602,6 @@ export function SessionComposerExpanded({
   onToggleAdditionalDirectoryList,
   onJumpToBottom,
   onSelectCustomAgent,
-  onSelectSkill,
   onRemoveAttachment,
   onRemoveAdditionalDirectory,
   onDraftChange,
@@ -3551,7 +3619,6 @@ export function SessionComposerExpanded({
   onMessageViewModeChange = () => {},
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
-  const skillListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -3570,15 +3637,6 @@ export function SessionComposerExpanded({
       customAgentListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
     nextFocusTarget?.focus();
   }, [customAgentItems, isAgentPickerOpen]);
-
-  useEffect(() => {
-    if (!isSkillPickerOpen) {
-      return;
-    }
-
-    const nextFocusTarget = skillListRef.current?.querySelector<HTMLElement>("[role=\"option\"]");
-    nextFocusTarget?.focus();
-  }, [isSkillPickerOpen, skillItems]);
 
   const showComposerToolbar =
     showAttachmentControls ||
@@ -3656,6 +3714,9 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
+                  if (isAdditionalDirectoryListOpen) {
+                    onToggleAdditionalDirectoryList();
+                  }
                   onToggleAgentPicker();
                 }}
                 disabled={!canSelectCustomAgent || isRunning || composerBlocked}
@@ -3671,10 +3732,14 @@ export function SessionComposerExpanded({
           ) : null}
           {showSkillPicker ? (
             <button
+              ref={skillButtonRef}
               className={`drawer-toggle compact secondary composer-skill-button${isSkillPickerOpen ? " is-open" : ""}`}
               type="button"
               onClick={() => {
                 setIsAttachmentMenuOpen(false);
+                if (isAdditionalDirectoryListOpen) {
+                  onToggleAdditionalDirectoryList();
+                }
                 onToggleSkillPicker();
               }}
               disabled={isRunning || composerBlocked}
@@ -3692,6 +3757,15 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
+                  if (isAgentPickerOpen) {
+                    onToggleAgentPicker();
+                  }
+                  if (isSkillPickerOpen) {
+                    onToggleSkillPicker();
+                  }
+                  if (isAdditionalDirectoryListOpen) {
+                    onToggleAdditionalDirectoryList();
+                  }
                   onAddAdditionalDirectory();
                 }}
                 disabled={isRunning || composerBlocked}
@@ -3703,6 +3777,12 @@ export function SessionComposerExpanded({
                 type="button"
                 onClick={() => {
                   setIsAttachmentMenuOpen(false);
+                  if (isAgentPickerOpen) {
+                    onToggleAgentPicker();
+                  }
+                  if (isSkillPickerOpen) {
+                    onToggleSkillPicker();
+                  }
                   onToggleAdditionalDirectoryList();
                 }}
                 disabled={additionalDirectoryCount === 0}
@@ -3800,47 +3880,6 @@ export function SessionComposerExpanded({
           ) : (
             <p className="composer-skill-empty">
               使える custom agent がまだないよ。`~/.copilot/agents` か workspace の `.github/agents` を確認してね。
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {showSkillPicker && isSkillPickerOpen ? (
-        <div
-          id="composer-skill-picker-list"
-          ref={skillListRef}
-          className="composer-path-match-list composer-skill-picker-list"
-          role={skillItems.length > 0 ? "listbox" : "status"}
-          aria-label="Skill 候補"
-          aria-orientation={skillItems.length > 0 ? "vertical" : undefined}
-          onKeyDown={(event) => {
-            if (skillItems.length > 0) {
-              focusRovingItemByKey(event, { orientation: "vertical" });
-            }
-          }}
-        >
-          {isSkillListLoading ? (
-            <p className="composer-skill-empty">Skill を読み込み中だよ。</p>
-          ) : skillItems.length > 0 ? (
-            skillItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                role="option"
-                tabIndex={item === skillItems[0] ? 0 : -1}
-                className="composer-path-match"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={() => onSelectSkill(item.skillId)}
-                title={item.title}
-              >
-                <span className="composer-path-match-primary">{item.primaryLabel}</span>
-                <span className="composer-path-match-secondary">{item.secondaryLabel}</span>
-              </button>
-            ))
-          ) : (
-            <p className="composer-skill-empty">
-              使える skill がまだないよ。Home の Settings で Skill Root を設定するか、workspace 配下に
-              `SKILL.md` を配置してね。
             </p>
           )}
         </div>

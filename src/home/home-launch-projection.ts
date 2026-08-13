@@ -4,6 +4,7 @@ import { getProviderAppSettings, type AppSettings } from "../provider-settings-s
 import { resolveSelectedLaunchProviderId } from "../launch/launch-provider-selection.js";
 import {
   resolveLaunchCharacterId,
+  type HomeLaunchWorkspaceValidationState,
   type LaunchCharacterSelectionMode,
 } from "./home-launch-state.js";
 import {
@@ -22,6 +23,9 @@ export type HomeLaunchProjection = {
   randomCharacterSelected: boolean;
   charactersLoaded: boolean;
   launchWorkspacePathLabel: string;
+  workspacePathInput: string;
+  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidationMessage: string;
   sessionFolderSelected: boolean;
   workspaceSelected: boolean;
   canStartSession: boolean;
@@ -32,6 +36,9 @@ export function buildHomeLaunchProjection({
   launchMode,
   launchTitle,
   launchWorkspace,
+  workspacePathInput = "",
+  workspaceValidation = "idle",
+  workspaceValidationMessage = "",
   launchCharacterId,
   launchCharacterSelectionMode = "random",
   characterEntries = [],
@@ -43,6 +50,9 @@ export function buildHomeLaunchProjection({
   launchMode?: "session" | "companion";
   launchTitle: string;
   launchWorkspace: LaunchWorkspaceSelection | null;
+  workspacePathInput?: string;
+  workspaceValidation?: HomeLaunchWorkspaceValidationState;
+  workspaceValidationMessage?: string;
   launchCharacterId?: string;
   launchCharacterSelectionMode?: LaunchCharacterSelectionMode;
   characterEntries?: readonly CharacterCatalogEntry[];
@@ -74,6 +84,9 @@ export function buildHomeLaunchProjection({
     launchWorkspacePathLabel: sessionFolderSelected
       ? "SessionFolder"
       : launchWorkspace?.path ?? "workspace",
+    workspacePathInput,
+    workspaceValidation,
+    workspaceValidationMessage,
     sessionFolderSelected,
     workspaceSelected: !!launchWorkspace,
     canStartSession:
