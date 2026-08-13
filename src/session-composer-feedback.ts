@@ -15,8 +15,8 @@ export type TextComposerSubmitPreflightResult =
   | { status: "blocked"; reason: "empty"; feedback: string }
   | { status: "blocked"; reason: "running" };
 
-export const BLANK_DRAFT_FEEDBACK = "メッセージを入力してください。";
-export const COMPOSER_SEND_BLOCKED_FALLBACK = "送信できない状態だよ。";
+export const BLANK_DRAFT_FEEDBACK = "Message is empty.";
+export const COMPOSER_SEND_BLOCKED_FALLBACK = "Message cannot be sent.";
 
 export function buildComposerSendabilityState({
   runState,
@@ -121,7 +121,7 @@ export function getComposerSendButtonTitle(state: ComposerSendabilityState): str
     return "メッセージを送信";
   }
 
-  return state.primaryFeedback || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : "送信できない状態だよ。");
+  return state.primaryFeedback || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : COMPOSER_SEND_BLOCKED_FALLBACK);
 }
 
 export function getComposerSendBlockedMessage(

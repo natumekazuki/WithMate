@@ -33,6 +33,7 @@ import {
   buildLiveSessionCommonComposerDockInput,
   buildLiveSessionCommonContextPaneProps,
   buildLiveSessionCommonMessageColumnProps,
+  buildLiveSessionErrorNotices,
   buildLiveSessionRecoveryActions,
 } from "./live-session-projection.js";
 
@@ -397,6 +398,9 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
     onActivateDockPriority: input.onActivateDockPriority,
     headerProps,
     messageColumnProps: chatBodyProps.messageColumnProps,
+    errorNotices: buildLiveSessionErrorNotices({
+      composerFeedback: input.composerSendability,
+    }),
     recoveryActions,
     isActionDockExpanded: input.isActionDockExpanded,
     headerSplitterProps: {

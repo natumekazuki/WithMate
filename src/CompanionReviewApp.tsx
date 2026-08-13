@@ -1295,7 +1295,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ],
   );
   const companionComposerBlockedReason = snapshot?.session.status !== "active"
-    ? "この Companion は active ではないよ。"
+    ? "This Companion session is not active."
     : "";
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!snapshot || !shouldShowRetryBanner({
@@ -1389,7 +1389,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       isSkillPickerOpen,
       isAdditionalDirectoryListOpen,
       isRetryDraftReplacePending,
-      companionComposerSendability.shouldShowFeedback,
     ],
   });
   const {

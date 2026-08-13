@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -34,13 +35,26 @@ import { focusRovingItemByKey } from "../a11y.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
+export type ChatErrorNotice = {
+  id: string;
+  message: string;
+  details?: readonly string[];
+  relatedControl?: "composer";
+  dismissLabel?: string;
+  onDismiss?: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
+  isActionDisabled?: boolean;
+};
+
 export type ChatWindowProps = Omit<
   ChatScreenProps,
-  "header" | "messageColumn" | "actionDock" | "isHeaderVisible"
+  "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "errorSurface"
 > & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
+  errorNotices?: readonly ChatErrorNotice[];
   recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
@@ -262,6 +276,7 @@ export function ChatWindow({
   isHeaderExpanded,
   headerProps,
   messageColumnProps,
+  errorNotices = [],
   recoveryActions,
   isActionDockExpanded,
   composerProps,
@@ -270,6 +285,7 @@ export function ChatWindow({
   ...screenProps
 }: ChatWindowProps) {
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
+  const errorSurfaceId = useId();
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
   const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
@@ -286,12 +302,53 @@ export function ChatWindow({
     wasSkillPickerOpenRef.current = isOpen;
   }, [skillPickerProps?.isOpen]);
 
+  const visibleErrorNotices = errorNotices.filter((notice) => notice.message.trim());
+  const renderedErrorNotices = visibleErrorNotices.map((notice, index) => ({
+    ...notice,
+    domId: `${errorSurfaceId}-notice-${index}`,
+  }));
+  const composerErrorDescriptionIds = renderedErrorNotices
+    .filter((notice) => notice.relatedControl === "composer")
+    .map((notice) => notice.domId)
+    .join(" ");
+
   return (
     <SessionChatScreen
       {...screenProps}
       header={<SessionHeader {...headerProps} />}
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
+      errorSurface={renderedErrorNotices.length > 0 ? (
+        <div className="chat-error-surface" role="region" aria-label="チャットエラー">
+          {renderedErrorNotices.map((notice) => (
+            <div key={notice.id} id={notice.domId} className="chat-error-notice" role="alert">
+              <div className="chat-error-copy">
+                <p>{notice.message}</p>
+                {notice.details && notice.details.length > 0 ? (
+                  <ul>
+                    {notice.details.map((detail, index) => <li key={`${notice.id}-detail-${index}`}>{detail}</li>)}
+                  </ul>
+                ) : null}
+              </div>
+              {notice.actionLabel && notice.onAction ? (
+                <button type="button" onClick={notice.onAction} disabled={notice.isActionDisabled}>
+                  {notice.actionLabel}
+                </button>
+              ) : null}
+              {notice.onDismiss ? (
+                <button
+                  className="chat-error-dismiss"
+                  type="button"
+                  onClick={notice.onDismiss}
+                  aria-label={notice.dismissLabel ?? "エラー表示を閉じる"}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       recoveryActions={recoveryActions}
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
@@ -311,6 +368,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
               skillButtonRef={skillButtonRef}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}

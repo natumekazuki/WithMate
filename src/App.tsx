@@ -506,7 +506,12 @@ export default function AgentSessionWindowApp() {
   } | null>(null);
   const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
   const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
-  const [inlinePathFeedback, setInlinePathFeedback] = useState("");
+  const [inlinePathError, setInlinePathError] = useState<{
+    ownerSessionId: string;
+    target: string;
+    message: string;
+  } | null>(null);
+  const inlinePathOperationRevisionRef = useRef(new StateMutationRevision());
   const [liveRunState, setLiveRunStateBase] = useState<OwnedLiveSessionRunState>({ ownerSessionId: null, state: null });
   const liveRunRevisionRef = useRef(0);
   const setLiveRunState = useCallback((update: SetStateAction<OwnedLiveSessionRunState>) => {
@@ -1103,17 +1108,17 @@ export default function AgentSessionWindowApp() {
     }
 
     if (isSelectedSessionReadOnly) {
-      return "この session は旧バージョンのため閲覧専用です。追加メッセージを送る場合は新しいセッションを作成してください。";
+      return "This session is read-only. Create a new session to send messages.";
     }
 
     if (!isSelectedProviderEnabled) {
-      return "この provider は Settings の Coding Agent Providers で無効になっているよ。Home の Settings で有効化してね。";
+      return "Provider is disabled. Enable it in Settings.";
     }
 
     return "";
   }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession]);
   const composerBlockedReason = pendingSubmitSessionId === selectedSession?.id
-    ? "送信処理を開始しているよ。少し待ってね。"
+    ? "Message submission is in progress."
     : sessionExecutionBlockedReason;
 
   useEffect(() => {
@@ -1872,7 +1877,6 @@ export default function AgentSessionWindowApp() {
       isAgentPickerOpen,
       isSkillPickerOpen,
       isRetryDraftReplacePending,
-      composerSendability.feedbackTone === "blocked",
     ],
   });
   const {
@@ -2746,15 +2750,30 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || !activeRunSessionId) {
       return;
     }
+    const ownerSessionId = activeRunSessionId;
+    inlinePathOperationRevisionRef.current.advance();
+    const operationRevision = inlinePathOperationRevisionRef.current.capture();
     try {
       const result = await withmateApi.openSessionFilePreviewWindow({
         kind: "link",
-        sessionId: activeRunSessionId,
+        sessionId: ownerSessionId,
         target,
       });
-      setInlinePathFeedback(result.status === "opened" ? "" : result.message);
+      if (!inlinePathOperationRevisionRef.current.isCurrent(operationRevision)) {
+        return;
+      }
+      setInlinePathError(result.status === "opened"
+        ? null
+        : { ownerSessionId, target, message: result.message });
     } catch (error) {
-      setInlinePathFeedback(error instanceof Error ? error.message : "The path could not be opened.");
+      if (!inlinePathOperationRevisionRef.current.isCurrent(operationRevision)) {
+        return;
+      }
+      setInlinePathError({
+        ownerSessionId,
+        target,
+        message: error instanceof Error ? error.message : "The path could not be opened.",
+      });
     }
   };
 
@@ -3638,7 +3657,9 @@ export default function AgentSessionWindowApp() {
         liveRunAssistantText,
         hasLiveRunAssistantText,
         liveRunErrorMessage: selectedSessionLiveRun?.errorMessage ?? "",
-        inlinePathFeedback,
+        inlinePathFeedback: inlinePathError?.ownerSessionId === renderedSession.id
+          ? inlinePathError.message
+          : "",
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
@@ -3743,7 +3764,10 @@ export default function AgentSessionWindowApp() {
         onResolveLiveApproval: (request, decision) => void handleResolveLiveApproval(request, decision),
         onResolveLiveElicitation: (request, response) => void handleResolveLiveElicitation(request, response),
         onOpenInlinePath: handleOpenInlinePath,
-        onDismissInlinePathFeedback: () => setInlinePathFeedback(""),
+        onDismissInlinePathFeedback: () => {
+          inlinePathOperationRevisionRef.current.advance();
+          setInlinePathError((current) => current?.ownerSessionId === renderedSession.id ? null : current);
+        },
         getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,

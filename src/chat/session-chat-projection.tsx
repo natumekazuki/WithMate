@@ -26,6 +26,7 @@ import {
   buildLiveSessionCommonComposerDockInput,
   buildLiveSessionCommonContextPaneProps,
   buildLiveSessionCommonMessageColumnProps,
+  buildLiveSessionErrorNotices,
   buildLiveSessionRecoveryActions,
 } from "./live-session-projection.js";
 
@@ -405,9 +406,18 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     headerProps,
     messageColumnProps: {
       ...chatBodyProps.messageColumnProps,
-      inlinePathFeedback: input.inlinePathFeedback,
-      onDismissInlinePathFeedback: input.onDismissInlinePathFeedback,
     },
+    errorNotices: buildLiveSessionErrorNotices({
+      composerFeedback: input.composerSendability,
+      additionalNotices: input.inlinePathFeedback.trim()
+        ? [{
+            id: "inline-path-open",
+            message: input.inlinePathFeedback,
+            dismissLabel: "パスを開いた結果を閉じる",
+            onDismiss: input.onDismissInlinePathFeedback,
+          }]
+        : [],
+    }),
     recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
