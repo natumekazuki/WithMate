@@ -862,6 +862,26 @@ export const CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL = `
     ON session_crud_idempotency_v6(expires_at);
 `;
 
+export const CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_file_write_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation = 'session.files.write_text'),
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    temp_name TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'rejected')),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, idempotency_key),
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_file_write_idempotency_expires
+    ON session_file_write_idempotency_v6(state, expires_at);
+`;
+
 export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_executions_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1361,6 +1381,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
@@ -1470,6 +1491,33 @@ function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
   db.exec("UPDATE auxiliary_sessions SET created_at = updated_at WHERE created_at IS NULL OR created_at = '';");
 }
 
+function ensureSessionFileWriteIdempotencyStates(db: DatabaseSync): void {
+  if (!tableExists(db, "session_file_write_idempotency_v6")) {
+    db.exec(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL);
+    return;
+  }
+  if (tableSql(db, "session_file_write_idempotency_v6").includes("'rejected'")) {
+    return;
+  }
+  db.exec(`
+    ALTER TABLE session_file_write_idempotency_v6
+      RENAME TO session_file_write_idempotency_v6_legacy;
+    DROP INDEX IF EXISTS idx_v6_session_file_write_idempotency_expires;
+  `);
+  db.exec(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL);
+  db.exec(`
+    INSERT INTO session_file_write_idempotency_v6 (
+      operation, idempotency_key, request_fingerprint, session_id, relative_path,
+      temp_name, state, result_json, created_at, expires_at
+    )
+    SELECT
+      operation, idempotency_key, request_fingerprint, session_id, relative_path,
+      temp_name, state, result_json, created_at, expires_at
+    FROM session_file_write_idempotency_v6_legacy;
+    DROP TABLE session_file_write_idempotency_v6_legacy;
+  `);
+}
+
 function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => void): void {
   db.exec(`SAVEPOINT ${savepointName};`);
   try {
@@ -1510,6 +1558,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
 
   ensureSessionExecutionIdempotencyOperations(db);
+  ensureSessionFileWriteIdempotencyStates(db);
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);

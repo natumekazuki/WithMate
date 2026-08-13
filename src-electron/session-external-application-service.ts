@@ -19,6 +19,9 @@ import {
   type SessionRuntimeEnqueueInput,
   type SessionRuntimeError,
   type SessionRuntimeExecutionInput,
+  type SessionRuntimeFileListInput,
+  type SessionRuntimeFileReadTextInput,
+  type SessionRuntimeFileWriteTextInput,
   type SessionRuntimeListInput,
   type SessionRuntimeOperation,
   type SessionRuntimeResultEnvelope,
@@ -44,6 +47,7 @@ import {
   SessionExecutionStateConflictError,
 } from "./session-execution-storage-v6.js";
 import { SessionCrudError, type SessionCrudService } from "./session-crud-service.js";
+import { SessionFileServiceError, type SessionFileService } from "./session-file-service.js";
 
 export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
@@ -51,6 +55,7 @@ export type SessionExternalApplicationServiceDeps = {
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
   >;
   crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
+  fileService?: Pick<SessionFileService, "list" | "readText" | "writeText">;
   currentModelCatalog(): ModelCatalogSnapshot | null;
   isProviderEnabled(providerId: string): boolean;
 };
@@ -104,6 +109,15 @@ export class SessionExternalApplicationService {
     }
     if (operation === "session.rename") {
       return this.deps.crudService.rename(input as SessionRuntimeRenameInput);
+    }
+    if (operation === "session.files.list") {
+      return this.requireFileService().list(input as SessionRuntimeFileListInput);
+    }
+    if (operation === "session.files.read_text") {
+      return this.requireFileService().readText(input as SessionRuntimeFileReadTextInput);
+    }
+    if (operation === "session.files.write_text") {
+      return this.requireFileService().writeText(input as SessionRuntimeFileWriteTextInput);
     }
     if (operation === "turn.options") {
       return this.turnOptions((input as SessionRuntimeSessionInput).sessionId);
@@ -266,6 +280,17 @@ export class SessionExternalApplicationService {
     }
     return snapshot;
   }
+
+  private requireFileService(): Pick<SessionFileService, "list" | "readText" | "writeText"> {
+    if (!this.deps.fileService) {
+      throw new SessionRuntimeValidationError(
+        "Session file operations are unavailable.",
+        {},
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    return this.deps.fileService;
+  }
 }
 
 function projectRuntimeCatalog(snapshot: ModelCatalogSnapshot): SessionRuntimeCatalogResult {
@@ -306,6 +331,11 @@ function projectionResourceDetails(
   const record = result as Record<string, unknown>;
   const sessionId = typeof record.sessionId === "string" ? record.sessionId : null;
   const executionId = typeof record.id === "string" ? record.id : null;
+  const file = record.file && typeof record.file === "object" && !Array.isArray(record.file)
+    ? record.file as Record<string, unknown>
+    : null;
+  const relativePath = typeof file?.relativePath === "string" ? file.relativePath : null;
+  const fileSessionId = typeof file?.sessionId === "string" ? file.sessionId : null;
   if (operation === "session.create" || operation === "session.rename") {
     return sessionId ? { sessionId } : {};
   }
@@ -313,6 +343,12 @@ function projectionResourceDetails(
     return {
       ...(sessionId ? { sessionId } : {}),
       ...(executionId ? { executionId } : {}),
+    };
+  }
+  if (operation === "session.files.write_text") {
+    return {
+      ...(fileSessionId ? { sessionId: fileSessionId } : {}),
+      ...(relativePath ? { relativePath } : {}),
     };
   }
   return {};
@@ -410,8 +446,18 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "turn.run"
         || operation === "turn.enqueue"
         || operation === "turn.cancel"
+        || operation === "session.files.write_text"
         ? "applied"
         : "not_applied",
+      details: error.details,
+    });
+  }
+  if (error instanceof SessionFileServiceError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      effect: error.effect,
       details: error.details,
     });
   }
@@ -464,5 +510,6 @@ function isMutationOperation(operation: SessionRuntimeOperation | string): boole
     || operation === "session.rename"
     || operation === "turn.run"
     || operation === "turn.enqueue"
-    || operation === "turn.cancel";
+    || operation === "turn.cancel"
+    || operation === "session.files.write_text";
 }

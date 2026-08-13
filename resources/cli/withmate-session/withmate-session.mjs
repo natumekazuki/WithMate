@@ -80,6 +80,8 @@ var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v1";
 var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v1";
 var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1";
 var SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
+var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1024 * 1024;
+var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
 	"runtime.catalog",
@@ -87,6 +89,9 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"session.list",
 	"session.get",
 	"session.rename",
+	"session.files.list",
+	"session.files.read_text",
+	"session.files.write_text",
 	"turn.options",
 	"turn.run",
 	"turn.enqueue",
@@ -122,6 +127,9 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "session.list") return parseSessionListInput(value);
 	if (operation === "session.get") return parseSessionInput(value);
 	if (operation === "session.rename") return parseSessionRenameInput(value);
+	if (operation === "session.files.list") return parseSessionFileListInput(value);
+	if (operation === "session.files.read_text") return parseSessionFileReadTextInput(value);
+	if (operation === "session.files.write_text") return parseSessionFileWriteTextInput(value);
 	if (operation === "turn.options") return parseSessionInput(value);
 	if (operation === "turn.run") return parseTurnRunInput(value);
 	if (operation === "turn.enqueue") return parseTurnEnqueueInput(value);
@@ -183,6 +191,59 @@ function parseSessionRenameInput(value) {
 	return {
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		title: requireNonEmptyString(record.title, "title"),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseSessionFileListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseSessionFileReadTextInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"relativePath",
+		"maxBytes"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
+		maxBytes: record.maxBytes === void 0 ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED")
+	};
+}
+function parseSessionFileWriteTextInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"relativePath",
+		"content",
+		"maxBytes",
+		"replace",
+		"idempotencyKey"
+	], "input");
+	const maxBytes = record.maxBytes === void 0 ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED");
+	const content = requireString(record.content, "content");
+	const actualBytes = Buffer.byteLength(content, "utf8");
+	if (actualBytes > maxBytes) throw new SessionRuntimeValidationError("Session file content exceeds the requested byte limit.", {
+		field: "content",
+		actualBytes,
+		maxBytes
+	}, "CONTENT_TOO_LARGE");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
+		content,
+		maxBytes,
+		replace: record.replace === void 0 ? false : requireBoolean(record.replace, "replace"),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
@@ -298,6 +359,14 @@ function assertKeys(record, allowed, field) {
 function requireNonEmptyString(value, field) {
 	if (typeof value !== "string" || !value.trim()) throw invalid(field, `${field} must be a non-empty string.`);
 	return value.trim();
+}
+function requireString(value, field) {
+	if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
+	return value;
+}
+function requireBoolean(value, field) {
+	if (typeof value !== "boolean") throw invalid(field, `${field} must be a boolean.`);
+	return value;
 }
 function requireInteger(value, field, min, max, code = "INVALID_INPUT") {
 	if (!Number.isSafeInteger(value) || value < min || value > max) throw invalid(field, `${field} must be an integer from ${min} through ${max}.`, code);
@@ -20515,6 +20584,31 @@ var sessionRenameInputSchema = object({
 	title: nonEmptyStringSchema,
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
+var sessionFileListInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	limit: number().int().min(1).max(500).default(50),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var sessionFileReadTextInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	relativePath: nonEmptyStringSchema,
+	maxBytes: number().int().min(1).max(SESSION_RUNTIME_MAX_FILE_TEXT_BYTES).default(SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES)
+}).strict();
+var sessionFileWriteTextInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	relativePath: nonEmptyStringSchema,
+	content: string(),
+	maxBytes: number().int().min(1).max(SESSION_RUNTIME_MAX_FILE_TEXT_BYTES).default(SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES),
+	replace: boolean().default(false),
+	idempotencyKey: nonEmptyStringSchema
+}).strict().superRefine((value, context) => {
+	const actualBytes = Buffer.byteLength(value.content, "utf8");
+	if (actualBytes > value.maxBytes) context.addIssue({
+		code: "custom",
+		path: ["content"],
+		message: `content exceeds maxBytes (${actualBytes} > ${value.maxBytes}).`
+	});
+});
 var publicDetailsSchema = record(string(), union([
 	string(),
 	number(),
@@ -20591,6 +20685,27 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "session.files.list",
+		title: "List Session files",
+		description: "List UTF-8-capable files in one SessionFolder.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "session.files.read_text",
+		title: "Read Session text file",
+		description: "Read one bounded UTF-8 text file from a SessionFolder.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "session.files.write_text",
+		title: "Write Session text file",
+		description: "Atomically write one bounded UTF-8 text file to a SessionFolder.",
+		readOnly: false,
+		destructive: true
+	},
+	{
 		name: "turn.options",
 		title: "Get Session turn options",
 		description: "Read valid turn options for one normal Session.",
@@ -20642,7 +20757,7 @@ function annotations(definition) {
 	};
 }
 function isMutation(operation) {
-	return operation === "session.create" || operation === "session.rename" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
@@ -20754,6 +20869,24 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: sessionRenameInputSchema,
 		outputSchema: createOutputSchema("session.rename")
 	}, async (input) => executeOperation("session.rename", input, deps));
+	server.registerTool("session.files.list", {
+		...definitions.get("session.files.list"),
+		annotations: annotations(definitions.get("session.files.list")),
+		inputSchema: sessionFileListInputSchema,
+		outputSchema: createOutputSchema("session.files.list")
+	}, async (input) => executeOperation("session.files.list", input, deps));
+	server.registerTool("session.files.read_text", {
+		...definitions.get("session.files.read_text"),
+		annotations: annotations(definitions.get("session.files.read_text")),
+		inputSchema: sessionFileReadTextInputSchema,
+		outputSchema: createOutputSchema("session.files.read_text")
+	}, async (input) => executeOperation("session.files.read_text", input, deps));
+	server.registerTool("session.files.write_text", {
+		...definitions.get("session.files.write_text"),
+		annotations: annotations(definitions.get("session.files.write_text")),
+		inputSchema: sessionFileWriteTextInputSchema,
+		outputSchema: createOutputSchema("session.files.write_text")
+	}, async (input) => executeOperation("session.files.write_text", input, deps));
 	server.registerTool("turn.options", {
 		...definitions.get("turn.options"),
 		annotations: annotations(definitions.get("turn.options")),
@@ -20821,6 +20954,9 @@ var commandMap = /* @__PURE__ */ new Map([
 	["session list", "session.list"],
 	["session get", "session.get"],
 	["session rename", "session.rename"],
+	["session files list", "session.files.list"],
+	["session files read-text", "session.files.read_text"],
+	["session files write-text", "session.files.write_text"],
 	["turn options", "turn.options"],
 	["turn run", "turn.run"],
 	["turn enqueue", "turn.enqueue"],
@@ -20931,13 +21067,14 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command) {
-	return command === "session create" || command === "session rename" || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
 async function parseArgs(args, deps) {
+	const fileCommand = args[0] === "session" && args[1] === "files";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
-	const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
-	const optionStart = namespacedCommand ? 2 : 1;
+	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+	const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
 	let useStdin = false;

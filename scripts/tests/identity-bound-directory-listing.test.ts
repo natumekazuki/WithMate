@@ -4,7 +4,10 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { listIdentityBoundDirectory } from "../../src-electron/identity-bound-directory-listing.js";
+import {
+  IdentityBoundDirectoryLimitError,
+  listIdentityBoundDirectory,
+} from "../../src-electron/identity-bound-directory-listing.js";
 
 test("listIdentityBoundDirectory は path が差し替えられても bound cwd の一覧だけを返す", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-"));
@@ -42,6 +45,7 @@ test("listIdentityBoundDirectory は path が差し替えられても bound cwd 
       { name: "inside.txt", kind: "file", byteLength: 6 },
     ]);
     assert.equal(snapshot.maxConcurrentStats, 1);
+    assert.equal(snapshot.scannedEntries, 1);
   } finally {
     await rm(basePath, { recursive: true, force: true });
     if (moved) {
@@ -58,9 +62,25 @@ test("listIdentityBoundDirectory は entry metadata の並列取得数を制限�
     )));
     const snapshot = await listIdentityBoundDirectory(basePath);
     assert.equal(snapshot.entries.length, 96);
+    assert.equal(snapshot.scannedEntries, 96);
     assert.ok(snapshot.maxConcurrentStats > 1);
     assert.ok(snapshot.maxConcurrentStats <= 32);
     assert.ok(snapshot.entries.every((entry) => entry.modifiedAt !== null));
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+test("listIdentityBoundDirectory はentry上限を超えるdirectoryをmetadata取得前に拒否する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-limit-"));
+  try {
+    await Promise.all(Array.from({ length: 257 }, (_, index) => (
+      writeFile(path.join(basePath, `file-${index.toString().padStart(3, "0")}.txt`), `${index}`)
+    )));
+    await assert.rejects(
+      () => listIdentityBoundDirectory(basePath, { maxEntries: 256 }),
+      IdentityBoundDirectoryLimitError,
+    );
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }

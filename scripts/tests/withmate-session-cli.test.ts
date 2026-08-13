@@ -17,6 +17,7 @@ import {
   SESSION_RUNTIME_MAX_BODY_BYTES,
   SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
   SessionRuntimeValidationError,
+  createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
 import {
   SESSION_RUNTIME_CHALLENGE_HEADER,
@@ -365,6 +366,41 @@ describe("withmate-session CLI", () => {
     assert.equal(request.input.idempotencyKey, "fixed");
   });
 
+  test("SF-ADAPTER-03: session files commandをshared operationへ変換する", async () => {
+    const stdout = capture();
+    let request: any;
+    const exitCode = await runWithMateSessionCli([
+      "session", "files", "write-text", "--json", JSON.stringify({
+        sessionId: "s1",
+        relativePath: "notes/brief.md",
+        content: "hello",
+        idempotencyKey: "write-1",
+      }),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        request = envelope;
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("session.files.write_text", { file: { relativePath: "notes/brief.md" } }),
+        } as any;
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.equal(request.operation, "session.files.write_text");
+    assert.deepEqual(request.input, {
+      sessionId: "s1",
+      relativePath: "notes/brief.md",
+      content: "hello",
+      maxBytes: 1024 * 1024,
+      replace: false,
+      idempotencyKey: "write-1",
+    });
+  });
+
   test("application errorをsafe JSONとexit 3へ写像する", async () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([
@@ -456,6 +492,21 @@ describe("withmate-session CLI", () => {
       call: async () => { throw new SessionRuntimeClientError("lost", true); },
     }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
     assert.equal(mutationFailure.json().error.effect, "indeterminate");
+
+    const fileMutationFailure = capture();
+    assert.equal(await runWithMateSessionCli([
+      "session", "files", "write-text", "--json", JSON.stringify({
+        sessionId: "session-1",
+        relativePath: "brief.md",
+        content: "hello",
+        idempotencyKey: "write-response-loss",
+      }),
+    ], {
+      stdout: fileMutationFailure.stream,
+      discover: async () => connection,
+      call: async () => { throw new SessionRuntimeClientError("lost", true); },
+    }), WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
+    assert.equal(fileMutationFailure.json().error.effect, "indeterminate");
   });
 
   test("usage failureはoperationを呼ばずexit 1を返す", async () => {

@@ -19,6 +19,7 @@ import {
   CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
@@ -169,12 +170,14 @@ describe("database-schema-v6", () => {
         "session_crud_idempotency_v6",
         "session_executions_v6",
         "session_execution_idempotency_v6",
+        "session_file_write_idempotency_v6",
       ].sort());
       const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL), true);
     } finally {
       db.close();
     }
@@ -191,6 +194,7 @@ describe("database-schema-v6", () => {
             statement !== CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL
             && statement !== CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL
             && statement !== CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL
+            && statement !== CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL
           ) {
             oldDb.exec(statement);
           }
@@ -208,6 +212,7 @@ describe("database-schema-v6", () => {
         assert.equal(tableNames(upgradedDb).includes("session_executions_v6"), true);
         assert.equal(tableNames(upgradedDb).includes("session_execution_idempotency_v6"), true);
         assert.equal(tableNames(upgradedDb).includes("session_crud_idempotency_v6"), true);
+        assert.equal(tableNames(upgradedDb).includes("session_file_write_idempotency_v6"), true);
         ensureV6Schema(upgradedDb);
         assert.equal(tableNames(upgradedDb).filter((name) => name === "session_crud_idempotency_v6").length, 1);
       } finally {
@@ -215,6 +220,74 @@ describe("database-schema-v6", () => {
       }
     } finally {
       rmSync(dirPath, { recursive: true, force: true });
+    }
+  });
+
+  it("ensureV6Schemaは既存Session file write tableをrejected対応へ更新する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE session_file_write_idempotency_v6;");
+      db.exec(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL.replace(
+        "state IN ('pending', 'applied', 'rejected')",
+        "state IN ('pending', 'applied')",
+      ));
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+          created_at, updated_at, last_active_at
+        ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+      `).run(
+        "session-files-migration",
+        "Session files migration",
+        "2026-08-12T00:00:00.000Z",
+        "2026-08-12T00:00:00.000Z",
+        "2026-08-12T00:00:00.000Z",
+      );
+      const insertLegacyWrite = db.prepare(`
+        INSERT INTO session_file_write_idempotency_v6 (
+          operation, idempotency_key, request_fingerprint, session_id, relative_path,
+          temp_name, state, result_json, created_at, expires_at
+        ) VALUES ('session.files.write_text', ?, ?, 'session-files-migration', ?, ?, ?, ?, ?, ?)
+      `);
+      insertLegacyWrite.run(
+        "pending-key", "pending-fingerprint", "pending.txt", ".pending.tmp", "pending", null,
+        "2026-08-12T00:00:00.000Z", "2026-08-13T00:00:00.000Z",
+      );
+      insertLegacyWrite.run(
+        "applied-key", "applied-fingerprint", "applied.txt", ".applied.tmp", "applied",
+        JSON.stringify({ file: { sessionId: "session-files-migration", relativePath: "applied.txt" } }),
+        "2026-08-12T00:01:00.000Z", "2026-08-13T00:01:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(tableSql(db, "session_file_write_idempotency_v6").includes("'rejected'"), true);
+      assert.equal(tableNames(db).includes("session_file_write_idempotency_v6_legacy"), false);
+      const migratedWrites = db.prepare(`
+          SELECT idempotency_key, state, result_json
+          FROM session_file_write_idempotency_v6
+          ORDER BY idempotency_key
+        `).all() as Array<{
+          idempotency_key: string;
+          state: string;
+          result_json: string | null;
+        }>;
+      assert.deepEqual(
+        migratedWrites.map((row) => ({ ...row })),
+        [
+          {
+            idempotency_key: "applied-key",
+            state: "applied",
+            result_json: JSON.stringify({
+              file: { sessionId: "session-files-migration", relativePath: "applied.txt" },
+            }),
+          },
+          { idempotency_key: "pending-key", state: "pending", result_json: null },
+        ],
+      );
+    } finally {
+      db.close();
     }
   });
 

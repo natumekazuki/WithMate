@@ -6,6 +6,8 @@ import { APPROVAL_MODE_VALUES } from "../src/approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "../src/codex-sandbox-mode.js";
 import {
   SESSION_RUNTIME_DEFAULT_LIST_LIMIT,
+  SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
+  SESSION_RUNTIME_MAX_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_LIST_LIMIT,
   SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS,
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
@@ -92,6 +94,35 @@ const sessionRenameInputSchema = z.object({
   title: nonEmptyStringSchema,
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
+const sessionFileListInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const sessionFileReadTextInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  relativePath: nonEmptyStringSchema,
+  maxBytes: z.number().int().min(1).max(SESSION_RUNTIME_MAX_FILE_TEXT_BYTES)
+    .default(SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES),
+}).strict();
+const sessionFileWriteTextInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  relativePath: nonEmptyStringSchema,
+  content: z.string(),
+  maxBytes: z.number().int().min(1).max(SESSION_RUNTIME_MAX_FILE_TEXT_BYTES)
+    .default(SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES),
+  replace: z.boolean().default(false),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict().superRefine((value, context) => {
+  const actualBytes = Buffer.byteLength(value.content, "utf8");
+  if (actualBytes > value.maxBytes) {
+    context.addIssue({
+      code: "custom",
+      path: ["content"],
+      message: `content exceeds maxBytes (${actualBytes} > ${value.maxBytes}).`,
+    });
+  }
+});
 
 const publicDetailsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 const errorSchema = z.object({
@@ -141,6 +172,9 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
   { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
   { name: "session.rename", title: "Rename Session", description: "Rename one normal Session.", readOnly: false, destructive: false },
+  { name: "session.files.list", title: "List Session files", description: "List UTF-8-capable files in one SessionFolder.", readOnly: true, destructive: false },
+  { name: "session.files.read_text", title: "Read Session text file", description: "Read one bounded UTF-8 text file from a SessionFolder.", readOnly: true, destructive: false },
+  { name: "session.files.write_text", title: "Write Session text file", description: "Atomically write one bounded UTF-8 text file to a SessionFolder.", readOnly: false, destructive: true },
   { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: false },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: false },
@@ -160,6 +194,7 @@ function annotations(definition: (typeof SESSION_MCP_TOOL_DEFINITIONS)[number]) 
 
 function isMutation(operation: SessionRuntimeOperation): boolean {
   return operation === "session.create" || operation === "session.rename"
+    || operation === "session.files.write_text"
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
 }
 
@@ -287,6 +322,24 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: sessionRenameInputSchema,
     outputSchema: createOutputSchema("session.rename"),
   }, async (input) => executeOperation("session.rename", input, deps));
+  server.registerTool("session.files.list", {
+    ...definitions.get("session.files.list")!,
+    annotations: annotations(definitions.get("session.files.list")!),
+    inputSchema: sessionFileListInputSchema,
+    outputSchema: createOutputSchema("session.files.list"),
+  }, async (input) => executeOperation("session.files.list", input, deps));
+  server.registerTool("session.files.read_text", {
+    ...definitions.get("session.files.read_text")!,
+    annotations: annotations(definitions.get("session.files.read_text")!),
+    inputSchema: sessionFileReadTextInputSchema,
+    outputSchema: createOutputSchema("session.files.read_text"),
+  }, async (input) => executeOperation("session.files.read_text", input, deps));
+  server.registerTool("session.files.write_text", {
+    ...definitions.get("session.files.write_text")!,
+    annotations: annotations(definitions.get("session.files.write_text")!),
+    inputSchema: sessionFileWriteTextInputSchema,
+    outputSchema: createOutputSchema("session.files.write_text"),
+  }, async (input) => executeOperation("session.files.write_text", input, deps));
   server.registerTool("turn.options", {
     ...definitions.get("turn.options")!,
     annotations: annotations(definitions.get("turn.options")!),

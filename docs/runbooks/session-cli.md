@@ -58,6 +58,18 @@ withmate-session session rename --json '{"sessionId":"SESSION_ID","title":"新�
 
 `session.create`と`session.rename`の`idempotencyKey`は必須で、callerが生成して保持する。response loss後の再送では同じkeyを使う。
 
+## SessionFolder操作
+
+対象SessionのSessionFolderにあるfileを、相対pathで一覧、UTF-8 text読取、UTF-8 text書込できる。absolute path、`..`、symlinkまたはjunctionを経由するpathは受理しない。
+
+```powershell
+withmate-session session files list --json '{"sessionId":"SESSION_ID"}'
+withmate-session session files read-text --json '{"sessionId":"SESSION_ID","relativePath":"notes/brief.md"}'
+withmate-session session files write-text --json '{"sessionId":"SESSION_ID","relativePath":"notes/brief.md","content":"本文","idempotencyKey":"write-20260812-001"}'
+```
+
+listの`limit`は既定50、最大500である。read/writeの`maxBytes`は既定1 MiB、最大8 MiBであり、超過時はtruncateせず失敗する。writeは既存fileを既定で上書きせず、上書きが必要な場合だけ`"replace":true`を指定する。`idempotencyKey`はcallerが生成して保持し、response loss後の再送では同じkeyを使う。
+
 既定はJSON出力である。人が読む要約には`--format text`を使う。scriptはJSON出力を使い、messageではなく`ok`、`error.code`、`error.retryable`、`error.effect`を判定する。
 
 ## Exit code
@@ -80,4 +92,4 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは`runtime.catalog`、`session.create`、`session.list`、`session.get`、`session.rename`、`turn.options`、`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`で、入力shapeはMCPの`tools/list`を正本とする。application errorはversioned `structuredContent`と`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは`runtime.catalog`、`session.create`、`session.list`、`session.get`、`session.rename`、`session.files.list`、`session.files.read_text`、`session.files.write_text`、`turn.options`、`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`で、入力shapeはMCPの`tools/list`を正本とする。application errorはversioned `structuredContent`と`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import {
+  SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
   SessionRuntimeValidationError,
@@ -82,6 +83,72 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
       input: { sessionId: "session-1", title: "Renamed", idempotencyKey: "key-1", provider: "codex" },
     }),
     (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.provider",
+  );
+});
+
+test("SF-ADAPTER-01: Session file operations normalize shared public inputs", () => {
+  const list = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.files.list",
+    input: { sessionId: " session-1 " },
+  });
+  assert.deepEqual(list.input, { sessionId: "session-1", limit: 50 });
+
+  const read = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.files.read_text",
+    input: { sessionId: "session-1", relativePath: " notes/brief.md " },
+  });
+  assert.deepEqual(read.input, {
+    sessionId: "session-1",
+    relativePath: "notes/brief.md",
+    maxBytes: SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
+  });
+
+  const write = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.files.write_text",
+    input: {
+      sessionId: "session-1",
+      relativePath: "notes/brief.md",
+      content: "hello",
+      idempotencyKey: "write-1",
+    },
+  });
+  assert.deepEqual(write.input, {
+    sessionId: "session-1",
+    relativePath: "notes/brief.md",
+    content: "hello",
+    maxBytes: SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
+    replace: false,
+    idempotencyKey: "write-1",
+  });
+});
+
+test("SF-LIMIT-01: Session file text inputs reject byte limit violations without truncation", () => {
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "session.files.write_text",
+      input: {
+        sessionId: "session-1",
+        relativePath: "brief.md",
+        content: "éé",
+        maxBytes: 3,
+        idempotencyKey: "write-1",
+      },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError
+      && error.code === "CONTENT_TOO_LARGE"
+      && error.details.actualBytes === 4,
+  );
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "session.files.read_text",
+      input: { sessionId: "session-1", relativePath: "brief.md", maxBytes: 8 * 1024 * 1024 + 1 },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.code === "LIMIT_EXCEEDED",
   );
 });
 

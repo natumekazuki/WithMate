@@ -47,7 +47,7 @@ async function withClient<T>(
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("11 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("14 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -65,6 +65,58 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(result.tools.find((tool) => tool.name === "session.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.get")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.options")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "session.files.list")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "session.files.read_text")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.readOnlyHint, false);
+      assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.destructiveHint, true);
+    });
+  });
+
+  it("SF-ADAPTER-04: Session file toolsをstrict schemaと既定limitでdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult(envelope.operation, { items: [], file: { relativePath: "brief.md" } }),
+        } as any;
+      },
+    }), async (client) => {
+      assert.equal((await client.callTool({
+        name: "session.files.list",
+        arguments: { sessionId: "session-1" },
+      })).isError, undefined);
+      assert.equal((await client.callTool({
+        name: "session.files.read_text",
+        arguments: { sessionId: "session-1", relativePath: "brief.md" },
+      })).isError, undefined);
+      assert.equal((await client.callTool({
+        name: "session.files.write_text",
+        arguments: {
+          sessionId: "session-1",
+          relativePath: "brief.md",
+          content: "hello",
+          idempotencyKey: "write-1",
+        },
+      })).isError, undefined);
+    });
+
+    assert.deepEqual(requests.map((request) => request.operation), [
+      "session.files.list",
+      "session.files.read_text",
+      "session.files.write_text",
+    ]);
+    assert.deepEqual(requests[0].input, { sessionId: "session-1", limit: 50 });
+    assert.deepEqual(requests[2].input, {
+      sessionId: "session-1",
+      relativePath: "brief.md",
+      content: "hello",
+      maxBytes: 1024 * 1024,
+      replace: false,
+      idempotencyKey: "write-1",
     });
   });
 

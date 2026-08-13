@@ -9,6 +9,8 @@ export const SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1" 
 export const SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
 export const SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES = 8 * 1024 * 1024;
 export const SESSION_RUNTIME_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+export const SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1024 * 1024;
+export const SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8 * 1024 * 1024;
 export const SESSION_RUNTIME_DEFAULT_LIST_LIMIT = 50;
 export const SESSION_RUNTIME_MAX_LIST_LIMIT = 500;
 export const SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS = 30_000;
@@ -20,6 +22,9 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "session.list",
   "session.get",
   "session.rename",
+  "session.files.list",
+  "session.files.read_text",
+  "session.files.write_text",
   "turn.options",
   "turn.run",
   "turn.enqueue",
@@ -91,6 +96,39 @@ export type SessionRuntimeSessionGetResult = Omit<SessionRuntimeSessionDetail, "
 export type SessionRuntimeSessionListResult = {
   items: SessionRuntimeSessionSummary[];
   nextCursor?: string;
+};
+
+export type SessionRuntimeFileReference = {
+  sessionId: string;
+  relativePath: string;
+  byteLength: number;
+  modifiedAt: string;
+};
+export type SessionRuntimeFileListInput = SessionRuntimeSessionInput & {
+  limit: number;
+  cursor?: string;
+};
+export type SessionRuntimeFileListResult = {
+  items: SessionRuntimeFileReference[];
+  nextCursor?: string;
+};
+export type SessionRuntimeFileReadTextInput = SessionRuntimeSessionInput & {
+  relativePath: string;
+  maxBytes: number;
+};
+export type SessionRuntimeFileReadTextResult = {
+  file: SessionRuntimeFileReference;
+  content: string;
+};
+export type SessionRuntimeFileWriteTextInput = SessionRuntimeSessionInput & {
+  relativePath: string;
+  content: string;
+  maxBytes: number;
+  replace: boolean;
+  idempotencyKey: string;
+};
+export type SessionRuntimeFileWriteTextResult = {
+  file: SessionRuntimeFileReference;
 };
 
 export type SessionRuntimeTurnRequest = {
@@ -220,6 +258,15 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "session.rename") {
     return parseSessionRenameInput(value);
   }
+  if (operation === "session.files.list") {
+    return parseSessionFileListInput(value);
+  }
+  if (operation === "session.files.read_text") {
+    return parseSessionFileReadTextInput(value);
+  }
+  if (operation === "session.files.write_text") {
+    return parseSessionFileWriteTextInput(value);
+  }
   if (operation === "turn.options") {
     return parseSessionInput(value);
   }
@@ -287,6 +334,59 @@ function parseSessionRenameInput(value: unknown): SessionRuntimeRenameInput {
   return {
     sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
     title: requireNonEmptyString(record.title, "title"),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseSessionFileListInput(value: unknown): SessionRuntimeFileListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "limit", "cursor"], "input");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    limit: record.limit === undefined
+      ? SESSION_RUNTIME_DEFAULT_LIST_LIMIT
+      : requireInteger(record.limit, "limit", 1, SESSION_RUNTIME_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function parseSessionFileReadTextInput(value: unknown): SessionRuntimeFileReadTextInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "relativePath", "maxBytes"], "input");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
+    maxBytes: record.maxBytes === undefined
+      ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES
+      : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED"),
+  };
+}
+
+function parseSessionFileWriteTextInput(value: unknown): SessionRuntimeFileWriteTextInput {
+  const record = requireObject(value, "input");
+  assertKeys(
+    record,
+    ["sessionId", "relativePath", "content", "maxBytes", "replace", "idempotencyKey"],
+    "input",
+  );
+  const maxBytes = record.maxBytes === undefined
+    ? SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES
+    : requireInteger(record.maxBytes, "maxBytes", 1, SESSION_RUNTIME_MAX_FILE_TEXT_BYTES, "LIMIT_EXCEEDED");
+  const content = requireString(record.content, "content");
+  const actualBytes = Buffer.byteLength(content, "utf8");
+  if (actualBytes > maxBytes) {
+    throw new SessionRuntimeValidationError(
+      "Session file content exceeds the requested byte limit.",
+      { field: "content", actualBytes, maxBytes },
+      "CONTENT_TOO_LARGE",
+    );
+  }
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    relativePath: requireNonEmptyString(record.relativePath, "relativePath"),
+    content,
+    maxBytes,
+    replace: record.replace === undefined ? false : requireBoolean(record.replace, "replace"),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }
@@ -454,6 +554,20 @@ function requireNonEmptyString(value: unknown, field: string): string {
     throw invalid(field, `${field} must be a non-empty string.`);
   }
   return value.trim();
+}
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== "string") {
+    throw invalid(field, `${field} must be a string.`);
+  }
+  return value;
+}
+
+function requireBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw invalid(field, `${field} must be a boolean.`);
+  }
+  return value;
 }
 
 function requireInteger(value: unknown, field: string, min: number, max: number, code = "INVALID_INPUT"): number {

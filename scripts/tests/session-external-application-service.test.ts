@@ -10,6 +10,7 @@ import {
 } from "../../src/session-external-runtime-contract.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
+import { SessionFileServiceError } from "../../src-electron/session-file-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 
 const execution: SessionExecution = {
@@ -69,6 +70,112 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
   const getResponse = await service.execute("session.get", { sessionId: "missing" });
   assert.equal("error" in getResponse && getResponse.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
+});
+
+test("SF-ADAPTER-02: Session file operationsを同じapplication serviceへdispatchする", async () => {
+  const calls: Array<{ operation: string; input: unknown }> = [];
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { throw new Error("unused"); },
+    },
+    fileService: {
+      async list(input) { calls.push({ operation: "list", input }); return { items: [] }; },
+      async readText(input) {
+        calls.push({ operation: "read_text", input });
+        return {
+          file: { sessionId: input.sessionId, relativePath: input.relativePath, byteLength: 5, modifiedAt: "now" },
+          content: "hello",
+        };
+      },
+      async writeText(input) {
+        calls.push({ operation: "write_text", input });
+        return {
+          file: { sessionId: input.sessionId, relativePath: input.relativePath, byteLength: 5, modifiedAt: "now" },
+        };
+      },
+    },
+  });
+
+  await service.execute("session.files.list", { sessionId: "session-1" });
+  await service.execute("session.files.read_text", { sessionId: "session-1", relativePath: "brief.md" });
+  await service.execute("session.files.write_text", {
+    sessionId: "session-1",
+    relativePath: "brief.md",
+    content: "hello",
+    idempotencyKey: "write-1",
+  });
+
+  assert.deepEqual(calls.map((call) => call.operation), ["list", "read_text", "write_text"]);
+  assert.deepEqual(calls[0]?.input, { sessionId: "session-1", limit: 50 });
+  assert.deepEqual(calls[2]?.input, {
+    sessionId: "session-1",
+    relativePath: "brief.md",
+    content: "hello",
+    maxBytes: 1024 * 1024,
+    replace: false,
+    idempotencyKey: "write-1",
+  });
+});
+
+test("SF-EFFECT-01: publish後のtyped file errorをindeterminateとsafe identifiers付きで返す", async () => {
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run() { throw new Error("unused"); },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      listPage() { throw new Error("unused"); },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { throw new Error("unused"); },
+    },
+    fileService: {
+      async list() { throw new Error("unused"); },
+      async readText() { throw new Error("unused"); },
+      async writeText() {
+        throw new SessionFileServiceError(
+          "PATH_CHANGED",
+          "The Session file path changed after publication.",
+          true,
+          { sessionId: "session-1", relativePath: "brief.md" },
+          "indeterminate",
+        );
+      },
+    },
+  });
+
+  const response = await service.execute("session.files.write_text", {
+    sessionId: "session-1",
+    relativePath: "brief.md",
+    content: "hello",
+    idempotencyKey: "write-effect",
+  });
+
+  assert.equal("error" in response && response.error.code, "PATH_CHANGED");
+  assert.equal("error" in response && response.error.effect, "indeterminate");
+  assert.equal("error" in response && response.error.details.sessionId, "session-1");
+  assert.equal("error" in response && response.error.details.relativePath, "brief.md");
 });
 
 test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過をappliedとして返す", async () => {

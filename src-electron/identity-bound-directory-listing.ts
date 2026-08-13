@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import type { SessionDirectoryEntry } from "../src/file-explorer/file-explorer-contract.js";
 
 const WORKER_SOURCE = String.raw`
-const { lstat, readdir, stat } = require("node:fs/promises");
+const { lstat, opendir, stat } = require("node:fs/promises");
 
 const STAT_CONCURRENCY = 32;
 
@@ -30,7 +30,15 @@ function toKind(entry) {
       setInterval(() => undefined, 1_000);
     });
   }
-  const dirents = await readdir(".", { withFileTypes: true });
+  const maxEntries = Number(process.env.WITHMATE_IDENTITY_DIRECTORY_MAX_ENTRIES || 0);
+  const dirents = [];
+  const directory = await opendir(".");
+  for await (const entry of directory) {
+    dirents.push(entry);
+    if (maxEntries > 0 && dirents.length > maxEntries) {
+      throw Object.assign(new Error("directory scan limit exceeded"), { code: "DIRECTORY_SCAN_LIMIT" });
+    }
+  }
   const entries = new Array(dirents.length);
   let nextIndex = 0;
   let activeStats = 0;
@@ -68,9 +76,11 @@ function toKind(entry) {
       }
     }
   }));
-  process.stdout.write(JSON.stringify({ type: "result", entries, maxConcurrentStats }) + "\n");
+  process.stdout.write(JSON.stringify({ type: "result", entries, scannedEntries: dirents.length, maxConcurrentStats }) + "\n");
 })().catch((error) => {
-  process.stderr.write(error instanceof Error ? error.message : String(error));
+  process.stderr.write(error && error.code === "DIRECTORY_SCAN_LIMIT"
+    ? "DIRECTORY_SCAN_LIMIT"
+    : error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 });
 `;
@@ -79,6 +89,7 @@ export type IdentityBoundDirectorySnapshot = {
   device: number;
   inode: number;
   entries: Array<Pick<SessionDirectoryEntry, "name" | "kind" | "byteLength" | "modifiedAt">>;
+  scannedEntries: number;
   maxConcurrentStats: number;
 };
 
@@ -86,6 +97,7 @@ type IdentityBoundDirectoryListingOptions = {
   delayAfterReadyMs?: number;
   hangAfterReady?: boolean;
   timeoutMs?: number;
+  maxEntries?: number;
   onIdentityBound?: () => void;
   onWorkerStarted?: () => void;
   onWorkerSettled?: () => void;
@@ -98,6 +110,7 @@ type WorkerMessage =
   | {
       type: "result";
       entries: IdentityBoundDirectorySnapshot["entries"];
+      scannedEntries: number;
       maxConcurrentStats: number;
     };
 
@@ -117,7 +130,9 @@ function parseWorkerMessage(line: string): WorkerMessage {
     "entries" in value &&
     Array.isArray(value.entries) &&
     "maxConcurrentStats" in value &&
-    typeof value.maxConcurrentStats === "number"
+    typeof value.maxConcurrentStats === "number" &&
+    "scannedEntries" in value &&
+    typeof value.scannedEntries === "number"
   ) {
     const entries = value.entries.map((entry): IdentityBoundDirectorySnapshot["entries"][number] => {
       if (!entry || typeof entry !== "object" || !("name" in entry) || !("kind" in entry)) {
@@ -140,7 +155,7 @@ function parseWorkerMessage(line: string): WorkerMessage {
         modifiedAt: entry.modifiedAt,
       };
     });
-    return { type: "result", entries, maxConcurrentStats: value.maxConcurrentStats };
+    return { type: "result", entries, scannedEntries: value.scannedEntries, maxConcurrentStats: value.maxConcurrentStats };
   }
   throw new Error("directory worker の応答形式が不正だよ。");
 }
@@ -157,6 +172,7 @@ export function listIdentityBoundDirectory(
         ELECTRON_RUN_AS_NODE: "1",
         WITHMATE_IDENTITY_DIRECTORY_DELAY_MS: String(options.delayAfterReadyMs ?? 0),
         WITHMATE_IDENTITY_DIRECTORY_HANG_AFTER_READY: options.hangAfterReady ? "1" : "0",
+        WITHMATE_IDENTITY_DIRECTORY_MAX_ENTRIES: String(options.maxEntries ?? 0),
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -166,6 +182,7 @@ export function listIdentityBoundDirectory(
     let identity: Pick<IdentityBoundDirectorySnapshot, "device" | "inode"> | null = null;
     let entries: IdentityBoundDirectorySnapshot["entries"] | null = null;
     let maxConcurrentStats: number | null = null;
+    let scannedEntries: number | null = null;
     let settled = false;
     let terminalError: Error | null = null;
     const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
@@ -216,6 +233,7 @@ export function listIdentityBoundDirectory(
           options.onIdentityBound?.();
         } else {
           entries = message.entries;
+          scannedEntries = message.scannedEntries;
           maxConcurrentStats = message.maxConcurrentStats;
         }
       }
@@ -259,14 +277,25 @@ export function listIdentityBoundDirectory(
         return;
       }
       if (code !== 0) {
+        if (stderr.trim() === "DIRECTORY_SCAN_LIMIT") {
+          settle(new IdentityBoundDirectoryLimitError());
+          return;
+        }
         settle(new Error(stderr.trim() || `directory worker が code ${code ?? "unknown"} で終了したよ。`));
         return;
       }
-      if (!identity || !entries || maxConcurrentStats === null) {
+      if (!identity || !entries || maxConcurrentStats === null || scannedEntries === null) {
         settle(new Error("directory worker の応答が途中で終了したよ。"));
         return;
       }
-      settle(null, { ...identity, entries, maxConcurrentStats });
+      settle(null, { ...identity, entries, scannedEntries, maxConcurrentStats });
     });
   });
+}
+
+export class IdentityBoundDirectoryLimitError extends Error {
+  constructor() {
+    super("directory scan limit exceeded");
+    this.name = "IdentityBoundDirectoryLimitError";
+  }
 }

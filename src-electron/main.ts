@@ -126,6 +126,7 @@ import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
 import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import { SessionCrudService } from "./session-crud-service.js";
+import { SessionFileService } from "./session-file-service.js";
 import { resolveCurrentGitBranch } from "./session-workspace-git.js";
 import {
   startSessionExternalRuntime,
@@ -359,6 +360,7 @@ let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionExecutionStorage: SessionExecutionStorageV6 | null = null;
 let sessionExecutionService: SessionExecutionService | null = null;
 let sessionCrudService: SessionCrudService | null = null;
+let sessionFileService: SessionFileService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
 let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
 let sessionExternalRuntimeShuttingDown = false;
@@ -2545,6 +2547,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
     sessionExternalApplicationService = new SessionExternalApplicationService({
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
+      fileService: requireSessionFileService(),
       currentModelCatalog: () => getModelCatalog(),
       isProviderEnabled: (providerId) => getProviderAppSettings(
         requireSettingsCatalogService().getAppSettings(),
@@ -2556,6 +2559,17 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
     }
   }
   return sessionExternalApplicationService;
+}
+
+function requireSessionFileService(): SessionFileService {
+  if (!sessionFileService) {
+    sessionFileService = new SessionFileService({
+      storage: requireSessionStorageV6(),
+      resolveSessionFilesDirectory: (sessionId) =>
+        resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+    });
+  }
+  return sessionFileService;
 }
 
 async function drainSessionExecutionsBestEffort(): Promise<void> {
@@ -3266,6 +3280,7 @@ function closeSessionExecutionRuntime(): void {
   sessionExecutionStorage = null;
   sessionExecutionService = null;
   sessionCrudService = null;
+  sessionFileService = null;
   sessionExternalApplicationService = null;
   activeSessionExecutionIds.clear();
   canceledSessionExecutionIds.clear();

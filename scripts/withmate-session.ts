@@ -68,6 +68,9 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["session list", "session.list"],
   ["session get", "session.get"],
   ["session rename", "session.rename"],
+  ["session files list", "session.files.list"],
+  ["session files read-text", "session.files.read_text"],
+  ["session files write-text", "session.files.write_text"],
   ["turn options", "turn.options"],
   ["turn run", "turn.run"],
   ["turn enqueue", "turn.enqueue"],
@@ -186,6 +189,7 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
 
 function isMutationCommand(command: string): boolean {
   return command === "session create" || command === "session rename"
+    || command === "session files write-text"
     || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
 }
 
@@ -197,12 +201,15 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   discoveryFilePath?: string;
   timeoutMs: number;
 }> {
+  const fileCommand = args[0] === "session" && args[1] === "files";
   const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
-  const command = namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+  const command = fileCommand
+    ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
+    : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
   }
-  const optionStart = namespacedCommand ? 2 : 1;
+  const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
   let json: string | undefined;
   let file: string | undefined;
   let useStdin = false;

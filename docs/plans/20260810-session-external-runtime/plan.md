@@ -429,3 +429,120 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Finding Promotion: SessionFolderの永続化呼出し後failureでdirectoryを保持する指摘は、ADR 005がデータ消失回避のaccepted behaviorとorphan riskを明示するため`accepted risk`。failure injection testで現行境界を固定
 - Targeted closure: `session-crud-c2`で`F-PROJECTION-PAGINATION`と`F-PUBLICATION-EFFECT`をそれぞれ一度確認し、blocking findingなしでclosed
 - Full-review gate: `skip`。triggerしたmatrix cellはdirect checkとspecialist/targeted closureで閉じ、未確認のcross-cutting interactionを残していない
+
+## Session Files Implementation
+
+### Scope
+
+- 通常Sessionを明示した`session.files.list`、`session.files.read_text`、`session.files.write_text`をshared application boundaryへ追加する
+- CLI、MCP、loopback HTTPは同じrequest parser、Session file service、result/error contractを使う
+- delete、rename、binary upload、caller workspaceからのcopy、Auxiliary/Companionの個別Folder操作は公開しない
+
+### Pre-Implementation Closure Plan
+
+- Gate: `ready`
+- Accepted contract: ADR 021のSessionFolder authority、relative path containment、write idempotency。`docs/design/session-external-runtime.md`のpagination、text byte limit、atomic no-overwrite contract
+- Canonical owner: public input/resultは`src/session-external-runtime-contract.ts`、path認可とfile effectは`src-electron/session-file-service.ts`、durable idempotencyは`SessionStorageV6`
+- Sibling entries: loopback HTTP、Session CLI、Session MCP。GUI Explorerはabsolute preview capabilityを持つため外部Session filesのownerとして再利用しない
+- Failure timing: validationとSession解決後にwrite idempotencyを`pending`へ保存し、同一filesystemのtemp fileをatomic publishしてから`applied`へ更新する。publish後にstorage更新またはresponse deliveryが失敗した場合は、同じkeyとfingerprintのretryでtarget digestを確認しcanonical resultへ収束する
+- Knowledge placement: ADR 021を継続利用し、新しい選択肢または不可逆な判断は追加しない。schema/type/testを正本とし、CLI操作だけrunbookへ反映する
+
+### Invariant Matrix
+
+| ID | Sibling channel / coupled values | Failure mode / timing | Consumer impact | Owner / effect certainty | Direct verification | Status |
+| --- | --- | --- | --- | --- | --- | --- |
+| SF-OWN | sessionId、default Session、SessionFolder | orphan Folderまたは非default SessionをIDだけで参照 | 別owner fileの露出 | Session file service / read-onlyまたはeffect前 | missing/nondefault Session test | covered |
+| SF-PATH | root identity、relative path、parent/file identity | absolute、`..`、symlink/junction、検証後差替え | SessionFolder外のfile露出または上書き | Session file service / effect前 | relative path、symlink read/list、identity-bound tests | covered |
+| SF-LIMIT | list limit/cursor、UTF-8、read/write maxBytes | aggregate scan、truncate、invalid text、8 MiB超過 | 不完全結果またはresource枯渇 | shared contract + Session file service / effect前 | parser、pagination、bounded read/write tests | covered |
+| SF-WRITE | sessionId、relativePath、content digest、replace、operation/key/fingerprint | partial file、response loss後の重複、key conflict | 上書き、canonical result喪失 | Session file service + V6 storage / pending or applied | no-overwrite、replay/conflict、publish後failure recovery tests | covered |
+| SF-ADAPTER | HTTP/CLI/MCP operationとstrict input | adapter固有schema、mutation effect誤分類 | surfaceごとのretry分岐 | shared contract + application service / stable envelope | shared/application/CLI/MCP contract tests | covered |
+
+### Review Plan
+
+- Candidate preflight後、`identity-security-ipc`、`contract-schema-projection`、`lifecycle-effect-concurrency`の3 lensを同じCandidateへ一度ずつ適用する
+- findingはFinding Promotionで分類し、`current-scope repair`だけを対象familyのdirect checkとtargeted closureへ戻す
+- Full-review gateはsecurity、filesystem、SQLite、CLI/MCPを跨ぐinteractionがtargeted checkだけで閉じない場合に`run`、それ以外は`skip`とする
+
+### Structure Convergence Gate
+
+- Result: `ready-after-consolidation`
+- Trigger evidence: Candidate c1のidentity reviewで、認可後のroot/parent差替えを通常のpath再解決だけでは防げないことが確認され、Session orchestrationとOS identity-bound write primitiveを同一serviceへ残すとsecurity decisionが分散する具体的なevidenceになった
+- Decision: Session ownership、public error/effect、idempotency orchestrationは`SessionFileService`へ残し、認可済みrootからnested parent、stage、publishまでを同一process cwdへidentity-bindするprimitiveを`identity-bound-file-write.ts`へ抽出した。durable replay stateは`SessionStorageV6`、public parser/projectionはshared contractとapplication serviceが引き続き所有する
+- Preserved contracts: `SF-OWN`、`SF-PATH`、`SF-LIMIT`、`SF-WRITE`、`SF-ADAPTER`
+- Responsibility delta / edit batch: identity-bound writeとcleanupを専用primitiveへ集約し、service内のlexical write helperを除去した。新しいpublic APIまたは別subsystemは追加していない
+- Post-gate direct checks: Session file service 12件、review finding横断targeted suite 48件、typecheck、build、全体testがpassed
+
+### Candidate Definition and Evidence Ledger
+
+- Candidate: `session-files-c1`
+- Source identity: `candidate_snapshot.py create`のschema version 1 `manifest-digest`で生成した`sha256:9e44d9c794357d2b6f799ea8c6a6f939aa927a1f1a6de9b4a93f437450856214`。production source、adapter、generated Session CLI、runbook、関連test 17 fileを固定し、task-local planは対象外とした
+- Candidate preflight: `review_brief.py`のschema version 1 builderで3 specialist Briefとも`ready / verified`。recorded baseは`bc02adf0e2a3cf0bc3d104de3de3ec0613789fe9`、raw diff digestは`sha256:a71e721317486d82a6ef5b859a3cb5cb5bc02582714f9694b1c0d990f65263f8`。未追跡fileはmanifestのexact content digestへ固定し、outside-scope changeはtask-local planだけである
+- Accepted contract / matrix: `SF-OWN`、`SF-PATH`、`SF-LIMIT`、`SF-WRITE`、`SF-ADAPTER`
+- Current direct evidence:
+  - Session file service/storage targeted set: 8 passed、0 failed
+  - Session files関連横断targeted set: 126 passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+  - `npm test`: 2468 tests、2467 passed、1 skipped、0 failed
+  - `git diff --check`: passed with line-ending warnings only
+- Review Brief: 同じCandidateを`identity-security-ipc`、`contract-schema-projection`、`lifecycle-effect-concurrency`へ独立に渡す。各lensは割当matrix cellと現実的な反例に限定し、source編集を行わない。初回の手書きenvelopeは必須field不足でvalidation-onlyとなったため、Candidateとreview contractを維持したtransport retryとしてbuilder発行済みBriefを同じreviewerへ再送した
+
+### Finding Promotion and Candidate c2
+
+- Candidate c1の3 specialist lensで、次をaccepted contract違反かつ現実的に到達可能な`current-scope repair`へ分類した
+  - `F-SF-PATH-IDENTITY-WRITE`: 認可後のSessionFolder rootまたはnested parent差替えで外部pathへwriteできる
+  - `F-SF-CONTRACT-EFFECT-ANNOTATION-PAGINATION`: publish後のtyped error effect、MCP destructive annotation、Unicode pagination comparatorがpublic contractと一致しない
+  - `F-SF-WRITE-LIFECYCLE`: late completionのexpiry、partial temp recovery、fresh no-overwrite collisionがdurable replay contractと一致しない
+- いずれも既存のSession file、application adapter、V6 storage owner内で閉じ、新しいsemantic ownerまたはsubsystemを要求しない。CLI response envelopeの追加validationはcurrent finding family外のhardening候補としてsourceへ加えない
+- Repair delta:
+  - write workerを認可済みrootのcwdへbindし、rootと各nested directoryのidentityをpublishまで検査する。root/nested junction swapをdirect regression化した
+  - typed `SessionFileServiceError`のeffectをpublic envelopeへ伝播し、MCP writeをdestructiveとして公開し、list sort/cursorをUTF-8 byte comparatorへ統一した
+  - applied expiryをcompletion基準へ更新し、partial tempの安全なrestage/cleanupとpublish proofをreplayへ保持し、fresh no-overwrite collisionはcontent一致でも`FILE_ALREADY_EXISTS`とした
+- Candidate: `session-files-c2`
+- Source identity: schema version 1 `manifest-digest`の`sha256:62e80aa977ac32cffa2e6213c4c118c8c11edd022316e8fd179cecdae0d9f5bd`。production source、adapter、generated Session CLI、runbook、関連test 18 fileを固定し、task-local planは対象外とした
+- Candidate preflight: 3 targeted-closure Briefとも`ready / verified`。recorded baseは`bc02adf0e2a3cf0bc3d104de3de3ec0613789fe9`、raw diff digestは`sha256:660701544b9bc5b8e54aa80cbe389c7c1b5fca77519bf5edcb913ff645750894`
+- Current direct evidence:
+  - finding横断targeted set: 48 passed、0 failed
+  - Session file service identity set: 12 passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+  - `npm test`: 2475 tests、2474 passed、1 skipped、0 failed
+  - `git diff --check`: passed with line-ending warnings only
+- Targeted closure: c1でfindingを出した3 reviewerへ、Candidate c2のfinding familyとresulting deltaだけを一度ずつ返す。complete diffの新規探索は行わない
+
+### Lifecycle Design Re-entry and Final Candidate
+
+- Candidate c2のidentityとcontract targeted closureはblockingなしでclosedした。lifecycle closureでは、`replace=true`のresumeにpublish proofがなくunrelatedな同digest targetをapplied化できる反例を確認した
+- Candidate c3でresume acceptanceをtemp/target同一identity proof必須へ統一し、別writerの同digest targetを再publishする`SF-WRITE-07`を追加した。identity familyへのdelta非影響はblockingなしで確認した
+- 同じlifecycle familyの二度目のclosureで、replace publishがtempをrenameで消費するため、completion failure後のretryでproofが残らず再publishする反例を確認した。同じfamilyのreviewはこれ以上反復せず、設計境界へ戻した
+- Final design: replace publish後にtargetからowned tempへhard linkを作り、staged inode、target、proof linkのidentity一致を検証する。proof linkはSQLiteのapplied確定まで保持し、成功後にidentity-bound cleanupする。これによりunrelated targetを受理せず、実publish後のretryは同じinode、mtime、canonical resultへ収束する
+- Direct closure:
+  - `SF-WRITE-07`: pending replaceが別writerの同digest targetを本operationのproofとして受理せず再publishする
+  - `SF-WRITE-08`: replace publish後のcompletion failureとretryでinode、mtime、canonical resultが変わらない
+  - finding横断targeted set: 51 passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+  - `npm test`: passed。1 skipped、0 failed
+- Final Candidate: `session-files-c4`
+- Source identity: schema version 1 `manifest-digest`の`sha256:6ce7ce760e87c9a8650e651e53de48506fe2a1daebba27a682a23e3ed8ee709f`。Candidate preflightは`verified`
+- Full-review gate: `run`。identity-bound filesystem effect、SQLite durable replay、HTTP/CLI/MCP public effectのcross-cutting interactionは単一targeted checkでは直接反証できないため、fresh reviewerへCandidate c4のcomplete diffを一度だけ渡す
+
+### Holistic Findings and Candidate c6 Closure
+
+- Candidate c4のholistic complete-diff reviewは一度だけ実施し、`SF-WRITE`と`SF-LIMIT`に各1件の`current-scope repair`を確認した。二度目のcomplete-diff探索は行わない
+- `F-HOLISTIC-TERMINAL-REJECTED`: `FILE_ALREADY_EXISTS / not_applied / retryable=false`が`pending`に残り、target削除後の同一key再送で成功し得る。V6 idempotency stateへ`rejected`を追加し、canonical errorをcompletion基準で24時間保持・再生・cleanupする。既存tableはSAVEPOINT内のrebuildで行を保持したままCHECK制約を更新する
+- `F-HOLISTIC-LIST-SCAN-BUDGET`: public limitが返却件数だけを制限し、directory enumeration、metadata取得、worker outputを制限しない。identity-bound listing workerを`opendir`による上限制御へ変更し、Session file serviceはpage limit由来のaggregate recursive scan budgetを全directoryで共有する
+- Finding Promotion: 前者は既存Session file storage/service owner、後者は既存identity-bound listing primitiveとSession file service owner内の`current-scope repair`。GUI Explorerは`maxEntries`未指定の既存挙動を維持し、新しいpublic operationまたは別subsystemを追加しない
+- Candidate c5で両finding familyのtargeted closureはblockingなしだった。terminal reviewerが示したmigration validation gapを閉じるため、旧CHECK制約tableへ`pending`と`applied`の既存行を入れた状態でrebuildと二回目の`ensureV6Schema`後にも保持されることをdirect regressionへ追加した。production sourceとlisting familyにはdeltaがない
+- Final Candidate: `session-files-c6`
+- Source identity: schema version 1 `manifest-digest`の`sha256:567224917d3848daf896d0748972b91552baa535321b6aa36fbe003a21948a49`。Candidate preflightは`verified`。scopeはCandidate c4の18 fileにidentity-bound directory listing source/testを加えた20 file
+- Current direct evidence:
+  - terminal rejection、既存行入りschema upgrade、bounded listingを含むfocused set: 34 passed、0 failed
+  - Session files横断targeted set: 105 passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS pseudo-element warningとVite chunk-size warningのみ
+  - `npm test`: 2480 tests、2479 passed、1 skipped、0 failed
+  - `git diff --check`: passed with line-ending warnings only
+- Final closure chain: holistic finding二件はCandidate c5上でfinding familyとresulting deltaに限定したtargeted closureを行い、Candidate c6ではmigration validation gapのclosureとlisting familyへのtest-only delta非影響だけを同じreviewerへ確認する。`SF-OWN`、`SF-PATH`、`SF-ADAPTER`にはproduction deltaがなく、identity-bound helperの既存GUI callerは上限未指定で従来の全件snapshotを維持する
+- Candidate c6 targeted closure: `SF-WRITE-TERMINAL/filesystem-storage-lifecycle`と`SF-LIMIT-SCAN/resource-pagination`はいずれもCandidate verification `verified`、blockingなし、期限内approve。前者は既存行入りmigration testでc5のvalidation gapを閉じた。後者はlisting対象4 fileがc5とbyte-identicalであることと独立19 testでdelta非影響を確認した
+- Residual validation gap: 複数の小directoryを横断してaggregate scan budgetを使い切る専用testはない。共有budgetのsource確認、flat directoryのmetadata取得前拒否、recursive pagination testは存在し、Candidate c6のdelta由来ではないためnon-blockingとする

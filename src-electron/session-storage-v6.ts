@@ -77,6 +77,15 @@ type SessionCrudIdempotencyRow = {
   result_json: string;
 };
 
+type SessionFileWriteIdempotencyRow = {
+  request_fingerprint: string;
+  session_id: string;
+  relative_path: string;
+  temp_name: string;
+  state: "pending" | "applied" | "rejected";
+  result_json: string | null;
+};
+
 export type SessionCrudOperation = "session.create" | "session.rename";
 export type SessionCrudReplayResult =
   | { kind: "absent" }
@@ -88,6 +97,18 @@ export class SessionCrudIdempotencyConflictError extends Error {
   constructor() {
     super("The idempotency key was already used with different input.");
     this.name = "SessionCrudIdempotencyConflictError";
+  }
+}
+
+export type SessionFileWriteReplayResult =
+  | { kind: "pending"; sessionId: string; relativePath: string; tempName: string; resumed: boolean }
+  | { kind: "replay"; sessionId: string; relativePath: string; tempName: string; result: unknown }
+  | { kind: "rejected"; sessionId: string; relativePath: string; tempName: string; error: unknown };
+
+export class SessionFileWriteIdempotencyConflictError extends Error {
+  constructor() {
+    super("The idempotency key was already used with different input.");
+    this.name = "SessionFileWriteIdempotencyConflictError";
   }
 }
 
@@ -417,6 +438,130 @@ export class SessionStorageV6 {
     return Number(result.changes);
   }
 
+  prepareSessionFileWrite(input: {
+    idempotencyKey: string;
+    requestFingerprint: string;
+    sessionId: string;
+    relativePath: string;
+    tempName: string;
+    createdAt: string;
+    expiresAt: string;
+  }): SessionFileWriteReplayResult {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      this.cleanupAppliedSessionFileWriteIdempotency(input.createdAt);
+      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      if (existing) {
+        const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
+        this.db.exec("COMMIT");
+        return resolved;
+      }
+      this.db.prepare(`
+        INSERT INTO session_file_write_idempotency_v6 (
+          operation, idempotency_key, request_fingerprint, session_id, relative_path,
+          temp_name, state, result_json, created_at, expires_at
+        ) VALUES ('session.files.write_text', ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+      `).run(
+        input.idempotencyKey,
+        input.requestFingerprint,
+        input.sessionId,
+        input.relativePath,
+        input.tempName,
+        input.createdAt,
+        input.expiresAt,
+      );
+      this.db.exec("COMMIT");
+      return {
+        kind: "pending",
+        sessionId: input.sessionId,
+        relativePath: input.relativePath,
+        tempName: input.tempName,
+        resumed: false,
+      };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  completeSessionFileWrite(input: {
+    idempotencyKey: string;
+    requestFingerprint: string;
+    result: unknown;
+    completedAt: string;
+    expiresAt: string;
+  }): unknown {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      if (!existing) {
+        throw new Error("Prepared Session file write idempotency record is missing.");
+      }
+      const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
+      if (resolved.kind === "replay") {
+        this.db.exec("COMMIT");
+        return resolved.result;
+      }
+      if (resolved.kind === "rejected") {
+        throw new Error("Rejected Session file write cannot be completed as applied.");
+      }
+      const resultJson = JSON.stringify(input.result);
+      this.db.prepare(`
+        UPDATE session_file_write_idempotency_v6
+        SET state = 'applied', result_json = ?, created_at = ?, expires_at = ?
+        WHERE operation = 'session.files.write_text' AND idempotency_key = ?
+      `).run(resultJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+      this.db.exec("COMMIT");
+      return JSON.parse(resultJson) as unknown;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  rejectSessionFileWrite(input: {
+    idempotencyKey: string;
+    requestFingerprint: string;
+    error: unknown;
+    completedAt: string;
+    expiresAt: string;
+  }): unknown {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      if (!existing) {
+        throw new Error("Prepared Session file write idempotency record is missing.");
+      }
+      const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
+      if (resolved.kind === "rejected") {
+        this.db.exec("COMMIT");
+        return resolved.error;
+      }
+      if (resolved.kind === "replay") {
+        throw new Error("Applied Session file write cannot be completed as rejected.");
+      }
+      const errorJson = JSON.stringify(input.error);
+      this.db.prepare(`
+        UPDATE session_file_write_idempotency_v6
+        SET state = 'rejected', result_json = ?, created_at = ?, expires_at = ?
+        WHERE operation = 'session.files.write_text' AND idempotency_key = ?
+      `).run(errorJson, input.completedAt, input.expiresAt, input.idempotencyKey);
+      this.db.exec("COMMIT");
+      return JSON.parse(errorJson) as unknown;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  cleanupAppliedSessionFileWriteIdempotency(nowIso: string): number {
+    const result = this.db.prepare(`
+      DELETE FROM session_file_write_idempotency_v6
+      WHERE state IN ('applied', 'rejected') AND expires_at <= ?
+    `).run(nowIso);
+    return Number(result.changes);
+  }
+
   setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
     this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
     const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
@@ -610,6 +755,14 @@ export class SessionStorageV6 {
       input.createdAt,
       input.expiresAt,
     );
+  }
+
+  private findSessionFileWriteIdempotency(idempotencyKey: string): SessionFileWriteIdempotencyRow | undefined {
+    return this.db.prepare(`
+      SELECT request_fingerprint, session_id, relative_path, temp_name, state, result_json
+      FROM session_file_write_idempotency_v6
+      WHERE operation = 'session.files.write_text' AND idempotency_key = ?
+    `).get(idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
   }
 
   private writeSession(session: Session, operation: "create" | "upsert" = "upsert"): void {
@@ -930,4 +1083,44 @@ export class SessionStorageV6 {
     `).all(...validParentSessionIds) as SessionIdRow[];
     return rows.map((row) => row.id).filter((id) => id.trim().length > 0);
   }
+}
+
+function resolveSessionFileWriteIdempotency(
+  row: SessionFileWriteIdempotencyRow,
+  requestFingerprint: string,
+): SessionFileWriteReplayResult {
+  if (row.request_fingerprint !== requestFingerprint) {
+    throw new SessionFileWriteIdempotencyConflictError();
+  }
+  if (row.state === "applied") {
+    if (!row.result_json) {
+      throw new Error("Applied Session file write is missing its canonical result.");
+    }
+    return {
+      kind: "replay",
+      sessionId: row.session_id,
+      relativePath: row.relative_path,
+      tempName: row.temp_name,
+      result: JSON.parse(row.result_json) as unknown,
+    };
+  }
+  if (row.state === "rejected") {
+    if (!row.result_json) {
+      throw new Error("Rejected Session file write is missing its canonical error.");
+    }
+    return {
+      kind: "rejected",
+      sessionId: row.session_id,
+      relativePath: row.relative_path,
+      tempName: row.temp_name,
+      error: JSON.parse(row.result_json) as unknown,
+    };
+  }
+  return {
+    kind: "pending",
+    sessionId: row.session_id,
+    relativePath: row.relative_path,
+    tempName: row.temp_name,
+    resumed: true,
+  };
 }
