@@ -1233,7 +1233,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
-    handleJumpToMessageListBottom,
+    followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
     scrollSignature: companionMessageListScrollSignature,
@@ -3165,7 +3165,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onJumpToMessageListBottom: handleJumpToMessageListBottom,
+        onJumpToMessageListBottom: followMessageListLatest,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
           if (activeAuxiliarySession) {
