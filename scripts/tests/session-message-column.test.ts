@@ -179,6 +179,7 @@ function renderSessionMessageColumn(options: {
   liveApprovalRequest?: LiveApprovalRequest | null;
   liveElicitationRequest?: LiveElicitationRequest | null;
   liveRunAssistantText?: string;
+  liveRunErrorMessage?: string;
   pendingMessageText?: string;
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
@@ -200,7 +201,7 @@ function renderSessionMessageColumn(options: {
       elicitationActionRequestId: null,
       liveRunAssistantText: options.liveRunAssistantText ?? "",
       hasLiveRunAssistantText: !!options.liveRunAssistantText,
-      liveRunErrorMessage: "",
+      liveRunErrorMessage: options.liveRunErrorMessage ?? "",
       pendingMessageText: options.pendingMessageText,
       pendingMessageGroupId: options.pendingMessageGroupId,
       isMessageListFollowing: options.isMessageListFollowing ?? false,
@@ -1272,6 +1273,46 @@ test("SessionMessageColumn は未選択時に response action を描画しない
   assert.doesNotMatch(html, />Quote</);
   assert.match(html, /data-message-text-actions="true"/);
   assert.equal((html.match(/data-message-text-actions="true"/g) ?? []).length, 1);
+});
+
+test("SessionMessageColumn は保持された assistant text を run の終了状態に関係なく response action 対象にする", () => {
+  const states = [
+    { label: "cancel前", isRunning: true, liveRunErrorMessage: "" },
+    { label: "cancel後", isRunning: false, liveRunErrorMessage: "キャンセルしました" },
+    { label: "failed", isRunning: false, liveRunErrorMessage: "実行に失敗しました" },
+    { label: "running", isRunning: true, liveRunErrorMessage: "" },
+    { label: "通常完了", isRunning: false, liveRunErrorMessage: "" },
+  ];
+
+  for (const state of states) {
+    const html = renderSessionMessageColumn({
+      messages: [{ role: "assistant", text: `${state.label}の保持済みresponse` }],
+      isRunning: state.isRunning,
+      liveRunErrorMessage: state.liveRunErrorMessage,
+      withResponseActions: true,
+    });
+
+    assert.equal(
+      (html.match(/data-message-text-actions="true"/g) ?? []).length,
+      1,
+      `${state.label}でも保持された assistant text を操作対象にする`,
+    );
+  }
+});
+
+test("SessionMessageColumn は pending response text も response action 対象にする", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "prompt" }],
+    isRunning: true,
+    pendingMessageText: "途中まで生成されたresponse",
+    withResponseActions: true,
+  });
+
+  const dom = new JSDOM(html);
+  const pendingBody = dom.window.document.querySelector("[data-pending-message-body='true']");
+  assert.ok(pendingBody);
+  assert.equal(pendingBody.getAttribute("data-message-body"), "true");
+  assert.equal(pendingBody.getAttribute("data-message-text-actions"), "true");
 });
 
 test("SessionMessageColumn は選択範囲にだけ response action toolbar を表示する", async () => {

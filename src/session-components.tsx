@@ -2576,6 +2576,7 @@ export function SessionMessageColumn({
     liveElicitationRequest === null &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
+  const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
   const messageRenderedSearchTexts = useMemo(
     () => (hasFindQuery
@@ -2974,7 +2975,11 @@ export function SessionMessageColumn({
           />
         ) : null}
         {hasPendingMessageText ? (
-          <div data-pending-message-body="true">
+          <div
+            data-message-body="true"
+            data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
+            data-pending-message-body="true"
+          >
             <MessageRichText
               text={pendingMessageText}
               forceFullRender={findOpen && hasFindQuery}
