@@ -1460,7 +1460,7 @@ export default function AgentSessionWindowApp() {
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
-    handleJumpToMessageListBottom,
+    followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
     scrollSignature: messageListScrollSignature,
@@ -3763,7 +3763,7 @@ export default function AgentSessionWindowApp() {
         onOpenPromptTemplates: handleOpenPromptTemplates,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onJumpToMessageListBottom: handleJumpToMessageListBottom,
+        onJumpToMessageListBottom: followMessageListLatest,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
           if (activeAuxiliarySession) {
