@@ -1,0 +1,4 @@
+interface:
+  display_name: "WithMate Session"
+  short_description: "Operate persistent WithMate Sessions via CLI or MCP"
+  default_prompt: "Use WithMate Session orchestration to create, run, queue, or inspect an explicit persistent Session."

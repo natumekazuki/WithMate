@@ -237,6 +237,10 @@ import {
   type ManagedMemorySkillSyncResult,
   WITHMATE_MEMORY_SKILL_NAME,
 } from "./managed-memory-skill-service.js";
+import {
+  ManagedSessionSkillService,
+  WITHMATE_SESSION_SKILL_NAME,
+} from "./managed-session-skill-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
@@ -320,6 +324,9 @@ const bundledCharacterAuthoringSkillPath = app.isPackaged
 const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
+const bundledSessionSkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_SESSION_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_SESSION_SKILL_NAME);
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
@@ -350,6 +357,7 @@ let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
 let managedMemorySkillService: ManagedMemorySkillService | null = null;
+let managedSessionSkillService: ManagedSessionSkillService | null = null;
 let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
@@ -690,6 +698,27 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       kind: "memory-v6.skill.sync.failed",
       process: "main",
       message: "Memory V6 managed skill sync failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+async function syncManagedSessionSkillBestEffort(): Promise<void> {
+  try {
+    const result = await requireManagedSessionSkillService().syncConfiguredProviderSkill();
+    writeAppLog({
+      level: result.status === "failed" || result.status === "skipped-collision" ? "warn" : "info",
+      kind: "session-runtime.skill.sync.completed",
+      process: "main",
+      message: "Session runtime managed Skill sync completed",
+      data: { result },
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "session-runtime.skill.sync.failed",
+      process: "main",
+      message: "Session runtime managed Skill sync failed",
       error: appLogService.errorToLogError(error),
     });
   }
@@ -1973,6 +2002,7 @@ function deletePromptTemplate(id: string): PromptTemplate[] {
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
   applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
+  void syncManagedSessionSkillBestEffort();
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
 }
@@ -1984,6 +2014,7 @@ function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSett
 async function resetAppSettings(): Promise<AppSettings> {
   const settings = requireAppSettingsStorage().resetSettings();
   applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  void syncManagedSessionSkillBestEffort();
   return settings;
 }
 
@@ -2040,6 +2071,19 @@ function requireManagedMemorySkillService(): ManagedMemorySkillService {
   }
 
   return managedMemorySkillService;
+}
+
+function requireManagedSessionSkillService(): ManagedSessionSkillService {
+  if (!managedSessionSkillService) {
+    managedSessionSkillService = new ManagedSessionSkillService({
+      bundledSkillPath: bundledSessionSkillPath,
+      getAppSettings: () => requireAppSettingsStorage().getSettings(),
+      getBundleVersion: () => app.getVersion(),
+      isPackagedApp: () => app.isPackaged,
+    });
+  }
+
+  return managedSessionSkillService;
 }
 
 function requireMemoryCliShimService(): MemoryCliShimService {
@@ -3350,6 +3394,7 @@ function closePersistentStores(): void {
   characterService = null;
   characterAuthoringService = null;
   managedMemorySkillService = null;
+  managedSessionSkillService = null;
   memoryCliShimService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
@@ -4428,6 +4473,7 @@ if (!hasSingleInstanceLock) {
       requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
       applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
+      void syncManagedSessionSkillBestEffort();
       await syncManagedMemorySkillBestEffort();
       publishAppBootStatus({
         kind: "completed",
