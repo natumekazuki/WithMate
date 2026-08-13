@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React from "react";
@@ -393,6 +394,46 @@ test("MessageRichText は GFM table を table 要素として render する", ()
   assert.match(html, /<th class="message-table-heading">置き場<\/th>/);
   assert.match(html, /<td class="message-table-cell"><code class="message-inline-code">history<\/code><\/td>/);
   assert.doesNotMatch(html, /\| --- \| --- \|/);
+});
+
+test("MessageRichText は2桁番号とnested listをsemanticなordered listとしてrenderする", () => {
+  const markdown = [
+    ...Array.from({ length: 11 }, (_, index) => `${index + 1}. item ${index + 1}`),
+    "12. viewportで折り返す長い本文でもmarkerと本文を別の領域に保つ項目",
+    "",
+    "    10. nested item 10",
+    "    11. nested item 11",
+  ].join("\n");
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const dom = new JSDOM(html);
+  const rootList = dom.window.document.querySelector("ol.message-list.ordered");
+  const rootItems = rootList
+    ? Array.from(rootList.children).filter((element) => element.tagName === "LI")
+    : [];
+  const nestedList = rootItems.at(-1)?.querySelector(":scope > ol.message-list.ordered");
+
+  assert.ok(rootList);
+  assert.equal(rootItems.length, 12);
+  assert.equal(rootItems[9]?.querySelector(":scope > .message-paragraph")?.textContent, "item 10");
+  assert.equal(
+    rootItems[11]?.querySelector(":scope > .message-paragraph")?.textContent,
+    "viewportで折り返す長い本文でもmarkerと本文を別の領域に保つ項目",
+  );
+  assert.equal(nestedList?.getAttribute("start"), "10");
+  assert.deepEqual(
+    Array.from(nestedList?.children ?? []).map((item) => item.textContent),
+    ["nested item 10", "nested item 11"],
+  );
+});
+
+test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独立scroll領域にしない", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const orderedListRule = styles.match(/\.message-list\.ordered\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const sharedScrollableLists = styles.match(/\.session-list,[\s\S]*?\.summary-list\s*{(?<body>[^}]*)}/)?.[0] ?? "";
+
+  assert.match(orderedListRule, /padding-inline-start:\s*2\.25em;/);
+  assert.doesNotMatch(orderedListRule, /padding-left:/);
+  assert.doesNotMatch(sharedScrollableLists, /\.message-list,/);
 });
 
 test("MessageRichText は browser 初回 render を light markdown にして後から full markdown に差し替える", async () => {
