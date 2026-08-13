@@ -6146,6 +6146,8 @@ button:disabled {
 }
 
 .message-avatar-stack {
+  position: sticky;
+  top: 8px;
   display: grid;
   justify-items: center;
   align-content: start;
@@ -11559,6 +11561,10 @@ button:disabled {
   .composer-box,
   .choice-card {
     grid-template-columns: 1fr;
+  }
+
+  .message-avatar-stack {
+    position: static;
   }
 
   .home-settings-rail {

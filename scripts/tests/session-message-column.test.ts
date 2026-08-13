@@ -983,9 +983,12 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
     );
     const rowAboveViewport = renderedRows.find((row) => {
       const start = Number.parseFloat(
-        row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1]
-          ?? row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1]
-          ?? "0",
+        row.style.top
+          || (
+            row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1]
+            ?? row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1]
+            ?? "0"
+          ),
       );
       return start < messageList.scrollTop;
     });
