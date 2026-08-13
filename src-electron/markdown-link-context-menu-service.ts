@@ -4,6 +4,7 @@ import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
 } from "../src/markdown-link-context-menu.js";
+import { resolveMarkdownLinkCopyTarget } from "./open-path.js";
 
 type LinkContextMenu = Pick<Menu, "popup">;
 
@@ -20,7 +21,7 @@ export class MarkdownLinkContextMenuService {
 
   private copyTarget(target: string): MarkdownLinkContextMenuResult {
     try {
-      this.deps.writeText(target);
+      this.deps.writeText(resolveMarkdownLinkCopyTarget(target));
       return { status: "copied" };
     } catch {
       return { status: "failed", message: LINK_COPY_FAILED_MESSAGE };
@@ -43,11 +44,16 @@ export class MarkdownLinkContextMenuService {
           resolve(result);
         }
       };
+      const copyAndSettle = () => {
+        if (!settled) {
+          settle(this.copyTarget(request.target));
+        }
+      };
 
       try {
         const menu = this.deps.buildMenu([{
           label: "リンクをコピー",
-          click: () => settle(this.copyTarget(request.target)),
+          click: copyAndSettle,
         }]);
         menu.popup({
           window,
