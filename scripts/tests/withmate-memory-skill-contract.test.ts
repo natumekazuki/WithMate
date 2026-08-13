@@ -47,11 +47,10 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /Do not also call `character_memory\.append_episode` for the event/);
     assert.match(skill, /standalone episode that is not linked to an affect event/);
     assert.match(skill, /These fields are not part of a linked `memoryEpisode`/);
-    assert.match(skill, /Use the existing general Memory CLI for these candidates because the public Character MCP surface has no semantic append tool/);
+    assert.match(skill, /Use the general `memory\.\*` MCP tools for these candidates/);
     assert.match(skill, /explicit `project`, `user-global`, `character`, or `character\+project` target/);
-    assert.match(skill, /general `withmate-memory search` against that exact target as duplicate preflight/);
-    assert.match(skill, /general `withmate-memory append` with the same explicit target/);
-    assert.match(skill, /semantic Memory path is not an MCP fallback and does not use `--fallback-from mcp`/);
+    assert.match(skill, /Run `memory\.search` against that exact target as duplicate preflight/);
+    assert.match(skill, /use `memory\.append` with the same explicit target/);
     assert.match(skill, /Do not convert a rejected affect candidate or episode mutation into semantic Memory/);
   });
 
@@ -65,6 +64,8 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /version conflict/);
     assert.match(skill, /must not be bypassed with CLI/);
     assert.match(skill, /same running WithMate application service and persistence owner/);
+    assert.match(skill, /`MEMORY_IDEMPOTENCY_CONFLICT`/);
+    assert.match(skill, /successful general Memory retry may include `replayed: true`/);
   });
 
   it("effect certainty、read-back、shadow mode、tool可視性を区別する", async () => {
@@ -98,6 +99,21 @@ describe("withmate-memory distributed Skill contract", () => {
     ]) {
       assert.equal(reference.includes(`\`${tool}\``), true, `${tool} must be documented`);
     }
+    for (const tool of [
+      "memory.search",
+      "memory.get_entry",
+      "memory.list_targets",
+      "memory.list_entries",
+      "memory.list_tags",
+      "memory.append",
+      "memory.forget",
+      "memory.move_entry",
+      "memory.get_file",
+      "memory.export_files",
+      "memory.file_usage",
+    ]) {
+      assert.equal(reference.includes(`\`${tool}\``), true, `${tool} must be documented`);
+    }
     for (const command of [
       "context-get",
       "affect-appraise",
@@ -121,8 +137,7 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(reference, /Linked `memoryEpisode` does not use `observedFact` or `characterObservation`/);
     assert.match(reference, /lifecycle owns mandatory post-turn appraisal/);
     assert.match(reference, /structured error can still identify committed or partially committed state/);
-    assert.match(reference, /general CLI with an explicit `character` or `character\+project` target for semantic Character preferences/);
-    assert.match(reference, /That use is not MCP fallback/);
+    assert.match(reference, /Use `memory\.search`, `memory\.get_entry`, and `memory\.append` with an explicit `character` or `character\+project` target/);
     assert.match(reference, /Character Memory mutations return `operation`/);
     assert.match(reference, /conversation text, Memory bodies, affect evidence text, inferred user emotion/);
     assert.match(reference, /`bundleVersion`/);
@@ -143,5 +158,7 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(cli, /A Character preference that belongs only to one project uses the combined target/);
     assert.match(cli, /"owner": "character"[\s\S]*"project": \{ "type": "path"[\s\S]*"scope": "project"/);
     assert.match(cli, /Do not silently drop either owner from a combined Character\+Project candidate/);
+    assert.match(cli, /Normal agent operations use the general `memory\.\*` tools/);
+    assert.match(cli, /A structured MCP domain error is not an availability failure/);
   });
 });

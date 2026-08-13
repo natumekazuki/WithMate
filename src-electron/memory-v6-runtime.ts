@@ -48,6 +48,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   userDataPath: string;
   runtimeDirectoryPath?: string;
   listCharacters?: () => readonly CharacterCatalogEntry[];
+  resolveCharacterById?: (id: string) => { id: string; name: string } | null;
   resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null;
   getMemoryFileQuotaBytes?: () => number;
   protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
@@ -278,6 +279,12 @@ export async function startMemoryV6RuntimeApi(
       storage,
       ...projectResolver,
       ...(options.listCharacters ? { listCharacters: options.listCharacters } : {}),
+      ...(options.resolveCharacterById ? { resolveCharacterById: options.resolveCharacterById } : options.listCharacters ? {
+        resolveCharacterById: (id) => {
+          const character = options.listCharacters?.().find((candidate) => candidate.id === id);
+          return character ? { id: character.id, name: character.name } : null;
+        },
+      } : {}),
       ...(options.getMemoryFileQuotaBytes ? { getMemoryFileQuotaBytes: options.getMemoryFileQuotaBytes } : {}),
       ...(protectedObjectKeyStore ? {
         protectedObjectImporter: {
