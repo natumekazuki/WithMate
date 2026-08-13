@@ -325,7 +325,7 @@ describe("SessionRuntimeService", () => {
     callOrder.push("second-returned");
 
     assert.deepEqual(catalogRevisions, [7, storedSession.catalogRevision]);
-    assert.deepEqual(composerScopes, ["session-folder", "workspace"]);
+    assert.deepEqual(composerScopes, ["workspace"]);
     assert.equal(contextVersion, 2);
     assert.deepEqual(appraisalCorrelations, [
       `turn:${storedSession.id}:audit:1`,
@@ -2858,6 +2858,8 @@ describe("SessionRuntimeService", () => {
   it("approval request の直後に progress が無くても running audit log を更新する", async () => {
     const session = createSession();
     const auditUpdates: UpdateAuditLogInput[] = [];
+    const externalInteractions: string[] = [];
+    const externalProgress: Array<{ executionId: string; assistantText: string }> = [];
     let liveState = createLiveRunState({ sessionId: session.id, threadId: session.threadId });
     const approvalRequest: LiveApprovalRequest = {
       requestId: "approval-1",
@@ -2887,6 +2889,11 @@ describe("SessionRuntimeService", () => {
       invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
         await input.onApprovalRequest?.(approvalRequest);
+        await onProgress?.(createLiveRunState({
+          sessionId: session.id,
+          threadId: "thread-approval",
+          assistantText: "provider-neutral partial",
+        }));
         return createPartialResult({
           threadId: "thread-approval",
           assistantText: "承認後に完了したよ。",
@@ -2903,6 +2910,9 @@ describe("SessionRuntimeService", () => {
         return next;
       },
       async resolveComposerPreview() {
+        return { attachments: [], errors: [] };
+      },
+      async resolveSessionFolderAttachments() {
         return { attachments: [], errors: [] };
       },
       async resolveSessionCharacter() {
@@ -2943,6 +2953,13 @@ describe("SessionRuntimeService", () => {
         };
         return "approve";
       },
+      registerExternalApprovalInteraction(input) {
+        externalInteractions.push(`${input.executionId}:${input.request.requestId}`);
+        return "approve";
+      },
+      publishExternalProgress(input) {
+        externalProgress.push({ executionId: input.executionId, assistantText: input.assistantText });
+      },
       async waitForElicitationResponse() {
         return { action: "accept" } as const;
       },
@@ -2957,7 +2974,16 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runExternalSessionTurn(session.id, 1, {
+      userMessage: "お願いします",
+      model: session.model,
+      reasoningEffort: session.reasoningEffort,
+      approvalMode: session.approvalMode,
+      codexSandboxMode: session.codexSandboxMode,
+      attachments: [],
+    }, "execution-1");
+    assert.deepEqual(externalInteractions, ["execution-1:approval-1"]);
+    assert.deepEqual(externalProgress, [{ executionId: "execution-1", assistantText: "provider-neutral partial" }]);
 
     const runningUpdate = auditUpdates.find((entry) =>
       entry.phase === "running" && entry.operations.some((operation) => operation.type === "approval_request"),
@@ -3850,7 +3876,13 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await service.runSessionTurn(session.id, {
+      userMessage: "お願いします",
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalMode: "never",
+      codexSandboxMode: "read-only",
+    });
 
     // progress update が複数回発生したことを確認
     assert.ok(progressUpdateCount >= 2, `progress update は 2 回以上発生すべきだが ${progressUpdateCount} 回だったよ`);
@@ -3861,6 +3893,15 @@ describe("SessionRuntimeService", () => {
 
     const firstRunningUpdate = runningUpdates[0];
     assert.ok(firstRunningUpdate, "最初の running update があるべきだよ");
+    assert.deepEqual({
+      model: firstRunningUpdate.model,
+      reasoningEffort: firstRunningUpdate.reasoningEffort,
+      approvalMode: firstRunningUpdate.approvalMode,
+    }, {
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalMode: "never",
+    });
     assert.equal(firstRunningUpdate.assistantText, "処理中...");
     assert.equal(firstRunningUpdate.operations.length, 1);
     assert.equal(firstRunningUpdate.operations[0]?.summary, "npm test");
@@ -3868,6 +3909,15 @@ describe("SessionRuntimeService", () => {
 
     const secondRunningUpdate = runningUpdates[1];
     assert.ok(secondRunningUpdate, "2 回目の running update があるべきだよ");
+    assert.deepEqual({
+      model: secondRunningUpdate.model,
+      reasoningEffort: secondRunningUpdate.reasoningEffort,
+      approvalMode: secondRunningUpdate.approvalMode,
+    }, {
+      model: "gpt-5.4",
+      reasoningEffort: "medium",
+      approvalMode: "never",
+    });
     assert.equal(secondRunningUpdate.assistantText, "処理中... テスト完了");
     assert.equal(secondRunningUpdate.operations.length, 1);
     assert.equal(secondRunningUpdate.operations[0]?.summary, "npm test");

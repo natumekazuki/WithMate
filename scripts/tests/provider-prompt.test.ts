@@ -75,6 +75,40 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("composeProviderPrompt", () => {
+  it("EXT-ATTACH-10: Codex file/folder attachmentはSessionFolder相対manifestだけをpromptへ投影する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/private/workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "briefを読んで",
+      appSettings: createDefaultAppSettings(),
+      attachments: [{
+        id: "file:brief",
+        kind: "file",
+        source: "text",
+        absolutePath: "C:/private/session-folder/brief.md",
+        displayPath: "brief.md",
+        workspaceRelativePath: "brief.md",
+        isOutsideWorkspace: false,
+      }],
+    });
+    assert.match(prompt.inputBodyText, /# SessionFolder Attachments[\s\S]*- file: brief\.md/);
+    assert.doesNotMatch(prompt.inputBodyText, /C:\/private/);
+    assert.deepEqual(prompt.imagePaths, []);
+  });
+
   it("normal Session の provider prompt に対象自身の Session ID を含める", () => {
     const session = buildNewSession({
       id: "session-self-1",

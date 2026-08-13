@@ -68,6 +68,9 @@ describe("withmate-session CLI", () => {
       waitTimeoutMs: 1_000,
     }), 35_000);
     assert.equal(resolveSessionCliTransportTimeoutMs("turn run", { responseMode: "deferred" }), 35_000);
+    assert.equal(resolveSessionCliTransportTimeoutMs("interaction respond", {
+      responseMode: "wait", waitTimeoutMs: 300_000,
+    }), 305_000);
   });
   test("discovery pointerからCLI generationだけを解決する", async () => {
     const directory = await mkdtemp(join(tmpdir(), "withmate-session-cli-"));
@@ -108,7 +111,7 @@ describe("withmate-session CLI", () => {
       await assert.rejects(
         () => callSessionRuntime(
           { ...connection, baseUrl: `http://127.0.0.1:${port}` },
-          { schemaVersion: "withmate-session-request-v1", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
           AbortSignal.timeout(2_000),
         ),
         (error) => error instanceof SessionRuntimeClientError && error.dispatched === false,
@@ -155,7 +158,7 @@ describe("withmate-session CLI", () => {
       await assert.rejects(
         () => callSessionRuntime(
           { ...connection, baseUrl: `http://127.0.0.1:${port}` },
-          { schemaVersion: "withmate-session-request-v1", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
           AbortSignal.timeout(2_000),
         ),
         SessionRuntimeClientError,
@@ -196,7 +199,7 @@ describe("withmate-session CLI", () => {
       await assert.rejects(
         () => callSessionRuntime(
           { ...connection, baseUrl: `http://127.0.0.1:${port}` },
-          { schemaVersion: "withmate-session-request-v1", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+          { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
           AbortSignal.timeout(2_000),
         ),
         (error) => error instanceof SessionRuntimeClientError
@@ -230,7 +233,7 @@ describe("withmate-session CLI", () => {
       assert.ok(port);
       const response = await callSessionRuntime(
         { ...connection, baseUrl: `http://127.0.0.1:${port}` },
-        { schemaVersion: "withmate-session-request-v1", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
+        { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
         AbortSignal.timeout(2_000),
       );
 
@@ -291,7 +294,7 @@ describe("withmate-session CLI", () => {
 
     assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
     assert.deepEqual(requests, [{
-      schemaVersion: "withmate-session-request-v1",
+      schemaVersion: "withmate-session-request-v2",
       operation: "runtime.catalog",
       input: {},
     }]);
@@ -344,11 +347,156 @@ describe("withmate-session CLI", () => {
 
     assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
     assert.deepEqual(requests, [{
-      schemaVersion: "withmate-session-request-v1",
+      schemaVersion: "withmate-session-request-v2",
       operation: "turn.options",
       input: { sessionId: "session-1" },
     }]);
     assert.equal(stdout.json().result.operation, "turn.options");
+  });
+
+  test("EXT-INTERACTION-11: interaction respondをshared exact inputへdispatchする", async () => {
+    const requests: any[] = [];
+    const stdout = capture();
+    const input = {
+      sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+      response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
+    };
+    const exitCode = await runWithMateSessionCli([
+      "interaction", "respond", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: createSessionRuntimeResult("interaction.respond", {} as never) };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests[0], {
+      schemaVersion: "withmate-session-request-v2", operation: "interaction.respond", input,
+    });
+  });
+
+  test("EXT-TRANSCRIPT-13: transcript exportをshared exact inputへdispatchする", async () => {
+    const requests: any[] = [];
+    const stdout = capture();
+    const input = {
+      sessionId: "session-1", format: "json", maxBytes: 1024,
+      destination: { kind: "inline" },
+    };
+    const exitCode = await runWithMateSessionCli([
+      "transcript", "export", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: createSessionRuntimeResult("transcript.export", {
+          destination: "inline", format: "json", byteLength: 2, content: "{}",
+        }) } as any;
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests[0], {
+      schemaVersion: "withmate-session-request-v2", operation: "transcript.export", input,
+    });
+  });
+
+  test("EXT-TRANSCRIPT-13: inlineはresponse lossをnot_applied、SessionFolderはindeterminateにする", async () => {
+    for (const [destination, expectedEffect] of [
+      [{ kind: "inline" }, "not_applied"],
+      [{ kind: "session_folder", relativePath: "transcript.json", replace: false, idempotencyKey: "export-1" }, "indeterminate"],
+    ] as const) {
+      const stdout = capture();
+      const exitCode = await runWithMateSessionCli(["transcript", "export", "--json", JSON.stringify({
+        sessionId: "session-1", format: "json", maxBytes: 1024, destination,
+      })], {
+        stdout: stdout.stream,
+        discover: async () => connection,
+        call: async () => { throw new SessionRuntimeClientError("response lost", true); },
+      });
+      assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate);
+      assert.equal(stdout.json().error.effect, expectedEffect);
+    }
+  });
+
+  test("EXT-PROVIDER-02: Copilot Session作成とTurn実行をprovider固有schemaでdispatchする", async () => {
+    const requests: any[] = [];
+    const stdout = capture();
+    const call = async (_connection: unknown, envelope: any) => {
+      requests.push(envelope);
+      if (envelope.operation === "session.create") {
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("session.create", { sessionId: "copilot-session", title: "Copilot" }),
+        } as any;
+      }
+      return {
+        ok: true,
+        status: 200,
+        value: createSessionRuntimeResult(envelope.operation, {
+          id: "execution-1",
+          sessionId: "copilot-session",
+          operation: envelope.operation,
+          state: "queued",
+          createdAt: "2026-08-13T00:00:00.000Z",
+          updatedAt: "2026-08-13T00:00:00.000Z",
+          startedAt: null,
+          finishedAt: null,
+          result: null,
+          errorCode: null,
+          errorMessage: null,
+          interruptedReason: null,
+        }),
+      } as any;
+    };
+
+    assert.equal(await runWithMateSessionCli([
+      "session", "create", "--json", JSON.stringify({
+        title: "Copilot",
+        provider: "copilot",
+        catalogRevision: 5,
+        workspace: { kind: "session_folder" },
+        idempotencyKey: "create-copilot",
+      }),
+    ], { stdout: stdout.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+
+    const turn = {
+      provider: "copilot",
+      userMessage: "hello",
+      model: "claude-sonnet",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      customAgentName: "reviewer",
+      attachments: [],
+    };
+    assert.equal(await runWithMateSessionCli([
+      "turn", "run", "--json", JSON.stringify({
+        sessionId: "copilot-session",
+        catalogRevision: 5,
+        idempotencyKey: "run-copilot",
+        responseMode: "deferred",
+        turn,
+      }),
+    ], { stdout: stdout.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+
+    assert.deepEqual(requests.map((request) => [request.operation, request.input.provider ?? request.input.turn?.provider]), [
+      ["session.create", "copilot"],
+      ["turn.run", "copilot"],
+    ]);
+
+    const invalid = capture();
+    assert.equal(await runWithMateSessionCli([
+      "turn", "enqueue", "--json", JSON.stringify({
+        sessionId: "copilot-session",
+        catalogRevision: 5,
+        idempotencyKey: "mixed-provider-fields",
+        turn: { ...turn, codexSandboxMode: "workspace-write" },
+      }),
+    ], { stdout: invalid.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.equal(invalid.json().error.code, "INVALID_INPUT");
+    assert.equal(requests.length, 2);
   });
 
   test("session renameは明示idempotency keyを維持する", async () => {
@@ -416,7 +564,7 @@ describe("withmate-session CLI", () => {
         ok: false,
         status: 404,
         value: {
-          schemaVersion: "withmate-session-error-v1",
+          schemaVersion: "withmate-session-error-v2",
           error: { code: "EXECUTION_NOT_FOUND", message: "Not found.", retryable: false, effect: "not_applied", details: {} },
         },
       }),
@@ -444,7 +592,7 @@ describe("withmate-session CLI", () => {
         ok: false,
         status: 413,
         value: {
-          schemaVersion: "withmate-session-error-v1",
+          schemaVersion: "withmate-session-error-v2",
           error: {
             code: "CONTENT_TOO_LARGE",
             message: "Projection too large.",
@@ -572,7 +720,7 @@ describe("withmate-session CLI", () => {
       callSessionRuntime(
         { ...connection, baseUrl: "http://127.0.0.1:1" },
         {
-          schemaVersion: "withmate-session-request-v1",
+          schemaVersion: "withmate-session-request-v2",
           operation: "turn.get",
           input: { payload: "a".repeat(SESSION_RUNTIME_MAX_BODY_BYTES) },
         },

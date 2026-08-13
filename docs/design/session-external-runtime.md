@@ -148,6 +148,8 @@ executionのpublic identityと状態は、process内のprovider handleとは分�
 
 起動時に`running`などadmit済みの非terminal executionが残っている場合は、providerへ到達したかを推測せず、terminal stateである`interrupted`へ収束させる。reasonは`runtime_restarted`とし、安全に保存済みのpartial outputがある場合だけpublic projectionへ含める。
 
+確認済みのアプリ終了では、新規admissionを閉じ、実行中providerへcancelを要求した後、有限のgraceだけ待つ。grace内にsettleしない`running` executionは`interrupted(runtime_shutdown)`へ永続化してからstorageを閉じる。以後のlate provider completionは永続化境界へ到達させない。HTTP handlerのdrainも同じく有限とし、stuck providerまたはclient connectionへアプリ終了を依存させない。
+
 admissionを永続化する前にcrashしたexecutionは`queued`のままなので再admitできる。admissionを永続化した後にcrashしたexecutionは、provider dispatch前に落ちた可能性があっても`interrupted`へ収束させ、自動再admitしない。起動時reconciliationでは、admit済みexecutionの収束とterminating guardの解放を確認してから、各Sessionのqueue先頭をFIFO順でadmitする。
 
 `interrupted`へ収束したexecutionは自動resumeしない。同じidempotency keyで`turn.run`または`turn.enqueue`を再送した場合は保存済みexecutionのcanonical resultを返し、新しいTurnを作成しない。明示的に再実行するcallerは新しいidempotency keyを使う。
@@ -538,6 +540,7 @@ provider実行がterminalの`failed`へ到達した場合、operationの受付�
 
 - `docs/adr/005-session-folder-workspace-launch.md`
 - `docs/adr/021-session-cli-mcp-application-boundary.md`
+- `docs/adr/022-session-runtime-windows-credential-directory.md`
 - `docs/adr/020-memory-affect-mcp-application-boundary.md`
 - `docs/design/session-local-files.md`
 - `docs/design/session-run-lifecycle.md`

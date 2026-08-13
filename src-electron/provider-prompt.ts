@@ -161,6 +161,14 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   if (userMessageText) {
     inputSections.push(`# User Input\n\n${userMessageText}`);
   }
+  if (input.session.provider === "codex") {
+    const fileManifest = input.attachments
+      .filter((attachment) => attachment.kind !== "image" && attachment.workspaceRelativePath !== null)
+      .map((attachment) => `- ${attachment.kind}: ${attachment.workspaceRelativePath}`);
+    if (fileManifest.length > 0) {
+      inputSections.push(`# SessionFolder Attachments\n\n${fileManifest.join("\n")}`);
+    }
+  }
   const inputPromptBody = inputSections.join("\n\n");
   const inputPromptText = inputPromptBody;
   const composedPromptText = [systemPromptBody, inputPromptText]

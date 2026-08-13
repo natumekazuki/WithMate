@@ -2,10 +2,23 @@ import { APPROVAL_MODE_VALUES, type ApprovalMode } from "./approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES, type CodexSandboxMode } from "./codex-sandbox-mode.js";
 import { isModelReasoningEffort, type ModelReasoningEffort } from "./model-catalog.js";
 import type { SessionExecution } from "./session-execution.js";
+import {
+  type SessionInteraction,
+  type SessionInteractionResponse,
+} from "./session-interaction.js";
+import type { ComposerAttachmentKind } from "./runtime-state.js";
+import {
+  SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
+  SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
+  SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES,
+  SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES,
+  type SessionTranscriptExportInput,
+  type SessionTranscriptExportResult,
+} from "./session-transcript.js";
 
-export const SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v1" as const;
-export const SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v1" as const;
-export const SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1" as const;
+export const SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v2" as const;
+export const SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v2" as const;
+export const SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v2" as const;
 export const SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
 export const SESSION_RUNTIME_MAX_INLINE_TEXT_BYTES = 8 * 1024 * 1024;
 export const SESSION_RUNTIME_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -15,6 +28,7 @@ export const SESSION_RUNTIME_DEFAULT_LIST_LIMIT = 50;
 export const SESSION_RUNTIME_MAX_LIST_LIMIT = 500;
 export const SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 export const SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 300_000;
+export const SESSION_RUNTIME_MAX_TURN_ATTACHMENTS = 32;
 
 export const SESSION_RUNTIME_OPERATIONS = [
   "runtime.catalog",
@@ -31,11 +45,16 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "turn.list",
   "turn.get",
   "turn.cancel",
+  "interaction.list",
+  "interaction.respond",
+  "transcript.export",
 ] as const;
 
 export type SessionRuntimeOperation = (typeof SESSION_RUNTIME_OPERATIONS)[number];
 export type SessionRuntimeAdapterKind = "cli" | "mcp";
 export type SessionRuntimeEffect = "not_applied" | "applied" | "indeterminate";
+export const SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"] as const;
+export type SessionRuntimeProviderId = (typeof SESSION_RUNTIME_PROVIDER_IDS)[number];
 
 export type SessionRuntimeCatalogResult = {
   revision: number;
@@ -58,7 +77,7 @@ export type SessionRuntimeCreateWorkspace =
 
 export type SessionRuntimeCreateInput = {
   title: string;
-  provider: "codex";
+  provider: SessionRuntimeProviderId;
   catalogRevision: number;
   workspace: SessionRuntimeCreateWorkspace;
   idempotencyKey: string;
@@ -131,17 +150,32 @@ export type SessionRuntimeFileWriteTextResult = {
   file: SessionRuntimeFileReference;
 };
 
-export type SessionRuntimeTurnRequest = {
+type SessionRuntimeTurnRequestBase = {
   userMessage: string;
   model: string;
   reasoningEffort: ModelReasoningEffort;
   approvalMode: ApprovalMode;
-  codexSandboxMode: CodexSandboxMode;
+  attachments: SessionRuntimeTurnAttachment[];
 };
 
-export type SessionRuntimeTurnOptionsResult = {
+export type SessionRuntimeTurnAttachment = {
+  kind: ComposerAttachmentKind;
+  relativePath: string;
+};
+
+export type SessionRuntimeTurnRequest = SessionRuntimeTurnRequestBase & (
+  | {
+    provider: "codex";
+    codexSandboxMode: CodexSandboxMode;
+  }
+  | {
+    provider: "copilot";
+    customAgentName: string;
+  }
+);
+
+type SessionRuntimeTurnOptionsBase = {
   sessionId: string;
-  provider: { id: string };
   catalogRevision: number;
   models: Array<{
     id: string;
@@ -149,7 +183,135 @@ export type SessionRuntimeTurnOptionsResult = {
     reasoningEfforts: ModelReasoningEffort[];
   }>;
   approvalModes: Array<{ id: ApprovalMode; label: string }>;
-  codexSandboxModes: Array<{ id: CodexSandboxMode; label: string }>;
+};
+
+export type SessionRuntimeTurnOptionsResult = SessionRuntimeTurnOptionsBase & (
+  | {
+    provider: { id: "codex" };
+    codexSandboxModes: Array<{ id: CodexSandboxMode; label: string }>;
+  }
+  | {
+    provider: { id: "copilot" };
+    customAgents: Array<{ name: string; displayName: string; description: string }>;
+  }
+);
+
+type SessionRuntimeEffectiveTurnBase = {
+  model: string;
+  reasoningEffort: ModelReasoningEffort;
+  approvalMode: ApprovalMode;
+};
+
+export type SessionRuntimeEffectiveTurn = SessionRuntimeEffectiveTurnBase & (
+  | { provider: "codex"; sandboxMode: CodexSandboxMode; customAgentName: null }
+  | { provider: "copilot"; sandboxMode: null; customAgentName: string }
+);
+
+type SessionRuntimePublicInteractionBase = {
+  sequence: number;
+  interactionId: string;
+  sessionId: string;
+  executionId: string;
+  kind: SessionInteraction["kind"];
+  request: SessionInteraction["publicPayload"];
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SessionRuntimePendingInteraction = SessionRuntimePublicInteractionBase & {
+  state: "pending";
+  resolution: null;
+};
+
+export type SessionRuntimeAnsweredInteraction = SessionRuntimePublicInteractionBase & {
+  state: "answered";
+  resolution: {
+    action: NonNullable<SessionInteraction["response"]>["action"];
+    submittedFields: string[];
+    resolvedAt: string;
+  };
+};
+
+export type SessionRuntimeExpiredInteraction = SessionRuntimePublicInteractionBase & {
+  state: "expired";
+  resolution: {
+    reason: NonNullable<SessionInteraction["expiryReason"]>;
+    resolvedAt: string;
+  };
+};
+
+export type SessionRuntimePublicInteraction =
+  | SessionRuntimePendingInteraction
+  | SessionRuntimeAnsweredInteraction
+  | SessionRuntimeExpiredInteraction;
+
+export type SessionRuntimePublicExecution = Omit<SessionExecution, "result"> & {
+  result: { assistantText: string } | null;
+  effectiveTurn: SessionRuntimeEffectiveTurn | null;
+  attachments: SessionRuntimeTurnAttachment[];
+  pendingInteraction: SessionRuntimePublicInteraction | null;
+  partialOutput: {
+    assistantText: string;
+    truncated: boolean;
+    updatedAt: string;
+  } | null;
+};
+
+export type SessionRuntimeTurnListResult = {
+  items: SessionRuntimePublicExecution[];
+  nextCursor?: string;
+};
+
+export type SessionRuntimeInteractionListInput = {
+  sessionId: string;
+  executionId?: string;
+  kind?: "approval" | "elicitation";
+  state?: "pending" | "answered" | "expired";
+  limit: number;
+  cursor?: string;
+};
+
+export type SessionRuntimeInteractionListResult = {
+  items: SessionRuntimePublicInteraction[];
+  nextCursor?: string;
+};
+
+export type SessionRuntimeInteractionRespondInput = {
+  sessionId: string;
+  executionId: string;
+  interactionId: string;
+  response: SessionInteractionResponse;
+  idempotencyKey: string;
+  responseMode: "wait" | "deferred";
+  waitTimeoutMs?: number;
+};
+
+export type SessionRuntimeInteractionRespondResult = {
+  interaction: SessionRuntimeAnsweredInteraction;
+  execution: SessionRuntimePublicExecution;
+};
+
+export type SessionRuntimeTranscriptExportInput = SessionTranscriptExportInput;
+export type SessionRuntimeTranscriptExportResult = SessionTranscriptExportResult;
+
+export type SessionRuntimeResultByOperation = {
+  "runtime.catalog": SessionRuntimeCatalogResult;
+  "session.create": SessionRuntimeSessionDetail;
+  "session.list": SessionRuntimeSessionListResult;
+  "session.get": SessionRuntimeSessionGetResult;
+  "session.rename": SessionRuntimeSessionDetail;
+  "session.files.list": SessionRuntimeFileListResult;
+  "session.files.read_text": SessionRuntimeFileReadTextResult;
+  "session.files.write_text": SessionRuntimeFileWriteTextResult;
+  "turn.options": SessionRuntimeTurnOptionsResult;
+  "turn.run": SessionRuntimePublicExecution;
+  "turn.enqueue": SessionRuntimePublicExecution;
+  "turn.list": SessionRuntimeTurnListResult;
+  "turn.get": SessionRuntimePublicExecution;
+  "turn.cancel": SessionRuntimePublicExecution;
+  "interaction.list": SessionRuntimeInteractionListResult;
+  "interaction.respond": SessionRuntimeInteractionRespondResult;
+  "transcript.export": SessionRuntimeTranscriptExportResult;
 };
 
 export type SessionRuntimeRunInput = {
@@ -172,11 +334,13 @@ export type SessionRuntimeRequestEnvelope = {
   input: unknown;
 };
 
-export type SessionRuntimeResultEnvelope = {
-  schemaVersion: typeof SESSION_RUNTIME_RESULT_SCHEMA_VERSION;
-  operation: SessionRuntimeOperation;
-  result: unknown;
-};
+export type SessionRuntimeResultEnvelope<O extends SessionRuntimeOperation = SessionRuntimeOperation> = {
+  [K in O]: {
+    schemaVersion: typeof SESSION_RUNTIME_RESULT_SCHEMA_VERSION;
+    operation: K;
+    result: SessionRuntimeResultByOperation[K];
+  }
+}[O];
 
 export type SessionRuntimeError = {
   schemaVersion: typeof SESSION_RUNTIME_ERROR_SCHEMA_VERSION;
@@ -285,6 +449,15 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "turn.cancel") {
     return parseCancelInput(value);
   }
+  if (operation === "interaction.list") {
+    return parseInteractionListInput(value);
+  }
+  if (operation === "interaction.respond") {
+    return parseInteractionRespondInput(value);
+  }
+  if (operation === "transcript.export") {
+    return parseTranscriptExportInput(value);
+  }
   throw invalid("operation", "Unsupported Session runtime operation.");
 }
 
@@ -293,7 +466,7 @@ function parseSessionCreateInput(value: unknown): SessionRuntimeCreateInput {
   assertKeys(record, ["title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
   return {
     title: requireNonEmptyString(record.title, "title"),
-    provider: requireEnum(record.provider, ["codex"] as const, "provider"),
+    provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
     catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
     workspace: parseSessionCreateWorkspace(record.workspace),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
@@ -391,10 +564,10 @@ function parseSessionFileWriteTextInput(value: unknown): SessionRuntimeFileWrite
   };
 }
 
-export function createSessionRuntimeResult(
-  operation: SessionRuntimeOperation,
-  result: unknown,
-): SessionRuntimeResultEnvelope {
+export function createSessionRuntimeResult<O extends SessionRuntimeOperation>(
+  operation: O,
+  result: SessionRuntimeResultByOperation[O],
+): SessionRuntimeResultEnvelope<O> {
   return { schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation, result };
 }
 
@@ -417,8 +590,20 @@ export function createSessionRuntimeError(input: {
   };
 }
 
-export function projectSessionExecution(execution: SessionExecution): SessionExecution {
+export function projectSessionExecution(
+  execution: SessionExecution,
+  observation: {
+    request?: unknown;
+    pendingInteraction?: SessionInteraction | null;
+    partialOutput?: {
+      assistantText: string;
+      truncated: boolean;
+      updatedAt: string;
+    } | null;
+  } = {},
+): SessionRuntimePublicExecution {
   try {
+    const turn = projectEffectiveTurn(observation.request);
     return {
       id: execution.id,
       sessionId: execution.sessionId,
@@ -431,6 +616,12 @@ export function projectSessionExecution(execution: SessionExecution): SessionExe
       admittedAt: execution.admittedAt,
       completedAt: execution.completedAt,
       updatedAt: execution.updatedAt,
+      effectiveTurn: turn?.effectiveTurn ?? null,
+      attachments: turn?.attachments ?? [],
+      pendingInteraction: observation.pendingInteraction
+        ? projectSessionInteraction(observation.pendingInteraction)
+        : null,
+      partialOutput: observation.partialOutput ?? null,
     };
   } catch (error) {
     if (error instanceof SessionRuntimeProjectionLimitError) {
@@ -440,6 +631,77 @@ export function projectSessionExecution(execution: SessionExecution): SessionExe
       });
     }
     throw error;
+  }
+}
+
+export function projectSessionInteraction(
+  interaction: SessionInteraction,
+): SessionRuntimePublicInteraction {
+  const base = {
+    sequence: interaction.sequence,
+    interactionId: interaction.id,
+    sessionId: interaction.sessionId,
+    executionId: interaction.executionId,
+    kind: interaction.kind,
+    request: structuredClone(interaction.publicPayload),
+    createdAt: interaction.createdAt,
+    updatedAt: interaction.updatedAt,
+  };
+  if (interaction.state === "pending") {
+    return { ...base, state: "pending", resolution: null };
+  }
+  if (interaction.state === "answered") {
+    return {
+      ...base,
+      state: "answered",
+      resolution: {
+        action: interaction.response.action,
+        submittedFields: [...interaction.response.submittedFields],
+        resolvedAt: interaction.resolvedAt,
+      },
+    };
+  }
+  return {
+    ...base,
+    state: "expired",
+    resolution: {
+      reason: interaction.expiryReason,
+      resolvedAt: interaction.resolvedAt,
+    },
+  };
+}
+
+function projectEffectiveTurn(request: unknown): {
+  effectiveTurn: SessionRuntimeEffectiveTurn;
+  attachments: SessionRuntimeTurnAttachment[];
+} | null {
+  if (!request || typeof request !== "object" || Array.isArray(request)) return null;
+  const turn = (request as Record<string, unknown>).turn;
+  if (!turn || typeof turn !== "object" || Array.isArray(turn)) return null;
+  try {
+    const parsed = parseTurnRequest(turn);
+    return {
+      effectiveTurn: parsed.provider === "codex"
+        ? {
+          provider: parsed.provider,
+          model: parsed.model,
+          reasoningEffort: parsed.reasoningEffort,
+          approvalMode: parsed.approvalMode,
+          sandboxMode: parsed.codexSandboxMode,
+          customAgentName: null,
+        }
+        : {
+          provider: parsed.provider,
+          model: parsed.model,
+          reasoningEffort: parsed.reasoningEffort,
+          approvalMode: parsed.approvalMode,
+          sandboxMode: null,
+          customAgentName: parsed.customAgentName,
+        },
+      attachments: parsed.attachments.map((attachment) => ({ ...attachment })),
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -490,18 +752,68 @@ function parseTurnMutationBase(record: Record<string, unknown>): SessionRuntimeE
 
 function parseTurnRequest(value: unknown): SessionRuntimeTurnRequest {
   const record = requireObject(value, "turn");
-  assertKeys(record, ["userMessage", "model", "reasoningEffort", "approvalMode", "codexSandboxMode"], "turn");
+  const provider = requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "turn.provider");
   const reasoningEffort = record.reasoningEffort;
   if (!isModelReasoningEffort(reasoningEffort)) {
     throw invalid("reasoningEffort", "reasoningEffort is invalid.");
   }
-  return {
+  const common = {
     userMessage: requireNonEmptyString(record.userMessage, "userMessage"),
     model: requireNonEmptyString(record.model, "model"),
     reasoningEffort,
     approvalMode: requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "approvalMode"),
-    codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode"),
+    attachments: parseTurnAttachments(record.attachments),
   };
+  if (provider === "codex") {
+    assertKeys(record, ["provider", "userMessage", "model", "reasoningEffort", "approvalMode", "codexSandboxMode", "attachments"], "turn");
+    return {
+      ...common,
+      provider,
+      codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode"),
+    };
+  }
+  assertKeys(record, ["provider", "userMessage", "model", "reasoningEffort", "approvalMode", "customAgentName", "attachments"], "turn");
+  return {
+    ...common,
+    provider,
+    customAgentName: requireString(record.customAgentName, "customAgentName").trim(),
+  };
+}
+
+function parseTurnAttachments(value: unknown): SessionRuntimeTurnAttachment[] {
+  if (!Array.isArray(value) || value.length > SESSION_RUNTIME_MAX_TURN_ATTACHMENTS) {
+    throw invalid("attachments", `attachments must be an array with at most ${SESSION_RUNTIME_MAX_TURN_ATTACHMENTS} items.`);
+  }
+  const seen = new Set<string>();
+  return value.map((item, index) => {
+    const record = requireObject(item, `attachments[${index}]`);
+    assertKeys(record, ["kind", "relativePath"], `attachments[${index}]`);
+    const relativePath = requireNonEmptyString(record.relativePath, `attachments[${index}].relativePath`);
+    if (
+      relativePath.includes("\0")
+      || relativePath.includes("\\")
+      || relativePath.includes("\r")
+      || relativePath.includes("\n")
+      || relativePath.startsWith("/")
+      || /^[a-zA-Z]:/.test(relativePath)
+      || relativePath.startsWith("//")
+    ) {
+      throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must be a portable relative path.");
+    }
+    const segments = relativePath.split("/");
+    if (segments.some((segment) => !segment || segment === "." || segment === "..")) {
+      throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must identify an item inside the SessionFolder.");
+    }
+    const duplicateKey = relativePath.toLowerCase();
+    if (seen.has(duplicateKey)) {
+      throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must not be duplicated.");
+    }
+    seen.add(duplicateKey);
+    return {
+      kind: requireEnum(record.kind, ["file", "folder", "image"] as const, `attachments[${index}].kind`),
+      relativePath,
+    };
+  });
 }
 
 function parseExecutionInput(value: unknown): SessionRuntimeExecutionInput {
@@ -533,6 +845,113 @@ function parseTurnListInput(value: unknown): SessionRuntimeListInput {
       : requireInteger(record.limit, "limit", 1, SESSION_RUNTIME_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
     ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
   };
+}
+
+function parseInteractionListInput(value: unknown): SessionRuntimeInteractionListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "executionId", "kind", "state", "limit", "cursor"], "input");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    ...(record.executionId === undefined ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") }),
+    ...(record.kind === undefined ? {} : { kind: requireEnum(record.kind, ["approval", "elicitation"] as const, "kind") }),
+    ...(record.state === undefined ? {} : { state: requireEnum(record.state, ["pending", "answered", "expired"] as const, "state") }),
+    limit: record.limit === undefined
+      ? SESSION_RUNTIME_DEFAULT_LIST_LIMIT
+      : requireInteger(record.limit, "limit", 1, SESSION_RUNTIME_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function parseInteractionRespondInput(value: unknown): SessionRuntimeInteractionRespondInput {
+  const record = requireObject(value, "input");
+  assertKeys(
+    record,
+    ["sessionId", "executionId", "interactionId", "response", "idempotencyKey", "responseMode", "waitTimeoutMs"],
+    "input",
+  );
+  const responseMode = requireEnum(record.responseMode, ["wait", "deferred"] as const, "responseMode");
+  if (responseMode === "deferred" && record.waitTimeoutMs !== undefined) {
+    throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
+  }
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    executionId: requireNonEmptyString(record.executionId, "executionId"),
+    interactionId: requireNonEmptyString(record.interactionId, "interactionId"),
+    response: parseInteractionResponse(record.response),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+    responseMode,
+    ...(record.waitTimeoutMs === undefined
+      ? {}
+      : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }),
+  };
+}
+
+function parseInteractionResponse(value: unknown): SessionInteractionResponse {
+  const record = requireObject(value, "response");
+  const kind = requireEnum(record.kind, ["approval", "elicitation"] as const, "response.kind");
+  if (kind === "approval") {
+    assertKeys(record, ["kind", "decision"], "response");
+    return { kind, decision: requireEnum(record.decision, ["approve", "deny"] as const, "response.decision") };
+  }
+  const action = requireEnum(record.action, ["accept", "decline", "cancel"] as const, "response.action");
+  if (action !== "accept") {
+    assertKeys(record, ["kind", "action"], "response");
+    return { kind, action };
+  }
+  assertKeys(record, ["kind", "action", "content"], "response");
+  const content = requireObject(record.content, "response.content");
+  return {
+    kind,
+    action,
+    content: Object.fromEntries(Object.entries(content).map(([name, item]) => [
+      requireNonEmptyString(name, "response.content field"),
+      parseElicitationValue(item, `response.content.${name}`),
+    ])),
+  };
+}
+
+function parseTranscriptExportInput(value: unknown): SessionRuntimeTranscriptExportInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "format", "maxBytes", "destination"], "input");
+  const destination = requireObject(record.destination, "destination");
+  const kind = requireEnum(destination.kind, ["inline", "session_folder"] as const, "destination.kind");
+  const maxBytes = requireInteger(
+    record.maxBytes ?? (kind === "inline"
+      ? SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES
+      : SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES),
+    "maxBytes",
+    1,
+    kind === "inline" ? SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES : SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
+    "LIMIT_EXCEEDED",
+  );
+  if (kind === "inline") {
+    assertKeys(destination, ["kind"], "destination");
+    return {
+      sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+      format: requireEnum(record.format, ["json", "markdown"] as const, "format"),
+      maxBytes,
+      destination: { kind },
+    };
+  }
+  assertKeys(destination, ["kind", "relativePath", "replace", "idempotencyKey"], "destination");
+  return {
+    sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+    format: requireEnum(record.format, ["json", "markdown"] as const, "format"),
+    maxBytes,
+    destination: {
+      kind,
+      relativePath: requireNonEmptyString(destination.relativePath, "destination.relativePath"),
+      replace: destination.replace === undefined ? false : requireBoolean(destination.replace, "destination.replace"),
+      idempotencyKey: requireNonEmptyString(destination.idempotencyKey, "destination.idempotencyKey"),
+    },
+  };
+}
+
+function parseElicitationValue(value: unknown, field: string): string | number | boolean | string[] {
+  if (typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (Array.isArray(value) && value.every((item) => typeof item === "string")) return [...value];
+  throw invalid(field, `${field} has an invalid elicitation value.`);
 }
 
 function requireObject(value: unknown, field: string): Record<string, unknown> {

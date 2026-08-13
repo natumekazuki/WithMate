@@ -77,6 +77,10 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["turn list", "turn.list"],
   ["turn get", "turn.get"],
   ["turn cancel", "turn.cancel"],
+  ["interaction list", "interaction.list"],
+  ["interaction respond", "interaction.respond"],
+  ["transcript export", "transcript.export"],
+  ["transcript export", "transcript.export"],
 ]);
 const inputlessOperationCommands = new Set(["runtime catalog"]);
 
@@ -84,6 +88,7 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
   const stdout = deps.stdout ?? process.stdout;
   let format: OutputFormat = "json";
   let command = "unknown";
+  let inputForEffect: unknown;
   try {
     if (args[0] === "mcp-server" && args.length === 1) {
       await (deps.startMcp ?? startWithMateSessionMcpServer)({ env: deps.env });
@@ -92,6 +97,7 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
     const parsed = await parseArgs(args, deps);
     command = parsed.command;
     format = parsed.format;
+    inputForEffect = parsed.input;
     if (command === "schema") {
       writeOutput(stdout, format, {
         schemaVersion: WITHMATE_SESSION_CLI_SCHEMA_VERSION,
@@ -161,7 +167,7 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
     return output.ok ? WITHMATE_SESSION_CLI_EXIT_CODES.ok : WITHMATE_SESSION_CLI_EXIT_CODES.applicationError;
   } catch (error) {
     if (error instanceof SessionRuntimeClientError) {
-      const indeterminate = error.dispatched && isMutationCommand(command);
+      const indeterminate = error.dispatched && isMutationCommand(command, inputForEffect);
       writeOutput(stdout, format, localError(
         command,
         "RUNTIME_UNAVAILABLE",
@@ -187,10 +193,13 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
   }
 }
 
-function isMutationCommand(command: string): boolean {
+function isMutationCommand(command: string, input?: unknown): boolean {
   return command === "session create" || command === "session rename"
     || command === "session files write-text"
-    || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+    || command === "turn run" || command === "turn enqueue" || command === "turn cancel"
+    || command === "interaction respond"
+    || (command === "transcript export"
+      && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
 }
 
 async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
@@ -202,12 +211,13 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   timeoutMs: number;
 }> {
   const fileCommand = args[0] === "session" && args[1] === "files";
-  const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
+  const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session"
+    || args[0] === "interaction" || args[0] === "transcript";
   const command = fileCommand
     ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
     : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
   }
   const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
   let json: string | undefined;
@@ -277,7 +287,7 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
 }
 
 export function resolveSessionCliTransportTimeoutMs(command: string, input: unknown): number {
-  if (command !== "turn run" || !input || typeof input !== "object" || Array.isArray(input)) {
+  if ((command !== "turn run" && command !== "interaction respond") || !input || typeof input !== "object" || Array.isArray(input)) {
     return 35_000;
   }
   const record = input as Record<string, unknown>;

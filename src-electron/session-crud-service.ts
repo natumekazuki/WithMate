@@ -65,6 +65,7 @@ export type SessionCrudServiceDeps = {
     | "getSessionSummary"
   >;
   resolveLaunchSelection(providerId: string): Promise<SessionLaunchSelection>;
+  isProviderSupported(providerId: string): boolean;
   listCharacters(): CharacterCatalogEntry[];
   listSessionSummaries(): SessionSummary[];
   listOpenSessionWindowIds(): string[];
@@ -143,6 +144,14 @@ export class SessionCrudService {
       throw mapStorageMutationError(error);
     }
 
+    if (this.deps.isProviderSupported && !this.deps.isProviderSupported(input.provider)) {
+      throw new SessionCrudError(
+        "RUNTIME_UNAVAILABLE",
+        "The requested provider is not supported by the external Session runtime.",
+        false,
+        { provider: input.provider },
+      );
+    }
     const launchSelection = await this.deps.resolveLaunchSelection(input.provider);
     if (launchSelection.provider !== input.provider) {
       throw new SessionCrudError(

@@ -17,10 +17,10 @@ import {
   type SessionRuntimeHttpHandler,
   type SessionRuntimeHttpServer,
 } from "./session-runtime-http-server.js";
+import { secureWindowsRuntimePath, type RuntimeAclTargetKind } from "./runtime-path-security.js";
 
 export type StartSessionExternalRuntimeOptions = {
   handle: SessionRuntimeHttpHandler;
-  runtimeDirectoryPath?: string;
 };
 
 export type SessionExternalRuntimeHandle = {
@@ -36,8 +36,13 @@ export type PublishSessionRuntimeDiscoveryOptions = {
   cliSecret: string;
   mcpSecret: string;
   runtimeInstanceId?: string;
-  runtimeDirectoryPath?: string;
   beforeCommit?: () => Promise<void>;
+};
+
+type SessionRuntimePublicationDeps = {
+  platform?: NodeJS.Platform;
+  resolveRuntimeDirectory?: () => string;
+  secureWindowsPath?: (targetPath: string, targetKind: RuntimeAclTargetKind) => Promise<void>;
 };
 
 export async function startSessionExternalRuntime(
@@ -69,7 +74,6 @@ export async function startSessionExternalRuntime(
       cliSecret,
       mcpSecret,
       runtimeInstanceId,
-      ...(options.runtimeDirectoryPath ? { runtimeDirectoryPath: options.runtimeDirectoryPath } : {}),
     });
     return {
       baseUrl,
@@ -91,15 +95,20 @@ export async function startSessionExternalRuntime(
   }
 }
 
-export async function publishSessionRuntimeDiscovery(options: PublishSessionRuntimeDiscoveryOptions): Promise<{
+export async function publishSessionRuntimeDiscovery(
+  options: PublishSessionRuntimeDiscoveryOptions,
+  deps: SessionRuntimePublicationDeps = {},
+): Promise<{
   discoveryFilePath: string;
   runtimeInstanceId: string;
   cleanup(): Promise<void>;
 }> {
-  const runtimeDirectoryPath = path.resolve(options.runtimeDirectoryPath ?? resolveDefaultSessionRuntimeDirectory());
+  const runtimeDirectoryPath = path.resolve(
+    deps.resolveRuntimeDirectory?.() ?? resolveDefaultSessionRuntimeDirectory(),
+  );
   const discoveryFilePath = path.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME);
   const runtimeInstanceId = options.runtimeInstanceId ?? randomUUID();
-  await ensureSecureRuntimeDirectory(runtimeDirectoryPath);
+  await ensureSecureRuntimeDirectory(runtimeDirectoryPath, deps);
   const generationFilePaths: string[] = [];
   let pointerTemporaryFilePath: string | null = null;
   try {
@@ -118,14 +127,14 @@ export async function publishSessionRuntimeDiscovery(options: PublishSessionRunt
         publishedAt: new Date().toISOString(),
       };
       generationFilePaths.push(generationFilePath);
-      await writeExclusive(generationFilePath, `${JSON.stringify(document)}\n`);
+      await writeExclusive(generationFilePath, `${JSON.stringify(document)}\n`, deps);
     }
     pointerTemporaryFilePath = `${discoveryFilePath}.${runtimeInstanceId}.tmp`;
     const pointer: SessionRuntimeDiscoveryPointer = {
       schemaVersion: SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
       runtimeInstanceId,
     };
-    await writeExclusive(pointerTemporaryFilePath, `${JSON.stringify(pointer)}\n`);
+    await writeExclusive(pointerTemporaryFilePath, `${JSON.stringify(pointer)}\n`, deps);
     await options.beforeCommit?.();
     await rename(pointerTemporaryFilePath, discoveryFilePath);
     pointerTemporaryFilePath = null;
@@ -153,7 +162,10 @@ export function resolveSessionRuntimeGenerationFilePath(
   return path.join(path.dirname(discoveryFilePath), buildSessionRuntimeDiscoveryGenerationFileName(adapter, runtimeInstanceId));
 }
 
-async function ensureSecureRuntimeDirectory(runtimeDirectoryPath: string): Promise<void> {
+async function ensureSecureRuntimeDirectory(
+  runtimeDirectoryPath: string,
+  deps: SessionRuntimePublicationDeps = {},
+): Promise<void> {
   await mkdir(runtimeDirectoryPath, { recursive: true, mode: 0o700 });
   const stats = await lstat(runtimeDirectoryPath);
   if (!stats.isDirectory() || stats.isSymbolicLink()) {
@@ -163,7 +175,10 @@ async function ensureSecureRuntimeDirectory(runtimeDirectoryPath: string): Promi
   if (currentUid !== null && stats.uid !== currentUid) {
     throw new Error("Session runtime directory must be owned by the current user.");
   }
-  if (process.platform !== "win32" && (stats.mode & 0o077) !== 0) {
+  const platform = deps.platform ?? process.platform;
+  if (platform === "win32") {
+    await (deps.secureWindowsPath ?? secureWindowsRuntimePath)(runtimeDirectoryPath, "directory");
+  } else if ((stats.mode & 0o077) !== 0) {
     await chmod(runtimeDirectoryPath, 0o700);
   }
   const verified = await lstat(runtimeDirectoryPath);
@@ -173,7 +188,7 @@ async function ensureSecureRuntimeDirectory(runtimeDirectoryPath: string): Promi
   if (currentUid !== null && verified.uid !== currentUid) {
     throw new Error("Session runtime directory owner changed during setup.");
   }
-  if (process.platform !== "win32" && (verified.mode & 0o077) !== 0) {
+  if (platform !== "win32" && (verified.mode & 0o077) !== 0) {
     throw new Error("Session runtime directory permissions are too broad.");
   }
 }
@@ -183,6 +198,7 @@ type SessionRuntimeDiscoveryFileDeps = {
   chmodFile?: typeof chmod;
   removeFile?: typeof rm;
   platform?: NodeJS.Platform;
+  secureWindowsPath?: (targetPath: string, targetKind: RuntimeAclTargetKind) => Promise<void>;
 };
 
 export async function writeSessionRuntimeDiscoveryFile(
@@ -193,10 +209,17 @@ export async function writeSessionRuntimeDiscoveryFile(
   let file: Awaited<ReturnType<typeof open>> | null = null;
   try {
     file = await (deps.openFile ?? open)(filePath, "wx", 0o600);
+    const platform = deps.platform ?? process.platform;
+    if (platform === "win32") {
+      await file.close();
+      file = null;
+      await (deps.secureWindowsPath ?? secureWindowsRuntimePath)(filePath, "file");
+      file = await (deps.openFile ?? open)(filePath, "r+");
+    }
     await file.writeFile(content, "utf8");
     await file.close();
     file = null;
-    if ((deps.platform ?? process.platform) !== "win32") {
+    if (platform !== "win32") {
       await (deps.chmodFile ?? chmod)(filePath, 0o600);
     }
   } catch (error) {

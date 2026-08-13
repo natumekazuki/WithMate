@@ -345,12 +345,28 @@ export type ComposerPreview = {
   errors: string[];
 };
 
+export type SessionTurnAttachmentIdentity = {
+  rootDevice: number;
+  rootInode: number;
+  device: number;
+  inode: number;
+  canonicalRelativePath: string;
+};
+
+export type SessionTurnAttachmentReference = {
+  kind: ComposerAttachmentKind;
+  relativePath: string;
+  identity?: SessionTurnAttachmentIdentity;
+};
+
 export type RunSessionTurnRequest = {
   userMessage: string;
   model?: string;
   reasoningEffort?: ModelReasoningEffort;
   approvalMode?: ApprovalMode;
   codexSandboxMode?: CodexSandboxMode;
+  customAgentName?: string;
+  attachments?: SessionTurnAttachmentReference[];
 };
 
 export function makeDiffRows(

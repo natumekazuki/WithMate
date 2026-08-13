@@ -29,6 +29,47 @@ const connection: SessionRuntimeConnection = {
 
 const executionInput = { sessionId: "session-1", executionId: "execution-1" };
 const cancelInput = { ...executionInput, idempotencyKey: "cancel-key-1" };
+const publicExecution = {
+  id: "execution-1",
+  sessionId: "session-1",
+  operation: "turn.run" as const,
+  state: "completed" as const,
+  result: { assistantText: "done" },
+  errorCode: "",
+  reason: "",
+  createdAt: "2026-08-11T00:00:00.000Z",
+  admittedAt: "2026-08-11T00:00:00.000Z",
+  completedAt: "2026-08-11T00:00:01.000Z",
+  updatedAt: "2026-08-11T00:00:01.000Z",
+  effectiveTurn: {
+    provider: "codex" as const,
+    model: "gpt-5.4",
+    reasoningEffort: "high" as const,
+    approvalMode: "on-request" as const,
+    sandboxMode: "workspace-write" as const,
+    customAgentName: null,
+  },
+  attachments: [],
+  pendingInteraction: null,
+  partialOutput: null,
+};
+const publicSession = {
+  sessionId: "s1",
+  title: "Demo",
+  sessionKind: "default" as const,
+  provider: { id: "codex", catalogRevision: 1 },
+  character: { id: "character-1", name: "Character" },
+  workspace: { kind: "session_folder" as const, label: "SessionFolder", path: "C:/session" },
+  updatedAt: "2026-08-11T00:00:00.000Z",
+  sessionFolder: { path: "C:/session", isWorkspace: true },
+};
+const { sessionFolder: _sessionFolder, ...publicSessionSummary } = publicSession;
+const publicFile = {
+  sessionId: "session-1",
+  relativePath: "brief.md",
+  byteLength: 5,
+  modifiedAt: "2026-08-11T00:00:00.000Z",
+};
 
 async function withClient<T>(
   server: ReturnType<typeof createWithMateSessionMcpServer>,
@@ -46,8 +87,12 @@ async function withClient<T>(
   }
 }
 
+function parseToolError(result: { content: unknown[] }): any {
+  return JSON.parse((result.content[0] as { text: string }).text);
+}
+
 describe("WithMate Session MCP contract", () => {
-  it("14 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("17 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -55,13 +100,21 @@ describe("WithMate Session MCP contract", () => {
         assert.equal(tool.inputSchema.type, "object");
         assert.equal(tool.inputSchema.additionalProperties, false);
         assert.equal(tool.outputSchema?.type, "object");
+        assert.equal(tool.outputSchema?.additionalProperties, false);
+        assert.ok(tool.outputSchema?.required?.includes("operation"));
+        assert.ok(tool.outputSchema?.required?.includes("result"));
         assert.ok(tool.description?.trim());
-        assert.equal(tool.annotations?.openWorldHint, false);
+        assert.equal(
+          tool.annotations?.openWorldHint,
+          tool.name === "turn.run" || tool.name === "turn.enqueue" || tool.name === "interaction.respond" || tool.name === "transcript.export",
+        );
         assert.equal(tool.annotations?.idempotentHint, true);
       }
       assert.equal(result.tools.find((tool) => tool.name === "turn.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "runtime.catalog")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.cancel")?.annotations?.destructiveHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "turn.run")?.annotations?.destructiveHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "turn.enqueue")?.annotations?.destructiveHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.get")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.options")?.annotations?.readOnlyHint, true);
@@ -69,6 +122,14 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(result.tools.find((tool) => tool.name === "session.files.read_text")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.readOnlyHint, false);
       assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.destructiveHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "interaction.list")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "interaction.respond")?.annotations?.destructiveHint, true);
+      const runOutput = result.tools.find((tool) => tool.name === "turn.run")?.outputSchema as any;
+      const enqueueOutput = result.tools.find((tool) => tool.name === "turn.enqueue")?.outputSchema as any;
+      assert.equal(runOutput.properties.operation.const, "turn.run");
+      assert.equal(enqueueOutput.properties.operation.const, "turn.enqueue");
+      assert.equal(runOutput.properties.result.properties.operation.const, "turn.run");
+      assert.equal(enqueueOutput.properties.result.properties.operation.const, "turn.enqueue");
     });
   });
 
@@ -78,10 +139,15 @@ describe("WithMate Session MCP contract", () => {
       discover: async () => connection,
       call: async (_connection, envelope) => {
         requests.push(envelope);
+        const result = envelope.operation === "session.files.list"
+          ? { items: [publicFile] }
+          : envelope.operation === "session.files.read_text"
+            ? { file: publicFile, content: "hello" }
+            : { file: publicFile };
         return {
           ok: true,
           status: 200,
-          value: createSessionRuntimeResult(envelope.operation, { items: [], file: { relativePath: "brief.md" } }),
+          value: createSessionRuntimeResult(envelope.operation, result as never),
         } as any;
       },
     }), async (client) => {
@@ -120,13 +186,33 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  it("EXT-TRANSCRIPT-13: inline transcript exportの8 MiB超過はpre-dispatchで拒否する", async () => {
+    let calls = 0;
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async () => { calls += 1; return connection; },
+    }), async (client) => {
+      const result = await client.callTool({ name: "transcript.export", arguments: {
+        sessionId: "session-1", format: "json", maxBytes: 8 * 1024 * 1024 + 1,
+        destination: { kind: "inline" },
+      } });
+      assert.equal(result.isError, true);
+      assert.equal(calls, 0);
+    });
+  });
+
   it("session.createはcaller-owned keyを必須にし、session.list/getはread-onlyでdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
       discover: async () => connection,
       call: async (_connection, envelope) => {
         requests.push(envelope);
-        return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, { sessionId: "s1", title: "Demo", items: [] }) } as any;
+        const result = envelope.operation === "session.list"
+          ? { items: [publicSessionSummary] }
+          : envelope.operation === "session.get"
+            ? { ...publicSession, workspace: { ...publicSession.workspace, branch: null } }
+            : publicSession;
+        return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, result as never) } as any;
       },
     }), async (client) => {
       const created = await client.callTool({ name: "session.create", arguments: {
@@ -167,7 +253,7 @@ describe("WithMate Session MCP contract", () => {
       const result = await client.callTool({ name: "runtime.catalog", arguments: {} });
       assert.equal(result.isError, undefined);
       assert.deepEqual(requests, [{
-        schemaVersion: "withmate-session-request-v1",
+        schemaVersion: "withmate-session-request-v2",
         operation: "runtime.catalog",
         input: {},
       }]);
@@ -186,8 +272,11 @@ describe("WithMate Session MCP contract", () => {
           status: 200,
           value: createSessionRuntimeResult("turn.options", {
             sessionId: "session-1",
+            provider: { id: "codex" },
             catalogRevision: 9,
             models: [],
+            approvalModes: [],
+            codexSandboxModes: [],
           }),
         };
       },
@@ -198,11 +287,151 @@ describe("WithMate Session MCP contract", () => {
       });
       assert.equal(result.isError, undefined);
       assert.deepEqual(requests, [{
-        schemaVersion: "withmate-session-request-v1",
+        schemaVersion: "withmate-session-request-v2",
         operation: "turn.options",
         input: { sessionId: "session-1" },
       }]);
       assert.equal((result.structuredContent as any).operation, "turn.options");
+    });
+  });
+
+  it("EXT-PROVIDER-02: Copilot Turnをprovider固有schemaでrun/enqueueへdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult(envelope.operation, {
+            ...publicExecution,
+            operation: envelope.operation,
+          } as never),
+        };
+      },
+    }), async (client) => {
+      const turn = {
+        provider: "copilot",
+        userMessage: "hello",
+        model: "claude-sonnet",
+        reasoningEffort: "high",
+        approvalMode: "on-request",
+        customAgentName: "reviewer",
+        attachments: [],
+      };
+      assert.equal((await client.callTool({
+        name: "turn.run",
+        arguments: {
+          sessionId: "session-1",
+          catalogRevision: 5,
+          idempotencyKey: "run-1",
+          responseMode: "deferred",
+          turn,
+        },
+      })).isError, undefined);
+      assert.equal((await client.callTool({
+        name: "turn.enqueue",
+        arguments: {
+          sessionId: "session-1",
+          catalogRevision: 5,
+          idempotencyKey: "enqueue-1",
+          turn,
+        },
+      })).isError, undefined);
+      const invalid = await client.callTool({
+        name: "turn.enqueue",
+        arguments: {
+          sessionId: "session-1",
+          catalogRevision: 5,
+          idempotencyKey: "enqueue-2",
+          turn: { ...turn, codexSandboxMode: "workspace-write" },
+        },
+      });
+      assert.equal(invalid.isError, true);
+    });
+    assert.deepEqual(requests.map((request) => request.operation), ["turn.run", "turn.enqueue"]);
+  });
+
+  it("EXT-RESULT-03: turn.runはenqueue executionをoperation別result schemaで拒否する", async () => {
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async () => ({
+        ok: true,
+        status: 200,
+        value: createSessionRuntimeResult("turn.run", {
+          ...publicExecution,
+          operation: "turn.enqueue",
+        } as never),
+      }),
+    }), async (client) => {
+      const result = await client.callTool({
+        name: "turn.run",
+        arguments: {
+          sessionId: "session-1",
+          catalogRevision: 5,
+          idempotencyKey: "run-operation-mismatch",
+          responseMode: "deferred",
+          turn: {
+            provider: "codex",
+            userMessage: "hello",
+            model: "gpt-5.4",
+            reasoningEffort: "high",
+            approvalMode: "on-request",
+            codexSandboxMode: "workspace-write",
+            attachments: [],
+          },
+        },
+      });
+      assert.equal(result.isError, true);
+      assert.equal(parseToolError(result as any).error.code, "RUNTIME_UNAVAILABLE");
+    });
+  });
+
+  it("EXT-RESULT-03: provider設定とinteraction種別の不正なpublic tupleを拒否する", async () => {
+    const invalidExecution = {
+      ...publicExecution,
+      effectiveTurn: {
+        ...publicExecution.effectiveTurn,
+        provider: "copilot",
+      },
+    };
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async () => ({
+        ok: true,
+        status: 200,
+        value: createSessionRuntimeResult("turn.get", invalidExecution),
+      }),
+    }), async (client) => {
+      const result = await client.callTool({ name: "turn.get", arguments: executionInput });
+      assert.equal(result.isError, true);
+      assert.equal(parseToolError(result as any).error.code, "RUNTIME_UNAVAILABLE");
+    });
+
+    const invalidInteraction = {
+      sequence: 1,
+      interactionId: "interaction-1",
+      sessionId: "session-1",
+      executionId: "execution-1",
+      kind: "approval",
+      state: "pending",
+      request: { mode: "form", message: "wrong request kind", fields: [] },
+      resolution: null,
+      createdAt: "2026-08-13T00:00:00.000Z",
+      updatedAt: "2026-08-13T00:00:00.000Z",
+    };
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async () => ({
+        ok: true,
+        status: 200,
+        value: createSessionRuntimeResult("interaction.list", { items: [invalidInteraction] }),
+      }),
+    }), async (client) => {
+      const result = await client.callTool({ name: "interaction.list", arguments: { sessionId: "session-1" } });
+      assert.equal(result.isError, true);
+      assert.equal(parseToolError(result as any).error.code, "RUNTIME_UNAVAILABLE");
     });
   });
 
@@ -216,7 +445,7 @@ describe("WithMate Session MCP contract", () => {
       call: async (_connection, envelope) => ({
         ok: true,
         status: 200,
-        value: createSessionRuntimeResult(envelope.operation, { execution: { id: "execution-1", state: "completed" } }),
+        value: createSessionRuntimeResult(envelope.operation, publicExecution as never),
       }),
     }), async (client) => {
       const result = await client.callTool({ name: "turn.get", arguments: executionInput });
@@ -225,7 +454,7 @@ describe("WithMate Session MCP contract", () => {
       assert.deepEqual(result.structuredContent, {
         schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
         operation: "turn.get",
-        result: { execution: { id: "execution-1", state: "completed" } },
+        result: publicExecution,
       });
     });
   });
@@ -257,9 +486,11 @@ describe("WithMate Session MCP contract", () => {
         value: createSessionRuntimeError({ code: "SESSION_BUSY", message: "Session is busy." }),
       }),
     }), async (client) => {
+      await client.listTools();
       const result = await client.callTool({ name: "turn.get", arguments: executionInput });
       assert.equal(result.isError, true);
-      assert.deepEqual(result.structuredContent, {
+      assert.equal(result.structuredContent, undefined);
+      assert.deepEqual(JSON.parse((result.content[0] as { text: string }).text), {
         schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
         error: {
           code: "SESSION_BUSY",
@@ -279,13 +510,16 @@ describe("WithMate Session MCP contract", () => {
         ok: true,
         status: 200,
         value: createSessionRuntimeResult("turn.get", {
-          execution: { id: "execution-1", state: "failed", errorCode: "PROVIDER_FAILURE" },
+          ...publicExecution,
+          state: "failed",
+          result: null,
+          errorCode: "PROVIDER_FAILURE",
         }),
       }),
     }), async (client) => {
       const result = await client.callTool({ name: "turn.get", arguments: executionInput });
       assert.equal(result.isError, undefined);
-      assert.equal((result.structuredContent as any).result.execution.state, "failed");
+      assert.equal((result.structuredContent as any).result.state, "failed");
     });
   });
 
@@ -297,8 +531,9 @@ describe("WithMate Session MCP contract", () => {
       }), async (client) => {
         const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
         assert.equal(result.isError, true);
-        assert.equal((result.structuredContent as any).error.effect, expectedEffect);
-        assert.doesNotMatch(JSON.stringify(result.structuredContent), /secret|stack/i);
+        const error = parseToolError(result as any);
+        assert.equal(error.error.effect, expectedEffect);
+        assert.doesNotMatch(JSON.stringify(error), /secret|stack/i);
       });
     }
   });
@@ -309,8 +544,41 @@ describe("WithMate Session MCP contract", () => {
       call: async () => { throw new SessionRuntimeClientError("response lost", true); },
     }), async (client) => {
       const result = await client.callTool({ name: "turn.get", arguments: executionInput });
-      assert.equal((result.structuredContent as any).error.effect, "not_applied");
+      assert.equal(parseToolError(result as any).error.effect, "not_applied");
     });
+  });
+
+  it("EXT-TRANSCRIPT-13: MCP transport response lossはinlineをnot_applied、SessionFolderをindeterminateにする", async () => {
+    const inputs = [
+      {
+        sessionId: "session-1",
+        format: "json",
+        maxBytes: 1024,
+        destination: { kind: "inline" },
+        expectedEffect: "not_applied",
+      },
+      {
+        sessionId: "session-1",
+        format: "json",
+        maxBytes: 1024,
+        destination: {
+          kind: "session_folder",
+          relativePath: "exports/transcript.json",
+          replace: false,
+          idempotencyKey: "transcript-response-loss",
+        },
+        expectedEffect: "indeterminate",
+      },
+    ] as const;
+    for (const { expectedEffect, ...input } of inputs) {
+      await withClient(createWithMateSessionMcpServer({
+        discover: async () => connection,
+        call: async () => { throw new SessionRuntimeClientError("response lost", true); },
+      }), async (client) => {
+        const result = await client.callTool({ name: "transcript.export", arguments: input });
+        assert.equal(parseToolError(result as any).error.effect, expectedEffect);
+      });
+    }
   });
 
   it("CLI-INPUT-LIMIT-01: shared request limit failureはCONTENT_TOO_LARGE/not_appliedを返す", async () => {
@@ -326,8 +594,9 @@ describe("WithMate Session MCP contract", () => {
     }), async (client) => {
       const result = await client.callTool({ name: "turn.get", arguments: executionInput });
       assert.equal(result.isError, true);
-      assert.equal((result.structuredContent as any).error.code, "CONTENT_TOO_LARGE");
-      assert.equal((result.structuredContent as any).error.effect, "not_applied");
+      const error = parseToolError(result as any);
+      assert.equal(error.error.code, "CONTENT_TOO_LARGE");
+      assert.equal(error.error.effect, "not_applied");
     });
   });
 
@@ -346,11 +615,48 @@ describe("WithMate Session MCP contract", () => {
       }), async (client) => {
         const result = await client.callTool({ name: "turn.cancel", arguments: cancelInput });
         assert.equal(result.isError, true);
-        assert.equal((result.structuredContent as any).error.effect, "not_applied");
+        assert.equal(parseToolError(result as any).error.effect, "not_applied");
         assert.equal(operationBodyBytes, 0);
       });
     } finally {
       await new Promise<void>((resolve) => runtime.close(() => resolve()));
     }
+  });
+
+  it("EXT-INTERACTION-11: interaction.list/respondをstrict schemaとcombined resultで公開する", async () => {
+    const requests: any[] = [];
+    const answered = {
+      sequence: 1, interactionId: "interaction-1", sessionId: "session-1", executionId: "execution-1",
+      kind: "approval", state: "answered",
+      request: { title: "Approve", summary: "Run command" },
+      resolution: { action: "approve", submittedFields: [], resolvedAt: "2026-08-13T00:00:01.000Z" },
+      createdAt: "2026-08-13T00:00:00.000Z", updatedAt: "2026-08-13T00:00:01.000Z",
+    };
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult(envelope.operation, envelope.operation === "interaction.list"
+            ? { items: [answered] }
+            : { interaction: answered, execution: publicExecution } as never),
+        };
+      },
+    }), async (client) => {
+      const listed = await client.callTool({ name: "interaction.list", arguments: { sessionId: "session-1" } });
+      assert.equal(listed.isError, undefined);
+      const responded = await client.callTool({
+        name: "interaction.respond",
+        arguments: {
+          sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+          response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
+        },
+      });
+      assert.equal(responded.isError, undefined);
+      assert.equal((responded.structuredContent as any).result.interaction.state, "answered");
+      assert.deepEqual(requests.map((request) => request.operation), ["interaction.list", "interaction.respond"]);
+    });
   });
 });

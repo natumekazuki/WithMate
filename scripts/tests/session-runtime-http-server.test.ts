@@ -218,11 +218,13 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
           idempotencyKey: "run-key",
           responseMode: "deferred",
           turn: {
+            provider: "codex",
             userMessage: "hello",
             model: "gpt-5.4",
             reasoningEffort: "high",
             approvalMode: "on-request",
             codexSandboxMode: "workspace-write",
+            attachments: [],
           },
         },
       },
@@ -382,7 +384,7 @@ test("HTTP-PREAUTH-01: live pre-auth connection数をhard limitする", async ()
   }
 });
 
-test("HTTP-PREAUTH-01: stopはsocket強制close後もauthenticated handlerの完了を待つ", async () => {
+test("EXT-SHUTDOWN-07: stopはstuck authenticated handlerをfinite grace後に切り離す", async () => {
   const handlerStarted = createDeferred();
   const releaseHandler = createDeferred();
   const server = createSessionRuntimeHttpServer({
@@ -404,15 +406,16 @@ test("HTTP-PREAUTH-01: stopはsocket強制close後もauthenticated handlerの完
   });
   const response = post(address.port, exchangePayload("cli", body)).catch(() => undefined);
   await handlerStarted.promise;
-  let firstStopped = false;
-  let secondStopped = false;
-  const firstStopping = server.stop().then(() => { firstStopped = true; });
-  const secondStopping = server.stop().then(() => { secondStopped = true; });
-  await new Promise<void>((resolve) => setTimeout(resolve, 50));
-  assert.equal(firstStopped, false);
-  assert.equal(secondStopped, false);
+  const firstStopping = server.stop();
+  const secondStopping = server.stop();
+  await Promise.race([
+    Promise.all([firstStopping, secondStopping]),
+    new Promise<never>((_resolve, reject) => setTimeout(
+      () => reject(new Error("authenticated handler shutdown did not settle within the finite deadline")),
+      500,
+    )),
+  ]);
   releaseHandler.resolve();
-  await Promise.all([firstStopping, secondStopping]);
   await response;
 });
 

@@ -74,11 +74,13 @@ var REASONING_EFFORT_SET = /* @__PURE__ */ new Set([
 function isModelReasoningEffort(value) {
 	return typeof value === "string" && REASONING_EFFORT_SET.has(value);
 }
+var SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES = 8 * 1024 * 1024;
+var SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES = 1024 * 1024 * 1024;
 //#endregion
 //#region src/session-external-runtime-contract.ts
-var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v1";
-var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v1";
-var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v1";
+var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v2";
+var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v2";
+var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v2";
 var SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1024 * 1024;
 var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8 * 1024 * 1024;
@@ -97,8 +99,12 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"turn.enqueue",
 	"turn.list",
 	"turn.get",
-	"turn.cancel"
+	"turn.cancel",
+	"interaction.list",
+	"interaction.respond",
+	"transcript.export"
 ];
+var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
 var SessionRuntimeValidationError = class extends Error {
 	code;
 	details;
@@ -136,6 +142,9 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "turn.list") return parseTurnListInput(value);
 	if (operation === "turn.get") return parseExecutionInput(value);
 	if (operation === "turn.cancel") return parseCancelInput(value);
+	if (operation === "interaction.list") return parseInteractionListInput(value);
+	if (operation === "interaction.respond") return parseInteractionRespondInput(value);
+	if (operation === "transcript.export") return parseTranscriptExportInput(value);
 	throw invalid("operation", "Unsupported Session runtime operation.");
 }
 function parseSessionCreateInput(value) {
@@ -149,7 +158,7 @@ function parseSessionCreateInput(value) {
 	], "input");
 	return {
 		title: requireNonEmptyString(record.title, "title"),
-		provider: requireEnum(record.provider, ["codex"], "provider"),
+		provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
 		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
 		workspace: parseSessionCreateWorkspace(record.workspace),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
@@ -297,22 +306,68 @@ function parseTurnMutationBase(record) {
 }
 function parseTurnRequest(value) {
 	const record = requireObject(value, "turn");
-	assertKeys(record, [
-		"userMessage",
-		"model",
-		"reasoningEffort",
-		"approvalMode",
-		"codexSandboxMode"
-	], "turn");
+	const provider = requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "turn.provider");
 	const reasoningEffort = record.reasoningEffort;
 	if (!isModelReasoningEffort(reasoningEffort)) throw invalid("reasoningEffort", "reasoningEffort is invalid.");
-	return {
+	const common = {
 		userMessage: requireNonEmptyString(record.userMessage, "userMessage"),
 		model: requireNonEmptyString(record.model, "model"),
 		reasoningEffort,
 		approvalMode: requireEnum(record.approvalMode, APPROVAL_MODE_VALUES, "approvalMode"),
-		codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode")
+		attachments: parseTurnAttachments(record.attachments)
 	};
+	if (provider === "codex") {
+		assertKeys(record, [
+			"provider",
+			"userMessage",
+			"model",
+			"reasoningEffort",
+			"approvalMode",
+			"codexSandboxMode",
+			"attachments"
+		], "turn");
+		return {
+			...common,
+			provider,
+			codexSandboxMode: requireEnum(record.codexSandboxMode, CODEX_SANDBOX_MODE_VALUES, "codexSandboxMode")
+		};
+	}
+	assertKeys(record, [
+		"provider",
+		"userMessage",
+		"model",
+		"reasoningEffort",
+		"approvalMode",
+		"customAgentName",
+		"attachments"
+	], "turn");
+	return {
+		...common,
+		provider,
+		customAgentName: requireString(record.customAgentName, "customAgentName").trim()
+	};
+}
+function parseTurnAttachments(value) {
+	if (!Array.isArray(value) || value.length > 32) throw invalid("attachments", `attachments must be an array with at most 32 items.`);
+	const seen = /* @__PURE__ */ new Set();
+	return value.map((item, index) => {
+		const record = requireObject(item, `attachments[${index}]`);
+		assertKeys(record, ["kind", "relativePath"], `attachments[${index}]`);
+		const relativePath = requireNonEmptyString(record.relativePath, `attachments[${index}].relativePath`);
+		if (relativePath.includes("\0") || relativePath.includes("\\") || relativePath.includes("\r") || relativePath.includes("\n") || relativePath.startsWith("/") || /^[a-zA-Z]:/.test(relativePath) || relativePath.startsWith("//")) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must be a portable relative path.");
+		if (relativePath.split("/").some((segment) => !segment || segment === "." || segment === "..")) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must identify an item inside the SessionFolder.");
+		const duplicateKey = relativePath.toLowerCase();
+		if (seen.has(duplicateKey)) throw invalid(`attachments[${index}].relativePath`, "attachment relativePath must not be duplicated.");
+		seen.add(duplicateKey);
+		return {
+			kind: requireEnum(record.kind, [
+				"file",
+				"folder",
+				"image"
+			], `attachments[${index}].kind`),
+			relativePath
+		};
+	});
 }
 function parseExecutionInput(value) {
 	const record = requireObject(value, "input");
@@ -347,6 +402,130 @@ function parseTurnListInput(value) {
 		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
 		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
 	};
+}
+function parseInteractionListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"executionId",
+		"kind",
+		"state",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
+		...record.kind === void 0 ? {} : { kind: requireEnum(record.kind, ["approval", "elicitation"], "kind") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, [
+			"pending",
+			"answered",
+			"expired"
+		], "state") },
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 500, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseInteractionRespondInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"executionId",
+		"interactionId",
+		"response",
+		"idempotencyKey",
+		"responseMode",
+		"waitTimeoutMs"
+	], "input");
+	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
+	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		executionId: requireNonEmptyString(record.executionId, "executionId"),
+		interactionId: requireNonEmptyString(record.interactionId, "interactionId"),
+		response: parseInteractionResponse(record.response),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		responseMode,
+		...record.waitTimeoutMs === void 0 ? {} : { waitTimeoutMs: requireInteger(record.waitTimeoutMs, "waitTimeoutMs", 1, SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS) }
+	};
+}
+function parseInteractionResponse(value) {
+	const record = requireObject(value, "response");
+	const kind = requireEnum(record.kind, ["approval", "elicitation"], "response.kind");
+	if (kind === "approval") {
+		assertKeys(record, ["kind", "decision"], "response");
+		return {
+			kind,
+			decision: requireEnum(record.decision, ["approve", "deny"], "response.decision")
+		};
+	}
+	const action = requireEnum(record.action, [
+		"accept",
+		"decline",
+		"cancel"
+	], "response.action");
+	if (action !== "accept") {
+		assertKeys(record, ["kind", "action"], "response");
+		return {
+			kind,
+			action
+		};
+	}
+	assertKeys(record, [
+		"kind",
+		"action",
+		"content"
+	], "response");
+	const content = requireObject(record.content, "response.content");
+	return {
+		kind,
+		action,
+		content: Object.fromEntries(Object.entries(content).map(([name, item]) => [requireNonEmptyString(name, "response.content field"), parseElicitationValue(item, `response.content.${name}`)]))
+	};
+}
+function parseTranscriptExportInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"sessionId",
+		"format",
+		"maxBytes",
+		"destination"
+	], "input");
+	const destination = requireObject(record.destination, "destination");
+	const kind = requireEnum(destination.kind, ["inline", "session_folder"], "destination.kind");
+	const maxBytes = requireInteger(record.maxBytes ?? (kind === "inline" ? 1048576 : 67108864), "maxBytes", 1, kind === "inline" ? SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES : SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES, "LIMIT_EXCEEDED");
+	if (kind === "inline") {
+		assertKeys(destination, ["kind"], "destination");
+		return {
+			sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+			format: requireEnum(record.format, ["json", "markdown"], "format"),
+			maxBytes,
+			destination: { kind }
+		};
+	}
+	assertKeys(destination, [
+		"kind",
+		"relativePath",
+		"replace",
+		"idempotencyKey"
+	], "destination");
+	return {
+		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
+		format: requireEnum(record.format, ["json", "markdown"], "format"),
+		maxBytes,
+		destination: {
+			kind,
+			relativePath: requireNonEmptyString(destination.relativePath, "destination.relativePath"),
+			replace: destination.replace === void 0 ? false : requireBoolean(destination.replace, "destination.replace"),
+			idempotencyKey: requireNonEmptyString(destination.idempotencyKey, "destination.idempotencyKey")
+		}
+	};
+}
+function parseElicitationValue(value, field) {
+	if (typeof value === "string" || typeof value === "boolean") return value;
+	if (typeof value === "number" && Number.isFinite(value)) return value;
+	if (Array.isArray(value) && value.every((item) => typeof item === "string")) return [...value];
+	throw invalid(field, `${field} has an invalid elicitation value.`);
 }
 function requireObject(value, field) {
 	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid(field, `${field} must be an object.`);
@@ -383,14 +562,21 @@ var SESSION_RUNTIME_DISCOVERY_FILE_NAME = "session.current.json";
 function buildSessionRuntimeDiscoveryGenerationFileName(adapter, runtimeInstanceId) {
 	return `session-${adapter}.${createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex")}.json`;
 }
-function resolveDefaultSessionRuntimeDirectory(env = process.env) {
+function resolveDefaultSessionRuntimeDirectory(env = process.env, platform = process.platform) {
 	const configured = env.WITHMATE_SESSION_RUNTIME_DIR?.trim();
+	if (platform === "win32") {
+		if (configured) throw new Error("WITHMATE_SESSION_RUNTIME_DIR is not supported on Windows.");
+		const localAppDataPath = env.LOCALAPPDATA?.trim();
+		if (!localAppDataPath || !path.win32.isAbsolute(localAppDataPath)) throw new Error("LOCALAPPDATA must identify an absolute Windows directory.");
+		return path.win32.join(localAppDataPath, "WithMate", "session-runtime");
+	}
 	if (configured) return path.resolve(configured);
 	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
 	return path.join(tmpdir(), "withmate-session", ownerSegment);
 }
-function resolveDefaultSessionRuntimeDiscoveryFilePath(env = process.env) {
-	return path.join(resolveDefaultSessionRuntimeDirectory(env), SESSION_RUNTIME_DISCOVERY_FILE_NAME);
+function resolveDefaultSessionRuntimeDiscoveryFilePath(env = process.env, platform = process.platform) {
+	const runtimeDirectoryPath = resolveDefaultSessionRuntimeDirectory(env, platform);
+	return platform === "win32" ? path.win32.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME) : path.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME);
 }
 //#endregion
 //#region src/session-runtime-exchange.ts
@@ -2696,7 +2882,7 @@ function deepPartialify(schema) {
 	});
 	else if (schema instanceof ZodOptional$1) return ZodOptional$1.create(deepPartialify(schema.unwrap()));
 	else if (schema instanceof ZodNullable$1) return ZodNullable$1.create(deepPartialify(schema.unwrap()));
-	else if (schema instanceof ZodTuple) return ZodTuple.create(schema.items.map((item) => deepPartialify(item)));
+	else if (schema instanceof ZodTuple$1) return ZodTuple$1.create(schema.items.map((item) => deepPartialify(item)));
 	else return schema;
 }
 var ZodObject$1 = class ZodObject$1 extends ZodType$1 {
@@ -3026,7 +3212,7 @@ ZodUnion$1.create = (types, params) => {
 	});
 };
 var getDiscriminator = (type) => {
-	if (type instanceof ZodLazy) return getDiscriminator(type.schema);
+	if (type instanceof ZodLazy$1) return getDiscriminator(type.schema);
 	else if (type instanceof ZodEffects) return getDiscriminator(type.innerType());
 	else if (type instanceof ZodLiteral$1) return [type.value];
 	else if (type instanceof ZodEnum$1) return type.options;
@@ -3197,7 +3383,7 @@ ZodIntersection$1.create = (left, right, params) => {
 		...processCreateParams(params)
 	});
 };
-var ZodTuple = class ZodTuple extends ZodType$1 {
+var ZodTuple$1 = class ZodTuple$1 extends ZodType$1 {
 	_parse(input) {
 		const { status, ctx } = this._processInputParams(input);
 		if (ctx.parsedType !== ZodParsedType.array) {
@@ -3242,15 +3428,15 @@ var ZodTuple = class ZodTuple extends ZodType$1 {
 		return this._def.items;
 	}
 	rest(rest) {
-		return new ZodTuple({
+		return new ZodTuple$1({
 			...this._def,
 			rest
 		});
 	}
 };
-ZodTuple.create = (schemas, params) => {
+ZodTuple$1.create = (schemas, params) => {
 	if (!Array.isArray(schemas)) throw new Error("You must pass an array of schemas to z.tuple([ ... ])");
-	return new ZodTuple({
+	return new ZodTuple$1({
 		items: schemas,
 		typeName: ZodFirstPartyTypeKind.ZodTuple,
 		rest: null,
@@ -3540,7 +3726,7 @@ var ZodFunction = class ZodFunction extends ZodType$1 {
 	args(...items) {
 		return new ZodFunction({
 			...this._def,
-			args: ZodTuple.create(items).rest(ZodUnknown$1.create())
+			args: ZodTuple$1.create(items).rest(ZodUnknown$1.create())
 		});
 	}
 	returns(returnType) {
@@ -3557,14 +3743,14 @@ var ZodFunction = class ZodFunction extends ZodType$1 {
 	}
 	static create(args, returns, params) {
 		return new ZodFunction({
-			args: args ? args : ZodTuple.create([]).rest(ZodUnknown$1.create()),
+			args: args ? args : ZodTuple$1.create([]).rest(ZodUnknown$1.create()),
 			returns: returns || ZodUnknown$1.create(),
 			typeName: ZodFirstPartyTypeKind.ZodFunction,
 			...processCreateParams(params)
 		});
 	}
 };
-var ZodLazy = class extends ZodType$1 {
+var ZodLazy$1 = class extends ZodType$1 {
 	get schema() {
 		return this._def.getter();
 	}
@@ -3577,8 +3763,8 @@ var ZodLazy = class extends ZodType$1 {
 		});
 	}
 };
-ZodLazy.create = (getter, params) => {
-	return new ZodLazy({
+ZodLazy$1.create = (getter, params) => {
+	return new ZodLazy$1({
 		getter,
 		typeName: ZodFirstPartyTypeKind.ZodLazy,
 		...processCreateParams(params)
@@ -4137,12 +4323,12 @@ ZodObject$1.strictCreate;
 ZodUnion$1.create;
 ZodDiscriminatedUnion$1.create;
 ZodIntersection$1.create;
-ZodTuple.create;
+ZodTuple$1.create;
 ZodRecord$1.create;
 ZodMap.create;
 ZodSet.create;
 ZodFunction.create;
-ZodLazy.create;
+ZodLazy$1.create;
 ZodLiteral$1.create;
 ZodEnum$1.create;
 ZodNativeEnum.create;
@@ -6092,6 +6278,98 @@ function handleIntersectionResults(result, left, right) {
 	result.value = merged.data;
 	return result;
 }
+var $ZodTuple = /*@__PURE__*/ $constructor("$ZodTuple", (inst, def) => {
+	$ZodType.init(inst, def);
+	const items = def.items;
+	inst._zod.parse = (payload, ctx) => {
+		const input = payload.value;
+		if (!Array.isArray(input)) {
+			payload.issues.push({
+				input,
+				inst,
+				expected: "tuple",
+				code: "invalid_type"
+			});
+			return payload;
+		}
+		payload.value = [];
+		const proms = [];
+		const optinStart = getTupleOptStart(items, "optin");
+		const optoutStart = getTupleOptStart(items, "optout");
+		if (!def.rest) {
+			if (input.length < optinStart) {
+				payload.issues.push({
+					code: "too_small",
+					minimum: optinStart,
+					inclusive: true,
+					input,
+					inst,
+					origin: "array"
+				});
+				return payload;
+			}
+			if (input.length > items.length) payload.issues.push({
+				code: "too_big",
+				maximum: items.length,
+				inclusive: true,
+				input,
+				inst,
+				origin: "array"
+			});
+		}
+		const itemResults = new Array(items.length);
+		for (let i = 0; i < items.length; i++) {
+			const r = items[i]._zod.run({
+				value: input[i],
+				issues: []
+			}, ctx);
+			if (r instanceof Promise) proms.push(r.then((rr) => {
+				itemResults[i] = rr;
+			}));
+			else itemResults[i] = r;
+		}
+		if (def.rest) {
+			let i = items.length - 1;
+			const rest = input.slice(items.length);
+			for (const el of rest) {
+				i++;
+				const result = def.rest._zod.run({
+					value: el,
+					issues: []
+				}, ctx);
+				if (result instanceof Promise) proms.push(result.then((r) => handleTupleResult(r, payload, i)));
+				else handleTupleResult(result, payload, i);
+			}
+		}
+		if (proms.length) return Promise.all(proms).then(() => handleTupleResults(itemResults, payload, items, input, optoutStart));
+		return handleTupleResults(itemResults, payload, items, input, optoutStart);
+	};
+});
+function getTupleOptStart(items, key) {
+	for (let i = items.length - 1; i >= 0; i--) if (items[i]._zod[key] !== "optional") return i + 1;
+	return 0;
+}
+function handleTupleResult(result, final, index) {
+	if (result.issues.length) final.issues.push(...prefixIssues(index, result.issues));
+	final.value[index] = result.value;
+}
+function handleTupleResults(itemResults, final, items, input, optoutStart) {
+	for (let i = 0; i < items.length; i++) {
+		const r = itemResults[i];
+		const isPresent = i < input.length;
+		if (r.issues.length) {
+			if (!isPresent && i >= optoutStart) {
+				final.value.length = i;
+				break;
+			}
+			final.issues.push(...prefixIssues(i, r.issues));
+		}
+		final.value[i] = r.value;
+	}
+	for (let i = final.value.length - 1; i >= input.length; i--) if (items[i]._zod.optout === "optional" && final.value[i] === void 0) final.value.length = i;
+	else break;
+	return final;
+}
 var $ZodRecord = /*@__PURE__*/ $constructor("$ZodRecord", (inst, def) => {
 	$ZodType.init(inst, def);
 	inst._zod.parse = (payload, ctx) => {
@@ -6442,6 +6720,21 @@ function handleReadonlyResult(payload) {
 	payload.value = Object.freeze(payload.value);
 	return payload;
 }
+var $ZodLazy = /*@__PURE__*/ $constructor("$ZodLazy", (inst, def) => {
+	$ZodType.init(inst, def);
+	defineLazy(inst._zod, "innerType", () => {
+		const d = def;
+		if (!d._cachedInner) d._cachedInner = def.getter();
+		return d._cachedInner;
+	});
+	defineLazy(inst._zod, "pattern", () => inst._zod.innerType?._zod?.pattern);
+	defineLazy(inst._zod, "propValues", () => inst._zod.innerType?._zod?.propValues);
+	defineLazy(inst._zod, "optin", () => inst._zod.innerType?._zod?.optin ?? void 0);
+	defineLazy(inst._zod, "optout", () => inst._zod.innerType?._zod?.optout ?? void 0);
+	inst._zod.parse = (payload, ctx) => {
+		return inst._zod.innerType._zod.run(payload, ctx);
+	};
+});
 var $ZodCustom = /*@__PURE__*/ $constructor("$ZodCustom", (inst, def) => {
 	$ZodCheck.init(inst, def);
 	$ZodType.init(inst, def);
@@ -8596,6 +8889,24 @@ function intersection(left, right) {
 		right
 	});
 }
+var ZodTuple = /*@__PURE__*/ $constructor("ZodTuple", (inst, def) => {
+	$ZodTuple.init(inst, def);
+	ZodType.init(inst, def);
+	inst._zod.processJSONSchema = (ctx, json, params) => tupleProcessor(inst, ctx, json, params);
+	inst.rest = (rest) => inst.clone({
+		...inst._zod.def,
+		rest
+	});
+});
+function tuple(items, _paramsOrRest, _params) {
+	const hasRest = _paramsOrRest instanceof $ZodType;
+	return new ZodTuple({
+		type: "tuple",
+		items,
+		rest: hasRest ? _paramsOrRest : null,
+		...normalizeParams(hasRest ? _params : _paramsOrRest)
+	});
+}
 var ZodRecord = /*@__PURE__*/ $constructor("ZodRecord", (inst, def) => {
 	$ZodRecord.init(inst, def);
 	ZodType.init(inst, def);
@@ -8827,6 +9138,18 @@ function readonly(innerType) {
 	return new ZodReadonly({
 		type: "readonly",
 		innerType
+	});
+}
+var ZodLazy = /*@__PURE__*/ $constructor("ZodLazy", (inst, def) => {
+	$ZodLazy.init(inst, def);
+	ZodType.init(inst, def);
+	inst._zod.processJSONSchema = (ctx, json, params) => lazyProcessor(inst, ctx, json, params);
+	inst.unwrap = () => inst._zod.def.getter();
+});
+function lazy(getter) {
+	return new ZodLazy({
+		type: "lazy",
+		getter
 	});
 }
 var ZodCustom = /*@__PURE__*/ $constructor("ZodCustom", (inst, def) => {
@@ -20525,13 +20848,29 @@ var reasoningEffortSchema = _enum([
 ]);
 var nonEmptyStringSchema = string().trim().min(1);
 var runtimeCatalogInputSchema = object({}).strict();
-var turnSchema = object({
+var commonTurnShape = {
 	userMessage: nonEmptyStringSchema,
 	model: nonEmptyStringSchema,
 	reasoningEffort: reasoningEffortSchema,
 	approvalMode: _enum(APPROVAL_MODE_VALUES),
+	attachments: array(object({
+		kind: _enum([
+			"file",
+			"folder",
+			"image"
+		]),
+		relativePath: nonEmptyStringSchema
+	}).strict()).max(32)
+};
+var turnSchema = discriminatedUnion("provider", [object({
+	...commonTurnShape,
+	provider: literal("codex"),
 	codexSandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES)
-}).strict();
+}).strict(), object({
+	...commonTurnShape,
+	provider: literal("copilot"),
+	customAgentName: string()
+}).strict()]);
 var mutationBaseShape = {
 	sessionId: nonEmptyStringSchema,
 	catalogRevision: number().int().min(1),
@@ -20564,9 +20903,56 @@ var listInputSchema = object({
 	limit: number().int().min(1).max(500).default(50),
 	cursor: nonEmptyStringSchema.optional()
 }).strict();
+var interactionListInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	executionId: nonEmptyStringSchema.optional(),
+	kind: _enum(["approval", "elicitation"]).optional(),
+	state: _enum([
+		"pending",
+		"answered",
+		"expired"
+	]).optional(),
+	limit: number().int().min(1).max(500).default(50),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var elicitationValueSchema = union([
+	string(),
+	number(),
+	boolean(),
+	array(string())
+]);
+var interactionRespondInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	executionId: nonEmptyStringSchema,
+	interactionId: nonEmptyStringSchema,
+	response: union([
+		object({
+			kind: literal("approval"),
+			decision: _enum(["approve", "deny"])
+		}).strict(),
+		object({
+			kind: literal("elicitation"),
+			action: literal("accept"),
+			content: record(string().min(1), elicitationValueSchema)
+		}).strict(),
+		object({
+			kind: literal("elicitation"),
+			action: _enum(["decline", "cancel"])
+		}).strict()
+	]),
+	idempotencyKey: nonEmptyStringSchema,
+	responseMode: _enum(["wait", "deferred"]),
+	waitTimeoutMs: number().int().min(1).max(SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS).optional()
+}).strict().superRefine((value, context) => {
+	if (value.responseMode === "deferred" && value.waitTimeoutMs !== void 0) context.addIssue({
+		code: "custom",
+		path: ["waitTimeoutMs"],
+		message: "waitTimeoutMs is only valid for wait mode."
+	});
+});
 var sessionCreateInputSchema = object({
 	title: nonEmptyStringSchema,
-	provider: literal("codex"),
+	provider: _enum(["codex", "copilot"]),
 	catalogRevision: number().int().min(1),
 	workspace: discriminatedUnion("kind", [object({
 		kind: literal("directory"),
@@ -20609,6 +20995,24 @@ var sessionFileWriteTextInputSchema = object({
 		message: `content exceeds maxBytes (${actualBytes} > ${value.maxBytes}).`
 	});
 });
+var transcriptExportInputSchema = object({
+	sessionId: nonEmptyStringSchema,
+	format: _enum(["json", "markdown"]),
+	maxBytes: number().int().min(1).max(SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES).optional(),
+	destination: discriminatedUnion("kind", [object({ kind: literal("inline") }).strict(), object({
+		kind: literal("session_folder"),
+		relativePath: nonEmptyStringSchema,
+		replace: boolean().default(false),
+		idempotencyKey: nonEmptyStringSchema
+	}).strict()])
+}).strict().superRefine((value, context) => {
+	const hardMax = value.destination.kind === "inline" ? SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES : SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES;
+	if (value.maxBytes !== void 0 && value.maxBytes > hardMax) context.addIssue({
+		code: "custom",
+		path: ["maxBytes"],
+		message: `maxBytes exceeds destination limit (${value.maxBytes} > ${hardMax}).`
+	});
+});
 var publicDetailsSchema = record(string(), union([
 	string(),
 	number(),
@@ -20628,20 +21032,336 @@ var errorSchema = object({
 		details: publicDetailsSchema
 	}).strict()
 }).strict();
-function createOutputSchema(operation) {
+var modelSchema = object({
+	id: string(),
+	label: string(),
+	reasoningEfforts: array(reasoningEffortSchema)
+}).strict();
+var characterSchema = object({
+	id: string(),
+	name: string()
+}).strict();
+var workspaceSchema = object({
+	kind: _enum(["directory", "session_folder"]),
+	label: string(),
+	path: string()
+}).strict();
+var sessionSummarySchema = object({
+	sessionId: string(),
+	title: string(),
+	sessionKind: literal("default"),
+	provider: object({
+		id: string(),
+		catalogRevision: number().int()
+	}).strict(),
+	character: characterSchema,
+	workspace: workspaceSchema,
+	updatedAt: string()
+}).strict();
+var sessionDetailSchema = sessionSummarySchema.extend({ sessionFolder: object({
+	path: string(),
+	isWorkspace: boolean()
+}).strict() }).strict();
+var sessionGetSchema = sessionDetailSchema.omit({ workspace: true }).extend({ workspace: workspaceSchema.extend({ branch: string().nullable() }).strict() }).strict();
+var fileReferenceSchema = object({
+	sessionId: string(),
+	relativePath: string(),
+	byteLength: number().int().nonnegative(),
+	modifiedAt: string()
+}).strict();
+var effectiveTurnSchema = discriminatedUnion("provider", [object({
+	provider: literal("codex"),
+	model: string(),
+	reasoningEffort: reasoningEffortSchema,
+	approvalMode: _enum(APPROVAL_MODE_VALUES),
+	sandboxMode: _enum(CODEX_SANDBOX_MODE_VALUES),
+	customAgentName: _null()
+}).strict(), object({
+	provider: literal("copilot"),
+	model: string(),
+	reasoningEffort: reasoningEffortSchema,
+	approvalMode: _enum(APPROVAL_MODE_VALUES),
+	sandboxMode: _null(),
+	customAgentName: string()
+}).strict()]);
+function createExecutionSchema(operation) {
 	return object({
-		schemaVersion: union([literal(SESSION_RUNTIME_RESULT_SCHEMA_VERSION), literal(SESSION_RUNTIME_ERROR_SCHEMA_VERSION)]),
-		operation: literal(operation).optional(),
-		result: unknown().optional(),
-		error: errorSchema.shape.error.optional()
-	}).strict().superRefine((value, context) => {
-		const success = value.schemaVersion === "withmate-session-result-v1" && value.operation === operation && value.result !== void 0 && value.error === void 0;
-		const failure = value.schemaVersion === "withmate-session-error-v1" && value.operation === void 0 && value.result === void 0 && value.error !== void 0;
-		if (!success && !failure) context.addIssue({
-			code: "custom",
-			message: "Expected a Session runtime result or error envelope."
-		});
-	});
+		id: string(),
+		sessionId: string(),
+		operation,
+		state: _enum([
+			"queued",
+			"running",
+			"completed",
+			"failed",
+			"canceled",
+			"interrupted"
+		]),
+		result: object({ assistantText: string() }).strict().nullable(),
+		errorCode: string(),
+		reason: string(),
+		createdAt: string(),
+		admittedAt: string().nullable(),
+		completedAt: string().nullable(),
+		updatedAt: string(),
+		effectiveTurn: effectiveTurnSchema.nullable(),
+		attachments: array(object({
+			kind: _enum([
+				"file",
+				"folder",
+				"image"
+			]),
+			relativePath: string()
+		}).strict()),
+		pendingInteraction: lazy(() => interactionSchema).nullable(),
+		partialOutput: object({
+			assistantText: string(),
+			truncated: boolean(),
+			updatedAt: string()
+		}).strict().nullable()
+	}).strict();
+}
+var elicitationFieldBase = {
+	name: string(),
+	title: string(),
+	description: string().optional(),
+	required: boolean()
+};
+var elicitationFieldSchema = discriminatedUnion("type", [
+	object({
+		...elicitationFieldBase,
+		type: literal("select"),
+		options: array(object({
+			value: string(),
+			label: string()
+		}).strict()),
+		defaultValue: string().optional()
+	}).strict(),
+	object({
+		...elicitationFieldBase,
+		type: literal("multi-select"),
+		options: array(object({
+			value: string(),
+			label: string()
+		}).strict()),
+		defaultValue: array(string()).optional(),
+		minItems: number().int().nonnegative().optional(),
+		maxItems: number().int().nonnegative().optional()
+	}).strict(),
+	object({
+		...elicitationFieldBase,
+		type: literal("boolean"),
+		defaultValue: boolean().optional()
+	}).strict(),
+	object({
+		...elicitationFieldBase,
+		type: literal("text"),
+		defaultValue: string().optional(),
+		minLength: number().int().nonnegative().optional(),
+		maxLength: number().int().nonnegative().optional(),
+		format: _enum([
+			"email",
+			"uri",
+			"date",
+			"date-time"
+		]).optional()
+	}).strict(),
+	object({
+		...elicitationFieldBase,
+		type: literal("number"),
+		numberKind: _enum(["number", "integer"]),
+		defaultValue: number().optional(),
+		minimum: number().optional(),
+		maximum: number().optional()
+	}).strict()
+]);
+var approvalRequestSchema = object({
+	title: string(),
+	summary: string(),
+	details: string().optional(),
+	warning: string().optional()
+}).strict();
+var elicitationRequestSchema = object({
+	mode: _enum(["form", "url"]),
+	message: string(),
+	fields: array(elicitationFieldSchema),
+	url: string().optional()
+}).strict();
+var interactionIdentityShape = {
+	sequence: number().int().positive(),
+	interactionId: string(),
+	sessionId: string(),
+	executionId: string(),
+	createdAt: string(),
+	updatedAt: string()
+};
+var approvalInteractionShape = {
+	kind: literal("approval"),
+	request: approvalRequestSchema
+};
+var elicitationInteractionShape = {
+	kind: literal("elicitation"),
+	request: elicitationRequestSchema
+};
+var pendingInteractionSchema = union([object({
+	...interactionIdentityShape,
+	...approvalInteractionShape,
+	state: literal("pending"),
+	resolution: _null()
+}).strict(), object({
+	...interactionIdentityShape,
+	...elicitationInteractionShape,
+	state: literal("pending"),
+	resolution: _null()
+}).strict()]);
+var answeredInteractionSchema = union([object({
+	...interactionIdentityShape,
+	...approvalInteractionShape,
+	state: literal("answered"),
+	resolution: object({
+		action: _enum(["approve", "deny"]),
+		submittedFields: tuple([]),
+		resolvedAt: string()
+	}).strict()
+}).strict(), object({
+	...interactionIdentityShape,
+	...elicitationInteractionShape,
+	state: literal("answered"),
+	resolution: object({
+		action: _enum([
+			"accept",
+			"decline",
+			"cancel"
+		]),
+		submittedFields: array(string()),
+		resolvedAt: string()
+	}).strict()
+}).strict()]);
+var expiredResolutionSchema = object({
+	reason: _enum([
+		"runtime_restarted",
+		"runtime_shutdown",
+		"execution_canceled",
+		"execution_terminal"
+	]),
+	resolvedAt: string()
+}).strict();
+var interactionSchema = union([
+	pendingInteractionSchema,
+	answeredInteractionSchema,
+	union([object({
+		...interactionIdentityShape,
+		...approvalInteractionShape,
+		state: literal("expired"),
+		resolution: expiredResolutionSchema
+	}).strict(), object({
+		...interactionIdentityShape,
+		...elicitationInteractionShape,
+		state: literal("expired"),
+		resolution: expiredResolutionSchema
+	}).strict()])
+]);
+var runExecutionSchema = createExecutionSchema(literal("turn.run"));
+var enqueueExecutionSchema = createExecutionSchema(literal("turn.enqueue"));
+var executionSchema = createExecutionSchema(_enum(["turn.run", "turn.enqueue"]));
+var turnOptionsSchema = union([object({
+	sessionId: string(),
+	provider: object({ id: literal("codex") }).strict(),
+	catalogRevision: number().int(),
+	models: array(modelSchema),
+	approvalModes: array(object({
+		id: _enum(APPROVAL_MODE_VALUES),
+		label: string()
+	}).strict()),
+	codexSandboxModes: array(object({
+		id: _enum(CODEX_SANDBOX_MODE_VALUES),
+		label: string()
+	}).strict())
+}).strict(), object({
+	sessionId: string(),
+	provider: object({ id: literal("copilot") }).strict(),
+	catalogRevision: number().int(),
+	models: array(modelSchema),
+	approvalModes: array(object({
+		id: _enum(APPROVAL_MODE_VALUES),
+		label: string()
+	}).strict()),
+	customAgents: array(object({
+		name: string(),
+		displayName: string(),
+		description: string()
+	}).strict())
+}).strict()]);
+var resultSchemas = {
+	"runtime.catalog": object({
+		revision: number().int(),
+		providers: array(object({
+			id: string(),
+			label: string(),
+			defaultModelId: string(),
+			defaultReasoningEffort: reasoningEffortSchema,
+			models: array(modelSchema)
+		}).strict())
+	}).strict(),
+	"session.create": sessionDetailSchema,
+	"session.list": object({
+		items: array(sessionSummarySchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"session.get": sessionGetSchema,
+	"session.rename": sessionDetailSchema,
+	"session.files.list": object({
+		items: array(fileReferenceSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"session.files.read_text": object({
+		file: fileReferenceSchema,
+		content: string()
+	}).strict(),
+	"session.files.write_text": object({ file: fileReferenceSchema }).strict(),
+	"turn.options": turnOptionsSchema,
+	"turn.run": runExecutionSchema,
+	"turn.enqueue": enqueueExecutionSchema,
+	"turn.list": object({
+		items: array(executionSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"turn.get": executionSchema,
+	"turn.cancel": executionSchema,
+	"interaction.list": object({
+		items: array(interactionSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"interaction.respond": object({
+		interaction: answeredInteractionSchema,
+		execution: executionSchema
+	}).strict(),
+	"transcript.export": discriminatedUnion("destination", [object({
+		destination: literal("inline"),
+		format: _enum(["json", "markdown"]),
+		byteLength: number().int(),
+		content: string()
+	}).strict(), object({
+		destination: literal("session_folder"),
+		format: _enum(["json", "markdown"]),
+		file: object({
+			sessionId: string(),
+			relativePath: string(),
+			byteLength: number().int(),
+			modifiedAt: string(),
+			sha256: string()
+		}).strict()
+	}).strict()])
+};
+function createSuccessSchema(operation) {
+	return object({
+		schemaVersion: literal(SESSION_RUNTIME_RESULT_SCHEMA_VERSION),
+		operation: literal(operation),
+		result: resultSchemas[operation]
+	}).strict();
+}
+function createOutputSchema(operation) {
+	return createSuccessSchema(operation);
 }
 var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Operate only the WithMate Session explicitly identified in each tool input.",
@@ -20717,14 +21437,14 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		title: "Run Session turn",
 		description: "Start one turn immediately in the specified Session.",
 		readOnly: false,
-		destructive: false
+		destructive: true
 	},
 	{
 		name: "turn.enqueue",
 		title: "Enqueue Session turn",
 		description: "Append one turn to the specified Session FIFO queue.",
 		readOnly: false,
-		destructive: false
+		destructive: true
 	},
 	{
 		name: "turn.list",
@@ -20746,6 +21466,27 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		description: "Cancel one queued or running execution in the specified Session.",
 		readOnly: false,
 		destructive: true
+	},
+	{
+		name: "interaction.list",
+		title: "List Session interactions",
+		description: "List public interactions for the specified Session.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "interaction.respond",
+		title: "Respond to Session interaction",
+		description: "Resolve one pending interaction in the specified execution.",
+		readOnly: false,
+		destructive: true
+	},
+	{
+		name: "transcript.export",
+		title: "Export Session transcript",
+		description: "Export a Session transcript inline or into its SessionFolder.",
+		readOnly: false,
+		destructive: true
 	}
 ];
 function annotations(definition) {
@@ -20753,38 +21494,34 @@ function annotations(definition) {
 		readOnlyHint: definition.readOnly,
 		destructiveHint: definition.destructive,
 		idempotentHint: true,
-		openWorldHint: false
+		openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue" || definition.name === "interaction.respond" || definition.name === "transcript.export"
 	};
 }
-function isMutation(operation) {
-	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+function isMutation(operation, input) {
+	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "interaction.respond" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
 	return parsed.success ? parsed.data : null;
 }
 function safeRuntimeResult(operation, response) {
-	if (!response.value || typeof response.value !== "object" || Array.isArray(response.value)) return null;
-	const value = response.value;
-	if (value.schemaVersion !== "withmate-session-result-v1" || value.operation !== operation || !("result" in value) || Object.keys(value).some((key) => ![
-		"schemaVersion",
-		"operation",
-		"result"
-	].includes(key))) return null;
-	return {
-		schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION,
-		operation,
-		result: value.result
-	};
+	const parsed = createSuccessSchema(operation).safeParse(response.value);
+	return parsed.success ? parsed.data : null;
 }
 function toolResult(value, isError) {
+	if (isError) return {
+		content: [{
+			type: "text",
+			text: JSON.stringify(value)
+		}],
+		isError: true
+	};
 	return {
 		content: [{
 			type: "text",
 			text: JSON.stringify(value)
 		}],
-		structuredContent: value,
-		...isError ? { isError: true } : {}
+		structuredContent: value
 	};
 }
 async function executeOperation(operation, input, deps) {
@@ -20813,7 +21550,7 @@ async function executeOperation(operation, input, deps) {
 		if (applicationError) return toolResult(applicationError, true);
 		const result = safeRuntimeResult(operation, response);
 		if (result) return toolResult(result, false);
-		return toolResult(createTransportError(operation, true, "Session runtime returned an invalid public response."), true);
+		return toolResult(createTransportError(operation, input, true, "Session runtime returned an invalid public response."), true);
 	} catch (error) {
 		if (error instanceof SessionRuntimeValidationError) return toolResult(createSessionRuntimeError({
 			code: error.code,
@@ -20822,15 +21559,15 @@ async function executeOperation(operation, input, deps) {
 			details: error.details
 		}), true);
 		const dispatched = error instanceof SessionRuntimeClientError && error.dispatched;
-		return toolResult(createTransportError(operation, dispatched, dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable."), true);
+		return toolResult(createTransportError(operation, input, dispatched, dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable."), true);
 	}
 }
-function createTransportError(operation, dispatched, message) {
+function createTransportError(operation, input, dispatched, message) {
 	return createSessionRuntimeError({
 		code: "RUNTIME_UNAVAILABLE",
 		message,
 		retryable: true,
-		effect: dispatched && isMutation(operation) ? "indeterminate" : "not_applied"
+		effect: dispatched && isMutation(operation, input) ? "indeterminate" : "not_applied"
 	});
 }
 function createWithMateSessionMcpServer(deps = {}) {
@@ -20923,6 +21660,24 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: cancelInputSchema,
 		outputSchema: createOutputSchema("turn.cancel")
 	}, async (input) => executeOperation("turn.cancel", input, deps));
+	server.registerTool("interaction.list", {
+		...definitions.get("interaction.list"),
+		annotations: annotations(definitions.get("interaction.list")),
+		inputSchema: interactionListInputSchema,
+		outputSchema: createOutputSchema("interaction.list")
+	}, async (input) => executeOperation("interaction.list", input, deps));
+	server.registerTool("interaction.respond", {
+		...definitions.get("interaction.respond"),
+		annotations: annotations(definitions.get("interaction.respond")),
+		inputSchema: interactionRespondInputSchema,
+		outputSchema: createOutputSchema("interaction.respond")
+	}, async (input) => executeOperation("interaction.respond", input, deps));
+	server.registerTool("transcript.export", {
+		...definitions.get("transcript.export"),
+		annotations: annotations(definitions.get("transcript.export")),
+		inputSchema: transcriptExportInputSchema,
+		outputSchema: createOutputSchema("transcript.export")
+	}, async (input) => executeOperation("transcript.export", input, deps));
 	return server;
 }
 async function startWithMateSessionMcpServer(deps = {}) {
@@ -20962,13 +21717,18 @@ var commandMap = /* @__PURE__ */ new Map([
 	["turn enqueue", "turn.enqueue"],
 	["turn list", "turn.list"],
 	["turn get", "turn.get"],
-	["turn cancel", "turn.cancel"]
+	["turn cancel", "turn.cancel"],
+	["interaction list", "interaction.list"],
+	["interaction respond", "interaction.respond"],
+	["transcript export", "transcript.export"],
+	["transcript export", "transcript.export"]
 ]);
 var inputlessOperationCommands = /* @__PURE__ */ new Set(["runtime catalog"]);
 async function runWithMateSessionCli(args, deps = {}) {
 	const stdout = deps.stdout ?? process.stdout;
 	let format = "json";
 	let command = "unknown";
+	let inputForEffect;
 	try {
 		if (args[0] === "mcp-server" && args.length === 1) {
 			await (deps.startMcp ?? startWithMateSessionMcpServer)({ env: deps.env });
@@ -20977,6 +21737,7 @@ async function runWithMateSessionCli(args, deps = {}) {
 		const parsed = await parseArgs(args, deps);
 		command = parsed.command;
 		format = parsed.format;
+		inputForEffect = parsed.input;
 		if (command === "schema") {
 			writeOutput(stdout, format, {
 				schemaVersion: WITHMATE_SESSION_CLI_SCHEMA_VERSION,
@@ -21053,7 +21814,7 @@ async function runWithMateSessionCli(args, deps = {}) {
 		return output.ok ? WITHMATE_SESSION_CLI_EXIT_CODES.ok : WITHMATE_SESSION_CLI_EXIT_CODES.applicationError;
 	} catch (error) {
 		if (error instanceof SessionRuntimeClientError) {
-			const indeterminate = error.dispatched && isMutationCommand(command);
+			const indeterminate = error.dispatched && isMutationCommand(command, inputForEffect);
 			writeOutput(stdout, format, localError(command, "RUNTIME_UNAVAILABLE", error.dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable.", true, indeterminate ? "indeterminate" : "not_applied"));
 			return error.dispatched ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
 		}
@@ -21066,14 +21827,14 @@ async function runWithMateSessionCli(args, deps = {}) {
 		return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
 	}
 }
-function isMutationCommand(command) {
-	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel";
+function isMutationCommand(command, input) {
+	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "interaction respond" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
-	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session";
+	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
@@ -21129,7 +21890,7 @@ async function parseArgs(args, deps) {
 	};
 }
 function resolveSessionCliTransportTimeoutMs(command, input) {
-	if (command !== "turn run" || !input || typeof input !== "object" || Array.isArray(input)) return 35e3;
+	if (command !== "turn run" && command !== "interaction respond" || !input || typeof input !== "object" || Array.isArray(input)) return 35e3;
 	const record = input;
 	if (record.responseMode !== "wait") return 35e3;
 	const waitTimeoutMs = typeof record.waitTimeoutMs === "number" && Number.isSafeInteger(record.waitTimeoutMs) ? record.waitTimeoutMs : 3e4;

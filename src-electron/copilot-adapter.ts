@@ -1568,6 +1568,10 @@ export function buildCopilotSessionSettings(
     workspacePath,
     input.session.customAgentName,
   );
+  const requestedCustomAgentName = input.session.customAgentName.trim();
+  if (requestedCustomAgentName && resolvedCustomAgents.selectedAgentName !== requestedCustomAgentName) {
+    throw new Error(`Copilot custom agent is no longer available: ${requestedCustomAgentName}`);
+  }
   const systemMessage = buildCopilotSystemMessage(prompt);
   const config: SessionConfig = {
     model: selection.resolvedModel,

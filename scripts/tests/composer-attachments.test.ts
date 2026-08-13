@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { resolveComposerPreview } from "../../src-electron/composer-attachments.js";
+import { resolveComposerPreview, resolveSessionFolderAttachments } from "../../src-electron/composer-attachments.js";
 import { formatMarkdownImageReference } from "../../src/composer-image-reference.js";
 
 test("resolveComposerPreview はMarkdown画像をprovider画像添付として解決する", async () => {
@@ -149,6 +149,42 @@ test("EXT-AUTH-ROOT-02: SessionFolder policyはroot自体がjunctionなら添付
     );
     assert.equal(preview.attachments.length, 0);
     assert.match(preview.errors[0] ?? "", /SessionFolder/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("EXT-ATTACH-10: 明示attachmentはkindを検証しdispatch前のidentity差替えを拒否する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-explicit-attachment-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const targetPath = path.join(sessionFolderPath, "brief.txt");
+  await mkdir(sessionFolderPath, { recursive: true });
+  await writeFile(targetPath, "first", "utf8");
+  const references = [{ kind: "file" as const, relativePath: "brief.txt" }];
+
+  try {
+    const admitted = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      references,
+    );
+    assert.deepEqual(admitted.errors, []);
+    assert.ok(references[0]?.identity);
+
+    const kindMismatch = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      [{ kind: "folder", relativePath: "brief.txt" }],
+    );
+    assert.equal(kindMismatch.attachments.length, 0);
+    assert.match(kindMismatch.errors[0] ?? "", /フォルダ/);
+
+    await rm(targetPath);
+    await writeFile(targetPath, "second", "utf8");
+    const dispatch = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      references,
+    );
+    assert.equal(dispatch.attachments.length, 0);
+    assert.match(dispatch.errors[0] ?? "", /changed before dispatch/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

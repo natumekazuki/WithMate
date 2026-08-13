@@ -1238,6 +1238,18 @@ describe("CopilotAdapter session settings", () => {
     assert.deepEqual(nextSettings.config.customAgents, CUSTOM_AGENT_CONFIGS);
   });
 
+  it("明示した custom agent が解決時に消えていた場合は既定agentへfallbackしない", () => {
+    const input = createRunSessionInput({ customAgentName: "missing-agent" });
+
+    assert.throws(
+      () => buildCopilotSessionSettings(input, EMPTY_PROMPT, "client-key", () => ({
+        customAgents: [...CUSTOM_AGENT_CONFIGS],
+        selectedAgentName: null,
+      })),
+      /missing-agent/,
+    );
+  });
+
   it("model / reasoning 変更後の session settings は新 config を反映する", () => {
     const previousInput = createRunSessionInput({
       customAgentName: "reviewer",

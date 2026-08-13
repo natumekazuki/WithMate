@@ -34,12 +34,14 @@ export type SessionExecutionServiceDeps = {
   storage: Pick<
     SessionExecutionStorageV6,
     | "admitNextQueued"
+    | "failNextQueued"
     | "cancelQueuedIdempotent"
     | "cleanupExpiredIdempotency"
     | "completeRunning"
     | "enqueue"
     | "get"
     | "interruptRunningForRestart"
+    | "interruptRunningForShutdown"
     | "listSessionExecutions"
     | "listSessionExecutionsPage"
     | "iterateSessionExecutionsPage"
@@ -48,7 +50,7 @@ export type SessionExecutionServiceDeps = {
     | "recordIdempotency"
     | "startImmediate"
   >;
-  validateTurn(sessionId: string, request: unknown): Promise<void> | void;
+  validateTurn(sessionId: string, request: unknown): Promise<unknown> | unknown;
   dispatchTurn(
     sessionId: string,
     executionId: string,
@@ -59,7 +61,20 @@ export type SessionExecutionServiceDeps = {
   createExecutionId(): string;
   currentTimestamp(): string;
   resolveIdempotencyExpiresAt(createdAt: string): string;
+  queueRetryDelayMs?: number;
+  shutdownGraceMs?: number;
+  onExecutionChanged?(executionId: string): void;
+  onExecutionTerminal?(
+    executionId: string,
+    reason: "execution_canceled" | "execution_terminal",
+    occurredAt: string,
+  ): void;
 };
+
+const DEFAULT_QUEUE_RETRY_DELAY_MS = 25;
+const DEFAULT_SHUTDOWN_GRACE_MS = 1_000;
+const MAX_QUEUE_ADMISSION_ATTEMPTS = 2;
+const MAX_QUEUE_RETRY_DELAY_MS = 30_000;
 
 export class SessionExecutionNotFoundError extends Error {
   readonly code = "EXECUTION_NOT_FOUND";
@@ -83,31 +98,52 @@ export class SessionExecutionService {
   private readonly sessionLocks = new Map<string, Promise<void>>();
   private readonly idempotencyLocks = new Map<string, Promise<void>>();
   private readonly dispatches = new Map<string, Promise<SessionExecution>>();
+  private readonly activeDispatches = new Map<string, SessionExecutionStorageRecord>();
+  private readonly drainAttempts = new Map<string, Promise<void>>();
+  private readonly drainRetryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly drainFailureCounts = new Map<string, number>();
+  private readonly shutdownTerminalExecutions = new Map<string, SessionExecutionStorageRecord>();
+  private readonly queueRetryDelayMs: number;
+  private readonly shutdownGraceMs: number;
   private acceptingDispatches = true;
+  private persistenceFenced = false;
+  private shutdownDrain: Promise<void> | null = null;
 
-  constructor(private readonly deps: SessionExecutionServiceDeps) {}
+  constructor(private readonly deps: SessionExecutionServiceDeps) {
+    this.queueRetryDelayMs = requirePositiveInteger(
+      deps.queueRetryDelayMs ?? DEFAULT_QUEUE_RETRY_DELAY_MS,
+      "queueRetryDelayMs",
+    );
+    this.shutdownGraceMs = requirePositiveInteger(
+      deps.shutdownGraceMs ?? DEFAULT_SHUTDOWN_GRACE_MS,
+      "shutdownGraceMs",
+    );
+  }
 
   beginShutdown(): void {
     this.acceptingDispatches = false;
+    for (const retry of this.drainRetryTimers.values()) {
+      clearTimeout(retry);
+    }
+    this.drainRetryTimers.clear();
+    this.drainFailureCounts.clear();
   }
 
   async drainForShutdown(): Promise<void> {
     this.beginShutdown();
-    while (this.dispatches.size > 0) {
-      await Promise.allSettled([...this.dispatches.values()]);
+    if (!this.shutdownDrain) {
+      this.shutdownDrain = this.performShutdownDrain();
     }
-    await Promise.allSettled([
-      ...this.sessionLocks.values(),
-      ...this.idempotencyLocks.values(),
-    ]);
+    await this.shutdownDrain;
   }
 
   async run(input: CreateSessionExecutionInput): Promise<SessionExecution> {
+    this.requirePersistenceAvailable();
     const replay = this.resolveReplay("turn.run", input);
     if (replay) {
       return replay;
     }
-    await this.deps.validateTurn(input.sessionId, input.request);
+    const validatedRequest = await this.deps.validateTurn(input.sessionId, input.request);
     return this.withSessionLock(input.sessionId, () => {
       this.requireDispatchAdmission();
       const replay = this.deps.storage.resolveIdempotency(
@@ -126,13 +162,14 @@ export class SessionExecutionService {
       const started = this.deps.storage.startImmediate({
         id: this.issueExecutionId(),
         sessionId: input.sessionId,
-        request: input.request,
+        request: validatedRequest,
         idempotencyKey: input.idempotencyKey,
         requestFingerprint: input.requestFingerprint,
         createdAt,
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
       });
       if (!started.replayed) {
+        this.notifyChanged(started.execution.id);
         this.startDispatch(started.execution);
       }
       return toPublicExecution(started.execution);
@@ -140,18 +177,19 @@ export class SessionExecutionService {
   }
 
   async enqueue(input: CreateSessionExecutionInput): Promise<SessionExecution> {
+    this.requirePersistenceAvailable();
     const replay = this.resolveReplay("turn.enqueue", input);
     if (replay) {
       return replay;
     }
-    await this.deps.validateTurn(input.sessionId, input.request);
+    const validatedRequest = await this.deps.validateTurn(input.sessionId, input.request);
     const queued = await this.withSessionLock(input.sessionId, () => {
       this.requireDispatchAdmission();
       const createdAt = this.deps.currentTimestamp();
       return this.deps.storage.enqueue({
         id: this.issueExecutionId(),
         sessionId: input.sessionId,
-        request: input.request,
+        request: validatedRequest,
         idempotencyKey: input.idempotencyKey,
         requestFingerprint: input.requestFingerprint,
         createdAt,
@@ -159,24 +197,34 @@ export class SessionExecutionService {
       });
     });
     if (!queued.replayed) {
-      void this.drainSession(input.sessionId);
+      this.notifyChanged(queued.execution.id);
+      void this.requestDrain(input.sessionId);
     }
     return toPublicExecution(queued.execution);
   }
 
   get(sessionId: string, executionId: string): SessionExecution {
+    this.requirePersistenceAvailable();
     return toPublicExecution(this.getOwned(sessionId, executionId));
   }
 
+  getRecord(sessionId: string, executionId: string): SessionExecutionStorageRecord {
+    this.requirePersistenceAvailable();
+    return this.getOwned(sessionId, executionId);
+  }
+
   list(sessionId: string): SessionExecution[] {
+    this.requirePersistenceAvailable();
     return this.deps.storage.listSessionExecutions(sessionId).map(toPublicExecution);
   }
 
   listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {
+    this.requirePersistenceAvailable();
     return this.deps.storage.iterateSessionExecutionsPage(sessionId, afterSequence, limit);
   }
 
   resolveReplay(operation: SessionExecutionOperation, input: CreateSessionExecutionInput): SessionExecution | null {
+    this.requirePersistenceAvailable();
     const replay = this.deps.storage.resolveIdempotency(
       operation,
       input.idempotencyKey,
@@ -186,6 +234,7 @@ export class SessionExecutionService {
   }
 
   async cancel(input: CancelSessionExecutionInput): Promise<SessionExecution> {
+    this.requirePersistenceAvailable();
     const replay = this.deps.storage.resolveIdempotency(
       "turn.cancel",
       input.idempotencyKey,
@@ -195,6 +244,7 @@ export class SessionExecutionService {
       return toPublicExecution(replay);
     }
     return this.withIdempotencyLock(`turn.cancel:${input.idempotencyKey}`, () => this.withSessionLock(input.sessionId, async () => {
+      this.requirePersistenceAvailable();
       const lockedReplay = this.deps.storage.resolveIdempotency(
         "turn.cancel",
         input.idempotencyKey,
@@ -207,18 +257,20 @@ export class SessionExecutionService {
       const createdAt = this.deps.currentTimestamp();
       const expiresAt = this.deps.resolveIdempotencyExpiresAt(createdAt);
       if (execution.state === "queued") {
-        return toPublicExecution(
-          this.deps.storage.cancelQueuedIdempotent({
+        const canceled = this.deps.storage.cancelQueuedIdempotent({
             executionId: execution.id,
             idempotencyKey: input.idempotencyKey,
             requestFingerprint: input.requestFingerprint,
             canceledAt: createdAt,
             expiresAt,
-          }),
-        );
+          });
+        this.deps.onExecutionTerminal?.(canceled.id, "execution_canceled", createdAt);
+        this.notifyChanged(canceled.id);
+        return toPublicExecution(canceled);
       }
       if (execution.state === "running") {
         await this.deps.cancelRunningTurn(input.sessionId, input.executionId);
+        this.requirePersistenceAvailable();
         return toPublicExecution(this.deps.storage.recordIdempotency({
           operation: "turn.cancel",
           idempotencyKey: input.idempotencyKey,
@@ -233,27 +285,38 @@ export class SessionExecutionService {
   }
 
   async reconcileAfterRestart(): Promise<SessionExecution[]> {
+    this.requirePersistenceAvailable();
     const interruptedAt = this.deps.currentTimestamp();
     this.deps.storage.cleanupExpiredIdempotency(interruptedAt);
     const interrupted = this.deps.storage.interruptRunningForRestart(
       interruptedAt,
       this.deps.resolveIdempotencyExpiresAt(interruptedAt),
     );
+    for (const execution of interrupted) this.notifyChanged(execution.id);
     for (const sessionId of this.deps.storage.listQueuedSessionIds()) {
-      await this.drainSession(sessionId);
+      await this.requestDrain(sessionId);
     }
     return interrupted.map(toPublicExecution);
   }
 
   resumeQueue(sessionId: string): Promise<void> {
-    return this.drainSession(sessionId);
+    return this.requestDrain(sessionId);
   }
 
   cleanupExpiredIdempotency(): number {
+    this.requirePersistenceAvailable();
     return this.deps.storage.cleanupExpiredIdempotency(this.deps.currentTimestamp());
   }
 
   async waitForTerminal(sessionId: string, executionId: string): Promise<SessionExecution> {
+    const shutdownTerminal = this.shutdownTerminalExecutions.get(executionId);
+    if (shutdownTerminal) {
+      if (shutdownTerminal.sessionId !== sessionId) {
+        throw new SessionExecutionOwnerMismatchError(sessionId, executionId);
+      }
+      return toPublicExecution(shutdownTerminal);
+    }
+    this.requirePersistenceAvailable();
     const execution = this.getOwned(sessionId, executionId);
     const dispatch = this.dispatches.get(executionId);
     if (dispatch) {
@@ -265,8 +328,10 @@ export class SessionExecutionService {
   private startDispatch(execution: SessionExecutionStorageRecord): void {
     const dispatch = this.runDispatch(execution);
     this.dispatches.set(execution.id, dispatch);
+    this.activeDispatches.set(execution.id, execution);
     const cleanup = () => {
       this.dispatches.delete(execution.id);
+      this.activeDispatches.delete(execution.id);
     };
     dispatch.then(cleanup, cleanup);
   }
@@ -284,7 +349,14 @@ export class SessionExecutionService {
       };
     }
 
+    if (this.persistenceFenced) {
+      return toPublicExecution(this.getShutdownTerminalExecution(execution));
+    }
+
     const completed = await this.withSessionLock(execution.sessionId, () => {
+      if (this.persistenceFenced) {
+        return this.getShutdownTerminalExecution(execution);
+      }
       const current = this.getOwned(execution.sessionId, execution.id);
       if (current.state !== "running") {
         throw new SessionExecutionStateConflictError(current.id, current.state);
@@ -300,13 +372,71 @@ export class SessionExecutionService {
         expiresAt: this.deps.resolveIdempotencyExpiresAt(completedAt),
       });
     });
-    void this.drainSession(execution.sessionId);
+    this.deps.onExecutionTerminal?.(
+      completed.id,
+      completed.state === "canceled" ? "execution_canceled" : "execution_terminal",
+      completed.completedAt ?? completed.updatedAt,
+    );
+    void this.requestDrain(execution.sessionId);
+    this.notifyChanged(completed.id);
     return toPublicExecution(completed);
+  }
+
+  private requestDrain(sessionId: string, allowRetry = true): Promise<void> {
+    const existing = this.drainAttempts.get(sessionId);
+    if (existing) {
+      return existing;
+    }
+    let drainNextAfterCleanup = false;
+    const attempt = this.drainSession(sessionId)
+      .catch(() => {
+        if (allowRetry) {
+          const failures = (this.drainFailureCounts.get(sessionId) ?? 0) + 1;
+          this.drainFailureCounts.set(sessionId, failures);
+          if (failures < MAX_QUEUE_ADMISSION_ATTEMPTS) {
+            this.scheduleDrainRetry(sessionId);
+          } else {
+            const exhaustion = this.failQueuedAfterAdmissionExhaustion(sessionId);
+            drainNextAfterCleanup = exhaustion === "failed";
+            if (exhaustion === "retry") {
+              this.scheduleDrainRetry(sessionId);
+            }
+          }
+        }
+      })
+      .finally(() => {
+        if (this.drainAttempts.get(sessionId) === attempt) {
+          this.drainAttempts.delete(sessionId);
+          if (drainNextAfterCleanup) {
+            void this.requestDrain(sessionId);
+          }
+        }
+      });
+    this.drainAttempts.set(sessionId, attempt);
+    return attempt;
+  }
+
+  private scheduleDrainRetry(sessionId: string): void {
+    if (!this.acceptingDispatches || this.persistenceFenced || this.drainRetryTimers.has(sessionId)) {
+      return;
+    }
+    const retry = setTimeout(() => {
+      this.drainRetryTimers.delete(sessionId);
+      if (!this.acceptingDispatches || this.persistenceFenced) {
+        return;
+      }
+      void this.requestDrain(sessionId);
+    }, Math.min(
+      this.queueRetryDelayMs * (2 ** Math.min((this.drainFailureCounts.get(sessionId) ?? 1) - 1, 10)),
+      MAX_QUEUE_RETRY_DELAY_MS,
+    ));
+    retry.unref();
+    this.drainRetryTimers.set(sessionId, retry);
   }
 
   private async drainSession(sessionId: string): Promise<void> {
     await this.withSessionLock(sessionId, () => {
-      if (!this.acceptingDispatches) {
+      if (!this.acceptingDispatches || this.persistenceFenced) {
         return;
       }
       if (this.deps.isSessionRunInFlight(sessionId)) {
@@ -314,9 +444,37 @@ export class SessionExecutionService {
       }
       const admitted = this.deps.storage.admitNextQueued(sessionId, this.deps.currentTimestamp());
       if (admitted) {
+        this.drainFailureCounts.delete(sessionId);
+        this.notifyChanged(admitted.id);
         this.startDispatch(admitted);
       }
     });
+  }
+
+  private failQueuedAfterAdmissionExhaustion(sessionId: string): "failed" | "empty" | "retry" {
+    if (!this.acceptingDispatches || this.persistenceFenced) {
+      return "empty";
+    }
+    try {
+      const failedAt = this.deps.currentTimestamp();
+      const failed = this.deps.storage.failNextQueued(
+        sessionId,
+        failedAt,
+        this.deps.resolveIdempotencyExpiresAt(failedAt),
+      );
+      this.drainFailureCounts.delete(sessionId);
+      if (failed) {
+        this.deps.onExecutionTerminal?.(failed.id, "execution_terminal", failedAt);
+        this.notifyChanged(failed.id);
+        return "failed";
+      }
+      return "empty";
+    } catch (error) {
+      // Keep the durable queue recoverable after a transient terminal-write failure.
+      // The tracked timer is unref'd and canceled by beginShutdown().
+      void error;
+      return "retry";
+    }
   }
 
   private getOwned(sessionId: string, executionId: string): SessionExecutionStorageRecord {
@@ -342,6 +500,51 @@ export class SessionExecutionService {
     if (!this.acceptingDispatches) {
       throw new SessionExecutionShuttingDownError();
     }
+  }
+
+  private requirePersistenceAvailable(): void {
+    if (this.persistenceFenced) {
+      throw new SessionExecutionShuttingDownError();
+    }
+  }
+
+  private async performShutdownDrain(): Promise<void> {
+    for (const execution of this.activeDispatches.values()) {
+      try {
+        void Promise.resolve(this.deps.cancelRunningTurn(execution.sessionId, execution.id)).catch(() => undefined);
+      } catch {
+        // Provider cancellation is best effort; the finite grace still settles persistence.
+      }
+    }
+
+    await waitForPromisesWithin([...this.dispatches.values()], this.shutdownGraceMs);
+
+    const interruptedAt = this.deps.currentTimestamp();
+    try {
+      const interrupted = this.deps.storage.interruptRunningForShutdown(
+        interruptedAt,
+        this.deps.resolveIdempotencyExpiresAt(interruptedAt),
+      );
+      for (const execution of interrupted) {
+        this.shutdownTerminalExecutions.set(execution.id, execution);
+        this.deps.onExecutionTerminal?.(execution.id, "execution_terminal", interruptedAt);
+        this.notifyChanged(execution.id);
+      }
+    } finally {
+      this.persistenceFenced = true;
+    }
+  }
+
+  private getShutdownTerminalExecution(execution: SessionExecutionStorageRecord): SessionExecutionStorageRecord {
+    const terminal = this.shutdownTerminalExecutions.get(execution.id);
+    if (!terminal) {
+      throw new SessionExecutionStateConflictError(execution.id, execution.state);
+    }
+    return terminal;
+  }
+
+  private notifyChanged(executionId: string): void {
+    this.deps.onExecutionChanged?.(executionId);
   }
 
   private withIdempotencyLock<T>(key: string, run: () => Promise<T> | T): Promise<T> {
@@ -405,4 +608,28 @@ function isTerminalSessionExecutionState(state: SessionExecution["state"]): bool
     || state === "failed"
     || state === "canceled"
     || state === "interrupted";
+}
+
+function requirePositiveInteger(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new TypeError(`Session execution ${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+async function waitForPromisesWithin(promises: Promise<unknown>[], timeoutMs: number): Promise<void> {
+  if (promises.length === 0) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(finish, timeoutMs);
+    void Promise.allSettled(promises).then(finish);
+  });
 }

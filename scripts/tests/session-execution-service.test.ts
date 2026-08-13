@@ -26,7 +26,14 @@ type DeferredDispatch = {
   reject(error: Error): void;
 };
 
-async function createFixture() {
+async function createFixture(options: {
+  admissionFailures?: number;
+  exhaustionWriteFailures?: number;
+  queueRetryDelayMs?: number;
+  shutdownGraceMs?: number;
+  onExecutionTerminal?: (executionId: string, reason: "execution_canceled" | "execution_terminal", occurredAt: string) => void;
+  normalizeRequest?: (request: unknown) => unknown;
+} = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-execution-service-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
   const db = new DatabaseSync(dbPath);
@@ -57,6 +64,26 @@ async function createFixture() {
   const dispatches = new Map<string, DeferredDispatch>();
   const dispatchEvents: Array<{ executionId: string; persistedState: string | undefined }> = [];
   const canceledExecutions: string[] = [];
+  let admissionAttempts = 0;
+  let remainingAdmissionFailures = options.admissionFailures ?? 0;
+  let remainingExhaustionWriteFailures = options.exhaustionWriteFailures ?? 0;
+  const admitNextQueued = storage.admitNextQueued.bind(storage);
+  storage.admitNextQueued = (sessionId, admittedAt) => {
+    admissionAttempts += 1;
+    if (remainingAdmissionFailures > 0) {
+      remainingAdmissionFailures -= 1;
+      throw new Error("transient admission failure");
+    }
+    return admitNextQueued(sessionId, admittedAt);
+  };
+  const failNextQueued = storage.failNextQueued.bind(storage);
+  storage.failNextQueued = (sessionId, failedAt, expiresAt) => {
+    if (remainingExhaustionWriteFailures > 0) {
+      remainingExhaustionWriteFailures -= 1;
+      throw new Error("transient exhaustion write failure");
+    }
+    return failNextQueued(sessionId, failedAt, expiresAt);
+  };
   let executionIndex = 0;
   let timestampIndex = 0;
   let validationError: Error | null = null;
@@ -69,6 +96,7 @@ async function createFixture() {
       if (typeof request !== "object" || request === null || !("userMessage" in request)) {
         throw new Error("invalid request");
       }
+      return options.normalizeRequest?.(request) ?? request;
     },
     dispatchTurn(sessionId, executionId) {
       activeSessions.add(sessionId);
@@ -96,6 +124,9 @@ async function createFixture() {
     resolveIdempotencyExpiresAt() {
       return "2026-08-11T00:00:00.000Z";
     },
+    queueRetryDelayMs: options.queueRetryDelayMs,
+    shutdownGraceMs: options.shutdownGraceMs,
+    onExecutionTerminal: options.onExecutionTerminal,
   });
 
   return {
@@ -105,6 +136,9 @@ async function createFixture() {
     dispatches,
     dispatchEvents,
     canceledExecutions,
+    getAdmissionAttempts() {
+      return admissionAttempts;
+    },
     setValidationError(error: Error | null) {
       validationError = error;
     },
@@ -121,6 +155,33 @@ function createInput(index: number, sessionId = "session-1") {
 }
 
 describe("SessionExecutionService", () => {
+  it("EXT-ATTACH-10: admissionで正規化した内部requestを永続化してdispatchへ渡す", async () => {
+    const fixture = await createFixture({
+      normalizeRequest: (request) => ({
+        ...(request as object),
+        attachments: [{
+          kind: "file",
+          relativePath: "brief.md",
+          identity: { canonicalRelativePath: "brief.md" },
+        }],
+      }),
+    });
+    try {
+      const execution = await fixture.service.run(createInput(1));
+      assert.deepEqual(fixture.storage.get(execution.id)?.request, {
+        userMessage: "message-1",
+        attachments: [{
+          kind: "file",
+          relativePath: "brief.md",
+          identity: { canonicalRelativePath: "brief.md" },
+        }],
+      });
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("I-01: canonical replayは現在のSession validationが失敗しても保存済みexecutionへ収束する", async () => {
     const fixture = await createFixture();
     try {
@@ -423,23 +484,120 @@ describe("SessionExecutionService", () => {
     }
   });
 
-  it("EXECUTION-DRAIN-01: shutdown drainはterminal永続化まで待ってqueuedをadmitしない", async () => {
-    const fixture = await createFixture();
+  it("EXT-SHUTDOWN-07: stuck providerをcancelし、finite grace後にinterruptedへ確定する", async () => {
+    const fixture = await createFixture({ shutdownGraceMs: 10 });
+    let storageClosed = false;
     try {
       const running = await fixture.service.enqueue(createInput(1));
       await waitFor(() => fixture.dispatchEvents.length === 1);
       const queued = await fixture.service.enqueue(createInput(2));
-      let drained = false;
-      const drain = fixture.service.drainForShutdown().then(() => { drained = true; });
+      const terminal = fixture.service.waitForTerminal("session-1", running.id);
 
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      assert.equal(drained, false);
-      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: { ok: true } });
-      await drain;
+      await fixture.service.drainForShutdown();
 
-      assert.equal(fixture.storage.get(running.id)?.state, "completed");
+      assert.deepEqual(fixture.canceledExecutions, [running.id]);
+      assert.equal(fixture.storage.get(running.id)?.state, "interrupted");
+      assert.equal(fixture.storage.get(running.id)?.reason, "runtime_shutdown");
       assert.equal(fixture.storage.get(queued.id)?.state, "queued");
       assert.equal(fixture.dispatchEvents.length, 1);
+
+      fixture.storage.close();
+      storageClosed = true;
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: { tooLate: true } });
+      const settled = await terminal;
+      assert.equal(settled.state, "interrupted");
+      assert.equal(settled.reason, "runtime_shutdown");
+    } finally {
+      if (!storageClosed) fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-QUEUE-08: transient admission failureは一つのtracked retryでqueuedを自動回復する", async () => {
+    const fixture = await createFixture({ admissionFailures: 1, queueRetryDelayMs: 5 });
+    try {
+      const queued = await fixture.service.enqueue(createInput(1));
+
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+
+      assert.equal(fixture.getAdmissionAttempts(), 2);
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", queued.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-QUEUE-08: shutdown開始後は予約済みqueue retryを実行しない", async () => {
+    const fixture = await createFixture({ admissionFailures: 1, queueRetryDelayMs: 50 });
+    try {
+      const queued = await fixture.service.enqueue(createInput(1));
+      await waitFor(() => fixture.getAdmissionAttempts() === 1);
+
+      await fixture.service.drainForShutdown();
+      await new Promise<void>((resolve) => setTimeout(resolve, 75));
+
+      assert.equal(fixture.getAdmissionAttempts(), 1);
+      assert.equal(fixture.storage.get(queued.id)?.state, "queued");
+      assert.equal(fixture.dispatchEvents.length, 0);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-QUEUE-08: admission failure exhaustionはqueuedをdurable failedへ収束する", async () => {
+    const fixture = await createFixture({ admissionFailures: 2, queueRetryDelayMs: 5 });
+    try {
+      const queued = await fixture.service.enqueue(createInput(1));
+      await waitFor(() => fixture.storage.get(queued.id)?.state === "failed");
+
+      assert.ok(fixture.getAdmissionAttempts() >= 2);
+      assert.equal(fixture.storage.get(queued.id)?.state, "failed");
+      assert.equal(fixture.storage.get(queued.id)?.errorCode, "QUEUE_ADMISSION_FAILURE");
+      assert.equal(fixture.storage.get(queued.id)?.reason, "queue_admission_exhausted");
+      assert.equal(fixture.dispatchEvents.length, 0);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-QUEUE-08: admission failure exhaustion後も次のqueuedを自動実行する", async () => {
+    const fixture = await createFixture({ admissionFailures: 2, queueRetryDelayMs: 50 });
+    try {
+      const failed = await fixture.service.enqueue(createInput(1));
+      const next = await fixture.service.enqueue(createInput(2));
+
+      await waitFor(() => fixture.storage.get(failed.id)?.state === "failed");
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+
+      assert.equal(fixture.getAdmissionAttempts(), 3);
+      assert.equal(fixture.storage.get(next.id)?.state, "running");
+      fixture.dispatches.get(next.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", next.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-QUEUE-08: exhaustion terminal writeの一時失敗後もqueuedを自動回復する", async () => {
+    const fixture = await createFixture({
+      admissionFailures: 2,
+      exhaustionWriteFailures: 1,
+      queueRetryDelayMs: 5,
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(1));
+
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", queued.id);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
@@ -511,6 +669,24 @@ describe("SessionExecutionService", () => {
 
       fixture.dispatches.get("pre-restart-2")?.resolve({ state: "completed", result: null });
       await fixture.service.waitForTerminal("session-1", "pre-restart-2");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-INTERACTION-11: terminal commit後にinteraction expiry boundaryを通知する", async () => {
+    const terminal: Array<{ id: string; reason: string; state: string | undefined }> = [];
+    let fixture: Awaited<ReturnType<typeof createFixture>>;
+    fixture = await createFixture({
+      onExecutionTerminal: (id, reason) => terminal.push({ id, reason, state: fixture.storage.get(id)?.state }),
+    });
+    try {
+      const running = await fixture.service.run(createInput(1));
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: { assistantText: "done" } });
+      await fixture.service.waitForTerminal("session-1", running.id);
+      assert.deepEqual(terminal, [{ id: running.id, reason: "execution_terminal", state: "completed" }]);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

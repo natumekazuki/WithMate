@@ -5,10 +5,15 @@ import { z } from "zod";
 import { APPROVAL_MODE_VALUES } from "../src/approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "../src/codex-sandbox-mode.js";
 import {
+  SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES,
+  SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
+} from "../src/session-transcript.js";
+import {
   SESSION_RUNTIME_DEFAULT_LIST_LIMIT,
   SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_LIST_LIMIT,
+  SESSION_RUNTIME_MAX_TURN_ATTACHMENTS,
   SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS,
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
@@ -37,13 +42,28 @@ type McpRuntimeDeps = {
 const reasoningEffortSchema = z.enum(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
 const nonEmptyStringSchema = z.string().trim().min(1);
 const runtimeCatalogInputSchema = z.object({}).strict();
-const turnSchema = z.object({
+const commonTurnShape = {
   userMessage: nonEmptyStringSchema,
   model: nonEmptyStringSchema,
   reasoningEffort: reasoningEffortSchema,
   approvalMode: z.enum(APPROVAL_MODE_VALUES),
-  codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES),
-}).strict();
+  attachments: z.array(z.object({
+    kind: z.enum(["file", "folder", "image"]),
+    relativePath: nonEmptyStringSchema,
+  }).strict()).max(SESSION_RUNTIME_MAX_TURN_ATTACHMENTS),
+};
+const turnSchema = z.discriminatedUnion("provider", [
+  z.object({
+    ...commonTurnShape,
+    provider: z.literal("codex"),
+    codexSandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES),
+  }).strict(),
+  z.object({
+    ...commonTurnShape,
+    provider: z.literal("copilot"),
+    customAgentName: z.string(),
+  }).strict(),
+]);
 const mutationBaseShape = {
   sessionId: nonEmptyStringSchema,
   catalogRevision: z.number().int().min(1),
@@ -74,9 +94,41 @@ const listInputSchema = z.object({
   limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
   cursor: nonEmptyStringSchema.optional(),
 }).strict();
+const interactionListInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  executionId: nonEmptyStringSchema.optional(),
+  kind: z.enum(["approval", "elicitation"]).optional(),
+  state: z.enum(["pending", "answered", "expired"]).optional(),
+  limit: z.number().int().min(1).max(SESSION_RUNTIME_MAX_LIST_LIMIT).default(SESSION_RUNTIME_DEFAULT_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const elicitationValueSchema = z.union([
+  z.string(), z.number(), z.boolean(), z.array(z.string()),
+]);
+const interactionRespondInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  executionId: nonEmptyStringSchema,
+  interactionId: nonEmptyStringSchema,
+  response: z.union([
+    z.object({ kind: z.literal("approval"), decision: z.enum(["approve", "deny"]) }).strict(),
+    z.object({
+      kind: z.literal("elicitation"),
+      action: z.literal("accept"),
+      content: z.record(z.string().min(1), elicitationValueSchema),
+    }).strict(),
+    z.object({ kind: z.literal("elicitation"), action: z.enum(["decline", "cancel"]) }).strict(),
+  ]),
+  idempotencyKey: nonEmptyStringSchema,
+  responseMode: z.enum(["wait", "deferred"]),
+  waitTimeoutMs: z.number().int().min(1).max(SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS).optional(),
+}).strict().superRefine((value, context) => {
+  if (value.responseMode === "deferred" && value.waitTimeoutMs !== undefined) {
+    context.addIssue({ code: "custom", path: ["waitTimeoutMs"], message: "waitTimeoutMs is only valid for wait mode." });
+  }
+});
 const sessionCreateInputSchema = z.object({
   title: nonEmptyStringSchema,
-  provider: z.literal("codex"),
+  provider: z.enum(["codex", "copilot"]),
   catalogRevision: z.number().int().min(1),
   workspace: z.discriminatedUnion("kind", [
     z.object({ kind: z.literal("directory"), path: nonEmptyStringSchema }).strict(),
@@ -123,7 +175,18 @@ const sessionFileWriteTextInputSchema = z.object({
     });
   }
 });
-
+const transcriptExportInputSchema = z.object({
+  sessionId: nonEmptyStringSchema,
+  format: z.enum(["json", "markdown"]),
+  maxBytes: z.number().int().min(1).max(SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES).optional(),
+  destination: z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("inline") }).strict(),
+    z.object({ kind: z.literal("session_folder"), relativePath: nonEmptyStringSchema, replace: z.boolean().default(false), idempotencyKey: nonEmptyStringSchema }).strict(),
+  ]),
+}).strict().superRefine((value, context) => {
+  const hardMax = value.destination.kind === "inline" ? SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES : SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES;
+  if (value.maxBytes !== undefined && value.maxBytes > hardMax) context.addIssue({ code: "custom", path: ["maxBytes"], message: `maxBytes exceeds destination limit (${value.maxBytes} > ${hardMax}).` });
+});
 const publicDetailsSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 const errorSchema = z.object({
   schemaVersion: z.literal(SESSION_RUNTIME_ERROR_SCHEMA_VERSION),
@@ -136,28 +199,230 @@ const errorSchema = z.object({
   }).strict(),
 }).strict();
 
-function createOutputSchema(operation: SessionRuntimeOperation) {
+const modelSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  reasoningEfforts: z.array(reasoningEffortSchema),
+}).strict();
+const characterSchema = z.object({ id: z.string(), name: z.string() }).strict();
+const workspaceSchema = z.object({
+  kind: z.enum(["directory", "session_folder"]),
+  label: z.string(),
+  path: z.string(),
+}).strict();
+const sessionSummarySchema = z.object({
+  sessionId: z.string(),
+  title: z.string(),
+  sessionKind: z.literal("default"),
+  provider: z.object({ id: z.string(), catalogRevision: z.number().int() }).strict(),
+  character: characterSchema,
+  workspace: workspaceSchema,
+  updatedAt: z.string(),
+}).strict();
+const sessionDetailSchema = sessionSummarySchema.extend({
+  sessionFolder: z.object({ path: z.string(), isWorkspace: z.boolean() }).strict(),
+}).strict();
+const sessionGetSchema = sessionDetailSchema.omit({ workspace: true }).extend({
+  workspace: workspaceSchema.extend({ branch: z.string().nullable() }).strict(),
+}).strict();
+const fileReferenceSchema = z.object({
+  sessionId: z.string(),
+  relativePath: z.string(),
+  byteLength: z.number().int().nonnegative(),
+  modifiedAt: z.string(),
+}).strict();
+const effectiveTurnSchema = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("codex"),
+    model: z.string(),
+    reasoningEffort: reasoningEffortSchema,
+    approvalMode: z.enum(APPROVAL_MODE_VALUES),
+    sandboxMode: z.enum(CODEX_SANDBOX_MODE_VALUES),
+    customAgentName: z.null(),
+  }).strict(),
+  z.object({
+    provider: z.literal("copilot"),
+    model: z.string(),
+    reasoningEffort: reasoningEffortSchema,
+    approvalMode: z.enum(APPROVAL_MODE_VALUES),
+    sandboxMode: z.null(),
+    customAgentName: z.string(),
+  }).strict(),
+]);
+function createExecutionSchema(operation: z.ZodType<"turn.run" | "turn.enqueue">) {
   return z.object({
-    schemaVersion: z.union([
-      z.literal(SESSION_RUNTIME_RESULT_SCHEMA_VERSION),
-      z.literal(SESSION_RUNTIME_ERROR_SCHEMA_VERSION),
-    ]),
-    operation: z.literal(operation).optional(),
-    result: z.unknown().optional(),
-    error: errorSchema.shape.error.optional(),
-  }).strict().superRefine((value, context) => {
-    const success = value.schemaVersion === SESSION_RUNTIME_RESULT_SCHEMA_VERSION
-      && value.operation === operation
-      && value.result !== undefined
-      && value.error === undefined;
-    const failure = value.schemaVersion === SESSION_RUNTIME_ERROR_SCHEMA_VERSION
-      && value.operation === undefined
-      && value.result === undefined
-      && value.error !== undefined;
-    if (!success && !failure) {
-      context.addIssue({ code: "custom", message: "Expected a Session runtime result or error envelope." });
-    }
-  });
+    id: z.string(),
+    sessionId: z.string(),
+    operation,
+    state: z.enum(["queued", "running", "completed", "failed", "canceled", "interrupted"]),
+    result: z.object({ assistantText: z.string() }).strict().nullable(),
+    errorCode: z.string(),
+    reason: z.string(),
+    createdAt: z.string(),
+    admittedAt: z.string().nullable(),
+    completedAt: z.string().nullable(),
+    updatedAt: z.string(),
+    effectiveTurn: effectiveTurnSchema.nullable(),
+    attachments: z.array(z.object({
+      kind: z.enum(["file", "folder", "image"]), relativePath: z.string(),
+    }).strict()),
+    pendingInteraction: z.lazy(() => interactionSchema).nullable(),
+    partialOutput: z.object({
+      assistantText: z.string(), truncated: z.boolean(), updatedAt: z.string(),
+    }).strict().nullable(),
+  }).strict();
+}
+const elicitationFieldBase = {
+  name: z.string(), title: z.string(), description: z.string().optional(), required: z.boolean(),
+};
+const elicitationFieldSchema = z.discriminatedUnion("type", [
+  z.object({
+    ...elicitationFieldBase, type: z.literal("select"),
+    options: z.array(z.object({ value: z.string(), label: z.string() }).strict()),
+    defaultValue: z.string().optional(),
+  }).strict(),
+  z.object({
+    ...elicitationFieldBase, type: z.literal("multi-select"),
+    options: z.array(z.object({ value: z.string(), label: z.string() }).strict()),
+    defaultValue: z.array(z.string()).optional(), minItems: z.number().int().nonnegative().optional(),
+    maxItems: z.number().int().nonnegative().optional(),
+  }).strict(),
+  z.object({ ...elicitationFieldBase, type: z.literal("boolean"), defaultValue: z.boolean().optional() }).strict(),
+  z.object({
+    ...elicitationFieldBase, type: z.literal("text"), defaultValue: z.string().optional(),
+    minLength: z.number().int().nonnegative().optional(), maxLength: z.number().int().nonnegative().optional(),
+    format: z.enum(["email", "uri", "date", "date-time"]).optional(),
+  }).strict(),
+  z.object({
+    ...elicitationFieldBase, type: z.literal("number"), numberKind: z.enum(["number", "integer"]),
+    defaultValue: z.number().optional(), minimum: z.number().optional(), maximum: z.number().optional(),
+  }).strict(),
+]);
+const approvalRequestSchema = z.object({
+  title: z.string(), summary: z.string(), details: z.string().optional(), warning: z.string().optional(),
+}).strict();
+const elicitationRequestSchema = z.object({
+  mode: z.enum(["form", "url"]), message: z.string(), fields: z.array(elicitationFieldSchema), url: z.string().optional(),
+}).strict();
+const interactionIdentityShape = {
+  sequence: z.number().int().positive(), interactionId: z.string(), sessionId: z.string(), executionId: z.string(),
+  createdAt: z.string(), updatedAt: z.string(),
+};
+const approvalInteractionShape = { kind: z.literal("approval"), request: approvalRequestSchema };
+const elicitationInteractionShape = { kind: z.literal("elicitation"), request: elicitationRequestSchema };
+const pendingInteractionSchema = z.union([
+  z.object({ ...interactionIdentityShape, ...approvalInteractionShape, state: z.literal("pending"), resolution: z.null() }).strict(),
+  z.object({ ...interactionIdentityShape, ...elicitationInteractionShape, state: z.literal("pending"), resolution: z.null() }).strict(),
+]);
+const answeredInteractionSchema = z.union([
+  z.object({
+    ...interactionIdentityShape,
+    ...approvalInteractionShape,
+    state: z.literal("answered"),
+    resolution: z.object({
+      action: z.enum(["approve", "deny"]), submittedFields: z.tuple([]), resolvedAt: z.string(),
+    }).strict(),
+  }).strict(),
+  z.object({
+    ...interactionIdentityShape,
+    ...elicitationInteractionShape,
+    state: z.literal("answered"),
+    resolution: z.object({
+      action: z.enum(["accept", "decline", "cancel"]), submittedFields: z.array(z.string()), resolvedAt: z.string(),
+    }).strict(),
+  }).strict(),
+]);
+const expiredResolutionSchema = z.object({
+  reason: z.enum(["runtime_restarted", "runtime_shutdown", "execution_canceled", "execution_terminal"]),
+  resolvedAt: z.string(),
+}).strict();
+const expiredInteractionSchema = z.union([
+  z.object({
+    ...interactionIdentityShape, ...approvalInteractionShape, state: z.literal("expired"), resolution: expiredResolutionSchema,
+  }).strict(),
+  z.object({
+    ...interactionIdentityShape, ...elicitationInteractionShape, state: z.literal("expired"), resolution: expiredResolutionSchema,
+  }).strict(),
+]);
+const interactionSchema = z.union([
+  pendingInteractionSchema,
+  answeredInteractionSchema,
+  expiredInteractionSchema,
+]);
+const runExecutionSchema = createExecutionSchema(z.literal("turn.run"));
+const enqueueExecutionSchema = createExecutionSchema(z.literal("turn.enqueue"));
+const executionSchema = createExecutionSchema(z.enum(["turn.run", "turn.enqueue"]));
+const turnOptionsSchema = z.union([
+  z.object({
+    sessionId: z.string(),
+    provider: z.object({ id: z.literal("codex") }).strict(),
+    catalogRevision: z.number().int(),
+    models: z.array(modelSchema),
+    approvalModes: z.array(z.object({ id: z.enum(APPROVAL_MODE_VALUES), label: z.string() }).strict()),
+    codexSandboxModes: z.array(z.object({ id: z.enum(CODEX_SANDBOX_MODE_VALUES), label: z.string() }).strict()),
+  }).strict(),
+  z.object({
+    sessionId: z.string(),
+    provider: z.object({ id: z.literal("copilot") }).strict(),
+    catalogRevision: z.number().int(),
+    models: z.array(modelSchema),
+    approvalModes: z.array(z.object({ id: z.enum(APPROVAL_MODE_VALUES), label: z.string() }).strict()),
+    customAgents: z.array(z.object({
+      name: z.string(),
+      displayName: z.string(),
+      description: z.string(),
+    }).strict()),
+  }).strict(),
+]);
+const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
+  "runtime.catalog": z.object({
+    revision: z.number().int(),
+    providers: z.array(z.object({
+      id: z.string(),
+      label: z.string(),
+      defaultModelId: z.string(),
+      defaultReasoningEffort: reasoningEffortSchema,
+      models: z.array(modelSchema),
+    }).strict()),
+  }).strict(),
+  "session.create": sessionDetailSchema,
+  "session.list": z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().optional() }).strict(),
+  "session.get": sessionGetSchema,
+  "session.rename": sessionDetailSchema,
+  "session.files.list": z.object({ items: z.array(fileReferenceSchema), nextCursor: z.string().optional() }).strict(),
+  "session.files.read_text": z.object({ file: fileReferenceSchema, content: z.string() }).strict(),
+  "session.files.write_text": z.object({ file: fileReferenceSchema }).strict(),
+  "turn.options": turnOptionsSchema,
+  "turn.run": runExecutionSchema,
+  "turn.enqueue": enqueueExecutionSchema,
+  "turn.list": z.object({ items: z.array(executionSchema), nextCursor: z.string().optional() }).strict(),
+  "turn.get": executionSchema,
+  "turn.cancel": executionSchema,
+  "interaction.list": z.object({ items: z.array(interactionSchema), nextCursor: z.string().optional() }).strict(),
+  "interaction.respond": z.object({ interaction: answeredInteractionSchema, execution: executionSchema }).strict(),
+  "transcript.export": z.discriminatedUnion("destination", [
+    z.object({ destination: z.literal("inline"), format: z.enum(["json", "markdown"]), byteLength: z.number().int(), content: z.string() }).strict(),
+    z.object({
+      destination: z.literal("session_folder"),
+      format: z.enum(["json", "markdown"]),
+      file: z.object({ sessionId: z.string(), relativePath: z.string(), byteLength: z.number().int(), modifiedAt: z.string(), sha256: z.string() }).strict(),
+    }).strict(),
+  ]),
+};
+
+function createSuccessSchema(operation: SessionRuntimeOperation) {
+  return z.object({
+    schemaVersion: z.literal(SESSION_RUNTIME_RESULT_SCHEMA_VERSION),
+    operation: z.literal(operation),
+    result: resultSchemas[operation],
+  }).strict();
+}
+
+function createOutputSchema(operation: SessionRuntimeOperation) {
+  // MCP outputSchema describes successful structured output. Tool errors are
+  // returned with isError=true and are intentionally excluded from SDK output
+  // validation, while safeRuntimeError validates their public envelope.
+  return createSuccessSchema(operation);
 }
 
 export const SESSION_MCP_SERVER_INSTRUCTIONS = [
@@ -176,11 +441,14 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "session.files.read_text", title: "Read Session text file", description: "Read one bounded UTF-8 text file from a SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.write_text", title: "Write Session text file", description: "Atomically write one bounded UTF-8 text file to a SessionFolder.", readOnly: false, destructive: true },
   { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
-  { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: false },
-  { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: false },
+  { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: true },
+  { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: true },
   { name: "turn.list", title: "List Session executions", description: "List execution records for the specified Session.", readOnly: true, destructive: false },
   { name: "turn.get", title: "Get Session execution", description: "Read one execution from the specified Session.", readOnly: true, destructive: false },
   { name: "turn.cancel", title: "Cancel Session execution", description: "Cancel one queued or running execution in the specified Session.", readOnly: false, destructive: true },
+  { name: "interaction.list", title: "List Session interactions", description: "List public interactions for the specified Session.", readOnly: true, destructive: false },
+  { name: "interaction.respond", title: "Respond to Session interaction", description: "Resolve one pending interaction in the specified execution.", readOnly: false, destructive: true },
+  { name: "transcript.export", title: "Export Session transcript", description: "Export a Session transcript inline or into its SessionFolder.", readOnly: false, destructive: true },
 ] as const;
 
 function annotations(definition: (typeof SESSION_MCP_TOOL_DEFINITIONS)[number]) {
@@ -188,14 +456,18 @@ function annotations(definition: (typeof SESSION_MCP_TOOL_DEFINITIONS)[number]) 
     readOnlyHint: definition.readOnly,
     destructiveHint: definition.destructive,
     idempotentHint: true,
-    openWorldHint: false,
+    openWorldHint: definition.name === "turn.run" || definition.name === "turn.enqueue"
+      || definition.name === "interaction.respond" || definition.name === "transcript.export",
   };
 }
 
-function isMutation(operation: SessionRuntimeOperation): boolean {
+function isMutation(operation: SessionRuntimeOperation, input?: unknown): boolean {
   return operation === "session.create" || operation === "session.rename"
     || operation === "session.files.write_text"
-    || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel";
+    || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+    || operation === "interaction.respond"
+    || (operation === "transcript.export"
+      && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
 }
 
 function safeRuntimeError(value: unknown): ReturnType<typeof createSessionRuntimeError> | null {
@@ -204,24 +476,20 @@ function safeRuntimeError(value: unknown): ReturnType<typeof createSessionRuntim
 }
 
 function safeRuntimeResult(operation: SessionRuntimeOperation, response: SessionRuntimeClientResponse): Record<string, unknown> | null {
-  if (!response.value || typeof response.value !== "object" || Array.isArray(response.value)) return null;
-  const value = response.value as Record<string, unknown>;
-  if (
-    value.schemaVersion !== SESSION_RUNTIME_RESULT_SCHEMA_VERSION
-    || value.operation !== operation
-    || !("result" in value)
-    || Object.keys(value).some((key) => !["schemaVersion", "operation", "result"].includes(key))
-  ) {
-    return null;
-  }
-  return { schemaVersion: SESSION_RUNTIME_RESULT_SCHEMA_VERSION, operation, result: value.result };
+  const parsed = createSuccessSchema(operation).safeParse(response.value);
+  return parsed.success ? parsed.data : null;
 }
 
 function toolResult(value: Record<string, unknown>, isError: boolean) {
+  if (isError) {
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(value) }],
+      isError: true as const,
+    };
+  }
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value) }],
     structuredContent: value,
-    ...(isError ? { isError: true } : {}),
   };
 }
 
@@ -259,7 +527,7 @@ async function executeOperation(
     if (applicationError) return toolResult(applicationError, true);
     const result = safeRuntimeResult(operation, response);
     if (result) return toolResult(result, false);
-    return toolResult(createTransportError(operation, true, "Session runtime returned an invalid public response."), true);
+    return toolResult(createTransportError(operation, input, true, "Session runtime returned an invalid public response."), true);
   } catch (error) {
     if (error instanceof SessionRuntimeValidationError) {
       return toolResult(createSessionRuntimeError({
@@ -270,7 +538,7 @@ async function executeOperation(
       }), true);
     }
     const dispatched = error instanceof SessionRuntimeClientError && error.dispatched;
-    return toolResult(createTransportError(operation, dispatched, dispatched
+    return toolResult(createTransportError(operation, input, dispatched, dispatched
       ? "Session runtime response was not received after dispatch."
       : "Session runtime is unavailable."), true);
   }
@@ -278,10 +546,11 @@ async function executeOperation(
 
 function createTransportError(
   operation: SessionRuntimeOperation,
+  input: unknown,
   dispatched: boolean,
   message: string,
 ): ReturnType<typeof createSessionRuntimeError> {
-  const effect: SessionRuntimeEffect = dispatched && isMutation(operation) ? "indeterminate" : "not_applied";
+  const effect: SessionRuntimeEffect = dispatched && isMutation(operation, input) ? "indeterminate" : "not_applied";
   return createSessionRuntimeError({ code: "RUNTIME_UNAVAILABLE", message, retryable: true, effect });
 }
 
@@ -376,6 +645,24 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: cancelInputSchema,
     outputSchema: createOutputSchema("turn.cancel"),
   }, async (input) => executeOperation("turn.cancel", input, deps));
+  server.registerTool("interaction.list", {
+    ...definitions.get("interaction.list")!,
+    annotations: annotations(definitions.get("interaction.list")!),
+    inputSchema: interactionListInputSchema,
+    outputSchema: createOutputSchema("interaction.list"),
+  }, async (input) => executeOperation("interaction.list", input, deps));
+  server.registerTool("interaction.respond", {
+    ...definitions.get("interaction.respond")!,
+    annotations: annotations(definitions.get("interaction.respond")!),
+    inputSchema: interactionRespondInputSchema,
+    outputSchema: createOutputSchema("interaction.respond"),
+  }, async (input) => executeOperation("interaction.respond", input, deps));
+  server.registerTool("transcript.export", {
+    ...definitions.get("transcript.export")!,
+    annotations: annotations(definitions.get("transcript.export")!),
+    inputSchema: transcriptExportInputSchema,
+    outputSchema: createOutputSchema("transcript.export"),
+  }, async (input) => executeOperation("transcript.export", input, deps));
 
   return server;
 }

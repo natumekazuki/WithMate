@@ -38,6 +38,7 @@ function createSession(overrides: Partial<Session> = {}): Session {
 function createService(session: Session) {
   const calls = {
     composerScopes: [] as string[],
+    attachmentResolutions: [] as string[][],
     catalogRevisions: [] as Array<number | null | undefined>,
     adapter: 0,
   };
@@ -47,12 +48,30 @@ function createService(session: Session) {
       calls.composerScopes.push(scope);
       return { attachments: [], errors: [] };
     },
-    getAppSettings: () => normalizeAppSettings({}),
+    resolveSessionFolderAttachments: async (_session, attachments) => {
+      calls.attachmentResolutions.push(attachments.map((attachment) => attachment.relativePath));
+      for (const attachment of attachments) {
+        attachment.identity = {
+          rootDevice: 1,
+          rootInode: 2,
+          device: 1,
+          inode: 3,
+          canonicalRelativePath: attachment.relativePath,
+        };
+      }
+      return { attachments: [], errors: [] };
+    },
+    getAppSettings: () => normalizeAppSettings({
+      codingProviderSettings: {
+        codex: { enabled: true },
+        copilot: { enabled: true },
+      },
+    }),
     resolveProviderCatalog(_providerId, revision) {
       calls.catalogRevisions.push(revision);
       const provider = {
-        id: "codex",
-        label: "Codex",
+        id: session.provider,
+        label: session.provider,
         defaultModelId: "gpt-5.4",
         defaultReasoningEffort: "high" as const,
         models: [{ id: "gpt-5.4", label: "GPT-5.4", reasoningEfforts: ["medium", "high"] as const }],
@@ -66,6 +85,7 @@ function createService(session: Session) {
       calls.adapter += 1;
       return {} as never;
     },
+    isSessionCustomAgentAvailable: async (_workspacePath, customAgentName) => customAgentName === "reviewer",
   } as SessionRuntimeServiceDeps);
   return { service, calls };
 }
@@ -77,7 +97,7 @@ describe("external Session turn validation", () => {
     await fixture.service.validateExternalSessionTurn("session-1", 4, request);
 
     assert.deepEqual(fixture.calls.catalogRevisions, [null]);
-    assert.deepEqual(fixture.calls.composerScopes, ["session-folder"]);
+    assert.deepEqual(fixture.calls.composerScopes, []);
     assert.equal(fixture.calls.adapter, 1);
 
     await assert.rejects(
@@ -101,6 +121,30 @@ describe("external Session turn validation", () => {
     assert.equal(fixture.calls.adapter, 0);
   });
 
+  it("EXT-ATTACH-10: admissionは明示attachmentをSessionFolder resolverでidentity付与する", async () => {
+    const fixture = createService(createSession());
+    const attachmentRequest: RunSessionTurnRequest = {
+      ...request,
+      attachments: [{ kind: "file", relativePath: "brief.md" }],
+    };
+    const validated = await fixture.service.validateExternalSessionTurn("session-1", 4, attachmentRequest);
+    assert.deepEqual(fixture.calls.attachmentResolutions, [["brief.md"]]);
+    assert.equal(validated.attachments?.[0]?.identity?.canonicalRelativePath, "brief.md");
+  });
+
+  it("EXT-ATTACH-10: dispatchはadmission identityのないattachmentをprovider到達前に拒否する", async () => {
+    const fixture = createService(createSession());
+    await assert.rejects(
+      fixture.service.runExternalSessionTurn("session-1", 4, {
+        ...request,
+        attachments: [{ kind: "file", relativePath: "brief.md" }],
+      }),
+      (error) => error instanceof SessionTurnValidationError && error.code === "PATH_OUTSIDE_SESSION_FOLDER",
+    );
+    assert.deepEqual(fixture.calls.catalogRevisions, []);
+    assert.equal(fixture.calls.adapter, 0);
+  });
+
   it("EXT-SCOPE-03: Character Authoring Sessionをcomposer/provider副作用前に拒否する", async () => {
     const fixture = createService(createSession({ sessionKind: "character-authoring" }));
 
@@ -111,5 +155,31 @@ describe("external Session turn validation", () => {
     assert.deepEqual(fixture.calls.catalogRevisions, []);
     assert.deepEqual(fixture.calls.composerScopes, []);
     assert.equal(fixture.calls.adapter, 0);
+  });
+
+  it("EXT-PROVIDER-02: Copilot optionを検証しunknown agentやprovider mismatchを副作用前に拒否する", async () => {
+    const fixture = createService(createSession({ provider: "copilot" }));
+    const copilotRequest: RunSessionTurnRequest = {
+      userMessage: "hello",
+      model: "gpt-5.4",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      customAgentName: "reviewer",
+    };
+
+    await fixture.service.validateExternalSessionTurn("session-1", 4, copilotRequest, "copilot");
+    await assert.rejects(
+      fixture.service.validateExternalSessionTurn(
+        "session-1",
+        4,
+        { ...copilotRequest, customAgentName: "missing" },
+        "copilot",
+      ),
+      (error) => error instanceof SessionTurnValidationError && error.code === "INVALID_INPUT",
+    );
+    await assert.rejects(
+      fixture.service.validateExternalSessionTurn("session-1", 4, copilotRequest, "codex"),
+      (error) => error instanceof SessionTurnValidationError && error.code === "INVALID_INPUT",
+    );
   });
 });

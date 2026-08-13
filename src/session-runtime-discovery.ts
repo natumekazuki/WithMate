@@ -31,8 +31,21 @@ export function buildSessionRuntimeDiscoveryGenerationFileName(
   return `session-${adapter}.${generationId}.json`;
 }
 
-export function resolveDefaultSessionRuntimeDirectory(env: NodeJS.ProcessEnv = process.env): string {
+export function resolveDefaultSessionRuntimeDirectory(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
   const configured = env.WITHMATE_SESSION_RUNTIME_DIR?.trim();
+  if (platform === "win32") {
+    if (configured) {
+      throw new Error("WITHMATE_SESSION_RUNTIME_DIR is not supported on Windows.");
+    }
+    const localAppDataPath = env.LOCALAPPDATA?.trim();
+    if (!localAppDataPath || !path.win32.isAbsolute(localAppDataPath)) {
+      throw new Error("LOCALAPPDATA must identify an absolute Windows directory.");
+    }
+    return path.win32.join(localAppDataPath, "WithMate", "session-runtime");
+  }
   if (configured) {
     return path.resolve(configured);
   }
@@ -40,6 +53,12 @@ export function resolveDefaultSessionRuntimeDirectory(env: NodeJS.ProcessEnv = p
   return path.join(tmpdir(), "withmate-session", ownerSegment);
 }
 
-export function resolveDefaultSessionRuntimeDiscoveryFilePath(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(resolveDefaultSessionRuntimeDirectory(env), SESSION_RUNTIME_DISCOVERY_FILE_NAME);
+export function resolveDefaultSessionRuntimeDiscoveryFilePath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  const runtimeDirectoryPath = resolveDefaultSessionRuntimeDirectory(env, platform);
+  return platform === "win32"
+    ? path.win32.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME)
+    : path.join(runtimeDirectoryPath, SESSION_RUNTIME_DISCOVERY_FILE_NAME);
 }

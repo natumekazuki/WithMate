@@ -24,8 +24,7 @@ test("Session discovery publishes separate CLI and MCP credentials under a Sessi
       cliSecret: "cli-secret",
       mcpSecret: "mcp-secret",
       runtimeInstanceId: "runtime-1",
-      runtimeDirectoryPath: directory,
-    });
+    }, { resolveRuntimeDirectory: () => directory });
     const pointer = JSON.parse(await readFile(publication.discoveryFilePath, "utf8")) as Record<string, unknown>;
     assert.deepEqual(pointer, {
       schemaVersion: SESSION_RUNTIME_DISCOVERY_POINTER_SCHEMA_VERSION,
@@ -60,16 +59,14 @@ test("stopping an old Session runtime does not delete a newer publication", asyn
       cliSecret: "cli-1",
       mcpSecret: "mcp-1",
       runtimeInstanceId: "runtime-1",
-      runtimeDirectoryPath: directory,
-    });
+    }, { resolveRuntimeDirectory: () => directory });
     const second = await publishSessionRuntimeDiscovery({
       baseUrl: "http://127.0.0.1:10002",
       apiSecret: "api-2",
       cliSecret: "cli-2",
       mcpSecret: "mcp-2",
       runtimeInstanceId: "runtime-2",
-      runtimeDirectoryPath: directory,
-    });
+    }, { resolveRuntimeDirectory: () => directory });
     await first.cleanup();
     const pointer = JSON.parse(await readFile(second.discoveryFilePath, "utf8")) as { runtimeInstanceId: string };
     assert.equal(pointer.runtimeInstanceId, "runtime-2");
@@ -89,8 +86,85 @@ test("Session discovery cleans prepared generations when atomic publication fail
       cliSecret: "cli-secret",
       mcpSecret: "mcp-secret",
       runtimeInstanceId: "runtime-failure",
-      runtimeDirectoryPath: directory,
       beforeCommit: async () => { throw new Error("commit failed"); },
+    }, { resolveRuntimeDirectory: () => directory }));
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("EXT-WIN-CRED-06: Windows publicationはdirectoryと全fileのACLをsecret公開前に検証する", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-windows-acl-"));
+  const securedPaths = new Map<string, string[]>();
+  try {
+    const publication = await publishSessionRuntimeDiscovery({
+      baseUrl: "http://127.0.0.1:12345",
+      apiSecret: "api-secret",
+      cliSecret: "cli-secret",
+      mcpSecret: "mcp-secret",
+      runtimeInstanceId: "runtime-windows-acl",
+    }, {
+      platform: "win32",
+      resolveRuntimeDirectory: () => directory,
+      secureWindowsPath: async (targetPath, targetKind) => {
+        const observations = securedPaths.get(targetPath) ?? [];
+        observations.push(targetKind === "file" ? await readFile(targetPath, "utf8") : targetKind);
+        securedPaths.set(targetPath, observations);
+      },
+    });
+
+    assert.deepEqual(securedPaths.get(directory), ["directory"]);
+    const fileObservations = [...securedPaths.entries()]
+      .filter(([targetPath]) => targetPath !== directory)
+      .map(([, observations]) => observations);
+    assert.equal(fileObservations.length, 3);
+    for (const observations of fileObservations) {
+      assert.deepEqual(observations, [""]);
+    }
+    await publication.cleanup();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("EXT-WIN-CRED-06: Windows directory ACLを検証できない場合はcredential fileを作らない", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-windows-directory-failure-"));
+  try {
+    await assert.rejects(() => publishSessionRuntimeDiscovery({
+      baseUrl: "http://127.0.0.1:12345",
+      apiSecret: "api-secret",
+      cliSecret: "cli-secret",
+      mcpSecret: "mcp-secret",
+      runtimeInstanceId: "runtime-windows-directory-failure",
+    }, {
+      platform: "win32",
+      resolveRuntimeDirectory: () => directory,
+      secureWindowsPath: async () => { throw new Error("ACL verification failed"); },
+    }));
+    assert.deepEqual(await readdir(directory), []);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("EXT-WIN-CRED-06: Windows file ACLの検証失敗は空の部分fileを除去する", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-runtime-windows-file-failure-"));
+  try {
+    await assert.rejects(() => publishSessionRuntimeDiscovery({
+      baseUrl: "http://127.0.0.1:12345",
+      apiSecret: "api-secret",
+      cliSecret: "cli-secret",
+      mcpSecret: "mcp-secret",
+      runtimeInstanceId: "runtime-windows-file-failure",
+    }, {
+      platform: "win32",
+      resolveRuntimeDirectory: () => directory,
+      secureWindowsPath: async (targetPath, targetKind) => {
+        if (targetKind === "directory") return;
+        assert.equal(await readFile(targetPath, "utf8"), "");
+        throw new Error("ACL verification failed");
+      },
     }));
     assert.deepEqual(await readdir(directory), []);
   } finally {

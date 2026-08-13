@@ -337,6 +337,39 @@ export class SessionExecutionStorageV6 {
     });
   }
 
+  failNextQueued(
+    sessionId: string,
+    failedAt: string,
+    expiresAt: string,
+  ): SessionExecutionStorageRecord | null {
+    return this.transaction(() => {
+      const next = this.db.prepare(`
+        SELECT id
+        FROM session_executions_v6
+        WHERE session_id = ? AND state = 'queued'
+        ORDER BY sequence ASC
+        LIMIT 1
+      `).get(sessionId) as { id: string } | undefined;
+      if (!next) {
+        return null;
+      }
+      const updated = this.db.prepare(`
+        UPDATE session_executions_v6
+        SET state = 'failed',
+            error_code = 'QUEUE_ADMISSION_FAILURE',
+            reason = 'queue_admission_exhausted',
+            completed_at = ?,
+            updated_at = ?
+        WHERE id = ? AND state = 'queued'
+      `).run(failedAt, failedAt, next.id);
+      if (updated.changes !== 1) {
+        return null;
+      }
+      this.updateIdempotencyExpiry(next.id, expiresAt);
+      return this.getRequired(next.id);
+    });
+  }
+
   completeRunning(input: CompleteSessionExecutionInput): SessionExecutionStorageRecord {
     const resultJson = input.result === null
       ? null
@@ -453,6 +486,21 @@ export class SessionExecutionStorageV6 {
     interruptedAt: string,
     expiresAt: string,
   ): SessionExecutionStorageRecord[] {
+    return this.interruptRunning(interruptedAt, expiresAt, "runtime_restarted");
+  }
+
+  interruptRunningForShutdown(
+    interruptedAt: string,
+    expiresAt: string,
+  ): SessionExecutionStorageRecord[] {
+    return this.interruptRunning(interruptedAt, expiresAt, "runtime_shutdown");
+  }
+
+  private interruptRunning(
+    interruptedAt: string,
+    expiresAt: string,
+    reason: "runtime_restarted" | "runtime_shutdown",
+  ): SessionExecutionStorageRecord[] {
     return this.transaction(() => {
       const runningIds = this.db.prepare(`
         SELECT id
@@ -466,11 +514,11 @@ export class SessionExecutionStorageV6 {
       this.db.prepare(`
         UPDATE session_executions_v6
         SET state = 'interrupted',
-            reason = 'runtime_restarted',
+            reason = ?,
             completed_at = ?,
             updated_at = ?
         WHERE state = 'running'
-      `).run(interruptedAt, interruptedAt);
+      `).run(reason, interruptedAt, interruptedAt);
       for (const { id } of runningIds) {
         this.updateIdempotencyExpiry(id, expiresAt);
       }

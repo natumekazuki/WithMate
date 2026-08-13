@@ -20,6 +20,11 @@ export const REQUIRED_V6_TABLES = [
   "session_turns_v6",
   "session_turn_interims_v6",
   "session_turn_provider_outputs_v6",
+  "session_execution_public_progress_v6",
+  "session_turn_public_context_v6",
+  "session_interactions_v6",
+  "session_interaction_idempotency_v6",
+  "session_transcript_export_idempotency_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
   "memory_entry_relations_v6",
@@ -57,6 +62,14 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turns_phase_updated",
   "idx_v6_session_turn_interims_turn_seq",
   "idx_v6_session_turn_provider_outputs_turn_kind_seq",
+  "idx_v6_session_execution_public_progress_updated",
+  "idx_v6_session_turns_id_session",
+  "idx_v6_session_turn_public_context_execution",
+  "idx_v6_session_interactions_execution_sequence",
+  "idx_v6_session_interactions_one_pending",
+  "idx_v6_session_interaction_idempotency_interaction",
+  "idx_v6_session_interaction_idempotency_expires",
+  "idx_v6_session_transcript_export_idempotency_expires",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
   "idx_v6_memory_mutation_events_result",
@@ -135,6 +148,58 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "payload_json",
     "payload_blob_id",
     "created_at",
+  ],
+  session_execution_public_progress_v6: [
+    "execution_id",
+    "assistant_text",
+    "truncated",
+    "updated_at",
+  ],
+  session_turn_public_context_v6: [
+    "turn_id",
+    "session_id",
+    "execution_id",
+    "effective_turn_json",
+    "attachments_json",
+    "created_at",
+    "updated_at",
+  ],
+  session_interactions_v6: [
+    "sequence",
+    "id",
+    "execution_id",
+    "kind",
+    "state",
+    "public_payload_json",
+    "response_action",
+    "response_submitted_fields_json",
+    "response_fingerprint",
+    "expiry_reason",
+    "created_at",
+    "resolved_at",
+    "updated_at",
+  ],
+  session_interaction_idempotency_v6: [
+    "operation",
+    "idempotency_key",
+    "request_fingerprint",
+    "interaction_id",
+    "created_at",
+    "expires_at",
+  ],
+  session_transcript_export_idempotency_v6: [
+    "operation",
+    "idempotency_key",
+    "request_fingerprint",
+    "session_id",
+    "relative_path",
+    "temp_name",
+    "state",
+    "output_sha256",
+    "byte_length",
+    "result_json",
+    "created_at",
+    "expires_at",
   ],
   memory_entries_v6: [
     "id",
@@ -434,6 +499,34 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
     && hasForeignKey(db, "session_turn_interims_v6", "turn_id", "session_turns_v6")
     && hasForeignKey(db, "session_turn_provider_outputs_v6", "turn_id", "session_turns_v6")
+    && hasForeignKey(
+      db,
+      "session_execution_public_progress_v6",
+      "execution_id",
+      "session_executions_v6",
+      "id",
+      "CASCADE",
+    )
+    && hasForeignKey(db, "session_turn_public_context_v6", "turn_id", "session_turns_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_turn_public_context_v6", "session_id", "session_turns_v6", "session_id", "CASCADE")
+    && hasForeignKey(db, "session_turn_public_context_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_interactions_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
+    && hasForeignKey(
+      db,
+      "session_interaction_idempotency_v6",
+      "interaction_id",
+      "session_interactions_v6",
+      "id",
+      "CASCADE",
+    )
+    && hasForeignKey(
+      db,
+      "session_transcript_export_idempotency_v6",
+      "session_id",
+      "sessions_v6",
+      "id",
+      "CASCADE",
+    )
     && hasForeignKey(db, "memory_entries_v6", "source_app_message_id", "session_messages_v6")
     && hasForeignKey(db, "memory_entries_v6", "superseded_by_id", "memory_entries_v6")
     && hasForeignKey(db, "memory_entry_tags_v6", "entry_id", "memory_entries_v6")
@@ -530,6 +623,11 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
   const sessionTurnInterimsSql = tableSql(db, "session_turn_interims_v6");
   const sessionTurnProviderOutputsSql = tableSql(db, "session_turn_provider_outputs_v6");
+  const sessionExecutionPublicProgressSql = tableSql(db, "session_execution_public_progress_v6");
+  const sessionTurnPublicContextSql = tableSql(db, "session_turn_public_context_v6");
+  const sessionInteractionsSql = tableSql(db, "session_interactions_v6");
+  const sessionInteractionIdempotencySql = tableSql(db, "session_interaction_idempotency_v6");
+  const sessionTranscriptExportIdempotencySql = tableSql(db, "session_transcript_export_idempotency_v6");
   const memoryEntriesSql = tableSql(db, "memory_entries_v6");
   const mutationEventsSql = tableSql(db, "memory_mutation_events_v6");
   const idempotencySql = tableSql(db, "memory_idempotency_keys_v6");
@@ -549,6 +647,18 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && sessionTurnInterimsSql.includes("source IN ('stream_delta', 'running_snapshot', 'migration')")
     && sessionTurnProviderOutputsSql.includes("json_valid(payload_json)")
     && sessionTurnProviderOutputsSql.includes("kind IN")
+    && sessionExecutionPublicProgressSql.includes("truncated IN (0, 1)")
+    && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
+    && sessionTurnPublicContextSql.includes("json_type(attachments_json) = 'array'")
+    && sessionInteractionsSql.includes("state IN ('pending', 'answered', 'expired')")
+    && sessionInteractionsSql.includes("'execution_canceled'")
+    && sessionInteractionsSql.includes("'execution_terminal'")
+    && sessionInteractionsSql.includes("length(CAST(public_payload_json AS BLOB)) <= 262144")
+    && sessionInteractionsSql.includes("kind = 'approval' AND response_action IN ('approve', 'deny')")
+    && sessionInteractionsSql.includes("kind = 'elicitation' AND response_action IN ('accept', 'decline', 'cancel')")
+    && sessionInteractionIdempotencySql.includes("operation = 'interaction.respond'")
+    && sessionTranscriptExportIdempotencySql.includes("operation = 'transcript.export'")
+    && sessionTranscriptExportIdempotencySql.includes("state IN ('pending', 'applied', 'rejected')")
     && memoryEntriesSql.includes("ON DELETE RESTRICT")
     && mutationEventsSql.includes("result_status TEXT NOT NULL")
     && mutationEventsSql.includes("result_status IN")
@@ -796,6 +906,9 @@ export const CREATE_V6_SESSION_TURNS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_session_turns_phase_updated
     ON session_turns_v6(phase, updated_at DESC);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_turns_id_session
+    ON session_turns_v6(id, session_id);
 `;
 
 export const CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL = `
@@ -916,6 +1029,9 @@ export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_executions_one_running
     ON session_executions_v6(session_id)
     WHERE state = 'running';
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_executions_id_session
+    ON session_executions_v6(id, session_id);
 `;
 
 export const CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL = `
@@ -935,6 +1051,154 @@ export const CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_session_execution_idempotency_expires
     ON session_execution_idempotency_v6(expires_at);
+`;
+
+export const CREATE_V6_SESSION_EXECUTION_PUBLIC_PROGRESS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_execution_public_progress_v6 (
+    execution_id TEXT PRIMARY KEY,
+    assistant_text TEXT NOT NULL,
+    truncated INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0, 1)),
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_execution_public_progress_updated
+    ON session_execution_public_progress_v6(updated_at);
+`;
+
+export const CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_turn_public_context_v6 (
+    turn_id INTEGER PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    execution_id TEXT NOT NULL UNIQUE,
+    effective_turn_json TEXT NOT NULL CHECK (json_valid(effective_turn_json)),
+    attachments_json TEXT NOT NULL
+      CHECK (json_valid(attachments_json))
+      CHECK (json_type(attachments_json) = 'array'),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (turn_id, session_id) REFERENCES session_turns_v6(id, session_id) ON DELETE CASCADE,
+    FOREIGN KEY (execution_id, session_id) REFERENCES session_executions_v6(id, session_id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_turn_public_context_execution
+    ON session_turn_public_context_v6(session_id, execution_id);
+`;
+
+export const CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_interactions_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    execution_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('approval', 'elicitation')),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'answered', 'expired')),
+    public_payload_json TEXT NOT NULL
+      CHECK (json_valid(public_payload_json))
+      CHECK (length(CAST(public_payload_json AS BLOB)) <= 262144),
+    response_action TEXT CHECK (response_action IS NULL OR response_action IN (
+      'approve',
+      'deny',
+      'accept',
+      'decline',
+      'cancel'
+    )),
+    response_submitted_fields_json TEXT
+      CHECK (response_submitted_fields_json IS NULL OR json_valid(response_submitted_fields_json)),
+    response_fingerprint TEXT,
+    expiry_reason TEXT CHECK (expiry_reason IS NULL OR expiry_reason IN (
+      'runtime_restarted',
+      'runtime_shutdown',
+      'execution_canceled',
+      'execution_terminal'
+    )),
+    created_at TEXT NOT NULL,
+    resolved_at TEXT,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE,
+    CHECK (
+      (state = 'pending'
+        AND response_action IS NULL
+        AND response_submitted_fields_json IS NULL
+        AND response_fingerprint IS NULL
+        AND expiry_reason IS NULL
+        AND resolved_at IS NULL)
+      OR
+      (state = 'answered'
+        AND response_action IS NOT NULL
+        AND response_submitted_fields_json IS NOT NULL
+        AND response_fingerprint IS NOT NULL
+        AND expiry_reason IS NULL
+        AND resolved_at IS NOT NULL
+        AND (
+          (kind = 'approval' AND response_action IN ('approve', 'deny'))
+          OR
+          (kind = 'elicitation' AND response_action IN ('accept', 'decline', 'cancel'))
+        ))
+      OR
+      (state = 'expired'
+        AND response_action IS NULL
+        AND response_submitted_fields_json IS NULL
+        AND response_fingerprint IS NULL
+        AND expiry_reason IS NOT NULL
+        AND resolved_at IS NOT NULL)
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_interactions_execution_sequence
+    ON session_interactions_v6(execution_id, sequence ASC);
+
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_interactions_one_pending
+    ON session_interactions_v6(execution_id)
+    WHERE state = 'pending';
+`;
+
+export const CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_interaction_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation = 'interaction.respond'),
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    interaction_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, idempotency_key),
+    FOREIGN KEY (interaction_id) REFERENCES session_interactions_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_interaction_idempotency_interaction
+    ON session_interaction_idempotency_v6(interaction_id);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_interaction_idempotency_expires
+    ON session_interaction_idempotency_v6(expires_at);
+`;
+
+export const CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_transcript_export_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation = 'transcript.export'),
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    relative_path TEXT NOT NULL,
+    temp_name TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'rejected')),
+    output_sha256 TEXT CHECK (output_sha256 IS NULL OR length(output_sha256) = 64),
+    byte_length INTEGER CHECK (byte_length IS NULL OR byte_length >= 0),
+    result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, idempotency_key),
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    CHECK ((output_sha256 IS NULL) = (byte_length IS NULL)),
+    CHECK (
+      (state = 'pending' AND result_json IS NULL)
+      OR
+      (state = 'applied' AND result_json IS NOT NULL AND output_sha256 IS NOT NULL)
+      OR
+      (state = 'rejected' AND result_json IS NOT NULL)
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_transcript_export_idempotency_expires
+    ON session_transcript_export_idempotency_v6(state, expires_at);
 `;
 
 function ensureSessionExecutionIdempotencyOperations(db: DatabaseSync): void {
@@ -967,6 +1231,56 @@ function ensureSessionExecutionIdempotencyOperations(db: DatabaseSync): void {
     DROP TABLE session_execution_idempotency_v6_legacy;
   `);
   db.exec(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL);
+}
+
+function ensureSessionInteractionExpiryReasons(db: DatabaseSync): void {
+  if (
+    !tableExists(db, "session_interactions_v6")
+    || tableSql(db, "session_interactions_v6").includes("'execution_terminal'")
+  ) {
+    return;
+  }
+  const hasIdempotency = tableExists(db, "session_interaction_idempotency_v6");
+  if (hasIdempotency) {
+    db.exec(`
+      ALTER TABLE session_interaction_idempotency_v6
+        RENAME TO session_interaction_idempotency_v6_legacy;
+      DROP INDEX IF EXISTS idx_v6_session_interaction_idempotency_interaction;
+      DROP INDEX IF EXISTS idx_v6_session_interaction_idempotency_expires;
+    `);
+  }
+  db.exec(`
+    ALTER TABLE session_interactions_v6
+      RENAME TO session_interactions_v6_legacy;
+    DROP INDEX IF EXISTS idx_v6_session_interactions_execution_sequence;
+    DROP INDEX IF EXISTS idx_v6_session_interactions_one_pending;
+  `);
+  db.exec(CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL);
+  db.exec(`
+    INSERT INTO session_interactions_v6 (
+      sequence, id, execution_id, kind, state, public_payload_json,
+      response_action, response_submitted_fields_json, response_fingerprint,
+      expiry_reason, created_at, resolved_at, updated_at
+    )
+    SELECT
+      sequence, id, execution_id, kind, state, public_payload_json,
+      response_action, response_submitted_fields_json, response_fingerprint,
+      expiry_reason, created_at, resolved_at, updated_at
+    FROM session_interactions_v6_legacy;
+  `);
+  if (hasIdempotency) {
+    db.exec(CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL);
+    db.exec(`
+      INSERT INTO session_interaction_idempotency_v6 (
+        operation, idempotency_key, request_fingerprint, interaction_id, created_at, expires_at
+      )
+      SELECT
+        operation, idempotency_key, request_fingerprint, interaction_id, created_at, expires_at
+      FROM session_interaction_idempotency_v6_legacy;
+      DROP TABLE session_interaction_idempotency_v6_legacy;
+    `);
+  }
+  db.exec("DROP TABLE session_interactions_v6_legacy;");
 }
 
 export const CREATE_V6_AUDIT_EVENTS_TABLE_SQL = `
@@ -1388,6 +1702,11 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_EXECUTION_PUBLIC_PROGRESS_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
+  CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
+  CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,
@@ -1546,6 +1865,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       || statement === CREATE_V6_SESSION_TURNS_TABLE_SQL
       || statement === CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL
       || statement === CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL
+      || statement === CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL
     ) {
       continue;
     }
@@ -1559,6 +1879,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
   ensureSessionExecutionIdempotencyOperations(db);
   ensureSessionFileWriteIdempotencyStates(db);
+  ensureSessionInteractionExpiryReasons(db);
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
@@ -1587,6 +1908,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   db.exec(CREATE_V6_SESSION_TURNS_TABLE_SQL);
   db.exec(CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL);
   db.exec(CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL);
+  db.exec(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL);
 
   if (tableExists(db, "memory_protected_objects_v6")) {
     const protectedObjectColumns = tableColumnNames(db, "memory_protected_objects_v6");

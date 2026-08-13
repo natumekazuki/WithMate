@@ -53,7 +53,13 @@ export function resolveProviderCatalogOrThrow(
 }
 
 function resolveProviderAdapter(args: ResolveProviderAdapterArgs): ProviderTurnAdapter {
-  return args.providerId === "copilot" ? args.copilotAdapter : args.codexAdapter;
+  if (args.providerId === "codex") {
+    return args.codexAdapter;
+  }
+  if (args.providerId === "copilot") {
+    return args.copilotAdapter;
+  }
+  throw new Error(`Unsupported provider adapter: ${args.providerId ?? ""}`);
 }
 
 export function resolveProviderCodingAdapter(args: ResolveProviderAdapterArgs): ProviderCodingAdapter {

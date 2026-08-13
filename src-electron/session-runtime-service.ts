@@ -11,6 +11,7 @@ import {
   type ProviderQuotaTelemetry,
   type ProjectMemoryEntry,
   type RunSessionTurnRequest,
+  type SessionTurnAttachmentReference,
   type SessionContextTelemetry,
   type SessionMemory,
 } from "../src/app-state.js";
@@ -38,6 +39,8 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
+import type { PublicTranscriptAttachmentV1, PublicTranscriptTurnOptionsV1 } from "../src/session-transcript.js";
+import { createSessionAttachmentSnapshot } from "./session-attachment-snapshot.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -58,6 +61,7 @@ function applyTurnRuntimeOptions(session: Session, request: RunSessionTurnReques
     reasoningEffort: request.reasoningEffort ?? session.reasoningEffort,
     approvalMode: request.approvalMode ?? session.approvalMode,
     codexSandboxMode: request.codexSandboxMode ?? session.codexSandboxMode,
+    customAgentName: request.customAgentName ?? session.customAgentName,
   };
 }
 
@@ -77,6 +81,37 @@ export type SessionRuntimeServiceDeps = {
     userMessage: string,
     scope?: "workspace" | "session-folder",
   ): Promise<ComposerPreview>;
+  resolveSessionFolderAttachments?: (
+    session: Session,
+    attachments: SessionTurnAttachmentReference[],
+  ) => Promise<ComposerPreview>;
+  attachmentSnapshotNamespacePath?: string;
+  registerExternalApprovalInteraction?: (input: {
+    sessionId: string;
+    executionId: string;
+    request: LiveApprovalRequest;
+    signal: AbortSignal;
+  }) => Promise<LiveApprovalDecision> | LiveApprovalDecision;
+  registerExternalElicitationInteraction?: (input: {
+    sessionId: string;
+    executionId: string;
+    request: LiveElicitationRequest;
+    signal: AbortSignal;
+  }) => Promise<LiveElicitationResponse> | LiveElicitationResponse;
+  publishExternalProgress?: (input: {
+    executionId: string;
+    assistantText: string;
+    updatedAt: string;
+  }) => void;
+  persistExternalTurnContext?: (input: {
+    turnId: number;
+    sessionId: string;
+    executionId: string;
+    effectiveOptions: PublicTranscriptTurnOptionsV1;
+    attachments: readonly PublicTranscriptAttachmentV1[];
+    createdAt: string;
+    updatedAt: string;
+  }) => Awaitable<void>;
   resolveProviderSession?: (session: Session) => Session;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
@@ -85,6 +120,7 @@ export type SessionRuntimeServiceDeps = {
     provider: ModelCatalogProvider;
   };
   getProviderCodingAdapter(providerId: string | null | undefined): ProviderCodingAdapter;
+  isSessionCustomAgentAvailable?: (workspacePath: string, customAgentName: string) => Promise<boolean>;
   getSessionMemory(session: Session): SessionMemory;
   resolveProjectMemoryEntriesForPrompt(
     session: Session,
@@ -769,14 +805,16 @@ export class SessionRuntimeService {
     sessionId: string,
     catalogRevision: number,
     request: RunSessionTurnRequest,
+    executionId?: string,
   ): Promise<ExternalSessionTurnResult> {
-    return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision);
+    return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision, executionId);
   }
 
   private async runSessionTurnWithCatalog(
     sessionId: string,
     request: RunSessionTurnRequest,
     externalCatalogRevision: number | null,
+    externalExecutionId?: string,
   ): Promise<ExternalSessionTurnResult> {
     if (this.isRunInFlight(sessionId)) {
       throw new Error("このセッションはまだ実行中だよ。");
@@ -792,6 +830,7 @@ export class SessionRuntimeService {
       request,
       runAbortController,
       externalCatalogRevision,
+      externalExecutionId,
     );
     try {
       return await waitForSetupWithCancelDeadline(
@@ -851,7 +890,8 @@ export class SessionRuntimeService {
     sessionId: string,
     catalogRevision: number,
     request: RunSessionTurnRequest,
-  ): Promise<void> {
+    requestedProviderId?: string,
+  ): Promise<RunSessionTurnRequest> {
     const session = await this.deps.getSession(sessionId);
     if (!session) {
       throw new SessionTurnValidationError("SESSION_NOT_FOUND", "対象セッションが見つからないよ。");
@@ -870,6 +910,9 @@ export class SessionRuntimeService {
     }
     if (!request.userMessage.trim()) {
       throw new SessionTurnValidationError("INVALID_INPUT", "送信するメッセージが空だよ。");
+    }
+    if (requestedProviderId !== undefined && requestedProviderId !== session.provider) {
+      throw new SessionTurnValidationError("INVALID_INPUT", "Turn provider does not match the target Session provider.");
     }
 
     let currentCatalog: ReturnType<SessionRuntimeServiceDeps["resolveProviderCatalog"]>;
@@ -897,13 +940,27 @@ export class SessionRuntimeService {
       );
     }
 
+    if (session.provider === "codex") {
+      if (!request.codexSandboxMode || request.customAgentName !== undefined) {
+        throw new SessionTurnValidationError("INVALID_INPUT", "Codex Turn requires codexSandboxMode only.");
+      }
+    } else if (session.provider === "copilot") {
+      if (request.customAgentName === undefined || request.codexSandboxMode !== undefined) {
+        throw new SessionTurnValidationError("INVALID_INPUT", "Copilot Turn requires customAgentName only.");
+      }
+      if (
+        request.customAgentName
+        && !await this.deps.isSessionCustomAgentAvailable?.(session.workspacePath, request.customAgentName)
+      ) {
+        throw new SessionTurnValidationError("INVALID_INPUT", "指定されたcustom agentは利用できないよ。");
+      }
+    } else {
+      throw new SessionTurnValidationError("PROVIDER_UNAVAILABLE", "この provider は現在利用できないよ。");
+    }
+
     const requestedSession = applyTurnRuntimeOptions(session, request);
     const providerSession = this.deps.resolveProviderSession?.(requestedSession) ?? requestedSession;
-    const composerPreview = await this.deps.resolveComposerPreview(
-      providerSession,
-      request.userMessage,
-      "session-folder",
-    );
+    const composerPreview = await this.resolveExternalAttachments(providerSession, request);
     if (composerPreview.errors.length > 0) {
       throw new SessionTurnValidationError(
         "PATH_OUTSIDE_SESSION_FOLDER",
@@ -920,6 +977,7 @@ export class SessionRuntimeService {
     } catch {
       throw new SessionTurnValidationError("PROVIDER_UNAVAILABLE", "この provider は現在利用できないよ。");
     }
+    return request;
   }
 
   private async runSessionTurnInternal(
@@ -927,6 +985,7 @@ export class SessionRuntimeService {
     request: RunSessionTurnRequest,
     runAbortController: AbortController,
     externalCatalogRevision: number | null,
+    externalExecutionId?: string,
   ): Promise<ExternalSessionTurnResult> {
     const observedAt = (this.deps.currentDate ?? (() => new Date()))();
     const investigationStartedAt = Date.now();
@@ -979,11 +1038,15 @@ export class SessionRuntimeService {
 
     const turnSession = applyTurnRuntimeOptions(session, request);
     const providerSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
-    const composerPreview = await this.deps.resolveComposerPreview(
-      providerSession,
-      request.userMessage,
-      externalCatalogRevision === null ? "workspace" : "session-folder",
-    );
+    if (
+      externalCatalogRevision !== null
+      && request.attachments?.some((attachment) => attachment.identity === undefined)
+    ) {
+      throw new SessionTurnValidationError("PATH_OUTSIDE_SESSION_FOLDER", "SessionFolder attachment admission identity is missing.");
+    }
+    const composerPreview = externalCatalogRevision === null
+      ? await this.deps.resolveComposerPreview(providerSession, request.userMessage, "workspace")
+      : await this.resolveExternalAttachments(providerSession, request);
     throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
       throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
@@ -1083,6 +1146,28 @@ export class SessionRuntimeService {
       });
       const runningAuditCreateStartedAt = Date.now();
       runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
+      if (externalExecutionId && this.deps.persistExternalTurnContext) {
+        const effectiveOptions: PublicTranscriptTurnOptionsV1 = {
+          provider: runningSession.provider === "copilot" ? "copilot" : "codex",
+          model: runningSession.model,
+          reasoningEffort: runningSession.reasoningEffort,
+          approvalMode: runningSession.approvalMode,
+          sandboxMode: runningSession.provider === "codex" ? runningSession.codexSandboxMode : null,
+          customAgentName: runningSession.provider === "copilot" ? runningSession.customAgentName ?? null : null,
+        };
+        await this.deps.persistExternalTurnContext({
+          turnId: runningAuditLog.id,
+          sessionId,
+          executionId: externalExecutionId,
+          effectiveOptions,
+          attachments: (request.attachments ?? []).map((attachment) => ({
+            kind: attachment.kind,
+            relativePath: attachment.relativePath,
+          })),
+          createdAt: runningAuditLog.createdAt,
+          updatedAt: runningAuditLog.createdAt,
+        });
+      }
       logSessionRunStuckInvestigation("runtime.running-audit-create.done", {
         sessionId,
         auditLogId: runningAuditLog.id,
@@ -1171,14 +1256,15 @@ export class SessionRuntimeService {
         return;
       }
 
+      const runtimeAuditSession = applyTurnRuntimeOptions(activeRunningSession, request);
       const nextRunningAuditEntry: CreateAuditLogInput = {
         ...runningAuditEntry,
         phase: "running",
-        provider: activeRunningSession.provider,
-        model: activeRunningSession.model,
-        reasoningEffort: activeRunningSession.reasoningEffort,
-        approvalMode: activeRunningSession.approvalMode,
-        threadId: pickPreferredThreadId(nextLiveState.threadId, runningAuditEntry.threadId, activeRunningSession.threadId),
+        provider: runtimeAuditSession.provider,
+        model: runtimeAuditSession.model,
+        reasoningEffort: runtimeAuditSession.reasoningEffort,
+        approvalMode: runtimeAuditSession.approvalMode,
+        threadId: pickPreferredThreadId(nextLiveState.threadId, runningAuditEntry.threadId, runtimeAuditSession.threadId),
         assistantText: nextLiveState.assistantText.trim()
           ? toAuditTextPreview(nextLiveState.assistantText) ?? ""
           : runningAuditEntry.assistantText,
@@ -1199,23 +1285,49 @@ export class SessionRuntimeService {
       await enqueueAuditWrite(nextRunningAuditEntry, nextSignature);
     };
     await syncRunningAuditFromLiveState(initialLiveState);
-    const runProviderTurn = (turnSession: Session) => {
+    const runProviderTurn = async (turnSession: Session) => {
       const progressGeneration = ++liveProgressGeneration;
       const runtimeOptionSession = applyTurnRuntimeOptions(turnSession, request);
       const effectiveTurnSession = this.deps.resolveProviderSession?.(runtimeOptionSession) ?? runtimeOptionSession;
-      const providerPromise = providerAdapter.runSessionTurn({
+      const dispatchPreview = externalCatalogRevision === null
+        ? composerPreview
+        : await this.resolveExternalAttachments(effectiveTurnSession, request);
+      if (dispatchPreview.errors.length > 0) {
+        throw new SessionTurnValidationError(
+          "PATH_OUTSIDE_SESSION_FOLDER",
+          dispatchPreview.errors[0] ?? "添付の解決に失敗したよ。",
+        );
+      }
+      const requiresAttachmentSnapshot = externalCatalogRevision !== null && dispatchPreview.attachments.length > 0;
+      const snapshotNamespacePath = this.deps.attachmentSnapshotNamespacePath;
+      if (requiresAttachmentSnapshot && !snapshotNamespacePath) {
+        throw new Error("Session attachment snapshot namespace is unavailable.");
+      }
+      const attachmentSnapshot = requiresAttachmentSnapshot && snapshotNamespacePath
+        ? await createSessionAttachmentSnapshot(dispatchPreview.attachments, request.attachments ?? [], {
+          snapshotNamespacePath,
+        })
+        : null;
+      const providerPromise = Promise.resolve().then(() => providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         sessionMemory,
         projectMemoryEntries,
         providerCatalog: provider,
         userMessage: nextMessage,
         appSettings,
-        attachments: composerPreview.attachments,
+        attachments: attachmentSnapshot?.attachments ?? dispatchPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
-          const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
+          const decision = externalExecutionId && this.deps.registerExternalApprovalInteraction
+            ? this.deps.registerExternalApprovalInteraction({
+              sessionId,
+              executionId: externalExecutionId,
+              request: approvalRequest,
+              signal: runAbortController.signal,
+            })
+            : this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
           void syncRunningAuditFromLiveState({
             ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
@@ -1227,7 +1339,14 @@ export class SessionRuntimeService {
           return decision;
         },
         onElicitationRequest: (elicitationRequest) => {
-          const response = this.deps.waitForElicitationResponse(sessionId, elicitationRequest, runAbortController.signal);
+          const response = externalExecutionId && this.deps.registerExternalElicitationInteraction
+            ? this.deps.registerExternalElicitationInteraction({
+              sessionId,
+              executionId: externalExecutionId,
+              request: elicitationRequest,
+              signal: runAbortController.signal,
+            })
+            : this.deps.waitForElicitationResponse(sessionId, elicitationRequest, runAbortController.signal);
           const currentLiveState = this.deps.getLiveSessionRun(sessionId);
           void syncRunningAuditFromLiveState({
             ...(currentLiveState ?? buildEmptyLiveSessionRunState(sessionId, activeRunningSession.threadId)),
@@ -1256,10 +1375,31 @@ export class SessionRuntimeService {
           approvalRequest: currentLiveState?.approvalRequest ?? null,
           elicitationRequest: currentLiveState?.elicitationRequest ?? null,
         };
+        if (externalExecutionId) {
+          this.deps.publishExternalProgress?.({
+            executionId: externalExecutionId,
+            assistantText: nextLiveState.assistantText,
+            updatedAt: this.deps.currentTimestampLabel?.() ?? new Date().toISOString(),
+          });
+        }
         void syncRunningAuditFromLiveState(nextLiveState).catch((error) => {
           console.warn("Audit progress update failed", error);
         });
-      });
+      }))
+        .then(
+          async (result) => {
+            await attachmentSnapshot?.dispose();
+            return result;
+          },
+          async (error) => {
+            try {
+              await attachmentSnapshot?.dispose();
+            } catch (cleanupError) {
+              throw new AggregateError([error, cleanupError], "Provider turn and attachment snapshot cleanup failed.");
+            }
+            throw error;
+          },
+        );
       return waitForProviderTurnWithCancelDeadline(
         providerPromise,
         runAbortController.signal,
@@ -1747,6 +1887,19 @@ export class SessionRuntimeService {
         liveRunAfterFinally: this.deps.getLiveSessionRun(sessionId) ? "present" : "null",
       });
     }
+  }
+
+  private resolveExternalAttachments(
+    session: Session,
+    request: RunSessionTurnRequest,
+  ): Promise<ComposerPreview> {
+    if ((request.attachments?.length ?? 0) === 0) {
+      return Promise.resolve({ attachments: [], errors: [] });
+    }
+    if (!this.deps.resolveSessionFolderAttachments) {
+      throw new SessionTurnValidationError("RUNTIME_UNAVAILABLE", "SessionFolder attachments are unavailable.");
+    }
+    return this.deps.resolveSessionFolderAttachments(session, request.attachments ?? []);
   }
 
 }

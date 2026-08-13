@@ -22,17 +22,36 @@ import {
   type SessionRuntimeFileListInput,
   type SessionRuntimeFileReadTextInput,
   type SessionRuntimeFileWriteTextInput,
+  type SessionRuntimeInteractionListInput,
+  type SessionRuntimeInteractionRespondInput,
+  type SessionRuntimeInteractionRespondResult,
   type SessionRuntimeListInput,
   type SessionRuntimeOperation,
+  type SessionRuntimePublicExecution,
+  projectSessionInteraction,
+  type SessionRuntimeResultByOperation,
   type SessionRuntimeResultEnvelope,
   type SessionRuntimeRunInput,
   type SessionRuntimeRenameInput,
   type SessionRuntimeSessionInput,
   type SessionRuntimeSessionListInput,
   type SessionRuntimeTurnOptionsResult,
+  type SessionRuntimeTranscriptExportInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { SessionExecution } from "../src/session-execution.js";
+import {
+  SessionInteractionContinuationUnavailableError,
+  SessionInteractionKindMismatchError,
+  type SessionInteractionService,
+} from "./session-interaction-service.js";
+import {
+  SessionInteractionAlreadyResolvedError,
+  SessionInteractionIdempotencyConflictError,
+  SessionInteractionNotFoundError,
+  SessionInteractionTargetMismatchError,
+} from "./session-interaction-storage-v6.js";
+import type { SessionExecutionPublicProgressStorageV6 } from "./session-execution-public-progress-storage-v6.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import {
   SessionExecutionNotFoundError,
@@ -48,16 +67,29 @@ import {
 } from "./session-execution-storage-v6.js";
 import { SessionCrudError, type SessionCrudService } from "./session-crud-service.js";
 import { SessionFileServiceError, type SessionFileService } from "./session-file-service.js";
+import { SessionTranscriptServiceError, type SessionTranscriptService } from "./session-transcript-service.js";
 
 export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
     SessionExecutionService,
     "beginShutdown" | "run" | "enqueue" | "get" | "listPage" | "cancel" | "waitForTerminal" | "resolveReplay"
+  > & Partial<Pick<SessionExecutionService, "getRecord">>;
+  interactionService?: Pick<
+    SessionInteractionService,
+    "getPendingForExecution" | "listSessionInteractionsPage" | "respond" | "subscribeExecution"
   >;
+  progressStorage?: Pick<SessionExecutionPublicProgressStorageV6, "get">;
+  transcriptService?: Pick<SessionTranscriptService, "export">;
   crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
   fileService?: Pick<SessionFileService, "list" | "readText" | "writeText">;
   currentModelCatalog(): ModelCatalogSnapshot | null;
   isProviderEnabled(providerId: string): boolean;
+  isProviderSupported(providerId: string): boolean;
+  discoverSessionCustomAgents(workspacePath: string): Promise<Array<{
+    name: string;
+    displayName: string;
+    description: string;
+  }>>;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
@@ -90,13 +122,20 @@ export class SessionExternalApplicationService {
       assertApplicationResponseSize(request.operation, result, response);
       return response;
     } catch (error) {
-      return mapApplicationError(error, operation);
+      return mapApplicationError(error, operation, input);
     }
   }
 
-  private async executeValidated(operation: SessionRuntimeOperation, input: unknown): Promise<unknown> {
+  private async executeValidated(
+    operation: SessionRuntimeOperation,
+    input: unknown,
+  ): Promise<SessionRuntimeResultByOperation[SessionRuntimeOperation]> {
     if (operation === "runtime.catalog") {
-      return projectRuntimeCatalog(this.requireCurrentModelCatalog());
+      return projectRuntimeCatalog(
+        this.requireCurrentModelCatalog(),
+        this.deps.isProviderEnabled,
+        (providerId) => this.isProviderSupported(providerId),
+      );
     }
     if (operation === "session.create") {
       return this.deps.crudService.create(input as SessionRuntimeCreateInput);
@@ -133,19 +172,29 @@ export class SessionExternalApplicationService {
     }
     if (operation === "turn.get") {
       const request = input as SessionRuntimeExecutionInput;
-      return projectSessionExecution(this.deps.executionService.get(request.sessionId, request.executionId));
+      return this.projectExecution(request.sessionId, request.executionId);
     }
     if (operation === "turn.cancel") {
       const request = input as SessionRuntimeCancelInput;
-      return projectSessionExecution(await this.deps.executionService.cancel({
+      const execution = await this.deps.executionService.cancel({
         ...request,
         requestFingerprint: fingerprintCancel(request),
-      }));
+      });
+      return this.projectExecution(execution.sessionId, execution.id, execution);
+    }
+    if (operation === "interaction.list") {
+      return this.listInteractions(input as SessionRuntimeInteractionListInput);
+    }
+    if (operation === "interaction.respond") {
+      return this.respondToInteraction(input as SessionRuntimeInteractionRespondInput);
+    }
+    if (operation === "transcript.export") {
+      return this.requireTranscriptService().export(input as SessionRuntimeTranscriptExportInput);
     }
     throw new SessionRuntimeValidationError("Unsupported Session runtime operation.", { field: "operation" });
   }
 
-  private async run(input: SessionRuntimeRunInput): Promise<SessionExecution> {
+  private async run(input: SessionRuntimeRunInput): Promise<SessionRuntimePublicExecution> {
     const mutation = {
       sessionId: input.sessionId,
       request: { catalogRevision: input.catalogRevision, turn: input.turn },
@@ -158,14 +207,11 @@ export class SessionExternalApplicationService {
     }
     const execution = replay ?? await this.deps.executionService.run(mutation);
     if (input.responseMode === "deferred") {
-      return projectSessionExecution(execution);
+      return this.projectExecution(execution.sessionId, execution.id, execution);
     }
     const timeoutMs = input.waitTimeoutMs ?? SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS;
-    return projectSessionExecution(await waitWithoutCancel(
-      this.deps.executionService.waitForTerminal(input.sessionId, execution.id),
-      timeoutMs,
-      execution,
-    ));
+    await this.waitForObservation(input.sessionId, execution.id, timeoutMs);
+    return this.projectExecution(input.sessionId, execution.id, execution);
   }
 
   private async turnOptions(sessionId: string): Promise<SessionRuntimeTurnOptionsResult> {
@@ -179,7 +225,7 @@ export class SessionExternalApplicationService {
         "RUNTIME_UNAVAILABLE",
       );
     }
-    if (provider.id !== "codex") {
+    if (!this.isProviderSupported(provider.id)) {
       throw new SessionRuntimeValidationError(
         "Turn options are unavailable for this Session provider.",
         { providerId: provider.id },
@@ -193,9 +239,8 @@ export class SessionExternalApplicationService {
         "PROVIDER_DISABLED",
       );
     }
-    const result: SessionRuntimeTurnOptionsResult = {
+    const common = {
       sessionId: session.sessionId,
-      provider: { id: provider.id },
       catalogRevision: snapshot.revision,
       models: provider.models.map((model) => ({
         id: model.id,
@@ -203,8 +248,21 @@ export class SessionExternalApplicationService {
         reasoningEfforts: [...model.reasoningEfforts],
       })),
       approvalModes: approvalModeOptions.map((option) => ({ ...option })),
-      codexSandboxModes: codexSandboxModeOptions.map((option) => ({ ...option })),
     };
+    const result: SessionRuntimeTurnOptionsResult = provider.id === "codex"
+      ? {
+        ...common,
+        provider: { id: "codex" },
+        codexSandboxModes: codexSandboxModeOptions.map((option) => ({ ...option })),
+      }
+      : {
+        ...common,
+        provider: { id: "copilot" },
+        customAgents: [
+          { name: "", displayName: "Default", description: "" },
+          ...await (this.deps.discoverSessionCustomAgents?.(session.workspace.path) ?? Promise.resolve([])),
+        ],
+      };
     if (
       Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("turn.options", result)), "utf8")
       > SESSION_RUNTIME_MAX_RESPONSE_BYTES
@@ -214,7 +272,7 @@ export class SessionExternalApplicationService {
     return result;
   }
 
-  private async enqueue(input: SessionRuntimeEnqueueInput): Promise<SessionExecution> {
+  private async enqueue(input: SessionRuntimeEnqueueInput): Promise<SessionRuntimePublicExecution> {
     const mutation = {
       sessionId: input.sessionId,
       request: { catalogRevision: input.catalogRevision, turn: input.turn },
@@ -225,13 +283,14 @@ export class SessionExternalApplicationService {
     if (!replay) {
       this.requireCurrentCatalog(input.catalogRevision);
     }
-    return projectSessionExecution(replay ?? await this.deps.executionService.enqueue(mutation));
+    const execution = replay ?? await this.deps.executionService.enqueue(mutation);
+    return this.projectExecution(execution.sessionId, execution.id, execution);
   }
 
-  private list(input: SessionRuntimeListInput): { items: SessionExecution[]; nextCursor?: string } {
+  private list(input: SessionRuntimeListInput): { items: SessionRuntimePublicExecution[]; nextCursor?: string } {
     const afterSequence = input.cursor ? decodeListCursor(input.cursor, input.sessionId) : null;
-    const resultBase: { items: SessionExecution[]; nextCursor?: string } = {
-      items: [] as SessionExecution[],
+    const resultBase: { items: SessionRuntimePublicExecution[]; nextCursor?: string } = {
+      items: [],
     };
     let responseBytes = Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("turn.list", resultBase)), "utf8");
     let lastSequence: number | undefined;
@@ -248,7 +307,7 @@ export class SessionExternalApplicationService {
         }
         break;
       }
-      const item = projectSessionExecution(execution);
+      const item = this.projectExecution(input.sessionId, execution.id, execution);
       responseBytes += (resultBase.items.length > 0 ? 1 : 0) + Buffer.byteLength(JSON.stringify(item), "utf8");
       if (responseBytes > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
         throw new SessionRuntimeProjectionLimitError("result.items");
@@ -257,6 +316,106 @@ export class SessionExternalApplicationService {
       lastSequence = execution.sequence;
     }
     return resultBase;
+  }
+
+  private projectExecution(
+    sessionId: string,
+    executionId: string,
+    fallback?: SessionExecution,
+  ): SessionRuntimePublicExecution {
+    const record = this.deps.executionService.getRecord?.(sessionId, executionId)
+      ?? fallback
+      ?? this.deps.executionService.get(sessionId, executionId);
+    return projectSessionExecution(record, {
+      request: "request" in record ? record.request : undefined,
+      pendingInteraction: this.deps.interactionService?.getPendingForExecution(executionId) ?? null,
+      partialOutput: this.deps.progressStorage?.get(executionId) ?? null,
+    });
+  }
+
+  private listInteractions(input: SessionRuntimeInteractionListInput) {
+    const filter = {
+      ...(input.executionId === undefined ? {} : { executionId: input.executionId }),
+      ...(input.kind === undefined ? {} : { kind: input.kind }),
+      ...(input.state === undefined ? {} : { state: input.state }),
+    };
+    const afterSequence = input.cursor ? decodeInteractionCursor(input, input.cursor) : null;
+    const interactions = this.requireInteractionService().listSessionInteractionsPage(
+      input.sessionId,
+      afterSequence,
+      input.limit + 1,
+      filter,
+    );
+    const items = interactions.slice(0, input.limit).map(projectSessionInteraction);
+    return {
+      items,
+      ...(interactions.length > input.limit && items.length > 0
+        ? { nextCursor: encodeInteractionCursor(input, items[items.length - 1]!.sequence) }
+        : {}),
+    };
+  }
+
+  private async respondToInteraction(
+    input: SessionRuntimeInteractionRespondInput,
+  ): Promise<SessionRuntimeInteractionRespondResult> {
+    const answered = this.requireInteractionService().respond({
+      sessionId: input.sessionId,
+      executionId: input.executionId,
+      interactionId: input.interactionId,
+      response: input.response,
+      idempotencyKey: input.idempotencyKey,
+      respondedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }).interaction;
+    if (answered.state !== "answered") {
+      throw new Error("Session interaction response did not produce an answered interaction.");
+    }
+    if (input.responseMode === "wait") {
+      await this.waitForObservation(
+        input.sessionId,
+        input.executionId,
+        input.waitTimeoutMs ?? SESSION_RUNTIME_DEFAULT_WAIT_TIMEOUT_MS,
+      );
+    }
+    const interaction = projectSessionInteraction(answered);
+    if (interaction.state !== "answered") throw new Error("Answered interaction projection is invalid.");
+    return {
+      interaction,
+      execution: this.projectExecution(input.sessionId, input.executionId),
+    };
+  }
+
+  private async waitForObservation(sessionId: string, executionId: string, timeoutMs: number): Promise<void> {
+    if (isTerminalOrPending(this.deps.executionService.get(sessionId, executionId), this.deps.interactionService?.getPendingForExecution(executionId) ?? null)) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      let unsubscribe: () => void = () => undefined;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve();
+      };
+      const observe = () => {
+        const execution = this.deps.executionService.get(sessionId, executionId);
+        const pending = this.deps.interactionService?.getPendingForExecution(executionId) ?? null;
+        if (isTerminalOrPending(execution, pending)) finish();
+      };
+      const timeout = setTimeout(finish, timeoutMs);
+      unsubscribe = this.requireInteractionService().subscribeExecution(executionId, observe);
+      observe();
+      void this.deps.executionService.waitForTerminal(sessionId, executionId).then(finish, finish);
+    });
+  }
+
+  private requireInteractionService() {
+    if (!this.deps.interactionService) {
+      throw new SessionRuntimeValidationError("Session interactions are unavailable.", {}, "RUNTIME_UNAVAILABLE");
+    }
+    return this.deps.interactionService;
   }
 
   private requireCurrentCatalog(catalogRevision: number): void {
@@ -291,12 +450,33 @@ export class SessionExternalApplicationService {
     }
     return this.deps.fileService;
   }
+
+  private requireTranscriptService(): Pick<SessionTranscriptService, "export"> {
+    if (!this.deps.transcriptService) {
+      throw new SessionRuntimeValidationError(
+        "Session transcript export is unavailable.",
+        {},
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    return this.deps.transcriptService;
+  }
+
+  private isProviderSupported(providerId: string): boolean {
+    return this.deps.isProviderSupported?.(providerId) ?? (providerId === "codex" || providerId === "copilot");
+  }
 }
 
-function projectRuntimeCatalog(snapshot: ModelCatalogSnapshot): SessionRuntimeCatalogResult {
+function projectRuntimeCatalog(
+  snapshot: ModelCatalogSnapshot,
+  isProviderEnabled: (providerId: string) => boolean,
+  isProviderSupported: (providerId: string) => boolean,
+): SessionRuntimeCatalogResult {
   return {
     revision: snapshot.revision,
-    providers: snapshot.providers.map((provider) => ({
+    providers: snapshot.providers
+      .filter((provider) => isProviderSupported(provider.id) && isProviderEnabled(provider.id))
+      .map((provider) => ({
       id: provider.id,
       label: provider.label,
       defaultModelId: provider.defaultModelId,
@@ -306,13 +486,13 @@ function projectRuntimeCatalog(snapshot: ModelCatalogSnapshot): SessionRuntimeCa
         label: model.label,
         reasoningEfforts: [...model.reasoningEfforts],
       })),
-    })),
+      })),
   };
 }
 
 function assertApplicationResponseSize(
   operation: SessionRuntimeOperation,
-  result: unknown,
+  result: SessionRuntimeResultByOperation[SessionRuntimeOperation],
   response: SessionRuntimeResultEnvelope,
 ): void {
   if (Buffer.byteLength(JSON.stringify(response), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
@@ -428,7 +608,46 @@ function decodeListCursor(cursor: string, sessionId: string): number {
   }
 }
 
-function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string): SessionRuntimeError {
+function encodeInteractionCursor(input: SessionRuntimeInteractionListInput, afterSequence: number): string {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    operation: "interaction.list",
+    sessionId: input.sessionId,
+    executionId: input.executionId ?? null,
+    kind: input.kind ?? null,
+    state: input.state ?? null,
+    afterSequence,
+  }), "utf8").toString("base64url");
+}
+
+function decodeInteractionCursor(input: SessionRuntimeInteractionListInput, cursor: string): number {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (
+      value.version !== 1
+      || value.operation !== "interaction.list"
+      || value.sessionId !== input.sessionId
+      || value.executionId !== (input.executionId ?? null)
+      || value.kind !== (input.kind ?? null)
+      || value.state !== (input.state ?? null)
+      || !Number.isSafeInteger(value.afterSequence)
+      || (value.afterSequence as number) < 1
+    ) throw new Error("invalid cursor");
+    return value.afterSequence as number;
+  } catch {
+    throw new SessionRuntimeValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
+}
+
+function isTerminalOrPending(execution: SessionExecution, pending: unknown): boolean {
+  return pending !== null
+    || execution.state === "completed"
+    || execution.state === "failed"
+    || execution.state === "canceled"
+    || execution.state === "interrupted";
+}
+
+function mapApplicationError(error: unknown, operation: SessionRuntimeOperation | string, input?: unknown): SessionRuntimeError {
   if (error instanceof SessionCrudError) {
     return createSessionRuntimeError({
       code: error.code,
@@ -446,6 +665,7 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "turn.run"
         || operation === "turn.enqueue"
         || operation === "turn.cancel"
+        || operation === "interaction.respond"
         || operation === "session.files.write_text"
         ? "applied"
         : "not_applied",
@@ -453,6 +673,15 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
     });
   }
   if (error instanceof SessionFileServiceError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      effect: error.effect,
+      details: error.details,
+    });
+  }
+  if (error instanceof SessionTranscriptServiceError) {
     return createSessionRuntimeError({
       code: error.code,
       message: error.message,
@@ -487,6 +716,18 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
   if (error instanceof SessionExecutionShuttingDownError) {
     return createSessionRuntimeError({ code: error.code, message: error.message });
   }
+  if (error instanceof SessionInteractionNotFoundError || error instanceof SessionInteractionTargetMismatchError) {
+    return createSessionRuntimeError({ code: "INTERACTION_NOT_FOUND", message: "The Session interaction was not found." });
+  }
+  if (error instanceof SessionInteractionAlreadyResolvedError) {
+    return createSessionRuntimeError({ code: "INTERACTION_ALREADY_RESOLVED", message: "The Session interaction is already resolved." });
+  }
+  if (error instanceof SessionInteractionIdempotencyConflictError) {
+    return createSessionRuntimeError({ code: "IDEMPOTENCY_CONFLICT", message: "The idempotency key was reused with a different response." });
+  }
+  if (error instanceof SessionInteractionKindMismatchError || error instanceof SessionInteractionContinuationUnavailableError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
+  }
   if (error instanceof SessionTurnValidationError) {
     return createSessionRuntimeError({
       code: error.code,
@@ -501,15 +742,18 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
     code: "RUNTIME_UNAVAILABLE",
     message: "The Session operation could not be completed.",
     retryable: true,
-    effect: isMutationOperation(operation) ? "indeterminate" : "not_applied",
+    effect: isMutationOperation(operation, input) ? "indeterminate" : "not_applied",
   });
 }
 
-function isMutationOperation(operation: SessionRuntimeOperation | string): boolean {
+function isMutationOperation(operation: SessionRuntimeOperation | string, input?: unknown): boolean {
   return operation === "session.create"
     || operation === "session.rename"
     || operation === "turn.run"
     || operation === "turn.enqueue"
     || operation === "turn.cancel"
-    || operation === "session.files.write_text";
+    || operation === "interaction.respond"
+    || operation === "session.files.write_text"
+    || (operation === "transcript.export"
+      && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
 }

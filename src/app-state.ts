@@ -53,6 +53,8 @@ export type {
   ComposerAttachmentKind,
   ComposerAttachmentSource,
   ComposerPreview,
+  SessionTurnAttachmentIdentity,
+  SessionTurnAttachmentReference,
   DiffRow,
   DiscoveredCustomAgent,
   DiscoveredCustomAgentSource,

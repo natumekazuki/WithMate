@@ -14,3 +14,13 @@ test("EXT-LIFECYCLE-04: shutdown後のGUI completion callbackはexecution runtim
     /function requireSessionExecutionService\(\)[\s\S]*?if \(sessionExternalRuntimeShuttingDown\)[\s\S]*?throw new SessionExecutionShuttingDownError\(\)[\s\S]*?new SessionExecutionStorageV6/,
   );
 });
+
+test("shutdown cleanup は interaction expiry failure 後も execution drain を実行する", async () => {
+  const mainSource = await readFile(new URL("../../src-electron/main.ts", import.meta.url), "utf8");
+
+  assert.match(
+    mainSource,
+    /const errors: unknown\[\] = \[\];[\s\S]*?expirePendingForShutdown\([\s\S]*?errors\.push\(error\);[\s\S]*?await sessionExecutionService\?\.drainForShutdown\(\);/,
+  );
+  assert.match(mainSource, /new AggregateError\(errors, "Session shutdown cleanup failed\."\)/);
+});

@@ -116,7 +116,18 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
 
   const waitForHandlersToDrain = async (): Promise<void> => {
     if (activeHandlers === 0) return;
-    await new Promise<void>((resolve) => handlerDrainWaiters.add(resolve));
+    await new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        handlerDrainWaiters.delete(finish);
+        resolve();
+      };
+      const timeout = setTimeout(finish, shutdownGraceMs);
+      handlerDrainWaiters.add(finish);
+    });
   };
 
   const server = createServer(async (request, response) => {

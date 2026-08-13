@@ -206,6 +206,29 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  it("EXT-QUEUE-08: admission exhaustionはFIFO先頭をfailedへ永続化する", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue(enqueueInput(1));
+      fixture.storage.enqueue(enqueueInput(2));
+
+      const failed = fixture.storage.failNextQueued(
+        "session-1",
+        "2026-08-10T00:01:00.000Z",
+        "2026-08-11T00:01:00.000Z",
+      );
+
+      assert.equal(failed?.id, "execution-1");
+      assert.equal(failed?.state, "failed");
+      assert.equal(failed?.errorCode, "QUEUE_ADMISSION_FAILURE");
+      assert.equal(failed?.reason, "queue_admission_exhausted");
+      assert.equal(fixture.storage.get("execution-2")?.state, "queued");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("E-03: 起動時reconciliation用にrunningをinterruptedへ収束する", async () => {
     const fixture = await createFixture();
     try {
@@ -225,6 +248,26 @@ describe("SessionExecutionStorageV6", () => {
 
       const next = fixture.storage.admitNextQueued("session-1", "2026-08-10T00:03:00.000Z");
       assert.equal(next?.id, "execution-2");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-SHUTDOWN-07: shutdown時のrunningを専用reasonでinterruptedへ収束する", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue(enqueueInput(1));
+      fixture.storage.admitNextQueued("session-1", "2026-08-10T00:01:00.000Z");
+
+      const interrupted = fixture.storage.interruptRunningForShutdown(
+        "2026-08-10T00:02:00.000Z",
+        "2026-08-11T00:02:00.000Z",
+      );
+
+      assert.deepEqual(interrupted.map((item) => item.id), ["execution-1"]);
+      assert.equal(interrupted[0]?.state, "interrupted");
+      assert.equal(interrupted[0]?.reason, "runtime_shutdown");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

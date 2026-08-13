@@ -61,10 +61,10 @@ describe("SessionCrudService", () => {
       db.close();
       const service = new SessionCrudService({
         storage,
-        resolveLaunchSelection: async () => {
+        resolveLaunchSelection: async (providerId) => {
           launchSelectionCount += 1;
           return {
-            provider: "codex",
+            provider: providerId,
             catalogRevision,
             model: "gpt-test",
             reasoningEffort: "high",
@@ -167,6 +167,15 @@ describe("SessionCrudService", () => {
       assert.equal(listedOrdinaryDirectory?.workspace.path, ordinaryDirectory.workspace.path);
       assert.equal("branch" in listedOrdinaryDirectory!.workspace, false);
       assert.equal((await service.get(ordinaryDirectory.sessionId)).workspace.branch, "feature/current");
+
+      const copilot = await service.create({
+        ...input,
+        provider: "copilot",
+        workspace: { kind: "session_folder" },
+        idempotencyKey: "create-key-copilot",
+      });
+      assert.equal(copilot.provider.id, "copilot");
+      assert.equal(storage.getSession(copilot.sessionId)?.provider, "copilot");
     } finally {
       storage.close();
       await removeDirectory(tempDirectory);

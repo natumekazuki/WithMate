@@ -80,6 +80,12 @@ test("resolveProviderCodingAdapter と resolveProviderBackgroundAdapter は prov
     }),
     copilotAdapter,
   );
+
+  assert.throws(() => resolveProviderCodingAdapter({
+    providerId: "unknown",
+    codexAdapter,
+    copilotAdapter,
+  }), /Unsupported provider adapter/);
 });
 
 test("fetchProviderQuotaTelemetry は adapter と app settings を使って quota を取得する", async () => {

@@ -20,6 +20,10 @@ import {
   CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
+  CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
@@ -178,6 +182,8 @@ describe("database-schema-v6", () => {
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL), true);
     } finally {
       db.close();
     }
@@ -286,6 +292,54 @@ describe("database-schema-v6", () => {
           { idempotency_key: "pending-key", state: "pending", result_json: null },
         ],
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schemaは既存interactionとidempotencyを保持してexecution expiry reasonを追加する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("PRAGMA foreign_keys = ON;");
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+          created_at, updated_at, last_active_at
+        ) VALUES ('interaction-migration', 'Migration', 'active', 'codex', 1, 'gpt-5',
+          'on-request', ?, ?, ?)
+      `).run("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO session_executions_v6 (
+          id, session_id, operation, state, request_json, created_at, updated_at
+        ) VALUES ('execution-migration', 'interaction-migration', 'turn.run', 'running', '{}', ?, ?)
+      `).run("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z");
+      db.exec("DROP TABLE session_interaction_idempotency_v6; DROP TABLE session_interactions_v6;");
+      db.exec(CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL
+        .replace("'runtime_shutdown',\n      'execution_canceled',\n      'execution_terminal'", "'runtime_shutdown'"));
+      db.exec(CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL);
+      db.prepare(`
+        INSERT INTO session_interactions_v6 (
+          id, execution_id, kind, state, public_payload_json, created_at, updated_at
+        ) VALUES ('interaction-legacy', 'execution-migration', 'approval', 'pending', '{}', ?, ?)
+      `).run("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO session_interaction_idempotency_v6 (
+          operation, idempotency_key, request_fingerprint, interaction_id, created_at, expires_at
+        ) VALUES ('interaction.respond', 'response-legacy', 'fingerprint', 'interaction-legacy', ?, ?)
+      `).run("2026-08-13T00:00:00.000Z", "2026-08-14T00:00:00.000Z");
+
+      ensureV6Schema(db);
+
+      const schema = db.prepare(`
+        SELECT sql FROM sqlite_schema WHERE type = 'table' AND name = 'session_interactions_v6'
+      `).get() as { sql: string };
+      assert.equal(schema.sql.includes("'execution_terminal'"), true);
+      assert.equal((db.prepare(`
+        SELECT COUNT(*) AS count FROM session_interactions_v6 WHERE id = 'interaction-legacy'
+      `).get() as { count: number }).count, 1);
+      assert.equal((db.prepare(`
+        SELECT COUNT(*) AS count FROM session_interaction_idempotency_v6 WHERE idempotency_key = 'response-legacy'
+      `).get() as { count: number }).count, 1);
     } finally {
       db.close();
     }

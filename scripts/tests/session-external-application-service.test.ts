@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { SessionExecution } from "../../src/session-execution.js";
+import type { SessionInteraction } from "../../src/session-interaction.js";
 import {
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SessionRuntimeProjectionLimitError,
@@ -33,11 +34,13 @@ const mutationInput = {
   idempotencyKey: "key-1",
   responseMode: "deferred" as const,
   turn: {
+    provider: "codex" as const,
     userMessage: "hello",
     model: "gpt-5.4",
     reasoningEffort: "high" as const,
     approvalMode: "on-request" as const,
     codexSandboxMode: "workspace-write" as const,
+    attachments: [],
   },
 };
 
@@ -70,6 +73,64 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
   const getResponse = await service.execute("session.get", { sessionId: "missing" });
   assert.equal("error" in getResponse && getResponse.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
+});
+
+test("EXT-TRANSCRIPT-13: transcript.exportを専用serviceへdispatchし結果をそのまま返す", async () => {
+  const input = {
+    sessionId: "session-1",
+    format: "json" as const,
+    maxBytes: 1024,
+    destination: { kind: "inline" as const },
+  };
+  const result = { destination: "inline" as const, format: "json" as const, byteLength: 2, content: "{}" };
+  const service = new SessionExternalApplicationService({
+    executionService: {} as never,
+    crudService: {} as never,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    transcriptService: { export: async (received) => {
+      assert.deepEqual(received, input);
+      return result;
+    } },
+  });
+  const response = await service.execute("transcript.export", input);
+  assert.deepEqual(response, {
+    schemaVersion: "withmate-session-result-v2",
+    operation: "transcript.export",
+    result,
+  });
+});
+
+test("EXT-TRANSCRIPT-13: inline transcript.exportの予期しないfailureはnot_appliedを返す", async () => {
+  const service = new SessionExternalApplicationService({
+    executionService: {} as never,
+    crudService: {} as never,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    transcriptService: { export: async () => { throw new Error("publish response lost"); } },
+  });
+  const response = await service.execute("transcript.export", {
+    sessionId: "session-1",
+    format: "json",
+    maxBytes: 1024,
+    destination: { kind: "inline" },
+  });
+  assert.equal("error" in response && response.error.effect, "not_applied");
+});
+
+test("EXT-TRANSCRIPT-13: SessionFolder transcript.exportの予期しないfailureはindeterminateを返す", async () => {
+  const service = new SessionExternalApplicationService({
+    executionService: {} as never,
+    crudService: {} as never,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    transcriptService: { export: async () => { throw new Error("publish response lost"); } },
+  });
+  const response = await service.execute("transcript.export", {
+    sessionId: "session-1", format: "json", maxBytes: 1024,
+    destination: { kind: "session_folder", relativePath: "transcript.json", replace: false, idempotencyKey: "export-1" },
+  });
+  assert.equal("error" in response && response.error.effect, "indeterminate");
 });
 
 test("SF-ADAPTER-02: Session file operationsを同じapplication serviceへdispatchする", async () => {
@@ -344,9 +405,36 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
           privateModelMetadata: "hidden",
         }],
         privateProviderMetadata: "hidden",
+      }, {
+        id: "copilot",
+        label: "Copilot",
+        defaultModelId: "claude-sonnet",
+        defaultReasoningEffort: "high",
+        models: [{ id: "claude-sonnet", label: "Claude Sonnet", reasoningEfforts: ["high"] }],
+      }, {
+        id: "disabled-provider",
+        label: "Disabled",
+        defaultModelId: "disabled-model",
+        defaultReasoningEffort: "medium",
+        models: [],
+      }, {
+        id: "unknown-provider",
+        label: "Unknown",
+        defaultModelId: "unknown-model",
+        defaultReasoningEffort: "medium",
+        models: [],
       }],
       privateCatalogMetadata: "hidden",
     }) as ModelCatalogSnapshot,
+    isProviderEnabled: (providerId) => providerId !== "disabled-provider",
+    isProviderSupported: (providerId) => providerId === "codex" || providerId === "copilot" || providerId === "disabled-provider",
+    discoverSessionCustomAgents: async () => [],
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); },
+      async rename() { throw new Error("unused"); },
+    },
     executionService: {
       beginShutdown() { executionInvoked = true; },
       async run() { executionInvoked = true; return execution; },
@@ -363,7 +451,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
 
   assert.equal(executionInvoked, false);
   assert.deepEqual(response, {
-    schemaVersion: "withmate-session-result-v1",
+    schemaVersion: "withmate-session-result-v2",
     operation: "runtime.catalog",
     result: {
       revision: 7,
@@ -376,6 +464,16 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
           id: "gpt-5.4",
           label: "GPT-5.4",
           reasoningEfforts: ["medium", "high"],
+        }],
+      }, {
+        id: "copilot",
+        label: "Copilot",
+        defaultModelId: "claude-sonnet",
+        defaultReasoningEffort: "high",
+        models: [{
+          id: "claude-sonnet",
+          label: "Claude Sonnet",
+          reasoningEfforts: ["high"],
         }],
       }],
     },
@@ -460,7 +558,7 @@ test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だ�
   assert.equal(executionInvoked, false);
   assert.equal(catalogReads, 1);
   assert.deepEqual(response, {
-    schemaVersion: "withmate-session-result-v1",
+    schemaVersion: "withmate-session-result-v2",
     operation: "turn.options",
     result: {
       sessionId: "session-1",
@@ -585,19 +683,69 @@ test("TURN-OPTIONS-CAPABILITY-04: 非対応providerとdisabled providerを候補
       async create() { throw new Error("unused"); },
       async list() { throw new Error("unused"); },
       async get() {
-        return { sessionId: "session-1", provider: { id: providerId, catalogRevision: 2 } } as never;
+        return {
+          sessionId: "session-1",
+          provider: { id: providerId, catalogRevision: 2 },
+          workspace: { kind: "directory", label: "workspace", path: "C:/workspace", branch: null },
+        } as never;
       },
       async rename() { throw new Error("unused"); },
     },
   });
 
-  const unsupported = await createService("copilot", true).execute("turn.options", { sessionId: "session-1" });
+  const unsupported = await createService("unknown", true).execute("turn.options", { sessionId: "session-1" });
   const disabled = await createService("codex", false).execute("turn.options", { sessionId: "session-1" });
 
   assert.equal("error" in unsupported && unsupported.error.code, "RUNTIME_UNAVAILABLE");
   assert.equal("error" in unsupported && unsupported.error.effect, "not_applied");
   assert.equal("error" in disabled && disabled.error.code, "PROVIDER_DISABLED");
   assert.equal("error" in disabled && disabled.error.effect, "not_applied");
+});
+
+test("EXT-PROVIDER-01: Copilot turn.optionsはpublic custom agentだけを投影する", async () => {
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({
+      revision: 5,
+      providers: [{
+        id: "copilot",
+        label: "Copilot",
+        defaultModelId: "claude-sonnet",
+        defaultReasoningEffort: "high",
+        models: [{ id: "claude-sonnet", label: "Claude Sonnet", reasoningEfforts: ["high"] }],
+      }],
+    }),
+    isProviderEnabled: () => true,
+    isProviderSupported: (providerId) => providerId === "copilot",
+    discoverSessionCustomAgents: async () => [{
+      name: "reviewer",
+      displayName: "Reviewer",
+      description: "Review changes",
+    }],
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { throw new Error("unused"); }, listPage() { return []; },
+      async cancel() { throw new Error("unused"); }, async waitForTerminal() { throw new Error("unused"); },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); }, async list() { throw new Error("unused"); },
+      async get() {
+        return {
+          sessionId: "session-1",
+          provider: { id: "copilot", catalogRevision: 5 },
+          workspace: { kind: "directory", label: "workspace", path: "C:/workspace", branch: null },
+        } as never;
+      },
+      async rename() { throw new Error("unused"); },
+    },
+  });
+
+  const response = await service.execute("turn.options", { sessionId: "session-1" });
+  assert.equal("result" in response && response.result.provider.id, "copilot");
+  assert.deepEqual("result" in response && "customAgents" in response.result && response.result.customAgents, [
+    { name: "", displayName: "Default", description: "" },
+    { name: "reviewer", displayName: "Reviewer", description: "Review changes" },
+  ]);
+  assert.equal("result" in response && "codexSandboxModes" in response.result, false);
 });
 
 test("Session application service persists catalog revision with the turn and returns an allowlisted projection", async () => {
@@ -876,4 +1024,154 @@ test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ�
   assert.equal("error" in response && response.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in response && response.error.retryable, false);
   assert.equal("error" in response && response.error.effect, "not_applied");
+});
+
+test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpublic executionを返す", async () => {
+  const answered = {
+    sequence: 1,
+    id: "interaction-1",
+    sessionId: "session-1",
+    executionId: "execution-1",
+    kind: "approval" as const,
+    state: "answered" as const,
+    publicPayload: { title: "Approve", summary: "Run command" },
+    response: { action: "approve" as const, submittedFields: [] },
+    expiryReason: null,
+    createdAt: "2026-08-13T00:00:00.000Z",
+    resolvedAt: "2026-08-13T00:01:00.000Z",
+    updatedAt: "2026-08-13T00:01:00.000Z",
+  };
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; },
+      getRecord() { return { ...execution, request: { catalogRevision: 4, turn: mutationInput.turn }, sequence: 1 }; },
+      listPage() { return []; }, async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+    interactionService: {
+      getPendingForExecution() { return null; }, listSessionInteractionsPage() { return []; },
+      respond() { return { interaction: answered, replayed: false }; }, subscribeExecution() { return () => undefined; },
+    } as never,
+    progressStorage: {
+      get() { return { executionId: "execution-1", assistantText: "partial", truncated: false, updatedAt: "now" }; },
+    },
+    crudService: {
+      async create() { throw new Error("unused"); }, async list() { throw new Error("unused"); },
+      async get() { throw new Error("unused"); }, async rename() { throw new Error("unused"); },
+    },
+  });
+  const response = await service.execute("interaction.respond", {
+    sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+    response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
+  });
+  assert.ok("result" in response);
+  if (!("result" in response)) return;
+  assert.equal(response.result.interaction.state, "answered");
+  assert.equal(response.result.execution.effectiveTurn?.provider, "codex");
+  assert.deepEqual(response.result.execution.attachments, []);
+  assert.equal(response.result.execution.partialOutput?.assistantText, "partial");
+  assert.equal("provider" in response.result.interaction.request, false);
+});
+
+test("EXT-INTERACTION-11/EXT-OBSERVATION-12: turn.run waitはCopilotでも最初のpending interactionを返す", async () => {
+  let pending: SessionInteraction | null = null;
+  let observer: (() => void) | null = null;
+  const copilotTurn = {
+    provider: "copilot" as const,
+    userMessage: "hello",
+    model: "claude-sonnet-4",
+    reasoningEffort: "high" as const,
+    approvalMode: "on-request" as const,
+    customAgentName: "",
+    attachments: [],
+  };
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run() {
+        setTimeout(() => {
+          pending = {
+            sequence: 1, id: "interaction-1", sessionId: "session-1", executionId: "execution-1",
+            kind: "approval", state: "pending", publicPayload: { title: "Approve", summary: "Run command" },
+            response: null, expiryReason: null, createdAt: "now", resolvedAt: null, updatedAt: "now",
+          };
+          observer?.();
+        }, 0);
+        return execution;
+      },
+      async enqueue() { throw new Error("unused"); }, resolveReplay() { return null; }, get() { return execution; },
+      getRecord() { return { ...execution, request: { catalogRevision: 4, turn: copilotTurn }, sequence: 1 }; },
+      listPage() { return []; }, async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { return new Promise<SessionExecution>(() => undefined); },
+    },
+    interactionService: {
+      getPendingForExecution() { return pending; }, listSessionInteractionsPage() { return []; },
+      respond() { throw new Error("unused"); },
+      subscribeExecution(_executionId: string, next: () => void) { observer = next; return () => { observer = null; }; },
+    } as never,
+  });
+
+  const response = await service.execute("turn.run", {
+    ...mutationInput,
+    turn: copilotTurn,
+    responseMode: "wait",
+    waitTimeoutMs: 500,
+  });
+
+  assert.ok("result" in response);
+  if (!("result" in response)) return;
+  assert.equal(response.result.effectiveTurn?.provider, "copilot");
+  assert.equal(response.result.pendingInteraction?.interactionId, "interaction-1");
+});
+
+test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending interactionまで待つ", async () => {
+  let pending: SessionInteraction | null = null;
+  let observer: (() => void) | null = null;
+  const answered: SessionInteraction = {
+    sequence: 1, id: "interaction-1", sessionId: "session-1", executionId: "execution-1",
+    kind: "approval", state: "answered", publicPayload: { title: "Approve", summary: "Run command" },
+    response: { action: "approve", submittedFields: [] }, expiryReason: null,
+    createdAt: "now", resolvedAt: "now", updatedAt: "now",
+  };
+  const service = new SessionExternalApplicationService({
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; },
+      getRecord() { return { ...execution, request: { catalogRevision: 4, turn: mutationInput.turn }, sequence: 1 }; },
+      listPage() { return []; }, async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { return new Promise<SessionExecution>(() => undefined); },
+    },
+    interactionService: {
+      getPendingForExecution() { return pending; }, listSessionInteractionsPage() { return []; },
+      respond() {
+        setTimeout(() => {
+          pending = {
+            sequence: 2, id: "interaction-2", sessionId: "session-1", executionId: "execution-1",
+            kind: "elicitation", state: "pending", publicPayload: { mode: "form", message: "Next", fields: [] },
+            response: null, expiryReason: null, createdAt: "later", resolvedAt: null, updatedAt: "later",
+          };
+          observer?.();
+        }, 0);
+        return { interaction: answered, replayed: false };
+      },
+      subscribeExecution(_executionId: string, next: () => void) { observer = next; return () => { observer = null; }; },
+    } as never,
+  });
+
+  const response = await service.execute("interaction.respond", {
+    sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+    response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1",
+    responseMode: "wait", waitTimeoutMs: 500,
+  });
+
+  assert.ok("result" in response);
+  if (!("result" in response)) return;
+  assert.equal(response.result.interaction.state, "answered");
+  assert.equal(response.result.execution.pendingInteraction?.interactionId, "interaction-2");
 });

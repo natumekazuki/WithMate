@@ -2,7 +2,7 @@
 
 - 作成日: 2026-08-10
 - タスク: Session External Runtime の実装
-- 状態: Complete
+- 状態: In Progress（holistic review finding対応）
 
 ## Goal
 
@@ -115,6 +115,33 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 ## Open Questions
 
 - なし。実装中にaccepted contract、owner、scope、consumerが変わる場合は、このplanのGateを再判定する。
+
+## Accepted Surface Completion Prerequisite
+
+- Gate: `ready`
+- Trigger: Active designとADR 021が公開する17操作に対し、`interaction.list`、`interaction.respond`、`transcript.export`と、TurnのSessionFolder attachment、未解決interaction、partial outputの投影が未実装
+- Disposition: 単なるadapter追加では永続化、provider continuation、filesystem identity、privacy、resource limitを閉じられないため、独立したboundary prerequisiteを次の順で実装する
+
+### Invariant Matrix
+
+| ID | Invariant | Scope / owner | Failure mode | Consumer impact | Direct verification |
+| --- | --- | --- | --- | --- | --- |
+| EXT-ATTACH-10 | 外部Turnのattachmentは対象SessionFolder内の明示relative pathだけを最大32件受理し、admission時とdispatch直前にidentityとkindを再検証する | shared Turn contract、composer attachment boundary、provider adapter | symlink/junctionまたは差し替え先へ追従する | 対象Session外fileの読取、誤fileのprovider送信 | absolute、`..`、root、重複、kind mismatch、symlink/junction、dispatch時差し替えのcontract test |
+| EXT-INTERACTION-11 | interactionはexecutionに属するdurable stateで、一executionにpendingは最大1件、answer commitとidempotency recordを同一transactionにする | interaction storage/service | response lossで二重resolve、restart後に古いcontinuationへ回答する | provider side effect重複、別executionへの回答 | tuple ownership、replay/conflict、二重応答、commit前後failure、restart/shutdown reconciliation test |
+| EXT-OBSERVATION-12 | waitはterminal、pending interaction、timeoutの最初を取りこぼさず、公開partial outputはprovider-neutral textだけをboundedに永続化する | execution observation/public progress owner | subscribe前のinteractionを見失う、private provider payloadを保存する | callerの無期限待機、privacy漏洩 | subscribe-before-read競合、全state projection、1 MiB UTF-8 truncation、restart test |
+| EXT-TRANSCRIPT-13 | transcriptはpublic message/turn/interaction projectionだけからversioned JSONを作り、Markdownは同じprojectionから派生させる | transcript projector | raw provider payload、absolute path、elicitation値を出力する | private data漏洩、adapter間不整合 | canonical JSON/Markdown、legacy partial、privacy exclusion test |
+| EXT-EXPORT-14 | SessionFolder exportはbounded streamingと同directory atomic publishを使い、response loss/crash後もidempotencyで完成fileへ収束する | transcript serviceとidentity-bound writer | 部分file公開、既存file破壊、rename後のeffect不明 | artifact破損または重複 | inline/folder limit、replace、rename前後crash、replay/conflict、temp cleanup test |
+
+### Dependency Order
+
+1. explicit SessionFolder attachment境界を閉じる
+2. durable interaction、execution observation、partial outputを一体で閉じる
+3. 1と2のpublic projectionを正本にtranscript inline/SessionFolder exportを閉じる
+4. CLI/MCPを17操作へ揃え、operation別request/result schemaとannotation inventoryを検証する
+
+- ADR gate: ADR 021のaccepted decisionを実装するため追加ADR不要
+- Architecture document gate: ownerとrestart/atomic orderingへのpointerだけを更新し、exact fieldはtype/schema/testを正本とする
+- Review gate: attachmentはfilesystem identity/provider parity、interactionはcontract projection/lifecycle concurrency、transcriptはprojection privacy/identity cleanupのtargeted reviewを各一度行う。統合後は未確認cross-subsystem interactionが残るため`Full-review gate=run`とする
 
 ## Slice 4 Candidate Evidence
 
@@ -546,3 +573,156 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
 - Final closure chain: holistic finding二件はCandidate c5上でfinding familyとresulting deltaに限定したtargeted closureを行い、Candidate c6ではmigration validation gapのclosureとlisting familyへのtest-only delta非影響だけを同じreviewerへ確認する。`SF-OWN`、`SF-PATH`、`SF-ADAPTER`にはproduction deltaがなく、identity-bound helperの既存GUI callerは上限未指定で従来の全件snapshotを維持する
 - Candidate c6 targeted closure: `SF-WRITE-TERMINAL/filesystem-storage-lifecycle`と`SF-LIMIT-SCAN/resource-pagination`はいずれもCandidate verification `verified`、blockingなし、期限内approve。前者は既存行入りmigration testでc5のvalidation gapを閉じた。後者はlisting対象4 fileがc5とbyte-identicalであることと独立19 testでdelta非影響を確認した
 - Residual validation gap: 複数の小directoryを横断してaggregate scan budgetを使い切る専用testはない。共有budgetのsource確認、flat directoryのmetadata取得前拒否、recursive pagination testは存在し、Candidate c6のdelta由来ではないためnon-blockingとする
+
+## External Runtime Review Repair
+
+### Task Brief
+
+- Goal: Session files実装後の外部Session runtimeを、accepted public contract、credential isolation、終了時のbounded lifecycle、provider-neutralなSession/Turn操作へ収束する
+- Scope: Windows discovery artifact、execution shutdown/queue drain、Session progress audit、runtime catalog、Session create、Turn options/run/enqueue、CLI/MCP schemaとannotation、acceptedだが未接続のinteraction/transcript surface
+- Excluded scope: Memory runtime、GUI固有の新機能、未知providerの自動fallback、review範囲外の一般的hardening
+- Done: 下表のblocking familyをdirect checkと必要なtargeted reviewで閉じ、typecheck/build/full testを最終sourceで通す。別subsystemを要求するpublic surface prerequisiteは独立sliceとして実装・検証する
+
+### Pre-Implementation Closure Plan
+
+- Gate: `ready`
+- Accepted contract:
+  - ADR 021の17 public operations、provider/catalog revisionの明示、provider固有Turn optionのexact projection、SessionFolder authority、外部adapter間の同一契約
+  - `docs/design/session-external-runtime.md`のruntime discovery security、bounded shutdown、public projection、operation別result、MCP metadata
+  - ユーザー指定により、`runtime.catalog`をCodexへ縮小せず、外部Session runtimeが対応する有効providerをSession createからTurn実行まで利用可能にする
+- Canonical owners:
+  - request/result mappingとstrict validation: `src/session-external-runtime-contract.ts`
+  - provider capabilityとadapter選択: `src-electron/provider-support.ts`
+  - public projection/orchestration: `src-electron/session-external-application-service.ts`
+  - queue admission、dispatch、shutdown persistence fence: `src-electron/session-execution-service.ts`
+  - discovery artifactとWindows ACL: `src-electron/session-external-runtime.ts`と`src/session-runtime-discovery.ts`
+  - execution audit: `src-electron/session-runtime-service.ts`
+- Sibling entries: loopback HTTP、Session CLI、Session MCP、GUI Session runtime。CLI/MCPだけを個別回避せず、shared application/contract境界で修正する
+- Failure timing:
+  - unsupported/disabled provider、stale catalog、provider固有option不一致、unknown custom agentはexecution登録前に`not_applied`
+  - Windows ACLがowner-onlyへ収束しない場合はcredential file作成前にfail closedする
+  - quitは新規受付を閉じ、active providerへcancelを要求し、有限grace後にrunning executionを`interrupted`へ確定する。late provider completionは閉じたstorageへ触れない
+  - transient queue admission failureはbounded retryを予約し、shutdown開始後は再予約しない
+- Knowledge placement: public input/resultとfailureはtype/schema/test、局所理由はcode comment、利用方法だけrunbookへ置く。ADR 021の選択を変更しないため新ADRは不要。未実装operationはdesign correctionではなくaccepted contractを満たす独立prerequisiteとして扱う
+
+### Finding Promotion
+
+| Finding | Disposition | Accepted contract / reachability | Supported owner |
+| --- | --- | --- | --- |
+| Windows credential ACL | `blocking / current-scope repair` | 任意runtime pathとWindows ACL未検証から平文secretへ到達可能 | runtime discovery publication |
+| unbounded quit | `blocking / current-scope repair` | authenticated handlerとprovider promiseが未settleならstorage closeへ進めない | HTTP + execution shutdown lifecycle |
+| missing accepted operations/projections | `blocking / boundary prerequisite` | ADR 021でacceptedなoperationをadapterが公開できない | interaction/transcript/public projection slices |
+| progress audit defaults overwrite | `blocking / current-scope repair` | meaningful progress後のrunning auditだけper-turn tupleを失う | Session runtime audit projection |
+| unusable catalog candidates | `blocking / current-scope repair` | Copilotは実装済みadapterだがcreate/options/input schemaで到達不能 | shared provider/Session Turn contract |
+| unknown MCP result schema | `blocking / current-scope repair` | operation別exact fieldをclient/runtimeが検証不能 | shared result map + MCP schema |
+| inaccurate MCP execution hints | `blocking / current-scope repair` | provider executionはfilesystem/network副作用へ到達可能 | MCP tool metadata |
+| stranded queued execution | `blocking / current-scope repair` | transient admission rejection後に自動drainが再発火しない | execution drain coordinator |
+
+### Invariant Matrix
+
+| ID | Coupled invariant | Failure mode / consumer impact | Direct verification | Review trigger |
+| --- | --- | --- | --- | --- |
+| EXT-PROVIDER-01 | catalog candidate = current snapshot ∩ external-runtime-supported ∩ enabled | 選択後にcreate/optionsが必ず失敗、または未知adapterへfallback | catalog/create/options application tests | public contract/provider capability targeted review |
+| EXT-PROVIDER-02 | external Turnはcommon tuple + exact provider option union。Codexはsandbox、Copilotはcustom agent | provider固有optionの混在、fallback、CLI/MCP分岐 | shared parser、CLI、MCP、dispatch tests | contract/schema targeted review |
+| EXT-RESULT-03 | operation→result mappingはcompile-timeとMCP runtime schemaでexact | 不正projectionを`unknown`で通過 | operation全件のsuccess/error schema tests | contract/schema targeted review |
+| EXT-MCP-04 | provider実行toolはdestructive/open-worldを正しく宣言 | clientが副作用確認を省略 | tool list annotation test | direct check sufficient |
+| EXT-AUDIT-05 | running/terminal auditは同じeffective Turn tupleを保持 | crash時に誤ったmodel/reasoning/approvalが履歴へ残る | progress→crash相当のaudit test | direct check sufficient |
+| EXT-WIN-CRED-06 | credential root/generation/fileはcurrent OS user boundary内、検証不能なら未公開 | 別OS userのsecret読取とruntime authorization bypass | injected Windows ACL failure/success/cleanup tests | identity/security targeted review |
+| EXT-SHUTDOWN-07 | cancel→finite grace→interrupted→storage fence→close | quit無期限停止、late write、結果消失 | stuck provider、late completion、HTTP handler tests | lifecycle/concurrency targeted review |
+| EXT-QUEUE-08 | drain rejectionは一つのtracked retryへ収束しshutdownで停止 | executionがqueuedのまま永続化 | transient admission/retry/shutdown tests | lifecycle/concurrency targeted review |
+| EXT-SURFACE-09 | ADR 021の17 operationsと必要projectionが全adapterで接続 | callerがaccepted operationを実行不能 | operation inventory、interaction/transcript/attachment tests | prerequisiteごとのtargeted review |
+
+### Slice Order and Review Contract
+
+1. provider-neutral public contract、exact result schema、MCP annotation、progress auditを同一external-surface sliceで閉じる
+2. Windows credential publicationを独立security sliceで閉じる
+3. shutdown persistence fenceとqueue retryを同一lifecycle sliceで閉じる
+4. missing interaction/transcript/projectionをsemantic ownerごとのboundary prerequisiteとして閉じる
+5. 各高リスクsliceはdirect check後に割当finding familyだけを`targeted_reviewer`へ一度渡す。全slice統合後はcross-subsystem interactionが残るため`Full-review gate=run`とし、同一Final Candidateのcomplete diffをfresh reviewerへ一度だけ渡す
+
+### Candidate c1 Finding Closure and c2 Preflight
+
+- Candidate c1: `session-external-runtime-final-c1`。source変更後のためc1上のreview/check entryは最終完了証拠に再関連付けしない
+- c1 lifecycle findingは`current-scope repair`。admission retry exhaustion後も次のqueued executionをdrainし、terminal writeの一時失敗もtracked retryへ戻す。同じexecution/queue coordinator owner内で閉じた
+- c1 identity findingsは`current-scope repair`。SessionFolder attachmentは検証済みidentityからruntime-owned snapshotを作りCodex/Copilotへ渡す。transcript temp cleanupはauthorized parent identityとstaged inodeに結び付け、parent rename後も同一inodeだけを回収する
+- Windows credentialとattachment snapshotのACL semantic ownerを`runtime-path-security.ts`へ統合し、Windowsでは内容書込前にprotected DACLを確定する。前processのsnapshot orphanはsingle-instance lock取得後のstartup sweepで回収する
+- contract projectionはprovider別discriminated union、interaction kind別tuple、operation別MCP result schemaへ固定し、`transcript.export`をmutation effect familyへ含める
+- Provider parity: `runtime.catalog`はenabledなCodex/Copilotを返し、両providerのSession create、Turn options、run、enqueueをshared contract、CLI、MCPから到達可能にする。未知providerのfallbackは行わない
+- Structural convergence gate: `ready-after-consolidation`。security ownerの重複を共有ACL boundaryへ収束し、public parser/projection、persistence、application orchestration、adapterの責務は既存境界を維持した。独立責務の追加混在またはcanonical boundary迂回を示す残存evidenceはない
+- Current direct checks:
+  - `npm test`: 2554 tests、2553 passed、1 skipped、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS selector warningとchunk size warningのみ
+  - attachment/Codex/Copilot/runtime targeted suite: 124 passed
+  - execution queue suite: 20 passed
+  - contract/application/execution/MCP suite: 78 passed
+  - transcript suite: 11 passed
+  - `git diff --check`: passed with line-ending warnings only
+- Full-review gate: `run`。public schema、Windows credential/attachment security、queue/shutdown concurrency、interaction/transcript persistenceが複数process/subsystemを横断し、direct checkだけではcross-cutting反例を閉じられない。triggered lensを同一c2 Candidateへ適用後、fresh reviewerによるcomplete-diff reviewを一度だけ行う
+
+### Candidate c2 Specialist Findings and c3 Closure
+
+- Candidate c2のspecialist reviewで3件を`blocking / current-scope repair`へ分類した。いずれもaccepted contractと現実的な到達性があり、既存semantic owner内で閉じる
+- `F-TRANSCRIPT-EFFECT`: `transcript.export`のinlineとSessionFolderで異なる上限・副作用をMCP schemaとCLI/application effectが区別していなかった。destination別schemaへ分離し、inline failureは常に`not_applied`、SessionFolderのdispatch後failureは`indeterminate`へ統一した
+- `F-INTERACTION-POSTCOMMIT`: durable response commit後のobserver例外がapplied responseとprovider continuationを壊し、shutdown expiry failureがexecution drainをskipし得た。observerをpost-commit best-effortへ限定し、continuationを一度だけsettleし、expiryとexecution drainを独立して必ず試行する
+- `F-TRANSCRIPT-PARENT-IDENTITY`: staging後にparentをSessionFolder外へ移動し元pathを同一inodeのsymlink/junctionへ差し替えるとpublish先が外へ移り得た。publish直前にparentのlexical non-link、current real path、identity、current root containmentの複合値を再検証する
+- Provider parityを再確認し、Codex/Copilotの両方についてcatalog、Session create、Turn options、run/enqueue、interaction observationをshared contract、CLI、MCPから到達可能なまま維持した
+- Current direct checks:
+  - provider/CLI/MCP/interaction/transcript targeted suite: 117 passed、0 failed
+  - `npm test`: 2560 tests、2559 passed、1 skipped、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS selector warningとchunk size warningのみ
+  - `git diff --check`: passed with line-ending warnings only
+- Candidate c3では上記3 finding familyとresulting deltaだけを各specialistへtargeted closureとして渡す。新規探索は行わない。3 closureが同一Candidateでclosedした後、`Full-review gate=run`に従いfresh reviewerへcomplete diffを一度だけ渡す
+
+### Candidate c3 Transcript Finding and c4 Closure
+
+- Candidate c3のinteraction closureはblockingなしでclosedした。transcript closureでは、path identityの最終確認後からpath-based publishまでにparentを差し替えられる`F-TRANSCRIPT-PUBLISH-TOCTOU`を`blocking / current-scope repair`へ分類した
+- Finding Promotion: acceptedなSessionFolder containmentとpersonal-data boundaryへ現実的に到達し、既存transcript export filesystem effect owner内で閉じる。新しいpublic operation、永続化schema、別subsystemは追加しない
+- Repair delta:
+  - 認可済みparentをchild processのcwdへidentity-bindし、stream staging、prepared barrier、publish、hard-link proof、recoveryをcwd相対basenameだけで実行する。全量bufferは保持せず、1 GiB hard maximumでもchunk streamingを維持する
+  - `recordPreparedOutput`成功後だけpublish commandを送り、`replace=true`ではtemp proofからpublish aliasをhard linkしてrenameする。rename直後のresponse lossでもtemp proofを失わず、別writerの同digest targetを本operationの成果として受理しない
+  - worker bind後かつpublish command直前にparentを外部directoryへのsymlink/junctionへ差し替えるdirect regressionを追加し、外部target/tempが作られないことを確認する。Windowsでcwd lockが差し替えを拒否する`EBUSY/EPERM`もpath identity failureへ収束する
+  - MCP transport response lossはinline transcriptを`not_applied`、SessionFolder transcriptを`indeterminate`へ投影するdirect contractを追加した
+- Provider parity: Codex/Copilot両方のSession create、Turn options、run、enqueue、CLI/MCP dispatchを再実行し、catalog候補を縮小せずend-to-end supportを維持した
+- Current direct checks:
+  - transcript/provider/CLI/MCP targeted set: 160 passed、0 failed
+  - transcript service exact race/recovery set: 12 passed、0 failed
+  - `npm test`: passed、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS selector warningとVite chunk-size warningのみ
+  - `git diff --check`: passed with line-ending warnings only
+- Candidate c4では`F-TRANSCRIPT-PUBLISH-TOCTOU`とMCP transcript effect deltaだけをtargeted closureへ渡す。interactionと他specialist cellはproduction delta非影響をsource identityで確認する。全trigger済みcellが同一Candidateへ揃った後、`Full-review gate=run`に従いfresh reviewerへcomplete diffを一度だけ渡す
+- security境界の選択理由は`docs/adr/023-identity-bound-sessionfolder-file-effects.md`を正本とする。完了時cleanupはtemporary fileと同一identityのpublish proofだけを除去し、別fileを削除しない
+
+### Holistic Candidate c5 Finding Promotion
+
+- Gate: `ready`
+- `F-ATTACH-IDENTITY-PERSIST`: admissionで検証・正規化したattachment identityをexecutionへ保存せず、dispatch時に欠落する。shared execution coordinator内の`current-scope repair`として、validatorの戻り値をcanonical internal requestとして保存・dispatchする
+- `F-SNAPSHOT-CROSS-INSTANCE-CLEANUP`: OS temp全体のprefix sweepが、異なる`userData`で同時起動中の別WithMate instanceのactive snapshotを削除する。snapshot lifecycle内の`current-scope repair`として、single-instance lock domainと同じ`userData`由来namespaceだけをcleanupする
+- `F-TRANSCRIPT-FIELD-TITLE`: canonical interaction fieldの`title`をtranscriptが旧`label`として読んで欠落させる。transcript projection owner内の`current-scope repair`として、public `label`へ`title`を写す
+- Folder snapshotのaggregate byte/file/depth budgetは新しいresource-limit contractを要求するため、現Candidateへ加えないhardening follow-upとする
+- `ATTACH-SNAPSHOT-OWNER-01`: 同じ`userData`のsingle-instance lock holderだけがexact namespaceの前process orphanを削除し、別namespace、legacy global root、unrelated entryを変更しない。namespaceとsnapshot rootは内容書込前にcurrent-user boundaryへsecureし、検証不能ならfail closedする
+- Direct verification: normalized requestのstorage/dispatch、canonical interaction titleのtranscript投影、userData A/B namespace isolation、同namespace orphan cleanup、legacy/unrelated preservation、Windows permission-before-writeを対象testで確認する
+- Knowledge placement: request normalizationとsnapshot namespaceはsource/type、不変条件はtest、lockとcleanupの結合は`main.ts`、userData namespaceとPID/TTLを退ける長期concurrency判断は独立ADRへ置く
+- Review: Candidate c5のcomplete-diff holistic reviewは既に一度実施済み。修正後Candidateではfinding familyとresulting deltaだけをtargeted closureし、complete-diff reviewを再実行しない
+
+### Candidate c6 Targeted Finding and c7 Closure
+
+- Candidate c6のtranscript field targeted closureはblockingなしでclosedした。attachment identity targeted closureでは、validation後に`RunSessionTurnRequest`単体を永続化し、dispatchが要求する`catalogRevision`とprovider discriminatorを失う`F-ATTACH-IDENTITY-PERSIST`同familyの反例を確認した
+- Finding Promotion: 新規external `turn.run` / `turn.enqueue`から通常到達し、attachment有無やproviderを問わずdispatch前に`PROVIDER_FAILURE`へ収束する。shared execution request composition owner内の`blocking / current-scope repair`として閉じる
+- Repair delta: execution envelopeのparseとvalidation後の再構成を専用境界へ抽出し、`catalogRevision`、Codex/Copilot discriminator、identity付与済みTurnをcanonical internal envelopeとして永続化する
+- Direct verification: red testでmodule不在時の失敗を確認後、validation済みCopilot Turnを再parseしてrevision、provider、attachment identityが保持されることを確認した。execution、attachment、provider application、CLI、MCPの関連109 testも通した
+- Candidate c7では`validate → persist → dispatch parse`のround-tripとsnapshot namespace deltaだけを同じattachment reviewerへtargeted closureし、transcript cellはc6以降のdelta非影響を同じtranscript reviewerへ確認する。complete-diff reviewは再実行しない
+- Final Candidate: `session-external-runtime-final-c7`。manifest-digest Candidateはtask-local planを除外して固定し、review前後ともverification `verified`
+- Current direct evidence:
+  - execution/provider/CLI/MCP targeted set: 109 passed、0 failed
+  - `npm test`: 2563 tests、2562 passed、1 skipped、0 failed
+  - `npm run typecheck`: passed
+  - `npm run build`: passed。既存のLightning CSS `::highlight` warningとVite chunk-size warningのみ
+  - `git diff --check`: passed with line-ending warnings only
+- Targeted closure:
+  - attachment identity/execution envelope cellは33 scoped testsとCodex/Copilot双方の追加round-trip checkを行い、blocking 0でapprove
+  - transcript title/label delta cellは13 direct testsとc6/c7 manifest比較を行い、production delta非影響、blocking 0でapprove
+- Final review state: holistic complete-diff reviewはCandidate c5で一度だけ実施済み。Candidate c7ではfinding familyとresulting deltaのtargeted closureだけを行い、未解決blocking、accepted-risk candidate、material validation gapはない
+- Residual hardening: folder snapshotのaggregate byte/file/depth budgetは新しいresource-limit contractを要するため、現論理変更には含めない

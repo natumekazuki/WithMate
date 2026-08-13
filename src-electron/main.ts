@@ -41,7 +41,6 @@ import {
   type LiveElicitationResponse,
   type LiveSessionRunState,
   type ProviderQuotaTelemetry,
-  type RunSessionTurnRequest,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionContextTelemetry,
@@ -93,7 +92,11 @@ import {
 } from "./character-authoring-service.js";
 import { CodexAdapter } from "./codex-adapter.js";
 import { CopilotAdapter } from "./copilot-adapter.js";
-import { resolveComposerPreview } from "./composer-attachments.js";
+import { resolveComposerPreview, resolveSessionFolderAttachments } from "./composer-attachments.js";
+import {
+  cleanupSessionAttachmentSnapshotOrphans,
+  resolveSessionAttachmentSnapshotNamespace,
+} from "./session-attachment-snapshot.js";
 import { areDirectoryPathsEquivalent } from "./additional-directories.js";
 import { ModelCatalogStorage } from "./model-catalog-storage.js";
 import {
@@ -123,6 +126,10 @@ import {
 import { runSessionExecutionDispatch } from "./session-execution-dispatch.js";
 import { SessionExecutionAdmissionGate } from "./session-execution-admission-gate.js";
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
+import {
+  parseSessionExecutionTurnRequest,
+  validateSessionExecutionTurnRequest,
+} from "./session-execution-turn-request.js";
 import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
 import { SessionCrudService } from "./session-crud-service.js";
@@ -162,6 +169,19 @@ import { SettingsCatalogService } from "./settings-catalog-service.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
 import { SessionApprovalService } from "./session-approval-service.js";
 import { SessionElicitationService } from "./session-elicitation-service.js";
+import {
+  projectApprovalInteractionPublicPayload,
+  projectElicitationInteractionPublicPayload,
+  SessionInteractionService,
+} from "./session-interaction-service.js";
+import {
+  tryRespondToExternalApprovalInteraction,
+  tryRespondToExternalElicitationInteraction,
+} from "./session-interaction-gui-bridge.js";
+import { SessionInteractionStorageV6 } from "./session-interaction-storage-v6.js";
+import { SessionExecutionPublicProgressStorageV6 } from "./session-execution-public-progress-storage-v6.js";
+import { SessionTranscriptStorageV6 } from "./session-transcript-storage-v6.js";
+import { SessionTranscriptService } from "./session-transcript-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
@@ -359,6 +379,11 @@ const PROVIDER_QUOTA_STALE_TTL_MS = 5 * 60 * 1000;
 let sessionRuntimeService: SessionRuntimeService | null = null;
 let sessionExecutionStorage: SessionExecutionStorageV6 | null = null;
 let sessionExecutionService: SessionExecutionService | null = null;
+let sessionInteractionStorage: SessionInteractionStorageV6 | null = null;
+let sessionInteractionService: SessionInteractionService | null = null;
+let sessionExecutionPublicProgressStorage: SessionExecutionPublicProgressStorageV6 | null = null;
+let sessionTranscriptStorage: SessionTranscriptStorageV6 | null = null;
+let sessionTranscriptService: SessionTranscriptService | null = null;
 let sessionCrudService: SessionCrudService | null = null;
 let sessionFileService: SessionFileService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
@@ -2323,10 +2348,24 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         }
         return resolveComposerPreview(session, userMessage);
       },
+      resolveSessionFolderAttachments: (session, attachments) =>
+        resolveSessionFolderAttachments(
+          {
+            ...session,
+            workspacePath: resolveSessionFilesDirectory(app.getPath("userData"), session.id),
+            allowedAdditionalDirectories: [],
+          },
+          attachments,
+        ),
+      attachmentSnapshotNamespacePath: resolveSessionAttachmentSnapshotNamespace(app.getPath("userData")),
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      isSessionCustomAgentAvailable: async (workspacePath, customAgentName) =>
+        (await discoverSessionCustomAgents(workspacePath)).some(
+          (agent) => agent.name.toLowerCase() === customAgentName.trim().toLowerCase(),
+        ),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2409,12 +2448,71 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       },
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
+      persistExternalTurnContext: (input) => requireSessionTranscriptStorage().upsertPublicTurnContext(input),
       setLiveSessionRun,
       getLiveSessionRun,
       waitForApprovalDecision: (sessionId, request, signal) =>
         waitForLiveApprovalDecision(sessionId, request, signal),
       waitForElicitationResponse: (sessionId, request, signal) =>
         waitForLiveElicitationResponse(sessionId, request, signal),
+      registerExternalApprovalInteraction: ({ sessionId, executionId, request, signal }) =>
+        new Promise<LiveApprovalDecision>((resolve) => {
+          if (signal.aborted) return resolve("deny");
+          updateLiveSessionRun(sessionId, (current) => ({ ...current, approvalRequest: request }));
+          requireSessionInteractionService().registerApproval({
+            id: `interaction-${crypto.randomUUID()}`,
+            sessionId,
+            executionId,
+            publicPayload: projectApprovalInteractionPublicPayload(request),
+            createdAt: new Date().toISOString(),
+            continueWith: (decision) => {
+              updateLiveSessionRun(sessionId, (current) => (
+                current.approvalRequest?.requestId === request.requestId
+                  ? { ...current, approvalRequest: null }
+                  : current
+              ));
+              resolve(decision);
+            },
+          });
+          signal.addEventListener("abort", () => {
+            requireSessionInteractionService().expirePendingForExecution(
+              executionId,
+              "execution_canceled",
+              new Date().toISOString(),
+            );
+          }, { once: true });
+        }),
+      registerExternalElicitationInteraction: ({ sessionId, executionId, request, signal }) =>
+        new Promise<LiveElicitationResponse>((resolve) => {
+          if (signal.aborted) return resolve({ action: "cancel" });
+          updateLiveSessionRun(sessionId, (current) => ({ ...current, elicitationRequest: request }));
+          requireSessionInteractionService().registerElicitation({
+            id: `interaction-${crypto.randomUUID()}`,
+            sessionId,
+            executionId,
+            publicPayload: projectElicitationInteractionPublicPayload(request),
+            createdAt: new Date().toISOString(),
+            continueWith: (response) => {
+              updateLiveSessionRun(sessionId, (current) => (
+                current.elicitationRequest?.requestId === request.requestId
+                  ? { ...current, elicitationRequest: null }
+                  : current
+              ));
+              resolve(response);
+            },
+          });
+          signal.addEventListener("abort", () => {
+            requireSessionInteractionService().expirePendingForExecution(
+              executionId,
+              "execution_canceled",
+              new Date().toISOString(),
+            );
+          }, { once: true });
+        }),
+      publishExternalProgress: (input) => {
+        requireSessionExecutionPublicProgressStorage().upsert(input);
+        requireSessionInteractionService().notifyExecutionChanged(input.executionId);
+      },
       setProviderQuotaTelemetry: (telemetry) => {
         setProviderQuotaTelemetry(telemetry.provider, telemetry);
       },
@@ -2520,14 +2618,17 @@ function requireSessionExecutionService(): SessionExecutionService {
     sessionExecutionStorage = new SessionExecutionStorageV6(dbPath);
     sessionExecutionService = new SessionExecutionService({
       storage: sessionExecutionStorage,
-      validateTurn: (sessionId, request) => {
-        const parsed = parseSessionExecutionTurnRequest(request);
-        return requireSessionRuntimeService().validateExternalSessionTurn(
-          sessionId,
-          parsed.catalogRevision,
-          parsed.turn,
-        );
-      },
+      validateTurn: (sessionId, request) => validateSessionExecutionTurnRequest(
+        sessionId,
+        request,
+        (targetSessionId, catalogRevision, turn, providerId) =>
+          requireSessionRuntimeService().validateExternalSessionTurn(
+            targetSessionId,
+            catalogRevision,
+            turn,
+            providerId,
+          ),
+      ),
       dispatchTurn: dispatchSessionExecutionTurn,
       cancelRunningTurn: (sessionId, executionId) => {
         cancelSessionRunFromAnySurface(sessionId, executionId);
@@ -2537,6 +2638,10 @@ function requireSessionExecutionService(): SessionExecutionService {
       currentTimestamp: () => new Date().toISOString(),
       resolveIdempotencyExpiresAt: (createdAt) =>
         new Date(new Date(createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+      onExecutionChanged: (executionId) => sessionInteractionService?.notifyExecutionChanged(executionId),
+      onExecutionTerminal: (executionId, reason, occurredAt) => {
+        requireSessionInteractionService().expirePendingForExecution(executionId, reason, occurredAt);
+      },
     });
   }
   return sessionExecutionService;
@@ -2548,11 +2653,22 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
       fileService: requireSessionFileService(),
+      interactionService: requireSessionInteractionService(),
+      progressStorage: requireSessionExecutionPublicProgressStorage(),
+      transcriptService: requireSessionTranscriptService(),
       currentModelCatalog: () => getModelCatalog(),
       isProviderEnabled: (providerId) => getProviderAppSettings(
         requireSettingsCatalogService().getAppSettings(),
         providerId,
       ).enabled,
+      isProviderSupported: (providerId) =>
+        getProviderRuntimeCapabilities({ providerId }).providerSupported,
+      discoverSessionCustomAgents: async (workspacePath) =>
+        (await discoverSessionCustomAgents(workspacePath)).map((agent) => ({
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description,
+        })),
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();
@@ -2573,15 +2689,24 @@ function requireSessionFileService(): SessionFileService {
 }
 
 async function drainSessionExecutionsBestEffort(): Promise<void> {
+  const errors: unknown[] = [];
+  try {
+    sessionInteractionService?.expirePendingForShutdown(new Date().toISOString());
+  } catch (error) {
+    errors.push(error);
+  }
   try {
     await sessionExecutionService?.drainForShutdown();
   } catch (error) {
+    errors.push(error);
+  }
+  if (errors.length > 0) {
     writeAppLog({
       level: "warn",
       kind: "session.execution.cleanup-failed",
       process: "main",
       message: "Session execution drain failed during shutdown",
-      error: appLogService.errorToLogError(error),
+      error: appLogService.errorToLogError(new AggregateError(errors, "Session shutdown cleanup failed.")),
     });
   }
 }
@@ -2591,6 +2716,8 @@ function requireSessionCrudService(): SessionCrudService {
     sessionCrudService = new SessionCrudService({
       storage: requireSessionStorageV6(),
       resolveLaunchSelection: (providerId) => requireSessionLaunchSelectionService().resolve(providerId),
+      isProviderSupported: (providerId) =>
+        getProviderRuntimeCapabilities({ providerId }).providerSupported,
       listCharacters: () => requireCharacterService().listCharacters(),
       listSessionSummaries: () => requireSessionStorageV6().listSessionSummaries(),
       listOpenSessionWindowIds: () => requireSessionWindowBridge().listOpenSessionWindowIds(),
@@ -2629,6 +2756,7 @@ async function dispatchSessionExecutionTurn(
         sessionId,
         parsed.catalogRevision,
         parsed.turn,
+        executionId,
       ),
       isCanceled: () => canceledSessionExecutionIds.has(executionId),
     });
@@ -2638,37 +2766,6 @@ async function dispatchSessionExecutionTurn(
     }
     canceledSessionExecutionIds.delete(executionId);
   }
-}
-
-type SessionExecutionTurnRequest = {
-  catalogRevision: number;
-  turn: RunSessionTurnRequest;
-};
-
-function parseSessionExecutionTurnRequest(request: unknown): SessionExecutionTurnRequest {
-  if (typeof request !== "object" || request === null) {
-    throw new TypeError("Session execution request must be an object.");
-  }
-  const executionRequest = request as { catalogRevision?: unknown; turn?: unknown };
-  if (!Number.isSafeInteger(executionRequest.catalogRevision) || (executionRequest.catalogRevision as number) < 1) {
-    throw new TypeError("Session execution catalogRevision must be a positive integer.");
-  }
-  if (typeof executionRequest.turn !== "object" || executionRequest.turn === null) {
-    throw new TypeError("Session execution turn must be an object.");
-  }
-  const candidate = executionRequest.turn as Partial<Record<keyof RunSessionTurnRequest, unknown>>;
-  if (typeof candidate.userMessage !== "string") {
-    throw new TypeError("Session execution userMessage must be a string.");
-  }
-  for (const key of ["model", "reasoningEffort", "approvalMode", "codexSandboxMode"] as const) {
-    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
-      throw new TypeError(`Session execution ${key} must be a string.`);
-    }
-  }
-  return {
-    catalogRevision: executionRequest.catalogRevision as number,
-    turn: candidate as RunSessionTurnRequest,
-  };
 }
 
 function cancelSessionRunFromAnySurface(sessionId: string, expectedExecutionId?: string): void {
@@ -3277,13 +3374,58 @@ function closePersistentStores(): void {
 function closeSessionExecutionRuntime(): void {
   stopSessionExecutionMaintenance();
   sessionExecutionStorage?.close();
+  sessionInteractionStorage?.close();
+  sessionExecutionPublicProgressStorage?.close();
+  sessionTranscriptStorage?.close();
   sessionExecutionStorage = null;
   sessionExecutionService = null;
+  sessionInteractionStorage = null;
+  sessionInteractionService = null;
+  sessionExecutionPublicProgressStorage = null;
+  sessionTranscriptStorage = null;
+  sessionTranscriptService = null;
   sessionCrudService = null;
   sessionFileService = null;
   sessionExternalApplicationService = null;
   activeSessionExecutionIds.clear();
   canceledSessionExecutionIds.clear();
+}
+
+function requireSessionInteractionService(): SessionInteractionService {
+  if (!sessionInteractionService) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    sessionInteractionStorage = new SessionInteractionStorageV6(dbPath);
+    sessionInteractionService = new SessionInteractionService(sessionInteractionStorage);
+    sessionInteractionService.expirePendingForRestart(new Date().toISOString());
+  }
+  return sessionInteractionService;
+}
+
+function requireSessionExecutionPublicProgressStorage(): SessionExecutionPublicProgressStorageV6 {
+  if (!sessionExecutionPublicProgressStorage) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    sessionExecutionPublicProgressStorage = new SessionExecutionPublicProgressStorageV6(dbPath);
+  }
+  return sessionExecutionPublicProgressStorage;
+}
+
+function requireSessionTranscriptStorage(): SessionTranscriptStorageV6 {
+  if (!sessionTranscriptStorage) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    sessionTranscriptStorage = new SessionTranscriptStorageV6(dbPath);
+  }
+  return sessionTranscriptStorage;
+}
+
+function requireSessionTranscriptService(): SessionTranscriptService {
+  if (!sessionTranscriptService) {
+    sessionTranscriptService = new SessionTranscriptService({
+      storage: requireSessionTranscriptStorage(),
+      resolveSessionFilesDirectory: (sessionId) =>
+        resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
+    });
+  }
+  return sessionTranscriptService;
 }
 
 async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
@@ -3864,6 +4006,16 @@ function broadcastLiveSessionRun(sessionId: string): void {
 }
 
 function resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): void {
+  const executionId = activeSessionExecutionIds.get(sessionId);
+  const liveRequestId = getLiveSessionRun(sessionId)?.approvalRequest?.requestId;
+  if (tryRespondToExternalApprovalInteraction({ sessionId, executionId, requestId, liveRequestId }, decision, {
+    interactionService: requireSessionInteractionService(),
+    currentTimestamp: () => new Date().toISOString(),
+    resolveIdempotencyExpiresAt: (respondedAt) =>
+      new Date(new Date(respondedAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+  })) {
+    return;
+  }
   requireSessionApprovalService().resolveLiveApproval(sessionId, requestId, decision);
 }
 
@@ -3880,6 +4032,16 @@ function resolveLiveElicitation(
   requestId: string,
   response: LiveElicitationResponse,
 ): void {
+  const executionId = activeSessionExecutionIds.get(sessionId);
+  const liveRequestId = getLiveSessionRun(sessionId)?.elicitationRequest?.requestId;
+  if (tryRespondToExternalElicitationInteraction({ sessionId, executionId, requestId, liveRequestId }, response, {
+    interactionService: requireSessionInteractionService(),
+    currentTimestamp: () => new Date().toISOString(),
+    resolveIdempotencyExpiresAt: (respondedAt) =>
+      new Date(new Date(respondedAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
+  })) {
+    return;
+  }
   requireSessionElicitationService().resolveLiveElicitation(sessionId, requestId, response);
 }
 
@@ -4204,6 +4366,9 @@ if (!hasSingleInstanceLock) {
     }
 
     try {
+      await cleanupSessionAttachmentSnapshotOrphans(
+        resolveSessionAttachmentSnapshotNamespace(app.getPath("userData")),
+      );
       dbPath = await resolveOrMigrateAppDatabasePath(app.getPath("userData"), (progress) => {
         publishAppBootStatus({
           kind: "running",

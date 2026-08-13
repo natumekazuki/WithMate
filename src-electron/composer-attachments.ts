@@ -1,7 +1,16 @@
 import { lstat, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 
-import type { ComposerAttachment, ComposerAttachmentInput, ComposerAttachmentKind, ComposerPreview, Session } from "../src/app-state.js";
+import type {
+  ComposerAttachment,
+  ComposerAttachmentInput,
+  ComposerAttachmentKind,
+  ComposerPreview,
+  Session,
+  SessionTurnAttachmentIdentity,
+  SessionTurnAttachmentReference,
+} from "../src/app-state.js";
+import { SESSION_RUNTIME_MAX_TURN_ATTACHMENTS } from "../src/session-external-runtime-contract.js";
 import { extractComposerAttachmentReferenceCandidates } from "../src/path-reference.js";
 import { isPathWithinAnyDirectory, normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 
@@ -12,12 +21,18 @@ type ComposerPreviewSessionContext = Pick<Session, "workspacePath" | "allowedAdd
 
 type ComposerAttachmentResolutionPolicy = {
   rootRelativeOnly?: boolean;
+  exactPath?: boolean;
 };
 
 type ManagedRootIdentity = {
   dev: number;
   ino: number;
   canonicalPath: string;
+};
+
+type ResolvedAttachmentCandidate = {
+  attachment: ComposerAttachment;
+  identity: SessionTurnAttachmentIdentity | null;
 };
 
 function normalizeSlash(filePath: string): string {
@@ -28,8 +43,8 @@ function trimCandidatePath(value: string): string {
   return value.trim().replace(TRAILING_PATH_PUNCTUATION, "");
 }
 
-function resolveCandidatePath(workspacePath: string, rawPath: string): string {
-  const trimmedPath = trimCandidatePath(rawPath);
+function resolveCandidatePath(workspacePath: string, rawPath: string, exactPath = false): string {
+  const trimmedPath = exactPath ? rawPath : trimCandidatePath(rawPath);
   if (!trimmedPath) {
     return "";
   }
@@ -89,8 +104,8 @@ async function resolveAttachmentCandidate(
   session: ComposerPreviewSessionContext,
   candidate: ComposerAttachmentInput,
   policy: ComposerAttachmentResolutionPolicy,
-): Promise<ComposerAttachment> {
-  const trimmedCandidatePath = trimCandidatePath(candidate.path);
+): Promise<ResolvedAttachmentCandidate> {
+  const trimmedCandidatePath = policy.exactPath ? candidate.path : trimCandidatePath(candidate.path);
   if (policy.rootRelativeOnly) {
     if (path.isAbsolute(trimmedCandidatePath)) {
       throw new Error(`SessionFolder attachment must use a relative path: ${candidate.path}`);
@@ -102,7 +117,7 @@ async function resolveAttachmentCandidate(
   const managedRootIdentity = policy.rootRelativeOnly
     ? await inspectManagedAttachmentRoot(session.workspacePath)
     : null;
-  const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path);
+  const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path, policy.exactPath);
   if (!absolutePath) {
     throw new Error("空のパスは添付できないよ。");
   }
@@ -161,13 +176,24 @@ async function resolveAttachmentCandidate(
   const displayPath = toDisplayPath(canonicalWorkspacePath, resolvedAttachmentPath);
 
   return {
-    id: `${kind}:${normalizeSlash(resolvedAttachmentPath).toLowerCase()}`,
-    kind,
-    source: candidate.source,
-    absolutePath: resolvedAttachmentPath,
-    displayPath,
-    workspaceRelativePath,
-    isOutsideWorkspace: workspaceRelativePath === null,
+    attachment: {
+      id: `${kind}:${normalizeSlash(resolvedAttachmentPath).toLowerCase()}`,
+      kind,
+      source: candidate.source,
+      absolutePath: resolvedAttachmentPath,
+      displayPath,
+      workspaceRelativePath,
+      isOutsideWorkspace: workspaceRelativePath === null,
+    },
+    identity: managedRootIdentity && workspaceRelativePath !== null
+      ? {
+        rootDevice: managedRootIdentity.dev,
+        rootInode: managedRootIdentity.ino,
+        device: stats.dev,
+        inode: stats.ino,
+        canonicalRelativePath: workspaceRelativePath,
+      }
+      : null,
   };
 }
 
@@ -183,7 +209,7 @@ export async function resolveComposerPreview(
 
   const resolvedCandidates = await Promise.all(candidates.map(async (candidate) => {
     try {
-      return { attachment: await resolveAttachmentCandidate(session, candidate, policy) } as const;
+      return await resolveAttachmentCandidate(session, candidate, policy);
     } catch (error) {
       return {
         error: error instanceof Error ? error.message : "添付の解決に失敗したよ。",
@@ -212,4 +238,50 @@ export async function resolveComposerPreview(
     attachments,
     errors,
   };
+}
+
+export async function resolveSessionFolderAttachments(
+  session: ComposerPreviewSessionContext,
+  references: SessionTurnAttachmentReference[],
+): Promise<ComposerPreview> {
+  if (references.length > SESSION_RUNTIME_MAX_TURN_ATTACHMENTS) {
+    return {
+      attachments: [],
+      errors: [`添付は最大${SESSION_RUNTIME_MAX_TURN_ATTACHMENTS}件までだよ。`],
+    };
+  }
+
+  const attachments: ComposerAttachment[] = [];
+  const errors: string[] = [];
+  for (const reference of references) {
+    try {
+      const resolved = await resolveAttachmentCandidate(
+        session,
+        { path: reference.relativePath, source: "text", kind: reference.kind },
+        { rootRelativeOnly: true, exactPath: true },
+      );
+      if (!resolved.identity) {
+        throw new Error(`SessionFolder attachment identity could not be verified: ${reference.relativePath}`);
+      }
+      if (reference.identity && !sameAttachmentIdentity(reference.identity, resolved.identity)) {
+        throw new Error(`SessionFolder attachment changed before dispatch: ${reference.relativePath}`);
+      }
+      reference.identity = resolved.identity;
+      attachments.push(resolved.attachment);
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : "添付の解決に失敗したよ。");
+    }
+  }
+  return { attachments, errors };
+}
+
+function sameAttachmentIdentity(
+  expected: SessionTurnAttachmentIdentity,
+  actual: SessionTurnAttachmentIdentity,
+): boolean {
+  return expected.rootDevice === actual.rootDevice
+    && expected.rootInode === actual.rootInode
+    && expected.device === actual.device
+    && expected.inode === actual.inode
+    && expected.canonicalRelativePath === actual.canonicalRelativePath;
 }

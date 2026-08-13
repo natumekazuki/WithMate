@@ -9,13 +9,19 @@ import {
   parseSessionRuntimeRequestEnvelope,
   projectSessionExecution,
 } from "../../src/session-external-runtime-contract.js";
+import {
+  SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
+  SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES,
+} from "../../src/session-transcript.js";
 
 const turn = {
+  provider: "codex",
   userMessage: "hello",
   model: "gpt-5.4",
   reasoningEffort: "high",
   approvalMode: "on-request",
   codexSandboxMode: "workspace-write",
+  attachments: [],
 };
 
 test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input", () => {
@@ -33,6 +39,53 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
     }),
     (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.revision",
   );
+});
+
+test("EXT-TRANSCRIPT-13: transcript.export normalizes inline and SessionFolder destinations", () => {
+  const inline = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "transcript.export",
+    input: { sessionId: " session-1 ", format: "json", maxBytes: 1024, destination: { kind: "inline" } },
+  });
+  assert.deepEqual(inline.input, {
+    sessionId: "session-1",
+    format: "json",
+    maxBytes: 1024,
+    destination: { kind: "inline" },
+  });
+  const folder = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "transcript.export",
+    input: {
+      sessionId: "session-1",
+      format: "markdown",
+      maxBytes: 2048,
+      destination: { kind: "session_folder", relativePath: "exports/transcript.md", replace: false, idempotencyKey: "export-1" },
+    },
+  });
+  assert.deepEqual(folder.input, {
+    sessionId: "session-1",
+    format: "markdown",
+    maxBytes: 2048,
+    destination: { kind: "session_folder", relativePath: "exports/transcript.md", replace: false, idempotencyKey: "export-1" },
+  });
+
+  const inlineDefault = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "transcript.export",
+    input: { sessionId: "session-1", format: "json", destination: { kind: "inline" } },
+  });
+  assert.equal(inlineDefault.input.maxBytes, SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES);
+  const folderDefault = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "transcript.export",
+    input: {
+      sessionId: "session-1",
+      format: "markdown",
+      destination: { kind: "session_folder", relativePath: "exports/transcript.md", idempotencyKey: "export-2" },
+    },
+  });
+  assert.equal(folderDefault.input.maxBytes, SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES);
 });
 
 test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () => {
@@ -199,6 +252,67 @@ test("Session runtime validator accepts an explicit deferred turn.run contract",
   });
 });
 
+test("EXT-PROVIDER-02: provider固有Turn fieldをexact unionとして検証する", () => {
+  const copilotTurn = {
+    provider: "copilot",
+    userMessage: "hello",
+    model: "claude-sonnet",
+    reasoningEffort: "high",
+    approvalMode: "on-request",
+    customAgentName: "reviewer",
+    attachments: [],
+  };
+  const parsed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "turn.enqueue",
+    input: { sessionId: "session-1", catalogRevision: 4, idempotencyKey: "key-2", turn: copilotTurn },
+  });
+  assert.deepEqual((parsed.input as { turn: unknown }).turn, copilotTurn);
+
+  for (const invalidTurn of [
+    { ...turn, customAgentName: "reviewer" },
+    { ...copilotTurn, codexSandboxMode: "workspace-write" },
+    { ...copilotTurn, provider: "unknown" },
+  ]) {
+    assert.throws(
+      () => parseSessionRuntimeRequestEnvelope({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation: "turn.enqueue",
+        input: { sessionId: "session-1", catalogRevision: 4, idempotencyKey: "key-3", turn: invalidTurn },
+      }),
+      SessionRuntimeValidationError,
+    );
+  }
+});
+
+test("EXT-ATTACH-10: Turn attachmentsは必須array・最大32・portable relative path・一意kindを要求する", () => {
+  const parse = (attachments: unknown) => parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "turn.enqueue",
+    input: {
+      sessionId: "session-1",
+      catalogRevision: 4,
+      idempotencyKey: "attachment-key",
+      turn: { ...turn, attachments },
+    },
+  });
+  assert.deepEqual(
+    ((parse([{ kind: "image", relativePath: "images/example.png" }]).input as any).turn.attachments),
+    [{ kind: "image", relativePath: "images/example.png" }],
+  );
+  for (const attachments of [
+    undefined,
+    Array.from({ length: 33 }, (_, index) => ({ kind: "file", relativePath: `file-${index}.txt` })),
+    [{ kind: "file", relativePath: "/absolute.txt" }],
+    [{ kind: "file", relativePath: "../outside.txt" }],
+    [{ kind: "file", relativePath: "." }],
+    [{ kind: "file", relativePath: "same.txt" }, { kind: "image", relativePath: "SAME.TXT" }],
+    [{ kind: "unknown", relativePath: "file.txt" }],
+  ]) {
+    assert.throws(() => parse(attachments), SessionRuntimeValidationError);
+  }
+});
+
 test("Session runtime validator rejects unknown fields and enqueue response mode", () => {
   assert.throws(
     () => parseSessionRuntimeRequestEnvelope({
@@ -266,6 +380,41 @@ test("ID-02: turn.cancel requires an idempotency key", () => {
     executionId: "execution-1",
     idempotencyKey: "cancel-key-1",
   });
+});
+
+test("EXT-INTERACTION-11: interaction operationsはfilter bindingとexact response unionを検証する", () => {
+  const listed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "interaction.list",
+    input: { sessionId: "session-1", executionId: "execution-1", kind: "elicitation", state: "pending" },
+  });
+  assert.deepEqual(listed.input, {
+    sessionId: "session-1", executionId: "execution-1", kind: "elicitation", state: "pending", limit: 50,
+  });
+  const accepted = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "interaction.respond",
+    input: {
+      sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+      response: { kind: "elicitation", action: "accept", content: { count: 2, tags: ["a"] } },
+      idempotencyKey: "respond-1", responseMode: "wait", waitTimeoutMs: 500,
+    },
+  });
+  assert.equal((accepted.input as any).response.action, "accept");
+  for (const response of [
+    { kind: "elicitation", action: "accept" },
+    { kind: "elicitation", action: "decline", content: {} },
+    { kind: "approval", decision: "approve", content: {} },
+  ]) {
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "interaction.respond",
+      input: {
+        sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+        response, idempotencyKey: "respond-1", responseMode: "deferred",
+      },
+    }), SessionRuntimeValidationError);
+  }
 });
 
 test("RL-01: public execution projection rejects inline assistant text over 8 MiB", () => {
