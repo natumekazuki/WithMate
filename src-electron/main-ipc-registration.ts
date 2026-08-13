@@ -1,6 +1,10 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import type {
+  MarkdownLinkContextMenuRequest,
+  MarkdownLinkContextMenuResult,
+} from "../src/markdown-link-context-menu.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
@@ -109,6 +113,11 @@ import type {
 } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
+  resolveWorkspaceDirectoryValidationMessage,
+  type WorkspaceDirectoryValidationResult,
+} from "../src/workspace-directory-validation.js";
+import { parseCreateSessionRequest } from "./create-session-request.js";
+import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
@@ -161,6 +170,7 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
@@ -210,6 +220,7 @@ import {
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
+  WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_PICK_FILE_CHANNEL,
   WITHMATE_PICK_FILES_CHANNEL,
   WITHMATE_PICK_SESSION_FILES_CHANNEL,
@@ -379,6 +390,10 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  showMarkdownLinkContextMenu(
+    event: IpcSenderEvent,
+    request: MarkdownLinkContextMenuRequest,
+  ): Awaitable<MarkdownLinkContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -431,6 +446,7 @@ export type MainIpcRegistrationDeps = {
   resolveLaunchCharacter(input?: ResolveLaunchCharacterInput | null): Awaitable<CharacterDetail | null>;
   startCharacterAuthoringSession(input: StartCharacterAuthoringSessionInput): Awaitable<CharacterAuthoringSessionStartResult>;
   pickDirectory(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
+  validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   pickFile(targetWindow: MaybeWindow, initialPath: string | null): Promise<string | null>;
   pickFiles(targetWindow: MaybeWindow, initialPath: string | null): Promise<string[]>;
   pickSessionFiles(targetWindow: MaybeWindow, sessionId: string): Promise<string[]>;
@@ -476,6 +492,7 @@ type MainIpcWindowDeps = Pick<
   | "openSessionTerminal"
   | "openTerminalAtPath"
   | "pickDirectory"
+  | "validateWorkspaceDirectory"
   | "pickFile"
   | "pickFiles"
   | "pickSessionFiles"
@@ -590,6 +607,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionFilePreviewWindowPayload"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
+  | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
   | "getFileRootDiff"
   | "getSessionMessageArtifact"
@@ -599,6 +617,9 @@ type MainIpcSessionQueryDeps = Pick<
 
 type MainIpcCompanionDeps = Pick<
   MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveHomeWindow"
+  | "validateWorkspaceDirectory"
   | "createCompanionSession"
   | "getCompanionSession"
   | "getCompanionMessageArtifact"
@@ -619,6 +640,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveHomeWindow"
+  | "validateWorkspaceDirectory"
   | "resolveSessionWindow"
   | "isSettingsWindow"
   | "getLiveSessionRun"
@@ -635,6 +657,16 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "runSessionTurn"
   | "cancelSessionRun"
 >;
+
+async function assertUsableWorkspaceDirectory(
+  targetPath: unknown,
+  deps: Pick<MainIpcRegistrationDeps, "validateWorkspaceDirectory">,
+): Promise<void> {
+  const result = await deps.validateWorkspaceDirectory(targetPath);
+  if (!result.valid) {
+    throw new Error(resolveWorkspaceDirectoryValidationMessage(result));
+  }
+}
 
 type MainIpcMateDeps = Pick<
   MainIpcRegistrationDeps,
@@ -687,6 +719,17 @@ function assertSettingsWindowSender(
     return;
   }
   throw new Error("Settings IPC is only available from the Settings window.");
+}
+
+function assertHomeWindowSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveHomeWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.resolveHomeWindow() === window) {
+    return;
+  }
+  throw new Error("Workspace validation IPC is only available from the Home window.");
 }
 
 function assertSessionDeleteSender(
@@ -876,6 +919,30 @@ function parseSessionFilePreviewImageActionRequest(
   };
 }
 
+function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContextMenuRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Markdown link context menu request is invalid.");
+  }
+  const candidate = input as Partial<MarkdownLinkContextMenuRequest>;
+  const point = candidate.point;
+  if (
+    typeof candidate.target !== "string"
+    || !candidate.target
+    || !point
+    || typeof point !== "object"
+    || !Number.isSafeInteger(point.x)
+    || point.x < 0
+    || !Number.isSafeInteger(point.y)
+    || point.y < 0
+  ) {
+    throw new TypeError("Markdown link context menu request is invalid.");
+  }
+  return {
+    target: candidate.target,
+    point: { x: point.x, y: point.y },
+  };
+}
+
 type AuxiliaryOwnerWindowKind = "session" | "companion-review";
 
 function resolveAuxiliaryOwnerWindowSender(
@@ -974,6 +1041,10 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_PICK_DIRECTORY_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickDirectory(resolveTargetWindow(event, deps), initialPath),
   );
+  ipcMain.handle(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL, async (event, targetPath: unknown) => {
+    assertHomeWindowSender(event, deps);
+    return deps.validateWorkspaceDirectory(targetPath);
+  });
   ipcMain.handle(WITHMATE_PICK_FILE_CHANNEL, async (event, initialPath: string | null) =>
     deps.pickFile(resolveTargetWindow(event, deps), initialPath),
   );
@@ -1342,6 +1413,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.showSessionFilePreviewImageContextMenu(event, request);
   });
+  ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
+    const request = parseMarkdownLinkContextMenuRequest(input);
+    if (!deps.resolveEventWindow(event)) {
+      throw new TypeError("Markdown link context menu is only available from a WithMate window.");
+    }
+    return deps.showMarkdownLinkContextMenu(event, request);
+  });
   ipcMain.handle(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, async (event, request: FileRootChangesRequest) => {
     if (
       !request
@@ -1455,9 +1533,11 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
   ipcMain.handle(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
     deps.previewCompanionComposerInput(sessionId, userMessage),
   );
-  ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (_event, input: CreateCompanionSessionInput) =>
-    deps.createCompanionSession(input),
-  );
+  ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (event, input: CreateCompanionSessionInput) => {
+    assertHomeWindowSender(event, deps);
+    await assertUsableWorkspaceDirectory(input?.workspacePath, deps);
+    return deps.createCompanionSession(input);
+  });
   ipcMain.handle(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runCompanionSessionTurn(sessionId, request),
   );
@@ -1506,7 +1586,14 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
       deps.resolveLiveElicitation(sessionId, requestId, response);
     },
   );
-  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, (_event, input: CreateSessionRequest) => deps.createSession(input));
+  ipcMain.handle(WITHMATE_CREATE_SESSION_CHANNEL, async (event, input: CreateSessionRequest) => {
+    assertHomeWindowSender(event, deps);
+    const { workspace } = parseCreateSessionRequest(input);
+    if (workspace.kind === "directory") {
+      await assertUsableWorkspaceDirectory(workspace.path, deps);
+    }
+    return deps.createSession(input);
+  });
   ipcMain.handle(WITHMATE_UPDATE_SESSION_CHANNEL, (_event, session: Session) => deps.updateSession(session));
   ipcMain.handle(
     WITHMATE_SET_SESSION_PINNED_CHANNEL,

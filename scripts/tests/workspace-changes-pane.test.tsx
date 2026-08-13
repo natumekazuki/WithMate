@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
@@ -380,4 +381,171 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     }
     dom.window.close();
   }
+});
+
+test("FileRootChangesPane は loading state を競合させず stale request を無視する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  type ChangesResult = { status: "ok"; entries: FileRootGitChangeEntry[] };
+  const pendingRequests: Array<(result: ChangesResult) => void> = [];
+  const testApi = {
+    listSessionFileRoots: async () => [
+      { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo" },
+    ],
+    listFileRootChanges: async () => new Promise<ChangesResult>((resolve) => pendingRequests.push(resolve)),
+  };
+  const baseProps = {
+    api: testApi,
+    sessionId: "session-1",
+    enabled: true,
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async () => null,
+  };
+  const entries = (count: number): FileRootGitChangeEntry[] => Array.from({ length: count }, (_, index) => ({
+    relativePath: `file-${index}.txt`,
+    previousRelativePath: null,
+    scopes: ["working-tree"],
+    kinds: { "working-tree": "modified" },
+  }));
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, baseProps));
+      await Promise.resolve();
+    });
+    const changesPane = dom.window.document.querySelector<HTMLElement>(".workspace-changes-pane");
+    const initialLoading = dom.window.document.querySelector<HTMLElement>(".workspace-changes-loading");
+    assert.equal(pendingRequests.length, 1);
+    assert.equal(changesPane?.getAttribute("aria-busy"), "true");
+    assert.equal(initialLoading?.getAttribute("role"), "status");
+    assert.equal(initialLoading?.className, "workspace-changes-loading");
+    assert.equal(initialLoading?.getAttribute("aria-live"), "polite");
+    assert.equal(initialLoading?.querySelector(".visually-hidden")?.textContent?.trim(), "Loading changes");
+    assert.ok(initialLoading?.querySelector(".workspace-changes-spinner[aria-hidden='true']"));
+    assert.equal(dom.window.document.querySelector(".workspace-changes-empty"), null);
+
+    await act(async () => {
+      pendingRequests[0]?.({ status: "ok", entries: entries(1) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesPane?.getAttribute("aria-busy"), "false");
+    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "1");
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 1 }));
+      await Promise.resolve();
+    });
+    const refreshLoading = dom.window.document.querySelector<HTMLElement>(".workspace-changes-loading");
+    assert.equal(pendingRequests.length, 2);
+    assert.equal(changesPane?.getAttribute("aria-busy"), "true");
+    assert.equal(refreshLoading?.className, "workspace-changes-loading");
+    assert.equal(refreshLoading?.querySelector(".visually-hidden")?.textContent?.trim(), "Refreshing changes");
+    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "1");
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...baseProps, refreshRevision: 2 }));
+      await Promise.resolve();
+    });
+    assert.equal(pendingRequests.length, 3);
+    await act(async () => {
+      pendingRequests[1]?.({ status: "ok", entries: entries(2) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesPane?.getAttribute("aria-busy"), "true");
+    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "1");
+
+    await act(async () => {
+      pendingRequests[2]?.({ status: "ok", entries: entries(3) });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(changesPane?.getAttribute("aria-busy"), "false");
+    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-root-count")?.textContent, "3");
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        api: {
+          listSessionFileRoots: async () => {
+            throw new Error("Initial root failure.");
+          },
+          listFileRootChanges: async () => ({ status: "ok" as const, entries: [] }),
+        },
+        sessionId: "session-error",
+        rootsRevision: "roots-error",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.match(dom.window.document.querySelector("[role='alert']")?.textContent ?? "", /Initial root failure/);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-empty"), null);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...baseProps,
+        api: {
+          listSessionFileRoots: async () => [],
+          listFileRootChanges: async () => ({ status: "ok" as const, entries: [] }),
+        },
+        sessionId: "session-empty",
+        rootsRevision: "roots-empty",
+      }));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.ok(dom.window.document.querySelector(".workspace-changes-empty"));
+    assert.equal(dom.window.document.querySelector("[role='alert']"), null);
+    assert.equal(dom.window.document.querySelector(".workspace-changes-loading"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
+test("Changes loading indicator は既存内容より明瞭で reduced motion に配慮する", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+
+  assert.match(
+    styles,
+    /\.workspace-changes-loading\s*{[^}]*background:\s*color-mix\(in srgb, var\(--surface-deep\) 72%, transparent\);[^}]*color:\s*var\(--ink\);/s,
+  );
+  assert.match(
+    styles,
+    /\.workspace-changes-spinner\s*{[^}]*width:\s*24px;[^}]*height:\s*24px;[^}]*border:\s*3px solid/s,
+  );
+  assert.match(styles, /\.workspace-changes-spinner\s*{[^}]*animation:\s*workspace-changes-spin\s+720ms\s+linear\s+infinite;/s);
+  assert.match(
+    styles,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.workspace-changes-spinner\s*{[^}]*animation:\s*none;/,
+  );
 });

@@ -52,6 +52,9 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async pickDirectory() {
         return null;
       },
+      async validateWorkspaceDirectory() {
+        return { valid: true };
+      },
       async pickFile() {
         return null;
       },

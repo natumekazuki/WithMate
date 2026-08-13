@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { ChatDockSplitter, ChatWindow, ChatWindowStatusScreen, type ChatWindowProps } from "../../src/chat/chat-window.js";
+import {
+  ChatDockSplitter,
+  ChatSkillPickerPanel,
+  ChatWindow,
+  ChatWindowStatusScreen,
+  filterChatSkillItems,
+  type ChatWindowProps,
+} from "../../src/chat/chat-window.js";
 import {
   createHiddenControlsTextChatComposerProps,
   createStaticChatHeaderProps,
@@ -86,6 +94,230 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.ok(html.indexOf("File Preview") < html.indexOf("Retry Actions"));
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
+});
+
+test("ChatWindow は preview を保持したまま Skill 候補を中央 work surface に重ねる", () => {
+  const props = createChatWindowProps();
+  props.mainContent = React.createElement("div", null, "File Preview");
+  props.skillPickerProps = {
+    isOpen: true,
+    isLoading: false,
+    items: [{
+      key: "skill-review",
+      skillId: "review",
+      primaryLabel: "review",
+      secondaryLabel: "Workspace",
+      title: "review",
+    }],
+    onSelectSkill: noop,
+    onDismiss: noop,
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
+  assert.match(html, /class="chat-skill-picker-layer"/);
+  assert.match(html, /role="listbox"/);
+  assert.ok(html.indexOf("File Preview") < html.indexOf("chat-skill-picker-layer"));
+  assert.ok(html.indexOf("chat-skill-picker-layer") < html.indexOf("session-action-dock-slot"));
+});
+
+test("Skill候補panelはchat work surfaceのほぼ全体を使う", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const layerRule = styles.match(/\.chat-skill-picker-layer\s*\{([^}]*)\}/)?.[1] ?? "";
+  const panelRule = styles.match(/\.chat-skill-picker-panel\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(layerRule, /inset:\s*0/);
+  assert.match(layerRule, /padding:\s*clamp\(6px,\s*1vw,\s*12px\)/);
+  assert.match(panelRule, /width:\s*100%/);
+  assert.match(panelRule, /height:\s*100%/);
+  assert.doesNotMatch(panelRule, /max-height/);
+});
+
+test("ChatSkillPickerPanel は loading・empty・error状態を区別する", () => {
+  const commonProps = {
+    isOpen: true,
+    items: [],
+    onSelectSkill: noop,
+    onDismiss: noop,
+  };
+  const loadingHtml = renderToStaticMarkup(React.createElement(ChatSkillPickerPanel, {
+    ...commonProps,
+    isLoading: true,
+  }));
+  const emptyHtml = renderToStaticMarkup(React.createElement(ChatSkillPickerPanel, {
+    ...commonProps,
+    isLoading: false,
+  }));
+  const errorHtml = renderToStaticMarkup(React.createElement(ChatSkillPickerPanel, {
+    ...commonProps,
+    isLoading: false,
+    errorMessage: "Skill error",
+  }));
+
+  assert.match(loadingHtml, /role="status"/);
+  assert.match(loadingHtml, /aria-busy="true"/);
+  assert.match(loadingHtml, /chat-skill-picker-spinner/);
+  assert.match(emptyHtml, /使える Skill がありません/);
+  assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);
+});
+
+test("Skill候補検索はnameとdescriptionを対象にしsource labelを対象にしない", () => {
+  const items = [
+    {
+      key: "skill-a",
+      skillId: "a",
+      primaryLabel: "Audit",
+      secondaryLabel: "Provider · Review completed work",
+      title: "Audit",
+      searchText: "Audit\nReview completed work",
+    },
+    {
+      key: "skill-b",
+      skillId: "b",
+      primaryLabel: "Commit",
+      secondaryLabel: "Workspace · Create a commit note",
+      title: "Commit",
+      searchText: "Commit\nCreate a commit note",
+    },
+  ];
+
+  assert.deepEqual(filterChatSkillItems(items, "audit"), [items[0]]);
+  assert.deepEqual(filterChatSkillItems(items, "commit note"), [items[1]]);
+  assert.deepEqual(filterChatSkillItems(items, "provider"), []);
+  assert.equal(filterChatSkillItems(items, "missing").length, 0);
+});
+
+test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱う", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  class TestResizeObserver {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value() {},
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value() {},
+  });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: TestResizeObserver });
+
+  const selected: string[] = [];
+  let dismissCount = 0;
+  let root: Root | null = null;
+  const items = [
+    {
+      key: "skill-a",
+      skillId: "a",
+      primaryLabel: "A",
+      secondaryLabel: "Workspace · First description",
+      title: "A",
+      searchText: "A\nFirst description",
+    },
+    {
+      key: "skill-b",
+      skillId: "b",
+      primaryLabel: "B",
+      secondaryLabel: "Provider · Second description",
+      title: "B",
+      searchText: "B\nSecond description",
+    },
+  ];
+
+  function SkillPickerHarness() {
+    const [isOpen, setIsOpen] = React.useState(false);
+    const props = createChatWindowProps();
+    props.composerProps = {
+      ...props.composerProps,
+      showSkillPicker: true,
+      isSkillPickerOpen: isOpen,
+      onToggleSkillPicker: () => setIsOpen((current) => !current),
+    };
+    props.skillPickerProps = {
+      isOpen,
+      isLoading: false,
+      items,
+      onSelectSkill: (skillId) => {
+        selected.push(skillId);
+        setIsOpen(false);
+      },
+      onDismiss: () => {
+        dismissCount += 1;
+        setIsOpen(false);
+      },
+    };
+    return React.createElement(ChatWindow, props);
+  }
+
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(SkillPickerHarness));
+    });
+    const skillButton = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Skill");
+    assert.ok(skillButton);
+
+    await act(async () => skillButton.click());
+    const searchInput = dom.window.document.querySelector<HTMLInputElement>(".chat-skill-picker-search");
+    assert.ok(searchInput);
+    assert.equal(dom.window.document.activeElement, searchInput);
+
+    const options = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>("[role='option']"));
+    assert.equal(options.length, 2);
+
+    await act(async () => {
+      searchInput.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    assert.equal(dom.window.document.activeElement, options[0]);
+
+    await act(async () => {
+      options[0]?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    assert.deepEqual(selected, ["a"]);
+    assert.equal(dom.window.document.querySelector(".chat-skill-picker-panel"), null);
+    assert.equal(dom.window.document.activeElement, skillButton);
+
+    await act(async () => skillButton.click());
+    const reopenedSearchInput = dom.window.document.querySelector<HTMLInputElement>(".chat-skill-picker-search");
+    assert.ok(reopenedSearchInput);
+    assert.equal(reopenedSearchInput.value, "");
+    await act(async () => {
+      reopenedSearchInput.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    assert.equal(dismissCount, 1);
+    assert.equal(dom.window.document.activeElement, skillButton);
+  } finally {
+    await act(async () => root?.unmount());
+    dom.window.close();
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: previousResizeObserver });
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
+      previousActEnvironment;
+  }
 });
 
 test("ChatWindow は Quote 対応 chat の表示 mode を message column と ActionDock で共有する", async () => {

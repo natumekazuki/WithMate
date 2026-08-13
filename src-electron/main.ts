@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   app,
   BrowserWindow,
+  clipboard,
   crashReporter,
   dialog,
   ipcMain,
@@ -184,9 +185,11 @@ import { SessionTranscriptStorageV6 } from "./session-transcript-storage-v6.js";
 import { SessionTranscriptService } from "./session-transcript-service.js";
 import { WindowBroadcastService } from "./window-broadcast-service.js";
 import { WindowDialogService } from "./window-dialog-service.js";
+import { WorkspaceDirectoryValidationService } from "./workspace-directory-validation-service.js";
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
+import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
@@ -321,6 +324,10 @@ const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
+const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+  writeText: (target) => clipboard.writeText(target),
+});
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
   process: "main",
@@ -415,6 +422,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
 let appTrayService: AppTrayService | null = null;
@@ -1396,6 +1404,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openCompanionMergeWindow,
                 pickDirectory: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickDirectory(targetWindow, initialPath),
+                validateWorkspaceDirectory: (targetPath) =>
+                  workspaceDirectoryValidationService.validate(targetPath),
                 pickFile: (targetWindow, initialPath) =>
                   requireWindowDialogService().pickFile(targetWindow, initialPath),
                 pickFiles: (targetWindow, initialPath) =>
@@ -1416,6 +1426,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     event.sender,
                     request.point,
+                  ),
+                showMarkdownLinkContextMenu: (event, request) =>
+                  markdownLinkContextMenuService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
                   ),
                 openPathTarget,
                 openAppLogFolder: () => openDirectory(appLogsPath),

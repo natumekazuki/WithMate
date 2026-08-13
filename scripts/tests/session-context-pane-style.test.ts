@@ -65,6 +65,23 @@ test("Session header menu は固定高の Header Dock に切られず中央領�
   );
 });
 
+test("selection action overlay は Session layout の stacking context 内で surface と modal の間を所有する", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.session-chat-layout\s*{[\s\S]*?isolation:\s*isolate;[\s\S]*?}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.session-selection-action-overlay\s*{\s*position:\s*fixed;\s*z-index:\s*35;\s*inset:\s*0;\s*pointer-events:\s*none;\s*}/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-response-actions\s*{[\s\S]*?position:\s*fixed;[\s\S]*?pointer-events:\s*auto;[\s\S]*?}/,
+  );
+});
+
 test("左右ペインは固定 track 構成の幅と内容を滑らかに開閉する", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 

@@ -24,9 +24,16 @@ import {
 import { buildHomeLaunchDialogProps } from "./home/home-launch-dialog-props.js";
 import {
   createClosedLaunchDraft,
+  applyLaunchWorkspacePathValidation,
+  beginLaunchWorkspacePathValidation,
+  markLaunchWorkspacePathValidationPending,
   resolveLaunchCharacterId,
   type HomeLaunchDraft,
 } from "./home/home-launch-state.js";
+import {
+  createHomeLaunchWorkspaceValidationController,
+  type HomeLaunchWorkspaceValidationController,
+} from "./home/home-launch-workspace-validation.js";
 import { resolveSelectedLaunchProviderDraftId } from "./launch/launch-provider-selection.js";
 import { type CompanionSessionSummary } from "./companion-state.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
@@ -130,6 +137,26 @@ export default function HomeApp() {
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
+  const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
+  if (workspaceValidationControllerRef.current === null) {
+    workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
+      validate: async (targetPath) => (
+        await withWithMateApi((api) => api.validateWorkspaceDirectory(targetPath))
+        ?? { valid: false, reason: "unavailable" }
+      ),
+      onScheduled: (targetPath) => {
+        setLaunchDraft((current) => beginLaunchWorkspacePathValidation(current, targetPath));
+      },
+      onValidationStart: (targetPath) => {
+        setLaunchDraft((current) => markLaunchWorkspacePathValidationPending(current, targetPath));
+      },
+      onResult: (targetPath, result) => {
+        setLaunchDraft((current) => applyLaunchWorkspacePathValidation(current, targetPath, result));
+      },
+    });
+  }
+
+  useEffect(() => () => workspaceValidationControllerRef.current?.cancel(), []);
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
@@ -390,6 +417,9 @@ export default function HomeApp() {
       launchMode: "session",
       launchTitle: launchDraft.title,
       launchWorkspace: launchDraft.workspace,
+      workspacePathInput: launchDraft.workspacePathInput,
+      workspaceValidation: launchDraft.workspaceValidation,
+      workspaceValidationMessage: launchDraft.workspaceValidationMessage,
       launchCharacterId: launchDraft.characterId,
       launchCharacterSelectionMode: launchDraft.characterSelectionMode,
       characterEntries,
@@ -445,6 +475,8 @@ export default function HomeApp() {
     setLaunchStarting,
     setLaunchDraft,
     pickWorkspaceDirectory: async () => withWithMateApi((api) => api.pickDirectory()),
+    scheduleWorkspaceValidation: (targetPath) => workspaceValidationControllerRef.current?.schedule(targetPath),
+    cancelWorkspaceValidation: () => workspaceValidationControllerRef.current?.cancel(),
     openSessionWindow,
     openCompanionReviewWindow,
     createSession: async (input) => await withWithMateApi((api) => api.createSession(input)),
@@ -634,6 +666,7 @@ export default function HomeApp() {
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
+      onChangeWorkspacePath: homeLaunchHandlers.onChangeWorkspacePath,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectSessionFolder: homeLaunchHandlers.onSelectSessionFolder,
       onSelectProvider: homeLaunchHandlers.onSelectLaunchProvider,

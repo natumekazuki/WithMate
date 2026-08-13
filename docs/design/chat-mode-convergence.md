@@ -111,6 +111,8 @@ mode 固有 action は layout を分岐させず、slot へ注入する。
 
 `Auxiliary`、`Return to main`、`Merge`、`Audit Log`、`Delete`、`Rename`、MateTalk 固有 action は slot item として扱う。
 
+Skill候補の一時panelはchat shellが所有し、中央work surfaceのほぼ全体へ重ねる。panel内の検索はSkillのnameとdescriptionを対象とする。候補取得は実行中のproviderと親sessionのworkspaceをscopeとし、Auxiliary IDを通常Sessionのlookupへ使わない。composerは開閉triggerとprompt挿入先だけを持ち、Agent / Companion / Auxiliaryごとの候補UIや専用chat layoutは作らない。
+
 ### Service Adapter
 
 UI component は storage や provider API の違いを知らない。

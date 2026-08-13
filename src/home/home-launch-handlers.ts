@@ -10,7 +10,6 @@ import type { HomeLaunchDraft } from "./home-launch-state.js";
 import {
   closeLaunchDraft,
   openLaunchDraft,
-  setLaunchWorkspaceFromPath,
   setLaunchWorkspaceToSessionFolder,
   updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
@@ -37,6 +36,8 @@ type HomeLaunchHandlersContext = {
   setLaunchStarting: (launchStarting: boolean) => void;
   setLaunchDraft: (updater: HomeLaunchDraft | ((draft: HomeLaunchDraft) => HomeLaunchDraft)) => void;
   pickWorkspaceDirectory: () => Promise<string | null> | string | null;
+  scheduleWorkspaceValidation: (targetPath: string) => void;
+  cancelWorkspaceValidation: () => void;
   openSessionWindow: (sessionId: string) => Promise<void>;
   openCompanionReviewWindow: (sessionId: string) => Promise<void>;
   createSession: (input: CreateSessionRequest) => Promise<SessionSummary | null>;
@@ -55,6 +56,7 @@ export type HomeLaunchHandlers = {
   onSelectRandomLaunchCharacter: () => void;
   onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
+  onChangeWorkspacePath: (value: string) => void;
   onStartSession: (mode?: HomeLaunchDraft["mode"]) => void;
 };
 
@@ -76,6 +78,8 @@ export function buildHomeLaunchHandlers({
   setLaunchStarting,
   setLaunchDraft,
   pickWorkspaceDirectory,
+  scheduleWorkspaceValidation,
+  cancelWorkspaceValidation,
   openSessionWindow,
   openCompanionReviewWindow,
   createSession,
@@ -90,10 +94,11 @@ export function buildHomeLaunchHandlers({
     }
 
     setLaunchFeedback("");
-    setLaunchDraft((current) => setLaunchWorkspaceFromPath(current, selectedPath));
+    scheduleWorkspaceValidation(selectedPath);
   };
 
   const onOpenLaunchDialog = async () => {
+    cancelWorkspaceValidation();
     setLaunchFeedback("");
     await refreshCharacterEntries().catch((error) => {
       setCharactersLoaded(false);
@@ -109,6 +114,7 @@ export function buildHomeLaunchHandlers({
   };
 
   const onCloseLaunchDialog = () => {
+    cancelWorkspaceValidation();
     setLaunchFeedback("");
     setLaunchStarting(false);
     setLaunchDraft((current) => closeLaunchDraft(current));
@@ -147,6 +153,7 @@ export function buildHomeLaunchHandlers({
   return {
     onBrowseWorkspace: () => void onBrowseWorkspace(),
     onSelectSessionFolder: () => {
+      cancelWorkspaceValidation();
       setLaunchFeedback("");
       setLaunchDraft((current) => setLaunchWorkspaceToSessionFolder(current));
     },
@@ -174,6 +181,10 @@ export function buildHomeLaunchHandlers({
     onChangeTitle: (value) => {
       setLaunchFeedback("");
       setLaunchDraft((current) => ({ ...current, title: value }));
+    },
+    onChangeWorkspacePath: (value) => {
+      setLaunchFeedback("");
+      scheduleWorkspaceValidation(value);
     },
     onStartSession: (mode) => void onStartSession(mode),
   };

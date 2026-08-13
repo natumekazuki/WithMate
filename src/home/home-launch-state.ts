@@ -14,6 +14,10 @@ import {
 } from "./home-launch-workspace.js";
 import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
+import {
+  resolveWorkspaceDirectoryValidationMessage,
+  type WorkspaceDirectoryValidationResult,
+} from "../workspace-directory-validation.js";
 
 const NEUTRAL_CHARACTER_ID = "withmate-neutral-character";
 const NEUTRAL_CHARACTER_NAME = "WithMate";
@@ -27,11 +31,15 @@ type LaunchCharacterSnapshot = {
 };
 
 export type LaunchCharacterSelectionMode = "specific" | "random";
+export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";
 
 export type HomeLaunchDraft = {
   open: boolean;
   mode: "session" | "companion";
   title: string;
+  workspacePathInput: string;
+  workspaceValidation: HomeLaunchWorkspaceValidationState;
+  workspaceValidationMessage: string;
   workspace: LaunchWorkspaceSelection | null;
   providerId: string;
   characterSelectionMode: LaunchCharacterSelectionMode;
@@ -43,6 +51,9 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     open: false,
     mode: "session",
     title: "",
+    workspacePathInput: "",
+    workspaceValidation: "idle",
+    workspaceValidationMessage: "",
     workspace: null,
     providerId: "",
     characterSelectionMode: "random",
@@ -60,6 +71,9 @@ export function openLaunchDraft(
     open: true,
     mode,
     title: "",
+    workspacePathInput: "",
+    workspaceValidation: "idle",
+    workspaceValidationMessage: "",
     workspace: null,
     providerId: defaultProviderId,
     characterSelectionMode: "random",
@@ -117,6 +131,9 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
     ...draft,
     open: false,
     title: "",
+    workspacePathInput: "",
+    workspaceValidation: "idle",
+    workspaceValidationMessage: "",
     workspace: null,
     providerId: "",
     characterSelectionMode: "random",
@@ -127,13 +144,64 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
 export function setLaunchWorkspaceFromPath(draft: HomeLaunchDraft, selectedPath: string): HomeLaunchDraft {
   return {
     ...draft,
+    workspacePathInput: selectedPath,
+    workspaceValidation: "valid",
+    workspaceValidationMessage: "",
     workspace: inferWorkspaceFromPath(selectedPath),
+  };
+}
+
+export function beginLaunchWorkspacePathValidation(
+  draft: HomeLaunchDraft,
+  targetPath: string,
+): HomeLaunchDraft {
+  return {
+    ...draft,
+    workspacePathInput: targetPath,
+    workspaceValidation: targetPath.length > 0 ? "debouncing" : "idle",
+    workspaceValidationMessage: "",
+    workspace: null,
+  };
+}
+
+export function markLaunchWorkspacePathValidationPending(
+  draft: HomeLaunchDraft,
+  targetPath: string,
+): HomeLaunchDraft {
+  if (draft.workspacePathInput !== targetPath) {
+    return draft;
+  }
+  return {
+    ...draft,
+    workspaceValidation: "pending",
+  };
+}
+
+export function applyLaunchWorkspacePathValidation(
+  draft: HomeLaunchDraft,
+  targetPath: string,
+  result: WorkspaceDirectoryValidationResult,
+): HomeLaunchDraft {
+  if (draft.workspacePathInput !== targetPath || draft.workspaceValidation !== "pending") {
+    return draft;
+  }
+  if (result.valid) {
+    return setLaunchWorkspaceFromPath(draft, targetPath);
+  }
+  return {
+    ...draft,
+    workspaceValidation: "invalid",
+    workspaceValidationMessage: resolveWorkspaceDirectoryValidationMessage(result),
+    workspace: null,
   };
 }
 
 export function setLaunchWorkspaceToSessionFolder(draft: HomeLaunchDraft): HomeLaunchDraft {
   return {
     ...draft,
+    workspacePathInput: "",
+    workspaceValidation: "idle",
+    workspaceValidationMessage: "",
     workspace: { kind: "session-folder" },
   };
 }

@@ -189,6 +189,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:pick-files",
     args: ["C:/seed"],
   });
+  assert.deepEqual(await api.validateWorkspaceDirectory("C:/workspace"), {
+    channel: "withmate:validate-workspace-directory",
+    args: ["C:/workspace"],
+  });
   assert.deepEqual(await api.pickSessionFiles("session-1"), {
     channel: "withmate:pick-session-files",
     args: ["session-1"],
@@ -264,6 +268,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.showSessionFilePreviewImageContextMenu(imageActionRequest), {
     channel: "withmate:show-session-file-preview-image-context-menu",
     args: [imageActionRequest],
+  });
+  const markdownLinkRequest = {
+    target: "docs/review-brief%20final.md",
+    point: { x: 80, y: 160 },
+  };
+  assert.deepEqual(await api.showMarkdownLinkContextMenu(markdownLinkRequest), {
+    channel: "withmate:show-markdown-link-context-menu",
+    args: [markdownLinkRequest],
   });
   assert.deepEqual(await api.listFileRootChanges({ sessionId: "session-1", rootId: "workspace" }), {
     channel: "withmate:list-file-root-changes",
@@ -411,6 +423,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openSettingsWindow",
     "openMemoryV6ReviewWindow",
     "openTerminalAtPath",
+    "validateWorkspaceDirectory",
     "pickDirectory",
     "pickFile",
     "pickFiles",
@@ -439,6 +452,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "setMateAvatar",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
+    "showMarkdownLinkContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
     "subscribeAppSettings",
