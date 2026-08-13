@@ -2063,6 +2063,12 @@ button:disabled {
   padding: 12px 22px 0;
 }
 
+.home-launch-dialog .launch-panel {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
 .launch-section {
   padding: 14px;
   border: 1px solid rgba(203, 213, 225, 0.12);
@@ -3494,6 +3500,22 @@ button:disabled {
   gap: 8px;
 }
 
+.home-launch-character-section,
+.home-launch-character-section .launch-field {
+  min-height: 0;
+}
+
+.home-launch-character-section .launch-field {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.home-launch-character-section .launch-character-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 3px;
+}
+
 .launch-character-option,
 .launch-character-neutral {
   display: grid;
@@ -3518,6 +3540,11 @@ button:disabled {
 .launch-character-option.selected {
   border-color: color-mix(in srgb, var(--character-main) 42%, rgba(203, 213, 225, 0.18));
   background: color-mix(in srgb, var(--character-main-soft) 34%, rgba(255, 255, 255, 0.04));
+}
+
+.launch-character-option:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.88);
+  outline-offset: -3px;
 }
 
 .launch-character-copy {

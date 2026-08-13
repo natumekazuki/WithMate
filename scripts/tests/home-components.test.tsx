@@ -598,6 +598,8 @@ describe("HomeLaunchDialog", () => {
   it("ダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog();
 
+    assert.ok(html.includes("launch-dialog panel home-launch-dialog"));
+    assert.ok(html.includes("launch-section minimal home-launch-character-section"));
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
     assert.ok(!html.includes(">Default</span>"));
