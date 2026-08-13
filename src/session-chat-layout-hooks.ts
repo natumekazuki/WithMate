@@ -546,7 +546,11 @@ export function useSessionMessageListFollowing({
     if (!ownerWindow) {
       return;
     }
-    ownerWindow.requestAnimationFrame(scrollMessageListToBottom);
+    ownerWindow.requestAnimationFrame(() => {
+      if (isMessageListFollowingRef.current) {
+        scrollMessageListToBottom();
+      }
+    });
   }, [scrollMessageListToBottom]);
 
   useLayoutEffect(() => {

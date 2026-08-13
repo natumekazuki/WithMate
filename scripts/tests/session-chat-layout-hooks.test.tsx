@@ -460,8 +460,10 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
       messageList.scrollTop -= 2;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
     });
     assert.equal(following.textContent, "false");
+    assert.equal(messageList.scrollTop, 798, "停止後は予約済みの末尾補正でも読書位置を動かさない");
 
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-while-reading" }));
