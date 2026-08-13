@@ -3851,7 +3851,6 @@ button:disabled {
 
 .session-list,
 .character-list,
-.message-list,
 .stream-list,
 .artifact-file-list,
 .summary-list {
@@ -6443,13 +6442,13 @@ button:disabled {
 
 .message-list {
   margin: 0;
-  padding-left: 22px;
+  padding-inline-start: 1.5em;
   display: grid;
   gap: 6px;
 }
 
 .message-list.ordered {
-  padding-left: 24px;
+  padding-inline-start: 2.25em;
 }
 
 .message-inline-code {
