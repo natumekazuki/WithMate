@@ -14,6 +14,14 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
           calls.push(`upsert:${session.id}`);
           return session as never;
         },
+        upsertTerminalSession(session) {
+          calls.push(`terminal:${session.id}`);
+          return session as never;
+        },
+        upsertSessionPreservingPin(session) {
+          calls.push(`preserve-pin:${session.id}`);
+          return session as never;
+        },
         replaceAllSessions(sessions) {
           calls.push(`replace:${sessions.length}`);
           return sessions as never;
@@ -23,9 +31,11 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
   });
 
   await facade.upsertSession({ id: "s-1" } as never);
+  await facade.upsertTerminalSession({ id: "s-1" } as never);
+  await facade.upsertSessionPreservingPin({ id: "s-1" } as never);
   await facade.replaceAllSessions([{ id: "s-1" }] as never);
 
-  assert.deepEqual(calls, ["upsert:s-1", "replace:1"]);
+  assert.deepEqual(calls, ["upsert:s-1", "terminal:s-1", "preserve-pin:s-1", "replace:1"]);
 });
 
 test("MainSessionPersistenceFacade は running session を詳細 hydrate して interrupted に変換する", async () => {

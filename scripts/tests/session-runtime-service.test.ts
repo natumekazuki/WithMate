@@ -32,6 +32,7 @@ import {
   SessionRuntimeService,
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
+  preserveSessionTurnRequestMetadata,
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
@@ -181,7 +182,10 @@ describe("SessionRuntimeService", () => {
     let contextVersion = 0;
     let auditId = 0;
     const appraisalCorrelations: string[] = [];
+    const requestCorrelations: string[] = [];
     const callOrder: string[] = [];
+    let blockCompletedAudit = false;
+    let releaseCompletedAudit: (() => void) | null = null;
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -221,6 +225,10 @@ describe("SessionRuntimeService", () => {
         return sessionId === storedSession.id ? storedSession : null;
       },
       upsertSession(next) {
+        storedSession = next;
+        return next;
+      },
+      upsertTerminalSession(next) {
         if (next.status === "idle" && next.messages.at(-1)?.role === "assistant") {
           callOrder.push("completed-upsert");
         }
@@ -260,10 +268,23 @@ describe("SessionRuntimeService", () => {
         callOrder.push("appraised");
       },
       createAuditLog(input) {
+        const requestMetadata = input.providerMetadata.find((entry) => entry.kind === "session_turn_request");
+        const clientRequestId = requestMetadata?.payload && "clientRequestId" in requestMetadata.payload
+          ? requestMetadata.payload.clientRequestId
+          : null;
+        if (typeof clientRequestId === "string") {
+          requestCorrelations.push(clientRequestId);
+        }
         auditId += 1;
         return { ...createAuditLogBase(input), id: auditId };
       },
-      updateAuditLog() {},
+      updateAuditLog(_id, input) {
+        if (blockCompletedAudit && input.phase === "completed") {
+          return new Promise<void>((resolve) => {
+            releaseCompletedAudit = resolve;
+          });
+        }
+      },
       setLiveSessionRun() {},
       getLiveSessionRun() {
         return null;
@@ -284,12 +305,24 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    await service.runSessionTurn(storedSession.id, { userMessage: "first" });
+    await service.runSessionTurn(storedSession.id, {
+      userMessage: "first",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b1",
+      submitSource: "composer",
+    });
     callOrder.push("first-returned");
-    await service.runSessionTurn(storedSession.id, { userMessage: "second" });
+    await service.runSessionTurn(storedSession.id, {
+      userMessage: "second",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b2",
+      submitSource: "retry",
+    });
     callOrder.push("second-returned");
 
     assert.equal(contextVersion, 2);
+    assert.deepEqual(requestCorrelations, [
+      "7c26d875-9117-4ad5-97b5-e9af775b94b1",
+      "7c26d875-9117-4ad5-97b5-e9af775b94b2",
+    ]);
     assert.deepEqual(appraisalCorrelations, [
       `turn:${storedSession.id}:audit:1`,
       `turn:${storedSession.id}:audit:2`,
@@ -304,6 +337,46 @@ describe("SessionRuntimeService", () => {
       "appraised",
       "second-returned",
     ]);
+
+    blockCompletedAudit = true;
+    const completingRun = service.runSessionTurn(storedSession.id, {
+      userMessage: "third",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b3",
+    });
+    for (let attempt = 0; attempt < 20 && !releaseCompletedAudit; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    assert.ok(releaseCompletedAudit, "provider完了後のaudit終了処理へ到達すること");
+    await assert.rejects(
+      service.runSessionTurn(storedSession.id, {
+        userMessage: "cleanup中の再送",
+        clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b4",
+      }),
+      /まだ実行中/,
+    );
+    blockCompletedAudit = false;
+    releaseCompletedAudit();
+    await completingRun;
+  });
+
+  it("terminal audit fallback はsession turn correlationだけを保持する", () => {
+    const correlation = {
+      provider: "codex",
+      kind: "session_turn_request",
+      source: "session-runtime-service.run-session-turn",
+      summary: "Session turn request correlation",
+      payload: { clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc", submitSource: "composer" },
+    };
+    assert.deepEqual(preserveSessionTurnRequestMetadata([
+      correlation,
+      {
+        provider: "codex",
+        kind: "provider_detail",
+        source: "provider",
+        summary: "detail",
+        payload: { secret: "drop" },
+      },
+    ]), [correlation]);
   });
 
   it("HTTP runtime未初期化でもpendingをcompleted Sessionより先に永続化し、保存失敗時はcompletedにしない", async () => {
@@ -1360,7 +1433,11 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    const result = await service.runSessionTurn(session.id, {
+      userMessage: "お願いします",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+      submitSource: "composer",
+    });
 
     assert.equal(result.runState, "idle");
     assert.equal(result.status, "idle");
@@ -1371,6 +1448,11 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
     assert.equal(persistedAudit?.phase, "completed");
     assert.equal(persistedAudit?.assistantText, "");
+    assert.equal(persistedAudit?.providerMetadata[0]?.kind, "session_turn_request");
+    assert.equal(
+      persistedAudit?.providerMetadata[0]?.payload.clientRequestId,
+      "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+    );
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(auditUpdates.at(-1)?.operations.length, 0);
     assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");

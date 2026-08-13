@@ -1677,6 +1677,13 @@ export class SessionPaneErrorBoundary extends Component<
   };
 
   private handleReload = () => {
+    getWithMateApi()?.reportRendererLog({
+      level: "warn",
+      kind: "renderer.reload-requested",
+      message: "Session pane reload requested from error boundary",
+      url: window.location.href,
+      data: { boundary: "session-pane" },
+    });
     window.location.reload();
   };
 

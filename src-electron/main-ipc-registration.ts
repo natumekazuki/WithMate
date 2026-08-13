@@ -1,6 +1,7 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
@@ -272,6 +273,7 @@ type LogIpcErrorInput = {
   channel: string;
   durationMs: number;
   error: unknown;
+  clientRequestId?: string;
 };
 
 type IpcHandleRegistrar = {
@@ -1683,10 +1685,14 @@ function createErrorLoggingIpcMain(ipcMain: IpcMain, deps: MainIpcRegistrationDe
         try {
           return await handler(event, ...args);
         } catch (error) {
+          const clientRequestId = channel === WITHMATE_RUN_SESSION_TURN_CHANNEL
+            ? normalizeSessionTurnCorrelation(args[1] as RunSessionTurnRequest).clientRequestId ?? undefined
+            : undefined;
           deps.logIpcError?.({
             channel,
             durationMs: Date.now() - startedAt,
             error,
+            clientRequestId,
           });
           throw error;
         }

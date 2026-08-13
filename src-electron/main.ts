@@ -789,6 +789,23 @@ function attachWindowLogHandlers(window: BrowserWindow): void {
       },
     });
   });
+  window.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+    writeAppLog({
+      level: "info",
+      kind: "renderer.navigation-started",
+      process: "main",
+      message: "Renderer main-frame navigation started",
+      windowId: window.id,
+      data: {
+        url,
+        isInPlace,
+        windowTitle: readWindowTitle(window),
+      },
+    });
+  });
 }
 
 function readWindowTitle(window: BrowserWindow): string {
@@ -807,16 +824,23 @@ function readWindowUrl(window: BrowserWindow): string {
   }
 }
 
-function writeIpcErrorLog(input: { channel: string; durationMs: number; error: unknown }): void {
+function writeIpcErrorLog(input: {
+  channel: string;
+  durationMs: number;
+  error: unknown;
+  clientRequestId?: string;
+}): void {
   writeAppLog({
     level: "error",
     kind: "ipc.error",
     process: "main",
     message: `IPC failed: ${input.channel}`,
+    requestId: input.clientRequestId,
     data: {
       channel: input.channel,
       durationMs: input.durationMs,
       success: false,
+      clientRequestId: input.clientRequestId,
     },
     error: appLogService.errorToLogError(input.error),
   });
@@ -2266,7 +2290,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
-      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
+      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+      upsertTerminalSession: (session) => requireMainSessionPersistenceFacade().upsertTerminalSession(session),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
