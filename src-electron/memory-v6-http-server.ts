@@ -119,6 +119,17 @@ const routeByPath = new Map<string, MemoryV6Route>([
 ]);
 
 const mcpRoutes = new Set<MemoryV6Route>([
+  "file_usage",
+  "list_targets",
+  "list_entries",
+  "search",
+  "get_entry",
+  "get_file",
+  "export_files",
+  "list_tags",
+  "append",
+  "forget",
+  "move_entry",
   "character_context_get",
   "character_affect_appraise",
   "character_memory_search",
@@ -499,6 +510,10 @@ async function routeResolvedRequest(input: {
   if (input.fallbackFrom === "mcp" && input.transport === "cli") {
     input.options.characterContextService?.recordFallback("mcp", "cli");
   }
+  const mcpGeneralPolicyError = validateMcpGeneralMutationPolicy(input.route, input.body, input.transport);
+  if (mcpGeneralPolicyError) {
+    return mcpGeneralPolicyError;
+  }
   return input.route.startsWith("character_")
     ? routeCharacterContextRequest(
         input.options.characterContextService,
@@ -507,6 +522,36 @@ async function routeResolvedRequest(input: {
         input.transport,
       )
     : routeServiceRequest(input.options.service, createLocalUserMemoryPrincipal(), input.route, input.body);
+}
+
+function validateMcpGeneralMutationPolicy(
+  route: MemoryV6Route,
+  body: unknown,
+  transport: CharacterContextTransport,
+): MemoryErrorResponse | null {
+  if (transport !== "mcp" || !body || typeof body !== "object" || Array.isArray(body)) {
+    return null;
+  }
+  const request = body as Record<string, unknown>;
+  const requireText = (field: string): MemoryErrorResponse | null => (
+    typeof request[field] === "string" && request[field].trim()
+      ? null
+      : createMemoryErrorResponse({
+        code: "MEMORY_INVALID_FIELD",
+        message: `${field} is required for MCP ${route}.`,
+        field,
+        retryable: false,
+        conversationMayContinue: true,
+        effect: "none",
+      })
+  );
+  if (route === "append" || route === "move_entry") {
+    return requireText("idempotencyKey");
+  }
+  if (route === "forget") {
+    return requireText("reason") ?? requireText("idempotencyKey");
+  }
+  return null;
 }
 
 export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): MemoryV6HttpServer {

@@ -3,6 +3,8 @@
 The bundled helper is a thin client for the running WithMate V6 Memory API. It does not read or write database files directly.
 Project-scoped, character-scoped, and user-global Memory require explicit targets. Project targets use an explicit project path or ID. Character targets use an explicit character ID.
 
+Normal agent operations use the general `memory.*` tools from the `withmate-character-context` MCP server. The commands in this reference are their CLI equivalents for transport-level MCP fallback and explicit operator or diagnostic work. A structured MCP domain error is not an availability failure and must not be bypassed with CLI.
+
 Character context, Character-owned affect, MCP-first operation, CLI fallback, authority, effect certainty, and Character-specific commands are documented in [Character Context MCP and CLI Reference](character-context.md). This file retains the Project Memory and general helper procedures.
 
 Run it with an explicit target after WithMate is installed:
@@ -212,7 +214,7 @@ The response confirms `entryId`, `outputDirectoryPath`, `exportedCount`, and one
 
 ```bash
 withmate-memory list-tags --file memory-list-tags.json
-withmate-memory list-tags --project <absolute-repo-path> --with-counts --sample-limit 3
+withmate-memory list-tags --project <absolute-repo-path> --with-counts --sample-limit 3 --limit 50
 ```
 
 Request shape:
@@ -224,9 +226,14 @@ Request shape:
     { "owner": "project", "project": { "type": "path", "path": "<absolute-repo-path>" }, "scope": "project" }
   ],
   "withCounts": true,
-  "sampleLimit": 3
+  "sampleLimit": 3,
+  "limit": 50,
+  "cursor": "<nextCursor-from-prior-response>"
 }
 ```
+
+`limit` bounds the total tag rows returned in one page. `sampleLimit` only bounds the entry samples attached to each tag when `withCounts` is true. Omit `cursor` on the first page, then repeat the same targets, count options, and limit with `nextCursor` until it is absent.
+`targets` must contain exactly one explicit target. A cursor is server-issued and opaque; do not construct or reuse it with another target or option set.
 
 ### append
 
@@ -348,6 +355,7 @@ Use `{ "owner": "user", "scope": "global" }` only for provider- and project-inde
 - Character targets use explicit IDs, for example `{ "owner": "character", "character": { "type": "id", "id": "<character-id>" }, "scope": "character" }`. If the ID is unknown, run `withmate-memory characters` first.
 - User-global Memory is visible across projects and providers. Store only user-level preferences, conventions, constraints, or other cross-project context there; do not store secrets, tokens, or project-specific private details.
 - Append is idempotent when an idempotency key is supplied.
+- MCP append, mutating forget, and move require an idempotency key. A successful retry reports `replayed: true`; a changed request with the same key returns an idempotency conflict.
 - `append`, `get-file`, and `export-files` use a longer 300-second operation timeout by default. A mutation timeout is ambiguous; do not assume it proves that no write occurred.
 - Forget hides entries from normal search and skill results.
 - Memory failures should not fail unrelated coding work.

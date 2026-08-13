@@ -541,6 +541,10 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
       listCharacters: () => requireCharacterService().listCharacters(),
+      resolveCharacterById: (id) => {
+        const character = requireCharacterService().getCharacterCatalogEntry(id);
+        return character ? { id: character.id, name: character.name } : null;
+      },
       resolveCharacterRuntimeSnapshot: (characterId) =>
         requireCharacterService().createRuntimeSnapshot(characterId),
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,

@@ -32,7 +32,7 @@ import {
   type MemorySearchResponse,
 } from "../src/memory-v6/memory-response-contract.js";
 import type { CharacterCatalogEntry } from "../src/character/character-catalog.js";
-import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryMoveEntryRequest, MemoryTargetSelector } from "../src/memory-v6/memory-contract.js";
+import type { MemoryAppendFileInput, MemoryAppendRequest, MemoryError, MemoryForgetRequest, MemoryMoveEntryRequest, MemoryTargetSelector } from "../src/memory-v6/memory-contract.js";
 import { MEMORY_FILE_QUOTA_DEFAULT_BYTES, normalizeMemoryFileQuotaBytes } from "../src/provider-settings-state.js";
 import {
   validateMemoryAppendRequest,
@@ -177,6 +177,19 @@ function buildMoveFingerprint(input: {
   });
 }
 
+function buildForgetRequestFingerprint(input: {
+  request: MemoryForgetRequest;
+  target: MemoryV6ResolvedTarget;
+}): string {
+  return fingerprint({
+    operation: "forget",
+    target: input.target,
+    entryIds: [...input.request.entryIds].sort(),
+    reason: input.request.reason ?? "user_request",
+    sourceMessageId: input.request.sourceMessageId ?? null,
+  });
+}
+
 function toMemoryErrorResponse(error: MemoryError): MemoryErrorResponse {
   return createMemoryErrorResponse(error);
 }
@@ -211,24 +224,39 @@ function fingerprint(value: unknown): string {
   return createHash("sha256").update(stableJson(value)).digest("hex");
 }
 
-function storageErrorResponse(error: unknown): MemoryErrorResponse {
+function storageError(error: unknown): MemoryError | null {
+  if (error instanceof MemoryV6FileCleanupError) {
+    return {
+      code: "MEMORY_FILE_CLEANUP_FAILED",
+      message: "Memory operation failed and redundant protected objects require operator GC cleanup.",
+      retryable: false,
+      conversationMayContinue: true,
+      effect: "partial",
+      details: {
+        originalCode: error.originalError.code,
+        ...(error.originalError.field ? { originalField: error.originalError.field } : {}),
+      },
+    };
+  }
   if (error instanceof MemoryV6FileImportError) {
-    return toMemoryErrorResponse(error.error);
+    return { ...error.error, effect: "none" };
   }
   if (error instanceof MemoryV6IdempotencyConflictError) {
-    return toMemoryErrorResponse({
+    return {
       code: "MEMORY_IDEMPOTENCY_CONFLICT",
       message: "Memory idempotency key was reused with a different request.",
-    });
+      effect: "none",
+    };
   }
   if (error instanceof MemoryV6EntryNotFoundError) {
-    return toMemoryErrorResponse({
+    return {
       code: "MEMORY_ENTRY_NOT_FOUND",
       message: "Memory entry was not found.",
-    });
+      effect: "none",
+    };
   }
   if (error instanceof MemoryV6FileQuotaExceededError) {
-    return toMemoryErrorResponse({
+    return {
       code: "MEMORY_FILE_QUOTA_EXCEEDED",
       message: "Memory file storage quota would be exceeded.",
       field: "files",
@@ -236,9 +264,35 @@ function storageErrorResponse(error: unknown): MemoryErrorResponse {
       usedBytes: error.usedBytes,
       incomingBytes: error.incomingBytes,
       availableBytes: error.availableBytes,
-    });
+      effect: "none",
+    };
+  }
+  return null;
+}
+
+function storageErrorResponse(error: unknown): MemoryErrorResponse {
+  const projected = storageError(error);
+  if (projected) {
+    return toMemoryErrorResponse(projected);
   }
   throw error;
+}
+
+function cleanupOriginalError(error: unknown): MemoryError {
+  return storageError(error) ?? {
+    code: "MEMORY_STORAGE_UNAVAILABLE",
+    message: "Memory storage operation failed.",
+    retryable: true,
+    conversationMayContinue: true,
+    effect: "unknown",
+  };
+}
+
+class MemoryV6FileCleanupError extends Error {
+  constructor(readonly originalError: MemoryError) {
+    super("Memory protected object cleanup failed.");
+    this.name = "MemoryV6FileCleanupError";
+  }
 }
 
 class MemoryV6FileImportError extends Error {
@@ -311,7 +365,12 @@ export class MemoryV6Service {
     }
     let projectId: string | undefined;
     if (validated.value.project) {
-      const resolved = resolveMemoryV6Target({ owner: "project", scope: "project", project: validated.value.project }, principal, this.deps);
+      const resolved = resolveMemoryV6Target(
+        { owner: "project", scope: "project", project: validated.value.project },
+        principal,
+        this.deps,
+        { projectPathResolution: "known" },
+      );
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
@@ -349,7 +408,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -393,7 +452,7 @@ export class MemoryV6Service {
     } else {
       inventoryItems = [];
       for (const selector of validated.value.targets ?? []) {
-        const resolved = resolveMemoryV6Target(selector, principal, this.deps);
+        const resolved = resolveMemoryV6Target(selector, principal, this.deps, { projectPathResolution: "known" });
         if (!resolved.ok) {
           return toMemoryErrorResponse(resolved.error);
         }
@@ -448,7 +507,7 @@ export class MemoryV6Service {
 
     const resolvedTargets: MemoryV6ResolvedTarget[] = [];
     for (const target of validated.value.targets) {
-      const resolved = resolveMemoryV6Target(target, principal, this.deps);
+      const resolved = resolveMemoryV6Target(target, principal, this.deps, { projectPathResolution: "known" });
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
@@ -482,7 +541,7 @@ export class MemoryV6Service {
       return toMemoryErrorResponse(validated.error);
     }
 
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -511,7 +570,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -553,6 +612,7 @@ export class MemoryV6Service {
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
         field: "outputPath",
+        effect: "unknown",
       });
     }
   }
@@ -569,7 +629,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps, { projectPathResolution: "known" });
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
@@ -608,6 +668,7 @@ export class MemoryV6Service {
         code: "MEMORY_FILE_EXPORT_FAILED",
         message: "Memory file export failed.",
         field: "outputDirectoryPath",
+        effect: "unknown",
       });
     }
   }
@@ -627,7 +688,7 @@ export class MemoryV6Service {
 
     const resolvedTargets: MemoryV6ResolvedTarget[] = [];
     for (const target of validated.value.targets) {
-      const resolved = resolveMemoryV6Target(target, principal, this.deps);
+      const resolved = resolveMemoryV6Target(target, principal, this.deps, { projectPathResolution: "known" });
       if (!resolved.ok) {
         return toMemoryErrorResponse(resolved.error);
       }
@@ -635,15 +696,24 @@ export class MemoryV6Service {
     }
 
     if (validated.value.withCounts) {
-      return createMemoryListTagsResponse(this.deps.storage.listTagStatistics(resolvedTargets, validated.value.sampleLimit ?? 0).map((tag) => ({
+      const page = this.deps.storage.listTagStatisticsPage(resolvedTargets, {
+        sampleLimit: validated.value.sampleLimit,
+        limit: validated.value.limit,
+        cursor: validated.value.cursor,
+      });
+      return createMemoryListTagsResponse(page.items.map((tag) => ({
         type: tag.type,
         value: tag.value,
         entryCount: tag.entryCount,
         latestUpdatedAt: tag.latestUpdatedAt,
         ...(tag.samples.length > 0 ? { samples: tag.samples } : {}),
-      })));
+      })), page.nextCursor);
     }
-    return createMemoryListTagsResponse(this.deps.storage.listTags(resolvedTargets));
+    const page = this.deps.storage.listTagsPage(resolvedTargets, {
+      limit: validated.value.limit,
+      cursor: validated.value.cursor,
+    });
+    return createMemoryListTagsResponse(page.items, page.nextCursor);
   }
 
   async append(principal: MemoryV6Principal | null, request: unknown): Promise<MemoryV6ServiceResult<MemoryAppendResponse>> {
@@ -688,7 +758,16 @@ export class MemoryV6Service {
           requestFingerprint,
         });
         if (replay) {
-          return createMemoryAppendResponse(replay.entry, replay.created);
+          if (replay.cleanupRequired) {
+            return toMemoryErrorResponse({
+              code: "MEMORY_FILE_CLEANUP_FAILED",
+              message: "Memory append committed, but redundant protected objects still require operator GC cleanup.",
+              retryable: false,
+              conversationMayContinue: true,
+              effect: "partial",
+            });
+          }
+          return createMemoryAppendResponse(replay.entry, replay.created, replay.replayed);
         }
       }
 
@@ -727,12 +806,37 @@ export class MemoryV6Service {
             providerId: providerIdForPrincipal(principal),
             appMessageId: null,
           },
+          projectScopeAdmissions: resolved.projectScopeAdmissions,
         });
       } catch (error) {
-        await this.discardPreparedObjects(protectedObjects);
+        const cleanupComplete = await this.discardPreparedObjects(protectedObjects);
+        if (!cleanupComplete) {
+          throw new MemoryV6FileCleanupError(cleanupOriginalError(error));
+        }
         throw error;
       }
-      return createMemoryAppendResponse(result.entry, result.created);
+      if (result.replayed) {
+        const retainedObjectIds = new Set(result.entry.files?.map((file) => file.objectId) ?? []);
+        const redundantObjects = protectedObjects.filter((object) => !retainedObjectIds.has(object.objectId));
+        const cleanupComplete = await this.discardPreparedObjects(redundantObjects);
+        if (!cleanupComplete) {
+          return toMemoryErrorResponse({
+            code: "MEMORY_FILE_CLEANUP_FAILED",
+            message: "Memory append replayed, but redundant protected objects require operator GC cleanup.",
+            retryable: false,
+            conversationMayContinue: true,
+            effect: "partial",
+          });
+        }
+        if (validated.value.idempotencyKey && redundantObjects.length > 0) {
+          this.deps.storage.settleAppendCleanupObligation({
+            target: resolved.target,
+            idempotencyKey: validated.value.idempotencyKey,
+            bindingIdHash: bindingIdHashForPrincipal(principal),
+          });
+        }
+      }
+      return createMemoryAppendResponse(result.entry, result.created, result.replayed);
     } catch (error) {
       return storageErrorResponse(error);
     }
@@ -772,23 +876,32 @@ export class MemoryV6Service {
         }));
       }
     } catch (error) {
-      await this.discardPreparedObjects(protectedObjects);
-      throw toFileImportError(error, protectedObjects.length);
+      const importError = toFileImportError(error, protectedObjects.length);
+      const cleanupComplete = await this.discardPreparedObjects(protectedObjects);
+      if (!cleanupComplete) {
+        throw new MemoryV6FileCleanupError(importError.error);
+      }
+      throw importError;
     }
     return protectedObjects;
   }
 
-  private async discardPreparedObjects(protectedObjects: readonly MemoryV6AppendProtectedObjectInput[]): Promise<void> {
-    if (protectedObjects.length === 0 || !this.deps.protectedObjectImporter?.discardPrepared) {
-      return;
+  private async discardPreparedObjects(protectedObjects: readonly MemoryV6AppendProtectedObjectInput[]): Promise<boolean> {
+    if (protectedObjects.length === 0) {
+      return true;
     }
-    await Promise.all(protectedObjects.map(async (object) => {
+    if (!this.deps.protectedObjectImporter?.discardPrepared) {
+      return false;
+    }
+    const results = await Promise.all(protectedObjects.map(async (object) => {
       try {
         await this.deps.protectedObjectImporter?.discardPrepared?.({ objectId: object.objectId });
+        return true;
       } catch {
-        // Best-effort cleanup: keep the original append/import error visible to the caller.
+        return false;
       }
     }));
+    return results.every(Boolean);
   }
 
   forget(principal: MemoryV6Principal | null, request: unknown): MemoryV6ServiceResult<MemoryForgetResponse> {
@@ -803,12 +916,21 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const resolved = resolveMemoryV6Target(validated.value.target, principal, this.deps);
+    const resolved = resolveMemoryV6Target(
+      validated.value.target,
+      principal,
+      this.deps,
+      { projectPathResolution: "known" },
+    );
     if (!resolved.ok) {
       return toMemoryErrorResponse(resolved.error);
     }
 
     try {
+      const requestFingerprint = buildForgetRequestFingerprint({
+        request: validated.value,
+        target: resolved.target,
+      });
       if (validated.value.dryRun) {
         const results = this.deps.storage.previewForgetEntries({
           target: resolved.target,
@@ -816,9 +938,12 @@ export class MemoryV6Service {
           reason: validated.value.reason,
           idempotencyKey: validated.value.idempotencyKey,
           bindingIdHash: bindingIdHashForPrincipal(principal),
+          requestFingerprint,
+          sourceMessageId: validated.value.sourceMessageId ?? null,
         }).map((result) => ({
           entryId: result.entryId,
           status: result.status,
+          ...(result.replayed ? { replayed: true as const } : {}),
           ...(result.entry ? { entry: toMemoryEntrySummary(result.entry) } : {}),
           ...(result.warning ? { warning: result.warning } : {}),
         }));
@@ -830,7 +955,9 @@ export class MemoryV6Service {
         reason: validated.value.reason,
         idempotencyKey: validated.value.idempotencyKey,
         bindingIdHash: bindingIdHashForPrincipal(principal),
+        requestFingerprint,
         sessionId: null,
+        sourceMessageId: validated.value.sourceMessageId ?? null,
       });
       return createMemoryForgetResponse(results);
     } catch (error) {
@@ -850,7 +977,7 @@ export class MemoryV6Service {
     if (!validated.ok) {
       return toMemoryErrorResponse(validated.error);
     }
-    const from = resolveMemoryV6Target(validated.value.from, principal, this.deps);
+    const from = resolveMemoryV6Target(validated.value.from, principal, this.deps, { projectPathResolution: "known" });
     if (!from.ok) {
       return toMemoryErrorResponse(from.error);
     }
@@ -873,10 +1000,12 @@ export class MemoryV6Service {
         bindingIdHash: bindingIdHashForPrincipal(principal),
         idempotencyKey: validated.value.idempotencyKey,
         requestFingerprint: buildMoveFingerprint({ request: validated.value, from: from.target, to: to.target }),
+        projectScopeAdmissions: to.projectScopeAdmissions,
       });
       return createMemoryMoveEntryResponse({
         entry: result.entry,
         moved: result.moved,
+        ...(result.replayed ? { replayed: true as const } : {}),
         from: validated.value.from,
         to: validated.value.to,
       });

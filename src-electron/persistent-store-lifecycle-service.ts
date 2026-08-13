@@ -100,6 +100,7 @@ export type AuxiliarySessionStorageAccess = {
 };
 export type CharacterStorageAccess = {
   listCharacters(options?: { includeArchived?: boolean }): CharacterCatalogEntry[];
+  getCharacterCatalogEntry(characterId: string): CharacterCatalogEntry | null;
   getCharacter(characterId: string): CharacterDetail | null;
   createCharacter(input: CreateCharacterInput): CharacterDetail;
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
@@ -384,6 +385,10 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
 class LegacyCharacterStorage implements CharacterStorageAccess {
   listCharacters(): CharacterCatalogEntry[] {
     return [];
+  }
+
+  getCharacterCatalogEntry(): CharacterCatalogEntry | null {
+    return null;
   }
 
   getCharacter(): CharacterDetail | null {

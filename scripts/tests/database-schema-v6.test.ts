@@ -573,6 +573,7 @@ describe("database-schema-v6", () => {
         "response_entry_id",
         "operation_created",
         "request_fingerprint",
+        "cleanup_pending_count",
         "created_at",
       ]);
       assert.equal(
@@ -582,6 +583,19 @@ describe("database-schema-v6", () => {
         true,
       );
       assert.equal(tableSql(db, "memory_idempotency_keys_v6").includes("request_fingerprint TEXT NOT NULL"), true);
+      assert.equal(tableSql(db, "memory_idempotency_keys_v6").includes("cleanup_pending_count INTEGER NOT NULL DEFAULT 0"), true);
+      assert.deepEqual(columnNames(db, "memory_target_tag_stats_v6"), [
+        "owner_type",
+        "owner_id",
+        "scope_type",
+        "scope_id",
+        "tag_type",
+        "tag_value",
+        "tag_type_canonical",
+        "tag_value_canonical",
+        "usage_count",
+        "latest_entry_updated_at",
+      ]);
 
       assert.deepEqual(columnNames(db, "memory_idempotency_forget_results_v6"), [
         "key",
@@ -598,6 +612,7 @@ describe("database-schema-v6", () => {
 
       assert.equal(tableSql(db, "memory_tag_catalog_v6").includes("PRIMARY KEY (tag_type_canonical, tag_value_canonical)"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("binding_id_hash"), true);
+      assert.equal(tableSql(db, "memory_mutation_events_v6").includes("source_message_id TEXT"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("result_status TEXT NOT NULL"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("'already_forgotten'"), true);
 
@@ -730,6 +745,57 @@ describe("database-schema-v6", () => {
         | undefined;
       assert.equal(row?.created_at, "2026-07-04T00:00:00.000Z");
       assert.equal(row?.updated_at, "2026-07-04T00:00:00.000Z");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schema は既存Memory idempotencyとmutation eventへcleanup/source列をadditive追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`
+        CREATE TABLE memory_idempotency_keys_v6 (
+          key TEXT NOT NULL,
+          operation TEXT NOT NULL,
+          binding_id_hash TEXT NOT NULL,
+          owner_type TEXT NOT NULL,
+          owner_id TEXT NOT NULL,
+          scope_type TEXT NOT NULL,
+          scope_id TEXT NOT NULL,
+          response_entry_id TEXT,
+          operation_created INTEGER NOT NULL,
+          request_fingerprint TEXT NOT NULL,
+          cleanup_required INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id)
+        );
+        CREATE TABLE memory_mutation_events_v6 (
+          id TEXT PRIMARY KEY,
+          operation TEXT NOT NULL,
+          entry_id TEXT,
+          binding_id_hash TEXT,
+          session_id TEXT,
+          result_status TEXT NOT NULL,
+          reason TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO memory_idempotency_keys_v6 (
+          key, operation, binding_id_hash, owner_type, owner_id, scope_type, scope_id,
+          response_entry_id, operation_created, request_fingerprint, cleanup_required, created_at
+        ) VALUES (
+          'cleanup-key', 'append', 'local-user', 'project', 'project-a', 'project', 'project-a',
+          NULL, 1, 'fingerprint', 1, '2026-08-13T00:00:00.000Z'
+        );
+      `);
+
+      ensureV6Schema(db);
+
+      assert.equal(columnNames(db, "memory_idempotency_keys_v6").includes("cleanup_pending_count"), true);
+      assert.equal(
+        (db.prepare("SELECT cleanup_pending_count FROM memory_idempotency_keys_v6 WHERE key = 'cleanup-key'").get() as { cleanup_pending_count: number }).cleanup_pending_count,
+        1,
+      );
+      assert.equal(columnNames(db, "memory_mutation_events_v6").includes("source_message_id"), true);
     } finally {
       db.close();
     }

@@ -462,6 +462,11 @@ export class CharacterStorage {
     return rows.map((row) => this.toEntry(row));
   }
 
+  getCharacterCatalogEntry(characterId: string): CharacterCatalogEntry | null {
+    const row = this.readCharacterRow(characterId);
+    return row ? this.toEntry(row) : null;
+  }
+
   getCharacter(characterId: string): CharacterDetail | null {
     const row = this.readCharacterRow(characterId);
     if (!row) {

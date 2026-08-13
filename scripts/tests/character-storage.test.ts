@@ -575,9 +575,14 @@ describe("CharacterStorage", () => {
     try {
       storage = new CharacterStorage(dbPath, userDataPath);
       const mia = storage.createCharacter({ name: "Mia", definitionMarkdown: validDefinition("Mia") });
+      storage.archiveCharacter(mia.id);
       await rm(path.join(userDataPath, "characters", mia.id, "character.md"));
 
       assert.equal(storage.createRuntimeSnapshot(mia.id), null);
+      assert.deepEqual(
+        { name: storage.getCharacterCatalogEntry(mia.id)?.name, state: storage.getCharacterCatalogEntry(mia.id)?.state },
+        { name: "Mia", state: "archived" },
+      );
     } finally {
       storage?.close();
       await cleanup();

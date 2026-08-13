@@ -42,9 +42,27 @@ The server uses stdio. It connects to the running WithMate loopback application 
 | `character_memory.correct` | Supersede an episode | destructive write | explicit tool invocation maps to explicit user instruction |
 | `character_memory.forget` | Forget an episode | destructive write | explicit tool invocation maps to explicit user instruction |
 
+The same server publishes general semantic Memory in the `memory.*` namespace:
+
+| Tool | Purpose | Mutation | Authority projection |
+| --- | --- | --- | --- |
+| `memory.search` | Search explicit general Memory targets | none | read-only MCP route |
+| `memory.get_entry` | Read one active entry with its body | none | read-only MCP route |
+| `memory.list_targets` | List bounded target inventory | none | read-only MCP route |
+| `memory.list_entries` | List one target without bodies by default | none | read-only MCP route |
+| `memory.list_tags` | List bounded target tag metadata | none | read-only MCP route |
+| `memory.append` | Append semantic Memory, optionally with protected files | bounded write | explicit target and required idempotency key |
+| `memory.forget` | Preview or forget entries | destructive write | explicit invocation, reason, target, and idempotency key |
+| `memory.move_entry` | Retarget one active entry | destructive write | explicit invocation, from/to targets, and idempotency key |
+| `memory.get_file` | Export one protected object to a new file | external file write | target validation and non-overwrite boundary |
+| `memory.export_files` | Export one entry's protected objects | external file write | target validation and non-overwrite boundary |
+| `memory.file_usage` | Read protected-object usage metadata | none | read-only MCP route |
+
 MCP write inputs do not accept a caller-supplied `authority` field. Tool annotations are client hints; the WithMate application service performs final route and authority validation.
 
-Use MCP `tools/list` as the complete MCP input/output schema. Canonical shared validation is in `src/character-context/character-context-validation.ts`, and shared TypeScript contracts are in `src/character-context/character-context-contract.ts` and `src/character-affect/affect-contract.ts`.
+Use MCP `tools/list` as the complete MCP input/output schema. General Memory validation and contracts are in `src/memory-v6/memory-validation.ts` and `src/memory-v6/memory-contract.ts`. Character validation and contracts are in `src/character-context/character-context-validation.ts`, `src/character-context/character-context-contract.ts`, and `src/character-affect/affect-contract.ts`.
+
+General Memory targets are always explicit project, user-global, character, or character+project selectors. Project path and project ID forms resolve through the same application service project resolver. General Memory MCP write inputs do not accept caller-supplied authority. Append, mutating forget, and move require an idempotency key; forget also requires a reason and supports dry-run. A successful retry reports `replayed: true`. Reusing the same key with a changed request is a structured domain conflict.
 
 ### Required input distinctions
 
@@ -84,7 +102,7 @@ The CLI is an operator/recovery adapter to the same application service:
 - `character-metrics`
 - `mcp-server`
 
-These Character-specific commands do not replace the general Memory V6 `search`, `get-entry`, and `append` commands. Use the general CLI with an explicit `character` or `character+project` target for semantic Character preferences, constraints, facts, conventions, or decisions. That use is not MCP fallback because the public Character MCP surface has no semantic append tool; do not add `--fallback-from mcp` unless an actual corresponding MCP operation failed for availability reasons.
+These Character-specific commands do not replace general semantic Memory. Use `memory.search`, `memory.get_entry`, and `memory.append` with an explicit `character` or `character+project` target for semantic Character preferences, constraints, facts, conventions, or decisions. Use the equivalent general CLI only after a transport-level MCP availability failure or for explicit operator work.
 
 Prefer `--stdin` or `--file` for request bodies. CLI Character operations require the CLI-specific authenticated adapter credential. The server derives operator authority only after that credential is verified; a request body's `authority` string or a normal runtime secret cannot elevate authority.
 
@@ -113,7 +131,7 @@ $request | withmate-memory context-get --stdin --fallback-from mcp
 
 `--fallback-from mcp` is recorded as `mcp->cli` metrics. Both adapters resolve one paired runtime generation and use the same application service and persistence. If the same runtime cannot be confirmed, do not perform a fallback write.
 
-Do not fallback for `invalid_input`, `unknown_character`, `unknown_scope`, `authority_denied`, `version_conflict`, `idempotent_replay`, `migration_required`, or any structured error from a normally responding MCP server. These are domain results, not MCP availability failures.
+Do not fallback for `invalid_input`, `unknown_character`, `unknown_scope`, `authority_denied`, `version_conflict`, `idempotent_replay`, `migration_required`, general Memory validation/target/authority/idempotency errors, or any structured error from a normally responding MCP server. These are domain results, not MCP availability failures.
 
 ## Idempotency and retry
 

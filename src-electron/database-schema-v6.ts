@@ -24,6 +24,7 @@ export const REQUIRED_V6_TABLES = [
   "memory_entry_tags_v6",
   "memory_entry_relations_v6",
   "memory_tag_catalog_v6",
+  "memory_target_tag_stats_v6",
   "memory_mutation_events_v6",
   "memory_idempotency_keys_v6",
   "memory_idempotency_forget_results_v6",
@@ -59,6 +60,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turn_provider_outputs_turn_kind_seq",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
+  "idx_v6_memory_target_tag_stats_page",
   "idx_v6_memory_mutation_events_result",
   "idx_v6_memory_idempotency_response_entry",
   "idx_v6_memory_move_events_entry",
@@ -161,7 +163,8 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   memory_entry_tags_v6: ["entry_id", "tag_type", "tag_value", "tag_type_canonical", "tag_value_canonical", "created_at"],
   memory_entry_relations_v6: ["source_entry_id", "target_entry_id", "relation_type", "created_at"],
   memory_tag_catalog_v6: ["tag_type", "tag_value", "tag_type_canonical", "tag_value_canonical", "description", "aliases_json", "state", "usage_count", "created_at", "updated_at"],
-  memory_mutation_events_v6: ["id", "operation", "entry_id", "binding_id_hash", "session_id", "result_status", "reason", "created_at"],
+  memory_target_tag_stats_v6: ["owner_type", "owner_id", "scope_type", "scope_id", "tag_type", "tag_value", "tag_type_canonical", "tag_value_canonical", "usage_count", "latest_entry_updated_at"],
+  memory_mutation_events_v6: ["id", "operation", "entry_id", "binding_id_hash", "session_id", "source_message_id", "result_status", "reason", "created_at"],
   memory_idempotency_keys_v6: [
     "key",
     "operation",
@@ -173,6 +176,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "response_entry_id",
     "operation_created",
     "request_fingerprint",
+    "cleanup_pending_count",
     "created_at",
   ],
   memory_idempotency_forget_results_v6: [
@@ -980,6 +984,34 @@ export const CREATE_V6_MEMORY_TAG_CATALOG_TABLE_SQL = `
     ON memory_tag_catalog_v6(tag_type_canonical, usage_count DESC, updated_at DESC);
 `;
 
+export const CREATE_V6_MEMORY_TARGET_TAG_STATS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS memory_target_tag_stats_v6 (
+    owner_type TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    scope_type TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    tag_type TEXT NOT NULL,
+    tag_value TEXT NOT NULL,
+    tag_type_canonical TEXT NOT NULL,
+    tag_value_canonical TEXT NOT NULL,
+    usage_count INTEGER NOT NULL CHECK (usage_count > 0),
+    latest_entry_updated_at TEXT NOT NULL,
+    PRIMARY KEY (owner_type, owner_id, scope_type, scope_id, tag_type_canonical, tag_value_canonical)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_memory_target_tag_stats_page
+    ON memory_target_tag_stats_v6(
+      owner_type,
+      owner_id,
+      scope_type,
+      scope_id,
+      usage_count DESC,
+      latest_entry_updated_at DESC,
+      tag_type_canonical ASC,
+      tag_value_canonical ASC
+    );
+`;
+
 export const CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS memory_mutation_events_v6 (
     id TEXT PRIMARY KEY,
@@ -987,6 +1019,7 @@ export const CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL = `
     entry_id TEXT,
     binding_id_hash TEXT,
     session_id TEXT,
+    source_message_id TEXT,
     result_status TEXT NOT NULL CHECK (result_status IN (
       'success',
       'already_forgotten',
@@ -1022,6 +1055,7 @@ export const CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL = `
     response_entry_id TEXT,
     operation_created INTEGER NOT NULL CHECK (operation_created IN (0, 1)),
     request_fingerprint TEXT NOT NULL,
+    cleanup_pending_count INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending_count >= 0),
     created_at TEXT NOT NULL,
     PRIMARY KEY (binding_id_hash, key, operation, owner_type, owner_id, scope_type, scope_id),
     FOREIGN KEY (response_entry_id) REFERENCES memory_entries_v6(id) ON DELETE SET NULL
@@ -1264,6 +1298,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_RELATIONS_TABLE_SQL,
   CREATE_V6_MEMORY_TAG_CATALOG_TABLE_SQL,
+  CREATE_V6_MEMORY_TARGET_TAG_STATS_TABLE_SQL,
   CREATE_V6_MEMORY_MUTATION_EVENTS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_KEYS_TABLE_SQL,
   CREATE_V6_MEMORY_IDEMPOTENCY_FORGET_RESULTS_TABLE_SQL,
@@ -1385,6 +1420,7 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 }
 
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
+  const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -1434,6 +1470,55 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     const protectedObjectColumns = tableColumnNames(db, "memory_protected_objects_v6");
     if (!protectedObjectColumns.has("role")) {
       db.exec("ALTER TABLE memory_protected_objects_v6 ADD COLUMN role TEXT NOT NULL DEFAULT 'other' CHECK (role IN ('evidence', 'source', 'snapshot', 'artifact', 'reference', 'other'))");
+    }
+  }
+
+  if (tableExists(db, "memory_idempotency_keys_v6")) {
+    const idempotencyColumns = tableColumnNames(db, "memory_idempotency_keys_v6");
+    if (!idempotencyColumns.has("cleanup_pending_count")) {
+      db.exec("ALTER TABLE memory_idempotency_keys_v6 ADD COLUMN cleanup_pending_count INTEGER NOT NULL DEFAULT 0 CHECK (cleanup_pending_count >= 0)");
+      if (idempotencyColumns.has("cleanup_required")) {
+        db.exec("UPDATE memory_idempotency_keys_v6 SET cleanup_pending_count = 1 WHERE cleanup_required = 1");
+      }
+    }
+  }
+
+  if (!targetTagStatsExisted) {
+    db.exec(`
+      INSERT INTO memory_target_tag_stats_v6 (
+        owner_type,
+        owner_id,
+        scope_type,
+        scope_id,
+        tag_type,
+        tag_value,
+        tag_type_canonical,
+        tag_value_canonical,
+        usage_count,
+        latest_entry_updated_at
+      )
+      SELECT
+        e.owner_type,
+        e.owner_id,
+        e.scope_type,
+        e.scope_id,
+        MAX(t.tag_type),
+        MAX(t.tag_value),
+        t.tag_type_canonical,
+        t.tag_value_canonical,
+        COUNT(*),
+        MAX(e.updated_at)
+      FROM memory_entry_tags_v6 AS t
+      INNER JOIN memory_entries_v6 AS e ON e.id = t.entry_id
+      WHERE e.state = 'active'
+      GROUP BY e.owner_type, e.owner_id, e.scope_type, e.scope_id, t.tag_type_canonical, t.tag_value_canonical
+    `);
+  }
+
+  if (tableExists(db, "memory_mutation_events_v6")) {
+    const mutationEventColumns = tableColumnNames(db, "memory_mutation_events_v6");
+    if (!mutationEventColumns.has("source_message_id")) {
+      db.exec("ALTER TABLE memory_mutation_events_v6 ADD COLUMN source_message_id TEXT");
     }
   }
 
