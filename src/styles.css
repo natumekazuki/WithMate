@@ -2063,6 +2063,12 @@ button:disabled {
   padding: 12px 22px 0;
 }
 
+.home-launch-dialog .launch-panel {
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
 .launch-section {
   padding: 14px;
   border: 1px solid rgba(203, 213, 225, 0.12);
@@ -3494,6 +3500,22 @@ button:disabled {
   gap: 8px;
 }
 
+.home-launch-character-section,
+.home-launch-character-section .launch-field {
+  min-height: 0;
+}
+
+.home-launch-character-section .launch-field {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.home-launch-character-section .launch-character-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-padding-block: 3px;
+}
+
 .launch-character-option,
 .launch-character-neutral {
   display: grid;
@@ -3518,6 +3540,11 @@ button:disabled {
 .launch-character-option.selected {
   border-color: color-mix(in srgb, var(--character-main) 42%, rgba(203, 213, 225, 0.18));
   background: color-mix(in srgb, var(--character-main-soft) 34%, rgba(255, 255, 255, 0.04));
+}
+
+.launch-character-option:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.88);
+  outline-offset: -3px;
 }
 
 .launch-character-copy {
@@ -3824,7 +3851,6 @@ button:disabled {
 
 .session-list,
 .character-list,
-.message-list,
 .stream-list,
 .artifact-file-list,
 .summary-list {
@@ -4122,15 +4148,70 @@ button:disabled {
 
 .session-message-stack {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto auto;
   gap: 0;
   min-height: 0;
   min-width: 0;
 }
 
 .session-recovery-actions-slot {
+  grid-row: 2;
   min-width: 0;
   padding: 0 12px 12px;
+}
+
+.chat-error-surface {
+  display: grid;
+  grid-row: 3;
+  gap: 6px;
+  min-width: 0;
+  padding: 0 12px 12px;
+}
+
+.chat-error-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(248, 113, 113, 0.24);
+  border-radius: 9px;
+  background: rgba(248, 113, 113, 0.1);
+  color: #fecaca;
+  font-size: 0.8rem;
+}
+
+.chat-error-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 4px;
+  min-width: 0;
+}
+
+.chat-error-copy p,
+.chat-error-copy li {
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.chat-error-copy ul {
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.chat-error-notice > button {
+  flex: 0 0 auto;
+}
+
+.chat-error-dismiss {
+  min-width: auto;
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
 }
 
 .session-message-column {
@@ -4141,6 +4222,7 @@ button:disabled {
 
 .session-central-surface {
   display: grid;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
 }
@@ -4383,34 +4465,8 @@ button:disabled {
   }
 }
 
-.session-message-column:has(.session-content-find),
-.session-message-column:has(.session-inline-path-feedback) {
+.session-message-column:has(.session-content-find) {
   grid-template-rows: auto minmax(0, 1fr);
-}
-
-.session-message-column:has(.session-content-find):has(.session-inline-path-feedback) {
-  grid-template-rows: auto auto minmax(0, 1fr);
-}
-
-.session-inline-path-feedback {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
-  padding: 7px 10px;
-  border: 1px solid rgba(251, 191, 36, 0.26);
-  border-radius: 9px;
-  background: rgba(120, 53, 15, 0.18);
-  color: #fde68a;
-  font-size: 0.76rem;
-}
-
-.session-inline-path-feedback button {
-  border: 0;
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
 }
 
 .session-context-pane {
@@ -6146,6 +6202,8 @@ button:disabled {
 }
 
 .message-avatar-stack {
+  position: sticky;
+  top: 8px;
   display: grid;
   justify-items: center;
   align-content: start;
@@ -6414,13 +6472,13 @@ button:disabled {
 
 .message-list {
   margin: 0;
-  padding-left: 22px;
+  padding-inline-start: 1.5em;
   display: grid;
   gap: 6px;
 }
 
 .message-list.ordered {
-  padding-left: 24px;
+  padding-inline-start: 2.25em;
 }
 
 .message-inline-code {
@@ -11559,6 +11617,10 @@ button:disabled {
   .composer-box,
   .choice-card {
     grid-template-columns: 1fr;
+  }
+
+  .message-avatar-stack {
+    position: static;
   }
 
   .home-settings-rail {

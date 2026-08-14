@@ -357,7 +357,7 @@ export class CompanionRuntimeService {
       ?? buildProviderSession(requestedSession);
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     if (composerPreview.errors.length > 0) {
-      throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
+      throw new Error(composerPreview.errors[0] ?? "Failed to resolve attachment.");
     }
 
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;

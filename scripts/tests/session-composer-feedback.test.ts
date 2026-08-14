@@ -90,7 +90,7 @@ describe("session composer feedback", () => {
       draftText: "",
     });
 
-    assert.equal(getComposerSendBlockedMessage(state), "送信できない状態だよ。");
+    assert.equal(getComposerSendBlockedMessage(state), "Message cannot be sent.");
   });
 
   it("send blocked message は送信可能なら null を返す", () => {

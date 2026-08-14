@@ -8,6 +8,11 @@ import type {
   MemoryEntryState,
   NormalizedMemoryTag,
 } from "../src/memory-v6/memory-contract.js";
+import {
+  decodeMemoryListTagsCursor,
+  encodeMemoryListTagsCursor,
+  type MemoryListTagsCursor,
+} from "../src/memory-v6/memory-validation.js";
 import type {
   MemoryV6ReviewForgetResult,
   MemoryV6ReviewSearchHit,
@@ -29,6 +34,7 @@ import {
   targetKey,
   targetWhereSql,
   type MemoryV6EntryRow,
+  type MemoryV6ProjectScopeAdmission,
   type MemoryV6ResolvedTarget,
   type MemoryV6StorageSource,
   type MemoryV6TagRow,
@@ -52,6 +58,7 @@ type AppendMemoryEntryInput = {
   protectedObjects?: readonly MemoryV6AppendProtectedObjectInput[];
   fileQuotaBytes?: number;
   now?: string;
+  projectScopeAdmissions?: readonly MemoryV6ProjectScopeAdmission[];
 };
 
 type ForgetMemoryEntriesInput = {
@@ -62,12 +69,15 @@ type ForgetMemoryEntriesInput = {
   bindingIdHash?: string;
   requestFingerprint?: string;
   sessionId?: string | null;
+  sourceMessageId?: string | null;
   now?: string;
 };
 
 export type MemoryV6AppendResult = {
   entry: MemoryEntryDetail;
   created: boolean;
+  replayed?: true;
+  cleanupRequired?: true;
 };
 
 export type MemoryV6ForgetResultStatus = "forgotten" | "already_forgotten" | "not_found";
@@ -75,6 +85,7 @@ export type MemoryV6ForgetResultStatus = "forgotten" | "already_forgotten" | "no
 export type MemoryV6ForgetResult = {
   entryId: string;
   status: MemoryV6ForgetResultStatus;
+  replayed?: true;
 };
 
 export type MemoryV6ForgetPreviewResult = MemoryV6ForgetResult & {
@@ -141,6 +152,11 @@ export type MemoryV6ListEntriesResult = {
   nextCursor?: string;
 };
 
+export type MemoryV6ListTagsResult<T> = {
+  items: T[];
+  nextCursor?: string;
+};
+
 export type MemoryV6MoveEntryInput = {
   entryId: string;
   from: MemoryV6ResolvedTarget;
@@ -149,11 +165,13 @@ export type MemoryV6MoveEntryInput = {
   idempotencyKey?: string;
   requestFingerprint: string;
   now?: string;
+  projectScopeAdmissions?: readonly MemoryV6ProjectScopeAdmission[];
 };
 
 export type MemoryV6MoveEntryResult = {
   entry: MemoryEntryDetail;
   moved: boolean;
+  replayed?: true;
 };
 
 export type MemoryV6ReviewSearchInput = {
@@ -254,6 +272,7 @@ type IdempotencyRow = {
   response_entry_id: string | null;
   operation_created: number;
   request_fingerprint: string;
+  cleanup_pending_count: number;
 };
 
 const DEFAULT_SEARCH_LIMIT = 20;
@@ -463,6 +482,10 @@ function uniqueSearchTokens(plan: SearchQueryPlan): string[] {
   return plan.tokens.filter((token, index, tokens) => token.length > 0 && tokens.indexOf(token) === index);
 }
 
+export function countMemorySearchQueryTerms(query: string): number {
+  return uniqueSearchTokens(buildSearchQueryPlan(query)).length;
+}
+
 function ownerRef(row: MemoryV6EntryRow): MemoryEntryDetail["owner"] {
   if (row.owner_type === "user") {
     return { type: "user", id: "local-user" };
@@ -549,6 +572,7 @@ function buildForgetFingerprint(input: ForgetMemoryEntriesInput): string {
     target: input.target,
     entryIds: [...input.entryIds].sort(),
     reason: input.reason ?? "user_request",
+    sourceMessageId: input.sourceMessageId ?? null,
   });
 }
 
@@ -627,6 +651,63 @@ export class MemoryV6Storage {
     );
   }
 
+  settleAppendCleanupObligation(input: {
+    target: MemoryV6ResolvedTarget;
+    idempotencyKey: string;
+    bindingIdHash?: string;
+  }): void {
+    const result = this.db.prepare(`
+      UPDATE memory_idempotency_keys_v6
+      SET cleanup_pending_count = cleanup_pending_count - 1
+      WHERE binding_id_hash = ?
+        AND key = ?
+        AND operation = 'append'
+        AND owner_type = ?
+        AND owner_id = ?
+        AND scope_type = ?
+        AND scope_id = ?
+        AND cleanup_pending_count > 0
+    `).run(
+      input.bindingIdHash ?? "",
+      input.idempotencyKey,
+      input.target.owner.type,
+      input.target.owner.id,
+      input.target.scope.type,
+      input.target.scope.id,
+    );
+    if (result.changes !== 1) {
+      throw new MemoryV6EntryNotFoundError(input.idempotencyKey);
+    }
+  }
+
+  private addAppendCleanupObligation(input: {
+    target: MemoryV6ResolvedTarget;
+    idempotencyKey: string;
+    bindingIdHash: string;
+  }): void {
+    const result = this.db.prepare(`
+      UPDATE memory_idempotency_keys_v6
+      SET cleanup_pending_count = cleanup_pending_count + 1
+      WHERE binding_id_hash = ?
+        AND key = ?
+        AND operation = 'append'
+        AND owner_type = ?
+        AND owner_id = ?
+        AND scope_type = ?
+        AND scope_id = ?
+    `).run(
+      input.bindingIdHash,
+      input.idempotencyKey,
+      input.target.owner.type,
+      input.target.owner.id,
+      input.target.scope.type,
+      input.target.scope.id,
+    );
+    if (result.changes !== 1) {
+      throw new MemoryV6EntryNotFoundError(input.idempotencyKey);
+    }
+  }
+
   appendEntry(input: AppendMemoryEntryInput): MemoryV6AppendResult {
     const createdAt = input.now ?? nowIso();
     const entryId = input.id ?? `mem-${randomUUID()}`;
@@ -638,6 +719,14 @@ export class MemoryV6Storage {
       if (input.idempotencyKey) {
         const replay = this.resolveAppendIdempotency(input.target, input.idempotencyKey, bindingIdHash, requestFingerprint);
         if (replay) {
+          if (protectedObjects.length > 0) {
+            this.addAppendCleanupObligation({
+              target: input.target,
+              idempotencyKey: input.idempotencyKey,
+              bindingIdHash,
+            });
+            return { ...replay, cleanupRequired: true };
+          }
           return replay;
         }
       }
@@ -651,6 +740,7 @@ export class MemoryV6Storage {
         return row;
       });
       this.assertProtectedObjectQuota(protectedObjects, input.fileQuotaBytes);
+      this.admitProjectScopes(input.projectScopeAdmissions ?? [], createdAt);
 
       this.db.prepare(`
         INSERT INTO memory_entries_v6 (
@@ -697,6 +787,7 @@ export class MemoryV6Storage {
 
       this.replaceTags(entryId, input.tags, createdAt);
       this.incrementTagCatalog(input.tags, createdAt);
+      this.incrementTargetTagStats(input.target, input.tags, createdAt);
       this.insertProtectedObjects(entryId, protectedObjects, createdAt);
 
       for (const supersededRow of supersededRows) {
@@ -718,7 +809,9 @@ export class MemoryV6Storage {
             AND state = 'active'
         `).run(entryId, createdAt, supersededRow.id);
 
-        this.decrementTagCatalog(this.getEntryTags(supersededRow.id));
+        const supersededTags = this.getEntryTags(supersededRow.id);
+        this.decrementTagCatalog(supersededTags);
+        this.refreshTargetTagStats(input.target, supersededTags);
         this.insertMutationEvent(
           "supersede",
           supersededRow.id,
@@ -1390,6 +1483,130 @@ export class MemoryV6Storage {
     }));
   }
 
+  private listTargetTagStatsRows(
+    target: MemoryV6ResolvedTarget,
+    cursor: MemoryListTagsCursor | null,
+    rowLimit: number,
+  ): Array<MemoryV6TagRow & { active_usage_count: number; latest_entry_updated_at: string }> {
+    const columns = `
+      s.tag_type,
+      s.tag_value,
+      s.tag_type_canonical,
+      s.tag_value_canonical,
+      s.usage_count AS active_usage_count,
+      s.latest_entry_updated_at
+    `;
+    const targetPredicate = `
+      s.owner_type = ?
+      AND s.owner_id = ?
+      AND s.scope_type = ?
+      AND s.scope_id = ?
+    `;
+    const order = "s.usage_count DESC, s.latest_entry_updated_at DESC, s.tag_type_canonical ASC, s.tag_value_canonical ASC";
+    const targetParams = [target.owner.type, target.owner.id, target.scope.type, target.scope.id];
+    if (!cursor) {
+      return this.db.prepare(`
+        SELECT ${columns}
+        FROM memory_target_tag_stats_v6 AS s
+        WHERE ${targetPredicate}
+        ORDER BY ${order}
+        LIMIT ?
+      `).all(...targetParams, rowLimit) as Array<MemoryV6TagRow & { active_usage_count: number; latest_entry_updated_at: string }>;
+    }
+
+    // Each branch starts at one concrete index range and is independently capped.
+    // The outer merge therefore sorts at most four bounded pages instead of scanning
+    // every tag preceding a deep cursor through a multi-column OR predicate.
+    return this.db.prepare(`
+      WITH candidates AS (
+        SELECT * FROM (
+          SELECT ${columns}
+          FROM memory_target_tag_stats_v6 AS s
+          WHERE ${targetPredicate} AND s.usage_count < ?
+          ORDER BY ${order}
+          LIMIT ?
+        )
+        UNION ALL
+        SELECT * FROM (
+          SELECT ${columns}
+          FROM memory_target_tag_stats_v6 AS s
+          WHERE ${targetPredicate}
+            AND s.usage_count = ?
+            AND s.latest_entry_updated_at < ?
+          ORDER BY ${order}
+          LIMIT ?
+        )
+        UNION ALL
+        SELECT * FROM (
+          SELECT ${columns}
+          FROM memory_target_tag_stats_v6 AS s
+          WHERE ${targetPredicate}
+            AND s.usage_count = ?
+            AND s.latest_entry_updated_at = ?
+            AND s.tag_type_canonical > ?
+          ORDER BY ${order}
+          LIMIT ?
+        )
+        UNION ALL
+        SELECT * FROM (
+          SELECT ${columns}
+          FROM memory_target_tag_stats_v6 AS s
+          WHERE ${targetPredicate}
+            AND s.usage_count = ?
+            AND s.latest_entry_updated_at = ?
+            AND s.tag_type_canonical = ?
+            AND s.tag_value_canonical > ?
+          ORDER BY ${order}
+          LIMIT ?
+        )
+      )
+      SELECT *
+      FROM candidates
+      ORDER BY active_usage_count DESC, latest_entry_updated_at DESC, tag_type_canonical ASC, tag_value_canonical ASC
+      LIMIT ?
+    `).all(
+      ...targetParams, cursor.usageCount, rowLimit,
+      ...targetParams, cursor.usageCount, cursor.latestUpdatedAt, rowLimit,
+      ...targetParams, cursor.usageCount, cursor.latestUpdatedAt, cursor.canonicalType, rowLimit,
+      ...targetParams, cursor.usageCount, cursor.latestUpdatedAt, cursor.canonicalType, cursor.canonicalValue, rowLimit,
+      rowLimit,
+    ) as Array<MemoryV6TagRow & { active_usage_count: number; latest_entry_updated_at: string }>;
+  }
+
+  listTagsPage(
+    targets: readonly MemoryV6ResolvedTarget[],
+    options: { limit?: number; cursor?: string } = {},
+  ): MemoryV6ListTagsResult<NormalizedMemoryTag> {
+    if (targets.length !== 1) {
+      throw new Error("Memory V6 list-tags page requires exactly one target.");
+    }
+    const target = targets[0]!;
+    const limit = normalizeMaintenanceLimit(options.limit);
+    const cursor = options.cursor ? decodeMemoryListTagsCursor(options.cursor) : null;
+    if (options.cursor && !cursor) {
+      throw new Error("Memory V6 list-tags cursor is invalid.");
+    }
+    const rows = this.listTargetTagStatsRows(target, cursor, limit + 1);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((row) => ({
+        type: row.tag_type,
+        value: row.tag_value,
+        canonicalType: row.tag_type_canonical,
+        canonicalValue: row.tag_value_canonical,
+      })),
+      ...(rows.length > limit && last ? {
+        nextCursor: encodeMemoryListTagsCursor({
+          usageCount: Number(last.active_usage_count),
+          latestUpdatedAt: last.latest_entry_updated_at,
+          canonicalType: last.tag_type_canonical,
+          canonicalValue: last.tag_value_canonical,
+        }),
+      } : {}),
+    };
+  }
+
   listTagStatistics(targets: readonly MemoryV6ResolvedTarget[], sampleLimit = 0): MemoryV6TagStatistic[] {
     const targetWhere = targetWhereSql("e", targets);
     const rows = this.db.prepare(`
@@ -1431,7 +1648,69 @@ export class MemoryV6Storage {
     });
   }
 
-  previewForgetEntries(input: Pick<ForgetMemoryEntriesInput, "target" | "entryIds" | "reason" | "idempotencyKey" | "bindingIdHash" | "requestFingerprint">): MemoryV6ForgetPreviewResult[] {
+  listTagStatisticsPage(
+    targets: readonly MemoryV6ResolvedTarget[],
+    options: { sampleLimit?: number; limit?: number; cursor?: string } = {},
+  ): MemoryV6ListTagsResult<MemoryV6TagStatistic> {
+    if (targets.length !== 1) {
+      throw new Error("Memory V6 list-tags statistics page requires exactly one target.");
+    }
+    const target = targets[0]!;
+    const limit = normalizeMaintenanceLimit(options.limit);
+    const sampleLimit = options.sampleLimit ?? 0;
+    const cursor = options.cursor ? decodeMemoryListTagsCursor(options.cursor) : null;
+    if (options.cursor && !cursor) {
+      throw new Error("Memory V6 list-tags cursor is invalid.");
+    }
+    const rows = this.listTargetTagStatsRows(target, cursor, limit + 1);
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
+    return {
+      items: page.map((row) => {
+        const samples = sampleLimit <= 0 ? [] : this.db.prepare(`
+          SELECT e.id, e.title
+          FROM memory_entry_tags_v6 AS t
+          INNER JOIN memory_entries_v6 AS e ON e.id = t.entry_id
+          WHERE e.state = 'active'
+            AND e.owner_type = ?
+            AND e.owner_id = ?
+            AND e.scope_type = ?
+            AND e.scope_id = ?
+            AND t.tag_type_canonical = ?
+            AND t.tag_value_canonical = ?
+          ORDER BY e.updated_at DESC, e.id DESC
+          LIMIT ?
+        `).all(
+          target.owner.type,
+          target.owner.id,
+          target.scope.type,
+          target.scope.id,
+          row.tag_type_canonical,
+          row.tag_value_canonical,
+          sampleLimit,
+        ) as Array<{ id: string; title: string }>;
+        return {
+          type: row.tag_type,
+          value: row.tag_value,
+          canonicalType: row.tag_type_canonical,
+          canonicalValue: row.tag_value_canonical,
+          entryCount: Number(row.active_usage_count),
+          latestUpdatedAt: row.latest_entry_updated_at,
+          samples,
+        };
+      }),
+      ...(rows.length > limit && last ? {
+        nextCursor: encodeMemoryListTagsCursor({
+          usageCount: Number(last.active_usage_count),
+          latestUpdatedAt: last.latest_entry_updated_at,
+          canonicalType: last.tag_type_canonical,
+          canonicalValue: last.tag_value_canonical,
+        }),
+      } : {}),
+    };
+  }
+
+  previewForgetEntries(input: Pick<ForgetMemoryEntriesInput, "target" | "entryIds" | "reason" | "idempotencyKey" | "bindingIdHash" | "requestFingerprint" | "sourceMessageId">): MemoryV6ForgetPreviewResult[] {
     if (input.idempotencyKey) {
       const replay = this.resolveForgetIdempotency(
         input.target,
@@ -1483,7 +1762,7 @@ export class MemoryV6Storage {
       const results: MemoryV6ForgetResult[] = entryIds.map((entryId) => {
         const row = this.getEntryRow(entryId);
         if (!row || !this.rowMatchesTarget(row, input.target)) {
-          this.insertMutationEvent("forget", null, bindingIdHash, input.sessionId ?? null, "not_found", reason, updatedAt);
+          this.insertMutationEvent("forget", null, bindingIdHash, input.sessionId ?? null, "not_found", reason, updatedAt, input.sourceMessageId ?? null);
           return { entryId, status: "not_found" };
         }
         if (row.state === "forgotten") {
@@ -1491,7 +1770,7 @@ export class MemoryV6Storage {
             this.redactForgottenEntryForPrivacy(entryId, updatedAt);
           }
           this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt, { redactMetadata: reason === "privacy" });
-          this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "already_forgotten", reason, updatedAt);
+          this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "already_forgotten", reason, updatedAt, input.sourceMessageId ?? null);
           return { entryId, status: "already_forgotten" };
         }
 
@@ -1513,12 +1792,13 @@ export class MemoryV6Storage {
 
         if (previousTags.length > 0) {
           this.decrementTagCatalog(previousTags);
+          this.refreshTargetTagStats(input.target, previousTags);
         }
         if (reason === "privacy") {
           this.db.prepare("DELETE FROM memory_entry_tags_v6 WHERE entry_id = ?").run(entryId);
         }
         this.markProtectedObjectsDeletePendingForEntry(entryId, updatedAt, { redactMetadata: reason === "privacy" });
-        this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "success", reason, updatedAt);
+        this.insertMutationEvent("forget", entryId, bindingIdHash, input.sessionId ?? row.source_session_id, "success", reason, updatedAt, input.sourceMessageId ?? null);
         return { entryId, status: "forgotten" };
       });
 
@@ -1588,7 +1868,7 @@ export class MemoryV6Storage {
           if (!replayedEntry || replayedEntry.state !== "active" || !this.rowMatchesTarget(this.getEntryRow(replay.entry_id)!, input.to)) {
             throw new MemoryV6EntryNotFoundError(replay.entry_id);
           }
-          return { entry: replayedEntry, moved: true };
+          return { entry: replayedEntry, moved: true, replayed: true };
         }
       }
 
@@ -1596,6 +1876,8 @@ export class MemoryV6Storage {
       if (!row || row.state !== "active" || !this.rowMatchesTarget(row, input.from)) {
         throw new MemoryV6EntryNotFoundError(input.entryId);
       }
+      this.admitProjectScopes(input.projectScopeAdmissions ?? [], movedAt);
+      const movedTags = this.getEntryTags(input.entryId);
       this.db.prepare(`
         UPDATE memory_entries_v6
         SET owner_type = ?,
@@ -1606,6 +1888,8 @@ export class MemoryV6Storage {
         WHERE id = ?
           AND state = 'active'
       `).run(input.to.owner.type, input.to.owner.id, input.to.scope.type, input.to.scope.id, movedAt, input.entryId);
+      this.refreshTargetTagStats(input.from, movedTags);
+      this.incrementTargetTagStats(input.to, movedTags, movedAt);
       this.db.prepare(`
         INSERT INTO memory_move_events_v6 (
           id,
@@ -1645,6 +1929,43 @@ export class MemoryV6Storage {
       }
       return { entry, moved: true };
     });
+  }
+
+  private admitProjectScopes(
+    admissions: readonly MemoryV6ProjectScopeAdmission[],
+    admittedAt: string,
+  ): void {
+    for (const admission of admissions) {
+      this.db.prepare(`
+        INSERT INTO project_scopes_v6 (
+          id,
+          project_type,
+          project_key,
+          workspace_path,
+          git_root,
+          git_remote_url,
+          display_name,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(project_type, project_key) DO UPDATE SET
+          workspace_path = excluded.workspace_path,
+          git_root = excluded.git_root,
+          git_remote_url = excluded.git_remote_url,
+          display_name = excluded.display_name,
+          updated_at = excluded.updated_at
+      `).run(
+        admission.id,
+        admission.projectType,
+        admission.projectKey,
+        admission.workspacePath,
+        admission.gitRoot ?? "",
+        admission.gitRemoteUrl ?? "",
+        admission.displayName,
+        admittedAt,
+        admittedAt,
+      );
+    }
   }
 
   private markProtectedObjectsDeletePendingForEntry(
@@ -1964,6 +2285,129 @@ export class MemoryV6Storage {
     }
   }
 
+  private incrementTargetTagStats(
+    target: MemoryV6ResolvedTarget,
+    tags: readonly NormalizedMemoryTag[],
+    updatedAt: string,
+  ): void {
+    const uniqueTags = new Map<string, NormalizedMemoryTag>();
+    for (const tag of tags) {
+      if (!uniqueTags.has(tagIdentityKey(tag))) {
+        uniqueTags.set(tagIdentityKey(tag), tag);
+      }
+    }
+    for (const tag of uniqueTags.values()) {
+      this.db.prepare(`
+        INSERT INTO memory_target_tag_stats_v6 (
+          owner_type,
+          owner_id,
+          scope_type,
+          scope_id,
+          tag_type,
+          tag_value,
+          tag_type_canonical,
+          tag_value_canonical,
+          usage_count,
+          latest_entry_updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(owner_type, owner_id, scope_type, scope_id, tag_type_canonical, tag_value_canonical) DO UPDATE SET
+          tag_type = excluded.tag_type,
+          tag_value = excluded.tag_value,
+          usage_count = usage_count + 1,
+          latest_entry_updated_at = MAX(latest_entry_updated_at, excluded.latest_entry_updated_at)
+      `).run(
+        target.owner.type,
+        target.owner.id,
+        target.scope.type,
+        target.scope.id,
+        tag.type,
+        tag.value,
+        tag.canonicalType,
+        tag.canonicalValue,
+        updatedAt,
+      );
+    }
+  }
+
+  private refreshTargetTagStats(target: MemoryV6ResolvedTarget, tags: readonly NormalizedMemoryTag[]): void {
+    const uniqueTags = new Map<string, NormalizedMemoryTag>();
+    for (const tag of tags) {
+      if (!uniqueTags.has(tagIdentityKey(tag))) {
+        uniqueTags.set(tagIdentityKey(tag), tag);
+      }
+    }
+    for (const tag of uniqueTags.values()) {
+      const remaining = this.db.prepare(`
+        SELECT COUNT(*) AS usage_count, MAX(e.updated_at) AS latest_entry_updated_at
+        FROM memory_entry_tags_v6 AS t
+        INNER JOIN memory_entries_v6 AS e ON e.id = t.entry_id
+        WHERE e.state = 'active'
+          AND e.owner_type = ?
+          AND e.owner_id = ?
+          AND e.scope_type = ?
+          AND e.scope_id = ?
+          AND t.tag_type_canonical = ?
+          AND t.tag_value_canonical = ?
+      `).get(
+        target.owner.type,
+        target.owner.id,
+        target.scope.type,
+        target.scope.id,
+        tag.canonicalType,
+        tag.canonicalValue,
+      ) as { usage_count: number; latest_entry_updated_at: string | null };
+      if (Number(remaining.usage_count) === 0 || !remaining.latest_entry_updated_at) {
+        this.db.prepare(`
+          DELETE FROM memory_target_tag_stats_v6
+          WHERE owner_type = ?
+            AND owner_id = ?
+            AND scope_type = ?
+            AND scope_id = ?
+            AND tag_type_canonical = ?
+            AND tag_value_canonical = ?
+        `).run(
+          target.owner.type,
+          target.owner.id,
+          target.scope.type,
+          target.scope.id,
+          tag.canonicalType,
+          tag.canonicalValue,
+        );
+        continue;
+      }
+      this.db.prepare(`
+        INSERT INTO memory_target_tag_stats_v6 (
+          owner_type,
+          owner_id,
+          scope_type,
+          scope_id,
+          tag_type,
+          tag_value,
+          tag_type_canonical,
+          tag_value_canonical,
+          usage_count,
+          latest_entry_updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(owner_type, owner_id, scope_type, scope_id, tag_type_canonical, tag_value_canonical) DO UPDATE SET
+          tag_type = excluded.tag_type,
+          tag_value = excluded.tag_value,
+          usage_count = excluded.usage_count,
+          latest_entry_updated_at = excluded.latest_entry_updated_at
+      `).run(
+        target.owner.type,
+        target.owner.id,
+        target.scope.type,
+        target.scope.id,
+        tag.type,
+        tag.value,
+        tag.canonicalType,
+        tag.canonicalValue,
+        Number(remaining.usage_count),
+        remaining.latest_entry_updated_at,
+      );
+    }
+  }
+
   private insertMutationEvent(
     operation: "append" | "forget" | "supersede",
     entryId: string | null,
@@ -1972,6 +2416,7 @@ export class MemoryV6Storage {
     resultStatus: "success" | "already_forgotten" | "not_found" | "forbidden" | "failed",
     reason: string,
     createdAt: string,
+    sourceMessageId: string | null = null,
   ): void {
     this.db.prepare(`
       INSERT INTO memory_mutation_events_v6 (
@@ -1980,11 +2425,12 @@ export class MemoryV6Storage {
         entry_id,
         binding_id_hash,
         session_id,
+        source_message_id,
         result_status,
         reason,
         created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(`memory-event-${randomUUID()}`, operation, entryId, bindingIdHash || null, sessionId, resultStatus, reason, createdAt);
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(`memory-event-${randomUUID()}`, operation, entryId, bindingIdHash || null, sessionId, sourceMessageId, resultStatus, reason, createdAt);
   }
 
   private insertIdempotencyKey(input: {
@@ -2049,6 +2495,8 @@ export class MemoryV6Storage {
     return {
       entry,
       created: row.operation_created === 1,
+      replayed: true,
+      ...(row.cleanup_pending_count > 0 ? { cleanupRequired: true as const } : {}),
     };
   }
 
@@ -2084,7 +2532,7 @@ export class MemoryV6Storage {
       target.scope.type,
       target.scope.id,
     ) as Array<{ entry_id: string; result_status: MemoryV6ForgetResultStatus }>;
-    return rows.map((result) => ({ entryId: result.entry_id, status: result.result_status }));
+    return rows.map((result) => ({ entryId: result.entry_id, status: result.result_status, replayed: true }));
   }
 
   private getIdempotencyRow(
@@ -2094,7 +2542,7 @@ export class MemoryV6Storage {
     bindingIdHash: string,
   ): IdempotencyRow | null {
     const row = this.db.prepare(`
-      SELECT response_entry_id, operation_created, request_fingerprint
+      SELECT response_entry_id, operation_created, request_fingerprint, cleanup_pending_count
       FROM memory_idempotency_keys_v6
       WHERE binding_id_hash = ?
         AND key = ?

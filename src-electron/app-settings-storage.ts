@@ -18,6 +18,7 @@ const SESSION_TURN_NOTIFICATION_ENABLED_KEY = "session_turn_notification_enabled
 const SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_ENABLED_KEY =
   "session_turn_notification_response_preview_enabled";
 const AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY = "auto_collapse_action_dock_on_send";
+const SCROLL_TO_LATEST_ON_SEND_KEY = "scroll_to_latest_on_send";
 const SESSION_HEADER_VISIBILITY_KEY = "session_header_visibility";
 const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
 const SESSION_SIDE_PANE_KEY = "session_side_pane";
@@ -113,6 +114,13 @@ export class AppSettingsStorage {
         String(DEFAULT_APP_SETTINGS.autoCollapseActionDockOnSend),
         updatedAt,
       );
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(DEFAULT_APP_SETTINGS.scrollToLatestOnSend), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -219,6 +227,12 @@ export class AppSettingsStorage {
       }
       if (row.setting_key === AUTO_COLLAPSE_ACTION_DOCK_ON_SEND_KEY) {
         settings.autoCollapseActionDockOnSend = row.setting_value === "true";
+        continue;
+      }
+      if (row.setting_key === SCROLL_TO_LATEST_ON_SEND_KEY) {
+        if (row.setting_value === "true" || row.setting_value === "false") {
+          settings.scrollToLatestOnSend = row.setting_value === "true";
+        }
         continue;
       }
       if (row.setting_key === SESSION_HEADER_VISIBILITY_KEY) {
@@ -368,6 +382,15 @@ export class AppSettingsStorage {
           String(normalized.autoCollapseActionDockOnSend),
           updatedAt,
         );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(normalized.scrollToLatestOnSend), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

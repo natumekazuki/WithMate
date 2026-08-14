@@ -1,6 +1,6 @@
 ---
 name: withmate-memory
-description: Use injected WithMate Character context first, then use the withmate-character-context MCP server for cue-driven Character recall, Character-owned affect appraisal, and Memory episodes. Reflect before every user-facing final response, write only concrete candidates, retain the general CLI for semantic Memory, and use Character CLI commands only for MCP availability fallback or explicit operator work.
+description: Use injected WithMate Character context first, then use the withmate-character-context MCP server for general semantic Memory, cue-driven Character recall, Character-owned affect appraisal, and Memory episodes. Reflect before every user-facing final response, write only concrete candidates, and use CLI only for MCP availability fallback or explicit operator work.
 ---
 
 # WithMate Memory and Character Context
@@ -103,13 +103,13 @@ Choose the idempotency key before the first write. After an ambiguous result, re
 
 ### Semantic Character Memory
 
-An explicit preference, constraint, fact, convention, decision, preferred name, interaction style, or relationship boundary can be semantic Memory rather than an episode or affect event. Use the existing general Memory CLI for these candidates because the public Character MCP surface has no semantic append tool:
+An explicit preference, constraint, fact, convention, decision, preferred name, interaction style, or relationship boundary can be semantic Memory rather than an episode or affect event. Use the general `memory.*` MCP tools for these candidates:
 
 1. Select an explicit `project`, `user-global`, `character`, or `character+project` target. Use `character` when the meaning follows one Character across projects, and `character+project` when it belongs only to that combination.
-2. Run general `withmate-memory search` against that exact target as duplicate preflight. Inspect an exact hit only when needed.
-3. If no active entry already expresses the meaning, use general `withmate-memory append` with the same explicit target and a stable idempotency key.
+2. Run `memory.search` against that exact target as duplicate preflight. Inspect an exact hit with `memory.get_entry` only when needed.
+3. If no active entry already expresses the meaning, use `memory.append` with the same explicit target and a stable idempotency key.
 
-This general semantic Memory path is not an MCP fallback and does not use `--fallback-from mcp`. Do not convert a rejected affect candidate or episode mutation into semantic Memory to evade its validation, authority, or error result.
+Do not convert a rejected affect candidate or episode mutation into semantic Memory to evade its validation, authority, or error result.
 
 ## MCP-first operation
 
@@ -122,13 +122,27 @@ Use the `withmate-character-context` MCP server for normal Character operations:
 - `character_memory.correct`
 - `character_memory.forget`
 
+Use the same MCP server for general semantic Memory:
+
+- `memory.search`
+- `memory.get_entry`
+- `memory.list_targets`
+- `memory.list_entries`
+- `memory.list_tags`
+- `memory.append`
+- `memory.forget`
+- `memory.move_entry`
+- `memory.get_file`
+- `memory.export_files`
+- `memory.file_usage`
+
 The lifecycle may already have supplied context and completed affect appraisal. MCP is for missing context, additional recall, and explicit operations; it is not a mandatory per-turn ritual.
 
 Treat routine context retrieval, recall, and appraisal as background work. Do not narrate every tool call to the user.
 
-## Character CLI fallback
+## CLI fallback
 
-For Character context, affect, and episode operations that have an MCP tool, use CLI fallback only when:
+For general Memory, Character context, affect, and episode operations that have an MCP tool, use CLI fallback only when:
 
 - the MCP server is not configured;
 - the MCP server cannot start;
@@ -152,6 +166,8 @@ These are not availability failures and must not be bypassed with CLI:
 - idempotent replay;
 - migration required;
 - any structured error returned by a normally responding MCP server.
+
+The same rule applies to general Memory errors such as `MEMORY_INVALID_FIELD`, `MEMORY_TARGET_NOT_FOUND`, `MEMORY_FORBIDDEN`, `MEMORY_IDEMPOTENCY_CONFLICT`, and migration or storage domain errors returned by the runtime. A successful general Memory retry may include `replayed: true`; this is a reconciliation result, not a new write.
 
 Do not turn MCP errors into transport errors. Do not create fallback files, databases, or other local state.
 
@@ -200,26 +216,26 @@ Always use the runtime's returned mode and save result independently. Shadow mod
 
 ## Semantic and Project Memory workflow
 
-The existing general Memory workflow remains separate from Character context, affect, and episodes:
+General semantic Memory uses the same MCP server but keeps its target and duplicate rules separate from Character episodes and affect:
 
 1. Read current repository sources of truth first.
-2. Search an explicit project, user-global, character, or character+project target only when stored semantic context could affect the current task or conversation.
-3. Inspect exact bodies only when the wording or rationale matters.
-4. For a concrete append candidate, search that target first for an active semantic duplicate.
-5. Append only reusable non-authoritative context that passes privacy and scope checks.
-6. Correct, move, or forget entries only on explicit user instruction.
+2. Use `memory.search` with an explicit project, user-global, character, or character+project target only when stored semantic context could affect the current task or conversation.
+3. Use `memory.get_entry` only when the exact body or rationale matters.
+4. For a concrete append candidate, search that exact target first for an active semantic duplicate.
+5. Use `memory.append` only for reusable non-authoritative context that passes privacy and scope checks.
+6. Move or forget entries only on explicit user instruction. Use `memory.forget` dry-run before a bulk forget.
 
-Common general and Project Memory commands remain available:
+The CLI equivalents remain available for transport-level MCP fallback and explicit operator work:
 
 ```bash
 withmate-memory status
-withmate-memory list-targets
+withmate-memory list-targets --fallback-from mcp
 withmate-memory list-entries --project <absolute-repo-path> --limit 100
-withmate-memory search --project <absolute-repo-path> --query "release workflow"
-withmate-memory get-entry --file memory-get-entry.json
-withmate-memory append --file memory-entry.json
-withmate-memory forget --file forget-request.json --dry-run
-withmate-memory move-entry --file move-request.json
+withmate-memory search --project <absolute-repo-path> --query "release workflow" --fallback-from mcp
+withmate-memory get-entry --file memory-get-entry.json --fallback-from mcp
+withmate-memory append --file memory-entry.json --fallback-from mcp
+withmate-memory forget --file forget-request.json --dry-run --fallback-from mcp
+withmate-memory move-entry --file move-request.json --fallback-from mcp
 ```
 
 Use [reference/cli.md](reference/cli.md) for complete semantic and Project Memory target shapes, request bodies, pagination, protected-file operations, maintenance commands, and exit codes.

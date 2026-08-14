@@ -75,6 +75,7 @@ describe("HomeSettingsContent", () => {
     sessionCleanupCutoffDate: "",
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeScrollToLatestOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
@@ -106,6 +107,8 @@ describe("HomeSettingsContent", () => {
 
     assert.ok(html.includes("Session のターン完了を Windows 通知で知らせる"));
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
+    assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
+    assert.ok(html.includes("送信時にチャット末尾へ移動する"));
   });
 
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
@@ -598,6 +601,8 @@ describe("HomeLaunchDialog", () => {
   it("ダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog();
 
+    assert.ok(html.includes("launch-dialog panel home-launch-dialog"));
+    assert.ok(html.includes("launch-section minimal home-launch-character-section"));
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));
     assert.ok(!html.includes(">Default</span>"));

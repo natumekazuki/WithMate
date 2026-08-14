@@ -59,6 +59,7 @@ export type MemoryListTagsResponse = {
     latestUpdatedAt?: string;
     samples?: Array<{ id: string; title: string }>;
   }>;
+  nextCursor?: string;
 };
 
 export type MemoryTargetInventoryItem = {
@@ -162,6 +163,7 @@ export type MemoryAppendResponse = {
    * Idempotent replays return the same value after current access and state checks.
    */
   created: boolean;
+  replayed?: true;
 };
 
 export type MemoryForgetResultStatus = "forgotten" | "already_forgotten" | "not_found";
@@ -169,6 +171,7 @@ export type MemoryForgetResultStatus = "forgotten" | "already_forgotten" | "not_
 export type MemoryForgetResult = {
   entryId: string;
   status: MemoryForgetResultStatus;
+  replayed?: true;
   entry?: MemoryEntrySummary;
   warning?: "target_mismatch_or_not_found";
 };
@@ -184,6 +187,7 @@ export type MemoryMoveEntryResponse = {
   schemaVersion: MemoryV6SchemaVersion;
   entry: MemoryEntrySummary;
   moved: boolean;
+  replayed?: true;
   from: MemoryTargetSelector;
   to: MemoryTargetSelector;
 };
@@ -261,7 +265,10 @@ export function createMemoryExportFilesResponse(input: {
   };
 }
 
-export function createMemoryListTagsResponse(tags: MemoryListTagsResponse["tags"]): MemoryListTagsResponse {
+export function createMemoryListTagsResponse(
+  tags: MemoryListTagsResponse["tags"],
+  nextCursor?: string,
+): MemoryListTagsResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     tags: tags.map((tag) => ({
@@ -271,6 +278,7 @@ export function createMemoryListTagsResponse(tags: MemoryListTagsResponse["tags"
       ...(tag.latestUpdatedAt === undefined ? {} : { latestUpdatedAt: tag.latestUpdatedAt }),
       ...(tag.samples === undefined ? {} : { samples: tag.samples.map((sample) => ({ ...sample })) }),
     })),
+    ...(nextCursor === undefined ? {} : { nextCursor }),
   };
 }
 
@@ -351,11 +359,12 @@ export function createMemoryFileUsageResponse(input: {
   };
 }
 
-export function createMemoryAppendResponse(entry: MemoryEntryDetail, created: boolean): MemoryAppendResponse {
+export function createMemoryAppendResponse(entry: MemoryEntryDetail, created: boolean, replayed = false): MemoryAppendResponse {
   return {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     entry: toMemoryEntrySummary(entry),
     created,
+    ...(replayed ? { replayed: true as const } : {}),
   };
 }
 
@@ -373,6 +382,7 @@ export function createMemoryForgetResponse(
 export function createMemoryMoveEntryResponse(input: {
   entry: MemoryEntryDetail;
   moved: boolean;
+  replayed?: true;
   from: MemoryTargetSelector;
   to: MemoryTargetSelector;
 }): MemoryMoveEntryResponse {
@@ -380,6 +390,7 @@ export function createMemoryMoveEntryResponse(input: {
     schemaVersion: MEMORY_V6_SCHEMA_VERSION,
     entry: toMemoryEntrySummary(input.entry),
     moved: input.moved,
+    ...(input.replayed ? { replayed: true as const } : {}),
     from: input.from,
     to: input.to,
   };

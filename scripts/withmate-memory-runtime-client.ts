@@ -18,7 +18,10 @@ import {
   type WithMateMemoryDiscoveryDocument,
   type WithMateMemoryDiscoveryPointer,
 } from "../src/memory-v6/memory-discovery.js";
-import { createMemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
+import {
+  createMemoryErrorResponse,
+  type MemoryErrorResponse,
+} from "../src/memory-v6/memory-response-contract.js";
 import {
   createWithMateMemoryRuntimeChallenge,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
@@ -91,10 +94,70 @@ export function mapRuntimeHttpFailureToCharacterContext(
   });
 }
 
+function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
+  return typeof value === "object"
+    && value !== null
+    && (value as { schemaVersion?: unknown }).schemaVersion === "withmate-memory-v1"
+    && typeof (value as { error?: { code?: unknown } }).error?.code === "string";
+}
+
+export function createMemoryRuntimeError(
+  code: string,
+  message: string,
+  options: {
+    retryable: boolean;
+    conversationMayContinue: boolean;
+    effect: "none" | "committed" | "partial" | "unknown";
+    details?: Record<string, unknown>;
+  },
+): MemoryErrorResponse {
+  return createMemoryErrorResponse({ code, message, ...options });
+}
+
+export function mapRuntimeHttpFailureToMemory(
+  response: WithMateMemoryRuntimeResponse,
+  operationKind: "read" | "write" = "read",
+): unknown {
+  if (isMemoryErrorResponse(response.value)) {
+    if (response.value.error.effect) {
+      return response.value;
+    }
+    return createMemoryErrorResponse({
+      ...response.value.error,
+      effect: operationKind === "write" && response.status >= 500 ? "unknown" : "none",
+    });
+  }
+  if (response.ok) {
+    return response.value;
+  }
+  const code = response.status === 401
+    ? "MEMORY_UNAUTHORIZED"
+    : response.status === 403
+      ? "MEMORY_FORBIDDEN"
+      : response.status === 404
+        ? "MEMORY_ROUTE_NOT_FOUND"
+        : response.status === 413
+          ? "MEMORY_REQUEST_TOO_LARGE"
+          : response.status === 415
+            ? "MEMORY_UNSUPPORTED_MEDIA_TYPE"
+            : response.status === 429
+              ? "MEMORY_TOO_MANY_REQUESTS"
+              : response.status >= 500
+                ? "MEMORY_STORAGE_UNAVAILABLE"
+                : "MEMORY_INVALID_REQUEST";
+  return createMemoryRuntimeError(code, "WithMate runtime rejected the Memory request.", {
+    retryable: response.status === 429 || response.status >= 500,
+    conversationMayContinue: true,
+    effect: operationKind === "write" && response.status >= 500 ? "unknown" : "none",
+    details: { httpStatus: response.status },
+  });
+}
+
 function usageError(message: string) {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_CLI_USAGE",
     message,
+    effect: "none",
   });
 }
 
@@ -102,6 +165,7 @@ function transportError(message: string) {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
     message,
+    effect: "none",
   });
 }
 

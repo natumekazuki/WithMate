@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION } from "../../src/memory-v6/memory-contract.js";
 import {
+  encodeMemoryListTagsCursor,
   validateMemoryAppendRequest,
   validateMemoryAuditRequest,
   validateMemoryExportFilesRequest,
@@ -19,7 +20,7 @@ import {
 const projectTarget = {
   owner: "project",
   scope: "project",
-  project: { type: "path", path: "../repo-a" },
+  project: { type: "path", path: "C:/repo-a" },
 };
 
 const characterTarget = {
@@ -246,9 +247,52 @@ describe("memory-v6 contract validation", () => {
     const listTags = validateMemoryListTagsRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       targets: [projectTarget],
+      limit: 25,
+      cursor: encodeMemoryListTagsCursor({
+        usageCount: 3,
+        latestUpdatedAt: "2026-08-13T00:00:00.000Z",
+        canonicalType: "topic",
+        canonicalValue: "memory",
+      }),
     });
     assert.equal(listTags.ok, true);
     assert.deepEqual(listTags.value.targets, [projectTarget]);
+    assert.equal(listTags.value.limit, 25);
+    assert.equal(typeof listTags.value.cursor, "string");
+
+    const invalidCursor = validateMemoryListTagsRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget],
+      cursor: "cursor-a",
+    });
+    assert.equal(invalidCursor.ok, false);
+    assert.equal(invalidCursor.error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(invalidCursor.error.field, "cursor");
+    for (const malformedCursor of [
+      "tag-v1:1:not-a-date:topic:memory",
+      "tag-v1:1:2026-08-13T00%3A00%3A00.000Z:TOPIC:Value",
+      "tag-v1:1:2026-08-13T00%3A00%3A00.000Z:topic:%6demory",
+      `tag-v1:1:2026-08-13T00%3A00%3A00.000Z:${"t".repeat(49)}:memory`,
+      `tag-v1:1:2026-08-13T00%3A00%3A00.000Z:topic:${"v".repeat(97)}`,
+      "tag-v1:1:2026-08-13T00%3A00%3A00.000Z:topic:%20memory",
+    ]) {
+      const malformed = validateMemoryListTagsRequest({
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [projectTarget],
+        cursor: malformedCursor,
+      });
+      assert.equal(malformed.ok, false);
+      assert.equal(malformed.error.code, "MEMORY_INVALID_FIELD");
+      assert.equal(malformed.error.effect, "none");
+    }
+
+    const multipleTargets = validateMemoryListTagsRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [projectTarget, userGlobalTarget],
+    });
+    assert.equal(multipleTargets.ok, false);
+    assert.equal(multipleTargets.error.code, "MEMORY_INVALID_TARGET");
+    assert.equal(multipleTargets.error.field, "targets");
   });
 
   it("get_entry request は単一targetを必須にする", () => {
@@ -411,6 +455,18 @@ describe("memory-v6 contract validation", () => {
     });
     assert.equal(userGlobalWithProject.ok, false);
     assert.equal(userGlobalWithProject.error.field, "targets[0].project");
+  });
+
+  it("project.pathは絶対pathだけを受理する", () => {
+    const result = validateMemorySearchRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      targets: [{ owner: "project", scope: "project", project: { type: "path", path: "." } }],
+      query: "test",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, "MEMORY_INVALID_FIELD");
+    assert.equal(result.error.field, "targets[0].project.path");
+    assert.match(result.error.message, /absolute path/);
   });
 
   it("targets上限とduplicate targetを拒否する", () => {

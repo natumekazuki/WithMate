@@ -313,6 +313,26 @@ test("buildCompanionChatWindowProps は retry actions を共通 chat layout に�
   assert.match(html, />編集<\/button>/);
 });
 
+test("buildCompanionChatWindowProps は composer error を共通領域へ投影する", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      primaryFeedback: "Path not found: C:/missing",
+      secondaryFeedback: [],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+    isActionDockExpanded: false,
+  }));
+
+  assert.deepEqual(props.errorNotices, [{
+    id: "composer-sendability",
+    message: "Path not found: C:/missing",
+    details: [],
+    relatedControl: "composer",
+  }]);
+  assert.equal(props.isActionDockExpanded, false);
+});
+
 test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 composer に渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     retryBanner: {

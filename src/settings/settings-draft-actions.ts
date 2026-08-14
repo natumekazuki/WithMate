@@ -21,6 +21,7 @@ import {
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
+  updateScrollToLatestOnSend,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
   updateUserMicrocopySlotDraft,
@@ -80,6 +81,12 @@ export function handleChangeAutoCollapseActionDockOnSend(input: SettingsDraftAct
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateAutoCollapseActionDockOnSend(current, input.enabled));
+}
+
+export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput & {
+  enabled: boolean;
+}): void {
+  input.setSettingsDraft((current) => updateScrollToLatestOnSend(current, input.enabled));
 }
 
 export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput & {

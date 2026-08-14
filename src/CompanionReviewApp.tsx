@@ -1233,7 +1233,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
-    handleJumpToMessageListBottom,
+    handleMessageListSend,
+    followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
     scrollSignature: companionMessageListScrollSignature,
@@ -1295,7 +1296,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     ],
   );
   const companionComposerBlockedReason = snapshot?.session.status !== "active"
-    ? "この Companion は active ではないよ。"
+    ? "This Companion session is not active."
     : "";
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!snapshot || !shouldShowRetryBanner({
@@ -1389,7 +1390,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       isSkillPickerOpen,
       isAdditionalDirectoryListOpen,
       isRetryDraftReplacePending,
-      companionComposerSendability.shouldShowFeedback,
     ],
   });
   const {
@@ -2726,6 +2726,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(blockedMessage);
       }
 
+      handleMessageListSend(appSettings.scrollToLatestOnSend);
       applyOptimisticSessionRunUpdate({
         session: snapshot.session,
         userMessage,
@@ -3165,7 +3166,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onJumpToMessageListBottom: handleJumpToMessageListBottom,
+        onJumpToMessageListBottom: followMessageListLatest,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
           if (activeAuxiliarySession) {

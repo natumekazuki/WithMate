@@ -103,6 +103,10 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     liveRunAssistantText: "",
     hasLiveRunAssistantText: false,
     liveRunErrorMessage: "",
+    inlinePathFeedback: "",
+    workspaceAvailabilityMessage: "",
+    isWorkspaceAvailabilityCheckPending: false,
+    isWorkspaceAvailable: true,
     isMessageListFollowing: true,
     retryBanner: null,
     isRetryActionDisabled: false,
@@ -197,6 +201,8 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onResolveLiveApproval: noop,
     onResolveLiveElicitation: noop,
     onOpenInlinePath: noop,
+    onDismissInlinePathFeedback: noop,
+    onRecheckWorkspaceAvailability: noop,
     getChangedFilesEmptyText: () => "ファイル変更はありません",
     onCopyMessageText: noop,
     onQuoteMessageText: noop,
@@ -293,6 +299,66 @@ test("buildAgentSessionChatWindowProps は retry actions を共通 chat layout �
   assert.match(html, /retry-banner failed/);
   assert.match(html, />再送<\/button>/);
   assert.match(html, />編集<\/button>/);
+});
+
+test("buildAgentSessionChatWindowProps は Workspace 利用不可を共通エラー領域へ投影して操作を無効化する", () => {
+  const onRecheckWorkspaceAvailability = noop;
+  const message = "Workspace not found: C:/missing. Restore it, then recheck.";
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    workspaceAvailabilityMessage: message,
+    isWorkspaceAvailable: false,
+    onRecheckWorkspaceAvailability,
+    composerSendability: {
+      primaryFeedback: message,
+      secondaryFeedback: [],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, [{
+    id: "workspace-unavailable",
+    message,
+    relatedControl: "composer",
+    actionLabel: "Recheck",
+    isActionDisabled: false,
+    onAction: onRecheckWorkspaceAvailability,
+  }]);
+  assert.equal(props.headerProps.isTerminalDisabled, true);
+  const headerHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.workspaceActions));
+  assert.match(headerHtml, /disabled=""/);
+});
+
+test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを共通領域へ投影する", () => {
+  const onDismissInlinePathFeedback = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    inlinePathFeedback: "The local path was not found.",
+    onDismissInlinePathFeedback,
+    composerSendability: {
+      primaryFeedback: "Path not found: C:/missing",
+      secondaryFeedback: ["C:/missing"],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+    isActionDockExpanded: false,
+  }));
+
+  assert.deepEqual(props.errorNotices, [
+    {
+      id: "composer-sendability",
+      message: "Path not found: C:/missing",
+      details: ["C:/missing"],
+      relatedControl: "composer",
+    },
+    {
+      id: "inline-path-open",
+      message: "The local path was not found.",
+      dismissLabel: "パスを開いた結果を閉じる",
+      onDismiss: onDismissInlinePathFeedback,
+    },
+  ]);
+  assert.equal(props.isActionDockExpanded, false);
+  assert.equal("inlinePathFeedback" in props.messageColumnProps, false);
 });
 
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {

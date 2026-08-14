@@ -17,6 +17,12 @@ import {
   settleCharacterAffectTurnOrScheduleRetry,
 } from "../../src-electron/character-affect-turn-retry-scheduler.js";
 import { settleCharacterAffectTurnWithRetry } from "../../src-electron/character-affect-turn-settler.js";
+import {
+  characterAffectTurnThrownFailureCode,
+  createCharacterAffectTurnFailureDiagnostic,
+  createCharacterAffectTurnRecoveryFailureLogData,
+  resolveCharacterAffectTurnContextFailureStage,
+} from "../../src-electron/character-affect-turn-recovery.js";
 
 function context(version: string): CharacterContextResponse {
   return {
@@ -129,6 +135,44 @@ function createScheduledTaskQueue() {
 }
 
 describe("settleCharacterAffectTurnWithRetry", () => {
+  it("Context stageとprovider timeoutを安全なfailure diagnosticへ分類する", () => {
+    const contextError = createCharacterContextError("storage_unavailable", "context read failed", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: "none",
+      details: { failureStage: "memory_search" },
+    });
+    assert.equal(resolveCharacterAffectTurnContextFailureStage(contextError), "context_memory_search");
+    const timeout = new Error("C:/private/workspace secret-token");
+    timeout.name = "AbortError";
+    assert.equal(characterAffectTurnThrownFailureCode(timeout, "evaluation"), "provider_timeout");
+    const diagnostic = createCharacterAffectTurnFailureDiagnostic({
+      code: "provider_timeout",
+      stage: "evaluation",
+      error: timeout,
+      durationMs: 15_000.9,
+    });
+    assert.deepEqual(diagnostic, {
+      code: "provider_timeout",
+      stage: "evaluation",
+      errorName: "AbortError",
+      safeMessage: "Character affect turn evaluation failed with provider_timeout.",
+      durationMs: 15_000,
+    });
+    assert.doesNotMatch(JSON.stringify(diagnostic), /private|workspace|secret-token/);
+
+    const unsafe = new Error("C:/private/workspace secret-token");
+    unsafe.name = "Bad Name C:/private";
+    unsafe.stack = "secret-token at C:/private/workspace";
+    const logData = createCharacterAffectTurnRecoveryFailureLogData(unsafe);
+    assert.deepEqual(logData, {
+      code: "recovery_failure",
+      stage: "runtime",
+      errorName: "UnknownError",
+    });
+    assert.doesNotMatch(JSON.stringify(logData), /private|workspace|secret-token|stack/);
+  });
+
   it("direct settlementがthrowしてもpendingをretry schedulerへ引き渡す", async () => {
     const scheduled = createScheduledTaskQueue();
     let drainCalls = 0;

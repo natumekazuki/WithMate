@@ -29,6 +29,21 @@ describe("microcopy-state", () => {
     assert.equal("unknown" in catalog, false);
   });
 
+  it("normalizeUserMicrocopyCatalog は旧 path error 既定値だけを現在の既定値へ移行する", () => {
+    const migrated = normalizeUserMicrocopyCatalog({
+      "composer.error.path_not_found": ["指定したパスが見つかりません: {path}"],
+    });
+    const customized = normalizeUserMicrocopyCatalog({
+      "composer.error.path_not_found": ["Custom path error: {path}"],
+    });
+
+    assert.deepEqual(
+      migrated["composer.error.path_not_found"],
+      BUILT_IN_MICROCOPY_CATALOG["composer.error.path_not_found"],
+    );
+    assert.deepEqual(customized["composer.error.path_not_found"], ["Custom path error: {path}"]);
+  });
+
   it("resolveMicrocopy は同じ seed で安定して variant を選ぶ", () => {
     const userCatalog = normalizeUserMicrocopyCatalog({
       "chat.pending.response_waiting": ["A", "B", "C"],

@@ -96,6 +96,67 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
 });
 
+test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
+  const props = createChatWindowProps();
+  props.isActionDockExpanded = false;
+  props.composerProps = {
+    ...props.composerProps,
+    composerSendability: {
+      primaryFeedback: "Path not found: C:/missing",
+      secondaryFeedback: ["Expected a file: C:/directory"],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+  };
+  props.errorNotices = [{
+    id: "composer-sendability",
+    message: "Path not found: C:/missing",
+    details: ["Expected a file: C:/directory"],
+    relatedControl: "composer",
+  }];
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="chat-error-surface" role="region" aria-label="チャットエラー"/);
+  assert.match(html, /class="chat-error-notice" role="alert"/);
+  assert.match(html, /Path not found: C:\/missing/);
+  assert.match(html, /Expected a file: C:\/directory/);
+  assert.match(html, /<textarea[^>]*aria-describedby="[^"]+-notice-0"[^>]*aria-invalid="true"/);
+  assert.doesNotMatch(html, /class="composer-sendability-feedback blocked"/);
+  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
+  assert.ok(html.indexOf("session-central-surface") < html.indexOf("chat-error-surface"));
+  assert.ok(html.indexOf("chat-error-surface") < html.indexOf("session-action-dock-slot"));
+});
+
+test("ChatWindow の共通エラー領域は owner が指定したdismissと回復操作を表示する", () => {
+  const props = createChatWindowProps();
+  props.errorNotices = [{
+    id: "workspace-unavailable",
+    message: "Workspace unavailable.",
+    dismissLabel: "Workspaceエラーを閉じる",
+    onDismiss: noop,
+    actionLabel: "Recheck",
+    onAction: noop,
+  }];
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="drawer-toggle compact secondary"[^>]*>Recheck<\/button>/);
+  assert.match(html, /aria-label="Workspaceエラーを閉じる"/);
+});
+
+test("chat work surface は共通エラーの有無に関係なく中央contentへ可変領域を割り当てる", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const stackRule = styles.match(/\.session-message-stack\s*\{([^}]*)\}/)?.[1] ?? "";
+  const errorRule = styles.match(/\.chat-error-surface\s*\{([^}]*)\}/)?.[1] ?? "";
+  const centralRule = styles.match(/\.session-central-surface\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(stackRule, /grid-template-rows:\s*minmax\(0, 1fr\) auto auto/);
+  assert.match(errorRule, /grid-row:\s*3/);
+  assert.match(errorRule, /padding:\s*0 12px 12px/);
+  assert.match(centralRule, /grid-row:\s*1/);
+});
+
 test("ChatWindow は preview を保持したまま Skill 候補を中央 work surface に重ねる", () => {
   const props = createChatWindowProps();
   props.mainContent = React.createElement("div", null, "File Preview");

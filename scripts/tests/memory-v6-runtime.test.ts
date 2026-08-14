@@ -317,7 +317,24 @@ describe("Memory V6 runtime API", () => {
     const workspacePath = path.join(userDataPath, "repo");
     try {
       await mkdir(path.join(workspacePath, ".git"), { recursive: true });
-      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath });
+      const runtime = await startMemoryV6RuntimeApi({
+        userDataPath,
+        runtimeDirectoryPath,
+        listCharacters: () => [{
+          id: "character-a",
+          name: "Character A",
+          description: "Runtime test character",
+          iconFilePath: "",
+          theme: { main: "#111111", sub: "#222222" },
+          state: "active",
+          createdAt: "2026-08-12T00:00:00.000Z",
+          updatedAt: "2026-08-12T00:00:00.000Z",
+          archivedAt: null,
+        }],
+        resolveCharacterById: (id) => ["character-a", "archived-character"].includes(id)
+          ? { id, name: id === "character-a" ? "Character A" : "Archived Character" }
+          : null,
+      });
       try {
         const discovery = (await readDiscoveryProjection(runtime.discoveryFilePath)).document;
         const mcpDiscovery = (await readDiscoveryProjection(runtime.mcpDiscoveryFilePath, "mcp")).document;
@@ -339,6 +356,64 @@ describe("Memory V6 runtime API", () => {
           env: {},
           discoveryFilePath: runtime.mcpDiscoveryFilePath,
         });
+        assert.ok(mcpConnection);
+        const unknownCharacter = await callWithMateMemoryRuntime(mcpConnection, {
+          method: "POST",
+          path: "/v1/append",
+          body: {
+            schemaVersion: "withmate-memory-v1",
+            target: {
+              owner: "character",
+              scope: "character",
+              character: { type: "id", id: "missing-character" },
+            },
+            kind: "note",
+            title: "Unknown Character",
+            body: "This write must not be accepted.",
+            preview: "Must not be accepted.",
+            tags: [],
+            idempotencyKey: "unknown-character-target",
+          },
+        }, { signal: new AbortController().signal });
+        assert.equal(unknownCharacter.status, 404);
+        assert.equal((unknownCharacter.value as { error: { code: string } }).error.code, "MEMORY_TARGET_NOT_FOUND");
+        const archivedAppend = await callWithMateMemoryRuntime(mcpConnection, {
+          method: "POST",
+          path: "/v1/append",
+          body: {
+            schemaVersion: "withmate-memory-v1",
+            target: {
+              owner: "character",
+              scope: "character",
+              character: { type: "id", id: "archived-character" },
+            },
+            kind: "note",
+            title: "Archived Character Memory",
+            body: "Archived identity remains a valid Memory target.",
+            preview: "Archived target remains valid.",
+            tags: [],
+            idempotencyKey: "archived-character-target",
+          },
+        }, { signal: new AbortController().signal });
+        assert.equal(archivedAppend.status, 200);
+        const archivedEntryId = (archivedAppend.value as { entry: { id: string } }).entry.id;
+        const archivedForget = await callWithMateMemoryRuntime(mcpConnection, {
+          method: "POST",
+          path: "/v1/forget",
+          body: {
+            schemaVersion: "withmate-memory-v1",
+            target: {
+              owner: "character",
+              scope: "character",
+              character: { type: "id", id: "archived-character" },
+            },
+            entryIds: [archivedEntryId],
+            reason: "user_request",
+            idempotencyKey: "archived-character-forget",
+          },
+        }, { signal: new AbortController().signal });
+        assert.equal(archivedForget.status, 200);
+        assert.equal((archivedForget.value as { results: Array<{ status: string }> }).results[0]?.status, "forgotten");
         assert.ok(mcpConnection);
         assert.equal(mcpConnection.credential.adapter, "mcp");
         assert.equal(Object.hasOwn(mcpConnection, "operatorApiSecret"), false);
@@ -390,6 +465,7 @@ describe("Memory V6 runtime API", () => {
           body: "Explicit project path works through the runtime API.",
           preview: "Explicit project path works.",
           tags: [{ type: "topic", value: "runtime" }],
+          idempotencyKey: "runtime-mcp-append",
         };
 
         const mcpDirectAppend = await fetch(`${runtime.baseUrl}/v1/append`, {
@@ -401,19 +477,19 @@ describe("Memory V6 runtime API", () => {
           },
           body: JSON.stringify(appendBody),
         });
-        assert.equal(mcpDirectAppend.status, 403);
-        assert.equal((await mcpDirectAppend.json()).error.code, "MEMORY_FORBIDDEN");
+        assert.equal(mcpDirectAppend.status, 200);
+        assert.equal((await mcpDirectAppend.json()).created, true);
 
         const mcpExchangeAppend = await callWithMateMemoryRuntime(mcpConnection, {
           method: "POST",
           path: "/v1/append",
           body: appendBody,
         }, { signal: new AbortController().signal });
-        assert.equal(mcpExchangeAppend.ok, false);
-        assert.equal(mcpExchangeAppend.status, 403);
-        assert.equal((mcpExchangeAppend.value as { error: { code: string } }).error.code, "MEMORY_FORBIDDEN");
+        assert.equal(mcpExchangeAppend.ok, true);
+        assert.equal(mcpExchangeAppend.status, 200);
+        assert.equal((mcpExchangeAppend.value as { replayed?: true }).replayed, true);
 
-        const deniedAppendReadBack = await callWithMateMemoryRuntime(cliConnection, {
+        const mcpAppendReadBack = await callWithMateMemoryRuntime(cliConnection, {
           method: "POST",
           path: "/v1/search",
           body: {
@@ -426,8 +502,8 @@ describe("Memory V6 runtime API", () => {
             query: "Runtime project path",
           },
         }, { signal: new AbortController().signal });
-        assert.equal(deniedAppendReadBack.ok, true);
-        assert.deepEqual((deniedAppendReadBack.value as { items: unknown[] }).items, []);
+        assert.equal(mcpAppendReadBack.ok, true);
+        assert.equal((mcpAppendReadBack.value as { items: unknown[] }).items.length, 1);
 
         const append = await fetch(`${runtime.baseUrl}/v1/append`, {
           method: "POST",
@@ -436,7 +512,7 @@ describe("Memory V6 runtime API", () => {
             "X-WithMate-Memory-Api-Secret": discovery.apiSecret,
             "X-WithMate-Memory-Operator-Api-Secret": discovery.adapterSecret,
           },
-          body: JSON.stringify(appendBody),
+          body: JSON.stringify({ ...appendBody, idempotencyKey: "runtime-operator-append" }),
         });
         assert.equal(append.status, 200);
         const appendJson = await append.json();
@@ -493,7 +569,11 @@ describe("Memory V6 runtime API", () => {
         assert.equal(characters.status, 200);
         assert.deepEqual(await characters.json(), {
           schemaVersion: "withmate-memory-v1",
-          characters: [],
+          characters: [{
+            id: "character-a",
+            name: "Character A",
+            description: "Runtime test character",
+          }],
         });
 
         const detail = await fetch(`${runtime.baseUrl}/v1/get_entry`, {

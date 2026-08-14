@@ -12,6 +12,7 @@ import type { CharacterStorage } from "./character-storage.js";
 export type CharacterCatalogServiceStorage = Pick<
   CharacterStorage,
   | "listCharacters"
+  | "getCharacterCatalogEntry"
   | "getCharacter"
   | "createCharacter"
   | "updateCharacterMetadata"
@@ -27,6 +28,13 @@ export class CharacterService {
 
   listCharacters(options?: { includeArchived?: boolean }): CharacterCatalogEntry[] {
     return this.storage.listCharacters(options);
+  }
+
+  getCharacterCatalogEntry(characterId: string): CharacterCatalogEntry | null {
+    if (!characterId) {
+      return null;
+    }
+    return this.storage.getCharacterCatalogEntry(characterId);
   }
 
   getCharacter(characterId: string): CharacterDetail | null {

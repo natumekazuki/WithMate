@@ -312,7 +312,7 @@ test("ActionDock compact height は展開時の外枠高ではなく compact row
   }
 });
 
-test("useSessionMessageListFollowing は上方向scrollで追従を止め、非表示からの復帰時に戻す", async () => {
+test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ追従する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -320,6 +320,7 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
   const previousHTMLElement = globalThis.HTMLElement;
   const previousNode = globalThis.Node;
   const previousNavigator = globalThis.navigator;
+  const previousResizeObserver = globalThis.ResizeObserver;
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
   });
@@ -332,12 +333,46 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
 
   let root: Root | null = null;
   let scrollToBottomCount = 0;
+  let scrollHeight = 1_000;
+  let clientHeight = 200;
+  const resizeObservers: TestResizeObserver[] = [];
+
+  class TestResizeObserver {
+    readonly targets = new Set<Element>();
+
+    constructor(readonly callback: ResizeObserverCallback) {
+      resizeObservers.push(this);
+    }
+
+    observe(target: Element): void {
+      this.targets.add(target);
+    }
+
+    disconnect(): void {
+      this.targets.clear();
+    }
+
+    unobserve(target: Element): void {
+      this.targets.delete(target);
+    }
+  }
+
+  Object.defineProperty(globalThis, "ResizeObserver", {
+    configurable: true,
+    value: TestResizeObserver,
+  });
+  Object.defineProperty(dom.window, "ResizeObserver", {
+    configurable: true,
+    value: TestResizeObserver,
+  });
 
   function Harness({ enabled, scrollSignature }: { enabled: boolean; scrollSignature: string }) {
     const {
       messageListRef,
       isMessageListFollowing,
       handleMessageListScroll,
+      handleMessageListSend,
+      followMessageListLatest,
     } = useSessionMessageListFollowing({
       ownerKey: "session-1",
       scrollSignature,
@@ -345,24 +380,57 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
     });
 
     return React.createElement(
-      "div",
-      {
-        ref: messageListRef,
-        onScroll: handleMessageListScroll,
-        hidden: !enabled,
-        "data-testid": "message-list",
-      },
-      React.createElement("div", {
-        className: "message-list-bottom-anchor",
-        ref: (element: HTMLDivElement | null) => {
-          if (element) {
-            element.scrollIntoView = () => {
-              scrollToBottomCount += 1;
-            };
-          }
+      React.Fragment,
+      null,
+      React.createElement(
+        "div",
+        {
+          ref: messageListRef,
+          onScroll: handleMessageListScroll,
+          hidden: !enabled,
+          "data-testid": "message-list",
         },
+        React.createElement("div", {
+          className: "session-message-list-window",
+        }, React.createElement("div", {
+          className: "message-list-bottom-anchor",
+          ref: (element: HTMLDivElement | null) => {
+            if (element) {
+              element.scrollIntoView = () => {
+                scrollToBottomCount += 1;
+                const owner = element.closest<HTMLElement>("[data-testid=\"message-list\"]");
+                if (owner) {
+                  owner.scrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
+                }
+              };
+            }
+          },
+        })),
+        React.createElement("input", { "data-testid": "elicitation-input" }),
+        React.createElement("textarea", { "data-testid": "elicitation-textarea" }),
+        React.createElement(
+          "select",
+          { "data-testid": "elicitation-select" },
+          React.createElement("option", null, "option"),
+        ),
+        React.createElement("output", { "data-testid": "following" }, String(isMessageListFollowing)),
+        React.createElement("button", {
+          type: "button",
+          onClick: followMessageListLatest,
+          "data-testid": "jump",
+        }),
+      ),
+      React.createElement("button", { type: "button", "data-testid": "outside-action" }),
+      React.createElement("button", {
+        type: "button",
+        onClick: () => handleMessageListSend(false),
+        "data-testid": "send-with-scroll-disabled",
       }),
-      React.createElement("output", { "data-testid": "following" }, String(isMessageListFollowing)),
+      React.createElement("button", {
+        type: "button",
+        onClick: () => handleMessageListSend(true),
+        "data-testid": "send-with-scroll-enabled",
+      }),
     );
   }
 
@@ -378,71 +446,163 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
     assert.ok(following);
     assert.equal(scrollToBottomCount, 1);
 
-    Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 1_000 });
-    Object.defineProperty(messageList, "clientHeight", { configurable: true, value: 200 });
+    Object.defineProperty(messageList, "scrollHeight", { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(messageList, "clientHeight", { configurable: true, get: () => clientHeight });
+    messageList.scrollTop = scrollHeight - clientHeight;
+    messageList.addEventListener("keydown", (event) => event.stopPropagation());
+    for (const [testId, key, shiftKey] of [
+      ["elicitation-input", "ArrowUp", false],
+      ["elicitation-textarea", "Home", false],
+      ["elicitation-select", " ", true],
+    ] as const) {
+      const formControl = dom.window.document.querySelector<HTMLElement>(`[data-testid="${testId}"]`);
+      assert.ok(formControl);
+      await act(async () => {
+        formControl.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+          bubbles: true,
+          key,
+          shiftKey,
+        }));
+      });
+      assert.equal(following.textContent, "true", `${key} のフォーム操作では追従を止めない`);
+    }
+
     await act(async () => {
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
-      messageList.scrollTop = 800;
+      messageList.scrollTop -= 2;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
-      messageList.scrollTop = 760;
+      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => resolve()));
+    });
+    assert.equal(following.textContent, "false");
+    assert.equal(messageList.scrollTop, 798, "停止後は予約済みの末尾補正でも読書位置を動かさない");
+
+    await act(async () => {
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-while-reading" }));
+    });
+    assert.equal(messageList.scrollTop, 798, "stream更新で読書位置を動かさない");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-disabled\"]")?.click();
+    });
+    assert.equal(following.textContent, "false", "設定OFFの送信では追随を再開しない");
+    assert.equal(messageList.scrollTop, 798, "設定OFFの送信では読書位置を動かさない");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-enabled\"]")?.click();
+    });
+    assert.equal(following.textContent, "true", "設定ONの送信では追随を再開する");
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "設定ONの送信では末尾へ移動する");
+
+    scrollHeight = 1_120;
+    await act(async () => {
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "pending-after-send" }));
+    });
+    assert.equal(following.textContent, "true", "送信後の待機表示が遅れて追加されても追随を維持する");
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "送信後の待機表示を含む末尾へ移動する");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-enabled\"]")?.click();
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      messageList.scrollTop -= 2;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
     assert.equal(following.textContent, "false");
 
+    const readingPositionAfterSend = messageList.scrollTop;
+    scrollHeight = 1_240;
     await act(async () => {
-      messageList.scrollTop = 780;
+      root?.render(React.createElement(Harness, {
+        enabled: true,
+        scrollSignature: "pending-after-user-scroll",
+      }));
+    });
+    assert.equal(following.textContent, "false", "送信後でも利用者が上へ戻ったら追随予約を破棄する");
+    assert.equal(messageList.scrollTop, readingPositionAfterSend, "破棄後の待機表示で読書位置を動かさない");
+
+    const outsideAction = dom.window.document.querySelector<HTMLButtonElement>(
+      "[data-testid=\"outside-action\"]",
+    );
+    assert.ok(outsideAction);
+    await act(async () => {
+      const pointerDown = new dom.window.Event("pointerdown", { bubbles: true });
+      Object.defineProperty(pointerDown, "pointerId", { value: 7 });
+      outsideAction.dispatchEvent(pointerDown);
+      const pointerUp = new dom.window.Event("pointerup");
+      Object.defineProperty(pointerUp, "pointerId", { value: 7 });
+      dom.window.dispatchEvent(pointerUp);
+      messageList.scrollTop = scrollHeight - clientHeight;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
-    assert.equal(
-      following.textContent,
-      "false",
-      "上方向wheel中のrow計測補正を末尾へ戻るuser intentとして扱わない",
-    );
+    assert.equal(following.textContent, "false", "message list外のpointer操作では追従を再開しない");
 
     await act(async () => {
-      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "while-reading" }));
+      const pointerDown = new dom.window.Event("pointerdown", { bubbles: true });
+      Object.defineProperty(pointerDown, "pointerId", { value: 8 });
+      messageList.dispatchEvent(pointerDown);
+      const pointerUp = new dom.window.Event("pointerup");
+      Object.defineProperty(pointerUp, "pointerId", { value: 8 });
+      dom.window.dispatchEvent(pointerUp);
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
-    assert.equal(scrollToBottomCount, 1);
+    assert.equal(following.textContent, "true", "message list内で開始したpointer操作は追従を再開できる");
+
+    await act(async () => {
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      messageList.scrollTop = scrollHeight - clientHeight - 2;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "false");
 
     await act(async () => {
       messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: 120 }));
-      messageList.scrollTop = 780;
+      messageList.scrollTop = scrollHeight - clientHeight - 1;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
-    assert.equal(following.textContent, "true");
+    assert.equal(following.textContent, "true", "1pxのlayout誤差は末尾として許容する");
 
-    Object.defineProperty(messageList, "scrollHeight", { configurable: true, value: 900 });
+    scrollHeight = 1_120;
     await act(async () => {
-      messageList.scrollTop = 680;
-      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-growing" }));
     });
-    assert.equal(
-      following.textContent,
-      "true",
-      "上側rowの縮小補正でbottom gapが変わらない場合は末尾追従を維持する",
-    );
+    assert.equal(messageList.scrollTop, 920, "stream本文の伸長へ追従する");
 
+    scrollHeight = 1_260;
     await act(async () => {
-      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "at-bottom-update" }));
+      for (const observer of resizeObservers) {
+        observer.callback([], observer as unknown as ResizeObserver);
+      }
     });
-    assert.equal(scrollToBottomCount, 2);
+    assert.equal(messageList.scrollTop, 1_060, "message高さの非同期変化へ追従する");
+
+    clientHeight = 140;
+    await act(async () => {
+      for (const observer of resizeObservers) {
+        observer.callback([], observer as unknown as ResizeObserver);
+      }
+    });
+    assert.equal(messageList.scrollTop, 1_120, "ActionDock resize後のviewport末尾へ追従する");
 
     await act(async () => {
-      messageList.scrollTop = 300;
+      messageList.scrollTop = scrollHeight - clientHeight - 2;
       messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
     });
     assert.equal(following.textContent, "false");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"jump\"]")?.click();
+    });
+    assert.equal(following.textContent, "true");
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
 
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: false, scrollSignature: "preview-update" }));
     });
-    assert.equal(scrollToBottomCount, 2);
-
     await act(async () => {
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "preview-update" }));
     });
-    assert.equal(scrollToBottomCount, 3);
     assert.equal(following.textContent, "true");
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight);
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -451,6 +611,10 @@ test("useSessionMessageListFollowing は上方向scrollで追従を止め、非�
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    Object.defineProperty(globalThis, "ResizeObserver", {
+      configurable: true,
+      value: previousResizeObserver,
+    });
     (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT =
       previousActEnvironment;
   }

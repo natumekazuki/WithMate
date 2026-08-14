@@ -47,6 +47,7 @@ import {
   callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
   mapRuntimeHttpFailureToCharacterContext,
+  mapRuntimeHttpFailureToMemory,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -152,6 +153,25 @@ const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "character_memory_correct",
   "character_memory_forget",
 ]);
+
+const GENERAL_MEMORY_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "append",
+  "forget",
+  "move_entry",
+  "get_file",
+  "export_files",
+]);
+
+function generalMemoryOperationKind(request: WithMateMemoryCliRequest): "read" | "write" {
+  if (request.command === "forget"
+    && typeof request.body === "object"
+    && request.body !== null
+    && !Array.isArray(request.body)
+    && (request.body as { dryRun?: unknown }).dryRun === true) {
+    return "read";
+  }
+  return GENERAL_MEMORY_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand) ? "write" : "read";
+}
 
 function characterRuntimeUnavailable(effect: "none" | "unknown" = "none") {
   return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
@@ -377,6 +397,7 @@ function usageError(message: string): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_CLI_USAGE",
     message,
+    effect: "none",
   });
 }
 
@@ -384,14 +405,22 @@ function notRunningError(): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_NOT_RUNNING",
     message: "WithMate Memory API is not running or could not be discovered.",
+    effect: "none",
   });
 }
 
-function requestTimeoutError(command: WithMateMemoryApiCommand, timeoutMs: number): MemoryErrorResponse {
+function requestTimeoutError(
+  command: WithMateMemoryApiCommand,
+  timeoutMs: number,
+  effect: "none" | "unknown",
+): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_REQUEST_TIMEOUT",
     message: `WithMate Memory API request timed out after ${timeoutMs}ms.`,
     field: command,
+    retryable: true,
+    conversationMayContinue: true,
+    effect,
   });
 }
 
@@ -399,6 +428,7 @@ function transportError(message: string): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
     message,
+    effect: "none",
   });
 }
 
@@ -1166,7 +1196,10 @@ function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: un
   if (!validation.ok) {
     return {
       exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.apiError,
-      response: createMemoryErrorResponse(validation.error),
+      response: createMemoryErrorResponse({
+        ...validation.error,
+        effect: validation.error.effect ?? "none",
+      }),
     };
   }
   return {
@@ -1354,7 +1387,8 @@ export async function runWithMateMemoryCli(
           stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
           return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
         }
-        stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+        const effect = generalMemoryOperationKind(request) === "write" ? "unknown" : "none";
+        stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs, effect))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
@@ -1373,6 +1407,12 @@ export async function runWithMateMemoryCli(
         status: response.status,
         value: responseJson,
       });
+    } else {
+      responseJson = mapRuntimeHttpFailureToMemory({
+        ok: response.ok,
+        status: response.status,
+        value: responseJson,
+      }, generalMemoryOperationKind(request));
     }
     stdout.write(request.command === "audit"
       ? formatAuditOutput(responseJson, request.outputFormat ?? "json")

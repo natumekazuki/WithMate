@@ -47,7 +47,8 @@ function isWindowsFileUrl(url: URL): boolean {
   if (hostname && hostname !== "localhost") {
     return true;
   }
-  return /^\/[a-zA-Z]:\//.test(url.pathname);
+  return /^\/[a-zA-Z]:\//.test(url.pathname)
+    || /^\/\/[^/]+\/[^/]+(?:\/|$)/.test(url.pathname);
 }
 
 function isSupportedExternalUrlScheme(scheme: string): boolean {
@@ -130,7 +131,7 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     };
   }
 
-  if (/^file:\/\//i.test(trimmed)) {
+  if (/^file:/i.test(trimmed)) {
     const fileUrl = new URL(trimmed);
     fileUrl.hash = "";
     fileUrl.search = "";
@@ -185,6 +186,17 @@ export function resolveOpenPathTarget(target: string, options: OpenPathOptions =
     type: "local-path",
     targetPath: localTarget,
   };
+}
+
+export function resolveMarkdownLinkCopyTarget(target: string): string {
+  const resolvedTarget = resolveOpenPathTarget(target);
+  const copyTarget = resolvedTarget.type === "local-path"
+    ? resolvedTarget.targetPath
+    : target;
+  if (/[\u0000-\u001f\u007f]/.test(copyTarget)) {
+    throw new Error("Markdown link copy target contains control characters.");
+  }
+  return copyTarget;
 }
 
 function isMissingLocalPathError(error: unknown): boolean {

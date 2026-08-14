@@ -57,6 +57,13 @@ export class WindowErrorBoundary extends Component<WindowErrorBoundaryProps, Win
   };
 
   private handleReload = () => {
+    getWithMateApi()?.reportRendererLog({
+      level: "warn",
+      kind: "renderer.reload-requested",
+      message: `${this.props.windowLabel} reload requested from error boundary`,
+      url: window.location.href,
+      data: { boundary: "window", windowLabel: this.props.windowLabel },
+    });
     window.location.reload();
   };
 

@@ -631,6 +631,7 @@ export type SessionHeaderProps = {
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
+  isTerminalDisabled?: boolean;
   showDeleteButton?: boolean;
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
@@ -657,6 +658,7 @@ export function SessionHeader({
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
+  isTerminalDisabled = false,
   showDeleteButton = true,
   workspaceActions,
   sessionFilesActions,
@@ -729,7 +731,12 @@ export function SessionHeader({
                 <span className="session-window-control-group-label">Workspace</span>
                 {workspaceActions}
                 {showTerminalButton ? (
-                  <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                  <button
+                    className="drawer-toggle compact secondary"
+                    type="button"
+                    onClick={onOpenTerminal}
+                    disabled={isTerminalDisabled}
+                  >
                     Terminal
                   </button>
                 ) : null}
@@ -848,6 +855,7 @@ export type SessionChatScreenProps = {
   messageColumn: ReactNode;
   mainContent?: ReactNode;
   workSurfaceOverlay?: ReactNode;
+  errorSurface?: ReactNode;
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
@@ -893,6 +901,7 @@ export function SessionChatScreen({
   messageColumn,
   mainContent,
   workSurfaceOverlay = null,
+  errorSurface = null,
   recoveryActions = null,
   actionDock,
   actionDockSplitter,
@@ -969,6 +978,7 @@ export function SessionChatScreen({
             {recoveryActions}
           </div>
         ) : null}
+        {errorSurface}
       </section>
 
       {splitter}
@@ -1677,6 +1687,13 @@ export class SessionPaneErrorBoundary extends Component<
   };
 
   private handleReload = () => {
+    getWithMateApi()?.reportRendererLog({
+      level: "warn",
+      kind: "renderer.reload-requested",
+      message: "Session pane reload requested from error boundary",
+      url: window.location.href,
+      data: { boundary: "session-pane" },
+    });
     window.location.reload();
   };
 
@@ -2187,8 +2204,6 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
-  inlinePathFeedback?: string;
-  onDismissInlinePathFeedback?: () => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
 };
@@ -2520,8 +2535,6 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
-  inlinePathFeedback = "",
-  onDismissInlinePathFeedback,
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
@@ -2554,7 +2567,7 @@ export function SessionMessageColumn({
       messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
     directDomUpdates: true,
-    directDomUpdatesMode: "transform",
+    directDomUpdatesMode: "position",
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
@@ -2569,6 +2582,7 @@ export function SessionMessageColumn({
     liveElicitationRequest === null &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
+  const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
   const messageRenderedSearchTexts = useMemo(
     () => (hasFindQuery
@@ -2967,7 +2981,11 @@ export function SessionMessageColumn({
           />
         ) : null}
         {hasPendingMessageText ? (
-          <div data-pending-message-body="true">
+          <div
+            data-message-body="true"
+            data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
+            data-pending-message-body="true"
+          >
             <MessageRichText
               text={pendingMessageText}
               forceFullRender={findOpen && hasFindQuery}
@@ -2985,14 +3003,6 @@ export function SessionMessageColumn({
 
   return (
     <div className="session-message-column">
-      {inlinePathFeedback ? (
-        <div className="session-inline-path-feedback" role="alert">
-          <span>{inlinePathFeedback}</span>
-          {onDismissInlinePathFeedback ? (
-            <button type="button" onClick={onDismissInlinePathFeedback} aria-label="Dismiss path open result">×</button>
-          ) : null}
-        </div>
-      ) : null}
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
@@ -3488,6 +3498,7 @@ export type SessionComposerExpandedProps = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
+  externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
@@ -3565,6 +3576,7 @@ export function SessionComposerExpanded({
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
+  externalErrorDescriptionIds,
   sendButtonTitle,
   isComposerBlockedFeedbackActive,
   approvalOptions,
@@ -3691,6 +3703,7 @@ export function SessionComposerExpanded({
                 onOpenPromptTemplates();
               }}
               aria-pressed={isPromptTemplateWorkspaceOpen}
+              disabled={isRunning || composerBlocked}
             >
               Template
             </button>
@@ -3943,10 +3956,12 @@ export function SessionComposerExpanded({
             onCompositionStart={onDraftCompositionStart}
             onCompositionEnd={onDraftCompositionEnd}
             disabled={isComposerDisabled}
-            aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
+            aria-describedby={externalErrorDescriptionIds || (
+              composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined
+            )}
             aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
           />
-          {composerSendability.shouldShowFeedback ? (
+          {composerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
               className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}

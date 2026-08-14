@@ -10,7 +10,10 @@ import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   isCharacterContextError,
 } from "../../src/character-context/character-context-contract.js";
-import { CharacterContextApplicationService } from "../../src-electron/character-context-application-service.js";
+import {
+  CharacterContextApplicationService,
+  type CharacterContextUnexpectedErrorDiagnostic,
+} from "../../src-electron/character-context-application-service.js";
 import { CharacterAffectService } from "../../src-electron/character-affect-service.js";
 import { createCharacterAffectServiceWithMemory } from "../../src-electron/character-affect-memory-adapter.js";
 import { CharacterAffectStorage } from "../../src-electron/character-affect-storage.js";
@@ -18,7 +21,12 @@ import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
 
-function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?: boolean } = {}) {
+function createFixture(options: {
+  failEpisodeWrite?: boolean;
+  failMemorySearch?: boolean;
+  failAffectState?: boolean;
+  onUnexpectedError?(diagnostic: CharacterContextUnexpectedErrorDiagnostic): void;
+} = {}) {
   const directory = mkdtempSync(join(tmpdir(), "withmate-character-context-"));
   const dbPath = join(directory, "withmate-v6.db");
   const db = new DatabaseSync(dbPath);
@@ -63,6 +71,11 @@ function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?:
         memoryStorage,
         evaluator: { async evaluate() { return []; } },
       });
+  if (options.failAffectState) {
+    affectService.getEffectiveState = () => {
+      throw new Error("C:/private/workspace secret-token must not be logged");
+    };
+  }
   const service = new CharacterContextApplicationService({
     memoryService,
     affectService,
@@ -79,6 +92,7 @@ function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?:
           snapshotAt: "2026-08-09T00:00:00.000Z",
         }
       : null,
+    onUnexpectedError: options.onUnexpectedError,
   });
   return {
     directory,
@@ -128,6 +142,76 @@ describe("CharacterContextApplicationService", () => {
         assert.equal(result.error.effect, "none");
         assert.equal(result.error.retryable, true);
       }
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("Context内のMemory検索failureを検索量付きのstage diagnosticへ写像する", async () => {
+    const diagnostics: CharacterContextUnexpectedErrorDiagnostic[] = [];
+    const fixture = createFixture({
+      failMemorySearch: true,
+      onUnexpectedError: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    try {
+      const result = await fixture.service.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        query: "failure terms",
+        memoryLimit: 3,
+      }, "lifecycle");
+      assert.equal(isCharacterContextError(result), true);
+      if (!isCharacterContextError(result)) return;
+      assert.equal(result.error.code, "storage_unavailable");
+      assert.equal(result.error.details?.failureStage, "memory_search");
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0]?.stage, "memory_search");
+      assert.equal(diagnostics[0]?.errorName, "Error");
+      assert.equal(diagnostics[0]?.queryLength, "failure terms".length);
+      assert.ok((diagnostics[0]?.searchTermCount ?? 0) > 0);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("Context stage failureを内容なしの安全な診断へ分離する", async () => {
+    const diagnostics: CharacterContextUnexpectedErrorDiagnostic[] = [];
+    const fixture = createFixture({
+      failAffectState: true,
+      onUnexpectedError: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    try {
+      const result = await fixture.service.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        query: "長い query terms",
+        memoryLimit: 3,
+      }, "lifecycle");
+      assert.equal(isCharacterContextError(result), true);
+      if (!isCharacterContextError(result)) return;
+      assert.equal(result.error.code, "storage_unavailable");
+      assert.equal(result.error.effect, "none");
+      assert.equal(result.error.details?.failureStage, "affect_state");
+      assert.equal(diagnostics.length, 1);
+      assert.deepEqual(
+        {
+          operation: diagnostics[0]?.operation,
+          transport: diagnostics[0]?.transport,
+          stage: diagnostics[0]?.stage,
+          errorName: diagnostics[0]?.errorName,
+        },
+        {
+          operation: "character_context.get",
+          transport: "lifecycle",
+          stage: "affect_state",
+          errorName: "Error",
+        },
+      );
+      assert.doesNotMatch(JSON.stringify(diagnostics), /private|workspace|secret-token/);
+      assert.match(diagnostics[0]?.safeMessage ?? "", /affect_state failed/);
+      assert.ok((diagnostics[0]?.durationMs ?? -1) >= 0);
     } finally {
       fixture.close();
     }

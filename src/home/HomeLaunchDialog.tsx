@@ -82,6 +82,7 @@ export function HomeLaunchDialog({
       onClose={onClose}
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
+      dialogClassName="home-launch-dialog"
       footer={
         <LaunchDialogFooter
           feedback={launchFeedback}
@@ -171,7 +172,7 @@ export function HomeLaunchDialog({
         onSelectProvider={onSelectProvider}
       />
 
-      <section className="launch-section minimal">
+      <section className="launch-section minimal home-launch-character-section">
         <div className="launch-field">
           <span className="launch-field-label">Character</span>
           {!charactersLoaded ? (

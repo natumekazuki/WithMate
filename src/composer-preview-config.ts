@@ -4,7 +4,7 @@ import {
   type MicrocopyCatalog,
 } from "./microcopy-state.js";
 
-const TEXT_PATH_NOT_FOUND_ERROR_PATTERN = /^@ のパスが見つからないよ: (.+)$/;
+const TEXT_PATH_NOT_FOUND_ERROR_PATTERN = /^Path not found: (.+)$/;
 
 export function createEmptyComposerPreview(): ComposerPreview {
   return { attachments: [], errors: [] };

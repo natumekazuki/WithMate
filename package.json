@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "6.3.21",
+  "version": "6.3.22",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -23,6 +23,7 @@
     "test": "tsx --test scripts/tests/*.test.ts scripts/tests/*.test.tsx",
     "test:shard": "node --import tsx scripts/run-test-shard.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "affect:settlement-recovery": "tsx scripts/character-affect-turn-settlement-recovery.ts",
     "validate:snapshot-ignore": "tsx scripts/validate-snapshot-ignore.ts"
   },
   "keywords": [],

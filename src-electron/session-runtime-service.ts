@@ -14,6 +14,7 @@ import {
   type SessionContextTelemetry,
   type SessionMemory,
 } from "../src/app-state.js";
+import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import { type CharacterProfile } from "../src/character-state.js";
 import { buildLiveRunAuditOperations } from "../src/live-run-audit-operations.js";
 import { getProviderAppSettings, type AppSettings } from "../src/provider-settings-state.js";
@@ -51,6 +52,7 @@ function logSessionRunStuckInvestigation(
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  upsertTerminalSession?(session: Session): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
@@ -489,6 +491,8 @@ function buildRunningAuditEntry(params: {
   session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode" | "codexSandboxMode" | "threadId" | "messages">;
   logicalPrompt: CreateAuditLogInput["logicalPrompt"];
   threadId?: string;
+  clientRequestId?: string | null;
+  submitSource?: RunSessionTurnRequest["submitSource"];
 }): CreateAuditLogInput {
   return {
     sessionId: params.sessionId,
@@ -506,7 +510,18 @@ function buildRunningAuditEntry(params: {
     assistantText: "",
     operations: [],
     rawItemsJson: "[]",
-    providerMetadata: [],
+    providerMetadata: params.clientRequestId
+      ? [{
+          provider: params.session.provider,
+          kind: "session_turn_request",
+          source: "session-runtime-service.run-session-turn",
+          summary: "Session turn request correlation",
+          payload: {
+            clientRequestId: params.clientRequestId,
+            submitSource: params.submitSource ?? null,
+          },
+        }]
+      : [],
     usage: null,
     errorMessage: "",
   };
@@ -601,6 +616,12 @@ function buildTerminalAuditEntry(params: {
   };
 }
 
+export function preserveSessionTurnRequestMetadata(
+  providerMetadata: CreateAuditLogInput["providerMetadata"],
+): NonNullable<CreateAuditLogInput["providerMetadata"]> {
+  return (providerMetadata ?? []).filter((entry) => entry.kind === "session_turn_request");
+}
+
 function buildMinimalTerminalAuditEntry(params: {
   baseEntry: CreateAuditLogInput;
   phase: CreateAuditLogInput["phase"];
@@ -609,6 +630,7 @@ function buildMinimalTerminalAuditEntry(params: {
   threadId?: string | null;
   errorMessage?: string;
 }): CreateAuditLogInput {
+  const correlationMetadata = preserveSessionTurnRequestMetadata(params.baseEntry.providerMetadata);
   return {
     ...params.baseEntry,
     phase: params.phase,
@@ -623,7 +645,7 @@ function buildMinimalTerminalAuditEntry(params: {
     assistantText: "",
     operations: [],
     rawItemsJson: "[]",
-    providerMetadata: [],
+    providerMetadata: correlationMetadata,
     usage: null,
     errorMessage: params.errorMessage ?? "",
   };
@@ -643,18 +665,21 @@ function buildDegradedCompletedAuditEntry(params: {
     phase: "completed",
     operations: [],
     rawItemsJson: "",
-    providerMetadata: [{
-      provider: params.completedAuditEntry.provider,
-      kind: "audit_persistence_degraded",
-      source: "session-runtime-service.completed-audit-update",
-      summary: "Completed audit persistence degraded",
-      payload: {
-        message,
-        operationCount: params.completedAuditEntry.operations.length,
-        hadRawItems: params.completedAuditEntry.rawItemsJson.trim() !== "",
-        hadProviderMetadata: (params.completedAuditEntry.providerMetadata ?? []).length > 0,
+    providerMetadata: [
+      ...preserveSessionTurnRequestMetadata(params.completedAuditEntry.providerMetadata),
+      {
+        provider: params.completedAuditEntry.provider,
+        kind: "audit_persistence_degraded",
+        source: "session-runtime-service.completed-audit-update",
+        summary: "Completed audit persistence degraded",
+        payload: {
+          message,
+          operationCount: params.completedAuditEntry.operations.length,
+          hadRawItems: params.completedAuditEntry.rawItemsJson.trim() !== "",
+          hadProviderMetadata: (params.completedAuditEntry.providerMetadata ?? []).length > 0,
+        },
       },
-    }],
+    ],
   };
 }
 
@@ -666,6 +691,10 @@ export class SessionRuntimeService {
   private readonly sessionRunControllers = new Map<string, AbortController>();
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
+
+  private upsertTerminalSession(session: Session): Awaitable<Session> {
+    return this.deps.upsertTerminalSession?.(session) ?? this.deps.upsertSession(session);
+  }
 
   hasInFlightRuns(): boolean {
     return this.inFlightSessionRuns.size > 0
@@ -726,7 +755,20 @@ export class SessionRuntimeService {
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
-    if (this.isRunInFlight(sessionId)) {
+    const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
+    const alreadyInFlight = this.isRunInFlight(sessionId);
+    logSessionRunStuckInvestigation("runtime.requested", {
+      sessionId,
+      clientRequestId,
+      submitSource,
+      isRunInFlight: alreadyInFlight,
+    });
+    if (alreadyInFlight) {
+      logSessionRunStuckInvestigation("runtime.rejected", {
+        sessionId,
+        clientRequestId,
+        reason: "session-run-in-flight",
+      });
       throw new Error("このセッションはまだ実行中だよ。");
     }
     this.startingSessionRuns.add(sessionId);
@@ -758,6 +800,7 @@ export class SessionRuntimeService {
     request: RunSessionTurnRequest,
     runAbortController: AbortController,
   ): Promise<Session> {
+    const { clientRequestId, submitSource } = normalizeSessionTurnCorrelation(request);
     const observedAt = (this.deps.currentDate ?? (() => new Date()))();
     const investigationStartedAt = Date.now();
     const storedSession = await this.deps.getSession(sessionId);
@@ -781,6 +824,7 @@ export class SessionRuntimeService {
     throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
       sessionId,
+      clientRequestId,
       provider: session.provider,
       runState: session.runState,
       status: session.status,
@@ -805,7 +849,7 @@ export class SessionRuntimeService {
     const composerPreview = await this.deps.resolveComposerPreview(providerSession, request.userMessage);
     throwIfRunCanceled(runAbortController.signal);
     if (composerPreview.errors.length > 0) {
-      throw new Error(composerPreview.errors[0] ?? "添付の解決に失敗したよ。");
+      throw new Error(composerPreview.errors[0] ?? "Failed to resolve attachment.");
     }
 
     const appSettings = this.deps.getAppSettings();
@@ -880,6 +924,8 @@ export class SessionRuntimeService {
         createdAt: new Date().toISOString(),
         session: runningSession,
         logicalPrompt: promptForAudit.logicalPrompt,
+        clientRequestId,
+        submitSource: submitSource ?? undefined,
       });
       const runningAuditCreateStartedAt = Date.now();
       runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
@@ -899,7 +945,7 @@ export class SessionRuntimeService {
         this.deps.setLiveSessionRun(sessionId, null);
       }
       if (setupRunningSessionSaved) {
-        await Promise.resolve(this.deps.upsertSession({
+        await Promise.resolve(this.upsertTerminalSession({
           ...runningSession!,
           updatedAt: currentTimestampLabel(),
           status: "idle",
@@ -1076,6 +1122,7 @@ export class SessionRuntimeService {
           result = await runProviderTurn(activeRunningSession);
           logSessionRunStuckInvestigation("runtime.provider-turn.done", {
             sessionId,
+            clientRequestId,
             elapsedMs: Date.now() - investigationStartedAt,
             assistantChars: result.assistantText.length,
             operationCount: result.operations.length,
@@ -1114,6 +1161,8 @@ export class SessionRuntimeService {
             session: activeRunningSession,
             logicalPrompt: promptForAudit.logicalPrompt,
             threadId: "",
+            clientRequestId,
+            submitSource: submitSource ?? undefined,
           });
           const resetAuditSignature = buildRunningAuditProgressSignature(resetAuditEntry);
           await flushAuditWrites();
@@ -1176,7 +1225,7 @@ export class SessionRuntimeService {
       }
 
       const completedSessionUpsertStartedAt = Date.now();
-      const storedCompletedSession = await this.deps.upsertSession(completedSession);
+      const storedCompletedSession = await this.upsertTerminalSession(completedSession);
       logSessionRunStuckInvestigation("runtime.completed-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - completedSessionUpsertStartedAt,
@@ -1502,7 +1551,7 @@ export class SessionRuntimeService {
       };
 
       const failedSessionUpsertStartedAt = Date.now();
-      const storedFailedSession = await this.deps.upsertSession(failedSession);
+      const storedFailedSession = await this.upsertTerminalSession(failedSession);
       logSessionRunStuckInvestigation("runtime.terminal-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - failedSessionUpsertStartedAt,
@@ -1535,6 +1584,7 @@ export class SessionRuntimeService {
       this.deps.broadcastLiveSessionRun(sessionId);
       logSessionRunStuckInvestigation("runtime.finally.done", {
         sessionId,
+        clientRequestId,
         elapsedMs: Date.now() - investigationStartedAt,
         activeRunState: activeRunningSession.runState,
         activeStatus: activeRunningSession.status,

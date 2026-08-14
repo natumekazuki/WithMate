@@ -5,6 +5,7 @@ import {
   openLocalPathWithDefaultApp,
   revealLocalPathInFileManager,
   resolveForwardSlashUncPathCandidate,
+  resolveMarkdownLinkCopyTarget,
   resolveOpenPathTarget,
   resolveProtocolRelativeExternalFallback,
   resolveProtocolRelativeExternalFallbackAfterLocalOpen,
@@ -200,6 +201,84 @@ describe("resolveOpenPathTarget", () => {
     });
   });
 
+});
+
+describe("resolveMarkdownLinkCopyTarget", () => {
+  it("local linkをdecodeしてfragmentを除いたfilesystem pathにする", () => {
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("docs/my%20file-%E4%BB%95%E6%A7%98.md#intro"),
+      "docs/my file-仕様.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("C:%5Cworkspace%5Csession-files%5Creport%20%E4%BB%95%E6%A7%98.md#intro"),
+      "C:\\workspace\\session-files\\report 仕様.md",
+    );
+  });
+
+  it("file URLとUNCをfilesystem pathにする", () => {
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file:///C:/workspace/my%20file.md#intro"),
+      "C:\\workspace\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file://server/share/my%20file.md#intro"),
+      "\\\\server\\share\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("%5C%5Cserver%5Cshare%5C%E4%BB%95%E6%A7%98%20file.md#intro"),
+      "\\\\server\\share\\仕様 file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file:/C:/workspace/my%20file.md#intro"),
+      "C:\\workspace\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("FILE:/C:/workspace/my%20file.md#intro"),
+      "C:\\workspace\\my file.md",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("file:////server/share/my%20file.md#intro"),
+      "\\\\server\\share\\my file.md",
+    );
+  });
+
+  it("decode後のlocal pathに制御文字があれば拒否する", () => {
+    for (const target of [
+      "docs/report%00.txt",
+      "docs/report%09.txt",
+      "docs/report%0D%0Apowershell.txt",
+      "docs/report%7F.txt",
+      "file:/C:/workspace/report%0A.txt",
+    ]) {
+      assert.throws(
+        () => resolveMarkdownLinkCopyTarget(target),
+        /control characters/i,
+      );
+    }
+  });
+
+  it("外部URLはencodeとquery・fragmentを保つ", () => {
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("//example.test/docs/my%20file.md?raw=%2F#intro"),
+      "//example.test/docs/my%20file.md?raw=%2F#intro",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("https://example.test/docs/my%20file.md?raw=%2F#intro"),
+      "https://example.test/docs/my%20file.md?raw=%2F#intro",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("mailto:alice+docs@example.test?subject=%E4%BB%95%E6%A7%98"),
+      "mailto:alice+docs@example.test?subject=%E4%BB%95%E6%A7%98",
+    );
+    assert.equal(
+      resolveMarkdownLinkCopyTarget("https://example.test/report%0D%0Apowershell.exe"),
+      "https://example.test/report%0D%0Apowershell.exe",
+    );
+    assert.throws(
+      () => resolveMarkdownLinkCopyTarget("https://example.test/report\r\npowershell.exe"),
+      /control characters/i,
+    );
+  });
 });
 
 describe("openLocalPathWithDefaultApp", () => {

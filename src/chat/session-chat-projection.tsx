@@ -26,6 +26,7 @@ import {
   buildLiveSessionCommonComposerDockInput,
   buildLiveSessionCommonContextPaneProps,
   buildLiveSessionCommonMessageColumnProps,
+  buildLiveSessionErrorNotices,
   buildLiveSessionRecoveryActions,
 } from "./live-session-projection.js";
 
@@ -68,6 +69,9 @@ export type AgentSessionChatProjectionInput = {
   hasLiveRunAssistantText: boolean;
   liveRunErrorMessage: string;
   inlinePathFeedback: string;
+  workspaceAvailabilityMessage: string;
+  isWorkspaceAvailabilityCheckPending: boolean;
+  isWorkspaceAvailable: boolean;
   isMessageListFollowing: boolean;
   pendingMessageGroupId?: SessionMessageColumnProps["pendingMessageGroupId"];
   retryBanner: SessionRetryBannerProps["retryBanner"];
@@ -157,6 +161,7 @@ export type AgentSessionChatProjectionInput = {
   onResolveLiveElicitation: SessionMessageColumnProps["onResolveLiveElicitation"];
   onOpenInlinePath: (target: string) => void;
   onDismissInlinePathFeedback: () => void;
+  onRecheckWorkspaceAvailability: () => void;
   getChangedFilesEmptyText: SessionMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText: NonNullable<SessionMessageColumnProps["onCopyMessageText"]>;
   onQuoteMessageText: NonNullable<SessionMessageColumnProps["onQuoteMessageText"]>;
@@ -237,6 +242,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     canViewAuditLog: true,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenSessionTerminal,
+    isTerminalDisabled: !input.isWorkspaceAvailable,
     onOpenSessionFilesExplorer: input.onOpenSessionFilesExplorer,
     onOpenSessionFilesTerminal: input.onOpenSessionFilesTerminal,
     onTitleDraftChange: input.onTitleDraftChange,
@@ -248,6 +254,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onTogglePin: input.onToggleSessionPin,
     actions: input.headerActions,
     onOpenWorkspaceExplorer: input.onOpenSessionExplorer,
+    isWorkspaceExplorerDisabled: !input.isWorkspaceAvailable,
   });
 
   const composerDockProps = buildLiveSessionComposerDockProps(
@@ -405,9 +412,28 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     headerProps,
     messageColumnProps: {
       ...chatBodyProps.messageColumnProps,
-      inlinePathFeedback: input.inlinePathFeedback,
-      onDismissInlinePathFeedback: input.onDismissInlinePathFeedback,
     },
+    errorNotices: buildLiveSessionErrorNotices({
+      composerFeedback: input.composerSendability,
+      additionalNotices: [
+        ...(input.workspaceAvailabilityMessage.trim()
+          ? [{
+              id: "workspace-unavailable",
+              message: input.workspaceAvailabilityMessage,
+              relatedControl: "composer" as const,
+              actionLabel: "Recheck",
+              isActionDisabled: input.isWorkspaceAvailabilityCheckPending,
+              onAction: input.onRecheckWorkspaceAvailability,
+            }]
+          : []),
+        ...(input.inlinePathFeedback.trim() ? [{
+            id: "inline-path-open",
+            message: input.inlinePathFeedback,
+            dismissLabel: "パスを開いた結果を閉じる",
+            onDismiss: input.onDismissInlinePathFeedback,
+          }] : []),
+      ],
+    }),
     recoveryActions,
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
