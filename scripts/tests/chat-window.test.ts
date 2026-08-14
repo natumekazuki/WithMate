@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   ChatDockSplitter,
+  ChatAdditionalDirectoryList,
   ChatSkillPickerPanel,
   ChatWindow,
   ChatWindowStatusScreen,
@@ -145,16 +146,72 @@ test("ChatWindow の共通エラー領域は owner が指定したdismissと回�
   assert.match(html, /aria-label="Workspaceエラーを閉じる"/);
 });
 
-test("chat work surface は共通エラーの有無に関係なく中央contentへ可変領域を割り当てる", async () => {
+test("chat work surface は補助情報と共通エラーの有無に関係なく中央contentへ可変領域を割り当てる", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const stackRule = styles.match(/\.session-message-stack\s*\{([^}]*)\}/)?.[1] ?? "";
   const errorRule = styles.match(/\.chat-error-surface\s*\{([^}]*)\}/)?.[1] ?? "";
   const centralRule = styles.match(/\.session-central-surface\s*\{([^}]*)\}/)?.[1] ?? "";
 
-  assert.match(stackRule, /grid-template-rows:\s*minmax\(0, 1fr\) auto auto/);
-  assert.match(errorRule, /grid-row:\s*3/);
+  assert.match(stackRule, /grid-template-rows:\s*minmax\(0, 1fr\) auto auto auto/);
+  assert.match(errorRule, /grid-row:\s*4/);
   assert.match(errorRule, /padding:\s*0 12px 12px/);
   assert.match(centralRule, /grid-row:\s*1/);
+});
+
+test("ChatWindow は追加Directory一覧をActionDock外の共通work surfaceへ描画する", () => {
+  const props = createChatWindowProps();
+  props.isActionDockExpanded = false;
+  props.additionalDirectoryListProps = {
+    isOpen: true,
+    items: [{
+      key: "C:/shared/docs",
+      path: "C:/shared/docs",
+      primaryLabel: "docs",
+      secondaryLabel: "C:/shared",
+      title: "C:/shared/docs",
+      canRemove: true,
+    }],
+    isInteractionDisabled: false,
+    onRemove: noop,
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="chat-additional-directory-surface"/);
+  assert.match(html, /aria-label="許可中の追加Directory"/);
+  assert.doesNotMatch(html, /composer-additional-directory-list/);
+  assert.ok(html.indexOf("chat-additional-directory-surface") < html.indexOf("session-action-dock-slot"));
+  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
+});
+
+test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影する", () => {
+  const html = renderToStaticMarkup(React.createElement(ChatAdditionalDirectoryList, {
+    isOpen: true,
+    items: [
+      {
+        key: "C:/shared/removable",
+        path: "C:/shared/removable",
+        primaryLabel: "removable",
+        secondaryLabel: "C:/shared",
+        title: "C:/shared/removable",
+        canRemove: true,
+      },
+      {
+        key: "C:/shared/allowed",
+        path: "C:/shared/allowed",
+        primaryLabel: "allowed",
+        secondaryLabel: "C:/shared",
+        title: "C:/shared/allowed",
+        canRemove: false,
+      },
+    ],
+    isInteractionDisabled: true,
+    onRemove: noop,
+  }));
+
+  assert.match(html, /class="chat-additional-directory-remove" disabled=""/);
+  assert.match(html, /aria-label="removable を削除"/);
+  assert.match(html, /class="chat-additional-directory-readonly">許可中/);
 });
 
 test("ChatWindow は preview を保持したまま Skill 候補を中央 work surface に重ねる", () => {

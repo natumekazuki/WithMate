@@ -25,6 +25,7 @@ type LiveSessionWindowShellPropsInput = {
   mainContent?: ReactNode;
   isActionDockExpanded: boolean;
   composerProps: ChatWindowProps["composerProps"];
+  additionalDirectoryListProps?: ChatWindowProps["additionalDirectoryListProps"];
   skillPickerProps: ChatWindowProps["skillPickerProps"];
   compactActionDockProps: ChatWindowProps["compactActionDockProps"];
   headerSplitterProps?: Omit<ComponentProps<typeof ChatDockSplitter>, "edge">;
@@ -64,6 +65,7 @@ export function buildLiveSessionWindowShellProps(
     mainContent: input.mainContent,
     isActionDockExpanded: input.isActionDockExpanded,
     composerProps: input.composerProps,
+    additionalDirectoryListProps: input.additionalDirectoryListProps,
     skillPickerProps: input.skillPickerProps,
     compactActionDockProps: input.compactActionDockProps,
     headerSplitter: (
