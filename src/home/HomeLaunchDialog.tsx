@@ -82,6 +82,8 @@ export function HomeLaunchDialog({
       onClose={onClose}
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
+      ariaLabel="New Session"
+      showDismissControl={false}
       dialogClassName="home-launch-dialog"
       footer={
         <LaunchDialogFooter

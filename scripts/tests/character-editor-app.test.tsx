@@ -377,3 +377,108 @@ test("CharacterEditorApp は未保存 Character では Author with Agent を開�
     }
   }
 });
+
+test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    url: "https://withmate.local/character-editor.html",
+  });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousNavigator = globalThis.navigator;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousTextEncoder = globalThis.TextEncoder;
+  const previousTextDecoder = globalThis.TextDecoder;
+  const previousWithMate = (globalThis.window as typeof window | undefined)?.withmate;
+  const closeDom = dom.window.close.bind(dom.window);
+  let closeCalls = 0;
+
+  Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+  Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+  Object.defineProperty(globalThis, "navigator", { value: dom.window.navigator, configurable: true });
+  Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+  Object.defineProperty(globalThis, "TextEncoder", { value: TextEncoder, configurable: true });
+  Object.defineProperty(globalThis, "TextDecoder", { value: TextDecoder, configurable: true });
+  Object.defineProperty(dom.window, "close", {
+    configurable: true,
+    value: () => {
+      closeCalls += 1;
+    },
+  });
+
+  const rootElement = dom.window.document.getElementById("root");
+  assert.ok(rootElement);
+  let root: Root | null = null;
+
+  dom.window.withmate = {
+    async getModelCatalog() {
+      return createModelCatalog();
+    },
+    async getAppSettings() {
+      return createDefaultAppSettings();
+    },
+  } as Partial<WithMateWindowApi> as WithMateWindowApi;
+
+  try {
+    await act(async () => {
+      root = createRoot(rootElement);
+      root.render(<CharacterEditorApp />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    assert.equal(
+      Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Close"),
+      false,
+    );
+
+    const firstCloseEvent = new dom.window.Event("beforeunload", { cancelable: true });
+    await act(async () => {
+      dom.window.dispatchEvent(firstCloseEvent);
+    });
+    assert.equal(firstCloseEvent.defaultPrevented, true);
+    assert.match(rootElement.textContent ?? "", /新しいCharacterを破棄しますか？/);
+    assert.doesNotMatch(rootElement.textContent ?? "", /保存していない内容は失われます。/);
+    const closeDialog = rootElement.querySelector(".character-editor-close-dialog");
+    assert.ok(closeDialog);
+    assert.equal(closeDialog.querySelector(".launch-section"), null);
+    assert.equal(closeCalls, 0);
+
+    await act(async () => {
+      findButtonByText(rootElement, "キャンセル")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.doesNotMatch(rootElement.textContent ?? "", /新しいCharacterを破棄しますか？/);
+    assert.equal(closeCalls, 0);
+
+    const secondCloseEvent = new dom.window.Event("beforeunload", { cancelable: true });
+    await act(async () => {
+      dom.window.dispatchEvent(secondCloseEvent);
+    });
+    assert.equal(secondCloseEvent.defaultPrevented, true);
+
+    await act(async () => {
+      findButtonByText(rootElement, "破棄して閉じる")
+        .dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+    });
+    assert.equal(closeCalls, 1);
+
+    const confirmedCloseEvent = new dom.window.Event("beforeunload", { cancelable: true });
+    assert.equal(dom.window.dispatchEvent(confirmedCloseEvent), true);
+    assert.equal(confirmedCloseEvent.defaultPrevented, false);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    closeDom();
+    Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+    Object.defineProperty(globalThis, "navigator", { value: previousNavigator, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "TextEncoder", { value: previousTextEncoder, configurable: true });
+    Object.defineProperty(globalThis, "TextDecoder", { value: previousTextDecoder, configurable: true });
+    if (previousWindow) {
+      previousWindow.withmate = previousWithMate;
+    }
+  }
+});

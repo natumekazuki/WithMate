@@ -1218,11 +1218,6 @@ export function SessionAuditLogModal({
       >
         <div className="diff-titlebar">
           <h2>Audit Log</h2>
-          <div className="diff-titlebar-actions">
-            <button className="diff-close" type="button" onClick={onClose}>
-              Close
-            </button>
-          </div>
         </div>
 
         <div className="audit-log-toolbar">
