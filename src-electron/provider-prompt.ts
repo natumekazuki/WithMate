@@ -134,7 +134,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
   const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
-  const systemPromptBody = [characterPromptBody, characterAffectContextBody, outputBoundaryBody, toolCallPresenceBody]
+  const systemPromptBody = [characterPromptBody, outputBoundaryBody, toolCallPresenceBody, characterAffectContextBody]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
