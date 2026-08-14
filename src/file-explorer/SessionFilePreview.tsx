@@ -13,6 +13,7 @@ import {
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
+import { BackNavigationButton } from "../back-navigation-button.js";
 import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
@@ -86,10 +87,12 @@ type FilePreviewApi = Pick<
 type SessionFilePreviewProps = {
   api: FilePreviewApi | null;
   request: SessionFileResourceRequest;
-  onClose: () => void;
+  backNavigation?: {
+    label: string;
+    onBack: () => void;
+  };
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
-  closeLabel?: string;
   diffScopes?: FileRootGitChangeScope[];
   onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
   diffLoadingScope?: FileRootGitChangeScope | null;
@@ -538,10 +541,9 @@ function VirtualizedSplitDiffContent({
 export function SessionFilePreview({
   api,
   request,
-  onClose,
+  backNavigation,
   onCopyText,
   onQuoteText,
-  closeLabel = "Back to Chat",
   diffScopes = [],
   onOpenDiff,
   diffLoadingScope = null,
@@ -962,15 +964,15 @@ export function SessionFilePreview({
         if (findOpen) {
           event.preventDefault();
           setFindOpen(false);
-        } else {
+        } else if (backNavigation) {
           event.preventDefault();
-          onClose();
+          backNavigation.onBack();
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [findOpen, onClose, previewKind]);
+  }, [backNavigation, findOpen, previewKind]);
 
   const navigateMatch = useCallback((direction: 1 | -1) => {
     if (previewKind === "markdown" && markdownMode === "preview") {
@@ -1198,9 +1200,13 @@ export function SessionFilePreview({
   return (
     <section className="session-file-preview" aria-label="File preview">
       <header className="session-file-preview-header">
-        <button className="session-file-back-to-chat" type="button" onClick={onClose}>
-          {closeLabel}{chatNotice ? <span>{chatNotice}</span> : null}
-        </button>
+        {backNavigation ? (
+          <BackNavigationButton
+            label={backNavigation.label}
+            notice={chatNotice || undefined}
+            onBack={backNavigation.onBack}
+          />
+        ) : null}
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
         </div>
@@ -1405,10 +1411,12 @@ export type SessionDiffPreviewProps = {
   title: string;
   previewRevision: number;
   patch: string;
-  onClose: () => void;
+  backNavigation?: {
+    label: string;
+    onBack: () => void;
+  };
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
-  closeLabel?: string;
   onReload?: () => Promise<string | null>;
   reloadPending?: boolean;
   chatNotice?: string;
@@ -1418,10 +1426,9 @@ export function SessionDiffPreview({
   title,
   previewRevision,
   patch,
-  onClose,
+  backNavigation,
   onCopyText,
   onQuoteText,
-  closeLabel = "Back to Chat",
   onReload,
   reloadPending = false,
   chatNotice = "",
@@ -1463,14 +1470,14 @@ export function SessionDiffPreview({
         event.preventDefault();
         if (findOpen) {
           setFindOpen(false);
-        } else {
-          onClose();
+        } else if (backNavigation) {
+          backNavigation.onBack();
         }
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [findOpen, onClose]);
+  }, [backNavigation, findOpen]);
 
   const navigate = (direction: 1 | -1) => {
     if (matches.length > 0) {
@@ -1502,9 +1509,13 @@ export function SessionDiffPreview({
   return (
     <section className="session-file-preview session-diff-preview" aria-label="Git diff preview">
       <header className="session-file-preview-header">
-        <button className="session-file-back-to-chat" type="button" onClick={onClose}>
-          {closeLabel}{chatNotice ? <span>{chatNotice}</span> : null}
-        </button>
+        {backNavigation ? (
+          <BackNavigationButton
+            label={backNavigation.label}
+            notice={chatNotice || undefined}
+            onBack={backNavigation.onBack}
+          />
+        ) : null}
         <div className="session-file-preview-title"><strong>{title}</strong><span>Git Diff</span></div>
         <div className="session-file-preview-actions">
           <div className="session-file-preview-segmented" role="group" aria-label="Git diff display mode">
