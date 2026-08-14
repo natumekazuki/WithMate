@@ -109,6 +109,68 @@ test("MessageRichText は **bold** を strong として render する", () => {
   assert.match(html, /<strong class="message-inline-strong">message<\/strong>/);
 });
 
+test("MessageRichText は属性なしの正しい HTML br 記法を改行として render する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: "first<br>second<br/>third<br />fourth<BR>fifth",
+    }),
+  );
+  const dom = new JSDOM(html);
+
+  assert.equal(dom.window.document.querySelectorAll("br").length, 4);
+  assert.equal(
+    dom.window.document.querySelector(".message-paragraph")?.textContent,
+    "first\nsecond\nthird\nfourth\nfifth",
+  );
+});
+
+test("MessageRichText は対象外の raw HTML を element として render しない", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "<script>alert('x')</script>",
+        "<img src=x onerror=alert(1)>",
+        "<br onclick=alert(1)>",
+      ].join("\n"),
+    }),
+  );
+  const dom = new JSDOM(html);
+
+  assert.equal(dom.window.document.querySelector("script, img, br"), null);
+  assert.match(dom.window.document.body.textContent, /<script>alert\('x'\)<\/script>/);
+  assert.match(dom.window.document.body.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.match(dom.window.document.body.textContent, /<br onclick=alert\(1\)>/);
+});
+
+test("MessageRichText は plain text と code literal 内の HTML br 文字列を改変しない", () => {
+  const markdown = [
+    "invalid </br> closing",
+    "",
+    "plain &lt;/br&gt; text",
+    "",
+    "`inline </br> code`",
+    "",
+    "```txt",
+    "fenced </br> code",
+    "```",
+  ].join("\n");
+  const previewHtml = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const previewDom = new JSDOM(previewHtml);
+  const sourceHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: "source </br> text",
+    displayMode: "source",
+  }));
+  const sourceDom = new JSDOM(sourceHtml);
+
+  assert.equal(previewDom.window.document.querySelector("br"), null);
+  assert.match(previewDom.window.document.body.textContent, /invalid <\/br> closing/);
+  assert.match(previewDom.window.document.body.textContent, /plain <\/br> text/);
+  assert.match(previewDom.window.document.querySelector("code")?.textContent ?? "", /inline <\/br> code/);
+  assert.match(previewDom.window.document.querySelector("pre")?.textContent ?? "", /fenced <\/br> code/);
+  assert.equal(sourceDom.window.document.querySelector("br"), null);
+  assert.equal(sourceDom.window.document.querySelector("pre")?.textContent, "source </br> text");
+});
+
 test("MessageRichText の Source は元 Markdown を変換せず plain text で描画する", () => {
   const source = [
     "[link label](https://example.test/path)",
@@ -464,6 +526,41 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
 
     assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
     assert.notEqual(container.querySelector("table.message-table"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("MessageRichText は light から full へ切り替わっても HTML br の改行を維持する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, { text: "first<br />second" }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.equal(container.querySelectorAll("br").length, 1);
+
+    await act(async () => {
+      await waitForAnimationFrame(dom.window);
+      await waitForAnimationFrame(dom.window);
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.equal(container.querySelectorAll("br").length, 1);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
