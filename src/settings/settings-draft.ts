@@ -32,6 +32,16 @@ export function updateAutoCollapseActionDockOnSend(
   };
 }
 
+export function updateScrollToLatestOnSend(
+  draft: AppSettings,
+  enabled: boolean,
+): AppSettings {
+  return {
+    ...draft,
+    scrollToLatestOnSend: enabled,
+  };
+}
+
 export function updateSessionTurnNotificationEnabled(
   draft: AppSettings,
   enabled: boolean,

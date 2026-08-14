@@ -1233,6 +1233,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
+    handleMessageListSend,
     followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
@@ -2725,6 +2726,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(blockedMessage);
       }
 
+      handleMessageListSend(appSettings.scrollToLatestOnSend);
       applyOptimisticSessionRunUpdate({
         session: snapshot.session,
         userMessage,

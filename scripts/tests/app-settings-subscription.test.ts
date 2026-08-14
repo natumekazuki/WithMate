@@ -12,6 +12,7 @@ const appSettings: AppSettings = createDefaultAppSettings();
 const nextAppSettings: AppSettings = {
   ...createDefaultAppSettings(),
   autoCollapseActionDockOnSend: false,
+  scrollToLatestOnSend: false,
 };
 
 const flushPromises = () => new Promise<void>((resolve) => {

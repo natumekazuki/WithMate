@@ -1465,6 +1465,7 @@ export default function AgentSessionWindowApp() {
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
+    handleMessageListSend,
     followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
@@ -2098,6 +2099,7 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
+      handleMessageListSend(appSettings.scrollToLatestOnSend);
       if (options?.collapseActionDock) {
         setIsActionDockPinnedExpanded(false);
       }

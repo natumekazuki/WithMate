@@ -5,6 +5,7 @@ import {
   handleChangeAutoCollapseActionDockOnSend,
   handleChangeLaunchAtLoginEnabled,
   handleChangeMemoryFileQuotaMegabytes,
+  handleChangeScrollToLatestOnSend,
   handleChangeProviderInstructionRelativePath,
   handleChangeProviderEnabled,
   handleChangeProviderSkillRelativePath,
@@ -21,6 +22,7 @@ type SettingsDraftHandlersContext = {
 export type SettingsDraftHandlers = Pick<
   HomeSettingsContentBaseProps,
   | "onChangeAutoCollapseActionDockOnSend"
+  | "onChangeScrollToLatestOnSend"
   | "onChangeLaunchAtLoginEnabled"
   | "onChangeSessionTurnNotificationEnabled"
   | "onChangeSessionTurnNotificationResponsePreviewEnabled"
@@ -38,6 +40,9 @@ export function buildSettingsDraftHandlers({
   return {
     onChangeAutoCollapseActionDockOnSend: (enabled) => {
       handleChangeAutoCollapseActionDockOnSend({ enabled, setSettingsDraft });
+    },
+    onChangeScrollToLatestOnSend: (enabled) => {
+      handleChangeScrollToLatestOnSend({ enabled, setSettingsDraft });
     },
     onChangeLaunchAtLoginEnabled: (enabled) => {
       handleChangeLaunchAtLoginEnabled({ enabled, setSettingsDraft });

@@ -436,6 +436,7 @@ export function useSessionMessageListFollowing({
   const messageListEnabledRef = useRef(enabled);
   const isMessageListFollowingRef = useRef(true);
   const canResumeMessageListFollowingRef = useRef(false);
+  const shouldFollowMessageListAfterSendRef = useRef(false);
   const messageListScrollIntentTimerRef = useRef<number | null>(null);
   const messageListPointerIdRef = useRef<number | null>(null);
   const [isMessageListFollowing, setIsMessageListFollowing] = useState(true);
@@ -463,6 +464,7 @@ export function useSessionMessageListFollowing({
     };
     const handleWheel = (event: WheelEvent) => {
       if (event.deltaY < 0) {
+        shouldFollowMessageListAfterSendRef.current = false;
         canResumeMessageListFollowingRef.current = false;
         isMessageListFollowingRef.current = false;
         setIsMessageListFollowing(false);
@@ -473,6 +475,7 @@ export function useSessionMessageListFollowing({
       }
     };
     const handlePointerDown = (event: PointerEvent) => {
+      shouldFollowMessageListAfterSendRef.current = false;
       messageListPointerIdRef.current = event.pointerId;
       canResumeMessageListFollowingRef.current = true;
     };
@@ -500,6 +503,7 @@ export function useSessionMessageListFollowing({
         return;
       }
       if (["ArrowUp", "PageUp", "Home"].includes(event.key) || (event.key === " " && event.shiftKey)) {
+        shouldFollowMessageListAfterSendRef.current = false;
         canResumeMessageListFollowingRef.current = false;
         isMessageListFollowingRef.current = false;
         setIsMessageListFollowing(false);
@@ -522,6 +526,7 @@ export function useSessionMessageListFollowing({
       ownerWindow.removeEventListener("pointercancel", handlePointerCancel);
       messageListElement.removeEventListener("keydown", handleKeyDown);
       clearScrollIntentTimer();
+      shouldFollowMessageListAfterSendRef.current = false;
       canResumeMessageListFollowingRef.current = false;
       messageListPointerIdRef.current = null;
     };
@@ -561,6 +566,7 @@ export function useSessionMessageListFollowing({
     messageListEnabledRef.current = enabled;
 
     if (!enabled) {
+      shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       return;
@@ -574,6 +580,7 @@ export function useSessionMessageListFollowing({
     }
 
     if (!wasEnabled) {
+      shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       followMessageListLatest();
@@ -581,6 +588,7 @@ export function useSessionMessageListFollowing({
     }
 
     if (!wasSameOwner) {
+      shouldFollowMessageListAfterSendRef.current = false;
       messageListOwnerKeyRef.current = ownerKey;
       messageListSignatureRef.current = currentSignature;
       followMessageListLatest();
@@ -592,6 +600,12 @@ export function useSessionMessageListFollowing({
     }
 
     messageListSignatureRef.current = currentSignature;
+
+    if (shouldFollowMessageListAfterSendRef.current) {
+      shouldFollowMessageListAfterSendRef.current = false;
+      followMessageListLatest();
+      return;
+    }
 
     if (isMessageListFollowingRef.current) {
       scrollMessageListToBottom();
@@ -628,20 +642,28 @@ export function useSessionMessageListFollowing({
     const maxScrollTop = Math.max(0, messageListElement.scrollHeight - messageListElement.clientHeight);
     const bottomGap = Math.max(0, maxScrollTop - currentScrollTop);
     const isAtBottom = bottomGap <= bottomTolerance;
-    const nextFollowing = isAtBottom
-      ? isMessageListFollowingRef.current || canResumeMessageListFollowingRef.current
-      : false;
+    let nextFollowing = shouldFollowMessageListAfterSendRef.current;
+    if (!nextFollowing && isAtBottom) {
+      nextFollowing = isMessageListFollowingRef.current || canResumeMessageListFollowingRef.current;
+    }
     isMessageListFollowingRef.current = nextFollowing;
     setIsMessageListFollowing((current) => current === nextFollowing ? current : nextFollowing);
   }, [bottomTolerance]);
 
   const handleJumpToMessageListBottom = followMessageListLatest;
+  const handleMessageListSend = useCallback((scrollToLatestOnSend: boolean) => {
+    shouldFollowMessageListAfterSendRef.current = scrollToLatestOnSend;
+    if (scrollToLatestOnSend) {
+      followMessageListLatest();
+    }
+  }, [followMessageListLatest]);
 
   return {
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
     handleJumpToMessageListBottom,
+    handleMessageListSend,
     followMessageListLatest,
   };
 }
