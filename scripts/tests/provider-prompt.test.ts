@@ -420,7 +420,7 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
-  it("Character Affect Contextへread-time evaluatedAtを保持する", () => {
+  it("固定system sectionの後ろへCharacter Affect Contextを置き、契約fieldと全effective componentを保持する", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -452,15 +452,15 @@ describe("composeProviderPrompt", () => {
         },
         affect: {
           mode: "active",
-          effective: [{
-            layer: "session",
+          effective: Array.from({ length: 13 }, (_, index) => ({
+            contributingLayers: ["session" as const],
             targetType: "task",
-            targetId: "current-task",
+            targetId: `current-task-${index}`,
             family: "interest",
             label: "focused",
             valence: 0.4,
             intensity: 0.5,
-          }],
+          })),
           evaluatedAt,
           version: "affect-v1-provider-prompt",
           updatedAt: "2026-08-09T00:00:00.000Z",
@@ -472,8 +472,24 @@ describe("composeProviderPrompt", () => {
 
     const contextJson = prompt.systemBodyText.match(/# Character Affect Context[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1];
     assert.ok(contextJson);
-    const context = JSON.parse(contextJson) as { characterAffect: { evaluatedAt: string } };
+    const context = JSON.parse(contextJson) as {
+      characterAffect: { effective: unknown[]; evaluatedAt: string; version: string };
+      baselineRef: { definitionSha256: string; snapshotAt: string };
+    };
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Character Definition Snapshot",
+      "# Output Boundary",
+      "# Tool Call Presence",
+      "# Character Affect Context",
+      "# User Input",
+    ]);
+    assert.equal(context.characterAffect.effective.length, 13);
     assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
+    assert.equal(context.characterAffect.version, "affect-v1-provider-prompt");
+    assert.deepEqual(context.baselineRef, {
+      definitionSha256: "sha256-character-definition",
+      snapshotAt: "2026-06-14T00:00:00.000Z",
+    });
   });
 
   it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {

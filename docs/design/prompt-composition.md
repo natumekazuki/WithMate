@@ -50,15 +50,17 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 1. `CharacterRuntimeSnapshot.definitionMarkdown`
 2. `Output Boundary`
 3. `Tool Call Presence`
-4. 必要最小限の WithMate run marker
-5. `Conversation Timing`
-6. ユーザー入力
-7. 添付 reference
+4. `Character Affect Context`
+5. 必要最小限の WithMate run marker
+6. `Conversation Timing`
+7. ユーザー入力
+8. 添付 reference
 
 通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
 provider に渡す `Character Definition Snapshot` では、snapshot の取得時点説明を prompt 本体には入れない。保存済み snapshot の frontmatter は除外し、Character 名と説明を metadata として示したうえで、`character.md` 本文だけを markdown block として囲む。Character section の固定説明は、話し方への反映と coding agent 境界の guard に絞る。
 通常 session / companion では Character section の直後に `Output Boundary` を置き、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
 通常 session / companion では `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
+Character Contextを取得できたturnでは、turnごとに変動する`Character Affect Context`を固定のCharacter section、`Output Boundary`、`Tool Call Presence`より後ろへ置く。providerが再利用できる固定prefixを先に保ち、Affectの意味や内容は変更しない。
 通常 session では可変な `Conversation Timing` を input 側の `User Input` 直前に置く。Copilotの`session.systemMessage`へは入れず、Codexのlogical promptとCopilotの`session.send.prompt`から同じ論理sectionを監査できるようにする。Auxiliary、Companion、`character-authoring` sessionには注入しない。
 `character-authoring` session は `character.md` / `character-notes.md` 自体が成果物なので、`Output Boundary`、`Tool Call Presence`、coding agent 境界の固定 guard を注入しない。
 
@@ -79,6 +81,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 論理 prompt では `Character Definition Snapshot` section を system 側に置く。
 通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
 通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
+Character Contextを取得できたturnでは、`Character Affect Context` sectionをsystem側の固定sectionより後ろに置く。
 通常 session では `Conversation Timing` sectionをinput側の`User Input`直前に置く。値の解決は`src-electron/conversation-timing.ts`、sectionの合成は`src-electron/provider-prompt.ts`を参照する。
 
 `# Session Memory`、`# Project Memory`、`# Project Context`、`# Character Memory` も coding plane prompt では作らない。
@@ -134,6 +137,16 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
   - routine な tool call ごとの実況は要求しない
   - tool call が不要な応答には前置きを要求しない
   - `character-authoring` session では注入しない
+
+### `# Character Affect Context`
+
+- source:
+  - Character Context application boundaryがturn開始時に返したread projection
+- 形式:
+  - system側の固定sectionより後ろに置く
+  - baselineへの参照、全layerを合成したeffective Affectと寄与layer、必要最小限のCharacter Memory、scope、Affect version、評価・更新時刻を保持する
+  - provider prompt側ではeffective componentを切り詰めない。family集約とsession layerの時間減衰はCharacter Affect projectionが所有し、優先順位と欠落表示を伴う選別契約なしにpromptだけで上限を設けない
+  - Character Definition、生event履歴、監査情報、secret、Memory検索結果全体は含めない
 
 ## Memory Injection Policy
 
