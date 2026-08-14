@@ -112,12 +112,9 @@ export function FileRootChangesPane({
 
   useEffect(() => {
     void reload();
-    const handleWindowFocus = () => void reload();
-    window.addEventListener("focus", handleWindowFocus);
     return () => {
       requestRevisionRef.current += 1;
       diffRevisionRef.current += 1;
-      window.removeEventListener("focus", handleWindowFocus);
     };
   }, [refreshRevision, reload, rootsRevision]);
 
