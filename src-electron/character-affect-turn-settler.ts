@@ -12,7 +12,7 @@ import type {
 
 export type CharacterAffectTurnSettlementResult =
   | { status: "settled"; appraisal: CharacterAffectAppraiseResponse | null }
-  | { status: "pending"; error: CharacterContextErrorResponse };
+  | { status: "pending"; phase: "context" | "appraisal"; error: CharacterContextErrorResponse };
 
 export function characterAffectTurnIdempotencyPrefix(
   correlationId: string,
@@ -74,7 +74,7 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
   if (!pending.evaluation) {
     const context = await deps.getContext();
     if (isCharacterContextError(context)) {
-      return { status: "pending", error: context };
+      return { status: "pending", phase: "context", error: context };
     }
     const candidates = await deps.evaluate(
       context,
@@ -110,5 +110,5 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     savedCandidateIndices: savedCandidateIndices(appraisal),
     prepareReevaluation: appraisal.error.code === "version_conflict" && effect === "none",
   });
-  return { status: "pending", error: appraisal };
+  return { status: "pending", phase: "appraisal", error: appraisal };
 }

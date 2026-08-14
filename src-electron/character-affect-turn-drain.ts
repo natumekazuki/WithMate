@@ -20,7 +20,6 @@ export type CharacterAffectTurnDrainResult = {
 
 export async function drainCharacterAffectTurnSettlementBatch(input: {
   storage: CharacterAffectTurnSettlementStorage;
-  runtimeAvailable: boolean;
   startupRecoveryCutoff: string;
   readyCursor?: CharacterAffectTurnDrainCursor;
   getSession(sessionId: string): Promise<Session | null>;
@@ -33,14 +32,6 @@ export async function drainCharacterAffectTurnSettlementBatch(input: {
   now?: () => string;
 }): Promise<CharacterAffectTurnDrainResult> {
   const observedAt = (input.now ?? (() => new Date().toISOString()))();
-  if (!input.runtimeAvailable) {
-    return {
-      retryRequired: input.storage.listReadyPending(1).length > 0
-        || input.storage.listUnreadyPendingBefore(observedAt, 1).length > 0,
-      nextReadyCursor: input.readyCursor,
-    };
-  }
-
   const recoveryPending = input.storage.listUnreadyPendingBefore(
     observedAt,
     UNREADY_RECOVERY_LIMIT,
@@ -59,14 +50,13 @@ export async function drainCharacterAffectTurnSettlementBatch(input: {
     }
   }
 
-  let pending = input.storage.listReadyPending(READY_SETTLEMENT_LIMIT, input.readyCursor);
+  let pending = input.storage.listDueReadyPending(observedAt, READY_SETTLEMENT_LIMIT, input.readyCursor);
   if (pending.length === 0 && input.readyCursor) {
-    pending = input.storage.listReadyPending(READY_SETTLEMENT_LIMIT);
+    pending = input.storage.listDueReadyPending(observedAt, READY_SETTLEMENT_LIMIT);
   }
   if (pending.length === 0) {
     return {
-      retryRequired: input.storage.listReadyPending(1).length > 0
-        || input.storage.listUnreadyPendingBefore(observedAt, 1).length > 0,
+      retryRequired: input.storage.hasRecoverablePending(),
       nextReadyCursor: undefined,
     };
   }
@@ -92,7 +82,6 @@ export async function drainCharacterAffectTurnSettlementBatch(input: {
     }
   }
 
-  retryRequired ||= input.storage.listReadyPending(1).length > 0
-    || input.storage.listUnreadyPendingBefore(observedAt, 1).length > 0;
+  retryRequired ||= input.storage.hasRecoverablePending();
   return { retryRequired, nextReadyCursor };
 }

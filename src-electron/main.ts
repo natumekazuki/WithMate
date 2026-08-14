@@ -123,6 +123,12 @@ import {
 } from "./character-affect-turn-evaluator.js";
 import { settleCharacterAffectTurnWithRetry } from "./character-affect-turn-settler.js";
 import {
+  characterAffectTurnThrownFailureCode,
+  createCharacterAffectTurnFailureDiagnostic,
+  createCharacterAffectTurnRecoveryFailureLogData,
+  resolveCharacterAffectTurnContextFailureStage,
+} from "./character-affect-turn-recovery.js";
+import {
   CharacterAffectTurnRetryScheduler,
   settleCharacterAffectTurnOrScheduleRetry,
 } from "./character-affect-turn-retry-scheduler.js";
@@ -2129,7 +2135,7 @@ function requireCharacterAffectTurnRetryScheduler(): CharacterAffectTurnRetrySch
           kind: "character-affect.lifecycle.recovery-failed",
           process: "main",
           message: "Character affect recovery did not complete",
-          error: appLogService.errorToLogError(error),
+          data: createCharacterAffectTurnRecoveryFailureLogData(error),
         });
       },
     });
@@ -2142,32 +2148,102 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     return true;
   }
   const settlementStorage = requireCharacterAffectTurnSettlementStorage();
-  if (!memoryV6RuntimeApi) {
-    return false;
-  }
-  const runtimeApi = memoryV6RuntimeApi;
   if (!hasCommittedAssistantMessage(request.session.messages, request)) {
     settlementStorage.markDiscarded(request.correlationId);
     return true;
   }
+  const attemptCount = settlementStorage.recordAttempt(request.correlationId);
+  if (attemptCount === null) {
+    return true;
+  }
+  let activeStage = "runtime" as import("./character-affect-turn-settlement-storage.js").CharacterAffectTurnFailureStage;
+  let stageStartedAt = Date.now();
+  let dispositionFailure: unknown;
+  const recordFailure = (input: {
+    code: string;
+    retryable: boolean;
+    effect?: string;
+    error?: unknown;
+  }): boolean => {
+    const diagnostic = createCharacterAffectTurnFailureDiagnostic({
+      code: input.code,
+      stage: activeStage,
+      error: input.error,
+      durationMs: Date.now() - stageStartedAt,
+    });
+    let disposition: ReturnType<CharacterAffectTurnSettlementStorage["recordFailure"]>;
+    try {
+      disposition = settlementStorage.recordFailure({
+        correlationId: request.correlationId,
+        retryable: input.retryable,
+        diagnostic,
+      });
+    } catch (error) {
+      dispositionFailure = error;
+      settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
+      throw error;
+    }
+    writeAppLog({
+      level: "warn",
+      kind: disposition.state === "quarantined"
+        ? "character-affect.lifecycle.settlement-quarantined"
+        : "character-affect.lifecycle.settlement-deferred",
+      process: "main",
+      message: disposition.state === "quarantined"
+        ? "Character affect appraisal was quarantined after a bounded failure"
+        : "Character affect appraisal was deferred after a retryable failure",
+      data: {
+        sessionId: request.session.id,
+        correlationId: request.correlationId,
+        provider: request.session.provider,
+        model: request.session.model,
+        userMessageLength: request.userMessage.length,
+        assistantMessageLength: request.assistantMessage.length,
+        attemptCount: disposition.attemptCount,
+        code: diagnostic.code,
+        retryable: input.retryable,
+        effect: input.effect ?? "none",
+        stage: diagnostic.stage,
+        errorName: diagnostic.errorName,
+        durationMs: diagnostic.durationMs,
+        nextAttemptAt: disposition.nextAttemptAt,
+        quarantinedAt: disposition.quarantinedAt,
+      },
+    });
+    return disposition.state === "quarantined";
+  };
+  if (!memoryV6RuntimeApi) {
+    return recordFailure({ code: "runtime_unavailable", retryable: true });
+  }
+  const runtimeApi = memoryV6RuntimeApi;
   const character = request.session.characterRuntimeSnapshot
     ?? requireCharacterService().createRuntimeSnapshot(request.session.characterId);
   if (!character) {
-    return false;
+    return recordFailure({ code: "unknown_character", retryable: false });
   }
 
-  settlementStorage.recordAttempt(request.correlationId);
-  const settlement = await settleCharacterAffectTurnWithRetry({
+  try {
+    const settlement = await settleCharacterAffectTurnWithRetry({
     correlationId: request.correlationId,
     getPending: () => settlementStorage.getPending(request.correlationId),
-    getContext: () => runtimeApi.characterContextService.getContext({
-      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-      characterId: request.session.characterId!,
-      sessionId: request.session.id,
-      query: request.userMessage,
-      memoryLimit: 3,
-    }, "lifecycle"),
+    getContext: async () => {
+      activeStage = "context_response_assembly";
+      stageStartedAt = Date.now();
+      const result = await runtimeApi.characterContextService.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: request.session.characterId!,
+        sessionId: request.session.id,
+        query: request.userMessage,
+        memoryLimit: 3,
+      }, "lifecycle");
+      if (isCharacterContextError(result)) {
+        activeStage = resolveCharacterAffectTurnContextFailureStage(result);
+      }
+      return result;
+    },
     evaluate: async (context, idempotencyPrefix) => {
+      activeStage = "evaluation";
+      stageStartedAt = Date.now();
       const backgroundAdapter = getProviderBackgroundAdapter(request.session.provider);
       const prompt = buildCharacterAffectTurnPrompt({
         character,
@@ -2204,37 +2280,36 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     persistEvaluation: (input) => {
       settlementStorage.saveEvaluation({ correlationId: request.correlationId, ...input });
     },
-    appraise: (expectedVersion, candidates) => runtimeApi.characterContextService.appraise({
-      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-      characterId: request.session.characterId!,
-      sessionId: request.session.id,
-      expectedVersion,
-      authority: { kind: "conversation" },
-      candidates,
-    }, "lifecycle"),
+    appraise: (expectedVersion, candidates) => {
+      activeStage = "appraisal";
+      stageStartedAt = Date.now();
+      return runtimeApi.characterContextService.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: request.session.characterId!,
+        sessionId: request.session.id,
+        expectedVersion,
+        authority: { kind: "conversation" },
+        candidates,
+      }, "lifecycle");
+    },
     recordAppraisalFailure: (input) => {
       return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
     },
     markSettled: () => {
       settlementStorage.markSettled(request.correlationId);
     },
-  });
-  if (settlement.status === "pending") {
-    writeAppLog({
-      level: "warn",
-      kind: "character-affect.lifecycle.settlement-pending",
-      process: "main",
-      message: "Character affect appraisal remains pending",
-      data: {
-        sessionId: request.session.id,
+    });
+    if (settlement.status === "pending") {
+      if (settlement.phase === "appraisal") {
+        activeStage = "appraisal";
+      }
+      return recordFailure({
         code: settlement.error.error.code,
         retryable: settlement.error.error.retryable,
         effect: settlement.error.error.effect,
-      },
-    });
-    return false;
-  }
-  if (settlement.appraisal && settlement.appraisal.rejected.length > 0) {
+      });
+    }
+    if (settlement.appraisal && settlement.appraisal.rejected.length > 0) {
       writeAppLog({
         level: "warn",
         kind: "character-affect.lifecycle.candidate-rejected",
@@ -2248,15 +2323,24 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
           })),
         },
       });
+    }
+    return true;
+  } catch (error) {
+    if (error === dispositionFailure) {
+      throw error;
+    }
+    return recordFailure({
+      code: characterAffectTurnThrownFailureCode(error, activeStage),
+      retryable: true,
+      error,
+    });
   }
-  return true;
 }
 
 async function drainPendingCharacterAffectTurns(): Promise<boolean> {
   const settlementStorage = requireCharacterAffectTurnSettlementStorage();
   const result = await drainCharacterAffectTurnSettlementBatch({
     storage: settlementStorage,
-    runtimeAvailable: memoryV6RuntimeApi !== null,
     startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
     readyCursor: characterAffectTurnDrainCursor,
     getSession: getRuntimeSession,
@@ -2283,8 +2367,11 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
         kind: "character-affect.lifecycle.recovery-failed",
         process: "main",
         message: "Pending Character affect appraisal remains available for recovery",
-        data: { sessionId: item.sessionId },
-        error: appLogService.errorToLogError(error),
+        data: {
+          sessionId: item.sessionId,
+          correlationId: item.correlationId,
+          ...createCharacterAffectTurnRecoveryFailureLogData(error),
+        },
       });
     },
   });
