@@ -45,7 +45,9 @@ function createFixture(options: {
     db.close();
   }
   const memoryStorage = new MemoryV6Storage(dbPath);
-  const affectStorage = new CharacterAffectStorage(dbPath);
+  const affectStorage = new CharacterAffectStorage(dbPath, {
+    now: () => new Date("2026-08-09T01:00:00.000Z"),
+  });
   const memoryService = new MemoryV6Service({
     storage: memoryStorage,
     resolveCharacterById: (id) => id === "character-a" ? { id, name: "A" } : null,
@@ -115,6 +117,7 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
     layer: "session",
     targetType: "bug",
     targetId: "bug-1",
+    family: "interest",
     value: { label: "interest", valence: 0.4, arousal: 0.3 },
     intensity: 0.6,
     reason: "The bug became tractable.",
@@ -392,6 +395,47 @@ describe("CharacterContextApplicationService", () => {
       if (isCharacterContextError(unknown)) {
         assert.equal(unknown.error.code, "unknown_scope");
       }
+      assert.equal(fixture.service.getMetrics().affect.versionRejections, 1);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("同じexpectedVersionの同時appraisalは一方だけcommitしてversion conflictへ収束する", async () => {
+    const fixture = createFixture();
+    try {
+      const before = await fixture.service.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+      });
+      assert.equal(isCharacterContextError(before), false);
+      if (isCharacterContextError(before)) return;
+      const request = (idempotencyKey: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        expectedVersion: before.affect.version,
+        authority: { kind: "conversation" as const },
+        candidates: [affectCandidate({ idempotencyKey })],
+      });
+      const results = await Promise.all([
+        fixture.service.appraise(request("concurrent-a")),
+        fixture.service.appraise(request("concurrent-b")),
+      ]);
+      assert.equal(results.filter((result) => !isCharacterContextError(result)).length, 1);
+      assert.equal(results.filter(
+        (result) => isCharacterContextError(result) && result.error.code === "version_conflict",
+      ).length, 1);
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        assert.equal(
+          (db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get() as { count: number }).count,
+          1,
+        );
+      } finally {
+        db.close();
+      }
     } finally {
       fixture.close();
     }
@@ -531,12 +575,51 @@ describe("CharacterContextApplicationService", () => {
           idempotencyKey: "invalid-relationship-target",
         })],
       }, "mcp");
+      await fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [affectCandidate({
+          family: "other",
+          idempotencyKey: "metrics-other",
+        })],
+      }, "mcp");
+      await fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [affectCandidate({
+          family: "unknown" as never,
+          idempotencyKey: "metrics-unknown",
+        })],
+      }, "mcp");
+      await fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [affectCandidate({
+          schemaVersion: "unknown-affect-schema" as never,
+          family: "joy",
+          idempotencyKey: "metrics-schema",
+        })],
+      }, "mcp");
       fixture.service.recordFallback("mcp", "cli");
 
       const metrics = fixture.service.getMetrics();
-      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.calls, 1);
-      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.rejectionsByCode.invalid_input, 1);
+      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.calls, 4);
+      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.rejectionsByCode.invalid_input, 3);
       assert.equal(metrics.fallbacks["mcp->cli"], 1);
+      assert.equal(metrics.affect.candidatesByFamily.interest, 1);
+      assert.equal(metrics.affect.rejectedByFamily.interest, 1);
+      assert.equal(metrics.affect.candidatesByFamily.other, 1);
+      assert.equal(metrics.affect.savedByFamily.other, 1);
+      assert.equal(metrics.affect.otherRate, 1 / 3);
+      assert.equal(metrics.affect.invalidFamilyRejections, 1);
+      assert.equal(metrics.affect.schemaVersionRejections, 1);
+      assert.equal(metrics.affect.storage.eventsByFamily.other, 1);
       assert.doesNotMatch(JSON.stringify(metrics), /bug-123|invalid-relationship-target/);
     } finally {
       fixture.close();
@@ -546,13 +629,17 @@ describe("CharacterContextApplicationService", () => {
   it("Affect保存後のepisode失敗をpartial failureとして返し、成功に見せない", async () => {
     const fixture = createFixture({ failEpisodeWrite: true });
     try {
-      const result = await fixture.service.appraise({
+      const request = {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         sessionId: "session-a",
-        authority: { kind: "conversation" },
+        authority: { kind: "conversation" as const },
         candidates: [affectCandidate({
           idempotencyKey: "partial-episode",
+          targetId: "private-target-id",
+          value: { label: "private-free-label", valence: 0.4 },
+          reason: "private-reason",
+          evidence: "private-evidence",
           memoryEpisode: {
             title: "Partial episode",
             body: "Episode body",
@@ -560,7 +647,8 @@ describe("CharacterContextApplicationService", () => {
             salience: 0.8,
           },
         })],
-      });
+      };
+      const result = await fixture.service.appraise(request);
 
       assert.equal(isCharacterContextError(result), true);
       if (!isCharacterContextError(result)) return;
@@ -568,6 +656,15 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(result.error.effect, "committed");
       assert.equal(result.error.retryable, true);
       assert.equal(typeof result.error.details?.eventId, "string");
+      const replay = await fixture.service.appraise(request);
+      assert.equal(isCharacterContextError(replay), true);
+      if (!isCharacterContextError(replay)) return;
+      assert.equal(replay.error.effect, "committed");
+      const metrics = fixture.service.getMetrics();
+      assert.equal(metrics.affect.savedByFamily.interest, 1);
+      assert.equal(metrics.affect.storage.events, 1);
+      assert.equal(metrics.affect.storage.idempotencyReplays, 1);
+      assert.doesNotMatch(JSON.stringify(metrics), /private-target-id|private-free-label|private-reason|private-evidence/);
     } finally {
       fixture.close();
     }

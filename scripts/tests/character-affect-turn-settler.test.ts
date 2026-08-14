@@ -30,7 +30,13 @@ function context(version: string): CharacterContextResponse {
     characterId: "character-a",
     sessionId: "session-a",
     baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
-    affect: { mode: "active", effective: [], version, updatedAt: null },
+    affect: {
+      mode: "active",
+      effective: [],
+      evaluatedAt: "2026-08-09T04:00:00.000Z",
+      version,
+      updatedAt: null,
+    },
     memory: { items: [], updatedAt: null },
     scope: { userId: "local-user", characterId: "character-a", sessionId: "session-a" },
   };
@@ -45,6 +51,7 @@ function candidate(idempotencyKey: string, reason = "stable candidate"): AffectE
     layer: "session",
     targetType: "task",
     targetId: "current-task",
+    family: "interest",
     value: { label: "interest", valence: 0.4 },
     intensity: 0.5,
     reason,

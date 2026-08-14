@@ -213,6 +213,7 @@ describe("SessionRuntimeService", () => {
       affect: {
         mode: "active",
         effective: [],
+        evaluatedAt: "2026-08-09T00:00:00.000Z",
         version: `affect-v1-${version}`,
         updatedAt: "2026-08-09T00:00:00.000Z",
       },

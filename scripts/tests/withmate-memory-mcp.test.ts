@@ -199,6 +199,39 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
           `${toolName} must not accept caller-asserted authority`,
         );
       }
+      const appraise = result.tools.find((tool) => tool.name === "character_affect.appraise");
+      const affectCandidateItems = appraise?.inputSchema.properties?.candidates as {
+        items?: { required?: string[]; properties?: { family?: { enum?: string[] } } };
+      };
+      assert.ok(affectCandidateItems.items?.required?.includes("family"));
+      assert.deepEqual(affectCandidateItems.items?.properties?.family?.enum, [
+        "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+        "concern", "frustration", "disappointment", "regret", "determination", "other",
+      ]);
+      const unknownFamily = await client.callTool({
+        name: "character_affect.appraise",
+        arguments: {
+          characterId: "character-a",
+          sessionId: "session-a",
+          candidates: [{
+            schemaVersion: "withmate-affect-v1",
+            characterId: "character-a",
+            userId: "local-user",
+            sessionId: "session-a",
+            layer: "session",
+            targetType: "task",
+            targetId: "task-a",
+            family: "unknown",
+            value: { label: "free label", valence: 0 },
+            intensity: 0.5,
+            reason: "reason",
+            evidence: "evidence",
+            occurredAt: "2026-08-09T00:00:00.000Z",
+            idempotencyKey: "unknown-family",
+          }],
+        },
+      });
+      assert.equal(unknownFamily.isError, true);
       for (const toolName of [
         "memory.append",
         "memory.forget",

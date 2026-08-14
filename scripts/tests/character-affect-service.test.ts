@@ -58,6 +58,7 @@ function episodeEvent(overrides: Partial<AffectEventInput> = {}): AffectEventInp
     layer: "session",
     targetType: "task",
     targetId: "release",
+    family: "joy",
     value: { label: "joy", valence: 0.8 },
     intensity: 0.7,
     reason: "A release milestone passed.",

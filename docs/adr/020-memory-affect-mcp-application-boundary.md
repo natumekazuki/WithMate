@@ -29,6 +29,9 @@ WithMateにはMemory V6 application serviceとlocal runtime endpointがあり、
 - lifecycleのContext取得はAffect状態取得、Memory検索、response組み立てをfailure stageとして区別する。予期しない例外のpublic responseは従来のCharacter Context error semanticsへ写像するが、app logには本文、Memory内容、workspace path、secretを含めず、stage、例外名、安全な定型message、所要時間、query文字数と検索term数だけを残す。turn settlementのfailure logもprovider/model、入力文字数、試行回数、次回試行またはquarantine、effect certaintyだけを投影する。
 - MCPはinputとstructured outputの両schemaを公開し、output schemaにはsuccessとstructured errorの双方を含める。CLIとMCPはavailability、timeout、response loss、HTTP non-2xxを同じCharacter Context error semanticsへ写像する。read-only operationはdispatch後のresponse lossでも`effect: none`、write operationはdispatch後に結果を確認できない場合だけ`effect: unknown`とする。
 - context resultとturn注入はbaselineへの参照、componentごとに全layerを合成したeffective Affectと寄与layer、必要最小限のCharacter Memory、scope、version、更新時刻だけを返す。Character Definition、生event履歴、監査、secret、検索結果全体は含めない。
+- lifecycle、MCP、CLIは同じapplication clockとAffect projectionを使い、effective componentのfamilyとprojectionの`evaluatedAt`を同じ意味で返す。read時計の進行だけではmutation version、`expectedVersion`判定、idempotent replayを変えない。projection cacheは導入せず、readごとに再評価する。
+- Affect metricsは固定family別の候補、保存、拒否、other率、legacy projection、decay除外、projection cache hit/miss/stale、schema/version拒否を集計可能にする。会話本文、evidence、reason、自由label、target IDはmetricsへ保持しない。
+- upgrade前にdurable settlementへ保存されたfamilyなしまたは未対応schemaのcandidateは、本文とcandidate payloadを保持したまま恒久failureとして通常drainから隔離する。operatorが明示releaseした場合だけ評価世代を進め、保存済みcandidate identityを再利用せず最新contextから再評価する。
 - Character Memoryの訂正理由はMemory append mutationの監査reasonとidempotency fingerprintへ渡す。forget理由はMemory V6のcanonical enumをpublic contractでも使い、adapterで別値へ置換しない。
 
 ## Alternatives

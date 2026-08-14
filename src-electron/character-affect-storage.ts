@@ -11,12 +11,15 @@ import {
   type AffectLayer,
   type AffectTargetType,
   type AffectValue,
+  type CharacterAffectFamily,
   type EffectiveAffectComponent,
   type EffectiveAffectState,
 } from "../src/character-affect/affect-contract.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 
 const LOCAL_USER_ID = "local-user";
+export const DEFAULT_SESSION_AFFECT_HALF_LIFE_MS = 6 * 60 * 60 * 1_000;
+export const MINIMUM_SESSION_AFFECT_DECAY_WEIGHT = 0.05;
 
 export class CharacterAffectIdempotencyConflictError extends Error {
   constructor() {
@@ -40,9 +43,10 @@ export type CharacterAffectStateVersion = {
   updatedAt: string | null;
 };
 
-export type StoredAffectEvent = Omit<AffectEventInput, "sessionId"> & {
+export type StoredAffectEvent = Omit<AffectEventInput, "sessionId" | "family"> & {
   id: string;
   sessionId: string | null;
+  family: CharacterAffectFamily | null;
   sourceSessionId: string | null;
   state: "active" | "corrected";
   correctionOfEventId: string | null;
@@ -96,6 +100,7 @@ type AffectEventRow = {
   layer: AffectLayer;
   target_type: AffectTargetType;
   target_id: string;
+  family: CharacterAffectFamily | null;
   value_json: string;
   intensity: number;
   reason: string;
@@ -112,9 +117,33 @@ type AffectEventRow = {
 
 export class CharacterAffectStorage {
   private readonly db: DatabaseSync;
+  private readonly now: () => Date;
+  private readonly sessionHalfLifeMs: number;
+  private readonly minimumDecayWeight: number;
+  private readonly projectionMetrics = {
+    reads: 0,
+    legacyComponents: 0,
+    decayExcluded: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+    cacheStale: 0,
+  };
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, options: {
+    now?: () => Date;
+    sessionHalfLifeMs?: number;
+    minimumDecayWeight?: number;
+  } = {}) {
     this.db = openAppDatabase(dbPath);
+    this.now = options.now ?? (() => new Date());
+    this.sessionHalfLifeMs = options.sessionHalfLifeMs ?? DEFAULT_SESSION_AFFECT_HALF_LIFE_MS;
+    this.minimumDecayWeight = options.minimumDecayWeight ?? MINIMUM_SESSION_AFFECT_DECAY_WEIGHT;
+    if (!Number.isFinite(this.sessionHalfLifeMs) || this.sessionHalfLifeMs <= 0) {
+      throw new Error("sessionHalfLifeMs must be a positive finite number.");
+    }
+    if (!Number.isFinite(this.minimumDecayWeight) || this.minimumDecayWeight < 0 || this.minimumDecayWeight > 1) {
+      throw new Error("minimumDecayWeight must be between 0 and 1.");
+    }
   }
 
   close(): void {
@@ -456,25 +485,48 @@ export class CharacterAffectStorage {
       sessionResetAt,
     ) as AffectEventRow[];
 
+    const evaluatedAt = this.now().toISOString();
+    const evaluatedAtMs = Date.parse(evaluatedAt);
+    this.projectionMetrics.reads += 1;
+    this.projectionMetrics.cacheMisses += 1;
+
     const layers = [
       ...(input.baseline ?? []).map((component) => ({
         layer: "baseline" as const,
         targetType: component.targetType,
         targetId: component.targetId,
+        family: component.family ?? null,
         value: component.value,
         intensity: component.intensity,
         reason: component.reason,
         eventId: null,
+        occurredAt: null,
+        weight: 1,
       })),
-      ...rows.map((row) => ({
-        layer: row.layer,
-        targetType: row.target_type,
-        targetId: row.target_id,
-        value: parseValue(row.value_json),
-        intensity: row.intensity,
-        reason: row.reason,
-        eventId: row.id,
-      })),
+      ...rows.flatMap((row) => {
+        const weight = row.layer === "session"
+          ? Math.pow(0.5, Math.max(0, evaluatedAtMs - Date.parse(row.occurred_at)) / this.sessionHalfLifeMs)
+          : 1;
+        if (weight < this.minimumDecayWeight) {
+          this.projectionMetrics.decayExcluded += 1;
+          return [];
+        }
+        if (row.family === null) {
+          this.projectionMetrics.legacyComponents += 1;
+        }
+        return [{
+          layer: row.layer,
+          targetType: row.target_type,
+          targetId: row.target_id,
+          family: row.family,
+          value: parseValue(row.value_json),
+          intensity: row.intensity,
+          reason: row.reason,
+          eventId: row.id,
+          occurredAt: row.occurred_at,
+          weight,
+        }];
+      }),
     ];
 
     return {
@@ -482,6 +534,7 @@ export class CharacterAffectStorage {
       characterId: input.characterId,
       userId: input.userId,
       sessionId: input.sessionId,
+      evaluatedAt,
       layers: aggregateComponents(layers, true),
       components: aggregateComponents(layers, false),
     };
@@ -626,6 +679,17 @@ export class CharacterAffectStorage {
     episodeCandidates: number;
     idempotencyReplays: number;
     idempotencyConflictsRejected: number;
+    eventsByFamily: Record<CharacterAffectFamily, number>;
+    otherRate: number;
+    legacyEvents: number;
+    projection: {
+      reads: number;
+      legacyComponents: number;
+      decayExcluded: number;
+      cacheHits: number;
+      cacheMisses: number;
+      cacheStale: number;
+    };
   } {
     const eventCounts = this.db.prepare(`
       SELECT
@@ -655,6 +719,23 @@ export class CharacterAffectStorage {
         SUM(CASE WHEN kind = 'idempotency' AND outcome = 'rejected' THEN 1 ELSE 0 END) AS conflicts
       FROM character_affect_observations_v6
     `).get() as { replays: number | null; conflicts: number | null };
+    const familyRows = this.db.prepare(`
+      SELECT family, COUNT(*) AS count
+      FROM character_affect_events_v6
+      WHERE family IS NOT NULL
+      GROUP BY family
+    `).all() as Array<{ family: CharacterAffectFamily; count: number }>;
+    const eventsByFamily = Object.fromEntries([
+      "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+      "concern", "frustration", "disappointment", "regret", "determination", "other",
+    ].map((family) => [family, 0])) as Record<CharacterAffectFamily, number>;
+    for (const row of familyRows) {
+      eventsByFamily[row.family] = row.count;
+    }
+    const classifiedEvents = Object.values(eventsByFamily).reduce((sum, count) => sum + count, 0);
+    const legacyEvents = this.db.prepare(`
+      SELECT COUNT(*) AS count FROM character_affect_events_v6 WHERE family IS NULL
+    `).get() as { count: number };
     return {
       events: eventCounts.events,
       relationshipUpdates: eventCounts.relationshipUpdates ?? 0,
@@ -666,6 +747,10 @@ export class CharacterAffectStorage {
       linkedEpisodes: mutationCounts.linkedEpisodes ?? 0,
       idempotencyReplays: observationCounts.replays ?? 0,
       idempotencyConflictsRejected: observationCounts.conflicts ?? 0,
+      eventsByFamily,
+      otherRate: classifiedEvents === 0 ? 0 : eventsByFamily.other / classifiedEvents,
+      legacyEvents: legacyEvents.count,
+      projection: { ...this.projectionMetrics },
     };
   }
 
@@ -680,10 +765,10 @@ export class CharacterAffectStorage {
     this.db.prepare(`
       INSERT INTO character_affect_events_v6 (
         id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
-        value_json, intensity, reason, evidence, occurred_at, idempotency_key,
+        family, value_json, intensity, reason, evidence, occurred_at, idempotency_key,
         request_fingerprint, correction_of_event_id, state, memory_entry_id,
         supersedes_memory_entry_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NULL, ?, ?)
     `).run(
       eventId,
       input.characterId,
@@ -693,6 +778,7 @@ export class CharacterAffectStorage {
       input.layer,
       input.targetType,
       input.targetId,
+      input.family,
       stableJson(input.value),
       input.intensity,
       input.reason,
@@ -862,6 +948,7 @@ function toStoredEvent(row: AffectEventRow): StoredAffectEvent {
     layer: row.layer,
     targetType: row.target_type,
     targetId: row.target_id,
+    family: row.family,
     value: parseValue(row.value_json),
     intensity: row.intensity,
     reason: row.reason,
@@ -885,19 +972,34 @@ function aggregateComponents(
     layer: "baseline" | AffectLayer;
     targetType: AffectTargetType;
     targetId: string;
+    family: CharacterAffectFamily | null;
     value: AffectValue;
     intensity: number;
     reason: string;
     eventId: string | null;
+    occurredAt: string | null;
+    weight: number;
   }>,
   separateLayers: boolean,
 ): EffectiveAffectComponent[] {
-  const groups = new Map<string, EffectiveAffectComponent>();
+  const groups = new Map<string, EffectiveAffectComponent & {
+    representativeContribution: number;
+    representativeOccurredAt: string;
+    representativeEventId: string;
+  }>();
   for (const input of inputs) {
-    const key = [separateLayers ? input.layer : "effective", input.targetType, input.targetId, input.value.label].join("\u0000");
+    const identity = input.family === null ? `legacy-label:${input.value.label}` : `family:${input.family}`;
+    const key = JSON.stringify([
+      separateLayers ? input.layer : "effective",
+      input.targetType,
+      input.targetId,
+      identity,
+    ]);
+    const contribution = input.intensity * input.weight;
     const current = groups.get(key) ?? {
       targetType: input.targetType,
       targetId: input.targetId,
+      family: input.family,
       label: input.value.label,
       valence: 0,
       dimensions: {},
@@ -905,15 +1007,34 @@ function aggregateComponents(
       reasons: [],
       eventIds: [],
       contributingLayers: [],
+      representativeContribution: -1,
+      representativeOccurredAt: "",
+      representativeEventId: "",
     };
-    current.valence = clamp(current.valence + input.value.valence * input.intensity);
+    const representativeEventId = input.eventId ?? "";
+    const representativeOccurredAt = input.occurredAt ?? "";
+    if (
+      contribution > current.representativeContribution
+      || (contribution === current.representativeContribution && representativeOccurredAt > current.representativeOccurredAt)
+      || (
+        contribution === current.representativeContribution
+        && representativeOccurredAt === current.representativeOccurredAt
+        && representativeEventId < current.representativeEventId
+      )
+    ) {
+      current.label = input.value.label;
+      current.representativeContribution = contribution;
+      current.representativeOccurredAt = representativeOccurredAt;
+      current.representativeEventId = representativeEventId;
+    }
+    current.valence = clamp(current.valence + input.value.valence * contribution);
     if (input.value.arousal !== undefined) {
-      current.arousal = clamp((current.arousal ?? 0) + input.value.arousal * input.intensity);
+      current.arousal = clamp((current.arousal ?? 0) + input.value.arousal * contribution);
     }
     for (const [dimension, value] of Object.entries(input.value.dimensions ?? {})) {
-      current.dimensions[dimension] = clamp((current.dimensions[dimension] ?? 0) + value * input.intensity);
+      current.dimensions[dimension] = clamp((current.dimensions[dimension] ?? 0) + value * contribution);
     }
-    current.intensity = clamp(current.intensity + input.intensity, 0, 1);
+    current.intensity = clamp(current.intensity + contribution, 0, 1);
     current.reasons.push(input.reason);
     if (input.eventId) {
       current.eventIds.push(input.eventId);
@@ -923,7 +1044,12 @@ function aggregateComponents(
     }
     groups.set(key, current);
   }
-  return [...groups.values()];
+  return [...groups.values()].map(({
+    representativeContribution: _representativeContribution,
+    representativeOccurredAt: _representativeOccurredAt,
+    representativeEventId: _representativeEventId,
+    ...component
+  }) => component);
 }
 
 function clamp(value: number, minimum = -1, maximum = 1): number {

@@ -52,6 +52,7 @@ export type StartMemoryV6RuntimeApiOptions = {
   resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null;
   getMemoryFileQuotaBytes?: () => number;
   protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
+  now?: () => Date;
   log?: (input: AppLogInput) => void;
 };
 
@@ -309,7 +310,9 @@ export async function startMemoryV6RuntimeApi(
         },
       } : {}),
     });
-    affectStorage = new CharacterAffectStorage(bootstrap.dbPath);
+    affectStorage = new CharacterAffectStorage(bootstrap.dbPath, {
+      ...(options.now ? { now: options.now } : {}),
+    });
     const affectService = createCharacterAffectServiceWithMemory({
       affectStorage,
       memoryStorage: storage,

@@ -420,6 +420,62 @@ describe("composeProviderPrompt", () => {
     ]);
   });
 
+  it("Character Affect Contextへread-time evaluatedAtを保持する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot(),
+      approvalMode: "untrusted",
+    });
+    const evaluatedAt = "2026-08-09T06:00:00.000Z";
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+      characterContext: {
+        schemaVersion: "withmate-character-context-v1",
+        characterId: "character-1",
+        sessionId: session.id,
+        baseline: {
+          definitionSha256: "sha256-character-definition",
+          snapshotAt: "2026-06-14T00:00:00.000Z",
+        },
+        affect: {
+          mode: "active",
+          effective: [{
+            layer: "session",
+            targetType: "task",
+            targetId: "current-task",
+            family: "interest",
+            label: "focused",
+            valence: 0.4,
+            intensity: 0.5,
+          }],
+          evaluatedAt,
+          version: "affect-v1-provider-prompt",
+          updatedAt: "2026-08-09T00:00:00.000Z",
+        },
+        memory: { items: [], updatedAt: null },
+        scope: { userId: "local-user", characterId: "character-1", sessionId: session.id },
+      },
+    });
+
+    const contextJson = prompt.systemBodyText.match(/# Character Affect Context[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1];
+    assert.ok(contextJson);
+    const context = JSON.parse(contextJson) as { characterAffect: { evaluatedAt: string } };
+    assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
+  });
+
   it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {
     const session = buildNewSession({
       taskTitle: "task",

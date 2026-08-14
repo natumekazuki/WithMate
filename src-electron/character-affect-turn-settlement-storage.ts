@@ -171,17 +171,22 @@ function parseObservedEffects(value: string): CharacterAffectTurnAppraisalEffect
   return effects.map((effect) => requireAppraisalEffect(String(effect)));
 }
 
-function parseEvaluation(row: SettlementRow): CharacterAffectTurnEvaluationSnapshot | null {
-  if (row.candidates_json === null || row.expected_version === null) {
-    return null;
-  }
-  const candidates = JSON.parse(row.candidates_json) as unknown;
+function parseStoredCandidates(value: string): AffectEventInput[] {
+  const candidates = JSON.parse(value) as unknown;
   if (!Array.isArray(candidates)) {
     throw new Error("Stored Character affect candidates must be an array.");
   }
   for (const candidate of candidates) {
     assertValidAffectEvent(candidate as AffectEventInput);
   }
+  return candidates as AffectEventInput[];
+}
+
+function parseEvaluation(row: SettlementRow): CharacterAffectTurnEvaluationSnapshot | null {
+  if (row.candidates_json === null || row.expected_version === null) {
+    return null;
+  }
+  const candidates = parseStoredCandidates(row.candidates_json);
   const savedCandidateIndices = JSON.parse(row.saved_candidate_indices_json) as unknown;
   if (!Array.isArray(savedCandidateIndices) || !savedCandidateIndices.every((value) => Number.isInteger(value))) {
     throw new Error("Stored Character affect candidate progress is invalid.");
@@ -189,7 +194,7 @@ function parseEvaluation(row: SettlementRow): CharacterAffectTurnEvaluationSnaps
   return {
     evaluationAttempt: requireNonNegativeInteger(row.evaluation_attempt, "evaluationAttempt"),
     expectedVersion: requireText(row.expected_version, "expectedVersion"),
-    candidates: candidates as AffectEventInput[],
+    candidates,
     lastEffect: requireAppraisalEffect(row.last_effect),
     observedEffects: parseObservedEffects(row.observed_effects_json),
     savedCandidateIndices: normalizeCandidateIndices(savedCandidateIndices as number[]),
@@ -197,6 +202,15 @@ function parseEvaluation(row: SettlementRow): CharacterAffectTurnEvaluationSnaps
 }
 
 function toPending(row: SettlementRow): PendingCharacterAffectTurnSettlement {
+  let evaluation: CharacterAffectTurnEvaluationSnapshot | null;
+  try {
+    evaluation = parseEvaluation(row);
+  } catch (error) {
+    if (row.quarantined_at === null) {
+      throw error;
+    }
+    evaluation = null;
+  }
   return {
     correlationId: row.correlation_id,
     characterId: row.character_id,
@@ -209,7 +223,7 @@ function toPending(row: SettlementRow): PendingCharacterAffectTurnSettlement {
     readyAt: row.ready_at,
     attemptCount: row.attempt_count,
     evaluationAttempt: requireNonNegativeInteger(row.evaluation_attempt, "evaluationAttempt"),
-    evaluation: parseEvaluation(row),
+    evaluation,
     nextAttemptAt: row.next_attempt_at,
     attemptStartedAt: row.attempt_started_at,
     quarantinedAt: row.quarantined_at,
@@ -322,6 +336,7 @@ export class CharacterAffectTurnSettlementStorage {
     if (!columns.some((column) => column.name === "last_duration_ms")) {
       this.db.exec("ALTER TABLE character_affect_turn_settlements ADD COLUMN last_duration_ms INTEGER");
     }
+    this.quarantineInvalidStoredEvaluations();
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_character_affect_turn_settlements_due
       ON character_affect_turn_settlements(status, quarantined_at, attempt_started_at, next_attempt_at, created_at, correlation_id)
@@ -774,14 +789,89 @@ export class CharacterAffectTurnSettlementStorage {
   }
 
   releaseQuarantined(correlationId: string): boolean {
-    const result = this.db.prepare(`
-      UPDATE character_affect_turn_settlements
-      SET attempt_count = 0, next_attempt_at = NULL, attempt_started_at = NULL, quarantined_at = NULL,
-          last_failure_code = NULL, last_failure_stage = NULL,
-          last_error_name = NULL, last_error_message = NULL, last_duration_ms = NULL
-      WHERE correlation_id = ? AND status = 'pending' AND quarantined_at IS NOT NULL
-    `).run(requireText(correlationId, "correlationId"));
-    return result.changes === 1;
+    const normalizedCorrelationId = requireText(correlationId, "correlationId");
+    let transactionStarted = false;
+    try {
+      this.db.exec("BEGIN IMMEDIATE");
+      transactionStarted = true;
+      const row = this.db.prepare(`
+        SELECT * FROM character_affect_turn_settlements
+        WHERE correlation_id = ? AND status = 'pending' AND quarantined_at IS NOT NULL
+      `).get(normalizedCorrelationId) as SettlementRow | undefined;
+      if (!row) {
+        this.db.exec("COMMIT");
+        transactionStarted = false;
+        return false;
+      }
+      let requiresReevaluation = row.last_failure_code === "affect_schema_version_rejected";
+      if (!requiresReevaluation && row.candidates_json !== null) {
+        try {
+          parseStoredCandidates(row.candidates_json);
+        } catch {
+          requiresReevaluation = true;
+        }
+      }
+      const reevaluationFlag = requiresReevaluation ? 1 : 0;
+      const evaluationAttempt = requiresReevaluation
+        ? nextEvaluationAttempt(row.evaluation_attempt)
+        : row.evaluation_attempt;
+      const result = this.db.prepare(`
+        UPDATE character_affect_turn_settlements
+        SET attempt_count = 0,
+            evaluation_attempt = ?,
+            expected_version = CASE WHEN ? = 1 THEN NULL ELSE expected_version END,
+            candidates_json = CASE WHEN ? = 1 THEN NULL ELSE candidates_json END,
+            last_effect = CASE WHEN ? = 1 THEN 'none' ELSE last_effect END,
+            observed_effects_json = CASE WHEN ? = 1 THEN '[]' ELSE observed_effects_json END,
+            saved_candidate_indices_json = CASE WHEN ? = 1 THEN '[]' ELSE saved_candidate_indices_json END,
+            next_attempt_at = NULL, attempt_started_at = NULL, quarantined_at = NULL,
+            last_failure_code = NULL, last_failure_stage = NULL,
+            last_error_name = NULL, last_error_message = NULL, last_duration_ms = NULL
+        WHERE correlation_id = ? AND status = 'pending' AND quarantined_at IS NOT NULL
+      `).run(
+        evaluationAttempt,
+        reevaluationFlag,
+        reevaluationFlag,
+        reevaluationFlag,
+        reevaluationFlag,
+        reevaluationFlag,
+        normalizedCorrelationId,
+      );
+      this.db.exec("COMMIT");
+      transactionStarted = false;
+      return result.changes === 1;
+    } catch (error) {
+      if (transactionStarted) {
+        this.db.exec("ROLLBACK");
+      }
+      throw error;
+    }
+  }
+
+  private quarantineInvalidStoredEvaluations(): void {
+    const rows = this.db.prepare(`
+      SELECT * FROM character_affect_turn_settlements
+      WHERE status = 'pending' AND candidates_json IS NOT NULL AND quarantined_at IS NULL
+    `).all() as SettlementRow[];
+    const quarantinedAt = new Date().toISOString();
+    for (const row of rows) {
+      try {
+        parseStoredCandidates(row.candidates_json!);
+      } catch {
+        this.db.prepare(`
+          UPDATE character_affect_turn_settlements
+          SET next_attempt_at = NULL,
+              attempt_started_at = NULL,
+              quarantined_at = ?,
+              last_failure_code = 'affect_schema_version_rejected',
+              last_failure_stage = 'evaluation',
+              last_error_name = 'CharacterAffectSchemaValidationError',
+              last_error_message = 'Stored Character affect evaluation schema is not supported.',
+              last_duration_ms = 0
+          WHERE correlation_id = ? AND status = 'pending' AND quarantined_at IS NULL
+        `).run(quarantinedAt, row.correlation_id);
+      }
+    }
   }
 
   markSettled(correlationId: string, settledAt = new Date().toISOString()): boolean {

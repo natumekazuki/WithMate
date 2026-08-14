@@ -1,4 +1,8 @@
-import { assertValidAffectEvent } from "../src/character-affect/affect-contract.js";
+import {
+  CHARACTER_AFFECT_FAMILIES,
+  assertValidAffectEvent,
+  type CharacterAffectFamily,
+} from "../src/character-affect/affect-contract.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -180,6 +184,13 @@ export class CharacterContextApplicationService {
   private readonly principal = createLocalUserMemoryPrincipal();
   private readonly metrics = new Map<string, OperationMetric>();
   private readonly fallbackMetrics = new Map<string, number>();
+  private readonly affectMetrics = {
+    candidatesByFamily: emptyFamilyCounts(),
+    savedByFamily: emptyFamilyCounts(),
+    rejectedByFamily: emptyFamilyCounts(),
+    invalidFamilyRejections: 0,
+    schemaVersionRejections: 0,
+  };
 
   constructor(private readonly deps: CharacterContextApplicationServiceDeps) {}
 
@@ -258,12 +269,14 @@ export class CharacterContextApplicationService {
               }),
               targetType: component.targetType,
               targetId: component.targetId,
+              family: component.family,
               label: component.label,
               valence: component.valence,
               ...(component.arousal === undefined ? {} : { arousal: component.arousal }),
               ...(Object.keys(component.dimensions).length === 0 ? {} : { dimensions: { ...component.dimensions } }),
               intensity: component.intensity,
             })),
+            evaluatedAt: state.evaluatedAt,
             version: version.version,
             updatedAt: version.updatedAt,
           },
@@ -306,9 +319,21 @@ export class CharacterContextApplicationService {
       let expectedVersion = input.expectedVersion;
       for (let index = 0; index < input.candidates.length; index += 1) {
         const candidate = input.candidates[index]!;
+        const family = isCharacterAffectFamily(candidate.family) ? candidate.family : null;
+        if (family) {
+          this.affectMetrics.candidatesByFamily[family] += 1;
+        } else {
+          this.affectMetrics.invalidFamilyRejections += 1;
+        }
         try {
           assertValidAffectEvent(candidate);
         } catch (error) {
+          if (family) {
+            this.affectMetrics.rejectedByFamily[family] += 1;
+          }
+          if (candidate.schemaVersion !== "withmate-affect-v1") {
+            this.affectMetrics.schemaVersionRejections += 1;
+          }
           rejected.push({
             candidateIndex: index,
             code: "invalid_input",
@@ -324,6 +349,9 @@ export class CharacterContextApplicationService {
             memoryEntryId: result.event.memoryEntryId,
             replayed: !result.created,
           });
+          if (result.created) {
+            this.affectMetrics.savedByFamily[candidate.family] += 1;
+          }
           expectedVersion = this.deps.affectService.getStateVersion({
             characterId: input.characterId,
             userId: LOCAL_USER_ID,
@@ -331,6 +359,9 @@ export class CharacterContextApplicationService {
           }).version;
         } catch (error) {
           if (error instanceof CharacterAffectEpisodePersistenceError) {
+            if (error.eventCreated) {
+              this.affectMetrics.savedByFamily[candidate.family] += 1;
+            }
             return createCharacterContextError(
               "partial_failure",
               "Character affect was saved, but its Memory episode did not converge.",
@@ -610,13 +641,37 @@ export class CharacterContextApplicationService {
   getMetrics(): {
     operations: Record<string, OperationMetric>;
     fallbacks: Record<string, number>;
+    affect: {
+      candidatesByFamily: Record<CharacterAffectFamily, number>;
+      savedByFamily: Record<CharacterAffectFamily, number>;
+      rejectedByFamily: Record<CharacterAffectFamily, number>;
+      otherRate: number;
+      invalidFamilyRejections: number;
+      schemaVersionRejections: number;
+      versionRejections: number;
+      storage: ReturnType<CharacterAffectService["getMetrics"]>;
+    };
   } {
+    const candidateCount = Object.values(this.affectMetrics.candidatesByFamily)
+      .reduce((sum, count) => sum + count, 0);
+    const versionRejections = [...this.metrics.values()]
+      .reduce((sum, metric) => sum + metric.versionConflicts, 0);
     return {
       operations: Object.fromEntries([...this.metrics.entries()].map(([key, value]) => [key, {
         ...value,
         rejectionsByCode: { ...value.rejectionsByCode },
       }])),
       fallbacks: Object.fromEntries(this.fallbackMetrics.entries()),
+      affect: {
+        candidatesByFamily: { ...this.affectMetrics.candidatesByFamily },
+        savedByFamily: { ...this.affectMetrics.savedByFamily },
+        rejectedByFamily: { ...this.affectMetrics.rejectedByFamily },
+        otherRate: candidateCount === 0 ? 0 : this.affectMetrics.candidatesByFamily.other / candidateCount,
+        invalidFamilyRejections: this.affectMetrics.invalidFamilyRejections,
+        schemaVersionRejections: this.affectMetrics.schemaVersionRejections,
+        versionRejections,
+        storage: this.deps.affectService.getMetrics(),
+      },
     };
   }
 
@@ -812,4 +867,15 @@ export class CharacterContextApplicationService {
       this.metrics.set(key, metric);
     }
   }
+}
+
+function emptyFamilyCounts(): Record<CharacterAffectFamily, number> {
+  return Object.fromEntries(CHARACTER_AFFECT_FAMILIES.map((family) => [family, 0])) as Record<
+    CharacterAffectFamily,
+    number
+  >;
+}
+
+function isCharacterAffectFamily(value: unknown): value is CharacterAffectFamily {
+  return typeof value === "string" && (CHARACTER_AFFECT_FAMILIES as readonly string[]).includes(value);
 }

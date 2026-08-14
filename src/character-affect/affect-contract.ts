@@ -2,6 +2,21 @@ export const AFFECT_SCHEMA_VERSION = "withmate-affect-v1" as const;
 
 export type AffectLayer = "relationship" | "session";
 export type AffectTargetType = "user" | "relationship" | "task" | "bug" | "artifact" | "self";
+export const CHARACTER_AFFECT_FAMILIES = [
+  "joy",
+  "relief",
+  "interest",
+  "anticipation",
+  "affinity",
+  "gratitude",
+  "concern",
+  "frustration",
+  "disappointment",
+  "regret",
+  "determination",
+  "other",
+] as const;
+export type CharacterAffectFamily = typeof CHARACTER_AFFECT_FAMILIES[number];
 
 export type AffectValue = {
   label: string;
@@ -13,6 +28,7 @@ export type AffectValue = {
 export type AffectBaselineComponent = {
   targetType: "self" | "relationship";
   targetId: string;
+  family?: CharacterAffectFamily;
   value: AffectValue;
   intensity: number;
   reason: string;
@@ -26,6 +42,7 @@ export type AffectEventInput = {
   layer: AffectLayer;
   targetType: AffectTargetType;
   targetId: string;
+  family: CharacterAffectFamily;
   value: AffectValue;
   intensity: number;
   reason: string;
@@ -66,6 +83,7 @@ export type AffectEvaluator = {
 export type EffectiveAffectComponent = {
   targetType: AffectTargetType;
   targetId: string;
+  family: CharacterAffectFamily | null;
   label: string;
   valence: number;
   arousal?: number;
@@ -81,6 +99,7 @@ export type EffectiveAffectState = {
   characterId: string;
   userId: string;
   sessionId: string;
+  evaluatedAt: string;
   layers: EffectiveAffectComponent[];
   components: EffectiveAffectComponent[];
 };
@@ -93,6 +112,9 @@ export function assertValidAffectEvent(input: AffectEventInput): void {
   requireNonEmpty(input.userId, "userId");
   requireNonEmpty(input.sessionId, "sessionId");
   requireNonEmpty(input.targetId, "targetId");
+  if (!CHARACTER_AFFECT_FAMILIES.includes(input.family)) {
+    throw new Error("family must be a supported Character affect family.");
+  }
   requireNonEmpty(input.value.label, "value.label");
   requireNonEmpty(input.reason, "reason");
   requireNonEmpty(input.evidence, "evidence");
@@ -123,6 +145,9 @@ export function assertValidAffectEvent(input: AffectEventInput): void {
 
 export function assertValidAffectBaseline(component: AffectBaselineComponent): void {
   requireNonEmpty(component.targetId, "baseline.targetId");
+  if (component.family !== undefined && !CHARACTER_AFFECT_FAMILIES.includes(component.family)) {
+    throw new Error("baseline.family must be a supported Character affect family.");
+  }
   requireNonEmpty(component.value.label, "baseline.value.label");
   requireNonEmpty(component.reason, "baseline.reason");
   assertFiniteRange(component.value.valence, -1, 1, "baseline.value.valence");

@@ -68,7 +68,7 @@ General Memory targets are always explicit project, user-global, character, or c
 
 - `character_context.get` requires `characterId` and `sessionId`; `query` is optional and `memoryLimit` defaults to 3 within 0..10.
 - `character_affect.appraise` requires 1..10 candidates. Candidate `characterId`, `sessionId`, and `userId: local-user` must match the request owner.
-- An affect candidate requires `schemaVersion`, owner IDs, `layer`, explicit `targetType` and `targetId`, value, intensity, reason, evidence, canonical UTC `occurredAt`, and `idempotencyKey`.
+- An affect candidate requires `schemaVersion`, owner IDs, `layer`, explicit `targetType` and `targetId`, one of `joy`, `relief`, `interest`, `anticipation`, `affinity`, `gratitude`, `concern`, `frustration`, `disappointment`, `regret`, `determination`, or `other` as `family`, free-label value, intensity, reason, evidence, canonical UTC `occurredAt`, and `idempotencyKey`.
 - When an episode belongs to that affect event, put its `title`, `preview`, `body`, required `salience` from 0 to 1, and optional `motif` in the candidate's `memoryEpisode`. Linked `memoryEpisode` does not use `observedFact` or `characterObservation`. Do not submit the same event separately through `character_memory.append_episode`.
 - Relationship affect may target only `user` or `relationship`. Targets `task`, `bug`, `artifact`, and `self` belong to the session layer.
 - `character_memory.search` requires a non-empty query and an explicit Character or Character+Project scope.
@@ -77,7 +77,7 @@ General Memory targets are always explicit project, user-global, character, or c
 
 ### Success output shapes
 
-- `character_context.get` returns `characterId`, `sessionId`, baseline definition digest/timestamp, affect `mode`, effective components, affect `version`/`updatedAt`, bounded Memory items/related tags/update time, and resolved `userId`/Character/Session scope. It does not return the Character Definition, raw affect events, secrets, or the complete Memory search result set.
+- `character_context.get` returns `characterId`, `sessionId`, baseline definition digest/timestamp, affect `mode`, read-time `evaluatedAt`, effective components with `family` (`null` only for unclassified legacy identity), affect `version`/`updatedAt`, bounded Memory items/related tags/update time, and resolved `userId`/Character/Session scope. It does not return the Character Definition, raw affect events, secrets, or the complete Memory search result set.
 - `character_affect.appraise` returns `saved[]`, `rejected[]`, the resulting affect `version`, and `updatedAt`. A saved item identifies `candidateIndex`, `eventId`, optional linked `memoryEntryId`, and `replayed`; a rejected item identifies its candidate index, rejection code, and message.
 - `character_memory.search` returns the resolved Character scope, bounded active `items[]`, optional `relatedTags[]`, and `sourceVersion`.
 - Character Memory mutations return `operation`, current `entry` when available, optional predecessor/creation/replay fields, `readBack`, and `sourceVersion`.
@@ -208,7 +208,7 @@ Run:
 withmate-memory character-metrics
 ```
 
-Metrics distinguish transport and operation calls, successes, rejections, failures, idempotent replays, version conflicts, rejection codes, total latency, and `mcp->cli` fallback counts. Lifecycle and model-driven MCP operations use distinct operation prefixes.
+Metrics distinguish transport and operation calls, successes, rejections, failures, idempotent replays, version conflicts, rejection codes, total latency, and `mcp->cli` fallback counts. Affect metrics also expose family-bucketed candidates/saves/rejections, `otherRate`, invalid-family/schema/version rejections, persisted `eventsByFamily`, legacy event/projection counts, decay exclusions, and projection cache hit/miss/stale counts. Lifecycle and model-driven MCP operations use distinct operation prefixes.
 
 Metrics and logs must not contain conversation text, Memory bodies, affect evidence text, inferred user emotion, secrets, or raw transcripts. Use an authorized inspect/search operation when content is genuinely required for recovery.
 

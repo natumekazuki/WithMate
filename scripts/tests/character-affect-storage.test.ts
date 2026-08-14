@@ -69,6 +69,7 @@ function event(overrides: Partial<AffectEventInput> = {}): AffectEventInput {
     layer: "session",
     targetType: "bug",
     targetId: "bug-1",
+    family: "frustration",
     value: { label: "frustration", valence: -0.6, arousal: 0.7 },
     intensity: 0.5,
     reason: "The same bug recurred.",
@@ -77,6 +78,12 @@ function event(overrides: Partial<AffectEventInput> = {}): AffectEventInput {
     idempotencyKey: "event-a",
     ...overrides,
   };
+}
+
+function affectStorage(dbPath: string): CharacterAffectStorage {
+  return new CharacterAffectStorage(dbPath, {
+    now: () => new Date("2026-08-09T01:00:00.000Z"),
+  });
 }
 
 type WorkerMessage = {
@@ -244,7 +251,7 @@ describe("CharacterAffectStorage", () => {
       assert.equal(results.filter((result) => result.created === false).length, 1);
       assert.equal(new Set(results.map((result) => result.eventId)).size, 3);
 
-      const storage = new CharacterAffectStorage(fixture.dbPath);
+      const storage = affectStorage(fixture.dbPath);
       try {
         const stateA = storage.getEffectiveState({
           characterId: "character-a",
@@ -290,8 +297,8 @@ describe("CharacterAffectStorage", () => {
 
   it("sessionごとの状態を分離し、relationshipだけを共有する", () => {
     const fixture = createFixture();
-    const storageA = new CharacterAffectStorage(fixture.dbPath);
-    const storageB = new CharacterAffectStorage(fixture.dbPath);
+    const storageA = affectStorage(fixture.dbPath);
+    const storageB = affectStorage(fixture.dbPath);
     try {
       storageA.recordEvent(event());
       storageB.recordEvent(event({
@@ -350,7 +357,7 @@ describe("CharacterAffectStorage", () => {
 
   it("retryは二重登録せず、異なるrequestでのkey再利用を拒否する", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const first = storage.recordEvent(event());
       const replay = storage.recordEvent(event());
@@ -372,7 +379,7 @@ describe("CharacterAffectStorage", () => {
 
   it("同一idempotency keyのreplayをexpected version検査より先に解決する", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const initialVersion = storage.getStateVersion({
         characterId: "character-a",
@@ -398,7 +405,7 @@ describe("CharacterAffectStorage", () => {
 
   it("optional fieldの省略と明示的undefinedを同じrequestとして扱い、valid JSONを保存する", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const explicitUndefined = event({
         value: {
@@ -424,7 +431,7 @@ describe("CharacterAffectStorage", () => {
 
   it("idempotency keyを操作横断で所有し、訂正理由も同一request判定へ含める", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const original = storage.recordEvent(event()).event;
       assert.throws(
@@ -458,7 +465,7 @@ describe("CharacterAffectStorage", () => {
 
   it("schema versionと時系列比較に使えないtimestampをruntime境界で拒否する", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       assert.throws(
         () => storage.recordEvent({ ...event(), schemaVersion: "future-affect" as typeof AFFECT_SCHEMA_VERSION }),
@@ -488,11 +495,12 @@ describe("CharacterAffectStorage", () => {
 
   it("baselineと段階的なsession eventを同じownerで合成し、値をclampする", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       storage.recordEvent(event({
         targetType: "self",
         targetId: "character-a",
+        family: "determination",
         value: { label: "resolve", valence: 0.8 },
         intensity: 0.75,
         idempotencyKey: "resolve-1",
@@ -500,6 +508,7 @@ describe("CharacterAffectStorage", () => {
       storage.recordEvent(event({
         targetType: "self",
         targetId: "character-a",
+        family: "determination",
         value: { label: "resolve", valence: 0.8 },
         intensity: 0.75,
         occurredAt: "2026-08-09T01:01:00.000Z",
@@ -512,6 +521,7 @@ describe("CharacterAffectStorage", () => {
         baseline: [{
           targetType: "self",
           targetId: "character-a",
+          family: "determination",
           value: { label: "resolve", valence: 0.6 },
           intensity: 0.5,
           reason: "Character baseline.",
@@ -530,7 +540,7 @@ describe("CharacterAffectStorage", () => {
 
   it("bug targetをrelationshipへ保存できず、session resetはrelationshipを消さない", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       assert.throws(
         () => storage.recordEvent(event({ layer: "relationship" })),
@@ -575,7 +585,7 @@ describe("CharacterAffectStorage", () => {
 
   it("local-user以外のownerはMemory候補の有無にかかわらず保存しない", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       assert.throws(
         () => storage.recordEvent(event({ userId: "other-user" })),
@@ -590,7 +600,7 @@ describe("CharacterAffectStorage", () => {
 
   it("訂正後の投影と元event、mutation auditを同時に確認できる", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const original = storage.recordEvent(event()).event;
       const replacement = storage.correctEvent({
@@ -620,7 +630,7 @@ describe("CharacterAffectStorage", () => {
 
   it("別sessionのinspectionでもcross-layer correction chainを一式確認できる", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const original = storage.recordEvent(event({
         layer: "relationship",
@@ -690,7 +700,7 @@ describe("CharacterAffectStorage", () => {
 
   it("source session削除後もrelationship affectと訂正auditを保持し、session affectだけを削除する", () => {
     const fixture = createFixture();
-    const storage = new CharacterAffectStorage(fixture.dbPath);
+    const storage = affectStorage(fixture.dbPath);
     try {
       const relationshipInput = event({
         layer: "relationship",
@@ -763,6 +773,280 @@ describe("CharacterAffectStorage", () => {
       assert.equal(delayedReplay.created, false);
       assert.equal(delayedReplay.event.id, relationshipReplacement.id);
       assert.equal(storage.getMetrics().idempotencyReplays, 2);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("同target・同familyの異labelを統合し、target/family差とstable representative順を保つ", () => {
+    const fixture = createFixture();
+    const storage = affectStorage(fixture.dbPath);
+    try {
+      const first = storage.recordEvent(event({
+        family: "determination",
+        value: { label: "steady", valence: 0.4 },
+        intensity: 0.6,
+        idempotencyKey: "family-steady",
+      })).event;
+      const second = storage.recordEvent(event({
+        family: "determination",
+        value: { label: "locked-in", valence: 0.5 },
+        intensity: 0.6,
+        idempotencyKey: "family-locked-in",
+      })).event;
+      storage.recordEvent(event({
+        targetId: "bug-2",
+        family: "determination",
+        value: { label: "other-target", valence: 0.2 },
+        idempotencyKey: "family-other-target",
+      }));
+      storage.recordEvent(event({
+        family: "concern",
+        value: { label: "same-target-other-family", valence: -0.2 },
+        idempotencyKey: "family-other-family",
+      }));
+
+      const state = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      const determination = state.components.filter(
+        (component) => component.targetId === "bug-1" && component.family === "determination",
+      );
+      assert.equal(determination.length, 1);
+      assert.deepEqual(new Set(determination[0]?.eventIds), new Set([first.id, second.id]));
+      assert.equal(
+        determination[0]?.label,
+        first.id.localeCompare(second.id) < 0 ? "steady" : "locked-in",
+      );
+      assert.equal(state.components.some(
+        (component) => component.targetId === "bug-2" && component.family === "determination",
+      ), true);
+      assert.equal(state.components.some(
+        (component) => component.targetId === "bug-1" && component.family === "concern",
+      ), true);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("sessionだけをhalf-lifeとminimum thresholdで減衰し、clock-only readでversionを変えない", () => {
+    const fixture = createFixture();
+    const occurredAtMs = Date.parse("2026-08-09T01:00:00.000Z");
+    let nowMs = occurredAtMs + 1_000;
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date(nowMs),
+      sessionHalfLifeMs: 1_000,
+      minimumDecayWeight: 0.05,
+    });
+    try {
+      storage.recordEvent(event({
+        value: {
+          label: "decaying",
+          valence: -0.6,
+          arousal: 0.7,
+          dimensions: { focus: 0.8 },
+        },
+        intensity: 0.5,
+        idempotencyKey: "decay-session",
+      }));
+      storage.recordEvent(event({
+        layer: "relationship",
+        targetType: "relationship",
+        targetId: "character-a:local-user",
+        family: "affinity",
+        value: { label: "stable-affinity", valence: 0.5, arousal: 0.2, dimensions: { trust: 0.4 } },
+        intensity: 0.6,
+        idempotencyKey: "decay-relationship",
+      }));
+      const versionBefore = storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+
+      const halfLife = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      const halfLifeSession = halfLife.components.find((component) => component.family === "frustration");
+      const relationship = halfLife.components.find((component) => component.family === "affinity");
+      assert.equal(halfLife.evaluatedAt, new Date(nowMs).toISOString());
+      assert.equal(halfLifeSession?.intensity, 0.25);
+      assert.equal(halfLifeSession?.valence, -0.15);
+      assert.equal(halfLifeSession?.arousal, 0.175);
+      assert.equal(halfLifeSession?.dimensions.focus, 0.2);
+      assert.equal(relationship?.intensity, 0.6);
+      assert.equal(relationship?.valence, 0.3);
+
+      nowMs = occurredAtMs + 2_000;
+      const twoHalfLives = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(twoHalfLives.components.find((component) => component.family === "frustration")?.intensity, 0.125);
+
+      const thresholdAgeMs = 1_000 * Math.log2(20);
+      nowMs = Math.floor(occurredAtMs + thresholdAgeMs);
+      const thresholdBefore = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(thresholdBefore.components.some((component) => component.family === "frustration"), true);
+      nowMs = Math.ceil(occurredAtMs + thresholdAgeMs) + 1;
+      const thresholdAfter = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(thresholdAfter.components.some((component) => component.family === "frustration"), false);
+      assert.equal(thresholdAfter.components.find((component) => component.family === "affinity")?.intensity, 0.6);
+      assert.notEqual(thresholdAfter.evaluatedAt, halfLife.evaluatedAt);
+      assert.deepEqual(storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      }), versionBefore);
+      assert.equal(
+        storage.inspect({ characterId: "character-a", userId: "local-user" }).events
+          .find((stored) => stored.family === "frustration")?.intensity,
+        0.5,
+      );
+      assert.equal(storage.getMetrics().projection.decayExcluded, 1);
+      assert.equal(storage.getMetrics().projection.cacheHits, 0);
+      assert.equal(storage.getMetrics().projection.cacheMisses, 4);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy label identityを別legacy labelや新規other familyへ統合しない", () => {
+    const fixture = createFixture();
+    const storage = affectStorage(fixture.dbPath);
+    try {
+      const legacyA = storage.recordEvent(event({
+        value: { label: "legacy-a", valence: 0.2 },
+        idempotencyKey: "legacy-a",
+      })).event;
+      const legacyB = storage.recordEvent(event({
+        value: { label: "legacy-b", valence: 0.3 },
+        idempotencyKey: "legacy-b",
+      })).event;
+      storage.recordEvent(event({
+        family: "other",
+        value: { label: "legacy-a", valence: 0.4 },
+        idempotencyKey: "new-other",
+      }));
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.prepare("UPDATE character_affect_events_v6 SET family = NULL WHERE id IN (?, ?)").run(legacyA.id, legacyB.id);
+      } finally {
+        db.close();
+      }
+
+      const state = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(state.components.filter((component) => component.targetId === "bug-1").length, 3);
+      assert.equal(state.components.filter((component) => component.family === null).length, 2);
+      assert.equal(state.components.filter((component) => component.family === "other").length, 1);
+      assert.equal(storage.getMetrics().legacyEvents, 2);
+      assert.equal(storage.getMetrics().eventsByFamily.other, 1);
+      assert.equal(storage.getMetrics().otherRate, 1);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy targetとlabelに区切り文字が含まれても異なるidentityを統合しない", () => {
+    const fixture = createFixture();
+    const storage = affectStorage(fixture.dbPath);
+    try {
+      const legacyA = storage.recordEvent(event({
+        targetId: "a",
+        value: { label: "b\u0000legacy-label:c", valence: 0.2 },
+        idempotencyKey: "legacy-delimiter-a",
+      })).event;
+      const legacyB = storage.recordEvent(event({
+        targetId: "a\u0000legacy-label:b",
+        value: { label: "c", valence: 0.3 },
+        idempotencyKey: "legacy-delimiter-b",
+      })).event;
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.prepare("UPDATE character_affect_events_v6 SET family = NULL WHERE id IN (?, ?)").run(legacyA.id, legacyB.id);
+      } finally {
+        db.close();
+      }
+
+      const state = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(state.components.length, 2);
+      assert.deepEqual(
+        state.components.map((component) => component.targetId).sort(),
+        ["a", "a\u0000legacy-label:b"].sort(),
+      );
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("correction/resetでactive setを確定してからsession decayを適用する", () => {
+    const fixture = createFixture();
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date("2026-08-09T02:00:00.000Z"),
+      sessionHalfLifeMs: 60 * 60 * 1_000,
+    });
+    try {
+      const original = storage.recordEvent(event({ idempotencyKey: "decay-original" })).event;
+      const replacement = storage.correctEvent({
+        eventId: original.id,
+        replacement: event({
+          family: "determination",
+          value: { label: "recovering", valence: 0.5 },
+          intensity: 0.8,
+          idempotencyKey: "decay-correction",
+        }),
+        reason: "The appraisal was corrected.",
+      }).event;
+      const corrected = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(corrected.components.some((component) => component.eventIds.includes(original.id)), false);
+      assert.equal(corrected.components.find((component) => component.family === "determination")?.intensity, 0.4);
+      assert.equal(corrected.components.some((component) => component.eventIds.includes(replacement.id)), true);
+
+      storage.reset({
+        characterId: "character-a",
+        userId: "local-user",
+        layer: "session",
+        sessionId: "session-a",
+        reason: "Reset corrected active state.",
+        resetAt: "2026-08-09T01:00:00.001Z",
+        idempotencyKey: "decay-reset",
+      });
+      const reset = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(reset.components.length, 0);
     } finally {
       storage.close();
       rmSync(fixture.directory, { recursive: true, force: true });
