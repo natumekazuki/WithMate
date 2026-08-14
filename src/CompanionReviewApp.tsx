@@ -134,7 +134,6 @@ import {
   resolveComposerSendabilityState,
   resolveComposerSendPreflight,
 } from "./session-composer-feedback.js";
-import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockRuntimeState,
   shouldFocusComposerForActionDockExpand,
@@ -1416,13 +1415,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setIsRetryDraftReplacePending(false);
     }
   }, [composerText, retryBanner]);
-  const actionDockCompactPreview = useMemo(
-    () =>
-      buildActionDockCompactPreview(activeComposerText, isSelectedSessionRunning, {
-        truncationSuffix: "...",
-      }),
-    [activeComposerText, isSelectedSessionRunning],
-  );
   const companionCharacterProfile = useCompanionCharacterProfile(displayedSession ?? snapshot?.session ?? null);
   const selectedCustomAgent = useMemo(() => {
     if (!displayedSession?.customAgentName.trim()) {
@@ -3083,7 +3075,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedModelFallbackLabel,
         reasoningOptions: reasoningSelectOptions,
         selectedReasoningEffort: selectedRuntimeReasoningEffort,
-        actionDockCompactPreview,
         attachmentCount: composerPreview.attachments.length,
         isContextRailResizing,
         isContextRailVisible,

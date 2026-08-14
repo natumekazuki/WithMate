@@ -114,7 +114,6 @@ import {
   resolveComposerSendPreflight,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
-import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockRuntimeState,
   shouldFocusComposerForActionDockExpand,
@@ -2087,13 +2086,6 @@ export default function AgentSessionWindowApp() {
     isHeaderExpanded: isSessionHeaderExpanded,
     isActionDockExpanded,
   });
-  const actionDockCompactPreview = useMemo(
-    () =>
-      buildActionDockCompactPreview(draft, selectedSessionRunState === "running", {
-        truncationSuffix: "…",
-      }),
-    [draft, selectedSessionRunState],
-  );
   useEffect(() => {
     if (!retryBanner) {
       setIsRetryDraftReplacePending(false);
@@ -3793,9 +3785,6 @@ export default function AgentSessionWindowApp() {
         modelSelectOptions,
         selectedModelFallbackLabel,
         reasoningSelectOptions,
-        actionDockCompactPreview: activeAuxiliarySession
-          ? (renderedDraft.trim() || (activeAuxiliarySession.runState === "running" ? "実行中" : "下書きなし"))
-          : actionDockCompactPreview,
         chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,

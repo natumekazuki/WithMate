@@ -144,7 +144,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
     selectedModelFallbackLabel: "GPT Test",
     reasoningSelectOptions: [{ value: "low", label: "low" }],
-    actionDockCompactPreview: "",
     attachmentCount: 0,
     isActionDockExpanded: true,
     isContextRailResizing: false,
@@ -491,7 +490,6 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
     pendingRunIndicatorText: "Agent responding",
     isMessageListFollowing: false,
     composerSendButtonTitle: "Agent stop",
-    actionDockCompactPreview: "Agent preview",
     chatNotice: "New messages",
     attachmentCount: 2,
     onCollapseActionDock,
@@ -516,16 +514,15 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
   assert.equal("onCollapse" in props.composerProps, false);
   assert.equal(props.composerProps.chatNotice, "New messages");
-  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 2);
   assert.equal(props.compactActionDockProps.chatNotice, "New messages");
   assert.equal(props.compactActionDockProps.isRunning, true);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
-  assert.equal(props.compactActionDockProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.compactActionDockProps.cancelButtonTitle, "Agent stop");
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
-  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal(props.compactActionDockProps.onCancel, onSendOrCancel);
   assert.equal("additionalDirectoryItems" in props.composerProps, false);
   assert.deepEqual(props.additionalDirectoryListProps?.items, []);
 });

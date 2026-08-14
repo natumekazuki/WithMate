@@ -108,7 +108,6 @@ export type CompanionChatProjectionInput = {
   selectedModelFallbackLabel: string;
   reasoningOptions: SessionComposerExpandedProps["reasoningOptions"];
   selectedReasoningEffort: string;
-  actionDockCompactPreview: string;
   attachmentCount: number;
   isContextRailResizing: boolean;
   isContextRailVisible: boolean;
@@ -289,7 +288,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
       reasoningOptions: input.reasoningOptions,
       selectedReasoningEffort: input.selectedReasoningEffort,
-      actionDockCompactPreview: input.actionDockCompactPreview,
       attachmentCount: input.attachmentCount,
       onPickFile: input.onPickFile,
       onPickFolder: input.onPickFolder,

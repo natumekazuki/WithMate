@@ -3293,42 +3293,42 @@ export function SessionMessageColumn({
 }
 
 export type SessionActionDockCompactRowProps = {
-  draft: string;
-  actionDockCompactPreview: string;
   attachmentCount: number;
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
   chatNotice?: string;
-  isSendDisabled: boolean;
   showJumpToBottom: boolean;
-  sendButtonTitle?: string;
+  showMessageViewModeControls?: boolean;
+  messageViewMode?: MessageViewMode;
+  cancelButtonTitle?: string;
   onExpand: () => void;
   onJumpToBottom: () => void;
-  onSendOrCancel: () => void;
+  onCancel: () => void;
+  onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
 
 export function SessionActionDockCompactRow({
-  draft,
-  actionDockCompactPreview,
   attachmentCount,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
   chatNotice,
-  isSendDisabled,
   showJumpToBottom,
-  sendButtonTitle,
+  showMessageViewModeControls = false,
+  messageViewMode = "preview",
+  cancelButtonTitle,
   onExpand,
   onJumpToBottom,
-  onSendOrCancel,
+  onCancel,
+  onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
-  if (isRunning) {
-    return (
-      <div className={`session-action-dock-compact-row running${modeLabel ? " has-mode-label" : ""}`}>
-        {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+  return (
+    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}${modeLabel ? " has-mode-label" : ""}`}>
+      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+      {isRunning ? (
         <button
           className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
           type="button"
@@ -3341,58 +3341,24 @@ export function SessionActionDockCompactRow({
             text={pendingRunIndicatorText}
           />
         </button>
-        <div className="session-action-dock-compact-actions">
-          {chatNotice ? (
-            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+      ) : (
+        <button
+          className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
+          type="button"
+          onClick={onExpand}
+          aria-label="ActionDock を展開"
+          title="ActionDock を展開"
+        >
+          {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
+          {attachmentCount > 0 ? (
+            <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
           ) : null}
-          {showJumpToBottom ? (
-            <button
-              className="drawer-toggle compact secondary message-jump-bottom-button"
-              type="button"
-              onClick={onJumpToBottom}
-            >
-              末尾へ移動
-            </button>
-          ) : null}
-          <button
-            className="danger session-send-button"
-            type="button"
-            onClick={onSendOrCancel}
-            title={sendButtonTitle}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`session-action-dock-compact-row${modeLabel ? " has-mode-label" : ""}`}>
-      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
-      <button
-        className="session-action-dock-compact-preview"
-        type="button"
-        onClick={onExpand}
-        title={draft.trim() ? draft : "下書きなし"}
-      >
-        <span className="session-action-dock-compact-label">Draft</span>
-        <span className={`session-action-dock-compact-text${draft.trim() ? " has-draft" : ""}`}>
-          {actionDockCompactPreview}
-        </span>
-      </button>
-      <div className="session-action-dock-compact-meta" aria-label="draft summary">
-        {chatNotice ? (
+        </button>
+      )}
+      <div className="session-action-dock-compact-actions">
+        {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
-        {attachmentCount > 0 ? (
-          <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
-        ) : null}
-        {isRunning ? (
-          <span className="session-action-dock-compact-badge running">RUN</span>
-        ) : null}
-      </div>
-      <div className="session-action-dock-compact-actions">
         {showJumpToBottom ? (
           <button
             className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -3402,15 +3368,36 @@ export function SessionActionDockCompactRow({
             末尾へ移動
           </button>
         ) : null}
-        <button
-          className={isRunning ? "danger session-send-button" : "session-send-button"}
-          type="button"
-          onClick={onSendOrCancel}
-          disabled={!isRunning && isSendDisabled}
-          title={sendButtonTitle}
-        >
-          {isRunning ? "Cancel" : "Send"}
-        </button>
+        {showMessageViewModeControls ? (
+          <div className="composer-message-view-mode" role="group" aria-label="Message display mode">
+            <button
+              className="composer-message-view-mode-button"
+              type="button"
+              aria-pressed={messageViewMode === "preview"}
+              onClick={() => onMessageViewModeChange("preview")}
+            >
+              Preview
+            </button>
+            <button
+              className="composer-message-view-mode-button"
+              type="button"
+              aria-pressed={messageViewMode === "source"}
+              onClick={() => onMessageViewModeChange("source")}
+            >
+              Source
+            </button>
+          </div>
+        ) : null}
+        {isRunning ? (
+          <button
+            className="danger session-send-button"
+            type="button"
+            onClick={onCancel}
+            title={cancelButtonTitle}
+          >
+            Cancel
+          </button>
+        ) : null}
       </div>
     </div>
   );

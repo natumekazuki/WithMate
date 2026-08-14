@@ -103,9 +103,9 @@ type HiddenControlsChatComposerProps = Pick<
 
 type StaticChatCompactActionDockProps = Pick<
   ChatCompactActionDockProps,
-  "draft" | "isRunning" | "isSendDisabled" | "onSendOrCancel"
+  "isRunning" | "onCancel"
 > &
-  Partial<Omit<ChatCompactActionDockProps, "draft" | "isRunning" | "isSendDisabled" | "onSendOrCancel">>;
+  Partial<Omit<ChatCompactActionDockProps, "isRunning" | "onCancel">>;
 
 type StaticTextConversationMessageColumnProps = {
   sessionId: string;
@@ -155,11 +155,9 @@ type HiddenControlsTextChatComposerProps = Pick<
   >
 >;
 
-type StaticTextChatCompactActionDockProps = Pick<ChatCompactActionDockProps, "draft" | "onSendOrCancel"> & {
-  isRunning: boolean;
+type StaticTextChatCompactActionDockProps = {
   pendingRunIndicatorAnnouncement?: ChatCompactActionDockProps["pendingRunIndicatorAnnouncement"];
   pendingRunIndicatorText?: ChatCompactActionDockProps["pendingRunIndicatorText"];
-  emptyPreview?: string;
   onExpand?: ChatCompactActionDockProps["onExpand"];
 };
 
@@ -258,7 +256,6 @@ export type LiveSessionComposerDockPropsInput = Omit<
   LiveSessionComposerProps,
   "showJumpToBottom"
 > & {
-  actionDockCompactPreview: string;
   attachmentCount: number;
   isMessageListFollowing: boolean;
   onExpandActionDock: () => void;
@@ -301,7 +298,6 @@ export function buildLiveSessionComposerDockProps(
   compactActionDock: LiveSessionCompactActionDockProps;
 } {
   const {
-    actionDockCompactPreview,
     attachmentCount,
     isMessageListFollowing,
     onExpandActionDock,
@@ -315,20 +311,17 @@ export function buildLiveSessionComposerDockProps(
       showJumpToBottom,
     },
     compactActionDock: {
-      draft: input.draft,
-      actionDockCompactPreview,
       attachmentCount,
       isRunning: input.isRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
       modeLabel: input.modeLabel,
       chatNotice: input.chatNotice,
-      isSendDisabled: input.isSendDisabled,
       showJumpToBottom,
-      sendButtonTitle: input.sendButtonTitle,
+      cancelButtonTitle: input.sendButtonTitle,
       onExpand: onExpandActionDock,
       onJumpToBottom: input.onJumpToBottom,
-      onSendOrCancel: input.onSendOrCancel,
+      onCancel: input.onSendOrCancel,
     },
   };
 }
@@ -598,7 +591,6 @@ export function createStaticChatCompactActionDockProps(
   props: StaticChatCompactActionDockProps,
 ): ChatCompactActionDockProps {
   return {
-    actionDockCompactPreview: props.draft.trim() || "下書きなし",
     attachmentCount: 0,
     showJumpToBottom: false,
     onExpand: chatWindowNoop,
@@ -608,22 +600,15 @@ export function createStaticChatCompactActionDockProps(
 }
 
 export function createStaticTextChatCompactActionDockProps({
-  draft,
-  isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
-  emptyPreview = "下書きなし",
   onExpand,
-  onSendOrCancel,
 }: StaticTextChatCompactActionDockProps): ChatCompactActionDockProps {
   return createStaticChatCompactActionDockProps({
-    draft,
-    actionDockCompactPreview: draft.trim() || emptyPreview,
     isRunning: false,
     pendingRunIndicatorAnnouncement,
     pendingRunIndicatorText,
-    isSendDisabled: isStaticChatSendDisabled({ draft, isRunning }),
     onExpand,
-    onSendOrCancel,
+    onCancel: chatWindowNoop,
   });
 }

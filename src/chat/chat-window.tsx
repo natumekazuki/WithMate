@@ -443,7 +443,12 @@ export function ChatWindow({
             aria-hidden={isActionDockExpanded}
             inert={isActionDockExpanded}
           >
-            <SessionActionDockCompactRow {...compactActionDockProps} />
+            <SessionActionDockCompactRow
+              {...compactActionDockProps}
+              showMessageViewModeControls={showMessageViewModeControls}
+              messageViewMode={messageViewMode}
+              onMessageViewModeChange={handleMessageViewModeChange}
+            />
           </div>
         </div>
       )}

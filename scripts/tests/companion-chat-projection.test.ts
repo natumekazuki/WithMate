@@ -144,7 +144,6 @@ function createProjectionInput(
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
     selectedReasoningEffort: "low",
-    actionDockCompactPreview: "実行中",
     attachmentCount: 0,
     isContextRailResizing: false,
     isContextRailVisible: true,
@@ -486,7 +485,6 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
     selectedModel: "gpt-companion",
     selectedReasoningEffort: "medium",
     sendButtonTitle: "Companion stop",
-    actionDockCompactPreview: "Companion preview",
     attachmentCount: 3,
     onCollapseActionDock,
     onToggleActionDock,
@@ -504,14 +502,13 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
   assert.equal(props.composerProps.selectedReasoningEffort, "medium");
   assert.equal(props.composerProps.sendButtonTitle, "Companion stop");
   assert.equal("onCollapse" in props.composerProps, false);
-  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Companion preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 3);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Companion が応答を生成中...");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
-  assert.equal(props.compactActionDockProps.sendButtonTitle, "Companion stop");
+  assert.equal(props.compactActionDockProps.cancelButtonTitle, "Companion stop");
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
-  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal(props.compactActionDockProps.onCancel, onSendOrCancel);
   assert.equal("additionalDirectoryItems" in props.composerProps, false);
   assert.deepEqual(props.additionalDirectoryListProps?.items, []);
 });
