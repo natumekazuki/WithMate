@@ -6,6 +6,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type MouseEvent,
   type ReactNode,
@@ -64,6 +65,16 @@ type HastNode = {
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: HastNode[];
+  position?: {
+    start?: {
+      offset?: number;
+    };
+  };
+};
+
+type MessageCopyFeedback = {
+  message: string;
+  tone: "error" | "success";
 };
 
 const htmlLineBreakPattern = /^<br[ \t]*\/?>$/i;
@@ -121,6 +132,66 @@ function extractTextContent(node: ReactNode): string {
     return extractTextContent(node.props.children);
   }
   return "";
+}
+
+export function resolveCodeBlockText(node: ReactNode): string {
+  return extractTextContent(node).replace(/\r\n?/g, "\n").replace(/\n$/, "");
+}
+
+function isFencedCodeBlock(node: HastNode | undefined, markdown: string): boolean {
+  const startOffset = node?.position?.start?.offset;
+  if (typeof startOffset !== "number") {
+    return false;
+  }
+  const openingLine = markdown.slice(startOffset).split(/\r?\n/, 1)[0];
+  return /^[ ]{0,3}(?:`{3,}|~{3,})/.test(openingLine);
+}
+
+type CodeBlockCopyButtonProps = {
+  code: string;
+  onCopyResult: (feedback: MessageCopyFeedback) => void;
+};
+
+function CodeBlockCopyButton({ code, onCopyResult }: CodeBlockCopyButtonProps) {
+  const [isCopying, setIsCopying] = useState(false);
+  const copyInFlightRef = useRef(false);
+
+  const handleCopy = async () => {
+    if (copyInFlightRef.current) {
+      return;
+    }
+    copyInFlightRef.current = true;
+    setIsCopying(true);
+    try {
+      const writeText = navigator.clipboard?.writeText?.bind(navigator.clipboard);
+      if (!writeText) {
+        throw new Error("Clipboard API is unavailable.");
+      }
+      await writeText(code);
+      onCopyResult({ message: "コードをコピーしました。", tone: "success" });
+    } catch {
+      onCopyResult({ message: "コードのコピーに失敗しました。", tone: "error" });
+    } finally {
+      copyInFlightRef.current = false;
+      setIsCopying(false);
+    }
+  };
+
+  return (
+    <button
+      className="message-code-copy-button"
+      type="button"
+      aria-label="コードをコピー"
+      title="コードをコピー"
+      disabled={isCopying}
+      onClick={() => void handleCopy()}
+    >
+      <svg aria-hidden="true" viewBox="0 0 24 24" focusable="false">
+        <path d="M8.5 15.5H7A2.5 2.5 0 0 1 4.5 13V7A2.5 2.5 0 0 1 7 4.5h6A2.5 2.5 0 0 1 15.5 7v1.5" />
+        <rect x="8.5" y="8.5" width="11" height="11" rx="3" />
+      </svg>
+    </button>
+  );
 }
 
 function resolveCodeLanguage(className?: string) {
@@ -316,7 +387,13 @@ function createFootnoteLabelIdPlugin(footnoteLabelId: string) {
   };
 }
 
-function MermaidDiagram({ source }: { source: string }) {
+function MermaidDiagram({
+  source,
+  onCopyResult,
+}: {
+  source: string;
+  onCopyResult?: (feedback: MessageCopyFeedback) => void;
+}) {
   const reactId = useId();
   const diagramId = useMemo(() => `message-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [reactId]);
   const diagramSource = source.trim();
@@ -355,15 +432,27 @@ function MermaidDiagram({ source }: { source: string }) {
   }, [diagramId, diagramSource]);
 
   if (renderState.status === "ready") {
-    return <div className="message-mermaid" dangerouslySetInnerHTML={{ __html: renderState.svg }} />;
+    return (
+      <div className="message-code-block-shell mermaid">
+        <div className="message-mermaid" dangerouslySetInnerHTML={{ __html: renderState.svg }} />
+        {onCopyResult ? (
+          <CodeBlockCopyButton code={resolveCodeBlockText(source)} onCopyResult={onCopyResult} />
+        ) : null}
+      </div>
+    );
   }
 
   return (
-    <div className="message-mermaid fallback">
-      {renderState.status === "error" ? <p className="message-mermaid-error">{renderState.message}</p> : null}
-      <pre className="message-code-block">
-        <code className="message-inline-code language-mermaid">{source}</code>
-      </pre>
+    <div className="message-code-block-shell mermaid">
+      <div className="message-mermaid fallback">
+        {renderState.status === "error" ? <p className="message-mermaid-error">{renderState.message}</p> : null}
+        <pre className="message-code-block">
+          <code className="message-inline-code language-mermaid">{source}</code>
+        </pre>
+      </div>
+      {onCopyResult ? (
+        <CodeBlockCopyButton code={resolveCodeBlockText(source)} onCopyResult={onCopyResult} />
+      ) : null}
     </div>
   );
 }
@@ -414,20 +503,6 @@ const markdownComponents: Components = {
       {children}
     </ol>
   ),
-  pre: ({ children, node, ...props }) => {
-    const child = Children.toArray(children)[0];
-    if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
-      const language = resolveCodeLanguage(child.props.className);
-      if (language === "mermaid") {
-        return <MermaidDiagram source={extractTextContent(child.props.children)} />;
-      }
-    }
-    return (
-      <pre {...props} className={mergeClassName("message-code-block", props.className)}>
-        {children}
-      </pre>
-    );
-  },
   code: ({ children, className: codeClassName, node, ...props }) => {
     const renderedChildren = typeof children === "string" && children.endsWith("\n")
       ? children.slice(0, -1)
@@ -587,6 +662,8 @@ function createMarkdownComponents(
   onOpenPath?: (target: string) => void,
   options?: {
     enableMermaid?: boolean;
+    markdown?: string;
+    onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
     onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
     resolveImageSource?: (target: string) => Promise<string | null>;
   },
@@ -594,15 +671,36 @@ function createMarkdownComponents(
   const enableMermaid = options?.enableMermaid ?? true;
   return {
     ...markdownComponents,
-    ...(enableMermaid
-      ? {}
-      : {
-          pre: ({ children, node, ...props }) => (
-            <pre {...props} className={mergeClassName("message-code-block", props.className)}>
-              {children}
-            </pre>
-          ),
-        }),
+    pre: ({ children, node, ...props }) => {
+      const isFenced = isFencedCodeBlock(node, options?.markdown ?? "");
+      const child = Children.toArray(children)[0];
+      if (enableMermaid && isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+        const language = resolveCodeLanguage(child.props.className);
+        if (language === "mermaid") {
+          return (
+            <MermaidDiagram
+              source={extractTextContent(child.props.children)}
+              onCopyResult={isFenced ? options?.onCodeBlockCopyResult : undefined}
+            />
+          );
+        }
+      }
+
+      const content = (
+        <pre {...props} className={mergeClassName("message-code-block", props.className)}>
+          {children}
+        </pre>
+      );
+      return isFenced && options?.onCodeBlockCopyResult ? (
+        <div className="message-code-block-shell">
+          {content}
+          <CodeBlockCopyButton
+            code={resolveCodeBlockText(children)}
+            onCopyResult={options.onCodeBlockCopyResult}
+          />
+        </div>
+      ) : content;
+    },
     a: ({ children, href, node, ...props }) => {
       const target = href?.trim() ?? "";
       const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
@@ -648,10 +746,7 @@ function MessageMarkdownPreview({
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
   const shouldDefer = !forceFullRender && shouldDeferRichMarkdownRender();
-  const [linkCopyFeedback, setLinkCopyFeedback] = useState<{
-    message: string;
-    tone: "error" | "success";
-  } | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(null);
   const [renderState, setRenderState] = useState<{ text: string; mode: MarkdownRenderMode }>(() => ({
     text,
     mode: shouldDefer ? "light" : "full",
@@ -659,19 +754,24 @@ function MessageMarkdownPreview({
   const renderMode = resolveMessageMarkdownRenderMode(forceFullRender, text, renderState, shouldDefer);
   const isFullRender = renderMode === "full";
   const handleLinkContextMenuResult = useCallback((result: MarkdownLinkContextMenuResult) => {
-    setLinkCopyFeedback(result.status === "copied"
+    setCopyFeedback(result.status === "copied"
       ? { message: "リンクをコピーしました。", tone: "success" }
       : result.status === "failed"
         ? { message: result.message, tone: "error" }
         : null);
   }, []);
+  const handleCodeBlockCopyResult = useCallback((feedback: MessageCopyFeedback) => {
+    setCopyFeedback(feedback);
+  }, []);
   const components = useMemo(
     () => createMarkdownComponents(onOpenPath, {
       enableMermaid: isFullRender,
+      markdown: text,
+      onCodeBlockCopyResult: handleCodeBlockCopyResult,
       onLinkContextMenuResult: handleLinkContextMenuResult,
       resolveImageSource,
     }),
-    [handleLinkContextMenuResult, isFullRender, onOpenPath, resolveImageSource],
+    [handleCodeBlockCopyResult, handleLinkContextMenuResult, isFullRender, onOpenPath, resolveImageSource, text],
   );
   const rehypePlugins = useMemo<PluggableList>(
     () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
@@ -703,12 +803,12 @@ function MessageMarkdownPreview({
   }, [shouldDefer, text]);
 
   useEffect(() => {
-    if (!linkCopyFeedback) {
+    if (!copyFeedback) {
       return;
     }
-    const timeout = window.setTimeout(() => setLinkCopyFeedback(null), 2_400);
+    const timeout = window.setTimeout(() => setCopyFeedback(null), 2_400);
     return () => window.clearTimeout(timeout);
-  }, [linkCopyFeedback]);
+  }, [copyFeedback]);
 
   return (
     <div className={`${className} rich-text`.trim()} data-markdown-render-mode={renderMode}>
@@ -721,14 +821,14 @@ function MessageMarkdownPreview({
       >
         {text}
       </ReactMarkdown>
-      {linkCopyFeedback ? (
+      {copyFeedback ? (
         <span
-          className={`message-link-copy-toast ${linkCopyFeedback.tone}`}
+          className={`message-copy-toast message-link-copy-toast ${copyFeedback.tone}`}
           role="status"
           aria-live="polite"
           aria-atomic="true"
         >
-          {linkCopyFeedback.message}
+          {copyFeedback.message}
         </span>
       ) : null}
     </div>

@@ -11,6 +11,7 @@ import {
   handleMarkdownLinkClick,
   handleMarkdownLinkContextMenu,
   MessageRichText,
+  resolveCodeBlockText,
   resolveMessageMarkdownRenderMode,
 } from "../../src/MessageRichText.js";
 
@@ -203,6 +204,160 @@ test("MessageRichText は inline code と link を優先しつつ bold を併用
   assert.match(html, /<code class="message-inline-code">\*\*literal\*\*<\/code>/);
   assert.match(html, /<strong class="message-inline-strong">/);
   assert.match(html, /<a href="src\/App\.tsx">file<\/a>/);
+});
+
+test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を表示する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "plain `inline` text",
+        "",
+        "````markdown",
+        "outer",
+        "```ts",
+        "const nested = true;",
+        "```",
+        "",
+        "````",
+        "",
+        "    indented code",
+      ].join("\n"),
+    }),
+  );
+  const dom = new JSDOM(html);
+  const copyButtons = dom.window.document.querySelectorAll<HTMLButtonElement>(".message-code-copy-button");
+
+  assert.equal(copyButtons.length, 1);
+  assert.equal(copyButtons[0]?.getAttribute("aria-label"), "コードをコピー");
+  assert.equal(copyButtons[0]?.getAttribute("title"), "コードをコピー");
+  assert.match(
+    dom.window.document.querySelector(".message-code-block")?.textContent ?? "",
+    /outer\n```ts\nconst nested = true;\n```\n/,
+  );
+  assert.equal(dom.window.document.querySelector(".message-inline-code")?.textContent, "inline");
+});
+
+test("resolveCodeBlockText は改行をLFへ揃えparser由来の末尾改行だけを除く", () => {
+  assert.equal(resolveCodeBlockText("first\r\nsecond\rthird\n\n"), "first\nsecond\nthird\n");
+  assert.equal(resolveCodeBlockText("without trailing newline"), "without trailing newline");
+});
+
+test("code block copy操作はhover・focus・disabledの視認状態を持つ", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const buttonRule = styles.match(/\.message-code-copy-button\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const hoverRule = styles.match(/\.message-code-copy-button:hover:not\(:disabled\)\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const focusRule = styles.match(/\.message-code-copy-button:focus-visible\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const disabledRule = styles.match(/\.message-code-copy-button:disabled\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(buttonRule, /color:\s*rgba\(255, 255, 255, 0\.94\);/);
+  assert.match(buttonRule, /border-radius:\s*999px;/);
+  assert.match(hoverRule, /border-color:/);
+  assert.match(hoverRule, /background:/);
+  assert.match(hoverRule, /transform:\s*translateY\(-1px\);/);
+  assert.match(focusRule, /outline:\s*2px solid var\(--teal\);/);
+  assert.match(disabledRule, /opacity:\s*0\.64;/);
+});
+
+test("MessageRichText のcode block copyは本文だけをclipboardへ渡してfeedbackを表示する", async () => {
+  const dom = new JSDOM("<div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "https://example.test/",
+  });
+  const restore = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  const root: Root | null = container ? createRoot(container) : null;
+  const copied: string[] = [];
+  let resolveWrite: (() => void) | undefined;
+  Object.defineProperty(dom.window.navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async (text: string) => {
+        copied.push(text);
+        await new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        });
+      },
+    },
+  });
+
+  try {
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: ["```ts", "const first = 1;", "", "```"].join("\n"),
+      }));
+    });
+    const button = container?.querySelector<HTMLButtonElement>(".message-code-copy-button");
+    assert.ok(button);
+
+    await act(async () => {
+      button.click();
+      button.click();
+      await Promise.resolve();
+    });
+
+    assert.deepEqual(copied, ["const first = 1;\n"]);
+    assert.equal(button.disabled, true);
+
+    await act(async () => {
+      resolveWrite?.();
+      await Promise.resolve();
+    });
+
+    assert.equal(button.disabled, false);
+    assert.equal(container?.querySelector(".message-copy-toast")?.textContent, "コードをコピーしました。");
+    assert.equal(container?.querySelector(".message-copy-toast")?.getAttribute("role"), "status");
+  } finally {
+    await act(async () => {
+      root?.unmount();
+    });
+    restore();
+    dom.window.close();
+  }
+});
+
+test("MessageRichText のcode block copy失敗はerror feedbackを表示する", async () => {
+  const dom = new JSDOM("<div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "https://example.test/",
+  });
+  const restore = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  const root: Root | null = container ? createRoot(container) : null;
+  Object.defineProperty(dom.window.navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async () => {
+        throw new Error("clipboard denied");
+      },
+    },
+  });
+
+  try {
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: ["```", "copy me", "```"].join("\n"),
+      }));
+    });
+    const button = container?.querySelector<HTMLButtonElement>(".message-code-copy-button");
+    assert.ok(button);
+
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+
+    const feedback = container?.querySelector(".message-copy-toast");
+    assert.equal(feedback?.textContent, "コードのコピーに失敗しました。");
+    assert.ok(feedback?.classList.contains("error"));
+  } finally {
+    await act(async () => {
+      root?.unmount();
+    });
+    restore();
+    dom.window.close();
+  }
 });
 
 test("handleMarkdownLinkClick は Markdown link を既定ナビゲーションではなく openPath 経路へ流す", () => {
