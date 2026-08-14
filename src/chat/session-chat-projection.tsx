@@ -106,7 +106,6 @@ export type AgentSessionChatProjectionInput = {
   modelSelectOptions: SessionComposerExpandedProps["modelOptions"];
   selectedModelFallbackLabel: string;
   reasoningSelectOptions: SessionComposerExpandedProps["reasoningOptions"];
-  actionDockCompactPreview: string;
   chatNotice?: string;
   attachmentCount: number;
   isActionDockExpanded: boolean;
@@ -299,7 +298,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
       reasoningOptions: input.reasoningSelectOptions,
       selectedReasoningEffort: input.selectedSession.reasoningEffort,
-      actionDockCompactPreview: input.actionDockCompactPreview,
       chatNotice: input.chatNotice,
       attachmentCount: input.attachmentCount,
       onPickFile: input.onPickFile,

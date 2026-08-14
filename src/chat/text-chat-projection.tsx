@@ -160,12 +160,9 @@ export function buildTextChatWindowProps({
       ...composerCapabilityProps,
     }),
     compactActionDockProps: createStaticTextChatCompactActionDockProps({
-      draft,
-      isRunning,
       pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText,
       onExpand: onToggleActionDock,
-      onSendOrCancel: onSubmit,
     }),
     headerSplitter: (
       <ChatDockSplitter

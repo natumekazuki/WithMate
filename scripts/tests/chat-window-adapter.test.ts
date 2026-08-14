@@ -721,7 +721,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
     selectedReasoningEffort: "low",
-    actionDockCompactPreview: "preview",
     attachmentCount: 1,
     onPickFile: () => {},
     onPickFolder: () => {},
@@ -750,16 +749,14 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
   assert.equal(props.composer.showJumpToBottom, true);
   assert.equal(props.composer.chatNotice, "New messages");
   assert.equal("onCollapse" in props.composer, false);
-  assert.equal(props.compactActionDock.draft, "draft");
-  assert.equal(props.compactActionDock.actionDockCompactPreview, "preview");
   assert.equal(props.compactActionDock.attachmentCount, 1);
   assert.equal(props.compactActionDock.modeLabel, "Auxiliary");
   assert.equal(props.compactActionDock.chatNotice, "New messages");
   assert.equal(props.compactActionDock.showJumpToBottom, true);
-  assert.equal(props.compactActionDock.sendButtonTitle, "Stop");
+  assert.equal(props.compactActionDock.cancelButtonTitle, "Stop");
   assert.equal(props.compactActionDock.onExpand, onExpandActionDock);
   assert.equal(props.compactActionDock.onJumpToBottom, onJumpToBottom);
-  assert.equal(props.compactActionDock.onSendOrCancel, onSendOrCancel);
+  assert.equal(props.compactActionDock.onCancel, onSendOrCancel);
 });
 
 test("buildLiveSessionSplitterProps は context rail resize state を反映する", () => {
@@ -994,17 +991,15 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onChangeReasoningEffort: () => {},
     },
     compactActionDock: {
-      draft: "draft",
-      actionDockCompactPreview: "preview",
       attachmentCount: 1,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "実行中",
       pendingRunIndicatorText: "応答を生成中",
-      isSendDisabled: true,
       showJumpToBottom: true,
-      sendButtonTitle: "Send",
+      cancelButtonTitle: "Send",
+      onExpand: noop,
       onJumpToBottom: () => {},
-      onSendOrCancel,
+      onCancel: onSendOrCancel,
     },
     splitter: {
       isContextRailResizing: true,
@@ -1018,7 +1013,7 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
   assert.equal(bodyProps.messageColumnProps.pendingMessageText, "応答を待っています");
   assert.equal(bodyProps.composerProps.showAttachmentControls, true);
   assert.equal(bodyProps.composerProps.showAdditionalDirectoryControls, true);
-  assert.equal(bodyProps.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal(bodyProps.compactActionDockProps.onCancel, onSendOrCancel);
   assert.equal(bodyProps.splitterProps.isActive, true);
   assert.equal(bodyProps.splitterProps.isPanelExpanded, true);
   assert.equal(bodyProps.splitterProps.onPointerDown, onPointerDown);
@@ -1254,25 +1249,17 @@ test("static chat sendability helper は running と空白 draft を送信不可
 
 test("createStaticChatCompactActionDockProps は静的 compact dock の既定値を補う", () => {
   const compactProps = createStaticChatCompactActionDockProps({
-    draft: "  ",
     isRunning: false,
-    isSendDisabled: true,
-    onSendOrCancel: noop,
+    onCancel: noop,
   });
 
-  assert.equal(compactProps.actionDockCompactPreview, "下書きなし");
   assert.equal(compactProps.attachmentCount, 0);
   assert.equal(compactProps.showJumpToBottom, false);
 });
 
 test("createStaticTextChatCompactActionDockProps は text chat 用の compact dock を補う", () => {
-  const compactProps = createStaticTextChatCompactActionDockProps({
-    draft: "  ",
-    isRunning: true,
-    onSendOrCancel: noop,
-  });
+  const compactProps = createStaticTextChatCompactActionDockProps({});
 
-  assert.equal(compactProps.actionDockCompactPreview, "下書きなし");
-  assert.equal(compactProps.isSendDisabled, true);
   assert.equal(compactProps.isRunning, false);
+  assert.equal(typeof compactProps.onCancel, "function");
 });

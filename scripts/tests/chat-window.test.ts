@@ -66,11 +66,7 @@ function createChatWindowProps(
       onChangeModel: noop,
       onChangeReasoningEffort: noop,
     }),
-    compactActionDockProps: createStaticTextChatCompactActionDockProps({
-      draft,
-      isRunning: false,
-      onSendOrCancel: noop,
-    }),
+    compactActionDockProps: createStaticTextChatCompactActionDockProps({}),
   };
 }
 
@@ -461,7 +457,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   }
 });
 
-test("ChatWindow は Quote 対応 chat の表示 mode を message column と ActionDock で共有する", async () => {
+test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操作を compact ActionDock へ共有する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -488,19 +484,35 @@ test("ChatWindow は Quote 対応 chat の表示 mode を message column と Act
 
   let root: Root | null = null;
   try {
+    let expandCallCount = 0;
+    const props = createChatWindowProps({
+      messages: [],
+      isRunning: true,
+      pendingMessageText: "[label](https://example.test/source)",
+    });
+    props.isActionDockExpanded = false;
+    props.compactActionDockProps = {
+      ...props.compactActionDockProps,
+      onExpand: () => {
+        expandCallCount += 1;
+      },
+    };
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(ChatWindow, createChatWindowProps({
-        messages: [],
-        isRunning: true,
-        pendingMessageText: "[label](https://example.test/source)",
-      })));
+      root.render(React.createElement(ChatWindow, props));
     });
     const sourceButton = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(
-      ".composer-message-view-mode-button",
+      ".session-action-dock-compact-content .composer-message-view-mode-button",
     )).find((button) => button.textContent === "Source");
     assert.ok(sourceButton);
     assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+
+    const expandButton = dom.window.document.querySelector<HTMLButtonElement>(
+      ".session-action-dock-compact-content .session-action-dock-compact-expand-button",
+    );
+    assert.ok(expandButton);
+    await act(async () => expandButton.click());
+    assert.equal(expandCallCount, 1);
 
     await act(async () => sourceButton.click());
 
@@ -508,6 +520,12 @@ test("ChatWindow は Quote 対応 chat の表示 mode を message column と Act
     assert.equal(source?.textContent, "[label](https://example.test/source)");
     assert.equal(dom.window.document.querySelector("[data-pending-message-body='true'] a"), null);
     assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+    assert.equal(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        ".session-action-dock-expanded-content .composer-message-view-mode-button:last-child",
+      )?.getAttribute("aria-pressed"),
+      "true",
+    );
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -704,23 +722,20 @@ test("SessionChatScreen は dock 優先を layout class へ投影する", () => 
   assert.match(html, /layout-priority-dock/);
 });
 
-test("SessionActionDockCompactRow は preview 中の chat notice を表示する", () => {
+test("SessionActionDockCompactRow は通常時の chat notice を下書き表示なしで維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      draft: "",
-      actionDockCompactPreview: "下書きなし",
       attachmentCount: 0,
       isRunning: false,
       chatNotice: "New messages",
-      isSendDisabled: true,
       showJumpToBottom: false,
       onExpand() {},
       onJumpToBottom() {},
-      onSendOrCancel() {},
+      onCancel() {},
     }),
   );
 
   assert.match(html, /session-action-dock-compact-badge attention/);
   assert.match(html, />New messages<\/span>/);
-  assert.match(html, /<button class="session-action-dock-compact-preview"[^>]*>/);
+  assert.doesNotMatch(html, /Draft|下書きなし|>Send<\/button>/);
 });
