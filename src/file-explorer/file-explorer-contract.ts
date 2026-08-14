@@ -79,7 +79,18 @@ export type SessionFilePreviewWindowOpenRequest =
 export type SessionFilePreviewWindowPayload = {
   resource: SessionFileResourceRequest;
   ownerSessionId: string;
+  windowTitle: string;
 };
+
+export const FILE_PREVIEW_WINDOW_TITLE_FALLBACK = "File Preview";
+
+export function resolveSessionFilePreviewWindowTitle(fileName: string | null | undefined): string {
+  const normalizedPath = fileName?.trim().replaceAll("\\", "/") ?? "";
+  const candidate = normalizedPath.split("/").at(-1)?.trim() ?? "";
+  return candidate && candidate !== "." && candidate !== ".." && !/[\u0000-\u001f\u007f]/u.test(candidate)
+    ? candidate
+    : FILE_PREVIEW_WINDOW_TITLE_FALLBACK;
+}
 
 export type SessionFilePreviewWindowOpenResult =
   | {

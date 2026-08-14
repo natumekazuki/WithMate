@@ -554,6 +554,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     getSessionFilePreviewWindowPayload: () => ({
       resource: currentPreviewResource,
       ownerSessionId: "session-1",
+      windowTitle: "current.md",
     }),
     listSessionFileRoots: async () => [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
     listSessionDirectory: async (request: unknown) => {
@@ -690,6 +691,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     {
       resource: currentPreviewResource,
       ownerSessionId: "session-1",
+      windowTitle: "current.md",
     },
   );
   assert.equal(
