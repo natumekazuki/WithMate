@@ -131,6 +131,9 @@ describe("withmate-memory distributed Skill contract", () => {
     }
     assert.match(reference, /CLI exit code is transport\/adapter status, not a replacement for the JSON domain result/);
     assert.match(reference, /`character_context\.get` returns `characterId`, `sessionId`/);
+    assert.match(reference, /as `family`, free-label value/);
+    assert.match(reference, /read-time `evaluatedAt`/);
+    assert.match(reference, /effective components with `family`/);
     assert.match(reference, /`character_affect\.appraise` returns `saved\[\]`, `rejected\[\]`/);
     assert.match(reference, /candidate's `memoryEpisode`/);
     assert.match(reference, /required `salience` from 0 to 1/);
@@ -140,6 +143,9 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(reference, /Use `memory\.search`, `memory\.get_entry`, and `memory\.append` with an explicit `character` or `character\+project` target/);
     assert.match(reference, /Character Memory mutations return `operation`/);
     assert.match(reference, /conversation text, Memory bodies, affect evidence text, inferred user emotion/);
+    assert.match(reference, /family-bucketed candidates\/saves\/rejections/);
+    assert.match(reference, /legacy event\/projection counts, decay exclusions/);
+    assert.match(reference, /projection cache hit\/miss\/stale counts/);
     assert.match(reference, /`bundleVersion`/);
   });
 

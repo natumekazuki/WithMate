@@ -27,6 +27,7 @@ describe("Character context CLI / MCP integration", () => {
     const runtime = await startMemoryV6RuntimeApi({
       userDataPath,
       runtimeDirectoryPath,
+      now: () => new Date("2026-08-09T09:00:00.000Z"),
       listCharacters: () => [{
         id: "character-a",
         name: "A",
@@ -91,6 +92,37 @@ describe("Character context CLI / MCP integration", () => {
       ], { env: cliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream }), 0);
       assert.equal(metricsOutput.json().metrics.fallbacks["mcp->cli"], 1);
 
+      const rejectedCliOutput = outputBuffer();
+      assert.equal(await runWithMateMemoryCli([
+        "affect-appraise",
+        "--json",
+        JSON.stringify({
+          schemaVersion: "withmate-character-context-v1",
+          characterId: "character-a",
+          sessionId: "session-a",
+          expectedVersion: before.affect.version,
+          authority: { kind: "operator", reason: "Unknown family integration check." },
+          candidates: [{
+            schemaVersion: "withmate-affect-v1",
+            characterId: "character-a",
+            userId: "local-user",
+            sessionId: "session-a",
+            layer: "session",
+            targetType: "task",
+            targetId: "unknown-family",
+            family: "unknown",
+            value: { label: "free label", valence: 0 },
+            intensity: 0.5,
+            reason: "Unknown family must be rejected.",
+            evidence: "CLI validation integration.",
+            occurredAt: "2026-08-09T03:00:00.000Z",
+            idempotencyKey: "cli-unknown-family",
+          }],
+        }),
+      ], { env: cliEnv, stdout: rejectedCliOutput.stream, stderr: outputBuffer().stream }), 0);
+      assert.equal(rejectedCliOutput.json().saved.length, 0);
+      assert.equal(rejectedCliOutput.json().rejected[0].code, "invalid_input");
+
       const appraisal = await client.callTool({
         name: "character_affect.appraise",
         arguments: {
@@ -105,6 +137,7 @@ describe("Character context CLI / MCP integration", () => {
             layer: "session",
             targetType: "task",
             targetId: "mcp-integration",
+            family: "interest",
             value: { label: "interest", valence: 0.5 },
             intensity: 0.7,
             reason: "The integration became observable.",
@@ -131,6 +164,35 @@ describe("Character context CLI / MCP integration", () => {
       const inspection = inspectOutput.json();
       assert.equal(inspection.version.version, appraisalState.version);
       assert.equal(inspection.events[0].targetId, "mcp-integration");
+      assert.equal(inspection.events[0].family, "interest");
+
+      const mcpContextCall = await client.callTool({
+        name: "character_context.get",
+        arguments: { characterId: "character-a", sessionId: "session-a" },
+      });
+      assert.equal(mcpContextCall.isError, undefined, JSON.stringify(mcpContextCall));
+      const mcpContext = mcpContextCall.structuredContent as Record<string, any>;
+      const cliContextOutput = outputBuffer();
+      assert.equal(await runWithMateMemoryCli([
+        "context-get",
+        "--json",
+        JSON.stringify({
+          schemaVersion: "withmate-character-context-v1",
+          characterId: "character-a",
+          sessionId: "session-a",
+        }),
+      ], { env: cliEnv, stdout: cliContextOutput.stream, stderr: outputBuffer().stream }), 0);
+      const cliContext = cliContextOutput.json();
+      const lifecycleContext = await runtime.characterContextService.getContext({
+        schemaVersion: "withmate-character-context-v1",
+        characterId: "character-a",
+        sessionId: "session-a",
+      }, "lifecycle") as Record<string, any>;
+      assert.deepEqual(cliContext.affect, mcpContext.affect);
+      assert.deepEqual(lifecycleContext.affect, mcpContext.affect);
+      assert.equal(mcpContext.affect.evaluatedAt, "2026-08-09T09:00:00.000Z");
+      assert.equal(mcpContext.affect.effective[0].family, "interest");
+      assert.equal(mcpContext.affect.effective[0].intensity, 0.35);
 
       const appendOutput = outputBuffer();
       assert.equal(await runWithMateMemoryCli([

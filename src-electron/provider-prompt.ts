@@ -79,6 +79,7 @@ function buildCharacterAffectContextSection(context: RunSessionTurnInput["charac
   const snapshot = {
     characterAffect: {
       effective: context.affect.effective,
+      evaluatedAt: context.affect.evaluatedAt,
       version: context.affect.version,
       updatedAt: context.affect.updatedAt,
       scope: context.scope,

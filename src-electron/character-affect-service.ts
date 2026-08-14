@@ -35,6 +35,7 @@ export type CharacterAffectServiceMode = "shadow" | "active";
 export class CharacterAffectEpisodePersistenceError extends Error {
   constructor(
     readonly eventId: string,
+    readonly eventCreated: boolean,
     options: { cause: unknown },
   ) {
     const causeMessage = options.cause instanceof Error ? options.cause.message : "Memory episode persistence failed.";
@@ -148,7 +149,7 @@ export class CharacterAffectService {
         event: await this.persistEpisode(result.event, candidate.memoryEpisode),
       };
     } catch (error) {
-      throw new CharacterAffectEpisodePersistenceError(result.event.id, { cause: error });
+      throw new CharacterAffectEpisodePersistenceError(result.event.id, result.created, { cause: error });
     }
   }
 
@@ -186,7 +187,7 @@ export class CharacterAffectService {
           ),
         };
       } catch (error) {
-        throw new CharacterAffectEpisodePersistenceError(replay.event.id, { cause: error });
+        throw new CharacterAffectEpisodePersistenceError(replay.event.id, replay.created, { cause: error });
       }
     }
     if (original.memoryEntryId && !input.replacement.memoryEpisode) {
@@ -212,7 +213,7 @@ export class CharacterAffectService {
         ),
       };
     } catch (error) {
-      throw new CharacterAffectEpisodePersistenceError(result.event.id, { cause: error });
+      throw new CharacterAffectEpisodePersistenceError(result.event.id, result.created, { cause: error });
     }
   }
 

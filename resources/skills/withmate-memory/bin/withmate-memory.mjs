@@ -22224,6 +22224,20 @@ var affectCandidateSchema = object({
 		"self"
 	]),
 	targetId: string().min(1),
+	family: _enum([
+		"joy",
+		"relief",
+		"interest",
+		"anticipation",
+		"affinity",
+		"gratitude",
+		"concern",
+		"frustration",
+		"disappointment",
+		"regret",
+		"determination",
+		"other"
+	]),
 	value: affectValueSchema,
 	intensity: number().min(0).max(1),
 	reason: string().min(1),
@@ -22386,12 +22400,27 @@ var contextOutputSchema = union([object({
 				"self"
 			]),
 			targetId: string(),
+			family: _enum([
+				"joy",
+				"relief",
+				"interest",
+				"anticipation",
+				"affinity",
+				"gratitude",
+				"concern",
+				"frustration",
+				"disappointment",
+				"regret",
+				"determination",
+				"other"
+			]).nullable(),
 			label: string(),
 			valence: number(),
 			arousal: number().optional(),
 			dimensions: record(string(), number()).optional(),
 			intensity: number()
 		}).strict()),
+		evaluatedAt: string(),
 		version: string(),
 		updatedAt: string().nullable()
 	}).strict(),

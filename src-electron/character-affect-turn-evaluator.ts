@@ -19,6 +19,13 @@ export const CHARACTER_AFFECT_TURN_OUTPUT_SCHEMA = {
             enum: ["user", "relationship", "task", "bug", "artifact", "self"],
           },
           targetId: { type: "string" },
+          family: {
+            type: "string",
+            enum: [
+              "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+              "concern", "frustration", "disappointment", "regret", "determination", "other",
+            ],
+          },
           label: { type: "string" },
           valence: { type: "number", minimum: -1, maximum: 1 },
           arousal: {
@@ -35,6 +42,7 @@ export const CHARACTER_AFFECT_TURN_OUTPUT_SCHEMA = {
           "layer",
           "targetType",
           "targetId",
+          "family",
           "label",
           "valence",
           "arousal",
@@ -52,6 +60,7 @@ type TurnAffectCandidate = {
   layer: AffectEventInput["layer"];
   targetType: AffectEventInput["targetType"];
   targetId: string;
+  family: AffectEventInput["family"];
   label: string;
   valence: number;
   arousal: number | null;
@@ -83,6 +92,7 @@ export function buildCharacterAffectTurnPrompt(input: CharacterAffectTurnPromptI
       "Return only structured candidates grounded in the supplied event.",
       "Use relationship scope only for affect toward the user or the relationship.",
       "Use session scope for a task, bug, artifact, self, or turn-local reaction.",
+      "Classify every candidate with exactly one supported stable family; keep label as a free representative phrase.",
       "Return an empty candidates array when no meaningful state change is supported.",
       "Do not invent facts, repeat the conversation, or include secrets in evidence.",
     ].join("\n"),
@@ -92,8 +102,9 @@ export function buildCharacterAffectTurnPrompt(input: CharacterAffectTurnPromptI
         definition: input.character.definitionMarkdown,
       },
       currentAffect: input.context
-        ? {
+          ? {
             effective: input.context.affect.effective,
+            evaluatedAt: input.context.affect.evaluatedAt,
             version: input.context.affect.version,
             scope: input.context.scope,
           }
@@ -121,6 +132,10 @@ export function normalizeCharacterAffectTurnEvaluation(value: unknown): Characte
       (candidate.layer !== "relationship" && candidate.layer !== "session")
       || !["user", "relationship", "task", "bug", "artifact", "self"].includes(String(candidate.targetType))
       || !isNonEmptyString(candidate.targetId)
+      || ![
+        "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+        "concern", "frustration", "disappointment", "regret", "determination", "other",
+      ].includes(String(candidate.family))
       || !isNonEmptyString(candidate.label)
       || !isRange(candidate.valence, -1, 1)
       || (candidate.arousal !== null && !isRange(candidate.arousal, -1, 1))
@@ -151,6 +166,7 @@ export function toAffectEventInputs(input: {
     layer: candidate.layer,
     targetType: candidate.targetType,
     targetId: candidate.targetId,
+    family: candidate.family,
     value: {
       label: candidate.label,
       valence: candidate.valence,
