@@ -482,6 +482,10 @@ function uniqueSearchTokens(plan: SearchQueryPlan): string[] {
   return plan.tokens.filter((token, index, tokens) => token.length > 0 && tokens.indexOf(token) === index);
 }
 
+export function countMemorySearchQueryTerms(query: string): number {
+  return uniqueSearchTokens(buildSearchQueryPlan(query)).length;
+}
+
 function ownerRef(row: MemoryV6EntryRow): MemoryEntryDetail["owner"] {
   if (row.owner_type === "user") {
     return { type: "user", id: "local-user" };

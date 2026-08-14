@@ -1506,6 +1506,50 @@ describe("CodexAdapter background structured prompt", () => {
     assert.equal(result.output?.answer, "ok");
     assert.deepEqual(result.parsedJson, { answer: "ok" });
   });
+
+  it("background timeout signalをSDK runへ渡しAbortErrorへ収束させる", async () => {
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            run: (_input: string, options: { signal: AbortSignal }) => Promise<never>;
+          };
+        };
+        clientKey: string;
+      };
+      runBackgroundStructuredPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<unknown>;
+    };
+    let observedAbort = false;
+    adapter.getClient = () => ({
+      client: {
+        startThread: () => ({
+          id: "thread-timeout",
+          run: async (_input, options) => await new Promise<never>((_resolve, reject) => {
+            options.signal.addEventListener("abort", () => {
+              observedAbort = true;
+              const error = new Error("The operation was aborted");
+              error.name = "AbortError";
+              reject(error);
+            }, { once: true });
+          }),
+        }),
+      },
+      clientKey: "client-key",
+    });
+
+    await assert.rejects(
+      () => adapter.runBackgroundStructuredPromptFromInput(
+        createCodexBackgroundPromptInput({ timeoutMs: 1 }),
+        JSON.parse,
+      ),
+      (error) => error instanceof Error && error.name === "AbortError",
+    );
+    assert.equal(observedAbort, true);
+  });
 });
 
 describe("workspace snapshot targeted capture", () => {

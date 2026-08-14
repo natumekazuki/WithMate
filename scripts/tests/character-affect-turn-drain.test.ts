@@ -69,7 +69,6 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
 
         const result = await drainCharacterAffectTurnSettlementBatch({
           storage,
-          runtimeAvailable: true,
           startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
           readyCursor: cursor,
           getSession: async (id) => sessions.get(id) ?? null,
@@ -109,7 +108,6 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
       enqueue(storage, "old-orphan", "missing-session", "orphan assistant");
       await drainCharacterAffectTurnSettlementBatch({
         storage,
-        runtimeAvailable: true,
         startupRecoveryCutoff: "9999-01-01T00:00:00.000Z",
         getSession: async () => null,
         settle: async () => {
@@ -150,7 +148,6 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
 
       const first = await drainCharacterAffectTurnSettlementBatch({
         storage,
-        runtimeAvailable: true,
         startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
         getSession: async (id) => sessions.get(id) ?? null,
         settle: async (item) => {
@@ -177,7 +174,6 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
 
       const second = await drainCharacterAffectTurnSettlementBatch({
         storage,
-        runtimeAvailable: true,
         startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
         readyCursor: first.nextReadyCursor,
         getSession: async (id) => sessions.get(id) ?? null,
@@ -222,7 +218,6 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
 
       const result = await drainCharacterAffectTurnSettlementBatch({
         storage,
-        runtimeAvailable: true,
         startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
         getSession: async (id) => {
           if (id.startsWith("uncommitted-")) {
@@ -251,6 +246,75 @@ describe("drainCharacterAffectTurnSettlementBatch", () => {
       assert.equal(settleCalls, 100);
       assert.equal(storage.listUnreadyPendingBefore("9999-12-31T23:59:59.999Z", 200).length, 101);
       assert.equal(storage.listReadyPending().length, 1);
+      assert.equal(result.retryRequired, true);
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("future deferredとquarantined itemをskipして後続due itemをsettleする", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-drain-due-"));
+    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
+    const sessions = new Map<string, Session>();
+    const settled: string[] = [];
+    try {
+      for (const correlationId of ["deferred", "quarantined", "due"]) {
+        const sessionId = `session-${correlationId}`;
+        const assistantMessage = `assistant-${correlationId}`;
+        enqueue(storage, correlationId, sessionId, assistantMessage);
+        storage.markReady(correlationId);
+        sessions.set(sessionId, createCommittedSession(sessionId, assistantMessage));
+      }
+      storage.recordAttempt("deferred", "2026-08-14T00:00:00.000Z");
+      storage.recordFailure({
+        correlationId: "deferred",
+        retryable: true,
+        observedAt: "2026-08-14T00:00:00.000Z",
+        diagnostic: {
+          code: "provider_timeout",
+          stage: "evaluation",
+          errorName: "AbortError",
+          safeMessage: "Character affect turn evaluation failed with provider_timeout.",
+          durationMs: 15_000,
+        },
+      });
+      storage.recordAttempt("quarantined", "2026-08-14T00:00:00.000Z");
+      storage.recordFailure({
+        correlationId: "quarantined",
+        retryable: false,
+        observedAt: "2026-08-14T00:00:00.000Z",
+        diagnostic: {
+          code: "unknown_character",
+          stage: "runtime",
+          errorName: "CharacterContextError",
+          safeMessage: "Character affect turn runtime failed with unknown_character.",
+          durationMs: 0,
+        },
+      });
+
+      const result = await drainCharacterAffectTurnSettlementBatch({
+        storage,
+        startupRecoveryCutoff: "2000-01-01T00:00:00.000Z",
+        getSession: async (id) => sessions.get(id) ?? null,
+        settle: async (item) => {
+          settled.push(item.correlationId);
+          storage.markSettled(item.correlationId);
+          return true;
+        },
+        onDiscard() {
+          assert.fail("owned settlement must not be discarded");
+        },
+        onFailure(_item, error) {
+          throw error;
+        },
+        now: () => "2026-08-14T00:00:30.000Z",
+      });
+
+      assert.deepEqual(settled, ["due"]);
+      assert.equal(storage.getPending("due"), null);
+      assert.equal(storage.getPending("deferred")?.nextAttemptAt, "2026-08-14T00:01:00.000Z");
+      assert.equal(storage.listQuarantined()[0]?.correlationId, "quarantined");
       assert.equal(result.retryRequired, true);
     } finally {
       storage.close();

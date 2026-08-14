@@ -1985,6 +1985,42 @@ describe("CopilotAdapter background structured prompt", () => {
     assert.deepEqual(result.output, { answer: "ok" });
   });
 
+  it("background provider timeoutでもusage listenerを解除してsessionをdisconnectする", async () => {
+    const cleanup: string[] = [];
+    const adapter = new CopilotAdapter() as unknown as {
+      getOrCreateClientByAppSettings: () => {
+        start: () => Promise<void>;
+        createSession: () => Promise<{
+          on: () => () => void;
+          sendAndWait: () => Promise<never>;
+          disconnect: () => Promise<void>;
+        }>;
+      };
+      runBackgroundPromptFromInput: <TOutput>(
+        input: RunBackgroundStructuredPromptInput,
+        parse: (rawText: string) => TOutput | null,
+      ) => Promise<unknown>;
+    };
+    adapter.getOrCreateClientByAppSettings = () => ({
+      start: async () => undefined,
+      createSession: async () => ({
+        on: () => () => cleanup.push("unsubscribe"),
+        sendAndWait: async () => {
+          throw new Error("injected provider timeout");
+        },
+        disconnect: async () => {
+          cleanup.push("disconnect");
+        },
+      }),
+    });
+
+    await assert.rejects(
+      () => adapter.runBackgroundPromptFromInput(createBackgroundPromptInput({ timeoutMs: 15_000 }), JSON.parse),
+      /provider timeout/,
+    );
+    assert.deepEqual(cleanup, ["unsubscribe", "disconnect"]);
+  });
+
   it("schema submit tool の args が実 schema の anyOf / oneOf / bounds 不一致なら失敗する", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       getOrCreateClientByAppSettings: () => {
