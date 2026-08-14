@@ -26,12 +26,14 @@ export function buildLiveSessionErrorNotices(input: {
   composerFeedback: {
     primaryFeedback: string;
     secondaryFeedback: readonly string[];
+    feedbackTone: "blocked" | "helper" | null;
     shouldShowFeedback: boolean;
   };
   additionalNotices?: readonly ChatErrorNotice[];
 }): ChatErrorNotice[] {
   const additionalNotices = input.additionalNotices ?? [];
   const feedbackMessages = input.composerFeedback.shouldShowFeedback
+    && input.composerFeedback.feedbackTone === "blocked"
     ? [input.composerFeedback.primaryFeedback, ...input.composerFeedback.secondaryFeedback]
       .map((message) => message.trim())
       .filter(Boolean)

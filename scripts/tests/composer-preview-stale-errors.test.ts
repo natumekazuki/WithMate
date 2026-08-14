@@ -15,7 +15,7 @@ test("Agent composer は draft 変更時に stale preview errors を clear す�
   );
   assert.match(
     source,
-    /resolveComposerSendabilityState\(\{\s*runState: selectedSessionRunState,\s*blockedReason: composerBlockedReason,\s*inputErrors: composerPreview\.errors,/,
+    /resolveComposerSendabilityState\(\{\s*runState: selectedSessionRunState,\s*busyReason: composerBusyReason,\s*blockedReason: sessionExecutionBlockedReason,\s*inputErrors: composerPreview\.errors,/,
   );
   assert.match(
     source,

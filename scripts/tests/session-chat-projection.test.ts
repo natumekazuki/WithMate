@@ -361,6 +361,36 @@ test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを
   assert.equal("inlinePathFeedback" in props.messageColumnProps, false);
 });
 
+test("buildAgentSessionChatWindowProps は submit pending の helper feedback を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Message submission is in progress.",
+      primaryFeedback: "Message submission is in progress.",
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+  assert.equal(props.composerProps.composerSendability.feedbackTone, "helper");
+  assert.equal(props.composerProps.composerSendability.isBusy, true);
+});
+
+test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      primaryFeedback: "Message is empty.",
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+});
+
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
   const normalProps = buildAgentSessionChatWindowProps(createProjectionInput());
   const auxiliaryProps = buildAgentSessionChatWindowProps(createProjectionInput({ isAuxiliaryMode: true }));

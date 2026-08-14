@@ -1174,9 +1174,10 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceAvailability]);
-  const composerBlockedReason = pendingSubmitSessionId === selectedSession?.id
+  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
     ? "Message submission is in progress."
-    : sessionExecutionBlockedReason;
+    : "";
+  const composerBlockedReason = composerBusyReason || sessionExecutionBlockedReason;
   const isSelectedWorkspaceAvailable = selectedSession
     ? isSessionWorkspaceAvailable(
         workspaceAvailability,
@@ -1928,12 +1929,20 @@ export default function AgentSessionWindowApp() {
     () =>
       resolveComposerSendabilityState({
         runState: selectedSessionRunState,
-        blockedReason: composerBlockedReason,
+        busyReason: composerBusyReason,
+        blockedReason: sessionExecutionBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: draft,
         forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
-    [composerBlockedReason, composerPreview.errors, draft, forceComposerBlockedFeedback, selectedSessionRunState],
+    [
+      composerBusyReason,
+      composerPreview.errors,
+      draft,
+      forceComposerBlockedFeedback,
+      selectedSessionRunState,
+      sessionExecutionBlockedReason,
+    ],
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);
@@ -2299,6 +2308,7 @@ export default function AgentSessionWindowApp() {
     } finally {
       submitLease.release();
       setPendingSubmitSessionId((current) => current === sessionId ? null : current);
+      setForceComposerBlockedFeedback(false);
     }
   };
 
@@ -2410,7 +2420,8 @@ export default function AgentSessionWindowApp() {
       const activeSendability = activeAuxiliarySession
         ? buildComposerSendabilityState({
             runState: activeAuxiliarySession.runState,
-            blockedReason: composerBlockedReason,
+            busyReason: composerBusyReason,
+            blockedReason: sessionExecutionBlockedReason,
             inputErrors: composerPreview.errors,
             draftText: activeAuxiliarySession.composerDraft,
           })
@@ -3513,15 +3524,17 @@ export default function AgentSessionWindowApp() {
   const auxiliaryComposerSendability = useMemo(
     () => buildComposerSendabilityState({
       runState: activeAuxiliarySession?.runState,
-      blockedReason: composerBlockedReason,
+      busyReason: composerBusyReason,
+      blockedReason: sessionExecutionBlockedReason,
       inputErrors: composerPreview.errors,
       draftText: activeAuxiliarySession?.composerDraft ?? "",
     }),
     [
       activeAuxiliarySession?.composerDraft,
       activeAuxiliarySession?.runState,
-      composerBlockedReason,
+      composerBusyReason,
       composerPreview.errors,
+      sessionExecutionBlockedReason,
     ],
   );
   const renderedSession = displayedSession;
@@ -3773,7 +3786,8 @@ export default function AgentSessionWindowApp() {
         isSendDisabled: renderedIsSendDisabled,
         composerSendability: renderedComposerSendability,
         composerSendButtonTitle: renderedComposerButtonTitle,
-        isComposerBlockedFeedbackActive: forceComposerBlockedFeedback && renderedComposerSendability.shouldShowFeedback,
+        isComposerBlockedFeedbackActive:
+          forceComposerBlockedFeedback && renderedComposerSendability.feedbackTone === "blocked",
         approvalChoiceOptions,
         sandboxChoiceOptions,
         modelSelectOptions,
