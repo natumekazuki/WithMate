@@ -6549,6 +6549,74 @@ button:disabled {
   white-space: pre;
 }
 
+.message-code-block-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.message-code-block-shell > .message-code-block {
+  padding-right: 52px;
+}
+
+.message-code-copy-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(30, 41, 59, 0.72);
+  color: rgba(255, 255, 255, 0.94);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 4px 12px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.message-code-copy-button svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.message-code-copy-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.58);
+  background: rgba(51, 65, 85, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 6px 16px rgba(0, 0, 0, 0.24);
+}
+
+.message-code-copy-button:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.message-code-copy-button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+}
+
+.message-code-copy-button:disabled {
+  transform: none;
+  opacity: 0.64;
+  cursor: progress;
+}
+
 .message-code-block .message-inline-code {
   display: inline;
   padding: 0;
@@ -6572,6 +6640,10 @@ button:disabled {
   padding: 0;
   border: 0;
   background: transparent;
+}
+
+.message-code-block-shell.mermaid > .message-mermaid {
+  padding-top: 42px;
 }
 
 .message-mermaid svg {
@@ -10671,7 +10743,7 @@ button:disabled {
   color: #933c3c;
 }
 
-.message-link-copy-toast {
+.message-copy-toast {
   position: fixed;
   right: 18px;
   bottom: 18px;
@@ -10685,11 +10757,11 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
-.message-link-copy-toast.success {
+.message-copy-toast.success {
   border-color: var(--teal);
 }
 
-.message-link-copy-toast.error {
+.message-copy-toast.error {
   border-color: var(--danger, #fca5a5);
 }
 
