@@ -14,7 +14,9 @@ import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform 
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type { PluggableList } from "unified";
+import type { Root } from "mdast";
+import type { Node, Parent } from "unist";
+import type { Plugin, PluggableList } from "unified";
 
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { toLocalFileUrl } from "./local-file-url.js";
@@ -62,6 +64,33 @@ type HastNode = {
   tagName?: string;
   properties?: Record<string, unknown>;
   children?: HastNode[];
+};
+
+const htmlLineBreakPattern = /^<br[ \t]*\/?>$/i;
+
+const remarkHtmlLineBreaks: Plugin<[], Root> = () => (tree) => {
+  function visit(node: Node) {
+    if (!("children" in node) || !Array.isArray(node.children)) {
+      return;
+    }
+
+    const parent = node as Parent;
+    for (let index = 0; index < parent.children.length; index += 1) {
+      const child = parent.children[index];
+      if (
+        child.type === "html"
+        && "value" in child
+        && typeof child.value === "string"
+        && htmlLineBreakPattern.test(child.value)
+      ) {
+        parent.children[index] = { type: "break", position: child.position };
+        continue;
+      }
+      visit(child);
+    }
+  }
+
+  visit(tree);
 };
 
 let mermaidModulePromise: Promise<typeof import("mermaid")> | null = null;
@@ -649,7 +678,11 @@ function MessageMarkdownPreview({
     [footnoteLabelId, isFullRender],
   );
   const remarkPlugins = useMemo<PluggableList>(
-    () => (isFullRender ? [remarkGfm, [remarkMath, { singleDollarTextMath: false }]] : []),
+    () => (
+      isFullRender
+        ? [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
+        : [remarkHtmlLineBreaks]
+    ),
     [isFullRender],
   );
 
