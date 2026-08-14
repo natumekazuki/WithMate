@@ -377,4 +377,46 @@ describe("home-settings-actions", () => {
     assert.match(feedback, /アンインストール/);
   });
 
+  it("Codex Session MCP registration は diagnostics state と再起動案内を更新する", async () => {
+    const settings = createDefaultAppSettings();
+    let status = "not-installed";
+    let feedback = "";
+    const handlers = buildSettingsCommandHandlers({
+      getApi: () => ({
+        registerCodexSessionMcp: async () => ({
+          generatedAt: "2026-08-14T00:00:00.000Z",
+          skillSync: { status: "unchanged", skillPath: "managed/withmate-session" },
+          launcher: {
+            status: "installed",
+            command: "withmate-session",
+            resolvedPath: "managed/withmate-session.cmd",
+            expectedPath: "managed/withmate-session.cmd",
+          },
+          codexMcp: {
+            status: "installed",
+            name: "withmate-session",
+            command: "withmate-session",
+            args: ["mcp-server"],
+          },
+        }),
+      } as Partial<WithMateWindowApi> as WithMateWindowApi),
+      persistedSettingsDraft: settings,
+      setAppSettings: () => undefined,
+      setSettingsDraft: () => undefined,
+      setSettingsFeedback: (nextFeedback) => {
+        feedback = nextFeedback;
+      },
+      setMemoryV6Diagnostics: () => undefined,
+      setSessionIntegrationDiagnostics: (diagnostics) => {
+        status = diagnostics.codexMcp.status;
+      },
+    });
+
+    handlers.onRegisterCodexSessionMcp();
+    await flushAsyncHandlers();
+
+    assert.equal(status, "installed");
+    assert.match(feedback, /新しい Codex Session/);
+  });
+
 });

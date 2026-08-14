@@ -1,8 +1,9 @@
 import { createWriteStream, type Stats } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, rm, type FileHandle } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, open, opendir, readdir, rm, type FileHandle } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 import type {
@@ -14,6 +15,28 @@ import { secureWindowsRuntimePath, type RuntimeAclTargetKind } from "./runtime-p
 
 const SESSION_ATTACHMENT_SNAPSHOT_NAMESPACE_PREFIX = "withmate-session-attachments-v1-";
 const SESSION_ATTACHMENT_SNAPSHOT_PREFIX = "snapshot-";
+export const SESSION_ATTACHMENT_SNAPSHOT_MAX_TOTAL_BYTES = 16 * 1024 * 1024;
+export const SESSION_ATTACHMENT_SNAPSHOT_MAX_FILE_COUNT = 4_000;
+export const SESSION_ATTACHMENT_SNAPSHOT_MAX_DIRECTORY_DEPTH = 32;
+
+export class SessionAttachmentSnapshotLimitError extends Error {
+  constructor(readonly code: "CONTENT_TOO_LARGE" | "LIMIT_EXCEEDED", message: string) {
+    super(message);
+    this.name = "SessionAttachmentSnapshotLimitError";
+  }
+}
+
+type SessionAttachmentSnapshotLimits = {
+  maxTotalBytes: number;
+  maxFileCount: number;
+  maxDirectoryDepth: number;
+};
+
+type SessionAttachmentSnapshotBudget = {
+  totalBytes: number;
+  fileCount: number;
+  limits: SessionAttachmentSnapshotLimits;
+};
 
 export type SessionAttachmentSnapshotLease = {
   attachments: ComposerAttachment[];
@@ -27,7 +50,37 @@ type SessionAttachmentSnapshotDeps = {
   platform?: NodeJS.Platform;
   snapshotNamespacePath: string;
   secureWindowsPath?: (targetPath: string, targetKind: RuntimeAclTargetKind) => Promise<void>;
+  limits?: Partial<SessionAttachmentSnapshotLimits>;
+  onBeforeFileOpen?: (sourcePath: string) => void | Promise<void>;
 };
+
+function resolveSnapshotLimits(input?: Partial<SessionAttachmentSnapshotLimits>): SessionAttachmentSnapshotLimits {
+  return {
+    maxTotalBytes: input?.maxTotalBytes ?? SESSION_ATTACHMENT_SNAPSHOT_MAX_TOTAL_BYTES,
+    maxFileCount: input?.maxFileCount ?? SESSION_ATTACHMENT_SNAPSHOT_MAX_FILE_COUNT,
+    maxDirectoryDepth: input?.maxDirectoryDepth ?? SESSION_ATTACHMENT_SNAPSHOT_MAX_DIRECTORY_DEPTH,
+  };
+}
+
+function reserveSnapshotEntry(budget: SessionAttachmentSnapshotBudget): void {
+  if (budget.fileCount + 1 > budget.limits.maxFileCount) {
+    throw new SessionAttachmentSnapshotLimitError(
+      "LIMIT_EXCEEDED",
+      `SessionFolder attachments exceed the ${budget.limits.maxFileCount} entry snapshot limit.`,
+    );
+  }
+  budget.fileCount += 1;
+}
+
+function reserveSnapshotBytes(budget: SessionAttachmentSnapshotBudget, byteLength: number): void {
+  if (budget.totalBytes + byteLength > budget.limits.maxTotalBytes) {
+    throw new SessionAttachmentSnapshotLimitError(
+      "CONTENT_TOO_LARGE",
+      `SessionFolder attachments exceed the ${budget.limits.maxTotalBytes} byte snapshot limit.`,
+    );
+  }
+  budget.totalBytes += byteLength;
+}
 
 export function resolveSessionAttachmentSnapshotNamespace(
   userDataPath: string,
@@ -124,18 +177,37 @@ async function copyOpenFile(
   sourcePath: string,
   destinationPath: string,
   expected: FileSystemIdentity,
+  budget: SessionAttachmentSnapshotBudget,
+  onBeforeFileOpen?: (sourcePath: string) => void | Promise<void>,
 ): Promise<void> {
   let sourceHandle: FileHandle | null = null;
   try {
+    await onBeforeFileOpen?.(sourcePath);
     sourceHandle = await open(sourcePath, "r");
     const openedStats = await sourceHandle.stat();
     if (!openedStats.isFile() || !sameFileSystemIdentity(expected, openedStats)) {
       throw new Error("SessionFolder attachment changed before its provider snapshot was captured.");
     }
+    reserveSnapshotBytes(budget, openedStats.size);
+    let copiedBytes = 0;
+    const exactSizeGuard = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        copiedBytes += chunk.byteLength;
+        if (copiedBytes > openedStats.size) {
+          callback(new Error("SessionFolder attachment grew while its provider snapshot was captured."));
+          return;
+        }
+        callback(null, chunk);
+      },
+    });
     await pipeline(
       sourceHandle.createReadStream({ autoClose: false }),
+      exactSizeGuard,
       createWriteStream(destinationPath, { flags: "wx", mode: 0o600 }),
     );
+    if (copiedBytes !== openedStats.size) {
+      throw new Error("SessionFolder attachment size changed while its provider snapshot was captured.");
+    }
     const completedStats = await sourceHandle.stat();
     if (!completedStats.isFile() || !sameSourceState(openedStats, completedStats)) {
       throw new Error("SessionFolder attachment changed while its provider snapshot was captured.");
@@ -151,36 +223,62 @@ async function copyDirectoryTree(
   rootPath: string,
   rootIdentity: Stats,
   directoryIdentity: Stats,
+  budget: SessionAttachmentSnapshotBudget,
+  depth: number,
+  deps: SessionAttachmentSnapshotDeps,
 ): Promise<void> {
+  if (depth > budget.limits.maxDirectoryDepth) {
+    throw new SessionAttachmentSnapshotLimitError(
+      "LIMIT_EXCEEDED",
+      `SessionFolder attachments exceed the ${budget.limits.maxDirectoryDepth} directory depth snapshot limit.`,
+    );
+  }
+  reserveSnapshotEntry(budget);
   await assertCurrentIdentity(rootPath, rootIdentity, "folder");
   await assertCurrentIdentity(sourcePath, directoryIdentity, "folder");
   await mkdir(destinationPath, { mode: 0o700 });
 
-  const entries = await readdir(sourcePath, { withFileTypes: true });
-  for (const entry of entries) {
-    await assertCurrentIdentity(rootPath, rootIdentity, "folder");
-    await assertCurrentIdentity(sourcePath, directoryIdentity, "folder");
-    const childSourcePath = path.join(sourcePath, entry.name);
-    const childDestinationPath = path.join(destinationPath, entry.name);
-    const childStats = await lstat(childSourcePath);
-    if (childStats.isSymbolicLink()) {
-      throw new Error("SessionFolder folder attachments containing symbolic links cannot be snapshotted safely.");
+  const directory = await opendir(sourcePath);
+  try {
+    for await (const entry of directory) {
+      await assertCurrentIdentity(rootPath, rootIdentity, "folder");
+      await assertCurrentIdentity(sourcePath, directoryIdentity, "folder");
+      const childSourcePath = path.join(sourcePath, entry.name);
+      const childDestinationPath = path.join(destinationPath, entry.name);
+      const childStats = await lstat(childSourcePath);
+      if (childStats.isSymbolicLink()) {
+        throw new Error("SessionFolder folder attachments containing symbolic links cannot be snapshotted safely.");
+      }
+      if (childStats.isDirectory()) {
+        await copyDirectoryTree(
+          childSourcePath,
+          childDestinationPath,
+          rootPath,
+          rootIdentity,
+          childStats,
+          budget,
+          depth + 1,
+          deps,
+        );
+        continue;
+      }
+      if (childStats.isFile()) {
+        reserveSnapshotEntry(budget);
+        await copyOpenFile(
+          childSourcePath,
+          childDestinationPath,
+          childStats,
+          budget,
+          deps.onBeforeFileOpen,
+        );
+        continue;
+      }
+      throw new Error("SessionFolder folder attachments may only contain files and directories.");
     }
-    if (childStats.isDirectory()) {
-      await copyDirectoryTree(
-        childSourcePath,
-        childDestinationPath,
-        rootPath,
-        rootIdentity,
-        childStats,
-      );
-      continue;
-    }
-    if (childStats.isFile()) {
-      await copyOpenFile(childSourcePath, childDestinationPath, childStats);
-      continue;
-    }
-    throw new Error("SessionFolder folder attachments may only contain files and directories.");
+  } finally {
+    await directory.close().catch((error: unknown) => {
+      if ((error as NodeJS.ErrnoException)?.code !== "ERR_DIR_CLOSED") throw error;
+    });
   }
 
   await assertCurrentIdentity(sourcePath, directoryIdentity, "folder");
@@ -246,6 +344,11 @@ export async function createSessionAttachmentSnapshot(
   try {
     await secureSnapshotRoot(rootPath, deps);
     const snapshotAttachments: ComposerAttachment[] = [];
+    const budget: SessionAttachmentSnapshotBudget = {
+      totalBytes: 0,
+      fileCount: 0,
+      limits: resolveSnapshotLimits(deps.limits),
+    };
     for (let index = 0; index < attachments.length; index += 1) {
       const attachment = attachments[index];
       const reference = references[index];
@@ -266,17 +369,23 @@ export async function createSessionAttachmentSnapshot(
           attachment.absolutePath,
           sourceDirectoryStats,
           sourceDirectoryStats,
+          budget,
+          0,
+          deps,
         );
       } else {
-        await assertCurrentIdentity(
+        const sourceFileStats = await assertCurrentIdentity(
           attachment.absolutePath,
           { dev: identity.device, ino: identity.inode },
           "file",
         );
+        reserveSnapshotEntry(budget);
         await copyOpenFile(
           attachment.absolutePath,
           destinationPath,
           { dev: identity.device, ino: identity.inode },
+          budget,
+          deps.onBeforeFileOpen,
         );
       }
       snapshotAttachments.push({ ...attachment, absolutePath: destinationPath });

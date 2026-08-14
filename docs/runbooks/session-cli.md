@@ -6,7 +6,7 @@
 
 ## 利用条件
 
-WithMateを起動しておく必要がある。Windows installerはinstall directoryへ`withmate-session.cmd`を配置し、user `Path` registry値を変更せずに`%LOCALAPPDATA%\Microsoft\WindowsApps\withmate-session.cmd` aliasを作成する。
+WithMateを起動しておく必要がある。Windows installerはinstall directoryへ`withmate-session.cmd`を配置する。Session CLI用のWindowsApps aliasは作成せず、Codex MCP登録はSettingsからinstall directory内のlauncher絶対pathを登録する。CLIを直接使う場合はinstall directory内のlauncherを明示するか、ユーザー自身がPATHを設定する。
 
 Windowsのruntime credentialは`%LOCALAPPDATA%\WithMate\session-runtime`へ公開される。Windowsでは`WITHMATE_SESSION_RUNTIME_DIR`による保存先変更を受理しない。ACLを安全に確定できない場合、Session runtimeはfail closedし、CLI/MCPは利用不能になる。
 
@@ -80,7 +80,7 @@ withmate-session session files read-text --json '{"sessionId":"SESSION_ID","rela
 withmate-session session files write-text --json '{"sessionId":"SESSION_ID","relativePath":"notes/brief.md","content":"本文","idempotencyKey":"write-20260812-001"}'
 ```
 
-listの`limit`は既定50、最大500である。read/writeの`maxBytes`は既定1 MiB、最大8 MiBであり、超過時はtruncateせず失敗する。writeは既存fileを既定で上書きせず、上書きが必要な場合だけ`"replace":true`を指定する。`idempotencyKey`はcallerが生成して保持し、response loss後の再送では同じkeyを使う。
+listの`limit`は既定50、最大500である。read/writeの`maxBytes`は既定1 MiB、最大8 MiBであり、超過時はtruncateせず失敗する。Windows版v6.4では新規fileだけを書き込める。既存fileへの`"replace":true`は安全なidentity-bound置換primitiveがないため`not_applied`でfail closedする。`idempotencyKey`はcallerが生成して保持し、response loss後の再送では同じkeyを使う。
 
 ## InteractionとTranscript
 
@@ -92,6 +92,8 @@ withmate-session interaction respond --json '{"sessionId":"SESSION_ID","executio
 ```
 
 Transcriptはpublic message、Turn、interaction projectionだけから生成される。inlineはJSONまたはMarkdownを返し、SessionFolder出力は同一SessionFolder配下へatomic publishする。SessionFolder出力ではresponse loss後も同じ`destination.idempotencyKey`で再送する。
+
+SessionFolder出力もWindows版v6.4では新規targetだけを公開できる。既存targetへの`replace:true`は`EXPORT_FAILED`、`retryable:false`、`effect:"not_applied"`で拒否されるため、別のrelative pathを指定する。
 
 ```powershell
 withmate-session transcript export --json '{"sessionId":"SESSION_ID","format":"json","maxBytes":1048576,"destination":{"kind":"inline"}}'

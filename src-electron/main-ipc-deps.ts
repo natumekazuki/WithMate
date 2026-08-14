@@ -25,6 +25,7 @@ import type {
   MarkdownLinkContextMenuResult,
 } from "../src/markdown-link-context-menu.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
+import type { SessionIntegrationDiagnostics } from "../src/session-integration-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
 import type {
@@ -188,6 +189,8 @@ export type MainIpcSettingsDepsArgs = {
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Awaitable<AppSettings>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
+  getSessionIntegrationDiagnostics(): Awaitable<SessionIntegrationDiagnostics>;
+  registerCodexSessionMcp(): Awaitable<SessionIntegrationDiagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   getMemoryV6FileUsage(): Awaitable<MemoryFileUsageResponse>;
@@ -442,6 +445,8 @@ export function createMainIpcRegistrationDeps(
     updateChatLayoutPreference: args.settings.updateChatLayoutPreference,
     getAppDatabaseDiagnostics: args.settings.getAppDatabaseDiagnostics,
     getMemoryV6Diagnostics: args.settings.getMemoryV6Diagnostics,
+    getSessionIntegrationDiagnostics: args.settings.getSessionIntegrationDiagnostics,
+    registerCodexSessionMcp: args.settings.registerCodexSessionMcp,
     installMemoryV6CliShim: args.settings.installMemoryV6CliShim,
     uninstallMemoryV6CliShim: args.settings.uninstallMemoryV6CliShim,
     getMemoryV6FileUsage: args.settings.getMemoryV6FileUsage,

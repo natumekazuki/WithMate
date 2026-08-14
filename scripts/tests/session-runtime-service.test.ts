@@ -32,6 +32,7 @@ import {
   SessionRuntimeService,
   hasMeaningfulPartialRunResult,
   isRetryableStaleThreadSessionError,
+  preserveProviderTurnOutcomeDuringCleanup,
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
 import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
@@ -174,6 +175,32 @@ describe("SessionRuntimeService stale retry helpers", () => {
     })), true);
   });
 });
+
+describe("SessionRuntimeService provider cleanup", () => {
+  it("snapshot cleanup失敗はprovider成功を失敗へ反転せずprovider errorも置換しない", async () => {
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      await assert.doesNotReject(async () => {
+        assert.equal(await preserveProviderTurnOutcomeDuringCleanup(
+          Promise.resolve("completed"),
+          async () => { throw new Error("snapshot locked"); },
+        ), "completed");
+      });
+
+      const providerError = new Error("provider failed after side effect");
+      await assert.rejects(
+        preserveProviderTurnOutcomeDuringCleanup(
+          Promise.reject(providerError),
+          async () => { throw new Error("snapshot locked"); },
+        ),
+        (error) => error === providerError,
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
 describe("SessionRuntimeService", () => {
 
   it("外部turnのcatalogと実行設定をproviderへ渡し、各turnで最新Character contextを取得する", async () => {
@@ -191,6 +218,7 @@ describe("SessionRuntimeService", () => {
     const callOrder: string[] = [];
     const catalogRevisions: Array<number | null | undefined> = [];
     const composerScopes: Array<"workspace" | "session-folder" | undefined> = [];
+    const persistedTurnContexts: Parameters<NonNullable<SessionRuntimeServiceDeps["persistExternalTurnContext"]>>[0][] = [];
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
         return {
@@ -252,6 +280,16 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
+      resolveProviderSession(session) {
+        if (session.model !== "gpt-5.4") return session;
+        return {
+          ...session,
+          model: "gpt-resolved",
+          reasoningEffort: "high",
+          approvalMode: "on-request",
+          codexSandboxMode: "workspace-write",
+        };
+      },
       getSessionMemory(session) {
         return createSessionMemory(session.id);
       },
@@ -293,6 +331,9 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      persistExternalTurnContext(input) {
+        persistedTurnContexts.push(input);
+      },
       currentTimestampLabel,
     });
 
@@ -302,17 +343,17 @@ describe("SessionRuntimeService", () => {
       reasoningEffort: "medium",
       approvalMode: "never",
       codexSandboxMode: "read-only",
-    });
+    }, "execution-1");
     assert.deepEqual({
       model: providerSessions[0]?.model,
       reasoningEffort: providerSessions[0]?.reasoningEffort,
       approvalMode: providerSessions[0]?.approvalMode,
       codexSandboxMode: providerSessions[0]?.codexSandboxMode,
     }, {
-      model: "gpt-5.4",
-      reasoningEffort: "medium",
-      approvalMode: "never",
-      codexSandboxMode: "read-only",
+      model: "gpt-resolved",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      codexSandboxMode: "workspace-write",
     });
     assert.deepEqual({
       model: storedSession.model,
@@ -320,6 +361,14 @@ describe("SessionRuntimeService", () => {
       approvalMode: storedSession.approvalMode,
       codexSandboxMode: storedSession.codexSandboxMode,
     }, storedRuntimeDefaults);
+    assert.deepEqual(persistedTurnContexts.map((context) => context.effectiveOptions), [{
+      provider: "codex",
+      model: "gpt-resolved",
+      reasoningEffort: "high",
+      approvalMode: "on-request",
+      sandboxMode: "workspace-write",
+      customAgentName: null,
+    }]);
     callOrder.push("first-returned");
     await service.runSessionTurn(storedSession.id, { userMessage: "second" });
     callOrder.push("second-returned");
@@ -2126,6 +2175,118 @@ describe("SessionRuntimeService", () => {
       { sessionId: session.id, decision: "deny" },
       { sessionId: session.id, decision: "deny" },
     ]);
+  });
+
+  it("legacy interaction resolver失敗時もcancelとresetはAbortControllerへ到達する", async () => {
+    const originalWarn = console.warn;
+    console.warn = () => undefined;
+    try {
+      for (const action of ["cancel", "reset"] as const) {
+        const session = createSession();
+        let providerSignal: AbortSignal | null = null;
+        let approvalCleanupCalls = 0;
+        let elicitationCleanupCalls = 0;
+        const adapter: ProviderCodingAdapter = {
+          composePrompt() {
+            return {
+              systemBodyText: "system",
+              inputBodyText: "input",
+              logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+              imagePaths: [],
+              additionalDirectories: [],
+            };
+          },
+          async getProviderQuotaTelemetry() {
+            return null;
+          },
+          invalidateSessionThread() {},
+          invalidateAllSessionThreads() {},
+          runSessionTurn(input) {
+            providerSignal = input.signal ?? null;
+            return new Promise<RunSessionTurnResult>((_resolve, reject) => {
+              input.signal?.addEventListener("abort", () => {
+                reject(new ProviderTurnError("canceled", createPartialResult(), true));
+              }, { once: true });
+            });
+          },
+        };
+        const service = new SessionRuntimeService({
+          getSession() {
+            return session;
+          },
+          upsertSession(next) {
+            return next;
+          },
+          async resolveComposerPreview() {
+            return { attachments: [], errors: [] };
+          },
+          async resolveSessionCharacter() {
+            return createCharacter();
+          },
+          getAppSettings() {
+            return normalizeAppSettings({});
+          },
+          resolveProviderCatalog() {
+            return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+          },
+          getProviderCodingAdapter() {
+            return adapter;
+          },
+          getSessionMemory(current) {
+            return createSessionMemory(current.id);
+          },
+          resolveProjectMemoryEntriesForPrompt() {
+            return [];
+          },
+          createAuditLog(input) {
+            return createAuditLogBase(input);
+          },
+          updateAuditLog() {},
+          setLiveSessionRun() {},
+          getLiveSessionRun() {
+            return null;
+          },
+          waitForApprovalDecision() {
+            return "approve";
+          },
+          waitForElicitationResponse() {
+            return { action: "cancel" };
+          },
+          setProviderQuotaTelemetry() {},
+          setSessionContextTelemetry() {},
+          invalidateProviderSessionThread() {},
+          scheduleProviderQuotaTelemetryRefresh() {},
+          broadcastLiveSessionRun() {},
+          resolvePendingApprovalRequest() {
+            approvalCleanupCalls += 1;
+            throw new Error("legacy approval not found");
+          },
+          resolvePendingElicitationRequest() {
+            elicitationCleanupCalls += 1;
+            throw new Error("legacy elicitation not found");
+          },
+          currentTimestampLabel,
+        });
+
+        const runPromise = service.runSessionTurn(session.id, { userMessage: action });
+        while (!providerSignal) {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        }
+        if (action === "cancel") {
+          service.cancelRun(session.id);
+        } else {
+          service.reset();
+        }
+        const result = await runPromise;
+
+        assert.equal(providerSignal.aborted, true, action);
+        assert.equal(result.runState, "idle", action);
+        assert.ok(approvalCleanupCalls > 0, action);
+        assert.ok(elicitationCleanupCalls > 0, action);
+      }
+    } finally {
+      console.warn = originalWarn;
+    }
   });
 
   it("cancel 後に provider が grace 内で成功しても完了通知しない", async () => {

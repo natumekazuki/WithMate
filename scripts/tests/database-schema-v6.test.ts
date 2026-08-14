@@ -233,10 +233,26 @@ describe("database-schema-v6", () => {
     const db = createV6Schema();
     try {
       db.exec("DROP TABLE session_file_write_idempotency_v6;");
-      db.exec(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL.replace(
-        "state IN ('pending', 'applied', 'rejected')",
-        "state IN ('pending', 'applied')",
-      ));
+      db.exec(`
+        CREATE TABLE session_file_write_idempotency_v6 (
+          operation TEXT NOT NULL CHECK (operation = 'session.files.write_text'),
+          idempotency_key TEXT NOT NULL,
+          request_fingerprint TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          relative_path TEXT NOT NULL,
+          temp_name TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('pending', 'applied')),
+          output_sha256 TEXT,
+          byte_length INTEGER,
+          file_device TEXT,
+          file_inode TEXT,
+          result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (operation, idempotency_key),
+          FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+        );
+      `);
       db.prepare(`
         INSERT INTO sessions_v6 (
           id, title, state, provider_id, catalog_revision, model_id, approval_mode,
@@ -252,23 +268,55 @@ describe("database-schema-v6", () => {
       const insertLegacyWrite = db.prepare(`
         INSERT INTO session_file_write_idempotency_v6 (
           operation, idempotency_key, request_fingerprint, session_id, relative_path,
-          temp_name, state, result_json, created_at, expires_at
-        ) VALUES ('session.files.write_text', ?, ?, 'session-files-migration', ?, ?, ?, ?, ?, ?)
+          temp_name, state, output_sha256, byte_length, file_device, file_inode,
+          result_json, created_at, expires_at
+        ) VALUES ('session.files.write_text', ?, ?, 'session-files-migration', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       insertLegacyWrite.run(
-        "pending-key", "pending-fingerprint", "pending.txt", ".pending.tmp", "pending", null,
+        "pending-key", "pending-fingerprint", "pending.txt", ".pending.tmp", "pending",
+        "a".repeat(64), 12, "1", "2", null,
         "2026-08-12T00:00:00.000Z", "2026-08-13T00:00:00.000Z",
       );
       insertLegacyWrite.run(
         "applied-key", "applied-fingerprint", "applied.txt", ".applied.tmp", "applied",
+        "b".repeat(64), 13, "1", "3",
         JSON.stringify({ file: { sessionId: "session-files-migration", relativePath: "applied.txt" } }),
         "2026-08-12T00:01:00.000Z", "2026-08-13T00:01:00.000Z",
       );
+      db.exec(`
+        DROP TABLE session_transcript_export_idempotency_v6;
+        CREATE TABLE session_transcript_export_idempotency_v6 (
+          operation TEXT NOT NULL CHECK (operation = 'transcript.export'),
+          idempotency_key TEXT NOT NULL,
+          request_fingerprint TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          relative_path TEXT NOT NULL,
+          temp_name TEXT NOT NULL,
+          state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'rejected')),
+          output_sha256 TEXT,
+          byte_length INTEGER,
+          result_json TEXT,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          PRIMARY KEY (operation, idempotency_key),
+          FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+        );
+        INSERT INTO session_transcript_export_idempotency_v6 (
+          operation, idempotency_key, request_fingerprint, session_id, relative_path,
+          temp_name, state, output_sha256, byte_length, created_at, expires_at
+        ) VALUES (
+          'transcript.export', 'legacy-prepared', 'legacy-fingerprint',
+          'session-files-migration', 'legacy.json', '.legacy.tmp', 'pending',
+          '${"c".repeat(64)}', 42, '2026-08-12T00:00:00.000Z', '2026-08-13T00:00:00.000Z'
+        );
+      `);
 
       ensureV6Schema(db);
       ensureV6Schema(db);
 
       assert.equal(tableSql(db, "session_file_write_idempotency_v6").includes("'rejected'"), true);
+      assert.equal(tableSql(db, "session_file_write_idempotency_v6").includes("file_device TEXT"), true);
+      assert.equal(tableSql(db, "session_file_write_idempotency_v6").includes("file_inode TEXT"), true);
       assert.equal(tableNames(db).includes("session_file_write_idempotency_v6_legacy"), false);
       const migratedWrites = db.prepare(`
           SELECT idempotency_key, state, result_json
@@ -289,9 +337,45 @@ describe("database-schema-v6", () => {
               file: { sessionId: "session-files-migration", relativePath: "applied.txt" },
             }),
           },
-          { idempotency_key: "pending-key", state: "pending", result_json: null },
+          {
+            idempotency_key: "pending-key",
+            state: "rejected",
+            result_json: JSON.stringify({
+              code: "RUNTIME_UNAVAILABLE",
+              message: "A legacy pending file publish proof cannot be recovered safely.",
+              retryable: false,
+              details: { reason: "legacy_publish_proof_missing_target_precondition" },
+              effect: "indeterminate",
+            }),
+          },
         ],
       );
+      const transcriptProof = db.prepare(`
+        SELECT state, result_json, output_sha256, byte_length, output_device, output_inode
+        FROM session_transcript_export_idempotency_v6
+        WHERE idempotency_key = 'legacy-prepared'
+      `).get() as {
+        state: string;
+        result_json: string | null;
+        output_sha256: string | null;
+        byte_length: number | null;
+        output_device: string | null;
+        output_inode: string | null;
+      };
+      assert.deepEqual({ ...transcriptProof }, {
+        state: "rejected",
+        result_json: JSON.stringify({
+          code: "EXPORT_FAILED",
+          message: "A legacy pending transcript publish proof cannot be recovered safely.",
+          retryable: false,
+          details: { reason: "legacy_publish_proof_missing_target_precondition" },
+          effect: "indeterminate",
+        }),
+        output_sha256: null,
+        byte_length: null,
+        output_device: null,
+        output_inode: null,
+      });
     } finally {
       db.close();
     }
@@ -954,7 +1038,7 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("ensureV6Schema は auxiliary_sessions rebuild 後も audit の Auxiliary owner を保持する", () => {
+  it("ensureV6Schema はデータ入り auxiliary_sessions rebuild 後も Turn graph と audit owner を保持して再実行時に収束する", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "withmate-v6-schema-"));
     const dbPath = join(tempDir, APP_DATABASE_V6_FILENAME);
     let db: DatabaseSync | null = null;
@@ -964,7 +1048,11 @@ describe("database-schema-v6", () => {
       db.exec("PRAGMA foreign_keys = ON;");
 
       for (const statement of CREATE_V6_SCHEMA_SQL) {
-        if (statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL) {
+        if (
+          statement !== CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
+          && statement !== CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL
+          && statement !== CREATE_V6_AUDIT_EVENTS_TABLE_SQL
+        ) {
           db.exec(statement);
         }
       }
@@ -990,6 +1078,19 @@ describe("database-schema-v6", () => {
           created_at TEXT NOT NULL,
           FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
           FOREIGN KEY (auxiliary_session_id) REFERENCES auxiliary_sessions(id) ON DELETE SET NULL
+        );
+
+        CREATE TABLE session_turn_public_context_v6 (
+          turn_id INTEGER PRIMARY KEY,
+          session_id TEXT NOT NULL,
+          execution_id TEXT NOT NULL UNIQUE,
+          effective_turn_json TEXT NOT NULL CHECK (json_valid(effective_turn_json)),
+          attachments_json TEXT NOT NULL CHECK (json_valid(attachments_json)),
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          FOREIGN KEY (turn_id) REFERENCES session_turns_v6(id) ON DELETE CASCADE,
+          FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+          FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE
         );
 
         CREATE INDEX idx_audit_events_v6_session_created
@@ -1036,6 +1137,85 @@ describe("database-schema-v6", () => {
           '2026-07-04T01:00:00.000Z',
           '{}'
         );
+
+        INSERT INTO session_executions_v6 (
+          id,
+          session_id,
+          operation,
+          state,
+          request_json,
+          created_at,
+          updated_at
+        ) VALUES (
+          'execution-aux-1',
+          'session-1',
+          'turn.run',
+          'completed',
+          '{}',
+          '2026-07-04T01:01:00.000Z',
+          '2026-07-04T01:03:00.000Z'
+        );
+
+        INSERT INTO session_turns_v6 (
+          id,
+          auxiliary_session_id,
+          phase,
+          provider_id,
+          model_id,
+          reasoning_effort,
+          approval_mode,
+          sandbox_mode,
+          thread_id,
+          summary,
+          started_at,
+          completed_at,
+          updated_at
+        ) VALUES (
+          41,
+          'aux-1',
+          'completed',
+          'codex',
+          'gpt-5',
+          'medium',
+          'on-request',
+          'workspace-write',
+          'thread-aux-1',
+          'Auxiliary summary',
+          '2026-07-04T01:01:00.000Z',
+          '2026-07-04T01:03:00.000Z',
+          '2026-07-04T01:03:00.000Z'
+        );
+
+        INSERT INTO session_turn_interims_v6 (
+          id, turn_id, seq, body, source, created_at
+        ) VALUES (
+          51, 41, 0, 'interim response', 'running_snapshot', '2026-07-04T01:02:00.000Z'
+        );
+
+        INSERT INTO session_turn_provider_outputs_v6 (
+          id, turn_id, seq, provider_id, kind, summary, payload_json, created_at
+        ) VALUES (
+          61, 41, 0, 'codex', 'usage', 'usage summary', '{"inputTokens":3}',
+          '2026-07-04T01:03:00.000Z'
+        );
+
+        INSERT INTO session_turn_public_context_v6 (
+          turn_id,
+          session_id,
+          execution_id,
+          effective_turn_json,
+          attachments_json,
+          created_at,
+          updated_at
+        ) VALUES (
+          41,
+          'session-1',
+          'execution-aux-1',
+          '{"provider":"codex"}',
+          '[{"name":"evidence.txt"}]',
+          '2026-07-04T01:01:00.000Z',
+          '2026-07-04T01:03:00.000Z'
+        );
       `);
 
       db.prepare(`
@@ -1072,6 +1252,63 @@ describe("database-schema-v6", () => {
       );
 
       ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      const auxiliaryTurn = db.prepare(`
+        SELECT id, auxiliary_session_id, phase, summary
+        FROM session_turns_v6
+        WHERE id = 41
+      `).get() as {
+        id: number;
+        auxiliary_session_id: string;
+        phase: string;
+        summary: string;
+      } | undefined;
+      assert.deepEqual({ ...auxiliaryTurn }, {
+        id: 41,
+        auxiliary_session_id: "aux-1",
+        phase: "completed",
+        summary: "Auxiliary summary",
+      });
+
+      const interim = db.prepare(`
+        SELECT id, turn_id, seq, body, source
+        FROM session_turn_interims_v6
+        WHERE id = 51
+      `).get();
+      assert.deepEqual({ ...interim }, {
+        id: 51,
+        turn_id: 41,
+        seq: 0,
+        body: "interim response",
+        source: "running_snapshot",
+      });
+
+      const providerOutput = db.prepare(`
+        SELECT id, turn_id, seq, kind, payload_json
+        FROM session_turn_provider_outputs_v6
+        WHERE id = 61
+      `).get();
+      assert.deepEqual({ ...providerOutput }, {
+        id: 61,
+        turn_id: 41,
+        seq: 0,
+        kind: "usage",
+        payload_json: '{"inputTokens":3}',
+      });
+
+      const publicContext = db.prepare(`
+        SELECT turn_id, session_id, execution_id, effective_turn_json, attachments_json
+        FROM session_turn_public_context_v6
+        WHERE turn_id = 41
+      `).get();
+      assert.deepEqual({ ...publicContext }, {
+        turn_id: 41,
+        session_id: "session-1",
+        execution_id: "execution-aux-1",
+        effective_turn_json: '{"provider":"codex"}',
+        attachments_json: '[{"name":"evidence.txt"}]',
+      });
 
       const auditOwner = db.prepare(`
         SELECT auxiliary_session_id
@@ -1079,15 +1316,23 @@ describe("database-schema-v6", () => {
         WHERE id = 1
       `).get() as { auxiliary_session_id: string | null } | undefined;
       assert.equal(auditOwner?.auxiliary_session_id, "aux-1");
+      assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.equal(
+        (db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM sqlite_temp_schema
+          WHERE name LIKE '%_auxiliary_restore'
+        `).get() as { count: number }).count,
+        0,
+      );
 
       db.close();
       db = null;
 
       auditStorage = new AuditLogStorageV6(dbPath);
       const summaries = auditStorage.listSessionAuditLogSummaries("aux-1");
-      assert.equal(summaries.length, 1);
-      assert.equal(summaries[0]?.sessionId, "aux-1");
-      assert.equal(summaries[0]?.assistantTextPreview, "assistant response");
+      const restoredAuditSummary = summaries.find((summary) => summary.assistantTextPreview === "assistant response");
+      assert.equal(restoredAuditSummary?.sessionId, "aux-1");
     } finally {
       auditStorage?.close();
       db?.close();

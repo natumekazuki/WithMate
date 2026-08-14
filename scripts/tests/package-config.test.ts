@@ -26,7 +26,8 @@ describe("package build config", () => {
     const installerScript = await readFile("build/installer.nsh", "utf8");
     assert.match(installerScript, /Microsoft\\WindowsApps/);
     assert.match(installerScript, /withmate-memory\.cmd/);
-    assert.match(installerScript, /withmate-session\.cmd/);
+    assert.doesNotMatch(installerScript, /WITHMATE_SESSION_ALIAS/);
+    assert.doesNotMatch(installerScript, /WindowsApps[^\n]*withmate-session\.cmd/);
     assert.doesNotMatch(installerScript, /ReadRegStr\s+\$\d+\s+HKCU\s+"Environment"\s+"Path"/);
     assert.doesNotMatch(installerScript, /WriteRegExpandStr\s+HKCU\s+"Environment"\s+"Path"/);
   });

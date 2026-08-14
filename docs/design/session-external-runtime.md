@@ -134,7 +134,7 @@ sequenceDiagram
 
 `wait`と`deferred`はdeliveryの違いであり、開始するexecutionは同じである。cancelとinteraction responseはSession ID、execution ID、対象固有IDを組にして検証する。
 
-`turn.run`は即時開始専用である。対象Sessionが実行中、または終了処理中のprovider processが残っている場合は`SESSION_BUSY`で拒否し、暗黙にqueueへ切り替えない。
+`turn.run`は即時開始専用である。対象Sessionが実行中、終了処理中のprovider processが残っている場合、またはqueued executionが一件でも存在する場合は`SESSION_BUSY`で拒否し、暗黙にqueueへ切り替えない。後発の`turn.run`は先着したFIFO headを追い越さない。
 
 `turn.enqueue`はexecutionを対象Sessionごとの永続FIFO queueへ登録し、`executionId`と`queued` stateを直ちに返す。response modeは受け取らず、admission、interaction、terminal resultを待たない。対象Sessionがidleなら、受付commit後に先頭executionのadmissionを開始する。queued executionは`turn.get`と`turn.list`に現れ、admission前なら`turn.cancel`で取り消せる。一つのSessionでは同時に一つのTurnだけを実行する。異なるSession間にglobal queueまたは固定並列数上限は追加しない。
 
@@ -192,7 +192,7 @@ sizeはUTF-8 byte数で判定する。入力で指定する`maxBytes`はserver h
 | loopback JSON request body | — | 8 MiB |
 | loopback JSON response body | — | 8 MiB |
 
-inline resultがlimitへ達した場合は切り詰めた成功を返さず、size limit errorを返す。SessionFolder exportはtemporary fileへstreaming writeし、完了後にatomic renameする。limit超過または生成失敗時はtemporary fileを除去し、partialな出力先を残さない。
+inline resultがlimitへ達した場合は切り詰めた成功を返さず、size limit errorを返す。SessionFolder exportはoperation-owned temporary proofへstreaming writeし、destinationが存在しない場合だけno-overwrite hard linkで公開する。既存destinationに対する`replace=true`はidentity-bound replacement primitiveがないため、公開前にfail closedする。limit超過、生成失敗、response lossではpath-based unlinkを行わず、temporary proofを回復証拠として保持する。
 
 `session.files.write_text`とloopback request bodyのhard maximumは引数で拡張できない。これを超える成果物はMCP payloadで運搬せず、対象Sessionへ生成を指示してSessionFolderへ保存させる。
 
@@ -235,7 +235,7 @@ Session詳細はWorkspaceとSessionFolderを別々に返し、SessionFolderがWo
 
 Transcript exportはversioned JSONとMarkdownを提供する。JSONをcanonical projectionとし、Markdownは同じprojectionから生成する。
 
-出力先の既定はinlineとする。SessionFolderへの出力を選んだ場合は、Session IDとrelative pathを指定し、atomic writeとidempotencyを適用する。既定では既存fileを上書きせず、明示したreplaceだけを許可する。
+出力先の既定はinlineとする。SessionFolderへの出力を選んだ場合は、Session IDとrelative pathを指定し、atomic writeとidempotencyを適用する。Windows版v6.4では新規targetだけを公開でき、既存targetへの`replace=true`は安全なidentity-bound置換primitiveがないため副作用前にfail closedする。
 
 Transcriptには利用者が観測できるmessage、effective Turn option、attachment、public tool event、interactionを含められる。secret、raw provider payload、内部system prompt、Character prompt、debug情報、stack trace、database内部情報は含めない。
 
@@ -435,12 +435,14 @@ sequenceDiagram
     Caller->>App: transcript.export(sessionId, session_folder, maxBytes = 512 MiB, idempotencyKey)
     App->>App: maxBytesが1 GiB以下であることを検証
     App->>Projection: public transcriptをstream生成
-    Projection->>Folder: temporary fileへstreaming write
-    alt 512 MiB以内で完了
-        Folder->>Folder: destinationへatomic rename
+    Projection->>Folder: operation-owned temporary proofへstreaming write
+    alt 512 MiB以内で完了しdestinationが存在しない
+        Folder->>Folder: no-overwrite hard linkでdestinationを公開
         App-->>Caller: file referenceとsize
+    else destinationが存在する
+        App-->>Caller: EXPORT_FAILED / not_applied
     else limit超過または生成失敗
-        Folder->>Folder: temporary fileを除去
+        Folder->>Folder: path-based unlinkをせずtemporary proofを保持
         App-->>Caller: CONTENT_TOO_LARGEまたはEXPORT_FAILED
     end
 ```

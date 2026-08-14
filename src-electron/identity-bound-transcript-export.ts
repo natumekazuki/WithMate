@@ -6,7 +6,8 @@ import type { Writable } from "node:stream";
 const WORKER_SOURCE = String.raw`
 const { createHash } = require("node:crypto");
 const { createReadStream } = require("node:fs");
-const { lstat, open, realpath, rename, link, stat, unlink } = require("node:fs/promises");
+const { lstat, open, realpath, link, stat } = require("node:fs/promises");
+const path = require("node:path");
 const readline = require("node:readline");
 
 const options = JSON.parse(process.env.WITHMATE_TRANSCRIPT_EXPORT_OPTIONS);
@@ -40,7 +41,23 @@ function sameIdentity(left, right) {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
-async function inspectFile(fileName, expectedDigest, expectedBytes) {
+function filePrecondition(file) {
+  return file ? {
+    kind: "file",
+    sha256: file.digest,
+    byteLength: file.stats.size,
+    device: String(file.stats.dev),
+    inode: String(file.stats.ino),
+  } : { kind: "absent" };
+}
+
+function matchesPrecondition(file, expected) {
+  if (expected.kind === "absent") return !file;
+  return Boolean(file && file.digest === expected.sha256 && file.stats.size === expected.byteLength
+    && String(file.stats.dev) === expected.device && String(file.stats.ino) === expected.inode);
+}
+
+async function inspectFile(fileName, expectedDigest, expectedBytes, expectedDevice, expectedInode) {
   try {
     const lexical = await lstat(fileName);
     if (!lexical.isFile() || lexical.isSymbolicLink()) {
@@ -50,6 +67,8 @@ async function inspectFile(fileName, expectedDigest, expectedBytes) {
     try {
       const before = await handle.stat();
       if (expectedBytes !== undefined && before.size !== expectedBytes) return null;
+      if (expectedDevice !== undefined && expectedInode !== undefined
+        && (String(before.dev) !== expectedDevice || String(before.ino) !== expectedInode)) return null;
       const hash = createHash("sha256");
       const buffer = Buffer.alloc(64 * 1024);
       let offset = 0;
@@ -75,18 +94,6 @@ async function inspectFile(fileName, expectedDigest, expectedBytes) {
   }
 }
 
-async function unlinkOwnedFile(fileName) {
-  try {
-    const lexical = await lstat(fileName);
-    if (!lexical.isFile() || lexical.isSymbolicLink()) {
-      throw Object.assign(new Error("path changed"), { code: "PATH_CHANGED" });
-    }
-    await unlink(fileName);
-  } catch (error) {
-    if (!error || error.code !== "ENOENT") throw error;
-  }
-}
-
 async function confirmBoundParent(boundStats) {
   const lexical = await lstat(options.parentPath);
   const resolved = await realpath(options.parentPath);
@@ -97,11 +104,14 @@ async function confirmBoundParent(boundStats) {
   }
 }
 
-async function publish(boundStats, expectedDigest, expectedBytes) {
+async function publish(boundStats, expectedDigest, expectedBytes, targetPrecondition, interactive = true) {
   await confirmBoundParent(boundStats);
   const staged = await inspectFile(options.tempName, expectedDigest, expectedBytes);
   if (!staged) throw Object.assign(new Error("staged output missing"), { code: "NOT_RECOVERABLE" });
   if (options.replace) {
+    if (targetPrecondition.kind === "file") {
+      throw Object.assign(new Error("safe replacement is unavailable"), { code: "REPLACE_UNAVAILABLE" });
+    }
     const publishName = options.tempName + ".publish";
     try {
       await link(options.tempName, publishName);
@@ -112,16 +122,32 @@ async function publish(boundStats, expectedDigest, expectedBytes) {
         throw Object.assign(new Error("publish proof collision"), { code: "PATH_CHANGED" });
       }
     }
-    await rename(publishName, options.targetName);
+    if (interactive) {
+      send({ type: "proof-linked" });
+      await waitCommand("continue-proof");
+    }
+    if (interactive) {
+      send({ type: "target-claimed" });
+      await waitCommand("continue-target-claim");
+    }
+    try {
+      await link(publishName, options.targetName);
+    } catch (error) {
+      if (error && error.code === "EEXIST") {
+        throw Object.assign(new Error("target changed while publishing replacement"), { code: "PATH_CHANGED" });
+      }
+      throw error;
+    }
     published = true;
-    send({ type: "renamed" });
-    await waitCommand("continue");
+    if (interactive) {
+      send({ type: "renamed" });
+      await waitCommand("continue");
+    }
   } else {
     try {
       await link(options.tempName, options.targetName);
     } catch (error) {
       if (error && error.code === "EEXIST") {
-        await unlinkOwnedFile(options.tempName);
         throw Object.assign(new Error("file already exists"), { code: "FILE_ALREADY_EXISTS" });
       }
       throw error;
@@ -133,12 +159,28 @@ async function publish(boundStats, expectedDigest, expectedBytes) {
   if (!target || !proof || !sameIdentity(target.stats, staged.stats) || !sameIdentity(proof.stats, target.stats)) {
     throw Object.assign(new Error("publish verification failed"), { code: "RUNTIME_UNAVAILABLE" });
   }
+  target.targetPrecondition = targetPrecondition;
   return target;
 }
 
 async function stage(boundStats) {
-  if (options.resumed) await unlinkOwnedFile(options.tempName);
-  const handle = await open(options.tempName, "wx", 0o600);
+  const target = await inspectFile(options.targetName);
+  if (target && !options.replace) {
+    throw Object.assign(new Error("file already exists"), { code: "FILE_ALREADY_EXISTS" });
+  }
+  if (target && options.replace) {
+    throw Object.assign(new Error("safe replacement is unavailable"), { code: "REPLACE_UNAVAILABLE" });
+  }
+  const targetPrecondition = filePrecondition(target);
+  let handle;
+  try {
+    handle = await open(options.tempName, "wx", 0o600);
+  } catch (error) {
+    if (error && error.code === "EEXIST") {
+      throw Object.assign(new Error("temporary proof already exists"), { code: "PATH_CHANGED" });
+    }
+    throw error;
+  }
   const hash = createHash("sha256");
   let byteLength = 0;
   try {
@@ -163,7 +205,6 @@ async function stage(boundStats) {
     await handle.sync();
   } catch (error) {
     await handle.close();
-    await unlinkOwnedFile(options.tempName);
     throw error;
   }
   await handle.close();
@@ -174,25 +215,56 @@ async function stage(boundStats) {
     type: "prepared",
     sha256: digest,
     byteLength,
-    device: staged.stats.dev,
-    inode: staged.stats.ino,
+    device: String(staged.stats.dev),
+    inode: String(staged.stats.ino),
+    targetPrecondition,
   });
   await waitCommand("publish");
-  return publish(boundStats, digest, byteLength);
+  return publish(boundStats, digest, byteLength, targetPrecondition);
 }
 
 async function recover(boundStats) {
   await waitCommand("start");
   await confirmBoundParent(boundStats);
-  const target = await inspectFile(options.targetName, options.expectedSha256, options.expectedByteLength);
-  const temp = await inspectFile(options.tempName, options.expectedSha256, options.expectedByteLength);
+  const target = await inspectFile(
+    options.targetName,
+    options.expectedSha256,
+    options.expectedByteLength,
+    options.expectedDevice,
+    options.expectedInode,
+  );
+  const temp = await inspectFile(
+    options.tempName,
+    options.expectedSha256,
+    options.expectedByteLength,
+    options.expectedDevice,
+    options.expectedInode,
+  );
+  const publishName = options.tempName + ".publish";
+  const currentTarget = await inspectFile(options.targetName);
+  const publishProof = await inspectFile(
+    publishName,
+    options.expectedSha256,
+    options.expectedByteLength,
+    options.expectedDevice,
+    options.expectedInode,
+  );
   if (target && temp && sameIdentity(target.stats, temp.stats)) return target;
+  if (temp && publishProof && sameIdentity(temp.stats, publishProof.stats)) {
+    return publish(boundStats, options.expectedSha256, options.expectedByteLength, options.targetPrecondition, false);
+  }
+  if (temp && matchesPrecondition(currentTarget, options.targetPrecondition)) {
+    return publish(boundStats, options.expectedSha256, options.expectedByteLength, options.targetPrecondition, false);
+  }
   if (options.replace && target && !temp) {
     await link(options.targetName, options.tempName);
     return target;
   }
+  if (await inspectFile(options.targetName)) {
+    throw Object.assign(new Error("target changed after output preparation"), { code: "PATH_CHANGED" });
+  }
   if (!temp) throw Object.assign(new Error("prepared output missing"), { code: "NOT_RECOVERABLE" });
-  return publish(boundStats, options.expectedSha256, options.expectedByteLength);
+  return publish(boundStats, options.expectedSha256, options.expectedByteLength, options.targetPrecondition, false);
 }
 
 async function main() {
@@ -200,13 +272,9 @@ async function main() {
   send({ type: "ready", device: boundStats.dev, inode: boundStats.ino });
   if (options.action === "cleanup") {
     await waitCommand("start");
-    const temp = await inspectFile(options.tempName);
-    const publishName = options.tempName + ".publish";
-    const publishProof = await inspectFile(publishName);
-    if (temp && publishProof && sameIdentity(temp.stats, publishProof.stats)) {
-      await unlinkOwnedFile(publishName);
-    }
-    await unlinkOwnedFile(options.tempName);
+    // Node does not expose an identity-bound unlink primitive on Windows. Leave
+    // operation-owned proofs in place rather than deleting a path that may have
+    // been replaced after verification.
     return { cleaned: true };
   }
   const result = options.action === "recover"
@@ -216,8 +284,9 @@ async function main() {
     sha256: result.digest,
     byteLength: result.stats.size,
     modifiedAt: result.stats.mtime.toISOString(),
-    device: result.stats.dev,
-    inode: result.stats.ino,
+    device: String(result.stats.dev),
+    inode: String(result.stats.ino),
+    targetPrecondition: result.targetPrecondition ?? options.targetPrecondition,
   };
 }
 
@@ -237,14 +306,17 @@ main().then((result) => {
 export type IdentityBoundTranscriptPrepared = {
   sha256: string;
   byteLength: number;
-  device: number;
-  inode: number;
+  device: string;
+  inode: string;
+  targetPrecondition:
+    | { kind: "absent" }
+    | { kind: "file"; sha256: string; byteLength: number; device: string; inode: string };
 };
 
 export type IdentityBoundTranscriptResult = IdentityBoundTranscriptPrepared & {
   modifiedAt: string;
-  device: number;
-  inode: number;
+  device: string;
+  inode: string;
 };
 
 export type IdentityBoundTranscriptExportInput = {
@@ -259,8 +331,13 @@ export type IdentityBoundTranscriptExportInput = {
   resumed?: boolean;
   expectedSha256?: string;
   expectedByteLength?: number;
+  expectedDevice?: string;
+  expectedInode?: string;
+  targetPrecondition?: IdentityBoundTranscriptPrepared["targetPrecondition"];
   onIdentityBound?(): void;
   onPrepared?(prepared: IdentityBoundTranscriptPrepared): void;
+  onAfterReplaceProof?(): void;
+  onAfterReplaceTargetClaim?(): void;
   onAfterReplaceRename?(): void;
 };
 
@@ -280,6 +357,8 @@ type WorkerMessage =
   | ({ type: "prepared" } & IdentityBoundTranscriptPrepared)
   | ({ type: "result" } & IdentityBoundTranscriptResult)
   | { type: "renamed" }
+  | { type: "proof-linked" }
+  | { type: "target-claimed" }
   | { type: "cleaned" }
   | { type: "failure"; code: string; published: boolean; actualBytes?: number };
 
@@ -288,6 +367,10 @@ type WorkerExecutionInput = IdentityBoundTranscriptExportInput | {
   parentStats: Stats;
   tempName: string;
   action: "cleanup";
+  expectedSha256: string;
+  expectedByteLength: number;
+  expectedDevice: string;
+  expectedInode: string;
 };
 
 async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBoundTranscriptResult | null> {
@@ -307,6 +390,9 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
           resumed: "resumed" in input ? input.resumed : false,
           expectedSha256: "expectedSha256" in input ? input.expectedSha256 : undefined,
           expectedByteLength: "expectedByteLength" in input ? input.expectedByteLength : undefined,
+          expectedDevice: "expectedDevice" in input ? input.expectedDevice : undefined,
+          expectedInode: "expectedInode" in input ? input.expectedInode : undefined,
+          targetPrecondition: "targetPrecondition" in input ? input.targetPrecondition : undefined,
         }),
       },
       stdio: ["pipe", "pipe", "pipe", "pipe"],
@@ -320,12 +406,13 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
     let failure: unknown = null;
     let settled = false;
     let ready = false;
+    let sentMutation = false;
     let inactivityTimer: NodeJS.Timeout;
 
     const touch = () => {
       clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
-        failure = new IdentityBoundTranscriptExportError("RUNTIME_UNAVAILABLE", false);
+        failure = new IdentityBoundTranscriptExportError("RUNTIME_UNAVAILABLE", sentMutation || input.action === "recover");
         child.kill();
       }, 300_000);
     };
@@ -344,7 +431,8 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
     };
 
     const sendControl = (command: string) => {
-      if (!control?.writable) return fail(new IdentityBoundTranscriptExportError("RUNTIME_UNAVAILABLE", false));
+      if (!control?.writable) return fail(new IdentityBoundTranscriptExportError("RUNTIME_UNAVAILABLE", sentMutation || input.action === "recover"));
+      sentMutation = true;
       control.write(`${command}\n`);
       touch();
     };
@@ -374,7 +462,7 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
         try {
           message = JSON.parse(line) as WorkerMessage;
         } catch {
-          fail(new IdentityBoundTranscriptExportError("RUNTIME_UNAVAILABLE", false));
+          fail(new IdentityBoundTranscriptExportError("RUNTIME_UNAVAILABLE", sentMutation || input.action === "recover"));
           return;
         }
         if (message.type === "ready") {
@@ -402,6 +490,7 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
               byteLength: message.byteLength,
               device: message.device,
               inode: message.inode,
+              targetPrecondition: message.targetPrecondition,
             });
             sendControl("publish");
           } catch (error) {
@@ -414,6 +503,20 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
           } catch (error) {
             fail(normalizeIdentityHookError(error, true));
           }
+        } else if (message.type === "proof-linked") {
+          try {
+            if ("onAfterReplaceProof" in input) input.onAfterReplaceProof?.();
+            sendControl("continue-proof");
+          } catch (error) {
+            fail(normalizeIdentityHookError(error, true));
+          }
+        } else if (message.type === "target-claimed") {
+          try {
+            if ("onAfterReplaceTargetClaim" in input) input.onAfterReplaceTargetClaim?.();
+            sendControl("continue-target-claim");
+          } catch (error) {
+            fail(normalizeIdentityHookError(error, true));
+          }
         } else if (message.type === "result") {
           result = message;
           control?.end();
@@ -421,9 +524,12 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
           cleaned = true;
           control?.end();
         } else {
+          const published = message.code === "REPLACE_UNAVAILABLE"
+            ? false
+            : message.published || sentMutation || input.action === "recover";
           failure = new IdentityBoundTranscriptExportError(
             message.code,
-            message.published,
+            published,
             message.actualBytes,
           );
           control?.end();
@@ -452,7 +558,10 @@ async function executeWorker(input: WorkerExecutionInput): Promise<IdentityBound
       if (failure) return reject(failure);
       if (code === 0 && ready && result) return resolve(result);
       if (code === 0 && ready && cleaned) return resolve(null);
-      reject(new IdentityBoundTranscriptExportError(stderr.trim() || "RUNTIME_UNAVAILABLE", false));
+      reject(new IdentityBoundTranscriptExportError(
+        stderr.trim() || "RUNTIME_UNAVAILABLE",
+        sentMutation || input.action === "recover",
+      ));
     });
   });
 }
@@ -469,6 +578,11 @@ export async function cleanupIdentityBoundTranscript(input: {
   parentPath: string;
   parentStats: Stats;
   tempName: string;
+  expectedSha256: string;
+  expectedByteLength: number;
+  expectedDevice: string;
+  expectedInode: string;
+  targetPrecondition?: IdentityBoundTranscriptPrepared["targetPrecondition"];
 }): Promise<void> {
   await executeWorker({ ...input, action: "cleanup" });
 }

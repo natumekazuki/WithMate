@@ -120,6 +120,9 @@ export const WITHMATE_UPDATE_PROMPT_TEMPLATE_CHANNEL = "withmate:update-prompt-t
 export const WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL = "withmate:delete-prompt-template";
 export const WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL = "withmate:get-app-database-diagnostics";
 export const WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL = "withmate:get-memory-v6-diagnostics";
+export const WITHMATE_GET_SESSION_INTEGRATION_DIAGNOSTICS_CHANNEL =
+  "withmate:get-session-integration-diagnostics";
+export const WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL = "withmate:register-codex-session-mcp";
 export const WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL = "withmate:install-memory-v6-cli-shim";
 export const WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL = "withmate:uninstall-memory-v6-cli-shim";
 export const WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL = "withmate:get-memory-v6-file-usage";

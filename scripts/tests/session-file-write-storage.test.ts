@@ -54,6 +54,7 @@ describe("Session file write idempotency storage", () => {
         sessionId: "session-a",
         relativePath: "notes/brief.md",
         tempName: ".withmate-write-temp-1",
+        prepared: null,
         resumed: false,
       });
       assert.deepEqual(storage.prepareSessionFileWrite({
@@ -69,10 +70,56 @@ describe("Session file write idempotency storage", () => {
         resumed: true,
       });
 
+      const preparedProof = {
+        sha256: "a".repeat(64),
+        byteLength: 5,
+        device: "11",
+        inode: "22",
+        targetPrecondition: { kind: "absent" as const },
+      };
+      storage.recordPreparedSessionFileWrite({
+        idempotencyKey: "write-1",
+        requestFingerprint: "fingerprint-1",
+        prepared: preparedProof,
+      });
+      assert.deepEqual(storage.prepareSessionFileWrite({
+        idempotencyKey: "write-1",
+        requestFingerprint: "fingerprint-1",
+        sessionId: "session-a",
+        relativePath: "ignored-by-replay.md",
+        tempName: "ignored-by-replay.tmp",
+        createdAt: "2026-08-12T00:01:00.000Z",
+        expiresAt: "2026-08-13T00:01:00.000Z",
+      }), {
+        ...prepared,
+        prepared: preparedProof,
+        resumed: true,
+      });
+      assert.throws(
+        () => storage.recordPreparedSessionFileWrite({
+          idempotencyKey: "write-1",
+          requestFingerprint: "fingerprint-1",
+          prepared: { ...preparedProof, inode: "different" },
+        }),
+        /proof changed/,
+      );
+
       const result = { file: { sessionId: "session-a", relativePath: "notes/brief.md", byteLength: 5 } };
+      assert.throws(
+        () => storage.completeSessionFileWrite({
+          idempotencyKey: "write-1",
+          requestFingerprint: "fingerprint-1",
+          prepared: { ...preparedProof, device: "different" },
+          result,
+          completedAt: "2026-08-12T00:02:00.000Z",
+          expiresAt: "2026-08-13T00:02:00.000Z",
+        }),
+        /does not match the prepared proof/,
+      );
       assert.deepEqual(storage.completeSessionFileWrite({
         idempotencyKey: "write-1",
         requestFingerprint: "fingerprint-1",
+        prepared: preparedProof,
         result,
         completedAt: "2026-08-12T00:02:00.000Z",
         expiresAt: "2026-08-13T00:02:00.000Z",
@@ -90,6 +137,7 @@ describe("Session file write idempotency storage", () => {
         sessionId: "session-a",
         relativePath: "notes/brief.md",
         tempName: ".withmate-write-temp-1",
+        prepared: preparedProof,
         result,
       });
       assert.throws(
@@ -141,6 +189,7 @@ describe("Session file write idempotency storage", () => {
         sessionId: "session-a",
         relativePath: "existing.md",
         tempName: ".withmate-write-rejected",
+        prepared: null,
         error: canonicalError,
       });
     } finally {
@@ -186,9 +235,22 @@ describe("Session file write idempotency storage", () => {
           expiresAt: "2026-08-11T00:00:00.000Z",
         });
       }
+      const appliedProof = {
+        sha256: "b".repeat(64),
+        byteLength: 1,
+        device: "1",
+        inode: "2",
+        targetPrecondition: { kind: "absent" as const },
+      };
+      storage.recordPreparedSessionFileWrite({
+        idempotencyKey: "applied",
+        requestFingerprint: "applied",
+        prepared: appliedProof,
+      });
       storage.completeSessionFileWrite({
         idempotencyKey: "applied",
         requestFingerprint: "applied",
+        prepared: appliedProof,
         result: { ok: true },
         completedAt: "2026-08-12T00:00:00.000Z",
         expiresAt: "2026-08-13T00:00:00.000Z",

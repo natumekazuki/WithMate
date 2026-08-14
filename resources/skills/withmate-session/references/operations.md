@@ -8,12 +8,13 @@ WithMate owns the Session database, provider adapters, loopback runtime, discove
 withmate-session status
 withmate-session schema
 withmate-session runtime catalog
-withmate-session mcp-server
 ```
+
+These are CLI fallback commands. Use them only when the user explicitly permits CLI fallback. The MCP host owns `withmate-session mcp-server`; never run that long-lived stdio entry through a shell or command-execution tool. Register the connection from WithMate Settings, then start a new Codex Session or restart Codex if the tools are not visible.
 
 The CLI request, result, and error schema versions are `withmate-session-request-v2`, `withmate-session-result-v2`, and `withmate-session-error-v2`. MCP server version is `1.0.0`. Exact fields come from the current CLI `schema` output and MCP `tools/list`, not this prose reference.
 
-On Windows, the installer exposes `withmate-session.cmd` through the WindowsApps alias. The runtime credential directory is `%LOCALAPPDATA%\WithMate\session-runtime`; a custom `WITHMATE_SESSION_RUNTIME_DIR` is rejected on Windows. Failure to establish a private owner ACL disables the runtime.
+On Windows, the packaged launcher is `<install-root>\withmate-session.cmd`. WithMate Settings registers that package-owned absolute path for Codex MCP. The installer does not create or overwrite a shared WindowsApps alias for Session CLI. CLI fallback therefore requires the packaged launcher path to be invoked explicitly or placed on PATH by the user. The runtime credential directory is `%LOCALAPPDATA%\WithMate\session-runtime`; a custom `WITHMATE_SESSION_RUNTIME_DIR` is rejected on Windows. Failure to establish a private owner ACL disables the runtime.
 
 ## CLI input and output
 
@@ -84,7 +85,7 @@ List operations use opaque cursors, a default limit of 50, and a maximum of 500.
 - Transcript inline: default 1 MiB, maximum 8 MiB
 - SessionFolder transcript: default 64 MiB, maximum 1 GiB
 
-Limits use UTF-8 byte counts. Oversized content fails instead of truncating. Session file writes do not replace existing files unless `replace: true` is explicit. Transcript SessionFolder publication is atomic and uses a destination idempotency key.
+Limits use UTF-8 byte counts. Oversized content fails instead of truncating. The Windows v6.4 runtime publishes only to an absent SessionFolder target. `replace: true` against an existing target fails before the target is changed because a safe identity-bound replacement primitive is not available. Transcript SessionFolder publication is atomic and uses a destination idempotency key.
 
 ## Stable error handling
 

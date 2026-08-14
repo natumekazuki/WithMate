@@ -30,6 +30,7 @@ import {
 } from "./identity-bound-directory-listing.js";
 import {
   SessionFileWriteIdempotencyConflictError,
+  type SessionFileWritePreparedProof,
   type SessionStorageV6,
 } from "./session-storage-v6.js";
 
@@ -67,6 +68,7 @@ export type SessionFileServiceDeps = {
     SessionStorageV6,
     | "getSessionSummary"
     | "prepareSessionFileWrite"
+    | "recordPreparedSessionFileWrite"
     | "completeSessionFileWrite"
     | "rejectSessionFileWrite"
   >;
@@ -74,6 +76,10 @@ export type SessionFileServiceDeps = {
   now?(): Date;
   createTempName?(): string;
   onWriteIdentityBound?(): void;
+  onWritePrepared?(): void | Promise<void>;
+  onAfterReplaceProof?(): void;
+  onAfterReplaceTargetClaim?(): void;
+  writeTimeoutMs?: number;
 };
 
 export class SessionFileService {
@@ -203,11 +209,11 @@ export class SessionFileService {
       throw error;
     }
     if (prepared.kind === "replay") {
-      await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName);
+      await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName, prepared.prepared);
       return normalizeWriteResult(prepared.result);
     }
     if (prepared.kind === "rejected") {
-      await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName);
+      await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName, prepared.prepared);
       throw normalizeStoredWriteError(prepared.error);
     }
 
@@ -219,6 +225,7 @@ export class SessionFileService {
     }
     try {
       const contentDigest = sha256(contentBytes);
+      let durableProof = prepared.prepared;
       let written: Awaited<ReturnType<typeof writeIdentityBoundFile>>;
       try {
         written = await writeIdentityBoundFile({
@@ -230,7 +237,20 @@ export class SessionFileService {
           tempName: prepared.tempName,
           replace: input.replace,
           resumed: prepared.resumed,
+          prepared: prepared.prepared,
           onIdentityBound: this.deps.onWriteIdentityBound,
+          onAfterReplaceProof: this.deps.onAfterReplaceProof,
+          onAfterReplaceTargetClaim: this.deps.onAfterReplaceTargetClaim,
+          timeoutMs: this.deps.writeTimeoutMs,
+          onPrepared: async (proof) => {
+            this.deps.storage.recordPreparedSessionFileWrite({
+              idempotencyKey: input.idempotencyKey,
+              requestFingerprint,
+              prepared: proof,
+            });
+            durableProof = proof;
+            await this.deps.onWritePrepared?.();
+          },
         });
         try {
           await confirmRootIdentity(root, relativePath);
@@ -251,8 +271,23 @@ export class SessionFileService {
           if (error.code === "FILE_ALREADY_EXISTS") {
             const terminalError = fileAlreadyExists(relativePath);
             const rejected = this.rejectWrite(input.idempotencyKey, requestFingerprint, terminalError);
-            await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName, root);
+            await this.cleanupWriteTempBestEffort(
+              input.sessionId,
+              relativePath,
+              prepared.tempName,
+              durableProof,
+              root,
+            );
             throw rejected;
+          }
+          if (error.code === "REPLACE_UNAVAILABLE") {
+            throw new SessionFileServiceError(
+              "RUNTIME_UNAVAILABLE",
+              "Safe replacement of an existing Session file is unavailable on this platform.",
+              false,
+              { sessionId: input.sessionId, relativePath, reason: "safe_replace_unavailable" },
+              "not_applied",
+            );
           }
           throw new SessionFileServiceError(
             error.code === "PATH_CHANGED" ? "PATH_CHANGED" : "RUNTIME_UNAVAILABLE",
@@ -261,12 +296,12 @@ export class SessionFileService {
               : "The Session file write could not be completed.",
             true,
             { sessionId: input.sessionId, relativePath },
-            error.published ? "indeterminate" : "not_applied",
+            error.effect,
           );
         }
         throw error;
       }
-      const result = this.completeWrite(input.idempotencyKey, requestFingerprint, {
+      const result = this.completeWrite(input.idempotencyKey, requestFingerprint, written, {
         file: {
           sessionId: input.sessionId,
           relativePath,
@@ -274,7 +309,7 @@ export class SessionFileService {
           modifiedAt: written.modifiedAt,
         },
       });
-      await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName, root);
+      await this.cleanupWriteTempBestEffort(input.sessionId, relativePath, prepared.tempName, written, root);
       return result;
     } finally {
       await closeAuthorizedRoot(root);
@@ -284,12 +319,14 @@ export class SessionFileService {
   private completeWrite(
     idempotencyKey: string,
     requestFingerprint: string,
+    prepared: SessionFileWritePreparedProof,
     result: SessionRuntimeFileWriteTextResult,
   ): SessionRuntimeFileWriteTextResult {
     const completedAt = this.now();
     return normalizeWriteResult(this.deps.storage.completeSessionFileWrite({
       idempotencyKey,
       requestFingerprint,
+      prepared,
       result,
       completedAt: completedAt.toISOString(),
       expiresAt: new Date(completedAt.getTime() + SESSION_FILE_WRITE_IDEMPOTENCY_TTL_MS).toISOString(),
@@ -321,8 +358,10 @@ export class SessionFileService {
     sessionId: string,
     relativePath: string,
     tempName: string,
+    prepared: SessionFileWritePreparedProof | null,
     authorizedRoot?: AuthorizedRoot,
   ): Promise<void> {
+    if (!prepared) return;
     let ownedRoot = authorizedRoot;
     try {
       ownedRoot ??= await authorizeRoot(this.deps.resolveSessionFilesDirectory(sessionId), false) ?? undefined;
@@ -332,6 +371,7 @@ export class SessionFileService {
         rootStats: ownedRoot.stats,
         relativePath,
         tempName,
+        prepared,
       });
     } catch {
       // Cleanup is retried on an idempotent replay and must not change an applied result.

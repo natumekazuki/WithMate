@@ -51,6 +51,7 @@ import type { AppBootStatus } from "./app-boot-state.js";
 import type { WorkspaceDirectoryValidationResult } from "./workspace-directory-validation.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
+import type { SessionIntegrationDiagnostics } from "./session-integration-diagnostics-state.js";
 import type { MemoryV6ReviewApi } from "./memory-v6/memory-review-state.js";
 import type {
   AuxiliarySession,
@@ -255,6 +256,8 @@ export type WithMateWindowSettingsApi = {
   updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): Promise<AppSettings>;
   getAppDatabaseDiagnostics(): Promise<AppDatabaseDiagnostics>;
   getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics>;
+  getSessionIntegrationDiagnostics(): Promise<SessionIntegrationDiagnostics>;
+  registerCodexSessionMcp(): Promise<SessionIntegrationDiagnostics>;
   installMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Promise<MemoryV6Diagnostics>;
   resetAppDatabase(request: ResetAppDatabaseRequest): Promise<ResetAppDatabaseResult>;

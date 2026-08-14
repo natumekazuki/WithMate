@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdirSync, renameSync, symlinkSync } from "node:fs";
+import { mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -24,6 +24,8 @@ const EARLIER_AT = "2026-08-12T00:00:00.000Z";
 
 async function createFixture(options: {
   onBeforePublish?(): void;
+  onAfterReplaceProof?(): void;
+  onAfterReplaceTargetClaim?(): void;
   onAfterReplaceRename?(): void;
   onAfterPublish?(): void;
 } = {}) {
@@ -300,7 +302,7 @@ describe("SessionTranscriptService", () => {
       assert.equal(bytes.toString("utf8"), inline.content);
       assert.equal(createHash("sha256").update(bytes).digest("hex"), first.file.sha256);
       assert.equal(bytes.byteLength, first.file.byteLength);
-      assert.equal((await readdir(path.join(fixture.sessionFolder, "exports"))).some((name) => name.includes("test-temp")), false);
+      assert.equal((await readdir(path.join(fixture.sessionFolder, "exports"))).some((name) => name.includes("test-temp")), true);
       await assert.rejects(
         fixture.service.export(folderInput({ relativePath: "other.json" })),
         (error) => error instanceof SessionTranscriptServiceError && error.code === "IDEMPOTENCY_CONFLICT",
@@ -337,7 +339,7 @@ describe("SessionTranscriptService", () => {
     }
   });
 
-  it("EXT-EXPORT-14: SessionFolder limit超過はtempとdestinationを残さずterminal rejectionへ収束する", async () => {
+  it("EXT-EXPORT-14: SessionFolder limit超過はdestinationを作らずtemp proofを保持してterminal rejectionへ収束する", async () => {
     const fixture = await createFixture();
     const input = folderInput({ idempotencyKey: "too-large", maxBytes: 1 });
     try {
@@ -350,7 +352,29 @@ describe("SessionTranscriptService", () => {
         );
       }
       const exportDirectory = path.join(fixture.sessionFolder, "exports");
-      assert.deepEqual(await readdir(exportDirectory), []);
+      assert.deepEqual(await readdir(exportDirectory), [".withmate-transcript-export-test-temp.tmp"]);
+      await assert.rejects(readFile(path.join(exportDirectory, "transcript.json")), /ENOENT/);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-EXPORT-14: operation-owned temp名のcollisionは既存fileを保持してfail-closedにする", async () => {
+    const fixture = await createFixture();
+    const exportDirectory = path.join(fixture.sessionFolder, "exports");
+    const tempPath = path.join(exportDirectory, ".withmate-transcript-export-test-temp.tmp");
+    try {
+      await mkdir(exportDirectory, { recursive: true });
+      await writeFile(tempPath, "third-party content", "utf8");
+      await assert.rejects(
+        fixture.service.export(folderInput({ idempotencyKey: "temp-collision" })),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "PATH_OUTSIDE_SESSION_FOLDER"
+          && error.effect === "not_applied",
+      );
+      assert.equal(await readFile(tempPath, "utf8"), "third-party content");
+      await assert.rejects(readFile(path.join(exportDirectory, "transcript.json")), /ENOENT/);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
@@ -376,14 +400,14 @@ describe("SessionTranscriptService", () => {
       const recoveredIdentity = await stat(targetPath);
       assert.equal(recovered.destination, "session_folder");
       assert.equal(recoveredIdentity.ino, firstIdentity.ino);
-      assert.equal((await readdir(path.dirname(targetPath))).some((name) => name.includes("test-temp")), false);
+      assert.equal((await readdir(path.dirname(targetPath))).some((name) => name.includes("test-temp")), true);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
     }
   });
 
-  it("EXT-EXPORT-14: replace rename直後のresponse lossをtarget hashから回復する", async () => {
+  it("EXT-EXPORT-14: 既存targetのreplaceはrename前にfail-closedにする", async () => {
     let failAfterRename = true;
     const fixture = await createFixture({
       onAfterReplaceRename: () => {
@@ -401,20 +425,155 @@ describe("SessionTranscriptService", () => {
     });
     try {
       await writeFile(targetPath, "old content", "utf8");
-      await assert.rejects(fixture.service.export(input), /simulated rename response loss/);
-      const firstIdentity = await stat(targetPath);
-      const recovered = await fixture.service.export(input);
-      const recoveredIdentity = await stat(targetPath);
-      assert.equal(recovered.destination, "session_folder");
-      assert.equal(recoveredIdentity.ino, firstIdentity.ino);
-      assert.equal((await readdir(fixture.sessionFolder)).some((name) => name.includes("test-temp")), false);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await assert.rejects(
+          fixture.service.export(input),
+          (error) => error instanceof SessionTranscriptServiceError
+            && error.code === "EXPORT_FAILED"
+            && error.retryable === false
+            && error.effect === "not_applied",
+        );
+      }
+      assert.equal(failAfterRename, true);
+      assert.equal(await readFile(targetPath, "utf8"), "old content");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
     }
   });
 
-  it("EXT-TRANSCRIPT-13: replace rename後のparent identity failureでも移動先のtempを残さない", async () => {
+  it("EXT-EXPORT-14: 既存targetのreplace拒否後も第三者変更を上書きしない", async () => {
+    let failAfterRename = true;
+    const fixture = await createFixture({
+      onAfterReplaceRename: () => {
+        if (failAfterRename) {
+          failAfterRename = false;
+          throw new Error("simulated rename response loss");
+        }
+      },
+    });
+    const targetPath = path.join(fixture.sessionFolder, "changed-after-publish.json");
+    const input = folderInput({
+      relativePath: "changed-after-publish.json",
+      replace: true,
+      idempotencyKey: "replace-target-changed",
+    });
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        fixture.service.export(input),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "EXPORT_FAILED"
+          && error.effect === "not_applied",
+      );
+      assert.equal(failAfterRename, true);
+      await writeFile(targetPath, "third-party content", "utf8");
+      await assert.rejects(
+        fixture.service.export(input),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "EXPORT_FAILED"
+          && error.effect === "not_applied",
+      );
+      assert.equal(await readFile(targetPath, "utf8"), "third-party content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-EXPORT-14: 既存targetのreplaceはproof作成前にfail-closedにする", async () => {
+    let stopAfterProof = true;
+    const fixture = await createFixture({
+      onAfterReplaceProof: () => {
+        if (!stopAfterProof) return;
+        stopAfterProof = false;
+        throw new Error("simulated proof response loss");
+      },
+    });
+    const targetPath = path.join(fixture.sessionFolder, "proof-before-rename.json");
+    const input = folderInput({
+      relativePath: "proof-before-rename.json",
+      replace: true,
+      idempotencyKey: "replace-proof-before-rename",
+    });
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        fixture.service.export(input),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "EXPORT_FAILED"
+          && error.effect === "not_applied",
+      );
+      assert.equal(stopAfterProof, true);
+      await writeFile(targetPath, "third-party content", "utf8");
+      await assert.rejects(
+        fixture.service.export(input),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "EXPORT_FAILED"
+          && error.effect === "not_applied",
+      );
+      assert.equal(await readFile(targetPath, "utf8"), "third-party content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-EXPORT-14: 既存targetのreplaceはprepared保存前にfail-closedにする", async () => {
+    let stopAfterPrepared = true;
+    const fixture = await createFixture({
+      onBeforePublish: () => {
+        if (!stopAfterPrepared) return;
+        stopAfterPrepared = false;
+        throw new Error("simulated pre-proof stop");
+      },
+    });
+    const targetPath = path.join(fixture.sessionFolder, "pre-proof.json");
+    const input = folderInput({ relativePath: "pre-proof.json", replace: true, idempotencyKey: "pre-proof-retry" });
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        fixture.service.export(input),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "EXPORT_FAILED"
+          && error.effect === "not_applied",
+      );
+      assert.equal(stopAfterPrepared, true);
+      assert.equal(await readFile(targetPath, "utf8"), "old content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-EXPORT-14: 既存targetのreplaceはtarget claim前にfail-closedにする", async () => {
+    let targetPath = "";
+    let targetClaimed = false;
+    const fixture = await createFixture({
+      onAfterReplaceTargetClaim: () => {
+        targetClaimed = true;
+        writeFileSync(targetPath, "third-party content", "utf8");
+      },
+    });
+    targetPath = path.join(fixture.sessionFolder, "claim-race.json");
+    const input = folderInput({ relativePath: "claim-race.json", replace: true, idempotencyKey: "claim-race" });
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        fixture.service.export(input),
+        (error) => error instanceof SessionTranscriptServiceError
+          && error.code === "EXPORT_FAILED"
+          && error.effect === "not_applied",
+      );
+      assert.equal(targetClaimed, false);
+      assert.equal(await readFile(targetPath, "utf8"), "old content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXT-TRANSCRIPT-13: parent identity failureではpath unlinkせずoperation proofを保持する", async () => {
     let originalParent = "";
     let movedParent = "";
     const fixture = await createFixture({
@@ -437,8 +596,8 @@ describe("SessionTranscriptService", () => {
           && error.code === "PATH_OUTSIDE_SESSION_FOLDER"
           && error.retryable,
       );
-      assert.equal((await readdir(originalParent)).some((name) => name.includes("test-temp")), false);
-      await assertNoTranscriptTemp(movedParent);
+      const retainedInOriginal = (await readdir(originalParent)).some((name) => name.includes("test-temp"));
+      assert.equal(retainedInOriginal, true);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

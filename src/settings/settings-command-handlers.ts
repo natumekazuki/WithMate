@@ -9,6 +9,7 @@ import {
 import { resolveProviderRelativePathFromSelection } from "./settings-view-model.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
+import type { SessionIntegrationDiagnostics } from "../session-integration-diagnostics-state.js";
 
 type SettingsCommandHandlersContext = {
   getApi: () => WithMateWindowApi | null;
@@ -17,6 +18,7 @@ type SettingsCommandHandlersContext = {
   setSettingsDraft: (settings: AppSettings) => void;
   setSettingsFeedback: (feedback: string) => void;
   setMemoryV6Diagnostics: (diagnostics: MemoryV6Diagnostics) => void;
+  setSessionIntegrationDiagnostics: (diagnostics: SessionIntegrationDiagnostics) => void;
   getSessionCleanupCutoffDate?: () => string;
   setDeletingOldSessions?: (deleting: boolean) => void;
   refreshSessionSummaries?: () => Promise<void>;
@@ -31,6 +33,7 @@ export type SettingsCommandHandlers = Pick<
   | "onOpenCrashDumpFolder"
   | "onInstallMemoryV6CliShim"
   | "onUninstallMemoryV6CliShim"
+  | "onRegisterCodexSessionMcp"
   | "onBrowseProviderSkillRootPath"
   | "onBrowseProviderSkillRelativePath"
   | "onBrowseProviderInstructionRelativePath"
@@ -45,6 +48,7 @@ export function buildSettingsCommandHandlers({
   setSettingsDraft,
   setSettingsFeedback,
   setMemoryV6Diagnostics,
+  setSessionIntegrationDiagnostics,
   getSessionCleanupCutoffDate = () => "",
   setDeletingOldSessions = () => undefined,
   refreshSessionSummaries,
@@ -149,6 +153,17 @@ export function buildSettingsCommandHandlers({
           setSettingsFeedback(formatCliShimActionFeedback(diagnostics, "uninstall"));
         } catch (error) {
           setSettingsFeedback(error instanceof Error ? error.message : "CLI shim のアンインストールに失敗したよ。");
+        }
+      });
+    },
+    onRegisterCodexSessionMcp: () => {
+      void withApi(async (api) => {
+        try {
+          const diagnostics = await api.registerCodexSessionMcp();
+          setSessionIntegrationDiagnostics(diagnostics);
+          setSettingsFeedback(formatCodexSessionMcpFeedback(diagnostics));
+        } catch (error) {
+          setSettingsFeedback(error instanceof Error ? error.message : "Codex Session MCP の登録に失敗したよ。");
         }
       });
     },
@@ -261,6 +276,19 @@ export function buildSettingsCommandHandlers({
       });
     },
   };
+}
+
+function formatCodexSessionMcpFeedback(diagnostics: SessionIntegrationDiagnostics): string {
+  switch (diagnostics.codexMcp.status) {
+    case "installed":
+      return "Codex Session MCP を登録したよ。新しい Codex Session を開始するか、Codex を再起動してね。";
+    case "unchanged":
+      return "Codex Session MCP は登録済みだよ。tools が見えない場合は新しい Codex Session を開始してね。";
+    case "collision":
+      return diagnostics.codexMcp.errorMessage ?? "同名のCodex MCP設定があるため上書きしなかったよ。";
+    default:
+      return diagnostics.codexMcp.errorMessage ?? `Codex Session MCP: ${diagnostics.codexMcp.status}`;
+  }
 }
 
 function formatCliShimActionFeedback(

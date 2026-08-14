@@ -197,6 +197,8 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "state",
     "output_sha256",
     "byte_length",
+    "output_device",
+    "output_inode",
     "result_json",
     "created_at",
     "expires_at",
@@ -984,9 +986,24 @@ export const CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL = `
     relative_path TEXT NOT NULL,
     temp_name TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'rejected')),
+    output_sha256 TEXT,
+    byte_length INTEGER,
+    file_device TEXT,
+    file_inode TEXT,
+    target_precondition_json TEXT CHECK (target_precondition_json IS NULL OR json_valid(target_precondition_json)),
     result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
+    CHECK (
+      (output_sha256 IS NULL AND byte_length IS NULL AND file_device IS NULL AND file_inode IS NULL AND target_precondition_json IS NULL)
+      OR (
+        output_sha256 IS NOT NULL
+        AND byte_length IS NOT NULL AND byte_length >= 0
+        AND file_device IS NOT NULL
+        AND file_inode IS NOT NULL
+        AND (state <> 'pending' OR target_precondition_json IS NOT NULL)
+      )
+    ),
     PRIMARY KEY (operation, idempotency_key),
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
   );
@@ -1182,12 +1199,17 @@ export const CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL = `
     state TEXT NOT NULL CHECK (state IN ('pending', 'applied', 'rejected')),
     output_sha256 TEXT CHECK (output_sha256 IS NULL OR length(output_sha256) = 64),
     byte_length INTEGER CHECK (byte_length IS NULL OR byte_length >= 0),
+    output_device TEXT,
+    output_inode TEXT,
+    target_precondition_json TEXT CHECK (target_precondition_json IS NULL OR json_valid(target_precondition_json)),
     result_json TEXT CHECK (result_json IS NULL OR json_valid(result_json)),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (operation, idempotency_key),
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
     CHECK ((output_sha256 IS NULL) = (byte_length IS NULL)),
+    CHECK ((output_device IS NULL) = (output_inode IS NULL)),
+    CHECK (state <> 'pending' OR output_sha256 IS NULL OR output_device IS NOT NULL),
     CHECK (
       (state = 'pending' AND result_json IS NULL)
       OR
@@ -1737,10 +1759,60 @@ function tableColumnNames(db: DatabaseSync, tableName: string): Set<string> {
 
 function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): void {
   const createdAtExpression = columns.has("created_at") ? "created_at" : "updated_at";
+  const shouldRestoreAuxiliaryTurns =
+    tableExists(db, "session_turns_v6")
+    && tableColumnNames(db, "session_turns_v6").has("auxiliary_session_id");
+  const shouldRestoreTurnInterims =
+    shouldRestoreAuxiliaryTurns && tableExists(db, "session_turn_interims_v6");
+  const shouldRestoreTurnProviderOutputs =
+    shouldRestoreAuxiliaryTurns && tableExists(db, "session_turn_provider_outputs_v6");
+  const shouldRestoreTurnPublicContext =
+    shouldRestoreAuxiliaryTurns && tableExists(db, "session_turn_public_context_v6");
   const shouldRestoreAuditAuxiliaryOwners =
     tableExists(db, "audit_events_v6") && tableColumnNames(db, "audit_events_v6").has("auxiliary_session_id");
 
   db.exec("DROP TABLE IF EXISTS auxiliary_sessions_v6_rebuild;");
+  // SQLite applies the parent table's delete actions during DROP TABLE, so preserve the dependent graph
+  // inside the schema-repair savepoint before replacing auxiliary_sessions.
+  if (shouldRestoreAuxiliaryTurns) {
+    db.exec(`
+      DROP TABLE IF EXISTS temp.session_turns_v6_auxiliary_restore;
+      CREATE TEMP TABLE session_turns_v6_auxiliary_restore AS
+      SELECT *
+      FROM session_turns_v6
+      WHERE auxiliary_session_id IS NOT NULL
+    `);
+  }
+  if (shouldRestoreTurnInterims) {
+    db.exec(`
+      DROP TABLE IF EXISTS temp.session_turn_interims_v6_auxiliary_restore;
+      CREATE TEMP TABLE session_turn_interims_v6_auxiliary_restore AS
+      SELECT interims.*
+      FROM session_turn_interims_v6 AS interims
+      INNER JOIN session_turns_v6_auxiliary_restore AS turns
+        ON turns.id = interims.turn_id
+    `);
+  }
+  if (shouldRestoreTurnProviderOutputs) {
+    db.exec(`
+      DROP TABLE IF EXISTS temp.session_turn_provider_outputs_v6_auxiliary_restore;
+      CREATE TEMP TABLE session_turn_provider_outputs_v6_auxiliary_restore AS
+      SELECT outputs.*
+      FROM session_turn_provider_outputs_v6 AS outputs
+      INNER JOIN session_turns_v6_auxiliary_restore AS turns
+        ON turns.id = outputs.turn_id
+    `);
+  }
+  if (shouldRestoreTurnPublicContext) {
+    db.exec(`
+      DROP TABLE IF EXISTS temp.session_turn_public_context_v6_auxiliary_restore;
+      CREATE TEMP TABLE session_turn_public_context_v6_auxiliary_restore AS
+      SELECT context.*
+      FROM session_turn_public_context_v6 AS context
+      INNER JOIN session_turns_v6_auxiliary_restore AS turns
+        ON turns.id = context.turn_id
+    `);
+  }
   if (shouldRestoreAuditAuxiliaryOwners) {
     db.exec("DROP TABLE IF EXISTS temp.audit_events_v6_auxiliary_owner_restore;");
     db.exec(`
@@ -1780,6 +1852,30 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
   `);
   db.exec("DROP TABLE auxiliary_sessions;");
   db.exec("ALTER TABLE auxiliary_sessions_v6_rebuild RENAME TO auxiliary_sessions;");
+  if (shouldRestoreAuxiliaryTurns) {
+    db.exec(`
+      INSERT INTO session_turns_v6
+      SELECT * FROM session_turns_v6_auxiliary_restore
+    `);
+  }
+  if (shouldRestoreTurnInterims) {
+    db.exec(`
+      INSERT INTO session_turn_interims_v6
+      SELECT * FROM session_turn_interims_v6_auxiliary_restore
+    `);
+  }
+  if (shouldRestoreTurnProviderOutputs) {
+    db.exec(`
+      INSERT INTO session_turn_provider_outputs_v6
+      SELECT * FROM session_turn_provider_outputs_v6_auxiliary_restore
+    `);
+  }
+  if (shouldRestoreTurnPublicContext) {
+    db.exec(`
+      INSERT INTO session_turn_public_context_v6
+      SELECT * FROM session_turn_public_context_v6_auxiliary_restore
+    `);
+  }
   if (shouldRestoreAuditAuxiliaryOwners) {
     db.exec(`
       UPDATE audit_events_v6
@@ -1804,6 +1900,18 @@ function rebuildAuxiliarySessionsTable(db: DatabaseSync, columns: Set<string>): 
     `);
     db.exec("DROP TABLE temp.audit_events_v6_auxiliary_owner_restore;");
   }
+  if (shouldRestoreTurnPublicContext) {
+    db.exec("DROP TABLE temp.session_turn_public_context_v6_auxiliary_restore;");
+  }
+  if (shouldRestoreTurnProviderOutputs) {
+    db.exec("DROP TABLE temp.session_turn_provider_outputs_v6_auxiliary_restore;");
+  }
+  if (shouldRestoreTurnInterims) {
+    db.exec("DROP TABLE temp.session_turn_interims_v6_auxiliary_restore;");
+  }
+  if (shouldRestoreAuxiliaryTurns) {
+    db.exec("DROP TABLE temp.session_turns_v6_auxiliary_restore;");
+  }
 }
 
 function backfillAuxiliarySessionsCreatedAt(db: DatabaseSync): void {
@@ -1815,7 +1923,11 @@ function ensureSessionFileWriteIdempotencyStates(db: DatabaseSync): void {
     db.exec(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL);
     return;
   }
-  if (tableSql(db, "session_file_write_idempotency_v6").includes("'rejected'")) {
+  const columns = tableColumnNames(db, "session_file_write_idempotency_v6");
+  if (
+    tableSql(db, "session_file_write_idempotency_v6").includes("'rejected'")
+    && ["output_sha256", "byte_length", "file_device", "file_inode", "target_precondition_json"].every((column) => columns.has(column))
+  ) {
     return;
   }
   db.exec(`
@@ -1824,16 +1936,85 @@ function ensureSessionFileWriteIdempotencyStates(db: DatabaseSync): void {
     DROP INDEX IF EXISTS idx_v6_session_file_write_idempotency_expires;
   `);
   db.exec(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL);
+  const legacyPendingHasProof = columns.has("output_sha256")
+    ? "state = 'pending' AND output_sha256 IS NOT NULL"
+    : "0";
   db.exec(`
     INSERT INTO session_file_write_idempotency_v6 (
       operation, idempotency_key, request_fingerprint, session_id, relative_path,
-      temp_name, state, result_json, created_at, expires_at
+      temp_name, state, output_sha256, byte_length, file_device, file_inode, target_precondition_json,
+      result_json, created_at, expires_at
     )
     SELECT
       operation, idempotency_key, request_fingerprint, session_id, relative_path,
-      temp_name, state, result_json, created_at, expires_at
+      temp_name, CASE WHEN ${legacyPendingHasProof} THEN 'rejected' ELSE state END,
+      ${columns.has("output_sha256")
+        ? (columns.has("target_precondition_json") ? "output_sha256" : "CASE WHEN state = 'pending' THEN NULL ELSE output_sha256 END")
+        : "NULL"},
+      ${columns.has("byte_length")
+        ? (columns.has("target_precondition_json") ? "byte_length" : "CASE WHEN state = 'pending' THEN NULL ELSE byte_length END")
+        : "NULL"},
+      ${columns.has("file_device")
+        ? (columns.has("target_precondition_json") ? "file_device" : "CASE WHEN state = 'pending' THEN NULL ELSE file_device END")
+        : "NULL"},
+      ${columns.has("file_inode")
+        ? (columns.has("target_precondition_json") ? "file_inode" : "CASE WHEN state = 'pending' THEN NULL ELSE file_inode END")
+        : "NULL"},
+      ${columns.has("target_precondition_json") ? "target_precondition_json" : "NULL"},
+      CASE WHEN ${legacyPendingHasProof} THEN json_object(
+        'code', 'RUNTIME_UNAVAILABLE',
+        'message', 'A legacy pending file publish proof cannot be recovered safely.',
+        'retryable', json('false'),
+        'details', json_object('reason', 'legacy_publish_proof_missing_target_precondition'),
+        'effect', 'indeterminate'
+      ) ELSE result_json END,
+      created_at, expires_at
     FROM session_file_write_idempotency_v6_legacy;
     DROP TABLE session_file_write_idempotency_v6_legacy;
+  `);
+}
+
+function ensureSessionTranscriptExportProofColumns(db: DatabaseSync): void {
+  if (!tableExists(db, "session_transcript_export_idempotency_v6")) {
+    db.exec(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL);
+    return;
+  }
+  const columns = tableColumnNames(db, "session_transcript_export_idempotency_v6");
+  const hadTargetPrecondition = columns.has("target_precondition_json");
+  if (!columns.has("output_device")) {
+    db.exec("ALTER TABLE session_transcript_export_idempotency_v6 ADD COLUMN output_device TEXT");
+  }
+  if (!columns.has("output_inode")) {
+    db.exec("ALTER TABLE session_transcript_export_idempotency_v6 ADD COLUMN output_inode TEXT");
+  }
+  if (!columns.has("target_precondition_json")) {
+    db.exec("ALTER TABLE session_transcript_export_idempotency_v6 ADD COLUMN target_precondition_json TEXT");
+  }
+  // A legacy pending publish proof has no trustworthy target precondition. It cannot be restaged:
+  // doing so would adopt the current target and could overwrite a third-party change.
+  if (!hadTargetPrecondition) {
+    db.exec(`
+      UPDATE session_transcript_export_idempotency_v6
+      SET state = 'rejected',
+          result_json = json_object(
+            'code', 'EXPORT_FAILED',
+            'message', 'A legacy pending transcript publish proof cannot be recovered safely.',
+            'retryable', json('false'),
+            'details', json_object('reason', 'legacy_publish_proof_missing_target_precondition'),
+            'effect', 'indeterminate'
+          ),
+          output_sha256 = NULL, byte_length = NULL, output_device = NULL, output_inode = NULL,
+          target_precondition_json = NULL
+      WHERE state = 'pending' AND output_sha256 IS NOT NULL
+    `);
+  }
+  // Pending rows without any durable output proof are safe to restage.
+  db.exec(`
+    UPDATE session_transcript_export_idempotency_v6
+    SET output_sha256 = NULL, byte_length = NULL, output_device = NULL, output_inode = NULL,
+        target_precondition_json = NULL
+    WHERE state = 'pending'
+      AND (output_device IS NULL OR output_inode IS NULL OR target_precondition_json IS NULL)
   `);
 }
 
@@ -1879,6 +2060,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
   ensureSessionExecutionIdempotencyOperations(db);
   ensureSessionFileWriteIdempotencyStates(db);
+  ensureSessionTranscriptExportProofColumns(db);
   ensureSessionInteractionExpiryReasons(db);
 
   if (!tableExists(db, "auxiliary_sessions")) {

@@ -9,6 +9,7 @@ import {
   cleanupSessionAttachmentSnapshotOrphans,
   createSessionAttachmentSnapshot,
   resolveSessionAttachmentSnapshotNamespace,
+  SessionAttachmentSnapshotLimitError,
 } from "../../src-electron/session-attachment-snapshot.js";
 import type { SessionTurnAttachmentReference } from "../../src/app-state.js";
 
@@ -185,6 +186,150 @@ test("EXT-ATTACH-10-SNAPSHOT: dispatch後かつsnapshot前のidentity差替え�
       createSessionAttachmentSnapshot(dispatch.attachments, references, snapshotDeps(root)),
       /changed/,
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATTACH-SNAPSHOT-LIMIT-02: 全添付共有のbyte上限超過はpartial snapshotを残さない", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-attachment-snapshot-byte-limit-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  await mkdir(sessionFolderPath, { recursive: true });
+  await writeFile(path.join(sessionFolderPath, "a.txt"), "1234", "utf8");
+  await writeFile(path.join(sessionFolderPath, "b.txt"), "5678", "utf8");
+  const references: SessionTurnAttachmentReference[] = [
+    { kind: "file", relativePath: "a.txt" },
+    { kind: "file", relativePath: "b.txt" },
+  ];
+  const deps = snapshotDeps(root);
+
+  try {
+    const dispatch = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      references,
+    );
+    await assert.rejects(
+      createSessionAttachmentSnapshot(dispatch.attachments, references, {
+        ...deps,
+        limits: { maxTotalBytes: 7 },
+      }),
+      (error) => error instanceof SessionAttachmentSnapshotLimitError
+        && error.code === "CONTENT_TOO_LARGE",
+    );
+    assert.deepEqual(await readdir(deps.snapshotNamespacePath), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATTACH-SNAPSHOT-LIMIT-02: folder配下のfile件数上限をaggregateで拒否する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-attachment-snapshot-file-limit-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const folderPath = path.join(sessionFolderPath, "docs");
+  await mkdir(folderPath, { recursive: true });
+  await writeFile(path.join(folderPath, "a.txt"), "a", "utf8");
+  await writeFile(path.join(folderPath, "b.txt"), "b", "utf8");
+  const references: SessionTurnAttachmentReference[] = [{ kind: "folder", relativePath: "docs" }];
+  const deps = snapshotDeps(root);
+
+  try {
+    const dispatch = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      references,
+    );
+    await assert.rejects(
+      createSessionAttachmentSnapshot(dispatch.attachments, references, {
+        ...deps,
+        limits: { maxFileCount: 1 },
+      }),
+      (error) => error instanceof SessionAttachmentSnapshotLimitError
+        && error.code === "LIMIT_EXCEEDED",
+    );
+    assert.deepEqual(await readdir(deps.snapshotNamespacePath), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATTACH-SNAPSHOT-LIMIT-02: 空directoryもaggregate entry上限へ数えてpartial snapshotを除去する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-attachment-snapshot-entry-limit-"));
+  const workspace = path.join(root, "workspace");
+  const namespace = path.join(root, "snapshots");
+  const folderPath = path.join(workspace, "folder");
+  try {
+    await mkdir(path.join(folderPath, "empty-a"), { recursive: true });
+    await mkdir(path.join(folderPath, "empty-b"));
+    const references: SessionTurnAttachmentReference[] = [{ kind: "folder", relativePath: "folder" }];
+    const dispatch = await resolveSessionFolderAttachments(
+      { workspacePath: workspace, allowedAdditionalDirectories: [] },
+      references,
+    );
+
+    await assert.rejects(
+      createSessionAttachmentSnapshot(dispatch.attachments, references, {
+        snapshotNamespacePath: namespace,
+        limits: { maxFileCount: 2 },
+      }),
+      (error: unknown) => error instanceof SessionAttachmentSnapshotLimitError
+        && error.code === "LIMIT_EXCEEDED",
+    );
+    assert.deepEqual(await readdir(namespace), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATTACH-SNAPSHOT-LIMIT-02: folderのdirectory depth上限をprovider開始前に拒否する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-attachment-snapshot-depth-limit-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const nestedPath = path.join(sessionFolderPath, "docs", "nested");
+  await mkdir(nestedPath, { recursive: true });
+  await writeFile(path.join(nestedPath, "a.txt"), "a", "utf8");
+  const references: SessionTurnAttachmentReference[] = [{ kind: "folder", relativePath: "docs" }];
+  const deps = snapshotDeps(root);
+
+  try {
+    const dispatch = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      references,
+    );
+    await assert.rejects(
+      createSessionAttachmentSnapshot(dispatch.attachments, references, {
+        ...deps,
+        limits: { maxDirectoryDepth: 0 },
+      }),
+      (error) => error instanceof SessionAttachmentSnapshotLimitError
+        && error.code === "LIMIT_EXCEEDED",
+    );
+    assert.deepEqual(await readdir(deps.snapshotNamespacePath), []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("ATTACH-SNAPSHOT-LIMIT-02: lstat後に同一inodeが成長してもopened sizeでbyte上限を拒否する", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "withmate-attachment-snapshot-growth-limit-"));
+  const sessionFolderPath = path.join(root, "session-folder");
+  const sourcePath = path.join(sessionFolderPath, "growing.txt");
+  const deps = snapshotDeps(root);
+  await mkdir(sessionFolderPath, { recursive: true });
+  await writeFile(sourcePath, "a", "utf8");
+  const references: SessionTurnAttachmentReference[] = [{ kind: "file", relativePath: "growing.txt" }];
+  try {
+    const dispatch = await resolveSessionFolderAttachments(
+      { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [] },
+      references,
+    );
+    await assert.rejects(
+      createSessionAttachmentSnapshot(dispatch.attachments, references, {
+        ...deps,
+        limits: { maxTotalBytes: 4 },
+        onBeforeFileOpen: async () => writeFile(sourcePath, "0123456789", "utf8"),
+      }),
+      (error) => error instanceof SessionAttachmentSnapshotLimitError
+        && error.code === "CONTENT_TOO_LARGE",
+    );
+    assert.deepEqual(await readdir(deps.snapshotNamespacePath), []);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -679,7 +679,19 @@ function projectEffectiveTurn(request: unknown): {
   const turn = (request as Record<string, unknown>).turn;
   if (!turn || typeof turn !== "object" || Array.isArray(turn)) return null;
   try {
-    const parsed = parseTurnRequest(turn);
+    const turnRecord = turn as Record<string, unknown>;
+    const attachments = Array.isArray(turnRecord.attachments)
+      ? turnRecord.attachments.map((attachment) => {
+        if (!attachment || typeof attachment !== "object" || Array.isArray(attachment)) {
+          return attachment;
+        }
+        const attachmentRecord = attachment as Record<string, unknown>;
+        const publicAttachment = { ...attachmentRecord };
+        delete publicAttachment.identity;
+        return publicAttachment;
+      })
+      : turnRecord.attachments;
+    const parsed = parseTurnRequest({ ...turnRecord, attachments });
     return {
       effectiveTurn: parsed.provider === "codex"
         ? {

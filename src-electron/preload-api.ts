@@ -40,6 +40,8 @@ import {
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
+  WITHMATE_GET_SESSION_INTEGRATION_DIAGNOSTICS_CHANNEL,
+  WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
   WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
@@ -605,6 +607,12 @@ function createSettingsApi(ipcRenderer: IpcRendererLike): WithMateWindowSettings
     },
     getMemoryV6Diagnostics() {
       return ipcRenderer.invoke(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL);
+    },
+    getSessionIntegrationDiagnostics() {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_INTEGRATION_DIAGNOSTICS_CHANNEL);
+    },
+    registerCodexSessionMcp() {
+      return ipcRenderer.invoke(WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL);
     },
     installMemoryV6CliShim() {
       return ipcRenderer.invoke(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL);

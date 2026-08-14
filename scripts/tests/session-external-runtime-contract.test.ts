@@ -438,3 +438,45 @@ test("RL-01: public execution projection rejects inline assistant text over 8 Mi
       && error.details.executionId === "execution-1",
   );
 });
+
+test("EXT-ATTACH-10: admitted attachment identityは公開投影から除外しwire ingressはstrictのまま維持する", () => {
+  const attachmentWithIdentity = {
+    kind: "file",
+    relativePath: "brief.md",
+    identity: {
+      rootDevice: 1,
+      rootInode: 2,
+      device: 3,
+      inode: 4,
+      canonicalRelativePath: "brief.md",
+    },
+  };
+  const request = {
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "turn.enqueue",
+    input: {
+      sessionId: "session-1",
+      catalogRevision: 4,
+      idempotencyKey: "attachment-identity",
+      turn: { ...turn, attachments: [attachmentWithIdentity] },
+    },
+  };
+  assert.throws(() => parseSessionRuntimeRequestEnvelope(request), SessionRuntimeValidationError);
+
+  const projected = projectSessionExecution({
+    id: "execution-attachment",
+    sessionId: "session-1",
+    operation: "turn.enqueue",
+    state: "running",
+    result: null,
+    errorCode: "",
+    reason: "",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    admittedAt: "2026-08-11T00:00:00.000Z",
+    completedAt: null,
+    updatedAt: "2026-08-11T00:00:00.000Z",
+  }, { request: request.input });
+
+  assert.deepEqual(projected.attachments, [{ kind: "file", relativePath: "brief.md" }]);
+  assert.equal(projected.effectiveTurn?.provider, "codex");
+});

@@ -33,6 +33,10 @@ async function createFixture(options: {
   shutdownGraceMs?: number;
   onExecutionTerminal?: (executionId: string, reason: "execution_canceled" | "execution_terminal", occurredAt: string) => void;
   normalizeRequest?: (request: unknown) => unknown;
+  onCancelRunningTurn?: (input: {
+    executionId: string;
+    hasDurableIntent: boolean;
+  }) => void;
 } = {}) {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-session-execution-service-"));
   const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
@@ -109,6 +113,14 @@ async function createFixture(options: {
     },
     cancelRunningTurn(_sessionId, executionId) {
       canceledExecutions.push(executionId);
+      options.onCancelRunningTurn?.({
+        executionId,
+        hasDurableIntent: storage.resolveIdempotency(
+          "turn.cancel",
+          "cancel-running",
+          "cancel-running-fingerprint",
+        ) !== null,
+      });
     },
     isSessionRunInFlight(sessionId) {
       return activeSessions.has(sessionId);
@@ -237,6 +249,36 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  it("E-02: 先にcommitしたqueued executionを同時到着のturn.runが追い越さない", async () => {
+    const fixture = await createFixture();
+    try {
+      const [enqueuedResult, runResult] = await Promise.allSettled([
+        fixture.service.enqueue(createInput(1)),
+        fixture.service.run(createInput(2)),
+      ]);
+
+      assert.equal(enqueuedResult.status, "fulfilled");
+      assert.equal(runResult.status, "rejected");
+      if (enqueuedResult.status !== "fulfilled") return;
+      assert.equal(
+        runResult.status === "rejected"
+          && runResult.reason instanceof SessionExecutionBusyError
+          && runResult.reason.code === "SESSION_BUSY",
+        true,
+      );
+      await waitFor(() => fixture.dispatchEvents.length === 1);
+      assert.equal(fixture.dispatchEvents[0]?.executionId, enqueuedResult.value.id);
+      assert.equal(fixture.storage.get(enqueuedResult.value.id)?.state, "running");
+      assert.equal(fixture.storage.listSessionExecutions("session-1").length, 1);
+
+      fixture.dispatches.get(enqueuedResult.value.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", enqueuedResult.value.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("I-01: activeなturn.runのretryもcanonical executionへ収束する", async () => {
     const fixture = await createFixture();
     try {
@@ -345,7 +387,10 @@ describe("SessionExecutionService", () => {
   });
 
   it("C-01: running cancelはexecutionを変えずruntimeのabort境界へ渡す", async () => {
-    const fixture = await createFixture();
+    const abortObservations: Array<{ executionId: string; hasDurableIntent: boolean }> = [];
+    const fixture = await createFixture({
+      onCancelRunningTurn: (input) => abortObservations.push(input),
+    });
     try {
       const running = await fixture.service.run(createInput(1));
       const cancelResult = await fixture.service.cancel({
@@ -357,6 +402,10 @@ describe("SessionExecutionService", () => {
 
       assert.equal(cancelResult.state, "running");
       assert.deepEqual(fixture.canceledExecutions, [running.id]);
+      assert.deepEqual(abortObservations, [{
+        executionId: running.id,
+        hasDurableIntent: true,
+      }]);
 
       const replay = await fixture.service.cancel({
         sessionId: "session-1",
@@ -365,7 +414,7 @@ describe("SessionExecutionService", () => {
         requestFingerprint: "cancel-running-fingerprint",
       });
       assert.equal(replay.id, running.id);
-      assert.deepEqual(fixture.canceledExecutions, [running.id]);
+      assert.deepEqual(fixture.canceledExecutions, [running.id, running.id]);
 
       fixture.dispatches.get(running.id)?.resolve({
         state: "canceled",
@@ -382,7 +431,45 @@ describe("SessionExecutionService", () => {
         requestFingerprint: "cancel-running-fingerprint",
       });
       assert.equal(terminalReplay.state, "canceled");
+      assert.deepEqual(fixture.canceledExecutions, [running.id, running.id]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("CANCEL-IDEMPOTENCY-11: running cancelはintent保存失敗時にabort effectを起こさない", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.run(createInput(1));
+      const recordIdempotency = fixture.storage.recordIdempotency.bind(fixture.storage);
+      fixture.storage.recordIdempotency = () => {
+        throw new Error("cancel intent persistence failed");
+      };
+
+      await assert.rejects(
+        fixture.service.cancel({
+          sessionId: "session-1",
+          executionId: running.id,
+          idempotencyKey: "cancel-running",
+          requestFingerprint: "cancel-running-fingerprint",
+        }),
+        /cancel intent persistence failed/,
+      );
+      assert.deepEqual(fixture.canceledExecutions, []);
+
+      fixture.storage.recordIdempotency = recordIdempotency;
+      const replayable = await fixture.service.cancel({
+        sessionId: "session-1",
+        executionId: running.id,
+        idempotencyKey: "cancel-running",
+        requestFingerprint: "cancel-running-fingerprint",
+      });
+      assert.equal(replayable.id, running.id);
       assert.deepEqual(fixture.canceledExecutions, [running.id]);
+
+      fixture.dispatches.get(running.id)?.resolve({ state: "canceled", result: null });
+      await fixture.service.waitForTerminal("session-1", running.id);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

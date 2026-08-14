@@ -18,6 +18,7 @@ import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
+import { DEFAULT_CHARACTER_THEME_COLORS } from "../src/character-state.js";
 import {
   isUnknownCharacterOwnerId,
   normalizeCharacterOwnerId,
@@ -71,6 +72,49 @@ type SessionIdRow = {
   id: string;
 };
 
+type SessionV6SummaryBaseRow = Omit<SessionV6Row, "character_snapshot_json">;
+
+type SessionV6SummaryRow = SessionV6SummaryBaseRow & {
+  character_snapshot_present: number;
+  snapshot_json_valid: number;
+  snapshot_character_id: unknown;
+  snapshot_name: unknown;
+  snapshot_icon_file_path: unknown;
+  snapshot_theme_main: unknown;
+  snapshot_theme_sub: unknown;
+  snapshot_definition_markdown_type: string | null;
+};
+
+const SESSION_SUMMARY_SELECT_COLUMNS = `
+  id,
+  title,
+  state,
+  session_kind,
+  provider_id,
+  catalog_revision,
+  model_id,
+  reasoning_effort,
+  custom_agent_name,
+  approval_mode,
+  codex_sandbox_mode,
+  allowed_additional_directories_json,
+  runtime_policy_json,
+  thread_id,
+  character_id,
+  workspace_path,
+  is_pinned,
+  updated_at,
+  last_active_at,
+  character_snapshot_json IS NOT NULL AS character_snapshot_present,
+  CASE WHEN json_valid(character_snapshot_json) THEN 1 ELSE 0 END AS snapshot_json_valid,
+  CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.characterId') END AS snapshot_character_id,
+  CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.name') END AS snapshot_name,
+  CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.iconFilePath') END AS snapshot_icon_file_path,
+  CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.theme.main') END AS snapshot_theme_main,
+  CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.theme.sub') END AS snapshot_theme_sub,
+  CASE WHEN json_valid(character_snapshot_json) THEN json_type(character_snapshot_json, '$.definitionMarkdown') END AS snapshot_definition_markdown_type
+`;
+
 type SessionCrudIdempotencyRow = {
   request_fingerprint: string;
   session_id: string;
@@ -83,8 +127,25 @@ type SessionFileWriteIdempotencyRow = {
   relative_path: string;
   temp_name: string;
   state: "pending" | "applied" | "rejected";
+  output_sha256: string | null;
+  byte_length: number | null;
+  file_device: string | null;
+  file_inode: string | null;
+  target_precondition_json: string | null;
   result_json: string | null;
 };
+
+export type SessionFileWritePreparedProof = {
+  sha256: string;
+  byteLength: number;
+  device: string;
+  inode: string;
+  targetPrecondition: SessionFileTargetPrecondition;
+};
+
+export type SessionFileTargetPrecondition =
+  | { kind: "absent" }
+  | { kind: "file"; sha256: string; byteLength: number; device: string; inode: string };
 
 export type SessionCrudOperation = "session.create" | "session.rename";
 export type SessionCrudReplayResult =
@@ -101,9 +162,30 @@ export class SessionCrudIdempotencyConflictError extends Error {
 }
 
 export type SessionFileWriteReplayResult =
-  | { kind: "pending"; sessionId: string; relativePath: string; tempName: string; resumed: boolean }
-  | { kind: "replay"; sessionId: string; relativePath: string; tempName: string; result: unknown }
-  | { kind: "rejected"; sessionId: string; relativePath: string; tempName: string; error: unknown };
+  | {
+    kind: "pending";
+    sessionId: string;
+    relativePath: string;
+    tempName: string;
+    prepared: SessionFileWritePreparedProof | null;
+    resumed: boolean;
+  }
+  | {
+    kind: "replay";
+    sessionId: string;
+    relativePath: string;
+    tempName: string;
+    prepared: SessionFileWritePreparedProof | null;
+    result: unknown;
+  }
+  | {
+    kind: "rejected";
+    sessionId: string;
+    relativePath: string;
+    tempName: string;
+    prepared: SessionFileWritePreparedProof | null;
+    error: unknown;
+  };
 
 export class SessionFileWriteIdempotencyConflictError extends Error {
   constructor() {
@@ -272,11 +354,11 @@ export class SessionStorageV6 {
 
   listSessionSummaries(): SessionSummary[] {
     const rows = this.db.prepare(`
-      SELECT *
+      SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
       ORDER BY last_active_at DESC, id DESC
-    `).all() as SessionV6Row[];
-    return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
+    `).all() as SessionV6SummaryRow[];
+    return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummaryProjection(row)));
   }
 
   getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
@@ -285,13 +367,13 @@ export class SessionStorageV6 {
       return null;
     }
     const row = this.db.prepare(`
-      SELECT *
+      SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6
       WHERE ${SESSION_PROVIDER_ID_NORMALIZER_SQL_FUNCTION}(provider_id) = ?
       ORDER BY last_active_at DESC, id DESC
       LIMIT 1
-    `).get(normalizeProviderId(normalizedProviderId)) as SessionV6Row | undefined;
-    return row ? this.rowToSessionSummary(row) : null;
+    `).get(normalizeProviderId(normalizedProviderId)) as SessionV6SummaryRow | undefined;
+    return row ? this.rowToSessionSummaryProjection(row) : null;
   }
 
   getSession(sessionId: string): Session | null {
@@ -300,8 +382,12 @@ export class SessionStorageV6 {
   }
 
   getSessionSummary(sessionId: string): SessionSummary | null {
-    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
-    return row ? this.rowToSessionSummary(row) : null;
+    const row = this.db.prepare(`
+      SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
+      FROM sessions_v6
+      WHERE id = ?
+    `).get(sessionId) as SessionV6SummaryRow | undefined;
+    return row ? this.rowToSessionSummaryProjection(row) : null;
   }
 
   listSessionSummaryPage(
@@ -310,7 +396,7 @@ export class SessionStorageV6 {
   ): SessionSummaryPageEntry[] {
     const rows = (position
       ? this.db.prepare(`
-          SELECT *
+          SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
             AND (last_active_at < ? OR (last_active_at = ? AND id < ?))
@@ -318,14 +404,14 @@ export class SessionStorageV6 {
           LIMIT ?
         `).all(position.lastActiveAt, position.lastActiveAt, position.sessionId, limit)
       : this.db.prepare(`
-          SELECT *
+          SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}
           FROM sessions_v6
           WHERE session_kind = 'default'
           ORDER BY last_active_at DESC, id DESC
           LIMIT ?
-        `).all(limit)) as SessionV6Row[];
+        `).all(limit)) as SessionV6SummaryRow[];
     return rows.map((row) => ({
-      summary: this.rowToSessionSummary(row),
+      summary: this.rowToSessionSummaryProjection(row),
       lastActiveAt: row.last_active_at,
     }));
   }
@@ -476,8 +562,45 @@ export class SessionStorageV6 {
         sessionId: input.sessionId,
         relativePath: input.relativePath,
         tempName: input.tempName,
+        prepared: null,
         resumed: false,
       };
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  recordPreparedSessionFileWrite(input: {
+    idempotencyKey: string;
+    requestFingerprint: string;
+    prepared: SessionFileWritePreparedProof;
+  }): void {
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const existing = this.findSessionFileWriteIdempotency(input.idempotencyKey);
+      if (!existing) throw new Error("Prepared Session file write idempotency record is missing.");
+      const resolved = resolveSessionFileWriteIdempotency(existing, input.requestFingerprint);
+      if (resolved.kind !== "pending") {
+        this.db.exec("COMMIT");
+        return;
+      }
+      if (resolved.prepared && !samePreparedProof(resolved.prepared, input.prepared)) {
+        throw new Error("Pending Session file write proof changed between retries.");
+      }
+      this.db.prepare(`
+        UPDATE session_file_write_idempotency_v6
+        SET output_sha256 = ?, byte_length = ?, file_device = ?, file_inode = ?, target_precondition_json = ?
+        WHERE operation = 'session.files.write_text' AND idempotency_key = ? AND state = 'pending'
+      `).run(
+        input.prepared.sha256,
+        input.prepared.byteLength,
+        input.prepared.device,
+        input.prepared.inode,
+        JSON.stringify(input.prepared.targetPrecondition),
+        input.idempotencyKey,
+      );
+      this.db.exec("COMMIT");
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;
@@ -487,6 +610,7 @@ export class SessionStorageV6 {
   completeSessionFileWrite(input: {
     idempotencyKey: string;
     requestFingerprint: string;
+    prepared: SessionFileWritePreparedProof;
     result: unknown;
     completedAt: string;
     expiresAt: string;
@@ -504,6 +628,9 @@ export class SessionStorageV6 {
       }
       if (resolved.kind === "rejected") {
         throw new Error("Rejected Session file write cannot be completed as applied.");
+      }
+      if (!resolved.prepared || !samePreparedProof(resolved.prepared, input.prepared)) {
+        throw new Error("Session file write completion does not match the prepared proof.");
       }
       const resultJson = JSON.stringify(input.result);
       this.db.prepare(`
@@ -759,7 +886,8 @@ export class SessionStorageV6 {
 
   private findSessionFileWriteIdempotency(idempotencyKey: string): SessionFileWriteIdempotencyRow | undefined {
     return this.db.prepare(`
-      SELECT request_fingerprint, session_id, relative_path, temp_name, state, result_json
+      SELECT request_fingerprint, session_id, relative_path, temp_name, state,
+        output_sha256, byte_length, file_device, file_inode, target_precondition_json, result_json
       FROM session_file_write_idempotency_v6
       WHERE operation = 'session.files.write_text' AND idempotency_key = ?
     `).get(idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
@@ -902,11 +1030,52 @@ export class SessionStorageV6 {
     }
   }
 
+  private rowToSessionSummaryProjection(row: SessionV6SummaryRow): SessionSummary {
+    const runtimePolicy = parseJsonObject(row.runtime_policy_json);
+    const runtimeCharacterId = normalizeCharacterOwnerId(runtimePolicy.characterId);
+    const storedCharacterId = normalizeCharacterOwnerId(row.character_id) ?? runtimeCharacterId;
+    const characterId = recoverStoredCharacterOwnerId(storedCharacterId);
+    const unresolvedOwner = isUnknownCharacterOwnerId(characterId);
+    const snapshotCharacterId = normalizeCharacterOwnerId(row.snapshot_character_id);
+    const hasValidSnapshot = row.character_snapshot_present === 1 &&
+      row.snapshot_json_valid === 1 &&
+      typeof row.snapshot_name === "string" &&
+      row.snapshot_definition_markdown_type === "text";
+    const snapshot = hasValidSnapshot && !unresolvedOwner && snapshotCharacterId === characterId
+      ? {
+          characterId,
+          name: row.snapshot_name as string,
+          description: "",
+          iconFilePath: typeof row.snapshot_icon_file_path === "string" ? row.snapshot_icon_file_path : "",
+          theme: {
+            main: typeof row.snapshot_theme_main === "string"
+              ? row.snapshot_theme_main
+              : DEFAULT_CHARACTER_THEME_COLORS.main,
+            sub: typeof row.snapshot_theme_sub === "string"
+              ? row.snapshot_theme_sub
+              : DEFAULT_CHARACTER_THEME_COLORS.sub,
+          },
+          definitionMarkdown: "",
+          definitionSha256: "",
+          definitionByteSize: 0,
+          snapshotAt: "",
+        }
+      : null;
+    const decoded: DecodedSessionV6RuntimeState = {
+      runtimePolicy,
+      characterId,
+      snapshot,
+      threadId: unresolvedOwner || (row.character_snapshot_present === 1 && snapshot === null) ? "" : row.thread_id,
+    };
+    return this.rowToSessionSummary(row, decoded);
+  }
+
   private rowToSessionSummary(
-    row: SessionV6Row,
-    decoded = decodeSessionV6RuntimeState(row),
+    row: SessionV6SummaryBaseRow,
+    decoded?: DecodedSessionV6RuntimeState,
   ): SessionSummary {
-    const { runtimePolicy, snapshot } = decoded;
+    const resolvedDecoded = decoded ?? decodeSessionV6RuntimeState(row as SessionV6Row);
+    const { runtimePolicy, snapshot, characterId, threadId } = resolvedDecoded;
     const summary = normalizeSessionSummary({
       id: row.id,
       taskTitle: row.title,
@@ -921,7 +1090,7 @@ export class SessionStorageV6 {
       sessionKind: row.session_kind,
       accessMode: runtimePolicy.accessMode,
       sourceSchemaVersion: runtimePolicy.sourceSchemaVersion ?? CURRENT_SESSION_SCHEMA_VERSION,
-      characterId: decoded.characterId,
+      characterId,
       character: snapshot?.name ?? runtimePolicy.characterName,
       characterIconPath: snapshot?.iconFilePath ?? runtimePolicy.characterIconPath,
       characterThemeColors: snapshot?.theme ?? runtimePolicy.characterThemeColors,
@@ -932,7 +1101,7 @@ export class SessionStorageV6 {
       reasoningEffort: row.reasoning_effort,
       customAgentName: row.custom_agent_name,
       allowedAdditionalDirectories: parseJsonArray(row.allowed_additional_directories_json),
-      threadId: decoded.threadId,
+      threadId,
     });
     if (!summary) {
       throw new Error(`V6 session row を summary に変換できないよ: ${row.id}`);
@@ -1092,6 +1261,7 @@ function resolveSessionFileWriteIdempotency(
   if (row.request_fingerprint !== requestFingerprint) {
     throw new SessionFileWriteIdempotencyConflictError();
   }
+  const prepared = decodePreparedProof(row);
   if (row.state === "applied") {
     if (!row.result_json) {
       throw new Error("Applied Session file write is missing its canonical result.");
@@ -1101,6 +1271,7 @@ function resolveSessionFileWriteIdempotency(
       sessionId: row.session_id,
       relativePath: row.relative_path,
       tempName: row.temp_name,
+      prepared,
       result: JSON.parse(row.result_json) as unknown,
     };
   }
@@ -1113,6 +1284,7 @@ function resolveSessionFileWriteIdempotency(
       sessionId: row.session_id,
       relativePath: row.relative_path,
       tempName: row.temp_name,
+      prepared,
       error: JSON.parse(row.result_json) as unknown,
     };
   }
@@ -1121,6 +1293,57 @@ function resolveSessionFileWriteIdempotency(
     sessionId: row.session_id,
     relativePath: row.relative_path,
     tempName: row.temp_name,
+    prepared,
     resumed: true,
   };
+}
+
+function decodePreparedProof(row: SessionFileWriteIdempotencyRow): SessionFileWritePreparedProof | null {
+  const values = [row.output_sha256, row.byte_length, row.file_device, row.file_inode, row.target_precondition_json];
+  if (values.every((value) => value === null)) return null;
+  if (
+    typeof row.output_sha256 !== "string"
+    || typeof row.byte_length !== "number"
+    || !Number.isSafeInteger(row.byte_length)
+    || row.byte_length < 0
+    || typeof row.file_device !== "string"
+    || typeof row.file_inode !== "string"
+    || (row.state === "pending" && typeof row.target_precondition_json !== "string")
+  ) {
+    throw new Error("Pending Session file write has an invalid prepared proof.");
+  }
+  const targetPrecondition = row.target_precondition_json === null
+    ? { kind: "absent" } as const
+    : JSON.parse(row.target_precondition_json) as unknown;
+  if (!isTargetPrecondition(targetPrecondition)) {
+    throw new Error("Pending Session file write has an invalid target precondition.");
+  }
+  return {
+    sha256: row.output_sha256,
+    byteLength: row.byte_length,
+    device: row.file_device,
+    inode: row.file_inode,
+    targetPrecondition,
+  };
+}
+
+function samePreparedProof(left: SessionFileWritePreparedProof, right: SessionFileWritePreparedProof): boolean {
+  return left.sha256 === right.sha256
+    && left.byteLength === right.byteLength
+    && left.device === right.device
+    && left.inode === right.inode
+    && JSON.stringify(left.targetPrecondition) === JSON.stringify(right.targetPrecondition);
+}
+
+function isTargetPrecondition(value: unknown): value is SessionFileTargetPrecondition {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Partial<SessionFileTargetPrecondition>;
+  if (candidate.kind === "absent") return Object.keys(candidate).length === 1;
+  return candidate.kind === "file"
+    && typeof candidate.sha256 === "string"
+    && typeof candidate.byteLength === "number"
+    && Number.isSafeInteger(candidate.byteLength)
+    && candidate.byteLength >= 0
+    && typeof candidate.device === "string"
+    && typeof candidate.inode === "string";
 }

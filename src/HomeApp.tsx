@@ -17,6 +17,7 @@ import { type ModelCatalogSnapshot } from "./model-catalog.js";
 import { startModelCatalogSubscription } from "./model-catalog-subscription.js";
 import type { OpenSessionWindowIdsState } from "./open-session-window-subscription.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
+import type { SessionIntegrationDiagnostics } from "./session-integration-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "./memory-v6/provider-instruction-sample.js";
 import {
   buildHomeLaunchProjection,
@@ -119,6 +120,8 @@ export default function HomeApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [settingsDraft, setSettingsDraft] = useState<AppSettings>(createDefaultAppSettings());
   const [memoryV6Diagnostics, setMemoryV6Diagnostics] = useState<MemoryV6Diagnostics | null>(null);
+  const [sessionIntegrationDiagnostics, setSessionIntegrationDiagnostics] =
+    useState<SessionIntegrationDiagnostics | null>(null);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [characterEntries, setCharacterEntries] = useState<CharacterCatalogEntry[]>([]);
   const [characterListFeedback, setCharacterListFeedback] = useState("");
@@ -226,6 +229,12 @@ export default function HomeApp() {
     setMemoryV6Diagnostics(await api.getMemoryV6Diagnostics());
   };
 
+  const refreshSessionIntegrationDiagnostics = async (
+    api: NonNullable<ReturnType<typeof getWithMateApi>>,
+  ): Promise<void> => {
+    setSessionIntegrationDiagnostics(await api.getSessionIntegrationDiagnostics());
+  };
+
   useEffect(() => {
     let active = true;
     const withmateApi = getWithMateApi();
@@ -294,6 +303,13 @@ export default function HomeApp() {
       }
 
       setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の読み込みに失敗したよ。");
+    });
+    void refreshSessionIntegrationDiagnostics(withmateApi).catch((error) => {
+      if (!active) {
+        return;
+      }
+
+      setSettingsFeedback(error instanceof Error ? error.message : "Session integration diagnostics の読み込みに失敗したよ。");
     });
 
     const unsubscribeModelCatalog = startModelCatalogSubscription({
@@ -547,6 +563,7 @@ export default function HomeApp() {
     setSettingsDraft,
     setSettingsFeedback,
     setMemoryV6Diagnostics,
+    setSessionIntegrationDiagnostics,
     getSessionCleanupCutoffDate: () => sessionCleanupCutoffDate,
     setDeletingOldSessions,
     refreshSessionSummaries: async () => {
@@ -564,6 +581,9 @@ export default function HomeApp() {
       void refreshMemoryV6Diagnostics(api).catch((error) => {
         setSettingsFeedback(error instanceof Error ? error.message : "Memory V6 diagnostics の再読み込みに失敗したよ。");
       });
+      void refreshSessionIntegrationDiagnostics(api).catch((error) => {
+        setSettingsFeedback(error instanceof Error ? error.message : "Session integration diagnostics の再読み込みに失敗したよ。");
+      });
     },
   });
 
@@ -576,6 +596,7 @@ export default function HomeApp() {
     providerCatalogLoaded: modelCatalog !== null,
     modelCatalogRevisionLabel: String(modelCatalog?.revision ?? "-"),
     memoryV6Diagnostics,
+    sessionIntegrationDiagnostics,
     settingsDirty,
     settingsFeedback,
     sessionCleanupCutoffDate,

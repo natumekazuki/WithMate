@@ -165,6 +165,9 @@ describe("SessionTranscriptStorageV6", () => {
         requestFingerprint: "fingerprint-1",
         outputSha256: "a".repeat(64),
         byteLength: 42,
+        outputDevice: "11",
+        outputInode: "22",
+        targetPrecondition: { kind: "absent" },
       });
       const resumed = f.storage.prepareExport({
         idempotencyKey: "export-1",
@@ -182,6 +185,9 @@ describe("SessionTranscriptStorageV6", () => {
         tempName: ".transcript.tmp",
         outputSha256: "a".repeat(64),
         byteLength: 42,
+        outputDevice: "11",
+        outputInode: "22",
+        targetPrecondition: { kind: "absent" },
         resumed: true,
       });
       const result = { destination: "session_folder", file: { relativePath: "transcript.json" } };
@@ -190,6 +196,9 @@ describe("SessionTranscriptStorageV6", () => {
         requestFingerprint: "fingerprint-1",
         outputSha256: "a".repeat(64),
         byteLength: 42,
+        outputDevice: "11",
+        outputInode: "22",
+        targetPrecondition: { kind: "absent" },
         result,
         completedAt: NOW,
         expiresAt: EXPIRES,
@@ -202,7 +211,18 @@ describe("SessionTranscriptStorageV6", () => {
         tempName: ".transcript.tmp",
         createdAt: NOW,
         expiresAt: EXPIRES,
-      }), { kind: "replay", result });
+      }), {
+        kind: "replay",
+        sessionId: "session-1",
+        relativePath: "transcript.json",
+        tempName: ".transcript.tmp",
+        outputSha256: "a".repeat(64),
+        byteLength: 42,
+        outputDevice: "11",
+        outputInode: "22",
+        targetPrecondition: { kind: "absent" },
+        result,
+      });
       assert.throws(
         () => f.storage.prepareExport({
           idempotencyKey: "export-1",

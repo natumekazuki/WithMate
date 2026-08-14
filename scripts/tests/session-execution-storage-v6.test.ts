@@ -27,7 +27,7 @@ async function createFixture(): Promise<{
   const db = new DatabaseSync(dbPath);
   try {
     db.exec("PRAGMA foreign_keys = ON;");
-    db.prepare(`
+    const insertSession = db.prepare(`
       INSERT INTO sessions_v6 (
         id,
         title,
@@ -40,7 +40,9 @@ async function createFixture(): Promise<{
         updated_at,
         last_active_at
       ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
-    `).run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
+    `);
+    insertSession.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
+    insertSession.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
   } finally {
     db.close();
   }
@@ -170,12 +172,14 @@ describe("SessionExecutionStorageV6", () => {
       const queued = fixture.storage.enqueue(enqueueInput(1));
       const running = fixture.storage.startImmediate({
         ...enqueueInput(2),
+        sessionId: "session-2",
         idempotencyKey: enqueueInput(1).idempotencyKey,
       });
 
       assert.equal(queued.execution.operation, "turn.enqueue");
       assert.equal(running.execution.operation, "turn.run");
-      assert.equal(fixture.storage.listSessionExecutions("session-1").length, 2);
+      assert.equal(fixture.storage.listSessionExecutions("session-1").length, 1);
+      assert.equal(fixture.storage.listSessionExecutions("session-2").length, 1);
 
       assert.throws(
         () => fixture.storage.startImmediate(enqueueInput(3)),

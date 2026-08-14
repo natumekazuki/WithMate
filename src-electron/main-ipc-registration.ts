@@ -7,6 +7,7 @@ import type {
 } from "../src/markdown-link-context-menu.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "../src/memory-v6/memory-diagnostics-state.js";
+import type { SessionIntegrationDiagnostics } from "../src/session-integration-diagnostics-state.js";
 import type { MemoryForgetReason, MemoryV6ReviewSearchRequest } from "../src/memory-v6/memory-contract.js";
 import type { MemoryFileUsageResponse } from "../src/memory-v6/memory-response-contract.js";
 import type {
@@ -136,6 +137,8 @@ import {
   WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL,
   WITHMATE_GET_APP_SETTINGS_CHANNEL,
   WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL,
+  WITHMATE_GET_SESSION_INTEGRATION_DIAGNOSTICS_CHANNEL,
+  WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL,
   WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
   WITHMATE_GET_MEMORY_V6_FILE_USAGE_CHANNEL,
   WITHMATE_EXPORT_MEMORY_V6_ENTRY_FILES_CHANNEL,
@@ -357,6 +360,8 @@ export type MainIpcRegistrationDeps = {
   deletePromptTemplate(id: string): Awaitable<PromptTemplate[]>;
   getAppDatabaseDiagnostics(): AppDatabaseDiagnostics;
   getMemoryV6Diagnostics(): Awaitable<MemoryV6Diagnostics>;
+  getSessionIntegrationDiagnostics(): Awaitable<SessionIntegrationDiagnostics>;
+  registerCodexSessionMcp(): Awaitable<SessionIntegrationDiagnostics>;
   installMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   uninstallMemoryV6CliShim(): Awaitable<MemoryV6Diagnostics>;
   getMemoryV6FileUsage(): Awaitable<MemoryFileUsageResponse>;
@@ -527,6 +532,8 @@ type MainIpcSettingsDeps = Pick<
   | "updateChatLayoutPreference"
   | "getAppDatabaseDiagnostics"
   | "getMemoryV6Diagnostics"
+  | "getSessionIntegrationDiagnostics"
+  | "registerCodexSessionMcp"
   | "installMemoryV6CliShim"
   | "uninstallMemoryV6CliShim"
   | "getMemoryV6FileUsage"
@@ -1225,6 +1232,14 @@ function registerSettingsHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSett
   });
   ipcMain.handle(WITHMATE_GET_APP_DATABASE_DIAGNOSTICS_CHANNEL, () => deps.getAppDatabaseDiagnostics());
   ipcMain.handle(WITHMATE_GET_MEMORY_V6_DIAGNOSTICS_CHANNEL, () => deps.getMemoryV6Diagnostics());
+  ipcMain.handle(
+    WITHMATE_GET_SESSION_INTEGRATION_DIAGNOSTICS_CHANNEL,
+    () => deps.getSessionIntegrationDiagnostics(),
+  );
+  ipcMain.handle(WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL, (event) => {
+    assertSettingsWindowSender(event, deps);
+    return deps.registerCodexSessionMcp();
+  });
   ipcMain.handle(WITHMATE_INSTALL_MEMORY_V6_CLI_SHIM_CHANNEL, (event) => {
     assertSettingsWindowSender(event, deps);
     return deps.installMemoryV6CliShim();

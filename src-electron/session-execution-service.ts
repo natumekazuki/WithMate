@@ -241,6 +241,9 @@ export class SessionExecutionService {
       input.requestFingerprint,
     );
     if (replay) {
+      if (replay.state === "running") {
+        await this.deps.cancelRunningTurn(replay.sessionId, replay.id);
+      }
       return toPublicExecution(replay);
     }
     return this.withIdempotencyLock(`turn.cancel:${input.idempotencyKey}`, () => this.withSessionLock(input.sessionId, async () => {
@@ -251,6 +254,9 @@ export class SessionExecutionService {
         input.requestFingerprint,
       );
       if (lockedReplay) {
+        if (lockedReplay.state === "running") {
+          await this.deps.cancelRunningTurn(lockedReplay.sessionId, lockedReplay.id);
+        }
         return toPublicExecution(lockedReplay);
       }
       const execution = this.getOwned(input.sessionId, input.executionId);
@@ -269,16 +275,16 @@ export class SessionExecutionService {
         return toPublicExecution(canceled);
       }
       if (execution.state === "running") {
-        await this.deps.cancelRunningTurn(input.sessionId, input.executionId);
-        this.requirePersistenceAvailable();
-        return toPublicExecution(this.deps.storage.recordIdempotency({
+        const canonical = this.deps.storage.recordIdempotency({
           operation: "turn.cancel",
           idempotencyKey: input.idempotencyKey,
           requestFingerprint: input.requestFingerprint,
           executionId: input.executionId,
           createdAt,
           expiresAt,
-        }));
+        });
+        await this.deps.cancelRunningTurn(input.sessionId, input.executionId);
+        return toPublicExecution(canonical);
       }
       throw new SessionExecutionStateConflictError(execution.id, execution.state);
     }));

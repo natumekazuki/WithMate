@@ -5,10 +5,8 @@ import {
   lstat,
   mkdir,
   open,
-  readdir,
   realpath,
   stat,
-  unlink,
 } from "node:fs/promises";
 import path from "node:path";
 
@@ -60,6 +58,8 @@ export type SessionTranscriptServiceDeps = {
   createTempName?(): string;
   onBeforePublish?(): void;
   onAfterReplaceRename?(): void;
+  onAfterReplaceProof?(): void;
+  onAfterReplaceTargetClaim?(): void;
   onAfterPublish?(): void;
 };
 
@@ -139,13 +139,36 @@ export class SessionTranscriptService {
       }
       throw error;
     }
-    if (prepared.kind === "replay") return normalizeFolderResult(prepared.result);
+    if (prepared.kind === "replay") {
+      const canonical = normalizeFolderResult(prepared.result);
+      try {
+        const replayRoot = await authorizeRoot(this.deps.resolveSessionFilesDirectory(prepared.sessionId));
+        try {
+          const replayParent = await authorizeDestinationParent(replayRoot, prepared.relativePath);
+          await cleanupIdentityBoundTranscript({
+            parentPath: replayParent.realPath,
+            parentStats: replayParent.stats,
+            tempName: prepared.tempName,
+            expectedSha256: prepared.outputSha256,
+            expectedByteLength: prepared.byteLength,
+            expectedDevice: prepared.outputDevice,
+            expectedInode: prepared.outputInode,
+            targetPrecondition: prepared.targetPrecondition,
+          });
+        } finally {
+          await replayRoot.handle.close();
+        }
+      } catch {
+        // The canonical applied result remains authoritative; a later replay retries proof cleanup.
+      }
+      return canonical;
+    }
     if (prepared.kind === "rejected") throw normalizeStoredError(prepared.error);
 
     const root = await authorizeRoot(this.deps.resolveSessionFilesDirectory(input.sessionId));
     let cleanupParent: AuthorizedParent | undefined;
     let cleanupTempPath: string | undefined;
-    let stagedIdentity: { dev: number | bigint; ino: number | bigint } | undefined;
+    let stagedIdentity: { dev: string; ino: string } | undefined;
     let cleanupOnFailure = false;
     try {
       const parent = await authorizeDestinationParent(root, relativePath);
@@ -155,10 +178,14 @@ export class SessionTranscriptService {
       cleanupTempPath = tempPath;
       let outputSha256 = prepared.outputSha256;
       let byteLength = prepared.byteLength;
+      let outputDevice = prepared.outputDevice;
+      let outputInode = prepared.outputInode;
+      let targetPrecondition = prepared.targetPrecondition;
       let publishedModifiedAt: string;
 
       try {
         const published = outputSha256 !== null && byteLength !== null
+          && outputDevice !== null && outputInode !== null
           ? await exportIdentityBoundTranscript({
             action: "recover",
             parentPath: parent.realPath,
@@ -168,7 +195,12 @@ export class SessionTranscriptService {
             replace: input.destination.replace,
             expectedSha256: outputSha256,
             expectedByteLength: byteLength,
+            expectedDevice: outputDevice,
+            expectedInode: outputInode,
+            targetPrecondition: targetPrecondition ?? undefined,
             onAfterReplaceRename: this.deps.onAfterReplaceRename,
+            onAfterReplaceProof: this.deps.onAfterReplaceProof,
+            onAfterReplaceTargetClaim: this.deps.onAfterReplaceTargetClaim,
           })
           : await exportIdentityBoundTranscript({
             action: "stage",
@@ -186,26 +218,39 @@ export class SessionTranscriptService {
               outputSha256 = staged.sha256;
               byteLength = staged.byteLength;
               stagedIdentity = { dev: staged.device, ino: staged.inode };
+              outputDevice = staged.device;
+              outputInode = staged.inode;
+              targetPrecondition = staged.targetPrecondition;
               this.deps.storage.recordPreparedOutput({
                 idempotencyKey,
                 requestFingerprint: fingerprint,
                 outputSha256,
                 byteLength,
+                outputDevice,
+                outputInode,
+                targetPrecondition,
               });
               this.deps.onBeforePublish?.();
             },
             onAfterReplaceRename: this.deps.onAfterReplaceRename,
+            onAfterReplaceProof: this.deps.onAfterReplaceProof,
+            onAfterReplaceTargetClaim: this.deps.onAfterReplaceTargetClaim,
           });
         outputSha256 = published.sha256;
         byteLength = published.byteLength;
         stagedIdentity = { dev: published.device, ino: published.inode };
+        outputDevice = published.device;
+        outputInode = published.inode;
         publishedModifiedAt = published.modifiedAt;
       } catch (error) {
         throw normalizeIdentityBoundError(error, relativePath, input.maxBytes);
       }
 
       await confirmDirectoryIdentities(root, parent, "indeterminate");
-      if (outputSha256 === null || byteLength === null) throw new Error("Transcript export output was not prepared.");
+      if (outputSha256 === null || byteLength === null || outputDevice === null || outputInode === null
+        || targetPrecondition === null) {
+        throw new Error("Transcript export output was not prepared.");
+      }
 
       this.deps.onAfterPublish?.();
       const result: SessionTranscriptFolderResult = {
@@ -225,6 +270,9 @@ export class SessionTranscriptService {
         requestFingerprint: fingerprint,
         outputSha256,
         byteLength,
+        outputDevice,
+        outputInode,
+        targetPrecondition,
         result,
         completedAt: completedAt.toISOString(),
         expiresAt: new Date(completedAt.getTime() + EXPORT_IDEMPOTENCY_TTL_MS).toISOString(),
@@ -233,6 +281,13 @@ export class SessionTranscriptService {
         parentPath: parent.realPath,
         parentStats: parent.stats,
         tempName: prepared.tempName,
+        expectedSha256: outputSha256,
+        expectedByteLength: byteLength,
+        expectedDevice: outputDevice,
+        expectedInode: outputInode,
+        targetPrecondition,
+      }).catch((error) => {
+        console.warn("Session transcript export proof cleanup failed", error);
       });
       return canonical;
     } catch (error) {
@@ -407,61 +462,17 @@ async function confirmDirectoryIdentities(
   }
 }
 
-async function unlinkRegularFileBestEffort(filePath: string): Promise<void> {
-  try {
-    const lexical = await lstat(filePath);
-    if (!lexical.isFile() || lexical.isSymbolicLink()) return;
-    await unlink(filePath);
-  } catch (error) {
-    if (!hasCode(error, "ENOENT")) return;
-  }
-}
-
 async function cleanupExportTemp(input: {
   root: AuthorizedRoot;
   parent: AuthorizedParent;
   tempPath: string;
   tempName: string;
-  stagedIdentity?: { dev: number | bigint; ino: number | bigint };
+  stagedIdentity?: { dev: string; ino: string };
 }): Promise<void> {
-  if (!input.stagedIdentity) return;
-  const candidates = new Set<string>([input.tempPath]);
-  await collectMatchingParentTempPaths(input.root.realPath, input.parent.stats, input.tempName, candidates);
-  for (const candidate of candidates) {
-    try {
-      const lexical = await lstat(candidate);
-      if (!lexical.isFile() || lexical.isSymbolicLink() || !sameIdentity(lexical, input.stagedIdentity)) continue;
-      await unlink(candidate);
-    } catch (error) {
-      if (!hasCode(error, "ENOENT")) continue;
-    }
-  }
-}
-
-async function collectMatchingParentTempPaths(
-  directory: string,
-  parentStats: { dev: number | bigint; ino: number | bigint },
-  tempName: string,
-  candidates: Set<string>,
-): Promise<void> {
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const entryPath = path.join(directory, entry.name);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-    let stats: Stats;
-    try {
-      stats = await stat(entryPath);
-    } catch {
-      continue;
-    }
-    if (sameIdentity(stats, parentStats)) candidates.add(path.join(entryPath, tempName));
-    await collectMatchingParentTempPaths(entryPath, parentStats, tempName, candidates);
-  }
+  // Node does not expose an identity-bound unlink primitive on Windows. Keep
+  // operation-owned proofs rather than deleting a path that may have been
+  // replaced after verification.
+  void input;
 }
 
 function normalizeIdentityBoundError(
@@ -487,6 +498,15 @@ function normalizeIdentityBoundError(
       "EXPORT_FAILED",
       "The prepared transcript export could not be recovered safely.",
       true,
+    );
+  }
+  if (error.code === "REPLACE_UNAVAILABLE") {
+    return new SessionTranscriptServiceError(
+      "EXPORT_FAILED",
+      "Safe replacement of an existing transcript is unavailable on this platform.",
+      false,
+      { relativePath, reason: "safe_replace_unavailable" },
+      "not_applied",
     );
   }
   return new SessionTranscriptServiceError(

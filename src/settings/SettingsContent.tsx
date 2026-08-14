@@ -1,5 +1,6 @@
 import type { AppSettings } from "../app-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
+import type { SessionIntegrationDiagnostics } from "../session-integration-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
 import {
@@ -40,6 +41,7 @@ export type HomeSettingsContentProps = {
   providerCatalogLoaded: boolean;
   modelCatalogRevisionLabel: string;
   memoryV6Diagnostics: MemoryV6Diagnostics | null;
+  sessionIntegrationDiagnostics: SessionIntegrationDiagnostics | null;
   settingsDirty: boolean;
   settingsFeedback: string;
   sessionCleanupCutoffDate: string;
@@ -65,6 +67,7 @@ export type HomeSettingsContentProps = {
   onOpenMemoryV6Review: () => void;
   onInstallMemoryV6CliShim: () => void;
   onUninstallMemoryV6CliShim: () => void;
+  onRegisterCodexSessionMcp: () => void;
   onCopyMemoryProviderInstructionSample: () => void;
   onDeleteSessionsLastActiveBefore: () => void;
   onSaveSettings: () => void;
@@ -100,6 +103,7 @@ export function HomeSettingsContent({
   providerCatalogLoaded,
   modelCatalogRevisionLabel,
   memoryV6Diagnostics,
+  sessionIntegrationDiagnostics,
   settingsDirty,
   settingsFeedback,
   sessionCleanupCutoffDate,
@@ -125,6 +129,7 @@ export function HomeSettingsContent({
   onOpenMemoryV6Review,
   onInstallMemoryV6CliShim,
   onUninstallMemoryV6CliShim,
+  onRegisterCodexSessionMcp,
   onCopyMemoryProviderInstructionSample,
   onDeleteSessionsLastActiveBefore,
   onSaveSettings,
@@ -321,6 +326,21 @@ export function HomeSettingsContent({
                     <strong>{memoryV6Diagnostics.lastErrors[0]?.kind ?? "none"}</strong>
                     <small>{memoryV6Diagnostics.lastErrors[0]?.message ?? "Memory V6 diagnostics has no recorded error."}</small>
                   </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Session Skill</span>
+                    <strong>{sessionIntegrationDiagnostics?.skillSync.status ?? "loading"}</strong>
+                    <small>{sessionIntegrationDiagnostics?.skillSync.skillPath ?? "managed Skill status unavailable"}</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Session CLI</span>
+                    <strong>{sessionIntegrationDiagnostics?.launcher.status ?? "loading"}</strong>
+                    <small>{sessionIntegrationDiagnostics?.launcher.resolvedPath ?? "launcher unavailable"}</small>
+                  </div>
+                  <div className="settings-diagnostics-item">
+                    <span>Codex Session MCP</span>
+                    <strong>{sessionIntegrationDiagnostics?.codexMcp.status ?? "loading"}</strong>
+                    <small>{sessionIntegrationDiagnostics?.codexMcp.errorMessage ?? "Start a new Codex Session after registration."}</small>
+                  </div>
                 </div>
               ) : (
                 <p className="settings-note">Memory V6 diagnostics を読み込んでいます。</p>
@@ -344,6 +364,14 @@ export function HomeSettingsContent({
                   disabled={!canUninstallCliShim(memoryV6Diagnostics)}
                 >
                   Uninstall CLI Shim
+                </button>
+                <button
+                  className="launch-toggle"
+                  type="button"
+                  onClick={onRegisterCodexSessionMcp}
+                  disabled={sessionIntegrationDiagnostics?.launcher.status !== "installed"}
+                >
+                  Register Session MCP for Codex
                 </button>
                 <button className="launch-toggle" type="button" onClick={onOpenAppLogFolder}>
                   {SETTINGS_OPEN_LOG_FOLDER_LABEL}

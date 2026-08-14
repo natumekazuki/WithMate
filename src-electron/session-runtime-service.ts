@@ -40,7 +40,10 @@ import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import type { PublicTranscriptAttachmentV1, PublicTranscriptTurnOptionsV1 } from "../src/session-transcript.js";
-import { createSessionAttachmentSnapshot } from "./session-attachment-snapshot.js";
+import {
+  createSessionAttachmentSnapshot,
+  SessionAttachmentSnapshotLimitError,
+} from "./session-attachment-snapshot.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
@@ -198,6 +201,22 @@ function notifySessionTurnCompletedBestEffort(
   } catch (error) {
     console.warn("Session turn completion notification failed", error);
   }
+}
+
+export function preserveProviderTurnOutcomeDuringCleanup<T>(
+  providerPromise: Promise<T>,
+  cleanup: (() => Promise<void>) | null,
+): Promise<T> {
+  return providerPromise.finally(async () => {
+    if (!cleanup) {
+      return;
+    }
+    try {
+      await cleanup();
+    } catch (error) {
+      console.warn("Session attachment snapshot cleanup failed", error);
+    }
+  });
 }
 
 async function waitForAuditEnrichment<T>(
@@ -771,12 +790,24 @@ export class SessionRuntimeService {
     promise.then(release, release);
   }
 
+  private resolvePendingInteractionsBestEffort(sessionId: string): void {
+    try {
+      this.deps.resolvePendingApprovalRequest(sessionId, "deny");
+    } catch (error) {
+      console.warn("Pending approval cleanup failed", error);
+    }
+    try {
+      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
+    } catch (error) {
+      console.warn("Pending elicitation cleanup failed", error);
+    }
+  }
+
   reset(): void {
     for (const sessionId of new Set([...this.startingSessionRuns, ...this.inFlightSessionRuns])) {
-      this.deps.resolvePendingApprovalRequest(sessionId, "deny");
-      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
       this.sessionRunControllers.get(sessionId)?.abort();
       this.pendingSessionRunCancels.add(sessionId);
+      this.resolvePendingInteractionsBestEffort(sessionId);
     }
     this.startingSessionRuns.clear();
     this.inFlightSessionRuns.clear();
@@ -784,17 +815,17 @@ export class SessionRuntimeService {
   }
 
   cancelRun(sessionId: string): void {
-    this.deps.resolvePendingApprovalRequest(sessionId, "deny");
-    this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
     const controller = this.sessionRunControllers.get(sessionId);
     if (!controller) {
       if (this.startingSessionRuns.has(sessionId)) {
         this.pendingSessionRunCancels.add(sessionId);
       }
+      this.resolvePendingInteractionsBestEffort(sessionId);
       return;
     }
 
     controller.abort();
+    this.resolvePendingInteractionsBestEffort(sessionId);
   }
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
@@ -1138,36 +1169,15 @@ export class SessionRuntimeService {
       this.deps.setLiveSessionRun(sessionId, initialLiveState);
       setupLiveRun = true;
 
+      const runtimeOptionSession = applyTurnRuntimeOptions(runningSession, request);
       runningAuditEntry = buildRunningAuditEntry({
         sessionId,
         createdAt: new Date().toISOString(),
-        session: applyTurnRuntimeOptions(runningSession, request),
+        session: runtimeOptionSession,
         logicalPrompt: promptForAudit.logicalPrompt,
       });
       const runningAuditCreateStartedAt = Date.now();
       runningAuditLog = await this.deps.createAuditLog(runningAuditEntry);
-      if (externalExecutionId && this.deps.persistExternalTurnContext) {
-        const effectiveOptions: PublicTranscriptTurnOptionsV1 = {
-          provider: runningSession.provider === "copilot" ? "copilot" : "codex",
-          model: runningSession.model,
-          reasoningEffort: runningSession.reasoningEffort,
-          approvalMode: runningSession.approvalMode,
-          sandboxMode: runningSession.provider === "codex" ? runningSession.codexSandboxMode : null,
-          customAgentName: runningSession.provider === "copilot" ? runningSession.customAgentName ?? null : null,
-        };
-        await this.deps.persistExternalTurnContext({
-          turnId: runningAuditLog.id,
-          sessionId,
-          executionId: externalExecutionId,
-          effectiveOptions,
-          attachments: (request.attachments ?? []).map((attachment) => ({
-            kind: attachment.kind,
-            relativePath: attachment.relativePath,
-          })),
-          createdAt: runningAuditLog.createdAt,
-          updatedAt: runningAuditLog.createdAt,
-        });
-      }
       logSessionRunStuckInvestigation("runtime.running-audit-create.done", {
         sessionId,
         auditLogId: runningAuditLog.id,
@@ -1176,8 +1186,7 @@ export class SessionRuntimeService {
       });
       this.startingSessionRuns.delete(sessionId);
     } catch (error) {
-      this.deps.resolvePendingApprovalRequest(sessionId, "deny");
-      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
+      this.resolvePendingInteractionsBestEffort(sessionId);
       this.inFlightSessionRuns.delete(sessionId);
       this.sessionRunControllers.delete(sessionId);
       if (setupLiveRun) {
@@ -1204,6 +1213,7 @@ export class SessionRuntimeService {
     let auditWritesDetached = false;
 
     let activeRunningSession = runningSession;
+    let externalTurnContextPersisted = false;
     const enqueueAuditWrite = (
       nextRunningAuditEntry: CreateAuditLogInput,
       nextSignature: string,
@@ -1289,6 +1299,29 @@ export class SessionRuntimeService {
       const progressGeneration = ++liveProgressGeneration;
       const runtimeOptionSession = applyTurnRuntimeOptions(turnSession, request);
       const effectiveTurnSession = this.deps.resolveProviderSession?.(runtimeOptionSession) ?? runtimeOptionSession;
+      if (!externalTurnContextPersisted && externalExecutionId && this.deps.persistExternalTurnContext) {
+        const effectiveOptions: PublicTranscriptTurnOptionsV1 = {
+          provider: effectiveTurnSession.provider === "copilot" ? "copilot" : "codex",
+          model: effectiveTurnSession.model,
+          reasoningEffort: effectiveTurnSession.reasoningEffort,
+          approvalMode: effectiveTurnSession.approvalMode,
+          sandboxMode: effectiveTurnSession.provider === "codex" ? effectiveTurnSession.codexSandboxMode : null,
+          customAgentName: effectiveTurnSession.provider === "copilot" ? effectiveTurnSession.customAgentName ?? null : null,
+        };
+        await this.deps.persistExternalTurnContext({
+          turnId: runningAuditLog.id,
+          sessionId,
+          executionId: externalExecutionId,
+          effectiveOptions,
+          attachments: (request.attachments ?? []).map((attachment) => ({
+            kind: attachment.kind,
+            relativePath: attachment.relativePath,
+          })),
+          createdAt: runningAuditLog.createdAt,
+          updatedAt: runningAuditLog.createdAt,
+        });
+        externalTurnContextPersisted = true;
+      }
       const dispatchPreview = externalCatalogRevision === null
         ? composerPreview
         : await this.resolveExternalAttachments(effectiveTurnSession, request);
@@ -1303,12 +1336,22 @@ export class SessionRuntimeService {
       if (requiresAttachmentSnapshot && !snapshotNamespacePath) {
         throw new Error("Session attachment snapshot namespace is unavailable.");
       }
-      const attachmentSnapshot = requiresAttachmentSnapshot && snapshotNamespacePath
-        ? await createSessionAttachmentSnapshot(dispatchPreview.attachments, request.attachments ?? [], {
-          snapshotNamespacePath,
-        })
-        : null;
-      const providerPromise = Promise.resolve().then(() => providerAdapter.runSessionTurn({
+      let attachmentSnapshot: Awaited<ReturnType<typeof createSessionAttachmentSnapshot>> | null = null;
+      if (requiresAttachmentSnapshot && snapshotNamespacePath) {
+        try {
+          attachmentSnapshot = await createSessionAttachmentSnapshot(
+            dispatchPreview.attachments,
+            request.attachments ?? [],
+            { snapshotNamespacePath },
+          );
+        } catch (error) {
+          if (error instanceof SessionAttachmentSnapshotLimitError) {
+            throw new SessionTurnValidationError(error.code, error.message);
+          }
+          throw error;
+        }
+      }
+      const providerTurnPromise = Promise.resolve().then(() => providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
         sessionMemory,
         projectMemoryEntries,
@@ -1385,21 +1428,11 @@ export class SessionRuntimeService {
         void syncRunningAuditFromLiveState(nextLiveState).catch((error) => {
           console.warn("Audit progress update failed", error);
         });
-      }))
-        .then(
-          async (result) => {
-            await attachmentSnapshot?.dispose();
-            return result;
-          },
-          async (error) => {
-            try {
-              await attachmentSnapshot?.dispose();
-            } catch (cleanupError) {
-              throw new AggregateError([error, cleanupError], "Provider turn and attachment snapshot cleanup failed.");
-            }
-            throw error;
-          },
-        );
+      }));
+      const providerPromise = preserveProviderTurnOutcomeDuringCleanup(
+        providerTurnPromise,
+        attachmentSnapshot ? () => attachmentSnapshot.dispose() : null,
+      );
       return waitForProviderTurnWithCancelDeadline(
         providerPromise,
         runAbortController.signal,
@@ -1861,8 +1894,7 @@ export class SessionRuntimeService {
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
       }
-      this.deps.resolvePendingApprovalRequest(sessionId, "deny");
-      this.deps.resolvePendingElicitationRequest(sessionId, { action: "cancel" });
+      this.resolvePendingInteractionsBestEffort(sessionId);
       this.inFlightSessionRuns.delete(sessionId);
       const currentLiveState = this.deps.getLiveSessionRun(sessionId);
       const preservedBackgroundTasks = currentLiveState?.backgroundTasks ?? [];

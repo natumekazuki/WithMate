@@ -7,7 +7,9 @@ description: Operate persistent WithMate Sessions through the versioned withmate
 
 Use WithMate Session orchestration for work that needs a separate persistent Session, workspace, Character, history, or queue. Use Codex subagents for temporary delegation inside the current task. Do not treat one as an alias for the other.
 
-Use the installed `withmate-session` command. Start the MCP server with `withmate-session mcp-server`. Do not invoke a helper copied into this Skill or depend on a source checkout. Read [references/operations.md](references/operations.md) before constructing an operation manually or handling a retry.
+Use WithMate Session MCP tools that the Codex host has already exposed. Never start `withmate-session mcp-server` through a shell or command-execution tool; it is a long-running stdio server entry for the MCP host, not a normal task command.
+
+If the MCP tools are missing, ask the user to register the Session MCP connection from WithMate Settings and start a new Codex Session or restart Codex. When the user specifically requires MCP, stop until the MCP tools are available. Use the installed `withmate-session` CLI only when the user explicitly permits CLI fallback. Do not invoke a helper copied into this Skill or depend on a source checkout. Read [references/operations.md](references/operations.md) before constructing an operation manually or handling a retry.
 
 ## Establish the target and authority
 
@@ -18,7 +20,7 @@ Use the installed `withmate-session` command. Start the MCP server with `withmat
 
 ## Follow the discovery workflow
 
-1. Run `withmate-session status` when runtime availability or identity is uncertain.
+1. Confirm that the Session MCP tools are exposed by the current host. If CLI fallback was explicitly permitted, run `withmate-session status` when runtime availability or identity is uncertain.
 2. Call `runtime.catalog`; select only a returned provider and retain its `catalogRevision`.
 3. Create a Session only with an explicit title, provider, catalog revision, workspace selection, and caller-owned idempotency key.
 4. Call `turn.options` for the target Session. Construct a provider-specific Turn tuple only from that result.
@@ -49,6 +51,6 @@ Do not infer provider support, model, reasoning effort, approval mode, sandbox, 
 
 ## Use the live schema
 
-Use `withmate-session schema` for CLI capability and exit-code discovery. Use MCP `tools/list` as the exact MCP input and output schema. An older installed Skill must not guess fields introduced by a newer runtime.
+Use MCP `tools/list` as the exact MCP input and output schema. When CLI fallback was explicitly permitted, use `withmate-session schema` for CLI capability and exit-code discovery. An older installed Skill must not guess fields introduced by a newer runtime.
 
 For command forms, limits, pagination, recovery, and stable error handling, read [references/operations.md](references/operations.md).

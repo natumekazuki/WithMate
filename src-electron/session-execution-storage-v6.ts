@@ -175,13 +175,14 @@ export class SessionExecutionStorageV6 {
         return { execution: this.getRequired(replay.execution_id), replayed: true };
       }
 
-      const running = this.db.prepare(`
+      const occupied = this.db.prepare(`
         SELECT id
         FROM session_executions_v6
-        WHERE session_id = ? AND state = 'running'
+        WHERE session_id = ? AND state IN ('queued', 'running')
+        ORDER BY sequence ASC
         LIMIT 1
       `).get(input.sessionId) as { id: string } | undefined;
-      if (running) {
+      if (occupied) {
         throw new SessionExecutionBusyError(input.sessionId);
       }
 

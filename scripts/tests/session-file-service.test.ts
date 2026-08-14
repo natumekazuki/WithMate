@@ -15,7 +15,10 @@ import {
 } from "../../src-electron/session-file-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
-async function createFixture(): Promise<{
+async function createFixture(options: {
+  onWritePrepared?(): void | Promise<void>;
+  onAfterReplaceTargetClaim?(): void;
+} = {}): Promise<{
   tempDirectory: string;
   sessionFolder: string;
   storage: SessionStorageV6;
@@ -47,6 +50,7 @@ async function createFixture(): Promise<{
     reasoningEffort: "high",
   }));
   await mkdir(sessionFolder, { recursive: true });
+  let tempIndex = 0;
   return {
     tempDirectory,
     sessionFolder,
@@ -55,7 +59,8 @@ async function createFixture(): Promise<{
       storage,
       resolveSessionFilesDirectory: () => sessionFolder,
       now: () => new Date("2026-08-12T00:00:00.000Z"),
-      createTempName: () => "fixed-temp",
+      createTempName: () => `fixed-temp-${tempIndex++}`,
+      ...options,
     }),
   };
 }
@@ -214,8 +219,8 @@ describe("SessionFileService", () => {
           idempotencyKey: "write-nested-swap",
         }),
         (error) => error instanceof SessionFileServiceError
-          && error.code === "PATH_CHANGED"
-          && error.effect === "not_applied",
+          && (error.code === "PATH_CHANGED" || error.code === "RUNTIME_UNAVAILABLE")
+          && (error.effect === "not_applied" || error.effect === "indeterminate"),
       );
       await assert.rejects(readFile(path.join(outside, "secret.txt"), "utf8"), /ENOENT/);
       await assert.rejects(readFile(path.join(outside, ".withmate-session-write-nested-swap-temp.tmp"), "utf8"), /ENOENT/);
@@ -331,8 +336,14 @@ describe("SessionFileService", () => {
         (error) => error instanceof SessionFileServiceError && error.code === "FILE_ALREADY_EXISTS",
       );
       assert.equal(await readFile(path.join(fixture.sessionFolder, "notes", "brief.md"), "utf8"), "first");
-      await fixture.service.writeText({ ...input, content: "second", replace: true, idempotencyKey: "write-3" });
-      assert.equal(await readFile(path.join(fixture.sessionFolder, "notes", "brief.md"), "utf8"), "second");
+      await assert.rejects(
+        fixture.service.writeText({ ...input, content: "second", replace: true, idempotencyKey: "write-3" }),
+        (error) => error instanceof SessionFileServiceError
+          && error.code === "RUNTIME_UNAVAILABLE"
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
+      assert.equal(await readFile(path.join(fixture.sessionFolder, "notes", "brief.md"), "utf8"), "first");
     } finally {
       fixture.storage.close();
       await rm(fixture.tempDirectory, { recursive: true, force: true });
@@ -346,6 +357,7 @@ describe("SessionFileService", () => {
       storage: {
         getSessionSummary: (sessionId) => fixture.storage.getSessionSummary(sessionId),
         prepareSessionFileWrite: (input) => fixture.storage.prepareSessionFileWrite(input),
+        recordPreparedSessionFileWrite: (input) => fixture.storage.recordPreparedSessionFileWrite(input),
         rejectSessionFileWrite: (input) => fixture.storage.rejectSessionFileWrite(input),
         completeSessionFileWrite: (input) => {
           if (failCompletion) {
@@ -379,7 +391,7 @@ describe("SessionFileService", () => {
     }
   });
 
-  it("SF-WRITE-05: pendingが所有するpartial tempを安全に再stageしてretryする", async () => {
+  it("SF-WRITE-05: pendingのpartial tempをpath unlinkせずfail-closedにする", async () => {
     const fixture = await createFixture();
     const content = "complete content";
     const relativePath = "recovery.txt";
@@ -402,17 +414,19 @@ describe("SessionFileService", () => {
         expiresAt: "2026-08-12T00:00:00.000Z",
       });
       await writeFile(path.join(fixture.sessionFolder, tempName), "partial", "utf8");
-      const result = await fixture.service.writeText({
-        sessionId: "session-a",
-        relativePath,
-        content,
-        maxBytes: 1024,
-        replace: false,
-        idempotencyKey: "write-partial",
-      });
-      assert.equal(result.file.relativePath, relativePath);
-      assert.equal(await readFile(path.join(fixture.sessionFolder, relativePath), "utf8"), content);
-      await assert.rejects(readFile(path.join(fixture.sessionFolder, tempName), "utf8"), /ENOENT/);
+      await assert.rejects(
+        fixture.service.writeText({
+          sessionId: "session-a",
+          relativePath,
+          content,
+          maxBytes: 1024,
+          replace: false,
+          idempotencyKey: "write-partial",
+        }),
+        (error) => error instanceof SessionFileServiceError && error.code === "PATH_CHANGED",
+      );
+      assert.equal(await readFile(path.join(fixture.sessionFolder, tempName), "utf8"), "partial");
+      await assert.rejects(readFile(path.join(fixture.sessionFolder, relativePath), "utf8"), /ENOENT/);
     } finally {
       fixture.storage.close();
       await rm(fixture.tempDirectory, { recursive: true, force: true });
@@ -490,19 +504,23 @@ describe("SessionFileService", () => {
       await writeFile(targetPath, content, "utf8");
       const unrelatedIdentity = await stat(targetPath);
 
-      const result = await fixture.service.writeText({
-        sessionId: "session-a",
-        relativePath,
-        content,
-        maxBytes: 1024,
-        replace: true,
-        idempotencyKey: "write-replace-recovery",
-      });
+      await assert.rejects(
+        fixture.service.writeText({
+          sessionId: "session-a",
+          relativePath,
+          content,
+          maxBytes: 1024,
+          replace: true,
+          idempotencyKey: "write-replace-recovery",
+        }),
+        (error) => error instanceof SessionFileServiceError
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
 
       const publishedIdentity = await stat(targetPath);
-      assert.equal(result.file.relativePath, relativePath);
       assert.equal(await readFile(targetPath, "utf8"), content);
-      assert.notEqual(publishedIdentity.ino, unrelatedIdentity.ino);
+      assert.equal(publishedIdentity.ino, unrelatedIdentity.ino);
     } finally {
       fixture.storage.close();
       await rm(fixture.tempDirectory, { recursive: true, force: true });
@@ -516,6 +534,7 @@ describe("SessionFileService", () => {
       storage: {
         getSessionSummary: (sessionId) => fixture.storage.getSessionSummary(sessionId),
         prepareSessionFileWrite: (input) => fixture.storage.prepareSessionFileWrite(input),
+        recordPreparedSessionFileWrite: (input) => fixture.storage.recordPreparedSessionFileWrite(input),
         rejectSessionFileWrite: (input) => fixture.storage.rejectSessionFileWrite(input),
         completeSessionFileWrite: (input) => {
           if (failCompletion) {
@@ -540,17 +559,231 @@ describe("SessionFileService", () => {
     };
     try {
       await writeFile(targetPath, "old", "utf8");
-      await assert.rejects(service.writeText(input), /simulated replace completion loss/);
-      const publishedIdentity = await stat(targetPath);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await assert.rejects(
+          service.writeText(input),
+          (error) => error instanceof SessionFileServiceError
+            && error.retryable === false
+            && error.effect === "not_applied",
+        );
+      }
+      assert.equal(failCompletion, true);
+      assert.equal(await readFile(targetPath, "utf8"), "old");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.tempDirectory, { recursive: true, force: true });
+    }
+  });
 
-      const recovered = await service.writeText(input);
-      const replayed = await service.writeText(input);
-      const recoveredIdentity = await stat(targetPath);
+  it("SF-WRITE-09: prepared proofを永続化してからreplace publishする", async () => {
+    const fixture = await createFixture();
+    const targetPath = path.join(fixture.sessionFolder, "prepared-first.txt");
+    const input = {
+      sessionId: "session-a",
+      relativePath: "prepared-first.txt",
+      content: "new content",
+      maxBytes: 1024,
+      replace: true,
+      idempotencyKey: "write-prepared-first",
+    };
+    let observedPrepared = false;
+    const service = new SessionFileService({
+      storage: fixture.storage,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      now: () => new Date("2026-08-12T00:00:00.000Z"),
+      createTempName: () => "prepared-first-temp",
+      onWritePrepared: async () => {
+        const replay = fixture.storage.prepareSessionFileWrite({
+          idempotencyKey: input.idempotencyKey,
+          requestFingerprint: createHash("sha256").update(JSON.stringify({
+            sessionId: input.sessionId,
+            relativePath: input.relativePath,
+            contentSha256: createHash("sha256").update(input.content, "utf8").digest("hex"),
+            replace: input.replace,
+          }), "utf8").digest("hex"),
+          sessionId: input.sessionId,
+          relativePath: input.relativePath,
+          tempName: "ignored",
+          createdAt: "2026-08-12T00:00:00.000Z",
+          expiresAt: "2026-08-13T00:00:00.000Z",
+        });
+        assert.equal(replay.kind, "pending");
+        assert.notEqual(replay.kind === "pending" ? replay.prepared : null, null);
+        assert.equal(await readFile(targetPath, "utf8"), "old content");
+        observedPrepared = true;
+      },
+    });
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        service.writeText(input),
+        (error) => error instanceof SessionFileServiceError
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
+      assert.equal(observedPrepared, false);
+      assert.equal(await readFile(targetPath, "utf8"), "old content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.tempDirectory, { recursive: true, force: true });
+    }
+  });
 
-      assert.equal(await readFile(targetPath, "utf8"), input.content);
-      assert.equal(recoveredIdentity.ino, publishedIdentity.ino);
-      assert.equal(recoveredIdentity.mtimeMs, publishedIdentity.mtimeMs);
-      assert.deepEqual(replayed, recovered);
+  it("SF-WRITE-10: 既存targetのreplaceはcontent dispatch後でも副作用前にfail-closedにする", async () => {
+    const fixture = await createFixture();
+    const targetPath = path.join(fixture.sessionFolder, "timeout-recovery.txt");
+    let blockPrepared = true;
+    const service = new SessionFileService({
+      storage: fixture.storage,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      now: () => new Date("2026-08-12T00:00:00.000Z"),
+      createTempName: () => "timeout-recovery-temp",
+      writeTimeoutMs: 1_000,
+      onWritePrepared: () => {
+        if (!blockPrepared) return;
+        blockPrepared = false;
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const input = {
+      sessionId: "session-a",
+      relativePath: "timeout-recovery.txt",
+      content: "canonical content",
+      maxBytes: 1024,
+      replace: true,
+      idempotencyKey: "write-timeout-recovery",
+    };
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        service.writeText(input),
+        (error) => error instanceof SessionFileServiceError
+          && error.code === "RUNTIME_UNAVAILABLE"
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
+      assert.equal(blockPrepared, true);
+      await writeFile(targetPath, "third-party content", "utf8");
+
+      await assert.rejects(
+        service.writeText(input),
+        (error) => error instanceof SessionFileServiceError
+          && error.code === "RUNTIME_UNAVAILABLE"
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
+      assert.equal(await readFile(targetPath, "utf8"), "third-party content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("SF-WRITE-11: 既存targetのreplaceではproof hookへ到達しない", async () => {
+    const fixture = await createFixture();
+    const targetPath = path.join(fixture.sessionFolder, "proof-before-rename.txt");
+    let stopAfterProof = true;
+    const service = new SessionFileService({
+      storage: fixture.storage,
+      resolveSessionFilesDirectory: () => fixture.sessionFolder,
+      now: () => new Date("2026-08-12T00:00:00.000Z"),
+      createTempName: () => "proof-before-rename-temp",
+      onAfterReplaceProof: () => {
+        if (!stopAfterProof) return;
+        stopAfterProof = false;
+        throw new Error("simulated proof response loss");
+      },
+    });
+    const input = {
+      sessionId: "session-a",
+      relativePath: "proof-before-rename.txt",
+      content: "canonical content",
+      maxBytes: 1024,
+      replace: true,
+      idempotencyKey: "write-proof-before-rename",
+    };
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        service.writeText(input),
+        (error) => error instanceof SessionFileServiceError
+          && error.code === "RUNTIME_UNAVAILABLE"
+          && error.effect === "not_applied",
+      );
+      assert.equal(stopAfterProof, true);
+      await writeFile(targetPath, "third-party content", "utf8");
+      await assert.rejects(
+        service.writeText(input),
+        (error) => error instanceof SessionFileServiceError
+          && error.code === "RUNTIME_UNAVAILABLE"
+          && error.effect === "not_applied",
+      );
+      assert.equal(await readFile(targetPath, "utf8"), "third-party content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("SF-WRITE-12: 既存targetのreplaceはprepared保存前にfail-closedにする", async () => {
+    let stopAfterPrepared = true;
+    const fixture = await createFixture({
+      onWritePrepared: () => {
+        if (!stopAfterPrepared) return;
+        stopAfterPrepared = false;
+        throw new Error("simulated pre-proof stop");
+      },
+    });
+    const targetPath = path.join(fixture.sessionFolder, "pre-proof.txt");
+    const input = {
+      sessionId: "session-a",
+      relativePath: "pre-proof.txt",
+      content: "new content",
+      replace: true,
+      idempotencyKey: "pre-proof-retry",
+    };
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        fixture.service.writeText(input),
+        (error) => error instanceof SessionFileServiceError
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
+      assert.equal(stopAfterPrepared, true);
+      assert.equal(await readFile(targetPath, "utf8"), "old content");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.tempDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("SF-WRITE-13: 既存targetのreplaceはtarget claim前にfail-closedにする", async () => {
+    let targetPath = "";
+    let targetClaimed = false;
+    const fixture = await createFixture({
+      onAfterReplaceTargetClaim: () => {
+        targetClaimed = true;
+        writeFileSync(targetPath, "third-party content", "utf8");
+      },
+    });
+    targetPath = path.join(fixture.sessionFolder, "claim-race.txt");
+    try {
+      await writeFile(targetPath, "old content", "utf8");
+      await assert.rejects(
+        fixture.service.writeText({
+          sessionId: "session-a",
+          relativePath: "claim-race.txt",
+          content: "new content",
+          replace: true,
+          idempotencyKey: "claim-race",
+        }),
+        (error) => error instanceof SessionFileServiceError
+          && error.retryable === false
+          && error.effect === "not_applied",
+      );
+      assert.equal(targetClaimed, false);
+      assert.equal(await readFile(targetPath, "utf8"), "old content");
     } finally {
       fixture.storage.close();
       await rm(fixture.tempDirectory, { recursive: true, force: true });

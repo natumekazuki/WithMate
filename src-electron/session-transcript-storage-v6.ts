@@ -20,6 +20,9 @@ type TranscriptExportRow = {
   state: "pending" | "applied" | "rejected";
   output_sha256: string | null;
   byte_length: number | null;
+  output_device: string | null;
+  output_inode: string | null;
+  target_precondition_json: string | null;
   result_json: string | null;
 };
 
@@ -81,10 +84,28 @@ export type SessionTranscriptExportReplay =
     tempName: string;
     outputSha256: string | null;
     byteLength: number | null;
+    outputDevice: string | null;
+    outputInode: string | null;
+    targetPrecondition: TranscriptTargetPrecondition | null;
     resumed: boolean;
   }
-  | { kind: "replay"; result: unknown }
+  | {
+    kind: "replay";
+    result: unknown;
+    sessionId: string;
+    relativePath: string;
+    tempName: string;
+    outputSha256: string;
+    byteLength: number;
+    outputDevice: string;
+    outputInode: string;
+    targetPrecondition: TranscriptTargetPrecondition;
+  }
   | { kind: "rejected"; error: unknown };
+
+export type TranscriptTargetPrecondition =
+  | { kind: "absent" }
+  | { kind: "file"; sha256: string; byteLength: number; device: string; inode: string };
 
 export class SessionTranscriptIdempotencyConflictError extends Error {
   constructor() {
@@ -427,6 +448,9 @@ export class SessionTranscriptStorageV6 {
         tempName: input.tempName,
         outputSha256: null,
         byteLength: null,
+        outputDevice: null,
+        outputInode: null,
+        targetPrecondition: null,
         resumed: false,
       };
     });
@@ -437,6 +461,9 @@ export class SessionTranscriptStorageV6 {
     requestFingerprint: string;
     outputSha256: string;
     byteLength: number;
+    outputDevice: string;
+    outputInode: string;
+    targetPrecondition: TranscriptTargetPrecondition;
   }): void {
     this.transaction(() => {
       const existing = this.findExportRequired(input.idempotencyKey);
@@ -445,14 +472,25 @@ export class SessionTranscriptStorageV6 {
       if (
         (resolved.outputSha256 !== null && resolved.outputSha256 !== input.outputSha256)
         || (resolved.byteLength !== null && resolved.byteLength !== input.byteLength)
+        || (resolved.outputDevice !== null && resolved.outputDevice !== input.outputDevice)
+        || (resolved.outputInode !== null && resolved.outputInode !== input.outputInode)
+        || (resolved.targetPrecondition !== null
+          && JSON.stringify(resolved.targetPrecondition) !== JSON.stringify(input.targetPrecondition))
       ) {
         throw new Error("Pending transcript export content changed between retries.");
       }
       this.db.prepare(`
         UPDATE session_transcript_export_idempotency_v6
-        SET output_sha256 = ?, byte_length = ?
+        SET output_sha256 = ?, byte_length = ?, output_device = ?, output_inode = ?, target_precondition_json = ?
         WHERE operation = 'transcript.export' AND idempotency_key = ? AND state = 'pending'
-      `).run(input.outputSha256, input.byteLength, input.idempotencyKey);
+      `).run(
+        input.outputSha256,
+        input.byteLength,
+        input.outputDevice,
+        input.outputInode,
+        JSON.stringify(input.targetPrecondition),
+        input.idempotencyKey,
+      );
     });
   }
 
@@ -461,6 +499,9 @@ export class SessionTranscriptStorageV6 {
     requestFingerprint: string;
     outputSha256: string;
     byteLength: number;
+    outputDevice: string;
+    outputInode: string;
+    targetPrecondition: TranscriptTargetPrecondition;
     result: unknown;
     completedAt: string;
     expiresAt: string;
@@ -470,7 +511,14 @@ export class SessionTranscriptStorageV6 {
       const resolved = resolveExport(existing, input.requestFingerprint, true);
       if (resolved.kind === "replay") return resolved.result;
       if (resolved.kind === "rejected") throw new Error("Rejected transcript export cannot become applied.");
-      if (resolved.outputSha256 !== input.outputSha256 || resolved.byteLength !== input.byteLength) {
+      if (
+        resolved.outputSha256 !== input.outputSha256
+        || resolved.byteLength !== input.byteLength
+        || resolved.outputDevice !== input.outputDevice
+      || resolved.outputInode !== input.outputInode
+        || resolved.targetPrecondition === null
+        || JSON.stringify(resolved.targetPrecondition) !== JSON.stringify(input.targetPrecondition)
+      ) {
         throw new Error("Transcript export completion does not match the prepared output.");
       }
       const resultJson = serializeJson(input.result);
@@ -520,7 +568,7 @@ export class SessionTranscriptStorageV6 {
   private findExport(idempotencyKey: string): TranscriptExportRow | null {
     return (this.db.prepare(`
       SELECT request_fingerprint, session_id, relative_path, temp_name, state,
-             output_sha256, byte_length, result_json
+             output_sha256, byte_length, output_device, output_inode, target_precondition_json, result_json
       FROM session_transcript_export_idempotency_v6
       WHERE operation = 'transcript.export' AND idempotency_key = ?
     `).get(idempotencyKey) as TranscriptExportRow | undefined) ?? null;
@@ -555,7 +603,22 @@ function resolveExport(
   }
   if (row.state === "applied") {
     if (!row.result_json) throw new Error("Applied transcript export is missing its canonical result.");
-    return { kind: "replay", result: JSON.parse(row.result_json) as unknown };
+    if (row.output_sha256 === null || row.byte_length === null
+      || row.output_device === null || row.output_inode === null) {
+      throw new Error("Applied transcript export is missing its cleanup proof.");
+    }
+    return {
+      kind: "replay",
+      result: JSON.parse(row.result_json) as unknown,
+      sessionId: row.session_id,
+      relativePath: row.relative_path,
+      tempName: row.temp_name,
+      outputSha256: row.output_sha256,
+      byteLength: row.byte_length,
+      outputDevice: row.output_device,
+      outputInode: row.output_inode,
+      targetPrecondition: decodeTargetPrecondition(row.target_precondition_json, true),
+    };
   }
   if (row.state === "rejected") {
     if (!row.result_json) throw new Error("Rejected transcript export is missing its canonical error.");
@@ -568,8 +631,33 @@ function resolveExport(
     tempName: row.temp_name,
     outputSha256: row.output_sha256,
     byteLength: row.byte_length,
+    outputDevice: row.output_device,
+    outputInode: row.output_inode,
+    targetPrecondition: row.output_sha256 === null
+      ? null
+      : decodeTargetPrecondition(row.target_precondition_json, false),
     resumed,
   };
+}
+
+function decodeTargetPrecondition(
+  value: string | null,
+  allowLegacyApplied: boolean,
+): TranscriptTargetPrecondition {
+  if (value === null && allowLegacyApplied) return { kind: "absent" };
+  if (value === null) throw new Error("Pending transcript export is missing its target precondition.");
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Transcript export target precondition is invalid.");
+  }
+  const candidate = parsed as Partial<TranscriptTargetPrecondition>;
+  if (candidate.kind === "absent" && Object.keys(candidate).length === 1) return candidate as TranscriptTargetPrecondition;
+  if (candidate.kind === "file" && typeof candidate.sha256 === "string"
+    && typeof candidate.byteLength === "number" && Number.isSafeInteger(candidate.byteLength)
+    && candidate.byteLength >= 0 && typeof candidate.device === "string" && typeof candidate.inode === "string") {
+    return candidate as TranscriptTargetPrecondition;
+  }
+  throw new Error("Transcript export target precondition is invalid.");
 }
 
 function decodeMessageText(body: string): string {

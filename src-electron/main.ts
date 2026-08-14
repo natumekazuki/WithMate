@@ -239,8 +239,10 @@ import {
 } from "./managed-memory-skill-service.js";
 import {
   ManagedSessionSkillService,
+  type ManagedSessionSkillSyncResult,
   WITHMATE_SESSION_SKILL_NAME,
 } from "./managed-session-skill-service.js";
+import { CodexSessionMcpRegistrationService } from "./codex-session-mcp-registration-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
 import { hydrateSessionsFromSummaries } from "./session-summary-adapter.js";
 import {
@@ -358,6 +360,8 @@ let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
 let managedMemorySkillService: ManagedMemorySkillService | null = null;
 let managedSessionSkillService: ManagedSessionSkillService | null = null;
+let managedSessionSkillSyncResult: ManagedSessionSkillSyncResult | null = null;
+let codexSessionMcpRegistrationService: CodexSessionMcpRegistrationService | null = null;
 let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
@@ -706,6 +710,7 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
 async function syncManagedSessionSkillBestEffort(): Promise<void> {
   try {
     const result = await requireManagedSessionSkillService().syncConfiguredProviderSkill();
+    managedSessionSkillSyncResult = result;
     writeAppLog({
       level: result.status === "failed" || result.status === "skipped-collision" ? "warn" : "info",
       kind: "session-runtime.skill.sync.completed",
@@ -722,6 +727,14 @@ async function syncManagedSessionSkillBestEffort(): Promise<void> {
       error: appLogService.errorToLogError(error),
     });
   }
+}
+
+async function getSessionIntegrationDiagnostics() {
+  return requireCodexSessionMcpRegistrationService().getDiagnostics();
+}
+
+async function registerCodexSessionMcp() {
+  return requireCodexSessionMcpRegistrationService().register();
 }
 
 function resolveCrashDumpsPath(): string {
@@ -1482,6 +1495,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 updateChatLayoutPreference,
                 getAppDatabaseDiagnostics,
                 getMemoryV6Diagnostics,
+                getSessionIntegrationDiagnostics,
+                registerCodexSessionMcp,
                 installMemoryV6CliShim,
                 uninstallMemoryV6CliShim,
                 getMemoryV6FileUsage,
@@ -2084,6 +2099,19 @@ function requireManagedSessionSkillService(): ManagedSessionSkillService {
   }
 
   return managedSessionSkillService;
+}
+
+function requireCodexSessionMcpRegistrationService(): CodexSessionMcpRegistrationService {
+  if (!codexSessionMcpRegistrationService) {
+    codexSessionMcpRegistrationService = new CodexSessionMcpRegistrationService({
+      getSkillSyncResult: () => managedSessionSkillSyncResult,
+      isPackagedApp: () => app.isPackaged,
+      executablePath: process.execPath,
+      resourcesPath: process.resourcesPath,
+    });
+  }
+
+  return codexSessionMcpRegistrationService;
 }
 
 function requireMemoryCliShimService(): MemoryCliShimService {
@@ -3395,6 +3423,8 @@ function closePersistentStores(): void {
   characterAuthoringService = null;
   managedMemorySkillService = null;
   managedSessionSkillService = null;
+  managedSessionSkillSyncResult = null;
+  codexSessionMcpRegistrationService = null;
   memoryCliShimService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;

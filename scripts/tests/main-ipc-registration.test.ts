@@ -54,6 +54,7 @@ import {
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
+  WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
@@ -962,6 +963,33 @@ test("Memory V6 CLI shim IPC は Settings window からだけ呼び出せる", a
     cliShim: { status: "not-installed" },
   });
   assert.deepEqual(calls, ["install", "uninstall"]);
+});
+
+test("Codex Session MCP registration IPC は Settings window からだけ呼び出せる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const settingsWindow = createWindowStub("http://localhost:5173/?mode=settings");
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  let eventWindow = settingsWindow;
+  const { deps, calls } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    isSettingsWindow: (window: unknown) => window === settingsWindow,
+    registerCodexSessionMcp: async () => {
+      calls.push("register");
+      return { codexMcp: { status: "installed" } } as never;
+    },
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(await handlers.get(WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL)?.({}), {
+    codexMcp: { status: "installed" },
+  });
+  eventWindow = homeWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL)?.({}) as Promise<unknown>,
+    /Settings IPC is only available/,
+  );
+  assert.deepEqual(calls, ["register", `log:${WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL}`]);
 });
 
 test("Memory V6 CLI shim IPC は Settings window 以外からの呼び出しを拒否する", async () => {

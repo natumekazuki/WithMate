@@ -726,3 +726,22 @@ exact request、response、error、状態遷移、limitは、実装時に追加�
   - transcript title/label delta cellは13 direct testsとc6/c7 manifest比較を行い、production delta非影響、blocking 0でapprove
 - Final review state: holistic complete-diff reviewはCandidate c5で一度だけ実施済み。Candidate c7ではfinding familyとresulting deltaのtargeted closureだけを行い、未解決blocking、accepted-risk candidate、material validation gapはない
 - Residual hardening: folder snapshotのaggregate byte/file/depth budgetは新しいresource-limit contractを要するため、現論理変更には含めない
+
+### REM-FILE-PROOF-CLEANUP
+
+- Status: follow-up
+- SessionFolder writeとtranscript exportは、response lossからのreconciliationとpath replacement raceの回避を優先し、operation-owned temporary proofとpublish proofをpath-based unlinkで削除しない
+- Accepted risk: proofが長期保持されるため、失敗や再試行が多い環境ではSessionFolderのdisk使用量が増える。機密性侵害や不可逆data lossではなく、利用者がSessionFolderを確認して回収できるため、現Candidateのblockingにはしない
+- 完了条件: native handle-bound delete/move、または同等にfile identityを再検証したcleanup ownerを導入し、別writerが同じpathへ置いたfileを変更しないこと、active/recoverable proofを回収しないこと、保持量とcleanup結果をDiagnosticsで観測できることをdirect testで確認する
+
+### Candidate c13 Holistic Finding Closure
+
+- `F-QUEUE-RUN-OVERTAKE`: 同一Sessionの`turn.enqueue`がdurable FIFOへ先着しても、lock待機中の後発`turn.run`がqueued rowを検査せず`running`へ遷移し、queue headを追い越せた
+- Current-scope repair: canonical execution storage transactionで`running`だけでなく`queued`もSession occupancyとして扱う。queued executionが存在する間の`turn.run`は`SESSION_BUSY`へ収束し、FIFO head admissionを優先する
+- Direct verification: 同じidle Sessionへ`turn.enqueue`と`turn.run`を並行送信し、enqueueだけが永続化・dispatchされ、後発runが`SESSION_BUSY`となることを確認する
+
+### REM-INTERACTION-PROJECTION-BUDGET
+
+- Status: hardening follow-up
+- `interaction.list`は最大pageをparse・projectした後に最終responseの8 MiB制限を検査するため、最大級payloadが蓄積したSessionではerrorへ収束する前の一時working setが大きくなり得る
+- 完了条件: projection中にUTF-8 byte budgetを検査して超過確定時点で停止し、public response hard limitとpagination contractを変えずにpeak working setを制限する。最大pageと1 byte超過をdirect testで確認する

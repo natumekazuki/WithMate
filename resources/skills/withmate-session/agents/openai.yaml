@@ -1,4 +1,10 @@
 interface:
   display_name: "WithMate Session"
   short_description: "Operate persistent WithMate Sessions via CLI or MCP"
-  default_prompt: "Use WithMate Session orchestration to create, run, queue, or inspect an explicit persistent Session."
+  default_prompt: "Use $withmate-session to create, run, queue, or inspect an explicit persistent Session."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "withmate-session"
+      description: "WithMate Session MCP server"

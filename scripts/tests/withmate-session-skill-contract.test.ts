@@ -8,13 +8,19 @@ import { SESSION_RUNTIME_OPERATIONS } from "../../src/session-external-runtime-c
 const skillRoot = path.resolve("resources", "skills", "withmate-session");
 
 describe("withmate-session managed Skill contract", () => {
-  it("installed packaged CLIとMCP entryを使いsource checkout helperへ依存しない", async () => {
+  it("host設定済みMCPを優先しstdio entryを通常shell commandとして実行しない", async () => {
     const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const openaiYaml = await readFile(path.join(skillRoot, "agents", "openai.yaml"), "utf8");
 
-    assert.match(skill, /installed `withmate-session` command/);
-    assert.match(skill, /withmate-session mcp-server/);
-    assert.match(operations, /WindowsApps alias/);
+    assert.match(skill, /MCP tools that the Codex host has already exposed/);
+    assert.match(skill, /Never start `withmate-session mcp-server` through a shell/);
+    assert.match(skill, /specifically requires MCP, stop until the MCP tools are available/);
+    assert.match(skill, /only when the user explicitly permits CLI fallback/);
+    assert.match(skill, /new Codex Session or restart Codex/);
+    assert.match(openaiYaml, /type: "mcp"[\s\S]*?value: "withmate-session"/);
+    assert.match(operations, /does not create or overwrite a shared WindowsApps alias/);
+    assert.doesNotMatch(operations, /```powershell[\s\S]*?withmate-session mcp-server[\s\S]*?```/);
     assert.doesNotMatch(`${skill}\n${operations}`, /node(?:\.exe)?\s+scripts[\\/]withmate-session/);
     assert.doesNotMatch(`${skill}\n${operations}`, /node_modules/);
   });

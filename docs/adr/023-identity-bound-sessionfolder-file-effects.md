@@ -14,9 +14,10 @@ SessionFolderへのtranscript exportは、relative pathのcontainment検証後�
 
 - containment検証で確定したparent directoryのfilesystem identityへworker processのcurrent working directoryを固定し、temporary file、publish proof、targetへのfile effectはbasenameだけで実行する。
 - workerが固定したdirectory identityをMain Process側でも照合し、不一致または再確認不能ではpublishせずfail closedする。
-- contentはworkerへstreaming転送し、hard maximumを超えた時点でtemporary fileを除去する。全量をMain Process memoryへ保持しない。
-- publish前にdigest、byte length、file identityを永続化する。`replace=false`はhard link、`replace=true`はtemporary fileと同一identityのpublish proofを作成してからatomic renameし、response loss後の回復証拠を維持する。
-- 完了またはterminal failure時は、temporary fileと同一identityであることを確認できたpublish proofだけを除去する。identityを証明できない既存fileは削除しない。
+- contentはworkerへstreaming転送し、hard maximumを超えた時点で失敗させる。全量をMain Process memoryへ保持しない。
+- publish前にdigest、byte length、file identityを永続化する。新規targetはtemporary fileからno-overwrite hard linkで公開し、response loss後の回復証拠を維持する。
+- Node.jsのpath-based `rename` / `unlink`では検証後の同名file差し替えを閉じられない。Windows版v6.4では既存targetへの`replace=true`を副作用前にfail closedとし、operation-owned temporary fileとpublish proofは自動削除しない。
+- 既存targetの安全な置換とproof cleanupは、file handleへ結び付いたno-replace move / delete primitiveを導入した後に有効化する。
 
 ## Alternatives
 
@@ -30,11 +31,12 @@ SessionFolder exportのresource limit契約と大容量streaming要件に反す�
 
 ### native addonでdirectory handle相対操作を実装する
 
-より直接的なOS primitiveを使えるが、platform別実装と配布負担が大きい。Node.jsの標準APIだけで必要なidentity固定とatomic publishを満たせるため、現時点では採用しない。
+既存targetの安全な置換とproof cleanupを直接実現できる。一方でplatform別実装と配布検証が必要なためv6.4には含めず、該当操作をfail closedにする。
 
 ## Consequences
 
 - path差し替え後もfile effectは検証済みdirectory identityから外れず、SessionFolder外へのpublishを防げる。
 - worker processの起動と制御がexportごとに必要になる。
 - Windowsではcurrent working directoryとして保持したparentのrenameが拒否される場合がある。この場合はpath変更としてfail closedする。
-- durable completionまでtemporary fileまたはhard-link proofを保持するため、response loss後も同一fileを回復できる。
+- durable completion後もtemporary fileまたはhard-link proofを保持するため、response loss後も同一fileを回復できる。成功時のhard linkはtargetと同じfile contentを共有するが、directory entryは残る。
+- limit超過などpublish前の失敗でもpartial temporary fileが残り得る。第三者fileの削除より安全側へ倒した既知の運用上の制約であり、native cleanup primitiveの導入時に解消する。

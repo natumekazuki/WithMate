@@ -309,6 +309,49 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  it("summary/list は大きな definitionMarkdown を投影せず metadata と既存 fallback を維持する", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      insertCharacterRows(dbPath, ["large-summary-character"]);
+      const snapshot = {
+        ...createCharacterRuntimeSnapshot("large-summary-character", "Projected name"),
+        description: "Projected description",
+        iconFilePath: "icons/projected.svg",
+        theme: { main: "#123456", sub: "#abcdef" },
+        definitionMarkdown: "# Large definition\n" + "x".repeat(2 * 1024 * 1024),
+      };
+      const session = buildNewSession({
+        id: "large-summary-session",
+        taskTitle: "Large summary",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: snapshot.characterId,
+        character: "Fallback name",
+        characterIconPath: "fallback.svg",
+        characterThemeColors: { main: "#000000", sub: "#ffffff" },
+        characterRuntimeSnapshot: snapshot,
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+      storage.insertSession(session);
+
+      const summary = storage.getSessionSummary(session.id);
+      assert.equal(summary?.character, "Projected name");
+      assert.equal(summary?.characterIconPath, "icons/projected.svg");
+      assert.deepEqual(summary?.characterThemeColors, { main: "#123456", sub: "#abcdef" });
+      assert.equal(storage.listSessionSummaries()[0]?.character, "Projected name");
+      assert.equal(storage.listSessionSummaryPage(1)[0]?.summary.character, "Projected name");
+      assert.equal(storage.getSession(session.id)?.characterRuntimeSnapshot?.definitionMarkdown.length, snapshot.definitionMarkdown.length);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("pin stateだけを更新し、updatedAtと本文を維持して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
