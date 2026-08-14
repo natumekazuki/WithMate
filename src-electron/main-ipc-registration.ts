@@ -162,6 +162,7 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
@@ -599,6 +600,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listOpenSessionWindowIds"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
+  | "validateWorkspaceDirectory"
   | "getSessionFileExplorerOwnerSessionId"
   | "listSessionFileRoots"
   | "listSessionDirectory"
@@ -1344,6 +1346,20 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       return null;
     }
     return deps.getSession(sessionId);
+  });
+  ipcMain.handle(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL, async (event, sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      throw new TypeError("Session ID is invalid.");
+    }
+    const window = deps.resolveEventWindow(event);
+    if (!window || deps.resolveSessionWindow(sessionId) !== window) {
+      throw new Error("Session workspace validation IPC is only available from the target Session window.");
+    }
+    const session = await deps.getSession(sessionId);
+    if (!session) {
+      return { valid: false, reason: "unavailable" };
+    }
+    return deps.validateWorkspaceDirectory(session.workspacePath);
   });
   ipcMain.handle(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL, async (event, sessionId: string) => {
     if (typeof sessionId !== "string" || !sessionId) {

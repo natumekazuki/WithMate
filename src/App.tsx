@@ -736,7 +736,7 @@ export default function AgentSessionWindowApp() {
     const requestId = workspaceAvailabilityRequestIdRef.current + 1;
     workspaceAvailabilityRequestIdRef.current = requestId;
     setWorkspaceAvailability(beginSessionWorkspaceAvailabilityCheck(sessionId, workspacePath, requestId));
-    const result = await withmateApi.validateWorkspaceDirectory(workspacePath)
+    const result = await withmateApi.validateSessionWorkspace(sessionId)
       .catch(() => ({ valid: false, reason: "unavailable" } as const));
     if (workspaceAvailabilityRequestIdRef.current !== requestId) {
       return false;
