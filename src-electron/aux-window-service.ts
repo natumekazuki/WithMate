@@ -4,8 +4,8 @@ import type {
   SessionFileResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
-  getSessionFileResourceDisplayPath,
   isSessionFileAbsoluteResource,
+  resolveSessionFilePreviewWindowTitle,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
@@ -305,13 +305,17 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     }
 
     const token = this.deps.generateDiffToken();
+    const storedPayload = {
+      ...payload,
+      windowTitle: resolveSessionFilePreviewWindowTitle(payload.windowTitle),
+    };
     const window = this.deps.createWindow({
       ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS,
-      title: `Preview - ${getSessionFileResourceDisplayPath(payload.resource)}`,
+      title: storedPayload.windowTitle,
     });
     this.filePreviewResourceTokens.set(resourceKey, token);
     this.filePreviewWindows.set(token, window);
-    this.filePreviewStore.set(token, payload);
+    this.filePreviewStore.set(token, storedPayload);
     window.once("ready-to-show", () => window.show());
     window.on("closed", () => {
       this.filePreviewResourceTokens.delete(resourceKey);

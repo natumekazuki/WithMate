@@ -55,6 +55,12 @@ export default function FilePreviewApp() {
   }, [api]);
 
   useEffect(() => {
+    if (payload) {
+      document.title = payload.windowTitle;
+    }
+  }, [payload]);
+
+  useEffect(() => {
     let active = true;
     if (!api || !payload || !isSessionFileRootResource(payload.resource)) {
       setDiffScopes([]);

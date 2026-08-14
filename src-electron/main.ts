@@ -72,6 +72,7 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import { resolveSessionFilePreviewWindowTitle } from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -3921,12 +3922,16 @@ async function openSessionFilePreviewWindow(
     };
   }
   try {
-    await explorer.inspectFile(resource);
+    const descriptor = await explorer.inspectFile(resource);
     const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
     if (!ownerSessionId) {
       throw new Error("The owning Session could not be resolved.");
     }
-    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({ resource, ownerSessionId });
+    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
+      resource,
+      ownerSessionId,
+      windowTitle: resolveSessionFilePreviewWindowTitle(descriptor.name),
+    });
     return { status: "opened", targetType: "preview-window", disposition, resource };
   } catch (error) {
     return {
