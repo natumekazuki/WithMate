@@ -131,3 +131,27 @@ Candidate 1を固定し、次の3 lensを独立した`targeted_reviewer`へ渡�
 - Independent review lens: none。
 
 修正前の直接testは`0 !== 1`でfailureを再現した。post-commit errorへstorageの`created`結果を保持する修正後は、episode failureと同一request replayを含むAffect service/application serviceの18件、`npm run typecheck`が成功した。
+
+## Follow-up closure: Node 22 SQLite text read-back
+
+- Invariant ID: `AFF-STORAGE-TEXT-07`
+- Accepted contract / exact anchor: Affect eventの`targetId`はpublic schemaで非空文字列として受理され、保存後のcreate response、個別取得、inspect、effective projectionで同じ文字列を欠損なく返す。Node 22の`node:sqlite`がTEXT内のNUL以降をread-back時に切り捨てても、DBへ保存済みのUTF-8 bytesとpublic projectionを一致させる。
+- Scope / semantic owner: `CharacterAffectStorage`のevent row read境界。record/correctのcreate response、`getEvent`、`inspect`、`getEffectiveState`、idempotent replayが同じrow復元規則を使う。
+- Failure mode / consumer impact: NULを含む`targetId`がNode 22で短縮され、異なるtargetがpublic response上で同一に見える。legacy identityの集約境界も誤って観測される。
+- State transitions / failure timing: event commit後のrequire/read、replay read、inspection、active-set projection。保存値、schema、migration、correction/reset stateは変更しない。
+- Direct verification: 既存のNUL衝突反証testでcreate response、`getEvent`、`inspect`、effective projectionをNode 22とNode 24の両方で確認し、関連storage test、typecheck、buildを実行する。
+- Independent review trigger: none。単一storage read境界で全material siblingを直接testでき、保存形式とschemaを変更しないcurrent-scope repair。
+- Gate: `ready`
+
+### Closure Map
+
+- Invariant ID: `AFF-STORAGE-TEXT-07`
+- Accepted anchor and meaning: public schemaが受理した非空`targetId`は、commit後の全event read channelで完全にround-tripする。
+- Canonical owner: `CharacterAffectStorage`のevent row selectionと`StoredAffectEvent` / projection変換。
+- Siblings in scope: record/correct/replayの`requireEvent`、`getEvent`、`inspect`、`getEffectiveState`。
+- Excluded siblings and reason: `value_json`内のlabel/reason/evidenceはJSON escapeを介して既にNode 22でもround-tripし、reset/mutation rowは`targetId`を所有しない。DB schemaとstored TEXT bytesは正しいためmigrationも対象外。
+- Failure points: commit後のTEXT column decodeでNUL以降が欠損し、create/read/projection consumerへ短縮値が返る。
+- Direct checks: Node 22/24で同じNUL入りeventのcreate/get/inspect/projection結果を比較する。
+- Independent review lens: none。
+
+修正前はNode 22.22.0でcreate responseの`targetId`がNUL直前の`a`へ短縮されるfailureを再現した。event row取得時に`target_id`をBLOBとして読み、UTF-8へ復元する共通境界へ修正した後、Node 22.22.0とNode 24.18.0のstorage test各18件、CIと同じNode 22 shard 1（710 passed、1 skipped）、`npm run typecheck`、`npm run build`が成功した。保存値、schema、migrationへの変更はなく、未解決blockingとvalidation gapはない。

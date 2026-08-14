@@ -1,3 +1,4 @@
+import { Buffer } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
@@ -99,7 +100,7 @@ type AffectEventRow = {
   source_session_id: string | null;
   layer: AffectLayer;
   target_type: AffectTargetType;
-  target_id: string;
+  target_id_bytes: Uint8Array;
   family: CharacterAffectFamily | null;
   value_json: string;
   intensity: number;
@@ -446,7 +447,7 @@ export class CharacterAffectStorage {
   getEvent(input: { eventId: string; characterId: string; userId: string }): StoredAffectEvent | null {
     assertLocalUser(input.userId);
     const row = this.db.prepare(`
-      SELECT *
+      SELECT *, CAST(target_id AS BLOB) AS target_id_bytes
       FROM character_affect_events_v6
       WHERE id = ? AND character_id = ? AND user_id = ?
     `).get(input.eventId, input.characterId, input.userId) as AffectEventRow | undefined;
@@ -467,7 +468,7 @@ export class CharacterAffectStorage {
     const relationshipResetAt = this.latestResetAt(input.characterId, input.userId, "relationship", null);
     const sessionResetAt = this.latestResetAt(input.characterId, input.userId, "session", input.sessionId);
     const rows = this.db.prepare(`
-      SELECT *
+      SELECT *, CAST(target_id AS BLOB) AS target_id_bytes
       FROM character_affect_events_v6
       WHERE character_id = ?
         AND user_id = ?
@@ -517,7 +518,7 @@ export class CharacterAffectStorage {
         return [{
           layer: row.layer,
           targetType: row.target_type,
-          targetId: row.target_id,
+          targetId: decodeSqliteText(row.target_id_bytes),
           family: row.family,
           value: parseValue(row.value_json),
           intensity: row.intensity,
@@ -592,7 +593,7 @@ export class CharacterAffectStorage {
       this.assertSessionOwner(input.sessionId, input.characterId);
     }
     const allEvents = this.db.prepare(`
-      SELECT * FROM character_affect_events_v6
+      SELECT *, CAST(target_id AS BLOB) AS target_id_bytes FROM character_affect_events_v6
       WHERE character_id = ? AND user_id = ?
       ORDER BY occurred_at ASC, id ASC
     `).all(input.characterId, input.userId) as AffectEventRow[];
@@ -886,7 +887,9 @@ export class CharacterAffectStorage {
   }
 
   private requireEvent(eventId: string): AffectEventRow {
-    const row = this.db.prepare("SELECT * FROM character_affect_events_v6 WHERE id = ?").get(eventId) as
+    const row = this.db.prepare(
+      "SELECT *, CAST(target_id AS BLOB) AS target_id_bytes FROM character_affect_events_v6 WHERE id = ?",
+    ).get(eventId) as
       | AffectEventRow
       | undefined;
     if (!row) {
@@ -947,7 +950,7 @@ function toStoredEvent(row: AffectEventRow): StoredAffectEvent {
     sourceSessionId: row.source_session_id,
     layer: row.layer,
     targetType: row.target_type,
-    targetId: row.target_id,
+    targetId: decodeSqliteText(row.target_id_bytes),
     family: row.family,
     value: parseValue(row.value_json),
     intensity: row.intensity,
@@ -965,6 +968,10 @@ function toStoredEvent(row: AffectEventRow): StoredAffectEvent {
 
 function parseValue(valueJson: string): AffectValue {
   return JSON.parse(valueJson) as AffectValue;
+}
+
+function decodeSqliteText(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("utf8");
 }
 
 function aggregateComponents(

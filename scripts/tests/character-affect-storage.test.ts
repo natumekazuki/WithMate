@@ -982,6 +982,17 @@ describe("CharacterAffectStorage", () => {
         value: { label: "c", valence: 0.3 },
         idempotencyKey: "legacy-delimiter-b",
       })).event;
+      assert.equal(legacyA.targetId, "a");
+      assert.equal(legacyB.targetId, "a\u0000legacy-label:b");
+      assert.equal(
+        storage.getEvent({ eventId: legacyB.id, characterId: "character-a", userId: "local-user" })?.targetId,
+        "a\u0000legacy-label:b",
+      );
+      assert.equal(
+        storage.inspect({ characterId: "character-a", userId: "local-user", sessionId: "session-a" })
+          .events.find((stored) => stored.id === legacyB.id)?.targetId,
+        "a\u0000legacy-label:b",
+      );
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.prepare("UPDATE character_affect_events_v6 SET family = NULL WHERE id IN (?, ?)").run(legacyA.id, legacyB.id);
