@@ -196,6 +196,14 @@ import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
+import {
+  INITIAL_SESSION_WORKSPACE_AVAILABILITY,
+  applySessionWorkspaceAvailabilityResult,
+  beginSessionWorkspaceAvailabilityCheck,
+  isSessionWorkspaceAvailable,
+  resolveSessionWorkspaceBlockedReason,
+  resolveSessionWorkspaceUnavailableMessage,
+} from "./session-workspace-availability.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
 import {
   type AuxiliarySession,
@@ -483,6 +491,11 @@ export default function AgentSessionWindowApp() {
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [draft, setDraft] = useState("");
   const [pendingSubmitSessionId, setPendingSubmitSessionId] = useState<string | null>(null);
+  const [workspaceAvailability, setWorkspaceAvailability] = useState(
+    INITIAL_SESSION_WORKSPACE_AVAILABILITY,
+  );
+  const [workspaceAvailabilityCheckRevision, setWorkspaceAvailabilityCheckRevision] = useState(0);
+  const workspaceAvailabilityRequestIdRef = useRef(0);
   const [forceComposerBlockedFeedback, setForceComposerBlockedFeedback] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<ModelCatalogSnapshot | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -715,6 +728,41 @@ export default function AgentSessionWindowApp() {
     [companionSessions, openCompanionReviewWindowIds],
   );
   const selectedSessionId = selectedSession?.id ?? null;
+  const validateSessionWorkspace = useCallback(async (session: Session): Promise<boolean> => {
+    if (!withmateApi) {
+      return false;
+    }
+    const { id: sessionId, workspacePath } = session;
+    const requestId = workspaceAvailabilityRequestIdRef.current + 1;
+    workspaceAvailabilityRequestIdRef.current = requestId;
+    setWorkspaceAvailability(beginSessionWorkspaceAvailabilityCheck(sessionId, workspacePath, requestId));
+    const result = await withmateApi.validateWorkspaceDirectory(workspacePath)
+      .catch(() => ({ valid: false, reason: "unavailable" } as const));
+    if (workspaceAvailabilityRequestIdRef.current !== requestId) {
+      return false;
+    }
+    setWorkspaceAvailability((current) => applySessionWorkspaceAvailabilityResult(
+      current,
+      sessionId,
+      workspacePath,
+      requestId,
+      result,
+    ));
+    return result.valid;
+  }, [withmateApi]);
+  useEffect(() => {
+    if (!withmateApi || !selectedSession) {
+      workspaceAvailabilityRequestIdRef.current += 1;
+      setWorkspaceAvailability(INITIAL_SESSION_WORKSPACE_AVAILABILITY);
+      return;
+    }
+
+    void validateSessionWorkspace(selectedSession);
+
+    return () => {
+      workspaceAvailabilityRequestIdRef.current += 1;
+    };
+  }, [selectedSession?.id, selectedSession?.workspacePath, validateSessionWorkspace, workspaceAvailabilityCheckRevision]);
   const handleSidePaneChange = useCallback((sidePane: SessionSidePane) => {
     void persistChatLayoutPreference(withmateApi, { target: "sidePane", value: sidePane });
   }, [withmateApi]);
@@ -1115,11 +1163,36 @@ export default function AgentSessionWindowApp() {
       return "Provider is disabled. Enable it in Settings.";
     }
 
+    const workspaceBlockedReason = resolveSessionWorkspaceBlockedReason(
+      workspaceAvailability,
+      selectedSession.id,
+      selectedSession.workspacePath,
+    );
+    if (workspaceBlockedReason) {
+      return workspaceBlockedReason;
+    }
+
     return "";
-  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession]);
+  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceAvailability]);
   const composerBlockedReason = pendingSubmitSessionId === selectedSession?.id
     ? "Message submission is in progress."
     : sessionExecutionBlockedReason;
+  const isSelectedWorkspaceAvailable = selectedSession
+    ? isSessionWorkspaceAvailable(
+        workspaceAvailability,
+        selectedSession.id,
+        selectedSession.workspacePath,
+      )
+    : false;
+  const workspaceAvailabilityMessage = selectedSession
+    ? resolveSessionWorkspaceUnavailableMessage(
+        workspaceAvailability,
+        selectedSession.id,
+        selectedSession.workspacePath,
+      )
+    : "";
+  const isWorkspaceAvailabilityCheckPending = workspaceAvailability.status === "checking"
+    && workspaceAvailability.sessionId === selectedSession?.id;
 
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {
@@ -2067,6 +2140,11 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
+      if (!await validateSessionWorkspace(selectedSession)) {
+        setForceComposerBlockedFeedback(true);
+        return;
+      }
+
       const previewRequest = createComposerPreviewRequest({
         api: withmateApi,
         mode: "session",
@@ -2172,6 +2250,7 @@ export default function AgentSessionWindowApp() {
         const [refreshedSessionResult, refreshedLiveRunResult] = await Promise.allSettled([
           withmateApi.getSession(sessionId),
           withmateApi.getLiveSessionRun(sessionId),
+          validateSessionWorkspace(selectedSession),
         ]);
         const canReplaceOptimisticBody = sessionMutationRevisionRef.current.isCurrent(
           optimisticSessionMutationRevision,
@@ -3504,7 +3583,7 @@ export default function AgentSessionWindowApp() {
     ...resolveAuxiliaryHeaderActionState({
       isActive: !!activeAuxiliarySession,
       isActionPending: isAuxiliaryActionPending,
-      isStartBlocked: isSelectedSessionRunning || isSelectedSessionReadOnly,
+      isStartBlocked: isSelectedSessionRunning || isSelectedSessionReadOnly || !isSelectedWorkspaceAvailable,
       activeRunState: activeAuxiliarySession?.runState,
     }),
     onStart: handleOpenAuxiliaryLaunchDialog,
@@ -3527,7 +3606,7 @@ export default function AgentSessionWindowApp() {
     <SessionFileExplorerPane
       api={withmateApi}
       sessionId={activeRunSessionId}
-      enabled={isFilesPaneVisible}
+      enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable}
       rootsRevision={fileExplorerRootsRevision}
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
@@ -3555,7 +3634,7 @@ export default function AgentSessionWindowApp() {
         <FileRootChangesPane
           api={withmateApi}
           sessionId={activeRunSessionId}
-          enabled={isFilesPaneVisible && fileExplorerTab === "changes"}
+          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "changes"}
           rootsRevision={fileExplorerRootsRevision}
           refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
@@ -3660,6 +3739,9 @@ export default function AgentSessionWindowApp() {
         inlinePathFeedback: inlinePathError?.ownerSessionId === renderedSession.id
           ? inlinePathError.message
           : "",
+        workspaceAvailabilityMessage,
+        isWorkspaceAvailabilityCheckPending,
+        isWorkspaceAvailable: isSelectedWorkspaceAvailable,
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
         isMessageListFollowing,
         retryBanner: activeAuxiliarySession ? null : retryBanner,
@@ -3767,6 +3849,9 @@ export default function AgentSessionWindowApp() {
         onDismissInlinePathFeedback: () => {
           inlinePathOperationRevisionRef.current.advance();
           setInlinePathError((current) => current?.ownerSessionId === renderedSession.id ? null : current);
+        },
+        onRecheckWorkspaceAvailability: () => {
+          setWorkspaceAvailabilityCheckRevision((current) => current + 1);
         },
         getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,

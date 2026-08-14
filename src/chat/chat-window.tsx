@@ -331,7 +331,12 @@ export function ChatWindow({
                 ) : null}
               </div>
               {notice.actionLabel && notice.onAction ? (
-                <button type="button" onClick={notice.onAction} disabled={notice.isActionDisabled}>
+                <button
+                  className="drawer-toggle compact secondary"
+                  type="button"
+                  onClick={notice.onAction}
+                  disabled={notice.isActionDisabled}
+                >
                   {notice.actionLabel}
                 </button>
               ) : null}

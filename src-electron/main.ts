@@ -1769,6 +1769,8 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       dismissSessionTurnNotification: (sessionId) =>
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       cleanupSessionFilesDirectory,
+      validateWorkspaceDirectory: (targetPath) =>
+        workspaceDirectoryValidationService.validate(targetPath),
     });
   }
 
