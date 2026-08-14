@@ -855,6 +855,7 @@ export type SessionChatScreenProps = {
   messageColumn: ReactNode;
   mainContent?: ReactNode;
   workSurfaceOverlay?: ReactNode;
+  supportingSurface?: ReactNode;
   errorSurface?: ReactNode;
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
@@ -901,6 +902,7 @@ export function SessionChatScreen({
   messageColumn,
   mainContent,
   workSurfaceOverlay = null,
+  supportingSurface = null,
   errorSurface = null,
   recoveryActions = null,
   actionDock,
@@ -973,6 +975,7 @@ export function SessionChatScreen({
           {mainContent}
         </div>
         {workSurfaceOverlay}
+        {supportingSurface}
         {recoveryActions ? (
           <div className="session-recovery-actions-slot">
             {recoveryActions}
@@ -3447,15 +3450,6 @@ type SessionAttachmentItem = {
   removeTargets: string[];
 };
 
-type SessionAdditionalDirectoryItem = {
-  key: string;
-  path: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-  canRemove: boolean;
-};
-
 type SessionComposerSendabilityView = {
   primaryFeedback: string;
   secondaryFeedback: string[];
@@ -3490,7 +3484,6 @@ export type SessionComposerExpandedProps = {
   isCustomAgentListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
   attachmentItems: SessionAttachmentItem[];
-  additionalDirectoryItems: SessionAdditionalDirectoryItem[];
   draft: string;
   placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -3525,7 +3518,6 @@ export type SessionComposerExpandedProps = {
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
   onRemoveAttachment: (targets: string[]) => void;
-  onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
   onDraftFocus: () => void;
   onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -3568,7 +3560,6 @@ export function SessionComposerExpanded({
   isCustomAgentListLoading,
   customAgentItems,
   attachmentItems,
-  additionalDirectoryItems,
   draft,
   placeholder,
   composerTextareaRef,
@@ -3603,7 +3594,6 @@ export function SessionComposerExpanded({
   onJumpToBottom,
   onSelectCustomAgent,
   onRemoveAttachment,
-  onRemoveAdditionalDirectory,
   onDraftChange,
   onDraftFocus,
   onDraftKeyDown,
@@ -3909,34 +3899,6 @@ export function SessionComposerExpanded({
               >
                 ×
               </button>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {isAdditionalDirectoryListOpen && additionalDirectoryItems.length > 0 ? (
-        <div className="composer-additional-directory-list">
-          {additionalDirectoryItems.map((item) => (
-            <div
-              key={item.key}
-              className="composer-additional-directory-chip"
-              title={item.title}
-            >
-              <span className="composer-additional-directory-copy">
-                <span className="composer-additional-directory-primary">{item.primaryLabel}</span>
-                <span className="composer-additional-directory-secondary">{item.secondaryLabel}</span>
-              </span>
-              {item.canRemove ? (
-                <button
-                  type="button"
-                  className="composer-additional-directory-remove"
-                  onClick={() => onRemoveAdditionalDirectory(item.path)}
-                  disabled={isRunning || composerBlocked}
-                  aria-label={`${item.primaryLabel} を削除`}
-                >
-                  ×
-                </button>
-              ) : null}
             </div>
           ))}
         </div>

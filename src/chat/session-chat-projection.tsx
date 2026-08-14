@@ -2,6 +2,7 @@ import type { CSSProperties, KeyboardEventHandler, PointerEventHandler, ReactNod
 
 import type { CharacterProfile, DiffPreviewPayload, Message, MessageArtifact } from "../app-state.js";
 import type { HomeMonitorEntry } from "../home/home-session-projection.js";
+import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
 import type { Session } from "../session-state.js";
 import {
   type SessionActionDockCompactRowProps,
@@ -92,7 +93,7 @@ export type AgentSessionChatProjectionInput = {
   customAgentItems: SessionComposerExpandedProps["customAgentItems"];
   skillItems: NonNullable<ChatWindowProps["skillPickerProps"]>["items"];
   composerAttachmentItems: SessionComposerExpandedProps["attachmentItems"];
-  additionalDirectoryItems: SessionComposerExpandedProps["additionalDirectoryItems"];
+  additionalDirectoryItems: AdditionalDirectoryItem[];
   draft: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   isComposerDisabled: boolean;
@@ -185,7 +186,7 @@ export type AgentSessionChatProjectionInput = {
   onSelectCustomAgent: SessionComposerExpandedProps["onSelectCustomAgent"];
   onSelectSkill: NonNullable<ChatWindowProps["skillPickerProps"]>["onSelectSkill"];
   onRemoveAttachment: SessionComposerExpandedProps["onRemoveAttachment"];
-  onRemoveAdditionalDirectory: SessionComposerExpandedProps["onRemoveAdditionalDirectory"];
+  onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
   onDraftFocus: () => void;
   onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -282,7 +283,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       isCustomAgentListLoading: input.isCustomAgentListLoading,
       customAgentItems: input.customAgentItems,
       attachmentItems: input.composerAttachmentItems,
-      additionalDirectoryItems: input.additionalDirectoryItems,
       draft: input.draft,
       composerTextareaRef: input.composerTextareaRef,
       isComposerDisabled: input.isComposerDisabled,
@@ -318,7 +318,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onJumpToBottom: input.onJumpToMessageListBottom,
       onSelectCustomAgent: input.onSelectCustomAgent,
       onRemoveAttachment: input.onRemoveAttachment,
-      onRemoveAdditionalDirectory: input.onRemoveAdditionalDirectory,
       onDraftChange: input.onDraftChange,
       onDraftFocus: input.onDraftFocus,
       onDraftKeyDown: input.onDraftKeyDown,
@@ -450,6 +449,12 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
+    additionalDirectoryListProps: {
+      isOpen: input.isAdditionalDirectoryListOpen,
+      items: input.additionalDirectoryItems,
+      isInteractionDisabled: input.isSelectedSessionRunning || input.composerBlocked,
+      onRemove: input.onRemoveAdditionalDirectory,
+    },
     skillPickerProps: {
       isOpen: !isCharacterAuthoringSession && input.isSkillPickerOpen,
       isLoading: input.isSkillListLoading,

@@ -343,8 +343,7 @@ button:disabled {
 
 .session-action-dock-slot.is-expanded .composer > :is(
   .composer-path-match-list,
-  .composer-attachment-list,
-  .composer-additional-directory-list
+  .composer-attachment-list
 ) {
   flex-shrink: 1;
   min-height: 0;
@@ -4148,21 +4147,21 @@ button:disabled {
 
 .session-message-stack {
   display: grid;
-  grid-template-rows: minmax(0, 1fr) auto auto;
+  grid-template-rows: minmax(0, 1fr) auto auto auto;
   gap: 0;
   min-height: 0;
   min-width: 0;
 }
 
 .session-recovery-actions-slot {
-  grid-row: 2;
+  grid-row: 3;
   min-width: 0;
   padding: 0 12px 12px;
 }
 
 .chat-error-surface {
   display: grid;
-  grid-row: 3;
+  grid-row: 4;
   gap: 6px;
   min-width: 0;
   padding: 0 12px 12px;
@@ -8351,51 +8350,78 @@ button:disabled {
   scrollbar-gutter: stable;
 }
 
-.composer-additional-directory-list {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 10px;
-}
-
-.composer-additional-directory-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 8px 10px;
-  border: 1px solid rgba(203, 213, 225, 0.12);
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.05);
+.chat-additional-directory-surface {
+  display: grid;
+  grid-row: 2;
+  gap: 6px;
+  min-width: 0;
+  max-height: min(28vh, 220px);
+  padding: 8px 12px 10px;
+  overflow: hidden;
+  border-top: 1px solid rgba(203, 213, 225, 0.14);
+  background: color-mix(in srgb, var(--surface-deep) 72%, transparent);
   color: var(--ink);
 }
 
-.composer-additional-directory-copy {
+.chat-additional-directory-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.chat-additional-directory-count {
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-additional-directory-list {
   display: grid;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+.chat-additional-directory-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 2px;
+}
+
+.chat-additional-directory-row + .chat-additional-directory-row {
+  border-top: 1px solid rgba(203, 213, 225, 0.1);
+}
+
+.chat-additional-directory-copy {
+  display: grid;
+  flex: 1 1 auto;
   gap: 2px;
   min-width: 0;
 }
 
-.composer-additional-directory-primary,
-.composer-additional-directory-secondary {
+.chat-additional-directory-primary,
+.chat-additional-directory-secondary {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.composer-additional-directory-primary {
+.chat-additional-directory-primary {
   color: var(--ink);
   font-weight: 600;
   font-size: 0.84rem;
 }
 
-.composer-additional-directory-secondary {
+.chat-additional-directory-secondary {
   color: var(--muted);
   font-size: 0.76rem;
 }
 
-.composer-additional-directory-remove {
+.chat-additional-directory-remove {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -8427,8 +8453,14 @@ button:disabled {
   font-size: 0.72rem;
 }
 
-.composer-additional-directory-remove:hover:not(:disabled) {
+.chat-additional-directory-remove:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.18);
+}
+
+.chat-additional-directory-readonly {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.72rem;
 }
 
 .composer-attachment-chip {

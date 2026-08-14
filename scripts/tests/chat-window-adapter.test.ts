@@ -606,7 +606,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     isCustomAgentListLoading: false,
     customAgentItems: [],
     attachmentItems: [],
-    additionalDirectoryItems: [],
     draft: "",
     composerTextareaRef,
     isComposerDisabled: false,
@@ -639,7 +638,6 @@ test("buildLiveSessionComposerProps は composer の表示デフォルトを反�
     onJumpToBottom: () => {},
     onSelectCustomAgent: () => {},
     onRemoveAttachment: () => {},
-    onRemoveAdditionalDirectory: () => {},
     onDraftChange: () => {},
     onDraftFocus: () => {},
     onDraftKeyDown: () => {},
@@ -702,7 +700,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     isCustomAgentListLoading: false,
     customAgentItems: [],
     attachmentItems: [],
-    additionalDirectoryItems: [],
     draft: "draft",
     composerTextareaRef,
     isComposerDisabled: false,
@@ -737,7 +734,6 @@ test("buildLiveSessionComposerDockProps は composer と compact dock の共通 
     onJumpToBottom,
     onSelectCustomAgent: () => {},
     onRemoveAttachment: () => {},
-    onRemoveAdditionalDirectory: () => {},
     onDraftChange: () => {},
     onDraftFocus: () => {},
     onDraftKeyDown: () => {},
@@ -953,7 +949,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       isCustomAgentListLoading: false,
       customAgentItems: [],
       attachmentItems: [],
-      additionalDirectoryItems: [],
       draft: "draft",
       composerTextareaRef,
       isComposerDisabled: false,
@@ -986,7 +981,6 @@ test("buildLiveSessionChatBodyProps は live session body props をまとめて�
       onJumpToBottom: () => {},
       onSelectCustomAgent: () => {},
       onRemoveAttachment: () => {},
-      onRemoveAdditionalDirectory: () => {},
       onDraftChange: () => {},
       onDraftFocus: () => {},
       onDraftKeyDown: () => {},
@@ -1138,7 +1132,7 @@ test("createHiddenControlsChatComposerProps は composer の非対応操作を�
   assert.equal(composerProps.canSelectCustomAgent, false);
   assert.deepEqual(composerProps.customAgentItems, []);
   assert.deepEqual(composerProps.attachmentItems, []);
-  assert.deepEqual(composerProps.additionalDirectoryItems, []);
+  assert.equal("additionalDirectoryItems" in composerProps, false);
   assert.equal(composerProps.selectedCustomAgentLabel, "Agent");
 });
 

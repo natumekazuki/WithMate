@@ -496,6 +496,34 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
   assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.deepEqual(props.additionalDirectoryListProps?.items, []);
+});
+
+test("buildAgentSessionChatWindowProps は追加Directory一覧をshared chat surfaceへ投影する", () => {
+  const onRemoveAdditionalDirectory = () => {};
+  const additionalDirectoryItems = [{
+    key: "C:/shared/docs",
+    path: "C:/shared/docs",
+    primaryLabel: "docs",
+    secondaryLabel: "C:/shared",
+    title: "C:/shared/docs",
+    canRemove: true,
+  }];
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isAdditionalDirectoryListOpen: true,
+    additionalDirectoryItems,
+    onRemoveAdditionalDirectory,
+  }));
+
+  assert.deepEqual(props.additionalDirectoryListProps, {
+    isOpen: true,
+    items: additionalDirectoryItems,
+    isInteractionDisabled: false,
+    onRemove: onRemoveAdditionalDirectory,
+  });
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.equal("onRemoveAdditionalDirectory" in props.composerProps, false);
 });
 
 test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠す", () => {
