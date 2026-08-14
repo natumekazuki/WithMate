@@ -132,16 +132,16 @@ test("ChatWindow の共通エラー領域は owner が指定したdismissと回�
   const props = createChatWindowProps();
   props.errorNotices = [{
     id: "workspace-unavailable",
-    message: "Workspaceを利用できません。",
+    message: "Workspace unavailable.",
     dismissLabel: "Workspaceエラーを閉じる",
     onDismiss: noop,
-    actionLabel: "再確認",
+    actionLabel: "Recheck",
     onAction: noop,
   }];
 
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
-  assert.match(html, />再確認<\/button>/);
+  assert.match(html, /class="drawer-toggle compact secondary"[^>]*>Recheck<\/button>/);
   assert.match(html, /aria-label="Workspaceエラーを閉じる"/);
 });
 

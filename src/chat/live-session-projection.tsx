@@ -30,12 +30,14 @@ export function buildLiveSessionErrorNotices(input: {
   };
   additionalNotices?: readonly ChatErrorNotice[];
 }): ChatErrorNotice[] {
+  const additionalNotices = input.additionalNotices ?? [];
   const feedbackMessages = input.composerFeedback.shouldShowFeedback
     ? [input.composerFeedback.primaryFeedback, ...input.composerFeedback.secondaryFeedback]
       .map((message) => message.trim())
       .filter(Boolean)
     : [];
   const composerNotice: ChatErrorNotice[] = feedbackMessages.length > 0
+    && !additionalNotices.some((notice) => notice.message.trim() === feedbackMessages[0])
     ? [{
         id: "composer-sendability",
         message: feedbackMessages[0],
@@ -44,7 +46,7 @@ export function buildLiveSessionErrorNotices(input: {
       }]
     : [];
 
-  return [...composerNotice, ...(input.additionalNotices ?? [])];
+  return [...composerNotice, ...additionalNotices];
 }
 
 export function buildLiveSessionCommonComposerDockInput(

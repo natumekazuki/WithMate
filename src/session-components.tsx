@@ -631,6 +631,7 @@ export type SessionHeaderProps = {
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
+  isTerminalDisabled?: boolean;
   showDeleteButton?: boolean;
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
@@ -657,6 +658,7 @@ export function SessionHeader({
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
+  isTerminalDisabled = false,
   showDeleteButton = true,
   workspaceActions,
   sessionFilesActions,
@@ -729,7 +731,12 @@ export function SessionHeader({
                 <span className="session-window-control-group-label">Workspace</span>
                 {workspaceActions}
                 {showTerminalButton ? (
-                  <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                  <button
+                    className="drawer-toggle compact secondary"
+                    type="button"
+                    onClick={onOpenTerminal}
+                    disabled={isTerminalDisabled}
+                  >
                     Terminal
                   </button>
                 ) : null}
@@ -3696,6 +3703,7 @@ export function SessionComposerExpanded({
                 onOpenPromptTemplates();
               }}
               aria-pressed={isPromptTemplateWorkspaceOpen}
+              disabled={isRunning || composerBlocked}
             >
               Template
             </button>
