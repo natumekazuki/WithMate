@@ -52,6 +52,7 @@ import {
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
@@ -245,6 +246,41 @@ test("workspace validation IPC は Home window だけから validation service �
     /only available from the Home window/,
   );
   assert.deepEqual(validatedPaths, ["C:\\workspace"]);
+});
+
+test("Session workspace validation IPC は対象 Session window の保存済み path だけを検証する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-2");
+  let eventWindow = sessionWindow;
+  const resolvedSessionIds: string[] = [];
+  const validatedPaths: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherWindow,
+    getSession: async (sessionId: string) => {
+      resolvedSessionIds.push(sessionId);
+      return sessionId === "session-1" ? { workspacePath: "C:\\session-workspace" } : null;
+    },
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validatedPaths.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL);
+
+  assert.deepEqual(await handler?.({}, "session-1"), { valid: true });
+  assert.deepEqual(resolvedSessionIds, ["session-1"]);
+  assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handler?.({}, "session-1") as Promise<unknown>,
+    /only available from the target Session window/,
+  );
+  assert.deepEqual(resolvedSessionIds, ["session-1"]);
+  assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
 });
 
 test("Session/Companion 作成 IPC は Home だけを許可し、作成直前に同じ workspace validation を通す", async () => {

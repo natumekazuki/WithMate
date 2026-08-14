@@ -142,6 +142,7 @@ export type WithMateWindowCatalogApi = {
 export type WithMateWindowSessionApi = {
   listSessionSummaries(): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
