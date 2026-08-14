@@ -320,6 +320,23 @@ export async function startMemoryV6RuntimeApi(
       affectService,
       resolveCharacterRuntimeSnapshot: (characterId) =>
         options.resolveCharacterRuntimeSnapshot?.(characterId) ?? null,
+      onUnexpectedError: (diagnostic) => {
+        options.log?.({
+          level: "warn",
+          kind: "character-context.application.unexpected-failure",
+          process: "main",
+          message: diagnostic.safeMessage,
+          data: {
+            operation: diagnostic.operation,
+            transport: diagnostic.transport,
+            stage: diagnostic.stage,
+            errorName: diagnostic.errorName,
+            durationMs: diagnostic.durationMs,
+            queryLength: diagnostic.queryLength,
+            searchTermCount: diagnostic.searchTermCount,
+          },
+        });
+      },
     });
     const apiSecret = createRuntimeApiSecret();
     const operatorApiSecret = createRuntimeApiSecret();

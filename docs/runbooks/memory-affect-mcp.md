@@ -136,4 +136,22 @@ metricsとapp logには会話本文、Memory本文、secretを記録しない。
 
 通常のWithMate Sessionは各turnの応答前にapplication serviceから最新context versionを取得し、Character Definitionとは別の最小envelopeをpromptへ注入する。応答後のCharacter自身の感情評価もlifecycleが実行する。MCP toolは追加想起や明示操作の境界であり、毎turn呼ばれる前提にはしない。
 
-post-turn appraisalは永続audit IDをcorrelationとし、Sessionをcompletedとして保存する前にpendingへ記録する。pendingにはassistant message indexも保存し、次回起動時は保存済みSessionの同じindexと本文が一致するrecordだけをcommit済みとして再評価する。Session保存前に停止したrecordはappraiseせず破棄する。cancelとprovider成功が競合してcompleted responseを保存する場合もenqueueは省略しない。appraiseのread-back後だけsettledにし、一時保存した会話本文を除去する。pendingはcursorで全件走査し、先頭batchの失敗で後続をstarvationさせない。version conflict時も古い候補をblind retryせず、最新contextで一度だけ再評価する。recovery失敗時は本文をlogへ出さずpendingを保持する。
+post-turn appraisalは永続audit IDをcorrelationとし、Sessionをcompletedとして保存する前にpendingへ記録する。pendingにはassistant message indexも保存し、次回起動時は保存済みSessionの同じindexと本文が一致するrecordだけをcommit済みとして再評価する。Session保存前に停止したrecordはappraiseせず破棄する。cancelとprovider成功が競合してcompleted responseを保存する場合もenqueueは省略しない。appraiseのread-back後だけsettledにし、一時保存した会話本文を除去する。pendingはcursorで全件走査し、先頭batchの失敗で後続をstarvationさせない。version conflict時も古い候補をblind retryせず、最新contextで一度だけ再評価する。
+
+retryable failureは項目ごとに1分から6時間上限の指数backoffを永続化する。実際の試行が8回失敗した項目とretryableでないfailureはquarantineされ、通常drainから除外される。quarantineは未処理dataの破棄ではなく、会話payloadと保存済みevaluationを保持する隔離である。`character-affect.lifecycle.settlement-deferred`と`character-affect.lifecycle.settlement-quarantined`には本文を出さず、stage、code、error name、所要時間、入力長、試行回数、次回時刻または隔離時刻を記録する。Context内部の予期しないfailureは`character-context.application.unexpected-failure`でAffect状態取得、Memory検索、response組み立てを区別する。
+
+## Turn settlementのquarantine確認と解除
+
+利用者databaseへ操作する前にWithMateを完全に終了し、databaseと同directoryの`-wal`、`-shm`を含めてdirectory単位でbackupする。まずread-only inspectを実行する。出力はcorrelation ID、Session ID、試行回数、failure分類だけで、会話本文は含まない。
+
+```powershell
+npm run affect:settlement-recovery -- --db "<absolute-app-database-path>" --inspect
+```
+
+原因を修正したversionが適用済みで、再試行してよい対象を確認した後、correlation IDを一件ずつreleaseする。`--confirm-app-stopped`は、停止確認を省略して実行しないための明示guardである。
+
+```powershell
+npm run affect:settlement-recovery -- --db "<absolute-app-database-path>" --release "<correlation-id>" --confirm-app-stopped
+```
+
+成功時はread-backした`state: ready`、`attemptCount: 0`、`evaluationPersisted`を確認する。その後WithMateを起動し、`settlement-deferred`、`settlement-quarantined`、settled件数を確認する。複数件を一括releaseせず、同じfailure分類の少数から再開してprovider負荷と成功率を確認する。実databaseへのreleaseはincident対応のoperator判断であり、通常のupgrade処理では自動実行しない。

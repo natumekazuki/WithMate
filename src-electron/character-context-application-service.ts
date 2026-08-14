@@ -36,6 +36,7 @@ import {
   CharacterAffectVersionConflictError,
 } from "./character-affect-storage.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
+import { countMemorySearchQueryTerms } from "./memory-v6-storage.js";
 import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
 
 const LOCAL_USER_ID = "local-user" as const;
@@ -57,7 +58,46 @@ export type CharacterContextApplicationServiceDeps = {
   memoryService: MemoryV6Service;
   affectService: CharacterAffectService;
   resolveCharacterRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
+  onUnexpectedError?(diagnostic: CharacterContextUnexpectedErrorDiagnostic): void;
 };
+
+export type CharacterContextUnexpectedErrorDiagnostic = {
+  operation: "character_context.get";
+  transport: CharacterContextTransport;
+  stage: "affect_state" | "memory_search" | "response_assembly";
+  errorName: string;
+  safeMessage: string;
+  durationMs: number;
+  queryLength: number;
+  searchTermCount: number;
+};
+
+class CharacterContextStageError extends Error {
+  constructor(
+    readonly stage: CharacterContextUnexpectedErrorDiagnostic["stage"],
+    readonly original: unknown,
+  ) {
+    super(`Character context ${stage} failed.`);
+    this.name = "CharacterContextStageError";
+  }
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name.trim() ? error.name : "UnknownError";
+}
+
+function withFailureStage(
+  response: CharacterContextErrorResponse,
+  stage: CharacterContextUnexpectedErrorDiagnostic["stage"],
+): CharacterContextErrorResponse {
+  return {
+    ...response,
+    error: {
+      ...response.error,
+      details: { failureStage: stage },
+    },
+  };
+}
 
 function characterTarget(characterId: string): MemoryTargetSelector {
   return {
@@ -159,28 +199,49 @@ export class CharacterContextApplicationService {
         });
       }
       try {
-        const state = this.deps.affectService.getEffectiveState({
-          characterId: input.characterId,
-          userId: LOCAL_USER_ID,
-          sessionId: input.sessionId,
-        });
-        const version = this.deps.affectService.getStateVersion({
-          characterId: input.characterId,
-          userId: LOCAL_USER_ID,
-          sessionId: input.sessionId,
-        });
+        const queryLength = input.query?.length ?? 0;
+        const searchTermCount = input.query ? countMemorySearchQueryTerms(input.query) : 0;
+        const { state, version } = await this.runContextStage(
+          "affect_state",
+          transport,
+          queryLength,
+          searchTermCount,
+          () => ({
+            state: this.deps.affectService.getEffectiveState({
+              characterId: input.characterId,
+              userId: LOCAL_USER_ID,
+              sessionId: input.sessionId,
+            }),
+            version: this.deps.affectService.getStateVersion({
+              characterId: input.characterId,
+              userId: LOCAL_USER_ID,
+              sessionId: input.sessionId,
+            }),
+          }),
+        );
         const memory = input.query && (input.memoryLimit ?? 0) > 0
-          ? await this.deps.memoryService.search(this.principal, {
-              schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-              targets: [characterTarget(input.characterId)],
-              query: input.query,
-              limit: input.memoryLimit,
-            })
+          ? await this.runContextStage(
+              "memory_search",
+              transport,
+              queryLength,
+              searchTermCount,
+              () => this.deps.memoryService.search(this.principal, {
+                schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+                targets: [characterTarget(input.characterId)],
+                query: input.query!,
+                limit: input.memoryLimit,
+              }),
+            )
           : { schemaVersion: MEMORY_V6_SCHEMA_VERSION, items: [] };
         if (memoryError(memory)) {
-          return memoryErrorToContext(memory, "none");
+          return withFailureStage(memoryErrorToContext(memory, "none"), "memory_search");
         }
-        return {
+        return await this.runContextStage(
+          "response_assembly",
+          transport,
+          queryLength,
+          searchTermCount,
+          () => ({
           schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
           characterId: input.characterId,
           sessionId: input.sessionId,
@@ -216,9 +277,12 @@ export class CharacterContextApplicationService {
             characterId: input.characterId,
             sessionId: input.sessionId,
           },
-        };
+          }),
+        );
       } catch (error) {
-        return this.mapThrownError(error, "context read", "none");
+        const stage = error instanceof CharacterContextStageError ? error.stage : "response_assembly";
+        const original = error instanceof CharacterContextStageError ? error.original : error;
+        return withFailureStage(this.mapThrownError(original, "context read", "none"), stage);
       }
     });
   }
@@ -647,6 +711,36 @@ export class CharacterContextApplicationService {
       conversationMayContinue: true,
       effect,
     });
+  }
+
+  private async runContextStage<T>(
+    stage: CharacterContextUnexpectedErrorDiagnostic["stage"],
+    transport: CharacterContextTransport,
+    queryLength: number,
+    searchTermCount: number,
+    run: () => T | Promise<T>,
+  ): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await run();
+    } catch (error) {
+      const diagnostic: CharacterContextUnexpectedErrorDiagnostic = {
+        operation: "character_context.get",
+        transport,
+        stage,
+        errorName: errorName(error),
+        safeMessage: `Character context ${stage} failed.`,
+        durationMs: Math.max(0, Date.now() - startedAt),
+        queryLength,
+        searchTermCount,
+      };
+      try {
+        this.deps.onUnexpectedError?.(diagnostic);
+      } catch {
+        // Diagnostic reporting must not change the public error contract.
+      }
+      throw new CharacterContextStageError(stage, error);
+    }
   }
 
   private async measure<T>(
