@@ -149,6 +149,38 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  it("send scroll setting の欠損値と不正値は既定の有効へ戻す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("invalid", "scroll_to_latest_on_send");
+      invalidDatabase.close();
+
+      const invalidValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidValueStorage.getSettings().scrollToLatestOnSend, true);
+      invalidValueStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("scroll_to_latest_on_send");
+      missingDatabase.close();
+
+      const missingValueStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingValueStorage.getSettings().scrollToLatestOnSend, true);
+      missingValueStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("coding provider settings を canonical key で保存して再読込できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");
@@ -163,6 +195,7 @@ describe("AppSettingsStorage", () => {
         sessionTurnNotificationEnabled: false,
         sessionTurnNotificationResponsePreviewEnabled: true,
         autoCollapseActionDockOnSend: false,
+        scrollToLatestOnSend: false,
         chatLayoutPreference: {
           header: "visible",
           actionDock: "expanded",

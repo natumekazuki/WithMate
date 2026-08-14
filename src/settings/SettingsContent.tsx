@@ -32,6 +32,7 @@ import {
   SETTINGS_PROVIDER_ROOT_DIRECTORY_PLACEHOLDER,
   SETTINGS_SESSION_TURN_NOTIFICATION_LABEL,
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
+  SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
 } from "./settings-ui.js";
 
 export type HomeSettingsContentProps = {
@@ -45,6 +46,7 @@ export type HomeSettingsContentProps = {
   sessionCleanupCutoffDate: string;
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
+  onChangeScrollToLatestOnSend: (enabled: boolean) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
@@ -105,6 +107,7 @@ export function HomeSettingsContent({
   sessionCleanupCutoffDate,
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
+  onChangeScrollToLatestOnSend,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
@@ -174,6 +177,14 @@ export function HomeSettingsContent({
                   type="checkbox"
                   checked={settingsDraft.autoCollapseActionDockOnSend}
                   onChange={(event) => onChangeAutoCollapseActionDockOnSend(event.target.checked)}
+                />
+              </label>
+              <label className="settings-provider-toggle-row settings-section-toggle">
+                <span className="settings-provider-name">{SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL}</span>
+                <input
+                  type="checkbox"
+                  checked={settingsDraft.scrollToLatestOnSend}
+                  onChange={(event) => onChangeScrollToLatestOnSend(event.target.checked)}
                 />
               </label>
             </div>

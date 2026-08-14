@@ -371,6 +371,7 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       messageListRef,
       isMessageListFollowing,
       handleMessageListScroll,
+      handleMessageListSend,
       followMessageListLatest,
     } = useSessionMessageListFollowing({
       ownerKey: "session-1",
@@ -420,6 +421,16 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
         }),
       ),
       React.createElement("button", { type: "button", "data-testid": "outside-action" }),
+      React.createElement("button", {
+        type: "button",
+        onClick: () => handleMessageListSend(false),
+        "data-testid": "send-with-scroll-disabled",
+      }),
+      React.createElement("button", {
+        type: "button",
+        onClick: () => handleMessageListSend(true),
+        "data-testid": "send-with-scroll-enabled",
+      }),
     );
   }
 
@@ -469,6 +480,45 @@ test("useSessionMessageListFollowing は末尾表示中だけ更新とresizeへ�
       root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "stream-while-reading" }));
     });
     assert.equal(messageList.scrollTop, 798, "stream更新で読書位置を動かさない");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-disabled\"]")?.click();
+    });
+    assert.equal(following.textContent, "false", "設定OFFの送信では追随を再開しない");
+    assert.equal(messageList.scrollTop, 798, "設定OFFの送信では読書位置を動かさない");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-enabled\"]")?.click();
+    });
+    assert.equal(following.textContent, "true", "設定ONの送信では追随を再開する");
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "設定ONの送信では末尾へ移動する");
+
+    scrollHeight = 1_120;
+    await act(async () => {
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+      root?.render(React.createElement(Harness, { enabled: true, scrollSignature: "pending-after-send" }));
+    });
+    assert.equal(following.textContent, "true", "送信後の待機表示が遅れて追加されても追随を維持する");
+    assert.equal(messageList.scrollTop, scrollHeight - clientHeight, "送信後の待機表示を含む末尾へ移動する");
+
+    await act(async () => {
+      dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"send-with-scroll-enabled\"]")?.click();
+      messageList.dispatchEvent(new dom.window.WheelEvent("wheel", { bubbles: true, deltaY: -120 }));
+      messageList.scrollTop -= 2;
+      messageList.dispatchEvent(new dom.window.Event("scroll", { bubbles: true }));
+    });
+    assert.equal(following.textContent, "false");
+
+    const readingPositionAfterSend = messageList.scrollTop;
+    scrollHeight = 1_240;
+    await act(async () => {
+      root?.render(React.createElement(Harness, {
+        enabled: true,
+        scrollSignature: "pending-after-user-scroll",
+      }));
+    });
+    assert.equal(following.textContent, "false", "送信後でも利用者が上へ戻ったら追随予約を破棄する");
+    assert.equal(messageList.scrollTop, readingPositionAfterSend, "破棄後の待機表示で読書位置を動かさない");
 
     const outsideAction = dom.window.document.querySelector<HTMLButtonElement>(
       "[data-testid=\"outside-action\"]",

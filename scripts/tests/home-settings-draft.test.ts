@@ -10,6 +10,7 @@ import {
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import {
   updateAutoCollapseActionDockOnSend,
+  updateScrollToLatestOnSend,
   updateCodingProviderApiKey,
   updateCodingProviderApiKeyDraft,
   updateCodingProviderEnabled,
@@ -275,6 +276,14 @@ describe("home-settings-draft", () => {
     const next = updateAutoCollapseActionDockOnSend(draft, false);
 
     assert.equal(next.autoCollapseActionDockOnSend, false);
+  });
+
+  it("send scroll を toggle できる", () => {
+    const draft = createDefaultAppSettings();
+
+    const next = updateScrollToLatestOnSend(draft, false);
+
+    assert.equal(next.scrollToLatestOnSend, false);
   });
 
   it("Session turn notification を toggle できる", () => {

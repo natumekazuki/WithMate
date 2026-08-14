@@ -75,6 +75,7 @@ describe("HomeSettingsContent", () => {
     sessionCleanupCutoffDate: "",
     deletingOldSessions: false,
     onChangeAutoCollapseActionDockOnSend: noOp,
+    onChangeScrollToLatestOnSend: noOp,
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
@@ -106,6 +107,8 @@ describe("HomeSettingsContent", () => {
 
     assert.ok(html.includes("Session のターン完了を Windows 通知で知らせる"));
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
+    assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
+    assert.ok(html.includes("送信時にチャット末尾へ移動する"));
   });
 
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
