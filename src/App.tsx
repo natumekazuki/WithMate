@@ -3672,7 +3672,7 @@ export default function AgentSessionWindowApp() {
       canInsert={activeAuxiliarySession
         ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
         : !isComposerDisabled}
-      onClose={closeCentralPreview}
+      onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
     />
   ) : fileRootDiffPreview ? (
@@ -3680,7 +3680,7 @@ export default function AgentSessionWindowApp() {
       title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
       previewRevision={fileRootDiffPreview.generation}
       patch={fileRootDiffPreview.patch}
-      onClose={closeCentralPreview}
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
       onCopyText={handleCopyMessageText}
       onQuoteText={handleQuoteMessageText}
       onReload={handleReloadFileRootDiff}
@@ -3691,7 +3691,7 @@ export default function AgentSessionWindowApp() {
     <SessionFilePreview
       api={withmateApi}
       request={selectedFilePreview}
-      onClose={closeCentralPreview}
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
       onCopyText={handleCopyMessageText}
       onQuoteText={handleQuoteMessageText}
       diffScopes={selectedFileDiffScopes}

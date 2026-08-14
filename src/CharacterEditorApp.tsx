@@ -84,6 +84,7 @@ export default function CharacterEditorApp() {
   const [appSettings, setAppSettings] = useState<AppSettings | null>(null);
   const [authoringProviderId, setAuthoringProviderId] = useState(DEFAULT_PROVIDER_ID);
   const [authoringLaunchOpen, setAuthoringLaunchOpen] = useState(false);
+  const [closeConfirmationOpen, setCloseConfirmationOpen] = useState(false);
   const [selectedTab, setSelectedTab] = useState<CharacterEditorTab>("profile");
   const [loading, setLoading] = useState(Boolean(initialCharacterId));
   const [saving, setSaving] = useState(false);
@@ -92,6 +93,7 @@ export default function CharacterEditorApp() {
   const definitionImportInputRef = useRef<HTMLInputElement | null>(null);
   const notesImportInputRef = useRef<HTMLInputElement | null>(null);
   const authoringStartButtonRef = useRef<HTMLButtonElement | null>(null);
+  const closeConfirmationCancelButtonRef = useRef<HTMLButtonElement | null>(null);
   const authoringRefreshPendingRef = useRef(false);
   const confirmedCloseRef = useRef(false);
 
@@ -124,6 +126,14 @@ export default function CharacterEditorApp() {
     open: authoringLaunchOpen,
     onClose: () => setAuthoringLaunchOpen(false),
     initialFocusRef: authoringStartButtonRef,
+  });
+  const {
+    dialogRef: closeConfirmationDialogRef,
+    handleDialogKeyDown: handleCloseConfirmationDialogKeyDown,
+  } = useDialogA11y<HTMLElement>({
+    open: closeConfirmationOpen,
+    onClose: () => setCloseConfirmationOpen(false),
+    initialFocusRef: closeConfirmationCancelButtonRef,
   });
   const denseEditorBody = selectedTab === "definition" || selectedTab === "notes" || selectedTab === "preview";
   const themeStyle = useMemo(() => buildCharacterThemeStyle({
@@ -215,6 +225,7 @@ export default function CharacterEditorApp() {
       }
       event.preventDefault();
       event.returnValue = "";
+      setCloseConfirmationOpen(true);
     };
 
     window.addEventListener("beforeunload", beforeUnload);
@@ -422,10 +433,7 @@ export default function CharacterEditorApp() {
     setAuthoringLaunchOpen(true);
   };
 
-  const closeWindow = () => {
-    if (dirty && !window.confirm("未保存の編集があります。\n\n保存せずに閉じますか？")) {
-      return;
-    }
+  const discardDraftAndCloseWindow = () => {
     confirmedCloseRef.current = true;
     window.close();
   };
@@ -527,9 +535,6 @@ export default function CharacterEditorApp() {
             <span className="settings-character-badge">
               {archived ? "Archived" : saving ? "Saving" : authoringStarting ? "Authoring" : dirty ? "Unsaved" : "Saved"}
             </span>
-            <button className="launch-toggle" type="button" onClick={closeWindow}>
-              Close
-            </button>
           </div>
         </header>
 
@@ -692,6 +697,40 @@ export default function CharacterEditorApp() {
             </section>
           ) : null}
         </main>
+
+        {closeConfirmationOpen ? (
+          <LaunchDialogShell
+            onClose={() => setCloseConfirmationOpen(false)}
+            dialogRef={closeConfirmationDialogRef}
+            onKeyDown={handleCloseConfirmationDialogKeyDown}
+            ariaLabel={draft.mode === "create" ? "新しいCharacterの破棄確認" : "未保存の変更の破棄確認"}
+            showDismissControl={false}
+            dialogClassName="character-editor-close-dialog"
+            footer={
+              <div className="character-editor-close-dialog-actions">
+                <button
+                  ref={closeConfirmationCancelButtonRef}
+                  className="launch-toggle"
+                  type="button"
+                  onClick={() => setCloseConfirmationOpen(false)}
+                >
+                  キャンセル
+                </button>
+                <button
+                  className="launch-toggle danger-button"
+                  type="button"
+                  onClick={discardDraftAndCloseWindow}
+                >
+                  破棄して閉じる
+                </button>
+              </div>
+            }
+          >
+            <div className="character-editor-close-dialog-copy">
+              <h2>{draft.mode === "create" ? "新しいCharacterを破棄しますか？" : "未保存の変更を破棄しますか？"}</h2>
+            </div>
+          </LaunchDialogShell>
+        ) : null}
 
         {authoringLaunchOpen ? (
           <LaunchDialogShell

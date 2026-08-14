@@ -295,6 +295,7 @@ test("ChatSkillPickerPanel は loading・empty・error状態を区別する", ()
   assert.match(loadingHtml, /role="status"/);
   assert.match(loadingHtml, /aria-busy="true"/);
   assert.match(loadingHtml, /chat-skill-picker-spinner/);
+  assert.match(loadingHtml, /aria-label="Skill候補を閉じる">×<\/button>/);
   assert.match(emptyHtml, /使える Skill がありません/);
   assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);
 });

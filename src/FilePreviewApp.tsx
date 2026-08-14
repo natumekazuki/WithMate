@@ -115,7 +115,6 @@ export default function FilePreviewApp() {
         <section className="panel empty-session-card">
           <h2>No file is available to preview</h2>
           <p>Open the file again from the originating Session.</p>
-          <button type="button" onClick={() => window.close()}>Close</button>
         </section>
       </main>
     );
@@ -128,8 +127,7 @@ export default function FilePreviewApp() {
           title={getSessionFileResourceDisplayPath(payload.resource)}
           previewRevision={diffState.revision}
           patch={diffState.patch}
-          onClose={() => setDiffState(null)}
-          closeLabel="Back to Preview"
+          backNavigation={{ label: "Back to Preview", onBack: () => setDiffState(null) }}
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           onReload={() => loadDiff(diffState.scope)}
           reloadPending={diffLoadingScope !== null}
@@ -138,8 +136,6 @@ export default function FilePreviewApp() {
         <SessionFilePreview
           api={api}
           request={payload.resource}
-          onClose={() => window.close()}
-          closeLabel="Close"
           onCopyText={(text) => void navigator.clipboard.writeText(text)}
           diffScopes={diffScopes}
           onOpenDiff={loadDiff}
