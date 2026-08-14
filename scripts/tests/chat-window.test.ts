@@ -129,6 +129,29 @@ test("ChatWindow は ActionDock の展開状態に依存しない共通エラー
   assert.ok(html.indexOf("chat-error-surface") < html.indexOf("session-action-dock-slot"));
 });
 
+test("ChatWindow は submit pending を非表示の busy status として通知し、エラー表示しない", () => {
+  const props = createChatWindowProps();
+  props.composerProps = {
+    ...props.composerProps,
+    isComposerDisabled: true,
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Message submission is in progress.",
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /<textarea[^>]*disabled=""[^>]*aria-busy="true"/);
+  assert.match(html, /class="visually-hidden" role="status"[^>]*>Message submission is in progress\.<\/span>/);
+  assert.doesNotMatch(html, /chat-error-surface/);
+  assert.doesNotMatch(html, /composer-sendability-feedback/);
+});
+
 test("ChatWindow の共通エラー領域は owner が指定したdismissと回復操作を表示する", () => {
   const props = createChatWindowProps();
   props.errorNotices = [{

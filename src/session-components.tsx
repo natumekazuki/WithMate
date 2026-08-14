@@ -3451,6 +3451,8 @@ type SessionAttachmentItem = {
 };
 
 type SessionComposerSendabilityView = {
+  isBusy?: boolean;
+  busyReason?: string;
   primaryFeedback: string;
   secondaryFeedback: string[];
   feedbackTone: "blocked" | "helper" | null;
@@ -3918,11 +3920,17 @@ export function SessionComposerExpanded({
             onCompositionStart={onDraftCompositionStart}
             onCompositionEnd={onDraftCompositionEnd}
             disabled={isComposerDisabled}
+            aria-busy={composerSendability.isBusy || undefined}
             aria-describedby={externalErrorDescriptionIds || (
               composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined
             )}
             aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
           />
+          {composerSendability.isBusy && composerSendability.busyReason ? (
+            <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+              {composerSendability.busyReason}
+            </span>
+          ) : null}
           {composerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
