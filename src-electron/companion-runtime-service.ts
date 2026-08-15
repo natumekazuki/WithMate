@@ -34,6 +34,7 @@ export type CompanionRuntimeServiceDeps = {
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
+  resolveSessionFolderPath?: (sessionId: string) => string;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -379,6 +380,7 @@ export class CompanionRuntimeService {
       return {
         session: turnProviderSession,
         executionWorkspacePath: turnSession.worktreePath,
+        sessionFolderPath: this.deps.resolveSessionFolderPath?.(turnProviderSession.id),
         sessionMemory,
         projectMemoryEntries: [],
         character,

@@ -597,12 +597,15 @@ describe("SessionRuntimeService", () => {
     };
     let composeSessionName = "";
     let runSessionName = "";
+    let composedSessionFolderPath = "";
+    let runSessionFolderPath = "";
     let notifiedSession: Session | null = null;
     let notifiedLastNonEmptyAssistantMessageText = "";
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
         composeSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
+        composedSessionFolderPath = input.sessionFolderPath ?? "";
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -618,6 +621,7 @@ describe("SessionRuntimeService", () => {
       invalidateAllSessionThreads() {},
       runSessionTurn(input) {
         runSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
+        runSessionFolderPath = input.sessionFolderPath ?? "";
         return Promise.resolve(createPartialResult({
           threadId: "thread-1",
           assistantText: "途中の案内\n\n完了したよ。",
@@ -648,6 +652,9 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
+      },
+      resolveSessionFolderPath(sessionId) {
+        return `F:/user-data/session-files/${sessionId}`;
       },
       getSessionMemory() {
         return createSessionMemory(staleSession.id);
@@ -687,6 +694,8 @@ describe("SessionRuntimeService", () => {
 
     assert.equal(composeSessionName, "Fresh");
     assert.equal(runSessionName, "Fresh");
+    assert.equal(composedSessionFolderPath, `F:/user-data/session-files/${freshSession.id}`);
+    assert.equal(runSessionFolderPath, composedSessionFolderPath);
     assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
     assert.equal(notifiedSession, result);
     assert.equal(notifiedLastNonEmptyAssistantMessageText, "完了したよ。");

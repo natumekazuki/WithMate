@@ -39,6 +39,7 @@ export type ProviderPromptComposition = {
 export type RunSessionTurnInput = {
   session: Session;
   executionWorkspacePath?: string;
+  sessionFolderPath?: string;
   sessionMemory: SessionMemory;
   projectMemoryEntries: ProjectMemoryEntry[];
   character?: CharacterProfile;

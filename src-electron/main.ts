@@ -2436,6 +2436,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       ),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -2652,6 +2653,13 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           auxiliarySession?.parentSessionId ?? session.id,
         );
       },
+      resolveSessionFolderPath: (sessionId) => {
+        const auxiliarySession = requireAuxiliarySessionService().getAuxiliarySession(sessionId);
+        return resolveSessionFilesDirectory(
+          app.getPath("userData"),
+          auxiliarySession?.parentSessionId ?? sessionId,
+        );
+      },
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -2735,6 +2743,7 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
