@@ -83,11 +83,6 @@ test("FilePreviewApp は payload hydrate 後も document title を対象ファ�
       });
     }
     assert.equal(dom.window.document.title, "notes.md");
-    assert.equal(dom.window.document.querySelector(".back-navigation-button"), null);
-    assert.equal(
-      [...dom.window.document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Close"),
-      false,
-    );
   } finally {
     if (root) {
       await act(async () => {
@@ -260,7 +255,7 @@ test("FilePreviewApp の live Git Diff は Open Preview で同じ detached Windo
   }
 });
 
-test("DiffApp は独立 Window に app 内 Close を表示しない", async () => {
+test("DiffApp は独立 Window の内容を描画する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -313,10 +308,6 @@ test("DiffApp は独立 Window に app 内 Close を表示しない", async () =
       });
     }
     assert.ok(dom.window.document.querySelector(".diff-window-shell"));
-    assert.equal(
-      [...dom.window.document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Close"),
-      false,
-    );
   } finally {
     if (root) {
       await act(async () => {

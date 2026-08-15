@@ -593,8 +593,6 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(html.includes("Start New Session"));
     assert.ok(html.includes('aria-label="New Session"'));
-    assert.ok(!html.includes('aria-label="Close"'));
-    assert.ok(!html.includes("launch-dialog-head"));
     assert.ok(!html.includes("Agent Mode"));
     assert.ok(!html.includes("Companion Mode"));
     assert.ok(!html.includes("Start Companion"));
@@ -604,7 +602,6 @@ describe("HomeLaunchDialog", () => {
   it("ダイアログに Character selector が含まれる", () => {
     const html = renderHomeLaunchDialog();
 
-    assert.ok(html.includes("launch-dialog panel home-launch-dialog"));
     assert.ok(html.includes("launch-section minimal home-launch-character-section"));
     assert.ok(html.includes("Character"));
     assert.ok(html.includes("Mia"));

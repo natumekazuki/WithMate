@@ -127,11 +127,51 @@ function Get-WithMateWorktreePaths {
   })
 }
 
+function Ensure-NpmDependencies {
+  param(
+    [Parameter(Mandatory = $true)][string]$RepositoryPath,
+    [Parameter(Mandatory = $true)][string]$RequiredElectronVersion
+  )
+
+  $requiredPaths = @(
+    "node_modules\.bin\tsc.cmd",
+    "node_modules\.bin\tsx.cmd",
+    "node_modules\.bin\vite.cmd",
+    "node_modules\.bin\install-electron.cmd",
+    "node_modules\electron\package.json"
+  ) | ForEach-Object { Join-Path $RepositoryPath $_ }
+  $electronPackagePath = Join-Path $RepositoryPath "node_modules\electron\package.json"
+  $hasRequiredLayout = @($requiredPaths | Where-Object {
+    -not (Test-Path -LiteralPath $_ -PathType Leaf)
+  }).Count -eq 0
+  $hasRequiredElectronVersion = $false
+  if ($hasRequiredLayout) {
+    $installedElectronVersion = (Get-Content -LiteralPath $electronPackagePath -Raw | ConvertFrom-Json).version
+    $hasRequiredElectronVersion = $installedElectronVersion -eq $RequiredElectronVersion
+  }
+
+  if ($hasRequiredLayout -and $hasRequiredElectronVersion) {
+    return
+  }
+
+  Write-Host "Installing npm dependencies..."
+  Push-Location $RepositoryPath
+  try {
+    & npm.cmd ci
+    if ($LASTEXITCODE -ne 0) {
+      throw "npm ci failed"
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
 function Get-ElectronExecutable {
   param(
     [Parameter(Mandatory = $true)][string]$RepositoryPath,
     [Parameter(Mandatory = $true)][string]$RequiredVersion,
-    [string]$ExplicitPath
+    [string]$ExplicitPath,
+    [switch]$AllowMissing
   )
 
   $candidatePaths = [System.Collections.Generic.List[string]]::new()
@@ -160,7 +200,34 @@ function Get-ElectronExecutable {
     }
   }
 
-  throw "Electron $RequiredVersion was not found in this or another WithMate worktree. Run npm install in one worktree or pass -ElectronPath."
+  if ($AllowMissing) {
+    return $null
+  }
+
+  throw "Electron $RequiredVersion was not found in this or another WithMate worktree."
+}
+
+function Ensure-LocalElectronExecutable {
+  param(
+    [Parameter(Mandatory = $true)][string]$RepositoryPath,
+    [Parameter(Mandatory = $true)][string]$RequiredVersion
+  )
+
+  $installerPath = Join-Path $RepositoryPath "node_modules\.bin\install-electron.cmd"
+  if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
+    throw "Electron $RequiredVersion installer was not found after npm dependency setup: $installerPath"
+  }
+
+  Write-Host "Ensuring Electron $RequiredVersion binary..."
+  Push-Location $RepositoryPath
+  try {
+    & $installerPath --no
+    if ($LASTEXITCODE -ne 0) {
+      throw "Electron $RequiredVersion binary setup failed"
+    }
+  } finally {
+    Pop-Location
+  }
 }
 
 function Backup-SqliteDatabase {
@@ -370,17 +437,36 @@ if (-not (Test-Path -LiteralPath $resolvedSourceUserDataPath -PathType Container
 }
 
 $requiredElectronVersion = Get-RequiredElectronVersion -RepositoryPath $resolvedWorktreePath
-$resolvedElectronPath = Get-ElectronExecutable `
-  -RepositoryPath $resolvedWorktreePath `
-  -RequiredVersion $requiredElectronVersion `
-  -ExplicitPath $ElectronPath
-
 $lifecycleLockPath = "$resolvedUserDataPath.lifecycle.lock"
 $lifecycleLock = $null
 try {
   $lifecycleLock = Enter-VisualCheckLifecycleLock `
     -LockPath $lifecycleLockPath `
     -Timeout ([TimeSpan]::FromMinutes(10))
+
+  Ensure-NpmDependencies `
+    -RepositoryPath $resolvedWorktreePath `
+    -RequiredElectronVersion $requiredElectronVersion
+
+  if (-not [string]::IsNullOrWhiteSpace($ElectronPath)) {
+    $resolvedElectronPath = Get-ElectronExecutable `
+      -RepositoryPath $resolvedWorktreePath `
+      -RequiredVersion $requiredElectronVersion `
+      -ExplicitPath $ElectronPath
+  } else {
+    $resolvedElectronPath = Get-ElectronExecutable `
+      -RepositoryPath $resolvedWorktreePath `
+      -RequiredVersion $requiredElectronVersion `
+      -AllowMissing
+    if ([string]::IsNullOrWhiteSpace($resolvedElectronPath)) {
+      Ensure-LocalElectronExecutable `
+        -RepositoryPath $resolvedWorktreePath `
+        -RequiredVersion $requiredElectronVersion
+      $resolvedElectronPath = Get-ElectronExecutable `
+        -RepositoryPath $resolvedWorktreePath `
+        -RequiredVersion $requiredElectronVersion
+    }
+  }
 
   Write-Host "Building $resolvedWorktreePath"
   Push-Location $resolvedWorktreePath

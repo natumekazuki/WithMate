@@ -2362,6 +2362,10 @@ button:disabled {
   box-shadow: 0 24px 54px rgba(0, 0, 0, 0.36);
 }
 
+.launch-dialog.launch-dialog-no-dismiss {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
 .auxiliary-provider-dialog {
   width: min(560px, 100%);
 }
