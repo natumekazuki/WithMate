@@ -129,10 +129,8 @@ import {
   createCharacterAffectTurnRecoveryFailureLogData,
   resolveCharacterAffectTurnContextFailureStage,
 } from "./character-affect-turn-recovery.js";
-import {
-  CharacterAffectTurnRetryScheduler,
-  settleCharacterAffectTurnOrScheduleRetry,
-} from "./character-affect-turn-retry-scheduler.js";
+import { CharacterAffectTurnRetryScheduler } from "./character-affect-turn-retry-scheduler.js";
+import { CharacterAffectTurnOwnershipCoordinator } from "./character-affect-turn-ownership-coordinator.js";
 import {
   drainCharacterAffectTurnSettlementBatch,
   type CharacterAffectTurnDrainCursor,
@@ -179,6 +177,7 @@ import {
   type SessionMemoryStorageAccess,
   type SessionPinStorage,
   type SessionStorageRead,
+  type SessionStorageWrite,
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
@@ -380,6 +379,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
@@ -2344,6 +2344,17 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     recordAppraisalFailure: (input) => {
       return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
     },
+    validateOwner: async () => {
+      const currentSession = await getRuntimeSession(request.session.id);
+      return Boolean(
+        currentSession
+        && currentSession.characterId === request.session.characterId
+        && hasCommittedAssistantMessage(currentSession.messages, request),
+      );
+    },
+    markDiscarded: () => {
+      settlementStorage.markDiscarded(request.correlationId);
+    },
     markSettled: () => {
       settlementStorage.markSettled(request.correlationId);
     },
@@ -2393,14 +2404,16 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
     startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
     readyCursor: characterAffectTurnDrainCursor,
     getSession: getRuntimeSession,
-    settle: (item, session) => settleCharacterAffectTurn({
-      session,
-      correlationId: item.correlationId,
-      userMessage: item.userMessage,
-      assistantMessage: item.assistantMessage,
-      assistantMessageIndex: item.assistantMessageIndex,
-      occurredAt: item.occurredAt,
-    }),
+    settle: (item, session) => characterAffectTurnOwnershipCoordinator.runExclusive(
+      () => settleCharacterAffectTurn({
+        session,
+        correlationId: item.correlationId,
+        userMessage: item.userMessage,
+        assistantMessage: item.assistantMessage,
+        assistantMessageIndex: item.assistantMessageIndex,
+        occurredAt: item.occurredAt,
+      }),
+    ),
     onDiscard: (item) => {
       writeAppLog({
         level: "warn",
@@ -2433,7 +2446,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
-      upsertTerminalSession: (session) => requireMainSessionPersistenceFacade().upsertTerminalSession(session),
+      upsertTerminalSession: (session, terminalCommit) =>
+        requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
@@ -2525,15 +2539,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       markCompletedTurnAppraisalReady: (correlationId) => {
         const result = requireCharacterAffectTurnSettlementStorage().markReady(correlationId);
         if (!result.updated) {
-          throw new Error(`Pending Character Affect appraisal was not found: ${correlationId}`);
+          return "absent";
         }
+        return "ready";
       },
       requireDurableCompletedTurnAppraisal: true,
-      appraiseCompletedTurn: async (input) => {
-        await settleCharacterAffectTurnOrScheduleRetry({
-          settle: () => settleCharacterAffectTurn(input),
-          scheduleRetry: () => requireCharacterAffectTurnRetryScheduler().request({ resetBackoff: true }),
-        });
+      appraiseCompletedTurn: () => {
+        requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       },
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
@@ -2852,7 +2864,16 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
         requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
       },
+      upsertStoredTerminalSession: (session, terminalCommit) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.upsertTerminalSession) {
+          throw new Error("terminal Session の atomic commit storage が利用できないよ。");
+        }
+        return storage.upsertTerminalSession(session, terminalCommit);
+      },
       broadcastSessions,
+      runCharacterAffectTurnOwnershipExclusive: (operation) =>
+        characterAffectTurnOwnershipCoordinator.runExclusive(operation),
     });
   }
 

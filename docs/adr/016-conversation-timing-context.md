@@ -12,6 +12,7 @@ Character はprovider実行時の現在日時や、正常に完了した前回tu
 ## Decision
 
 - 会話完了時刻は`session_turns_v6.completed_at`、turn実行開始時刻は`session_turns_v6.started_at`を正本とする。
+- terminal Sessionと、phase、assistant message index、thread、error、完了時刻からなる最小terminal markerを同じSQLite transactionで保存する。markerは`running`からterminal phaseへ一度だけ遷移し、commit後のprojection失敗やstale writeで再分類しない。Conversation Timingはこのmarkerだけで次turnと再起動後のreadへ反映でき、provider payloadやoperationを含む詳細auditのbackground保存を待たない。terminal marker確定後のstaleなrunning audit更新はphaseを巻き戻さない。
 - 対象は`session_kind = 'default'`の通常Sessionに属する、`phase = 'completed'`かつ`assistant_message_seq IS NOT NULL`のturnだけとする。Auxiliary、Companion、Character Authoringは集計および注入から除外する。
 - user turn開始時にローカル日時を一度だけ取得し、storage snapshotから経過時間、同じCharacterの別Sessionにおける最新完了時刻、今日と累積のturn壁時計時間を純粋resolverで算出する。同一turnの監査、provider実行、internal retryでは同じ結果を再利用する。
 - parse不能な時刻、基準時刻より未来の完了時刻、`completed_at < started_at`の実行時間は推測や0への丸めを行わず除外する。

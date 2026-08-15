@@ -64,6 +64,8 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     savedCandidateIndices: number[];
     prepareReevaluation: boolean;
   }): { reevaluationPrepared: boolean };
+  validateOwner?(): Promise<boolean>;
+  markDiscarded?(): void;
   markSettled(): void;
 }): Promise<CharacterAffectTurnSettlementResult> {
   let pending = deps.getPending();
@@ -94,6 +96,11 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
   const evaluation = pending.evaluation;
   if (evaluation.candidates.length === 0) {
     deps.markSettled();
+    return { status: "settled", appraisal: null };
+  }
+
+  if (deps.validateOwner && !await deps.validateOwner()) {
+    (deps.markDiscarded ?? deps.markSettled)();
     return { status: "settled", appraisal: null };
   }
 

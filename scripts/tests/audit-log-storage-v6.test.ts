@@ -106,6 +106,58 @@ function seedAuxiliarySession(dbPath: string): void {
 }
 
 describe("AuditLogStorageV6", () => {
+  it("atomic terminal markerをstaleなrunning audit更新で巻き戻さない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-terminal-marker-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      seedSession(dbPath);
+      const auditStorage = new AuditLogStorageV6(dbPath);
+      const runningEntry = baseAuditLog({
+        phase: "running",
+        createdAt: "2026-08-16T00:00:00.000Z",
+        assistantText: "",
+      });
+      const created = auditStorage.createAuditLog(runningEntry);
+      const sessionStorage = new SessionStorageV6(dbPath);
+      try {
+        const session = sessionStorage.getSession("session-v6");
+        assert.ok(session);
+        sessionStorage.upsertTerminalSession({
+          ...session,
+          messages: [
+            { role: "user", text: "hello" },
+            { role: "assistant", text: "done" },
+          ],
+        }, {
+          auditLogId: created.id,
+          sessionId: session.id,
+          phase: "completed",
+          assistantMessageSeq: 1,
+          threadId: "thread-v6",
+          errorMessage: "",
+          completedAt: "2026-08-16T00:00:01.000Z",
+        });
+
+        assert.throws(
+          () => auditStorage.updateAuditLog(created.id, runningEntry),
+          /audit log not found or target mismatch/,
+        );
+        const completedEntry = baseAuditLog({
+          phase: "completed",
+          createdAt: "2026-08-16T00:00:01.000Z",
+          assistantMessageSeq: 1,
+        });
+        auditStorage.updateAuditLog(created.id, completedEntry);
+        assert.equal(auditStorage.listSessionAuditLogs("session-v6")[0]?.phase, "completed");
+      } finally {
+        sessionStorage.close();
+        auditStorage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("summary では operation details を落とし、detail では保持する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-log-v6-"));
     try {

@@ -212,6 +212,52 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     scheduler.dispose();
   });
 
+  it("provider評価中にSession ownerが消えた場合はappraiseせずpendingを破棄する", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-owner-recheck-"));
+    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
+    const correlationId = "turn:session-a:audit:owner-recheck";
+    let appraisalCount = 0;
+    try {
+      enqueue(storage, correlationId);
+      const result = await settleCharacterAffectTurnWithRetry({
+        correlationId,
+        getPending: () => storage.getPending(correlationId),
+        async getContext() {
+          return context("v-owner-recheck");
+        },
+        async evaluate(_current, idempotencyPrefix) {
+          return [candidate(`${idempotencyPrefix}:0`)];
+        },
+        persistEvaluation(input) {
+          storage.saveEvaluation({ correlationId, ...input });
+        },
+        async appraise() {
+          appraisalCount += 1;
+          return success();
+        },
+        recordAppraisalFailure(input) {
+          return storage.recordAppraisalFailure({ correlationId, ...input });
+        },
+        async validateOwner() {
+          return false;
+        },
+        markDiscarded() {
+          storage.markDiscarded(correlationId);
+        },
+        markSettled() {
+          storage.markSettled(correlationId);
+        },
+      });
+
+      assert.deepEqual(result, { status: "settled", appraisal: null });
+      assert.equal(appraisalCount, 0);
+      assert.equal(storage.getPending(correlationId), null);
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("unknownからversion conflictになったpendingを予約済みdrainでrestartなしにsettledへ収束させる", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-scheduled-retry-"));
     const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));

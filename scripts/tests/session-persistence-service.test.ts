@@ -12,6 +12,7 @@ import type { CharacterRuntimeSnapshot } from "../../src/character/character-cat
 import { normalizeAppSettings } from "../../src/provider-settings-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { ModelCatalogProvider, ModelCatalogSnapshot } from "../../src/model-catalog.js";
+import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/character-affect-turn-ownership-coordinator.js";
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
@@ -143,6 +144,10 @@ describe("SessionPersistenceService", () => {
         storedSession = next;
         return next;
       },
+      upsertStoredTerminalSession: (next) => {
+        storedSession = next;
+        return next;
+      },
       replaceStoredSessions: () => undefined,
       setStoredSessionPinned: (sessionId, isPinned) => {
         storedSession = { ...storedSession, isPinned };
@@ -177,13 +182,96 @@ describe("SessionPersistenceService", () => {
       threadId: "",
       isPinned: false,
     });
-    const terminalWrite = service.upsertTerminalSession(staleCompletedSession);
+    const terminalWrite = service.upsertTerminalSession(staleCompletedSession, {
+      auditLogId: 1,
+      sessionId: staleCompletedSession.id,
+      phase: "completed",
+      assistantMessageSeq: staleCompletedSession.messages.length - 1,
+      threadId: staleCompletedSession.threadId,
+      errorMessage: "",
+      completedAt: "2026-08-16T00:00:00.000Z",
+    });
     await Promise.all([pinWrite, staleRunningWrite, staleRetryWrite, terminalWrite]);
 
     assert.equal(storedSession.isPinned, true);
     assert.equal(storedSession.runState, "idle");
     assert.equal(storedSession.messages.at(-1)?.text, "done");
     assert.equal(cachedSessions[0]?.isPinned, true);
+  });
+
+  it("terminal commit後のprojection failureを保存済み結果へ波及させない", async () => {
+    for (const failingProjection of ["dependency", "cache", "broadcast"] as const) {
+      const runningSession = createSession({
+        id: `terminal-projection-${failingProjection}`,
+        status: "running",
+        runState: "running",
+      });
+      const terminalSession = createSession({
+        ...runningSession,
+        status: "idle",
+        runState: "idle",
+        messages: [...runningSession.messages, { role: "assistant", text: "done" }],
+      });
+      let cachedSessions = [runningSession];
+      let persistedSession = runningSession;
+      const attemptedProjections: string[] = [];
+      const service = new SessionPersistenceService({
+        getSessions: () => cachedSessions,
+        setSessions(nextSessions) {
+          attemptedProjections.push("cache");
+          if (failingProjection === "cache") {
+            throw new Error("cache projection failed");
+          }
+          cachedSessions = nextSessions;
+        },
+        getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+        isSessionRunInFlight: () => true,
+        upsertStoredSession(next) {
+          persistedSession = next;
+          return next;
+        },
+        upsertStoredTerminalSession(next) {
+          persistedSession = next;
+          return next;
+        },
+        replaceStoredSessions: () => undefined,
+        setStoredSessionPinned: (_sessionId, isPinned) => ({ ...persistedSession, isPinned }),
+        listStoredSessions: () => [persistedSession],
+        getAppSettings: () => normalizeAppSettings({}),
+        getModelCatalogSnapshot: createSnapshot,
+        syncSessionDependencies() {
+          attemptedProjections.push("dependency");
+          if (failingProjection === "dependency") {
+            throw new Error("dependency projection failed");
+          }
+        },
+        clearSessionContextTelemetry: () => undefined,
+        clearSessionBackgroundActivities: () => undefined,
+        invalidateProviderSessionThread: () => undefined,
+        closeSessionWindow: () => undefined,
+        broadcastSessions() {
+          attemptedProjections.push("broadcast");
+          if (failingProjection === "broadcast") {
+            throw new Error("broadcast projection failed");
+          }
+        },
+      });
+
+      const result = await service.upsertTerminalSession(terminalSession, {
+        auditLogId: 1,
+        sessionId: terminalSession.id,
+        phase: "completed",
+        assistantMessageSeq: terminalSession.messages.length - 1,
+        threadId: terminalSession.threadId,
+        errorMessage: "",
+        completedAt: "2026-08-16T00:00:00.000Z",
+      });
+
+      assert.equal(result.runState, "idle");
+      assert.equal(result.messages.at(-1)?.text, "done");
+      assert.equal(persistedSession.runState, "idle");
+      assert.deepEqual(attemptedProjections, ["dependency", "cache", "broadcast"]);
+    }
   });
 
   it("createSession は有効な provider と model を解決して保存する", async () => {
@@ -1331,7 +1419,7 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(persistedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
   });
 
-  it("replaceAllSessions は removed/provider change の副作用と invalidation を処理する", async () => {
+  it("replaceAllSessions は進行中appraisalを待ってから removed/provider change の副作用を処理する", async () => {
     const sessionA = createSession({ id: "session-a", provider: "codex", model: "codex-default" });
     const sessionB = createSession({ id: "session-b", provider: "copilot", model: "copilot-default" });
     const nextSessionA = { ...sessionA, provider: "copilot", model: "copilot-default", threadId: "" };
@@ -1341,6 +1429,20 @@ describe("SessionPersistenceService", () => {
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
     const replaceOrder: string[] = [];
+    const ownershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
+    let releaseAppraisal = () => undefined;
+    let markAppraisalStarted = () => undefined;
+    const appraisalBarrier = new Promise<void>((resolve) => {
+      releaseAppraisal = resolve;
+    });
+    const appraisalStarted = new Promise<void>((resolve) => {
+      markAppraisalStarted = resolve;
+    });
+    const appraisal = ownershipCoordinator.runExclusive(async () => {
+      markAppraisalStarted();
+      await appraisalBarrier;
+    });
+    await appraisalStarted;
 
     const service = new SessionPersistenceService({
       getSessions() {
@@ -1401,13 +1503,18 @@ describe("SessionPersistenceService", () => {
       broadcastSessions(sessionIds) {
         broadcastedSessionIds.push(Array.from(sessionIds ?? []));
       },
+      runCharacterAffectTurnOwnershipExclusive: (operation) => ownershipCoordinator.runExclusive(operation),
     });
 
     const replacePromise = service.replaceAllSessions([nextSessionA], {
       invalidateSessionIds: ["session-a"],
     });
     const pinPromise = service.setSessionPinned("session-a", false);
-    const [replaced, pinned] = await Promise.all([replacePromise, pinPromise]);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(replaceOrder, []);
+
+    releaseAppraisal();
+    const [, replaced, pinned] = await Promise.all([appraisal, replacePromise, pinPromise]);
 
     assert.equal(replaced.length, 1);
     assert.equal(replaced[0]?.isPinned, true);
