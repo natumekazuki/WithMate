@@ -30,8 +30,10 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /Use `targetType=bug` for frustration with a bug/);
     assert.match(skill, /entries in `rejected` were not/);
     assert.match(skill, /rejected candidate must not be copied into another store/);
-    assert.match(skill, /lifecycle owns the mandatory post-turn appraisal/);
-    assert.match(skill, /Do not submit the same turn again through MCP/);
+    assert.match(skill, /lifecycle owns the mandatory post-turn appraisal only/);
+    assert.match(skill, /Immediate concrete affect events remain MCP appraisal candidates/);
+    assert.match(skill, /first react naturally in the user-facing response, then call `character_affect\.appraise`/);
+    assert.match(skill, /If frustration occurs and later changes to relief, appraise both events/);
   });
 
   it("semantic duplicate、別episode、同一event retryの規則を分離する", async () => {
@@ -41,6 +43,10 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /separate event at a different time may be appended/);
     assert.match(skill, /same turn, event, timeout retry, response-loss retry, or client resend uses the unchanged request and the same idempotency key/);
     assert.match(skill, /different event or changed request uses a new key/);
+    assert.match(skill, /different occurrence times or supporting events are separate events/);
+    assert.match(skill, /semantic similarity is not a duplicate rule/);
+    assert.match(skill, /carry the `version` returned by a successful appraisal into the next appraisal/);
+    assert.match(skill, /After timeout, response loss, or `effect: unknown`, reconcile only by resending the unchanged request/);
     assert.match(skill, /Do not send a raw conversation transcript/);
     assert.match(skill, /include it as that affect candidate's `memoryEpisode`/);
     assert.match(skill, /linked shape requires `title`, `preview`, `body`, and `salience` from 0 to 1/);
@@ -142,7 +148,10 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(reference, /candidate's `memoryEpisode`/);
     assert.match(reference, /required `salience` from 0 to 1/);
     assert.match(reference, /Linked `memoryEpisode` does not use `observedFact` or `characterObservation`/);
-    assert.match(reference, /lifecycle owns mandatory post-turn appraisal/);
+    assert.match(reference, /owner of mandatory post-turn appraisal, not the sole owner of every affect mutation/);
+    assert.match(reference, /bound Agent may call `character_affect\.appraise` when it recognizes a concrete affect change/);
+    assert.match(reference, /Different occurrence times or supporting events use different keys/);
+    assert.match(reference, /use the `version` from each successful appraisal as the next request's `expectedVersion`/);
     assert.match(reference, /structured error can still identify committed or partially committed state/);
     assert.match(reference, /Use `memory\.search`, `memory\.get_entry`, and `memory\.append` with an explicit `character` or `character\+project` target/);
     assert.match(reference, /Character Memory mutations return `operation`/);

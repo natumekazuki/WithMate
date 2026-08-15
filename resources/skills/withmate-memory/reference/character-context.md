@@ -86,7 +86,7 @@ General Memory targets are always explicit project, user-global, character, or c
 
 The success shape is not permission to infer omitted values. Use the exact structured response and schema advertised by `tools/list`.
 
-For a normal WithMate Session turn, lifecycle-injected context identifies a lifecycle-owned turn: the in-process lifecycle owns mandatory post-turn appraisal and its linked `memoryEpisode`. External clients must not submit a second MCP appraisal for that turn. MCP appraisal is for clients without that lifecycle owner or an explicitly requested manual operation. Standalone `character_memory.append_episode` remains available only when the episode is not linked to an affect event.
+For a normal WithMate Session turn, lifecycle-injected context identifies the owner of mandatory post-turn appraisal, not the sole owner of every affect mutation during the turn. A bound Agent may call `character_affect.appraise` when it recognizes a concrete affect change, then the lifecycle may save a later post-turn event even when its meaning resembles the immediate event. Do not resend the lifecycle's same post-turn request through MCP. Standalone `character_memory.append_episode` remains available only when the episode is not linked to an affect event.
 
 ## Character CLI commands
 
@@ -139,11 +139,15 @@ Do not fallback for `invalid_input`, `unknown_character`, `unknown_scope`, `auth
 
 Choose an idempotency key before the first write.
 
+- Appraise each affect change when it occurs. A later resolution, reversal, or decay is a new event and does not replace the earlier event.
+- Different occurrence times or supporting events use different keys even when family, target, label, or meaning match. Affect events are not semantically deduplicated.
 - Retry the same event after timeout or response loss with the unchanged request and unchanged key.
 - A changed request uses a new key.
 - A separate event at a later time uses a new key even when it shares a motif with an older episode.
 - Reusing one key with a different request fingerprint is rejected.
 - `replayed: true` identifies an idempotent replay; it is not a newly created event.
+
+Within one turn, use the `version` from each successful appraisal as the next request's `expectedVersion`. Reconcile `effect: unknown` with the unchanged request and key. For an uncommitted `version_conflict` with `effect: none`, read the latest context and re-evaluate; if the request changes, use a new key. The later mandatory post-turn appraisal reads the latest context and follows its durable settlement contract, so an immediate appraisal does not authorize blind retry of a stale post-turn candidate.
 
 Semantic Memory and Character episodes have different duplicate rules. Equivalent active semantic preferences or constraints should not be appended repeatedly. A later distinct Character episode may be appended separately; use `motif` to relate recurring events without replacing the older episode.
 
