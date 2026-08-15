@@ -643,6 +643,31 @@ test("MessageRichText は2桁番号とnested listをsemanticなordered listと�
   );
 });
 
+test("MessageRichText は2文字ずつのindentをnested unordered listとしてrenderする", () => {
+  const markdown = [
+    "- aaa",
+    "  - bbbb with **inline** text and viewportで折り返す長い本文",
+    "    - cccc",
+    "",
+    "  child paragraph",
+  ].join("\n");
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const dom = new JSDOM(html);
+  const rootList = dom.window.document.querySelector("ul.message-list");
+  const rootItem = rootList?.querySelector(":scope > li");
+  const nestedList = rootItem?.querySelector(":scope > ul.message-list");
+  const nestedItem = nestedList?.querySelector(":scope > li");
+  const deepestList = nestedItem?.querySelector(":scope > ul.message-list");
+
+  assert.ok(rootList);
+  assert.equal(rootItem?.querySelector(":scope > .message-paragraph")?.textContent, "aaa");
+  assert.match(nestedItem?.textContent ?? "", /bbbb with inline text and viewportで折り返す長い本文/);
+  assert.equal(nestedItem?.querySelector("strong.message-inline-strong")?.textContent, "inline");
+  assert.equal(deepestList?.querySelector(":scope > li")?.textContent, "cccc");
+  assert.equal(rootItem?.querySelectorAll(":scope > .message-paragraph").length, 2);
+  assert.equal(rootItem?.querySelectorAll(":scope > .message-paragraph")[1]?.textContent, "child paragraph");
+});
+
 test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独立scroll領域にしない", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const orderedListRule = styles.match(/\.message-list\.ordered\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
@@ -979,6 +1004,39 @@ test("MessageRichText は slash / backslash 形式の Windows absolute image pat
   assert.match(html, /src="file:\/\/\/C:\/workspace\/image-folder\/sample\.png"/);
 });
 
+test("MessageRichText は heading 階層と thematic break の semantic HTML を保持する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "# ATX H1",
+        "## ATX H2",
+        "### ATX H3",
+        "#### ATX H4",
+        "##### ATX H5",
+        "###### ATX H6",
+        "",
+        "---",
+        "",
+        "Setext H1",
+        "=========",
+        "",
+        "Setext H2",
+        "---------",
+      ].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<h1 class="message-heading level-1">ATX H1<\/h1>/);
+  assert.match(html, /<h2 class="message-heading level-2">ATX H2<\/h2>/);
+  assert.match(html, /<h3 class="message-heading level-3">ATX H3<\/h3>/);
+  assert.match(html, /<h4 class="message-heading level-4">ATX H4<\/h4>/);
+  assert.match(html, /<h5 class="message-heading level-5">ATX H5<\/h5>/);
+  assert.match(html, /<h6 class="message-heading level-6">ATX H6<\/h6>/);
+  assert.match(html, /<hr class="message-divider"\/>/);
+  assert.match(html, /<h1 class="message-heading level-1">Setext H1<\/h1>/);
+  assert.match(html, /<h2 class="message-heading level-2">Setext H2<\/h2>/);
+});
+
 test("MessageRichText は先頭空白付き Markdown 行でも停止せずに render できる", { timeout: 2_000 }, () => {
   const input = ["  # title", "", "  - item", "  1. first", "", "  ```ts", "const answer = 42;", "  ```"].join("\n");
   const html = renderToStaticMarkup(
@@ -987,7 +1045,7 @@ test("MessageRichText は先頭空白付き Markdown 行でも停止せずに re
     }),
   );
 
-  assert.match(html, /<h3 class="message-heading level-1">title<\/h3>/);
+  assert.match(html, /<h1 class="message-heading level-1">title<\/h1>/);
   assert.match(html, /<ul class="message-list">\s*<li>item<\/li>\s*<\/ul>/);
   assert.match(html, /<ol class="message-list ordered">\s*<li>first<\/li>\s*<\/ol>/);
   assert.match(html, /<pre class="message-code-block"><code class="message-inline-code language-ts">const answer = 42;<\/code><\/pre>/);
@@ -1002,7 +1060,7 @@ test("MessageRichText は先頭空白付き Markdown を既存 block と inline 
     }),
   );
 
-  assert.match(html, /<h3 class="message-heading level-1"><strong class="message-inline-strong">title<\/strong><\/h3>/);
+  assert.match(html, /<h1 class="message-heading level-1"><strong class="message-inline-strong">title<\/strong><\/h1>/);
   assert.match(
     html,
     /<ul class="message-list">\s*<li><a href="src\/App\.tsx">file<\/a><\/li>\s*<li><code class="message-inline-code">literal<\/code><\/li>\s*<\/ul>/,

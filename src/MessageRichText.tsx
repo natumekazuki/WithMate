@@ -459,34 +459,37 @@ function MermaidDiagram({
 
 const markdownComponents: Components = {
   h1: ({ children, className: headingClassName, node, ...props }) => (
-    <h3 {...props} className={mergeClassName("message-heading level-1", headingClassName)}>
+    <h1 {...props} className={mergeClassName("message-heading level-1", headingClassName)}>
+      {children}
+    </h1>
+  ),
+  h2: ({ children, className: headingClassName, node, ...props }) => (
+    <h2 {...props} className={mergeClassName("message-heading level-2", headingClassName)}>
+      {children}
+    </h2>
+  ),
+  h3: ({ children, className: headingClassName, node, ...props }) => (
+    <h3 {...props} className={mergeClassName("message-heading level-3", headingClassName)}>
       {children}
     </h3>
   ),
-  h2: ({ children, className: headingClassName, node, ...props }) => (
-    <h4 {...props} className={mergeClassName("message-heading level-2", headingClassName)}>
+  h4: ({ children, className: headingClassName, node, ...props }) => (
+    <h4 {...props} className={mergeClassName("message-heading level-4", headingClassName)}>
       {children}
     </h4>
   ),
-  h3: ({ children, className: headingClassName, node, ...props }) => (
-    <h5 {...props} className={mergeClassName("message-heading level-3", headingClassName)}>
-      {children}
-    </h5>
-  ),
-  h4: ({ children, className: headingClassName, node, ...props }) => (
-    <h5 {...props} className={mergeClassName("message-heading level-3", headingClassName)}>
-      {children}
-    </h5>
-  ),
   h5: ({ children, className: headingClassName, node, ...props }) => (
-    <h5 {...props} className={mergeClassName("message-heading level-3", headingClassName)}>
+    <h5 {...props} className={mergeClassName("message-heading level-5", headingClassName)}>
       {children}
     </h5>
   ),
   h6: ({ children, className: headingClassName, node, ...props }) => (
-    <h5 {...props} className={mergeClassName("message-heading level-3", headingClassName)}>
+    <h6 {...props} className={mergeClassName("message-heading level-6", headingClassName)}>
       {children}
-    </h5>
+    </h6>
+  ),
+  hr: ({ className: dividerClassName, node, ...props }) => (
+    <hr {...props} className={mergeClassName("message-divider", dividerClassName)} />
   ),
   p: ({ children, className: paragraphClassName, node, ...props }) => (
     <p {...props} className={mergeClassName("message-paragraph", paragraphClassName)}>

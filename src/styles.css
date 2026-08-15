@@ -6462,9 +6462,11 @@ button:disabled {
   margin: 0;
 }
 
-.message-body.rich-text {
+.message-body.rich-text,
+.session-file-markdown.rich-text {
   display: grid;
   gap: 8px;
+  line-height: 1.6;
 }
 
 .message-source-text {
@@ -6487,19 +6489,72 @@ button:disabled {
 }
 
 .message-heading.level-1 {
-  font-size: 1.02rem;
+  font-size: 1.25rem;
+  font-weight: 700;
 }
 
-.message-heading.level-2,
+.message-heading.level-2 {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
 .message-heading.level-3 {
-  font-size: 0.94rem;
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.message-heading.level-4 {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.message-heading.level-5 {
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+.message-heading.level-6 {
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.message-divider {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-block-start: 1px solid var(--line);
 }
 
 .message-list {
   margin: 0;
   padding-inline-start: 1.5em;
+  list-style-position: outside;
   display: grid;
   gap: 6px;
+}
+
+.message-list:not(.ordered) {
+  list-style-type: disc;
+}
+
+.message-list .message-list:not(.ordered) {
+  list-style-type: circle;
+}
+
+.message-list .message-list .message-list:not(.ordered) {
+  list-style-type: square;
+}
+
+.message-list > li::marker {
+  color: currentColor;
+}
+
+.message-list .message-list {
+  margin-block-start: 6px;
+}
+
+.message-list > li > .message-paragraph + .message-paragraph {
+  margin-block-start: 6px;
 }
 
 .message-list.ordered {
