@@ -41,7 +41,7 @@ import {
 } from "./character-affect-storage.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import { countMemorySearchQueryTerms } from "./memory-v6-storage.js";
-import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
+import { createLocalUserMemoryPrincipal, type MemoryV6Principal } from "./memory-v6-permission.js";
 
 const LOCAL_USER_ID = "local-user" as const;
 
@@ -135,6 +135,10 @@ function requireExplicitAuthority(authority: CharacterOperationAuthority): Chara
   );
 }
 
+function requireMemoryMutationAuthority(authority: CharacterOperationAuthority): CharacterContextErrorResponse | null {
+  return authority.kind === "conversation" ? null : requireExplicitAuthority(authority);
+}
+
 function memoryErrorToContext(
   error: MemoryErrorResponse,
   failureEffect: "none" | "unknown",
@@ -177,6 +181,21 @@ function memoryErrorToContext(
     retryable: true,
     conversationMayContinue: true,
     effect: failureEffect,
+  });
+}
+
+function rejectOtherCharacterPrincipal(
+  principal: MemoryV6Principal,
+  characterId: string,
+): CharacterContextErrorResponse | null {
+  if (principal.type !== "session_binding" || principal.characterId === characterId) {
+    return null;
+  }
+  return createCharacterContextError("authority_denied", "Memory target is not accessible.", {
+    field: "characterId",
+    retryable: false,
+    conversationMayContinue: true,
+    effect: "none",
   });
 }
 
@@ -508,9 +527,14 @@ export class CharacterContextApplicationService {
   async searchMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemorySearchResponse>> {
     return this.measure("character_memory.search", transport, "none", async () => {
       const input = validateCharacterMemorySearchRequest(request);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
@@ -527,7 +551,7 @@ export class CharacterContextApplicationService {
             character: { type: "id" as const, id: input.characterId },
             project: input.scope.project,
           };
-      const result = await this.deps.memoryService.search(this.principal, {
+      const result = await this.deps.memoryService.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [target],
         query: input.query,
@@ -550,9 +574,14 @@ export class CharacterContextApplicationService {
   async appendEpisode(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
     return this.measure("character_memory.append_episode", transport, "unknown", async () => {
       const input = validateCharacterMemoryAppendEpisodeRequest(request);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
@@ -571,6 +600,7 @@ export class CharacterContextApplicationService {
         return this.mapThrownError(error, "episode scope validation", "none");
       }
       return this.appendMemoryEpisode({
+        principal,
         characterId: input.characterId,
         idempotencyKey: input.idempotencyKey,
         episode: input.episode,
@@ -582,14 +612,20 @@ export class CharacterContextApplicationService {
   async correctMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
     return this.measure("character_memory.correct", transport, "unknown", async () => {
       const input = validateCharacterMemoryCorrectRequest(request);
-      const authorityError = requireExplicitAuthority(input.authority);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
+      const authorityError = requireMemoryMutationAuthority(input.authority);
       if (authorityError) {
         return authorityError;
       }
       return this.appendMemoryEpisode({
+        principal,
         characterId: input.characterId,
         idempotencyKey: input.idempotencyKey,
         episode: input.replacement,
@@ -603,14 +639,19 @@ export class CharacterContextApplicationService {
   async forgetMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
     return this.measure("character_memory.forget", transport, "unknown", async () => {
       const input = validateCharacterMemoryForgetRequest(request);
-      const authorityError = requireExplicitAuthority(input.authority);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
+      const authorityError = requireMemoryMutationAuthority(input.authority);
       if (authorityError) {
         return authorityError;
       }
-      const result = this.deps.memoryService.forget(this.principal, {
+      const result = this.deps.memoryService.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: characterTarget(input.characterId),
         entryIds: [input.entryId],
@@ -676,6 +717,7 @@ export class CharacterContextApplicationService {
   }
 
   private async appendMemoryEpisode(input: {
+    principal: MemoryV6Principal;
     characterId: string;
     idempotencyKey: string;
     episode: {
@@ -695,7 +737,7 @@ export class CharacterContextApplicationService {
       ...(input.episode.observedFact ? [{ type: "evidence", value: "user-stated" }] : []),
       ...(input.episode.characterObservation ? [{ type: "evidence", value: "character-observation" }] : []),
     ];
-    const result = await this.deps.memoryService.append(this.principal, {
+    const result = await this.deps.memoryService.append(input.principal, {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: characterTarget(input.characterId),
       kind: "context",

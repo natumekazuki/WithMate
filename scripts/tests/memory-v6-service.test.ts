@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
@@ -9,7 +10,11 @@ import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.j
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryProtectedObjectImportError } from "../../src-electron/memory-protected-object-importer.js";
 import { createMemoryV6ProjectResolver, listMemoryV6ProjectScopes } from "../../src-electron/memory-v6-project-resolver.js";
-import { createLocalUserMemoryPrincipal } from "../../src-electron/memory-v6-permission.js";
+import {
+  LOCAL_USER_MEMORY_PERMISSIONS,
+  createLocalUserMemoryPrincipal,
+  type MemoryV6SessionBindingPrincipal,
+} from "../../src-electron/memory-v6-permission.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage, type MemoryV6AppendProtectedObjectInput } from "../../src-electron/memory-v6-storage.js";
@@ -40,17 +45,17 @@ async function withService<T>(
     getMemoryFileQuotaBytes: overrides.getMemoryFileQuotaBytes ?? (() => MEMORY_FILE_QUOTA_MIN_BYTES),
     ...(overrides.protectedObjectImporter ? { protectedObjectImporter: overrides.protectedObjectImporter } : {}),
     ...(overrides.protectedObjectExporter ? { protectedObjectExporter: overrides.protectedObjectExporter } : {}),
-    listCharacters: () => [{
-      id: "character-a",
-      name: "Character A",
+    listCharacters: () => ["a", "b"].map((suffix) => ({
+      id: `character-${suffix}`,
+      name: `Character ${suffix.toUpperCase()}`,
       description: "Test character",
       iconFilePath: "",
       theme: { main: "#111111", sub: "#222222" },
-      state: "active",
+      state: "active" as const,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
-    }],
+    })),
     resolveProjectById: (id) => ({ id, displayName: id }),
     resolveProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
       ? { id: "project-a", displayName: "Project A" }
@@ -58,7 +63,9 @@ async function withService<T>(
     resolveKnownProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
       ? { id: "project-a", displayName: "Project A" }
       : null,
-    resolveCharacterById: (id) => id === "character-a" ? { id, name: "Character A" } : null,
+    resolveCharacterById: (id) => id === "character-a" || id === "character-b"
+      ? { id, name: id === "character-a" ? "Character A" : "Character B" }
+      : null,
   });
   try {
     return await runner({ service, storage, dbPath });
@@ -82,6 +89,17 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
     preview: "serviceで検証してstorageへ渡す。",
     tags: [{ type: "topic", value: "memory" }],
     ...overrides,
+  };
+}
+
+function createSessionBindingPrincipal(characterId = "character-a"): MemoryV6SessionBindingPrincipal {
+  return {
+    type: "session_binding",
+    bindingIdHash: "binding-a",
+    sessionId: "session-a",
+    providerId: "codex",
+    characterId,
+    permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
 }
 
@@ -127,6 +145,10 @@ describe("MemoryV6Service", () => {
         id: "character-a",
         name: "Character A",
         description: "Test character",
+      }, {
+        id: "character-b",
+        name: "Character B",
+        description: "Test character",
       }]);
       assert.equal("isDefault" in characters.characters[0], false);
       assert.equal("iconFilePath" in characters.characters[0], false);
@@ -140,6 +162,114 @@ describe("MemoryV6Service", () => {
       });
       assert.equal("error" in forget, false);
       assert.deepEqual(forget.results, [{ entryId: append.entry.id, status: "forgotten" }]);
+    });
+  });
+
+  it("session bindingはuser-global、Project、自Characterを扱い、別CharacterのCRUDを拒否する", async () => {
+    await withService(async ({ service }) => {
+      const principal = createSessionBindingPrincipal();
+      const allowedTargets = [
+        { owner: "user", scope: "global" },
+        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        { owner: "character", scope: "character", character: { type: "id", id: "character-a" } },
+        {
+          owner: "character",
+          scope: "project",
+          character: { type: "id", id: "character-a" },
+          project: { type: "id", id: "project-a" },
+        },
+      ];
+      for (const target of allowedTargets) {
+        const result = service.search(principal, {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          targets: [target],
+          query: "Memory",
+        });
+        assert.equal("error" in result, false);
+      }
+
+      const otherTarget = {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "character-b" },
+      };
+      const append = await service.append(principal, appendRequest({
+        target: otherTarget,
+        idempotencyKey: "session-binding-other-character",
+      }));
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FORBIDDEN");
+
+      const search = service.search(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [otherTarget],
+        query: "Memory",
+      });
+      assert.equal("error" in search, true);
+      assert.equal(search.error.code, "MEMORY_FORBIDDEN");
+
+      const missingOtherCharacter = service.search(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{
+          owner: "character",
+          scope: "character",
+          character: { type: "id", id: "character-missing" },
+        }],
+        query: "Memory",
+      });
+      assert.equal("error" in missingOtherCharacter, true);
+      assert.equal(missingOtherCharacter.error.code, "MEMORY_FORBIDDEN");
+
+      const forget = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: otherTarget,
+        entryIds: ["unknown"],
+        reason: "user_request",
+        idempotencyKey: "session-binding-forget-other-character",
+      });
+      assert.equal("error" in forget, true);
+      assert.equal(forget.error.code, "MEMORY_FORBIDDEN");
+
+      const move = service.moveEntry(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "unknown",
+        from: allowedTargets[2],
+        to: otherTarget,
+        reason: "move to requested target",
+        idempotencyKey: "session-binding-move-other-character",
+      });
+      assert.equal("error" in move, true);
+      assert.equal(move.error.code, "MEMORY_FORBIDDEN");
+    });
+  });
+
+  it("session bindingのtarget inventoryは別Characterをpagination前に除外する", async () => {
+    await withService(({ service, storage }) => {
+      for (const characterId of ["character-a", "character-b"]) {
+        storage.appendEntry({
+          id: `mem-${characterId}`,
+          target: {
+            owner: { type: "character", id: characterId },
+            scope: { type: "character", id: characterId },
+          },
+          kind: "note",
+          title: characterId,
+          body: `${characterId} body`,
+          preview: characterId,
+          tags: [],
+          source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+        });
+      }
+
+      const result = service.listTargets(createSessionBindingPrincipal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        owner: "character",
+        limit: 1,
+      });
+
+      assert.equal("error" in result, false);
+      assert.deepEqual(result.items.map((item) => item.target.character?.id), ["character-a"]);
+      assert.equal(result.nextCursor, undefined);
     });
   });
 
@@ -242,6 +372,68 @@ describe("MemoryV6Service", () => {
         fileCount: 1,
         updatedAt: "2026-07-04T00:00:00.000Z",
       }]);
+    });
+  });
+
+  it("bound Sessionのfile usageは他Characterのlargest entry候補を返さない", async () => {
+    await withService(async ({ service, dbPath }) => {
+      const appendEntry = async (title: string, target: Record<string, unknown>, idempotencyKey: string) => {
+        const result = await service.append(createLocalUserMemoryPrincipal(), appendRequest({
+          title,
+          preview: `${title} preview`,
+          target,
+          idempotencyKey,
+        }));
+        if ("error" in result) {
+          throw new Error(result.error.message);
+        }
+        return result.entry.id;
+      };
+      const otherCharacterEntryId = await appendEntry("Other Character", {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "character-b" },
+      }, "file-usage-other-character");
+      const ownCharacterEntryId = await appendEntry("Own Character", {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "character-a" },
+      }, "file-usage-own-character");
+      const projectEntryId = await appendEntry("Project", {
+        owner: "project",
+        scope: "project",
+        project: { type: "id", id: "project-a" },
+      }, "file-usage-project");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const insert = db.prepare(`
+          INSERT INTO memory_protected_objects_v6 (
+            object_id, entry_id, state, role, media_kind, summary,
+            original_bytes, stored_bytes, created_at, updated_at, deleted_at
+          ) VALUES (?, ?, 'active', 'evidence', 'image', ?, ?, ?, ?, ?, NULL)
+        `);
+        for (const [objectId, entryId, title, bytes] of [
+          ["b".repeat(32), otherCharacterEntryId, "Other Character", 8192],
+          ["a".repeat(32), ownCharacterEntryId, "Own Character", 4096],
+          ["c".repeat(32), projectEntryId, "Project", 2048],
+        ] as const) {
+          insert.run(objectId, entryId, `${title} file`, bytes, bytes, "2026-07-04T00:00:00.000Z", "2026-07-04T00:00:00.000Z");
+        }
+      } finally {
+        db.close();
+      }
+
+      const usage = service.fileUsage(createSessionBindingPrincipal("character-a"), {
+        includeLargestEntries: true,
+        largestLimit: 10,
+      });
+
+      assert.equal("error" in usage, false);
+      assert.deepEqual(usage.largestEntries?.map((entry) => entry.entryId), [
+        ownCharacterEntryId,
+        projectEntryId,
+      ]);
     });
   });
 
@@ -1200,6 +1392,7 @@ describe("MemoryV6Service", () => {
         entryId: "missing-entry",
         from: { owner: "user", scope: "global" },
         to: { owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } },
+        reason: "move to project scope",
         idempotencyKey: "missing-move",
       });
       assert.equal("error" in failedMove, true);
@@ -1233,6 +1426,7 @@ describe("MemoryV6Service", () => {
         entryId: append.entry.id,
         from: { owner: "project", scope: "project", project: { type: "path", path: workspacePath } },
         to: { owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } },
+        reason: "move to destination project",
         idempotencyKey: "move-to-new-project",
       });
       assert.equal("error" in moved, false);
@@ -1426,6 +1620,7 @@ describe("MemoryV6Service", () => {
         entryId: "mem-move",
         from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         to: { owner: "user", scope: "global" },
+        reason: "move CLI note to user scope",
         idempotencyKey: "move-cli-note",
       };
       const moved = service.moveEntry(principal, request);

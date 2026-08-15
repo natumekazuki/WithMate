@@ -2018,6 +2018,7 @@ describe("SessionRuntimeService", () => {
     if (!resolveComposer) {
       throw new Error("composer setup が開始されていないよ。");
     }
+    assert.equal(service.isRunInFlight(session.id), true);
     service.cancelRun(session.id);
     const outcome = await Promise.race([
       runPromise.then(() => "resolved", () => "rejected"),
@@ -2270,8 +2271,11 @@ describe("SessionRuntimeService", () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const reset: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     const seenThreadIds: string[] = [];
+    const seenBindingGenerations: Array<string | undefined> = [];
+    let bindingGeneration = 0;
     const timingContexts: Array<ConversationTimingContext | undefined> = [];
     const fixedObservedAt = new Date("2026-08-04T12:32:00.000Z");
     const timingContext: ConversationTimingContext = {
@@ -2305,6 +2309,7 @@ describe("SessionRuntimeService", () => {
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
+        seenBindingGenerations.push(input.agentRuntimeBinding?.executionGeneration);
         timingContexts.push(input.conversationTimingContext);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
@@ -2340,6 +2345,17 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
+      getProviderAgentRuntimeBinding({ session: bindingSession, provider }) {
+        bindingGeneration += 1;
+        return {
+          bindingId: `binding-${bindingGeneration}`,
+          bindingReference: `reference-${bindingGeneration}`,
+          providerId: provider.id,
+          executionGeneration: `generation-${bindingGeneration}`,
+          transport: "env",
+          expiresAt: null,
+        };
+      },
       getSessionMemory(current) {
         return createSessionMemory(current.id);
       },
@@ -2372,6 +2388,9 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread(providerId, retrySessionId) {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
+      resetProviderSessionThread(providerId, retrySessionId) {
+        reset.push({ providerId, sessionId: retrySessionId });
+      },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
       broadcastLiveSessionRun() {},
@@ -2394,7 +2413,10 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
     assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
-    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
+    assert.deepEqual(seenBindingGenerations, ["generation-1", "generation-1"]);
+    assert.equal(bindingGeneration, 1);
+    assert.deepEqual(reset, [{ providerId: "codex", sessionId: session.id }]);
+    assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
     assert.equal(auditUpdates.length, 3);

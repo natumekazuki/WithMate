@@ -35,6 +35,10 @@ import {
   type RunSessionTurnInput,
 } from "../../src-electron/provider-runtime.js";
 import { toProviderMetadataLogData } from "../../src-electron/provider-metadata-log.js";
+import {
+  PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+} from "../../src-electron/provider-agent-runtime-binding.js";
 
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
   id: "codex",
@@ -1549,6 +1553,211 @@ describe("CodexAdapter background structured prompt", () => {
       (error) => error instanceof Error && error.name === "AbortError",
     );
     assert.equal(observedAbort, true);
+  });
+});
+
+describe("CodexAdapter agent runtime binding", () => {
+  it("Session generationごとのclient envを分離しbackground clientをunboundに保つ", () => {
+    const adapter = new CodexAdapter() as unknown as {
+      getClient: (
+        providerId: string,
+        appSettings: ReturnType<typeof createDefaultAppSettings>,
+        binding?: {
+          bindingId: string;
+          bindingReference: string;
+          providerId: string;
+          executionGeneration: string;
+          transport: "env";
+          expiresAt: null;
+        },
+      ) => {
+        client: { options: { env?: Record<string, string> } };
+        clientKey: string;
+      };
+    };
+    const settings = createDefaultAppSettings();
+    const before = process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV];
+    const bindingA = {
+      bindingId: "binding-a",
+      bindingReference: "opaque-reference-a",
+      providerId: "codex",
+      executionGeneration: "generation-a",
+      transport: "env" as const,
+      expiresAt: null,
+    };
+    const bindingB = {
+      bindingId: "binding-b",
+      bindingReference: "opaque-reference-b",
+      providerId: "codex",
+      executionGeneration: "generation-b",
+      transport: "env" as const,
+      expiresAt: null,
+    };
+
+    const clientA = adapter.getClient("codex", settings, bindingA);
+    const clientARetry = adapter.getClient("codex", settings, bindingA);
+    const clientB = adapter.getClient("codex", settings, bindingB);
+    const backgroundClient = adapter.getClient("codex", settings);
+
+    assert.equal(clientA.client, clientARetry.client);
+    assert.notEqual(clientA.client, clientB.client);
+    assert.notEqual(clientA.clientKey, clientB.clientKey);
+    assert.equal(
+      clientA.client.options.env?.[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      bindingA.bindingReference,
+    );
+    assert.equal(
+      clientB.client.options.env?.[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      bindingB.bindingReference,
+    );
+    assert.equal(
+      backgroundClient.client.options.env?.[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      undefined,
+    );
+    assert.equal(process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], before);
+  });
+
+  it("binding referenceをprovider由来のlive・audit projectionから除去しlogical promptは変更しない", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-binding-redaction-"));
+    const bindingReference = "opaque-reference-redaction-probe";
+    const logs: unknown[] = [];
+    const progress: unknown[] = [];
+    const adapter = new CodexAdapter((entry) => logs.push(entry)) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-redaction",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([
+                {
+                  type: "item.completed",
+                  item: {
+                    id: "command-1",
+                    type: "command_execution",
+                    command: "env",
+                    aggregated_output: `secret=${bindingReference}`,
+                    status: "completed",
+                    exit_code: 0,
+                  },
+                },
+                {
+                  type: "item.completed",
+                  item: { id: "message-1", type: "agent_message", text: `answer ${bindingReference}` },
+                },
+                { type: "turn.completed", usage: null },
+              ]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+      const input = createCodexRunSessionTurnInput(workspacePath);
+      input.userMessage = `user supplied ${bindingReference}`;
+      input.agentRuntimeBinding = {
+        bindingId: "binding-redaction",
+        bindingReference,
+        providerId: "codex",
+        executionGeneration: "generation-redaction",
+        transport: "env",
+        expiresAt: null,
+      };
+
+      const result = await adapter.runSessionTurn(input, (state) => {
+        progress.push(state);
+      });
+
+      assert.match(result.logicalPrompt.composedText, new RegExp(bindingReference));
+      assert.match(JSON.stringify(result.transportPayload), new RegExp(bindingReference));
+      assert.doesNotMatch(JSON.stringify({
+        assistantText: result.assistantText,
+        lastNonEmptyAssistantMessageText: result.lastNonEmptyAssistantMessageText,
+        artifact: result.artifact,
+        operations: result.operations,
+        rawItemsJson: result.rawItemsJson,
+        providerMetadata: result.providerMetadata,
+      }), new RegExp(bindingReference));
+      assert.match(result.assistantText, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+      assert.doesNotMatch(JSON.stringify(progress), new RegExp(bindingReference));
+      assert.doesNotMatch(JSON.stringify(logs), new RegExp(bindingReference));
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
+  });
+
+  it("binding referenceをprovider errorと通常logから除去する", async () => {
+    const workspacePath = await mkdtemp(path.join(os.tmpdir(), "withmate-codex-binding-error-redaction-"));
+    const bindingReference = "opaque-reference-error-redaction-probe";
+    const logs: unknown[] = [];
+    const adapter = new CodexAdapter((entry) => logs.push(entry)) as unknown as {
+      getClient: () => {
+        client: {
+          startThread: () => {
+            id: string;
+            runStreamed: () => Promise<{ events: AsyncGenerator<never> }>;
+          };
+          resumeThread: never;
+        };
+        clientKey: string;
+      };
+      runSessionTurn: CodexAdapter["runSessionTurn"];
+    };
+
+    try {
+      adapter.getClient = () => ({
+        client: {
+          startThread: () => ({
+            id: "thread-error-redaction",
+            runStreamed: async () => ({
+              events: createCodexStreamFromEvents([{
+                type: "turn.failed",
+                error: { message: `provider echoed ${bindingReference}` },
+              }]),
+            }),
+          }),
+          resumeThread: undefined as never,
+        },
+        clientKey: "client-key",
+      });
+      const input = createCodexRunSessionTurnInput(workspacePath);
+      input.agentRuntimeBinding = {
+        bindingId: "binding-error-redaction",
+        bindingReference,
+        providerId: "codex",
+        executionGeneration: "generation-error-redaction",
+        transport: "env",
+        expiresAt: null,
+      };
+
+      await assert.rejects(
+        () => adapter.runSessionTurn(input),
+        (error: unknown) => {
+          assert.ok(error instanceof ProviderTurnError);
+          assert.doesNotMatch(error.message, new RegExp(bindingReference));
+          assert.match(error.message, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+          return true;
+        },
+      );
+
+      assert.doesNotMatch(JSON.stringify(logs), new RegExp(bindingReference));
+      assert.match(JSON.stringify(logs), new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+    } finally {
+      await rm(workspacePath, { recursive: true, force: true });
+    }
   });
 });
 

@@ -303,6 +303,7 @@ withmate-memory move-entry --file move-request.json
   "entryId": "<entry-id>",
   "from": { "owner": "project", "scope": "project", "project": { "type": "path", "path": "<absolute-repo-path>" } },
   "to": { "owner": "user", "scope": "global" },
+  "reason": "Retarget this entry to user-global Memory.",
   "idempotencyKey": "stable-move-key"
 }
 ```

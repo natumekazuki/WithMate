@@ -131,6 +131,10 @@ describe("withmate-memory distributed Skill contract", () => {
     }
     assert.match(reference, /CLI exit code is transport\/adapter status, not a replacement for the JSON domain result/);
     assert.match(reference, /`character_context\.get` returns `characterId`, `sessionId`/);
+    assert.match(reference, /actor `sessionId` is resolved from the WithMate runtime binding/);
+    assert.match(reference, /request-body `sessionId` does not establish actor authority/);
+    assert.match(reference, /`character_memory\.append_episode` retains `sessionId` in its public input/);
+    assert.match(reference, /server replaces it with the actor Session before validation/);
     assert.match(reference, /as `family`, free-label value/);
     assert.match(reference, /read-time `evaluatedAt`/);
     assert.match(reference, /effective components with `family`/);
@@ -158,6 +162,10 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(cli, /### append/);
     assert.match(cli, /### forget/);
     assert.match(cli, /### move-entry/);
+    assert.match(
+      cli,
+      /### move-entry[\s\S]*"reason": "Retarget this entry to user-global Memory\."[\s\S]*"idempotencyKey": "stable-move-key"/,
+    );
     assert.match(cli, /## Exit Codes/);
     assert.match(cli, /Character Context MCP and CLI Reference/);
     assert.match(cli, /Semantic Memory target shapes/);

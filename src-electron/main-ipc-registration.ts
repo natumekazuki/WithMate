@@ -62,6 +62,10 @@ import type {
   UpdateMateInput,
 } from "../src/mate/mate-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../src/companion-state.js";
+import {
+  COMPANION_MODE_RETIRED_MESSAGE,
+  COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE,
+} from "../src/companion-retirement.js";
 import type {
   CompanionMergeSelectedFilesRequest,
   CompanionMergeSelectedFilesResult,
@@ -980,10 +984,7 @@ function assertAuxiliaryCreateModeForOwner(
   input: CreateAuxiliarySessionInput,
 ): void {
   if (ownerWindowKind === "companion-review") {
-    if (input.runtimeSelection !== undefined && input.runtimeSelection !== "explicit") {
-      throw new Error("Companion Review Auxiliary creation only supports explicit runtime selection.");
-    }
-    return;
+    throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
   }
 
   if (input.runtimeSelection !== "latest-session") {
@@ -1190,7 +1191,10 @@ function registerAuxiliaryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcAux
     async (event, auxiliarySessionId: string, request: RunSessionTurnRequest) => {
       const auxiliaryDeps = getAuxiliaryDeps(deps);
       const session = await getAuxiliarySessionForMutation(auxiliaryDeps, auxiliarySessionId);
-      assertAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+      const ownerWindowKind = resolveAuxiliaryOwnerWindowSender(event, session.parentSessionId, deps);
+      if (ownerWindowKind === "companion-review") {
+        throw new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE);
+      }
       return auxiliaryDeps.runAuxiliarySessionTurn(auxiliarySessionId, request);
     },
   );
@@ -1549,15 +1553,14 @@ function registerCompanionHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcCom
     deps.updateCompanionSession(session),
   );
   ipcMain.handle(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL, async (_event, sessionId: string, userMessage: string) =>
-    deps.previewCompanionComposerInput(sessionId, userMessage),
+    Promise.reject(new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE)),
   );
   ipcMain.handle(WITHMATE_CREATE_COMPANION_SESSION_CHANNEL, async (event, input: CreateCompanionSessionInput) => {
     assertHomeWindowSender(event, deps);
-    await assertUsableWorkspaceDirectory(input?.workspacePath, deps);
-    return deps.createCompanionSession(input);
+    throw new Error(COMPANION_MODE_RETIRED_MESSAGE);
   });
   ipcMain.handle(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
-    deps.runCompanionSessionTurn(sessionId, request),
+    Promise.reject(new Error(COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE)),
   );
   ipcMain.handle(WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     deps.cancelCompanionSessionRun(sessionId);

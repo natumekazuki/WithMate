@@ -190,9 +190,10 @@ Use `retryable`, `conversationMayContinue`, `effect`, `details`, and read-back f
 
 ## Correction, forget, and reset
 
+An agent may correct, forget, or move Memory autonomously as the user's delegate when the target is explicit, the reason is concrete, and the operation is idempotent. Confirm the target entry and read back the resulting state. Use a dry-run before a bulk general Memory forget.
+
 Run these only with an explicit user instruction or operator authority:
 
-- Character Memory correction or forget;
 - relationship affect correction;
 - session or relationship affect reset;
 - relationship-boundary changes.
@@ -223,7 +224,7 @@ General semantic Memory uses the same MCP server but keeps its target and duplic
 3. Use `memory.get_entry` only when the exact body or rationale matters.
 4. For a concrete append candidate, search that exact target first for an active semantic duplicate.
 5. Use `memory.append` only for reusable non-authoritative context that passes privacy and scope checks.
-6. Move or forget entries only on explicit user instruction. Use `memory.forget` dry-run before a bulk forget.
+6. Move or forget entries only when the target and reason are concrete. Use `memory.forget` dry-run before a bulk forget, then read back the resulting target.
 
 The CLI equivalents remain available for transport-level MCP fallback and explicit operator work:
 

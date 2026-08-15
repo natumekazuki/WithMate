@@ -30,6 +30,10 @@ import {
   WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
   WITHMATE_MEMORY_RUNTIME_NONCE_HEADER,
 } from "../src/memory-v6/memory-runtime-exchange.js";
+import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
 
 export type WithMateMemoryApiConnection = {
   baseUrl: string;
@@ -94,7 +98,7 @@ export function mapRuntimeHttpFailureToCharacterContext(
   });
 }
 
-function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
+export function isMemoryErrorResponse(value: unknown): value is MemoryErrorResponse {
   return typeof value === "object"
     && value !== null
     && (value as { schemaVersion?: unknown }).schemaVersion === "withmate-memory-v1"
@@ -157,6 +161,8 @@ function usageError(message: string) {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_CLI_USAGE",
     message,
+    retryable: false,
+    conversationMayContinue: true,
     effect: "none",
   });
 }
@@ -286,7 +292,7 @@ export async function discoverWithMateMemoryApi(
 export async function callWithMateMemoryRuntime(
   connection: WithMateMemoryRuntimeConnection,
   operation: WithMateMemoryRuntimeOperation,
-  options: { signal: AbortSignal },
+  options: { signal: AbortSignal; bindingReference?: string },
 ): Promise<WithMateMemoryRuntimeResponse> {
   const nonce = randomBytes(16).toString("base64url");
   const exchangeUrl = new URL(WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
@@ -372,6 +378,7 @@ export async function callWithMateMemoryRuntime(
         apiSecret: connection.api.apiSecret,
         adapter: connection.credential.adapter,
         adapterSecret: connection.credential.adapterSecret,
+        ...(options.bindingReference ? { bindingReference: options.bindingReference } : {}),
         operation,
       }));
     });
@@ -384,6 +391,16 @@ export async function callWithMateMemoryRuntime(
       fail("Memory API request could not be dispatched.", error);
     }
   });
+}
+
+export function resolveAgentRuntimeBindingReference(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
+  if (!reference && env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1") {
+    throw usageError("WithMate provider execution requires its runtime binding reference.");
+  }
+  return reference || undefined;
 }
 
 export async function verifyRuntimeIdentity(

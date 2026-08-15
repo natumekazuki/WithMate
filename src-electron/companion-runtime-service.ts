@@ -57,7 +57,7 @@ export type CompanionRuntimeServiceDeps = {
   ): Promise<LiveElicitationResponse> | LiveElicitationResponse;
   setProviderQuotaTelemetry(telemetry: ProviderQuotaTelemetry): void;
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastCompanionSessions(): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -529,7 +529,7 @@ export class CompanionRuntimeService {
     const partialResult = providerTurnError?.partialResult;
     const message = error instanceof Error ? error.message : String(error);
     if (canceled) {
-      this.deps.invalidateProviderSessionThread(session.provider, session.id);
+      await this.deps.invalidateProviderSessionThread(session.provider, session.id);
     }
     const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
     const assistantText = partialResult?.assistantText.trim()

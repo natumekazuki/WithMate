@@ -383,7 +383,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
       catalogRevision: 1,
       model: "gpt-5.4",
       reasoningEffort: "high",
-      threadId: "",
+      threadId: "thread-before-model-change",
     });
     activeModelCatalog = buildTestModelCatalogSnapshot(3);
     const draftBeforeModelChange = service.updateAuxiliarySession({
@@ -399,6 +399,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     assert.equal(explicitModelChange.catalogRevision, 3);
     assert.equal(explicitModelChange.model, "gpt-5.4-mini");
     assert.equal(explicitModelChange.reasoningEffort, "medium");
+    assert.equal(explicitModelChange.threadId, "");
     assert.equal(explicitModelChange.composerDraft, "draft saved before model change");
 
     const userChangedModelWithDraft = auxiliaryStorage.upsertAuxiliarySession({

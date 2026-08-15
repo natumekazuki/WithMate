@@ -557,8 +557,10 @@ describe("Memory V6 runtime API", () => {
             sessionId: "missing-session",
           }),
         });
-        assert.equal(authenticatedCli.status, 404);
-        assert.equal((await authenticatedCli.json()).error.code, "unknown_character");
+        assert.equal(authenticatedCli.status, 403);
+        const authenticatedCliError = await authenticatedCli.json();
+        assert.equal(authenticatedCliError.error.code, "authority_denied");
+        assert.equal(authenticatedCliError.error.details.bindingFailure, "SESSION_BINDING_REQUIRED");
 
         const characters = await fetch(`${runtime.baseUrl}/v1/characters`, {
           headers: {

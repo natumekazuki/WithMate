@@ -53,7 +53,7 @@ const APPEND_REQUEST_KEYS = new Set([
   "idempotencyKey",
 ]);
 const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey", "dryRun"]);
-const MOVE_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "from", "to", "sourceMessageId", "idempotencyKey"]);
+const MOVE_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "from", "to", "reason", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
 const CHARACTER_TARGET_ID_KEYS = new Set(["type", "id"]);
@@ -68,6 +68,7 @@ const MAX_SEARCH_QUERY_LENGTH = 500;
 const MAX_TITLE_LENGTH = 160;
 const MAX_PREVIEW_LENGTH = 280;
 const MAX_BODY_LENGTH = 8_000;
+const MAX_REASON_LENGTH = 1_000;
 const MAX_TAG_TYPE_LENGTH = 48;
 const MAX_TAG_VALUE_LENGTH = 96;
 const MAX_ID_LENGTH = 200;
@@ -1102,6 +1103,10 @@ export function validateMemoryMoveEntryRequest(value: unknown): MemoryValidation
   if (JSON.stringify(from.value) === JSON.stringify(to.value)) {
     return error("MEMORY_INVALID_FIELD", "from and to must identify different targets.", "to");
   }
+  const reason = normalizeText(value.reason, "reason", { maxLength: MAX_REASON_LENGTH });
+  if (!reason.ok) {
+    return reason;
+  }
   const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
   if (!sourceMessageId.ok) {
     return sourceMessageId;
@@ -1117,6 +1122,7 @@ export function validateMemoryMoveEntryRequest(value: unknown): MemoryValidation
       entryId: entryId.value,
       from: from.value,
       to: to.value,
+      reason: reason.value,
       ...(sourceMessageId.value === undefined ? {} : { sourceMessageId: sourceMessageId.value }),
       ...(idempotencyKey.value === undefined ? {} : { idempotencyKey: idempotencyKey.value }),
     },

@@ -240,6 +240,7 @@ describe("general Memory MCP runtime integration", () => {
           entryId: (first.structuredContent as any).entry.id,
           from: projectTarget({ type: "path", path: PROJECT_PATH }),
           to: { owner: "user", scope: "global" },
+          reason: "move to user scope",
           idempotencyKey: "mcp-move-1",
         },
       });
@@ -251,6 +252,7 @@ describe("general Memory MCP runtime integration", () => {
           entryId: (first.structuredContent as any).entry.id,
           from: projectTarget({ type: "path", path: PROJECT_PATH }),
           to: { owner: "user", scope: "global" },
+          reason: "move to user scope",
           idempotencyKey: "mcp-move-1",
         },
       });

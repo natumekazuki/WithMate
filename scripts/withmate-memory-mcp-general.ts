@@ -338,7 +338,7 @@ export const GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
   { name: "memory.list_entries", description: "List entries in one explicit target; bodies are omitted unless explicitly requested.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.list_tags", description: "List tags for one explicit Memory target, optionally with bounded counts and samples.", annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
   { name: "memory.append", description: "Append one idempotent general Memory entry to an explicit target, optionally importing protected files atomically.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false } },
-  { name: "memory.forget", description: "Preview or perform an idempotent forget after an explicit user instruction and reason.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
+  { name: "memory.forget", description: "Preview or perform an idempotent forget for an explicit target and concrete reason.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: "memory.move_entry", description: "Move one active entry idempotently between explicit targets while preserving its identity and attachments.", annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false } },
   { name: "memory.get_file", description: "Export one protected object to a new absolute output path after target validation; existing files are not overwritten.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
   { name: "memory.export_files", description: "Export all protected objects for one entry to new files in an absolute output directory after target validation.", annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false } },
@@ -458,6 +458,7 @@ export function registerGeneralMemoryMcpTools(
     entryId: z.string().min(1).max(200),
     from: memoryTargetSchema,
     to: memoryTargetSchema,
+    reason: z.string().min(1).max(1_000),
     sourceMessageId: z.string().min(1).max(200).optional(),
     idempotencyKey: z.string().min(1).max(200),
   }).strict(), createMemoryToolOutputSchema(moveSuccessSchema, ["schemaVersion", "entry", "moved", "from", "to"]), (input) => ({

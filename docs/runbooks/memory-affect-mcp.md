@@ -42,11 +42,11 @@ Character系は次の6 toolを公開する。
 - `memory.export_files`
 - `memory.file_usage`
 
-`memory.append`、`memory.forget`、`memory.move_entry`はidempotency keyを必須とする。`memory.forget`はreasonも必須であり、`dryRun: true`ではMemory、protected object、監査event、idempotency stateを変更しない。成功responseの`replayed: true`は同一requestの再送を表す。keyを異なるrequestへ再利用した結果はdomain conflictであり、availability failureではない。
+`memory.append`、`memory.forget`、`memory.move_entry`はidempotency keyを必須とし、`memory.forget`と`memory.move_entry`はreasonも必須とする。`memory.forget`の`dryRun: true`はMemory、protected object、監査event、idempotency stateを変更しない。`memory.move_entry`はdry-runを受け付けない。成功responseの`replayed: true`は同一requestの再送を表す。keyを異なるrequestへ再利用した結果はdomain conflictであり、availability failureではない。
 
 `memory.get_file`と`memory.export_files`は、target照合後に新しい出力fileだけを作成する。既存fileを上書きしないためdestructive annotationは付けないが、external side effectを持ち、同じrequestの再実行は既存file errorになり得るためread-onlyまたはidempotentとは表示しない。
 
-Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-onlyである。Characterの`appraise`と`append_episode`、一般Memoryの`append`はbounded writeである。Characterの`correct`と`forget`、一般Memoryの`forget`と`move_entry`は明示的なユーザー指示を必要とする。MCP tool inputはauthority文字列を受け付けない。CLIはCLI専用operator credential、MCPはMCP専用credentialで認証し、MCP credentialは公開toolに対応するruntime routeだけを呼び出せる。最終判定はWithMate application serviceが行う。
+Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-onlyである。Characterの`appraise`と`append_episode`、一般Memoryの`append`はbounded writeである。runtime bindingで解決されたAgentは、明示target、具体的な理由、idempotency key、変更後のread-backを満たす場合、Characterの`correct`と`forget`、一般Memoryの`forget`と`move_entry`をユーザーの代理として自律実行できる。一般Memoryのbulk forgetは実行前にdry-runする。relationship affect correction、session / relationship affect reset、relationship boundary変更は、明示的なユーザー指示またはoperator authorityを必要とする。MCP tool inputはauthority文字列を受け付けない。CLIはCLI専用operator credential、MCPはMCP専用credentialで認証し、MCP credentialは公開toolに対応するruntime routeだけを呼び出せる。最終判定はWithMate application serviceが行う。
 
 `memory.list_tags`は`targets`へ明示targetを1件だけ指定する。`limit`で1 pageのtag総数を制限し、`nextCursor`が返る間は同じtargetとcount条件で継続する。cursorはruntime発行値だけを使う。`sampleLimit`は`withCounts: true`時の各tagのsample数だけを制限し、tag総数の上限には使わない。
 
@@ -59,7 +59,7 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 | `help` | なし | MCPで代替済み | server instructions、`tools/list` | CLIの表示用helpをpublic APIにしない |
 | `status` | `/v1/status` | MCPで代替済み | MCP initializeと各toolのstructured availability error | runtime identity確認用routeをtool化しない |
 | `characters` | `/v1/characters` | MCPで代替済み | `memory.list_targets`で`owner: character`と`includeEmpty: true`を指定 | Character definitionを広げずtarget inventoryだけを使う |
-| `file-usage` | `/v1/file_usage` | 公開 | `memory.file_usage` | なし |
+| `file-usage` | `/v1/file_usage` | 公開 | `memory.file_usage` | optional |
 | `list-targets` | `/v1/list_targets` | 公開 | `memory.list_targets` | なし |
 | `list-entries` | `/v1/list_entries` | 公開 | `memory.list_entries` | なし |
 | `audit` | `/v1/audit` | operator/診断専用として除外 | CLI operator credential | repository横断の保守・診断候補を通常会話toolへ出さない |
@@ -70,7 +70,7 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 | `list-tags` | `/v1/list_tags` | 公開 | `memory.list_tags` | なし |
 | `append` | `/v1/append` | 公開 | `memory.append` | MCPではidempotency keyを必須化する |
 | `forget` | `/v1/forget` | 公開 | `memory.forget` | MCPではreasonとidempotency keyを必須化し、dry-runを維持する |
-| `move-entry` | `/v1/move_entry` | 公開 | `memory.move_entry` | MCPではidempotency keyを必須化する |
+| `move-entry` | `/v1/move_entry` | 公開 | `memory.move_entry` | MCPではreasonとidempotency keyを必須化する |
 | `context-get` | `/v1/character_context/get` | 公開 | `character_context.get` | なし |
 | `affect-appraise` | `/v1/character_affect/appraise` | 公開 | `character_affect.appraise` | なし |
 | `affect-inspect` | `/v1/character_affect/inspect` | operator/診断専用として除外 | CLI operator credential | 生eventとversionの運用inspectを通常会話toolへ出さない |
@@ -78,8 +78,8 @@ Character系の`get`と`search`、一般Memoryのsearch/get/list/usageはread-on
 | `affect-reset` | `/v1/character_affect/reset` | operator/診断専用として除外 | CLI operator credential | session/relationship resetを通常会話toolへ出さない |
 | `character-memory-search` | `/v1/character_memory/search` | 公開 | `character_memory.search` | なし |
 | `character-memory-append-episode` | `/v1/character_memory/append_episode` | 公開 | `character_memory.append_episode` | なし |
-| `character-memory-correct` | `/v1/character_memory/correct` | 公開 | `character_memory.correct` | destructive invocationを明示指示へ写像する |
-| `character-memory-forget` | `/v1/character_memory/forget` | 公開 | `character_memory.forget` | destructive invocationを明示指示へ写像する |
+| `character-memory-correct` | `/v1/character_memory/correct` | 公開 | `character_memory.correct` | 明示target、理由、idempotency、read-backを維持する |
+| `character-memory-forget` | `/v1/character_memory/forget` | 公開 | `character_memory.forget` | 明示target、理由、idempotency、read-backを維持する |
 | `character-metrics` | `/v1/character_context/metrics` | operator/診断専用として除外 | CLI operator credential | 運用metricsを通常会話toolへ出さない |
 | `mcp-server` | なし | MCPで代替済み | stdio MCP serverの起動command | toolではなくadapter bootstrapである |
 | `schema` | なし | MCPで代替済み | `tools/list` | MCPでは完全なinput/output schemaをprotocolで返す |

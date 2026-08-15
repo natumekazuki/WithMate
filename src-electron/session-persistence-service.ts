@@ -42,6 +42,9 @@ export type SessionPersistenceServiceDeps = {
   getStoredSession?(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
   listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
+  listAuxiliarySessionRuntimeIdentities?(
+    parentSessionIds: readonly string[],
+  ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
@@ -55,7 +58,8 @@ export type SessionPersistenceServiceDeps = {
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
 };
@@ -179,12 +183,15 @@ export class SessionPersistenceService {
       ),
     });
 
-    if (currentSession.provider !== updatedSession.provider) {
+    const providerChanged = currentSession.provider !== updatedSession.provider;
+    if (providerChanged) {
       this.deps.clearSessionContextTelemetry(updatedSession.id);
+      this.deps.revokeSessionAgentRuntimeBindings?.(updatedSession.id);
+      await this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
     }
 
-    if (currentSession.threadId && !updatedSession.threadId) {
-      this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
+    if (!providerChanged && currentSession.threadId && !updatedSession.threadId) {
+      await this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
     }
 
     return updatedSession;
@@ -233,6 +240,8 @@ export class SessionPersistenceService {
     const currentSessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
     const runningActiveAuxiliaryParentIds =
       await this.deps.listRunningActiveAuxiliaryParentIds?.(uniqueSessionIds) ?? new Set<string>();
+    const auxiliaryRuntimeIdentities =
+      await this.deps.listAuxiliarySessionRuntimeIdentities?.(uniqueSessionIds) ?? [];
 
     for (const sessionId of uniqueSessionIds) {
       const session = currentSessionsById.get(sessionId);
@@ -277,9 +286,23 @@ export class SessionPersistenceService {
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
 
     for (const sessionId of deletableSessionIds) {
+      const deletedSession = currentSessionsById.get(sessionId);
+      this.deps.revokeSessionAgentRuntimeBindings?.(sessionId);
+      await this.deps.invalidateProviderSessionThread(deletedSession?.provider ?? null, sessionId);
       this.deps.clearSessionContextTelemetry(sessionId);
       this.deps.clearSessionBackgroundActivities(sessionId);
       this.deps.closeSessionWindow(sessionId);
+    }
+    const deletableParentIds = new Set(deletableSessionIds);
+    for (const auxiliary of auxiliaryRuntimeIdentities) {
+      if (!deletableParentIds.has(auxiliary.parentSessionId)) {
+        continue;
+      }
+      this.deps.revokeSessionAgentRuntimeBindings?.(auxiliary.id);
+      await this.deps.invalidateProviderSessionThread(auxiliary.provider, auxiliary.id);
+      this.deps.clearSessionContextTelemetry(auxiliary.id);
+      this.deps.clearSessionBackgroundActivities(auxiliary.id);
+      this.deps.closeSessionWindow(auxiliary.id);
     }
 
     this.deps.broadcastSessions(deletableSessionIds);
@@ -395,6 +418,8 @@ export class SessionPersistenceService {
       const nextSession = nextSessionsById.get(previousSession.id);
       if (!nextSession || nextSession.provider !== previousSession.provider) {
         this.deps.clearSessionContextTelemetry(previousSession.id);
+        this.deps.revokeSessionAgentRuntimeBindings?.(previousSession.id);
+        await this.deps.invalidateProviderSessionThread(previousSession.provider, previousSession.id);
       }
       if (!nextSession) {
         this.deps.clearSessionBackgroundActivities(previousSession.id);
@@ -402,11 +427,12 @@ export class SessionPersistenceService {
     }
 
     for (const sessionId of options?.invalidateSessionIds ?? []) {
+      this.deps.revokeSessionAgentRuntimeBindings?.(sessionId);
       const sessionProvider =
         nextSessionsById.get(sessionId)?.provider ??
         previousSessionsById.get(sessionId)?.provider ??
         null;
-      this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
     }
 
     if (options?.broadcast ?? true) {
