@@ -182,7 +182,11 @@ import {
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
-import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
+import {
+  applyLaunchAtLoginSetting,
+  resolveAppUserModelId,
+  shouldLaunchInBackground,
+} from "./app-login-item.js";
 import { AppTrayService } from "./app-tray-service.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
@@ -257,7 +261,10 @@ const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
 const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
 const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
-app.setAppUserModelId("com.natumekazuki.withmate");
+app.setAppUserModelId(resolveAppUserModelId({
+  isPackaged: app.isPackaged,
+  execPath: process.execPath,
+}));
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
 const appLogService = new AppLogService({
@@ -1931,7 +1938,7 @@ function deletePromptTemplate(id: string): PromptTemplate[] {
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
-  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
+  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled, app.isPackaged);
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
 }
@@ -1942,7 +1949,7 @@ function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSett
 
 async function resetAppSettings(): Promise<AppSettings> {
   const settings = requireAppSettingsStorage().resetSettings();
-  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
   return settings;
 }
 
@@ -2851,7 +2858,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       recreateDatabaseFile,
       applyAppSettingsSideEffects: (settings) => {
-        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
       },
       broadcastSessions,
       broadcastAppSettings,
@@ -4040,7 +4047,11 @@ if (!hasSingleInstanceLock) {
       await startMemoryV6RuntimeApiBestEffort();
       requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
-      applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
+      applyLaunchAtLoginSetting(
+        app,
+        requireAppSettingsStorage().getSettings().launchAtLoginEnabled,
+        app.isPackaged,
+      );
       await syncManagedMemorySkillBestEffort();
       publishAppBootStatus({
         kind: "completed",

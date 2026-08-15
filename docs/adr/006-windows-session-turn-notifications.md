@@ -13,6 +13,7 @@ Session のターン完了まで時間がかかる場合、ユーザーは WithM
 
 - 対応対象は Windows の通常 Session と Character 作成 Session とし、Companion と Auxiliary Session、macOS、Linux は対象外とする。
 - Electron の `Notification` API を使い、Windows の既定の通知音と表示時間に従う。独自 toast XML は生成しない。
+- packaged app だけが `com.natumekazuki.withmate` を AppUserModelID として使う。dev / visual-check の unpackaged app は `process.execPath` を使い、Start Menu に置かれた引数なしの `electron.exe` がインストール版の通知activation先になる衝突を避ける。
 - 通知設定は既定で有効とし、App Settings から無効化できる。
 - 返答冒頭の表示設定は完了通知とは別に設け、既定で無効とする。完了通知が無効な間は Settings 上で操作できないが、保存済みの選択値は維持する。
 - provider の成功結果を含む Session が永続化された直後を通知契機とする。失敗、キャンセル、setup failure では通知しない。
