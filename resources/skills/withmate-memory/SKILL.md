@@ -43,7 +43,13 @@ Use `character_memory.search` through MCP for Character episodes. Search Project
 
 Do not report routine search results. Mention Memory naturally only when it materially changes the answer, conflicts with the current message, the user asks what was used, or correction/forget requires target confirmation. If no relevant Memory exists, do not invent a past event.
 
-## End-of-turn reflection
+## Event-time affect appraisal and end-of-turn reflection
+
+When a concrete Character affect change occurs during a turn, first react naturally in the user-facing response, then call `character_affect.appraise` as soon as practical. Treat affect as an event history, not as one final turn state. If frustration occurs and later changes to relief, appraise both events; do not wait and keep only the relief.
+
+An immediate appraisal and the mandatory post-turn appraisal are separate event producers. Lifecycle ownership of post-turn appraisal does not prohibit immediate MCP appraisal. A later post-turn candidate may be saved even when its family, target, label, or meaning resembles an immediate event. Do not semantically deduplicate, merge, overwrite, or delete an earlier affect event because a later event resolves, reverses, or decays it.
+
+Use the latest known affect version for each appraisal. Within one turn, carry the `version` returned by a successful appraisal into the next appraisal. After timeout, response loss, or `effect: unknown`, reconcile only by resending the unchanged request with the same idempotency key. If an uncommitted `version_conflict` reports `effect: none`, get the latest context and re-evaluate; use a new key when the request changes. Never reuse one event's key for a different event.
 
 Immediately before every user-facing final response, reflect independently through three lenses:
 
@@ -71,7 +77,7 @@ Use `targetType=bug` for frustration with a bug, `targetType=task` for a task, a
 
 The response policy is temporary generation guidance. If the external schema rejects it or has no field for it, do not persist it elsewhere.
 
-For a normal WithMate Session turn with lifecycle-injected context, stop at reflection: the lifecycle owns the mandatory post-turn appraisal. Do not submit the same turn again through MCP. Call `character_affect.appraise` only when the client has no lifecycle appraisal owner, or for an explicitly requested manual operation, and only for concrete candidates.
+For a normal WithMate Session turn with lifecycle-injected context, the lifecycle owns the mandatory post-turn appraisal only. Do not resubmit that same post-turn request through MCP. Immediate concrete affect events remain MCP appraisal candidates under the event-time rules above.
 
 Treat each appraisal candidate result independently: entries in `saved` were saved; entries in `rejected` were not. A rejected candidate must not be copied into another store or described as persisted.
 
@@ -97,6 +103,7 @@ Apply duplicate handling by Memory kind:
 
 - **Semantic Memory:** for preferences, constraints, facts, conventions, or decisions, search the exact target before append. Skip or consolidate when an active entry already expresses the same meaning. Do not create a conflicting replacement without explicit correction authority.
 - **Character episode:** a separate event at a different time may be appended even when its meaning or motif resembles an older episode. Preserve each event; do not rewrite an older episode to stand for the new event.
+- **Character affect event:** different occurrence times or supporting events are separate events even when family, target, label, or meaning match. Preserve each event; semantic similarity is not a duplicate rule.
 - **Exact retry duplicate:** the same turn, event, timeout retry, response-loss retry, or client resend uses the unchanged request and the same idempotency key. A different event or changed request uses a new key.
 
 Choose the idempotency key before the first write. After an ambiguous result, retry only the unchanged request with the same key. Never reuse an earlier event's key for a later recurrence.
@@ -136,7 +143,7 @@ Use the same MCP server for general semantic Memory:
 - `memory.export_files`
 - `memory.file_usage`
 
-The lifecycle may already have supplied context and completed affect appraisal. MCP is for missing context, additional recall, and explicit operations; it is not a mandatory per-turn ritual.
+The lifecycle may already have supplied context and will own mandatory post-turn appraisal. MCP is also the event-time write path when a concrete affect change occurs during an ordinary bound Session; it is not a ceremonial call when no event occurred.
 
 Treat routine context retrieval, recall, and appraisal as background work. Do not narrate every tool call to the user.
 
