@@ -9,10 +9,12 @@ File Explorer already owns an in-session central preview, while chat file links 
 ## Decision
 
 - A normal File Explorer click opens the existing central preview.
-- Ctrl-click (Cmd-click on macOS) in File Explorer opens a detached preview window without replacing the central preview.
+- Ctrl-click (Cmd-click on macOS) in File Explorer opens a detached preview window without replacing the central preview. The same modifier on a tracked Changes row opens that file's live Git Diff in the detached host; an untracked row opens its file preview.
+- `Open Preview` in a live Git Diff opens the same root-scoped resource in the current central or detached host.
 - A chat local-file link opens a detached preview window.
 - `SessionFilePreview` and `SessionDiffPreview` remain the canonical renderers. The detached window is only a host with window-specific navigation.
 - Detached windows are identified and reused by their canonical resource identity: `(sessionId, rootId, normalized relativePath)` for root-scoped resources, or `(sessionId, exact canonical real file path)` for absolute-file resources. The canonical absolute path is not case-folded or separator-rewritten, so case-sensitive Windows directories and POSIX filenames containing a literal backslash do not collapse distinct files. Reopening restores and focuses the existing window. Different resources may have different windows.
+- Reopening a resource with an explicit file-preview or live-Git-Diff view navigates the reused detached host to that view before focusing it. A live Git Diff view additionally preserves its Git scope.
 - Link resolution runs in the main process. Relative chat links use the active session Workspace; relative links activated inside a preview use the current file's directory. Files within the current Workspace, parent Session Folder, or an explicitly registered Additional Directory retain a root-scoped resource. A user-activated link to another existing regular file becomes an absolute-file preview resource without adding a root or provider permission.
 - External URLs and directories retain the existing explicit open behavior. Directories outside the registered roots, missing paths, special files, and unsupported URL schemes return a visible failure and are not opened automatically by the operating system.
 - Automatic local resources embedded by Markdown, including images, remain root-scoped. The unrestricted absolute-file path applies only to explicit file navigation and the explicit `Open` / `Show in Explorer` actions for the current preview.

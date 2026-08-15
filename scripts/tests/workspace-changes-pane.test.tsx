@@ -202,14 +202,28 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     scopes: ["working-tree"],
     kinds: { "working-tree": "modified", staged: null },
   }));
-  const additionalEntries: FileRootGitChangeEntry[] = [{
-    relativePath: "app/src/00-shared.ts",
-    previousRelativePath: null,
-    scopes: ["working-tree"],
-    kinds: { "working-tree": "modified" },
-  }];
+  const additionalEntries: FileRootGitChangeEntry[] = [
+    {
+      relativePath: "app/src/00-shared.ts",
+      previousRelativePath: null,
+      scopes: ["working-tree"],
+      kinds: { "working-tree": "modified" },
+    },
+    {
+      relativePath: "notes.txt",
+      previousRelativePath: null,
+      scopes: ["working-tree"],
+      kinds: { "working-tree": "untracked" },
+    },
+  ];
   const requestedRootIds: string[] = [];
-  const diffRequests: FileRootFileDiffRequest[] = [];
+  const diffRequests: Array<FileRootFileDiffRequest & { openInWindow: boolean }> = [];
+  const fileRequests: Array<{
+    sessionId: string;
+    rootId: string;
+    relativePath: string;
+    openInWindow: boolean;
+  }> = [];
   let rootListFailure: Error | null = null;
   let workspaceEntries = entries;
   const testApi = {
@@ -243,9 +257,12 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     enabled: true,
     rootsRevision: "roots-1",
     refreshRevision: 0,
-    onOpenFile: () => undefined,
-    onOpenDiff: async (request: FileRootFileDiffRequest) => {
-      diffRequests.push(request);
+    onOpenFile: async (request: { sessionId: string; rootId: string; relativePath: string }, openInWindow: boolean) => {
+      fileRequests.push({ ...request, openInWindow });
+      return null;
+    },
+    onOpenDiff: async (request: FileRootFileDiffRequest, openInWindow: boolean) => {
+      diffRequests.push({ ...request, openInWindow });
       return null;
     },
   };
@@ -278,7 +295,7 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       String(entries.length),
     );
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
-    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "230px");
+    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "260px");
     assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
     assert.deepEqual(requestedRootIds, ["session-folder", "additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
@@ -320,9 +337,56 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       workspaceChange.click();
       await Promise.resolve();
     });
-    assert.deepEqual(diffRequests.map(({ rootId, relativePath }) => ({ rootId, relativePath })), [
-      { rootId: "additional:repo", relativePath: "app/src/00-shared.ts" },
-      { rootId: "workspace", relativePath: "src/00-shared.ts" },
+    assert.deepEqual(diffRequests.map(({ rootId, relativePath, openInWindow }) => ({
+      rootId,
+      relativePath,
+      openInWindow,
+    })), [
+      { rootId: "additional:repo", relativePath: "app/src/00-shared.ts", openInWindow: false },
+      { rootId: "workspace", relativePath: "src/00-shared.ts", openInWindow: false },
+    ]);
+
+    await act(async () => {
+      additionalChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      workspaceChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, metaKey: true }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(diffRequests.slice(2).map(({ rootId, relativePath, scope, openInWindow }) => ({
+      rootId,
+      relativePath,
+      scope,
+      openInWindow,
+    })), [
+      {
+        rootId: "additional:repo",
+        relativePath: "app/src/00-shared.ts",
+        scope: "working-tree",
+        openInWindow: true,
+      },
+      {
+        rootId: "workspace",
+        relativePath: "src/00-shared.ts",
+        scope: "working-tree",
+        openInWindow: true,
+      },
+    ]);
+
+    const untrackedChange = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
+      .find((button) => button.title === "notes.txt");
+    assert.ok(untrackedChange);
+    await act(async () => {
+      untrackedChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      untrackedChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      untrackedChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, metaKey: true }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(fileRequests, [
+      { sessionId: "session-1", rootId: "additional:repo", relativePath: "notes.txt", openInWindow: false },
+      { sessionId: "session-1", rootId: "additional:repo", relativePath: "notes.txt", openInWindow: true },
+      { sessionId: "session-1", rootId: "additional:repo", relativePath: "notes.txt", openInWindow: true },
     ]);
 
     const repoList = dom.window.document.querySelector<HTMLElement>(

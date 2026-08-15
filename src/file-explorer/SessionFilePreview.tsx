@@ -1196,9 +1196,10 @@ export function SessionFilePreview({
       ? `Formatted preview is skipped for files larger than ${formatFileByteLength(STRUCTURED_TEXT_PREVIEW_MAX_BYTES)}.`
       : "";
   const previewFeedback = [feedback, diffAvailabilityMessage, structuredTextFeedback].filter(Boolean);
+  const contentLoading = loadState.status === "inspecting" || loadState.status === "loading";
 
   return (
-    <section className="session-file-preview" aria-label="File preview">
+    <section className="session-file-preview" aria-label="File preview" aria-busy={contentLoading || undefined}>
       <header className="session-file-preview-header">
         {backNavigation ? (
           <BackNavigationButton
@@ -1300,10 +1301,16 @@ export function SessionFilePreview({
         />
       ) : null}
 
-      {loadState.status === "inspecting" ? <div className="session-file-preview-status">Inspecting file…</div> : null}
+      {loadState.status === "inspecting" ? (
+        <div className="session-file-preview-loading" role="status" aria-live="polite">
+          <span className="session-file-preview-spinner" aria-hidden="true" />
+          <span className="visually-hidden">Inspecting file</span>
+        </div>
+      ) : null}
       {loadState.status === "loading" ? (
-        <div className="session-file-preview-status">
+        <div className="session-file-preview-loading" role="status" aria-live="polite">
           <progress max={loadState.descriptor.byteLength || 1} value={loadState.loadedBytes} />
+          <span className="visually-hidden">Loading file content</span>
           <span>{formatFileByteLength(loadState.loadedBytes)} / {formatFileByteLength(loadState.descriptor.byteLength)}</span>
         </div>
       ) : null}
@@ -1417,7 +1424,9 @@ export type SessionDiffPreviewProps = {
   };
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
+  onOpenPreview?: () => Promise<string | null>;
   onReload?: () => Promise<string | null>;
+  loading?: boolean;
   reloadPending?: boolean;
   chatNotice?: string;
 };
@@ -1429,7 +1438,9 @@ export function SessionDiffPreview({
   backNavigation,
   onCopyText,
   onQuoteText,
+  onOpenPreview,
   onReload,
+  loading = false,
   reloadPending = false,
   chatNotice = "",
 }: SessionDiffPreviewProps) {
@@ -1440,9 +1451,11 @@ export function SessionDiffPreview({
   const [feedback, setFeedback] = useState("");
   const previewIdentity = `${title}\0${previewRevision}`;
   const previewIdentityRef = useRef(previewIdentity);
+  const navigationRevisionRef = useRef(0);
   const reloadRevisionRef = useRef(0);
   if (previewIdentityRef.current !== previewIdentity) {
     previewIdentityRef.current = previewIdentity;
+    navigationRevisionRef.current += 1;
     reloadRevisionRef.current += 1;
   }
   const lines = useMemo(() => splitPreviewLines(patch), [patch]);
@@ -1463,7 +1476,7 @@ export function SessionDiffPreview({
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
+      if (!loading && (event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
         event.preventDefault();
         setFindOpen(true);
       } else if (event.key === "Escape") {
@@ -1477,7 +1490,7 @@ export function SessionDiffPreview({
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [backNavigation, findOpen]);
+  }, [backNavigation, findOpen, loading]);
 
   const navigate = (direction: 1 | -1) => {
     if (matches.length > 0) {
@@ -1506,8 +1519,29 @@ export function SessionDiffPreview({
     }
   };
 
+  const openPreview = async () => {
+    if (!onOpenPreview) {
+      return;
+    }
+    const revision = ++navigationRevisionRef.current;
+    try {
+      const message = await onOpenPreview();
+      if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
+        setFeedback(message ?? "");
+      }
+    } catch (error) {
+      if (revision === navigationRevisionRef.current && previewIdentityRef.current === previewIdentity) {
+        setFeedback(error instanceof Error ? error.message : "The file preview could not be opened.");
+      }
+    }
+  };
+
   return (
-    <section className="session-file-preview session-diff-preview" aria-label="Git diff preview">
+    <section
+      className="session-file-preview session-diff-preview"
+      aria-label="Git diff preview"
+      aria-busy={loading || undefined}
+    >
       <header className="session-file-preview-header">
         {backNavigation ? (
           <BackNavigationButton
@@ -1522,6 +1556,7 @@ export function SessionDiffPreview({
             <button
               type="button"
               className={viewMode === "split" ? "is-active" : ""}
+              disabled={loading}
               onClick={() => setViewMode("split")}
             >
               Split
@@ -1529,25 +1564,34 @@ export function SessionDiffPreview({
             <button
               type="button"
               className={viewMode === "inline" ? "is-active" : ""}
+              disabled={loading}
               onClick={() => setViewMode("inline")}
             >
               Inline
             </button>
           </div>
-          <button type="button" onClick={() => setFindOpen(true)}>Find</button>
+          {onOpenPreview ? (
+            <button
+              type="button"
+              onClick={() => void openPreview()}
+            >
+              Open Preview
+            </button>
+          ) : null}
+          <button type="button" disabled={loading} onClick={() => setFindOpen(true)}>Find</button>
           {onReload ? (
             <button
               type="button"
-              disabled={reloadPending}
+              disabled={loading || reloadPending}
               onClick={() => void reload()}
             >
-              {reloadPending ? "Reloading…" : "Reload"}
+              {reloadPending && !loading ? "Reloading…" : "Reload"}
             </button>
           ) : null}
         </div>
       </header>
       <SessionContentFindBar
-        open={findOpen}
+        open={!loading && findOpen}
         query={query}
         currentMatch={activeCurrentMatch}
         matchCount={matches.length}
@@ -1556,7 +1600,12 @@ export function SessionDiffPreview({
         onNext={() => navigate(1)}
         onClose={() => setFindOpen(false)}
       />
-      {viewMode === "split" ? (
+      {loading ? (
+        <div className="session-file-preview-loading" role="status" aria-live="polite">
+          <span className="session-file-preview-spinner" aria-hidden="true" />
+          <span className="visually-hidden">Loading Git diff</span>
+        </div>
+      ) : viewMode === "split" ? (
         <VirtualizedSplitDiffContent
           patch={patch}
           copyText={onCopyText}

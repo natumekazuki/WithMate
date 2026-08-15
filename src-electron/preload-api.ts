@@ -77,6 +77,7 @@ import {
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
+  WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
@@ -723,6 +724,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeAppBootStatus(listener) {
       return subscribe(ipcRenderer, WITHMATE_APP_BOOT_STATUS_EVENT, listener);
+    },
+    subscribeSessionFilePreviewNavigation(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, listener);
     },
     subscribeSessionSummaries(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);

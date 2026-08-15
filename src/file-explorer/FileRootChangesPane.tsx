@@ -24,8 +24,14 @@ export type FileRootChangesPaneProps = {
   enabled: boolean;
   rootsRevision: string;
   refreshRevision: number;
-  onOpenFile: (request: SessionFileRootResourceRequest) => void;
-  onOpenDiff: (request: FileRootFileDiffRequest) => Promise<string | null>;
+  onOpenFile: (
+    request: SessionFileRootResourceRequest,
+    openInWindow: boolean,
+  ) => void | Promise<string | null>;
+  onOpenDiff: (
+    request: FileRootFileDiffRequest,
+    openInWindow: boolean,
+  ) => Promise<string | null>;
 };
 
 function directoryStateKey(rootId: string, scope: FileRootGitChangeScope, relativePath: string): string {
@@ -131,12 +137,24 @@ export function FileRootChangesPane({
     rootId: string,
     entry: FileRootGitChangeEntry,
     scope: FileRootGitChangeScope,
+    openInWindow: boolean,
   ) => {
     if (!api || !sessionId) {
       return;
     }
     if (entry.kinds[scope] === "untracked") {
-      onOpenFile({ sessionId, rootId, relativePath: entry.relativePath });
+      setMessage("");
+      try {
+        const resultMessage = await onOpenFile(
+          { sessionId, rootId, relativePath: entry.relativePath },
+          openInWindow,
+        );
+        if (resultMessage) {
+          setMessage(resultMessage);
+        }
+      } catch (error) {
+        setMessage(error instanceof Error ? error.message : "The file preview could not be opened.");
+      }
       return;
     }
     const request = { sessionId, rootId, relativePath: entry.relativePath, scope };
@@ -146,7 +164,7 @@ export function FileRootChangesPane({
     setLoadingKey(key);
     setMessage("");
     try {
-      const resultMessage = await onOpenDiff(request);
+      const resultMessage = await onOpenDiff(request, openInWindow);
       if (diffRevisionRef.current !== revision) {
         return;
       }
