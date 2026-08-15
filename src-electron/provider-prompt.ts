@@ -1,4 +1,8 @@
-import type { RunSessionTurnInput, ProviderPromptComposition } from "./provider-runtime.js";
+import {
+  resolveRunWorkspacePath,
+  type ProviderPromptComposition,
+  type RunSessionTurnInput,
+} from "./provider-runtime.js";
 import { normalizeAllowedAdditionalDirectories } from "./additional-directories.js";
 import { buildCharacterRuntimePromptSection } from "../src/character/character-runtime-snapshot.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
@@ -122,7 +126,36 @@ function buildToolCallPresenceSection(enabled: boolean): string {
   ].join("\n");
 }
 
+function buildFolderContextSection(
+  input: RunSessionTurnInput,
+  workspacePath: string,
+  additionalDirectories: readonly string[],
+): string {
+  const sessionFolderPath = input.sessionFolderPath?.trim()
+    || (input.session.workspaceLabel.trim() === "SessionFolder" ? workspacePath : "");
+
+  return [
+    "# Workspace",
+    "",
+    workspacePath.trim() || "利用不可",
+    "",
+    "# SessionFolder",
+    "",
+    sessionFolderPath || "利用不可",
+    "",
+    "# Additional Directories",
+    "",
+    additionalDirectories.length > 0 ? additionalDirectories.map((directoryPath) => `- ${directoryPath}`).join("\n") : "なし",
+  ].join("\n");
+}
+
 export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromptComposition {
+  const workspacePath = resolveRunWorkspacePath(input);
+  const additionalDirectories = normalizeAllowedAdditionalDirectories(
+    workspacePath,
+    input.session.allowedAdditionalDirectories,
+  );
+  const folderContextBody = buildFolderContextSection(input, workspacePath, additionalDirectories);
   const isCharacterAuthoringSession = input.session.sessionKind === "character-authoring";
   const characterPromptBody = buildCharacterRuntimePromptSection(input.session.characterRuntimeSnapshot, {
     includeRuntimeBoundary: !isCharacterAuthoringSession,
@@ -134,7 +167,13 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
     !isCharacterAuthoringSession && characterPromptBody.trim().length > 0,
   );
   const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
-  const systemPromptBody = [characterPromptBody, outputBoundaryBody, toolCallPresenceBody, characterAffectContextBody]
+  const systemPromptBody = [
+    characterPromptBody,
+    outputBoundaryBody,
+    toolCallPresenceBody,
+    folderContextBody,
+    characterAffectContextBody,
+  ]
     .filter((section) => section.trim().length > 0)
     .join("\n\n");
   const referencedImages = input.attachments.filter((attachment) => attachment.kind === "image");
@@ -164,10 +203,7 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
       composedText: composedPromptText,
     },
     imagePaths: referencedImages.map((attachment) => attachment.absolutePath),
-    additionalDirectories: normalizeAllowedAdditionalDirectories(
-      input.session.workspacePath,
-      input.session.allowedAdditionalDirectories,
-    ),
+    additionalDirectories,
   };
 }
 

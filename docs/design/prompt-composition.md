@@ -1,7 +1,7 @@
 # Prompt Composition
 
 - 作成日: 2026-03-13
-- 更新日: 2026-08-09
+- 更新日: 2026-08-15
 - 対象: WithMate における coding plane の prompt 合成
 
 ## Goal
@@ -50,13 +50,15 @@ coding plane に渡す turn prompt は、次のレイヤーを基本にする。
 1. `CharacterRuntimeSnapshot.definitionMarkdown`
 2. `Output Boundary`
 3. `Tool Call Presence`
-4. `Character Affect Context`
-5. 必要最小限の WithMate run marker
-6. `Conversation Timing`
-7. ユーザー入力
-8. 添付 reference
+4. `Folder Context`
+5. `Character Affect Context`
+6. 必要最小限の WithMate run marker
+7. `Conversation Timing`
+8. ユーザー入力
+9. 添付 reference
 
 通常 session / companion の Character snapshot は session / companion 開始時点の保存済み値を使い、catalog の現在値へ追従しない。`character-authoring` session は turn 開始時に最新の `character.md` から runtime snapshot を作り直す。app 共通 system prompt は挿入しない。
+`Folder Context` は毎 turn system 側へ置き、実行 workspace、Main Process が解決した SessionFolder、実効 Additional Directories 一覧だけを明示する。Character、`Output Boundary`、`Tool Call Presence` の安定した section の後ろ、turn ごとに変動する `Character Affect Context` の前に置き、folder 値が変わっても固定 system prefix の再利用を保ちやすくする。各 directory の利用方針は repository instruction、filesystem access grant は provider adapter と既存 allowlist が所有し、Folder Context に説明文を重ねない。
 provider に渡す `Character Definition Snapshot` では、snapshot の取得時点説明を prompt 本体には入れない。保存済み snapshot の frontmatter は除外し、Character 名と説明を metadata として示したうえで、`character.md` 本文だけを markdown block として囲む。Character section の固定説明は、話し方への反映と coding agent 境界の guard に絞る。
 通常 session / companion では Character section の直後に `Output Boundary` を置き、Character 定義の適用先をユーザー向け自然言語レスポンスへ限定する。コード、設定、テスト、ドキュメント、コミットメッセージ案、PR本文案、生成ファイル、diff、artifact summary は、ユーザーが明示しない限り Character の口調・設定・台詞・メタ説明を混ぜず、repository instruction、既存文体、対象ファイルの目的を優先する。
 通常 session / companion では `Output Boundary` の直後に `Tool Call Presence` を置き、tool call や command 実行前に短い自然言語レスポンスを返すことで、Character が無言のまま作業へ入ったように見える体験を避ける。
@@ -78,6 +80,7 @@ Mate Core / Bond Profile / Work Style は provider instruction file へ同期し
 
 ### current runtime
 
+論理 prompt では `Folder Context` section を Character、`Output Boundary`、`Tool Call Presence` の後ろ、`Character Affect Context` の前に置く。Character section がない場合は system 側の先頭になる。`Workspace` は `resolveRunWorkspacePath` の実行値、`SessionFolder` は `session-files.ts` を経由して Main Process が解決した値、`Additional Directories` は実行 workspace を基準に `normalizeAllowedAdditionalDirectories` で正規化した値を使う。空の Additional Directories は `なし`、取得できない path は `利用不可` と明示する。
 論理 prompt では `Character Definition Snapshot` section を system 側に置く。
 通常 session / companion では `Output Boundary` section も system 側に置く。`character-authoring` session では置かない。
 通常 session / companion では `Tool Call Presence` section も system 側に置く。`character-authoring` session では置かない。
@@ -98,6 +101,18 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
 - transport payload summary
 
 ## Section Formats
+
+### `# Workspace` / `# SessionFolder` / `# Additional Directories`
+
+- source:
+  - `Workspace`: `resolveRunWorkspacePath` の実行 workspace
+  - `SessionFolder`: Main Process が `resolveSessionFilesDirectory` で解決した managed directory
+  - `Additional Directories`: 実行 workspace を基準に正規化した実効 additional directory 一覧
+- 形式:
+  - 3つの見出しと値を system 側へ固定順で置く。Character section がない場合は先頭になる
+  - 値以外の利用方針や認可説明は入れず、repository instruction と provider adapter の責務を重複させない
+  - 値の表示は provider の filesystem access grant を拡大しない。Additional Directories の認可は provider adapter と既存 allowlist が所有する
+  - 値がない場合は path を推測せず、`利用不可` または `なし` を表示する
 
 ### `# User Input`
 
@@ -186,8 +201,10 @@ Character Contextを取得できたturnでは、`Character Affect Context` secti
 
 - 固定的な Mate 定義は provider instruction sync 側へ移す
 - turn prompt の可変部分は `# User Input` と添付 reference に寄せる
+- `CharacterRuntimeSnapshot`、`Output Boundary`、`Tool Call Presence` を system 側の先頭に保ち、その直後に `Folder Context` を置く
+- `Folder Context` は同じ Session で通常は安定するが、実行 workspace や Additional Directories が変わっても固定 prefix の後ろで差分になるようにする
 
-Mate 定義全文と Memory section を毎 turn prompt から外すことで、短い依頼での token 消費を抑え、provider 側の prompt cache を阻害しにくくする。ただし provider instruction file が provider context として読まれる場合、token 消費が完全にゼロになるわけではない。
+固定 Character section と Folder Context を user input / timing / Affect より前に置き、provider が再利用できる prefix を保つ。Folder Context は固定 Character section の後ろへ置くことで、folder 値の変更が固定 prefix 全体を無効化しにくい。Mate 定義全文と Memory section を毎 turn prompt から外すことで、短い依頼での token 消費も抑える。ただし provider instruction file が provider context として読まれる場合、token 消費が完全にゼロになるわけではない。
 
 ## Responsibility Split
 
@@ -250,7 +267,7 @@ Session Window の composer では、参照対象は最終的に textarea 内の
 - `logicalPrompt`
   - `systemText`
     - provider instruction projection の要約
-    - app 共通 system prompt は空
+    - `Folder Context` と Character の system section
   - `inputText`
     - `# Conversation Timing`
     - `# User Input`

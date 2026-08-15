@@ -57,6 +57,7 @@ export type SessionRuntimeServiceDeps = {
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
+  resolveSessionFolderPath?: (sessionId: string) => string;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
@@ -890,6 +891,7 @@ export class SessionRuntimeService {
     try {
       promptForAudit = providerAdapter.composePrompt({
         session: providerSession,
+        sessionFolderPath: this.deps.resolveSessionFolderPath?.(providerSession.id),
         sessionMemory,
         projectMemoryEntries,
         character: sessionCharacter ?? undefined,
@@ -1060,6 +1062,7 @@ export class SessionRuntimeService {
       const effectiveTurnSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
+        sessionFolderPath: this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
         sessionMemory,
         projectMemoryEntries,
         providerCatalog: provider,
