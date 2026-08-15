@@ -5145,7 +5145,7 @@ button:disabled {
   object-fit: contain;
 }
 
-.session-file-preview-status,
+.session-file-preview-loading,
 .session-file-preview-error,
 .session-file-preview-large-warning,
 .session-file-preview-metadata {
@@ -5160,7 +5160,7 @@ button:disabled {
   text-align: center;
 }
 
-.session-file-preview-status progress {
+.session-file-preview-loading progress {
   width: min(440px, 60vw);
 }
 
@@ -5172,12 +5172,13 @@ button:disabled {
 .file-preview-window-page {
   --ink: #e5edf8;
   --muted: #aab6c8;
+  --surface-deep: rgba(18, 22, 30, 0.98);
   width: 100vw;
   height: 100vh;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: linear-gradient(180deg, var(--bg-top) 0%, var(--bg-bottom) 100%);
+  background: linear-gradient(180deg, #0f131a 0%, #151a22 100%);
 }
 
 .file-preview-window-page > .session-file-preview {
@@ -5185,6 +5186,81 @@ button:disabled {
   height: 100%;
   border: 0;
   border-radius: 0;
+}
+
+.file-preview-loading-title,
+.file-preview-loading-actions,
+.file-preview-loading-content span {
+  display: block;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--muted) 18%, transparent);
+  animation: file-preview-loading-pulse 1.4s ease-in-out infinite;
+}
+
+.file-preview-loading-title {
+  width: min(260px, 42vw);
+  height: 28px;
+}
+
+.file-preview-loading-actions {
+  width: min(220px, 34vw);
+  height: 30px;
+}
+
+.file-preview-loading-content {
+  grid-area: content;
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  padding: 24px 20px;
+}
+
+.file-preview-loading-content span {
+  width: 72%;
+  height: 11px;
+}
+
+.file-preview-loading-content span:nth-child(2),
+.file-preview-loading-content span:nth-child(5) {
+  width: 88%;
+}
+
+.file-preview-loading-content span:nth-child(3) {
+  width: 54%;
+}
+
+.file-preview-loading-content span:nth-child(4) {
+  width: 64%;
+}
+
+.file-preview-loading-content span:nth-child(6) {
+  width: 46%;
+}
+
+.session-file-preview-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid color-mix(in srgb, var(--muted) 24%, transparent);
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: session-file-preview-spin 720ms linear infinite;
+}
+
+@keyframes session-file-preview-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes file-preview-loading-pulse {
+  0%,
+  100% {
+    opacity: 0.42;
+  }
+
+  50% {
+    opacity: 0.82;
+  }
 }
 
 .session-file-preview-metadata dl {
@@ -11636,6 +11712,16 @@ button:disabled {
   }
 
   .workspace-changes-spinner {
+    animation: none;
+  }
+
+  .file-preview-loading-title,
+  .file-preview-loading-actions,
+  .file-preview-loading-content span {
+    animation: none;
+  }
+
+  .session-file-preview-spinner {
     animation: none;
   }
 }

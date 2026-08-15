@@ -246,6 +246,7 @@ import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
@@ -1263,6 +1264,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadFilePreviewEntry: (window, token) => requireWindowEntryLoader().loadFilePreviewEntry(window, token),
+          navigateFilePreviewWindow: (window, payload) => {
+            window.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, payload);
+          },
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeReviewEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
@@ -4020,6 +4024,7 @@ async function openSessionFilePreviewWindow(
       resource,
       ownerSessionId,
       windowTitle: resolveSessionFilePreviewWindowTitle(descriptor.name),
+      view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
     });
     return { status: "opened", targetType: "preview-window", disposition, resource };
   } catch (error) {

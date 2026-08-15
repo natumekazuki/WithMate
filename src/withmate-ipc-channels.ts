@@ -18,6 +18,8 @@ export const WITHMATE_OPEN_SESSION_FILE_CHANNEL = "withmate:open-session-file";
 export const WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL = "withmate:open-session-file-preview-window";
 export const WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL =
   "withmate:get-session-file-preview-window-payload";
+export const WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT =
+  "withmate:session-file-preview-navigation";
 export const WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL = "withmate:copy-session-file-preview-image";
 export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
   "withmate:show-session-file-preview-image-context-menu";

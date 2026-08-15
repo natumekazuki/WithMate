@@ -299,6 +299,94 @@ async function renderPreview(
   return root;
 }
 
+test("File Preview はheaderを維持し本文だけをinspectionとcontent読込の状態表示へ切り替える", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    rootId: "workspace",
+    relativePath: "notes.txt",
+  };
+  const bytes = new TextEncoder().encode("loaded preview");
+  const descriptor: SessionFileDescriptor = {
+    ...request,
+    name: "notes.txt",
+    kind: "text",
+    byteLength: bytes.byteLength,
+    modifiedAt: "2026-08-16T00:00:00.000Z",
+    mimeType: "text/plain",
+    suggestedEncoding: "utf-8",
+    revision: "notes-r1",
+  };
+  const inspectGate = deferred<SessionFileDescriptor>();
+  const readGate = deferred<void>();
+  const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" }];
+    },
+    async inspectSessionFile() {
+      return inspectGate.promise;
+    },
+    async readSessionFileChunk(chunkRequest) {
+      await readGate.promise;
+      return {
+        data: copyArrayBuffer(bytes),
+        offset: chunkRequest.offset,
+        nextOffset: bytes.byteLength,
+        totalBytes: bytes.byteLength,
+        done: true,
+        revision: chunkRequest.expectedRevision,
+      };
+    },
+    async openSessionFile() {
+      return { status: "opened", targetType: "local-path", target: request.relativePath };
+    },
+    async openPath(target) {
+      return { status: "opened", targetType: "local-path", target };
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    const preview = container.querySelector<HTMLElement>("[aria-label='File preview']");
+    assert.ok(preview);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+    assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "notes.txt");
+    assert.equal(preview.querySelector("[role='status']")?.textContent, "Inspecting file");
+    assert.ok(preview.querySelector(".session-file-preview-spinner[aria-hidden='true']"));
+
+    await act(async () => inspectGate.resolve(descriptor));
+    await waitFor(() => preview.querySelector("progress") !== null);
+    const progress = preview.querySelector<HTMLProgressElement>("progress");
+    assert.ok(progress);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+    assert.equal(progress.max, bytes.byteLength);
+    assert.equal(progress.value, 0);
+    assert.equal(preview.querySelector("[role='status'] .visually-hidden")?.textContent, "Loading file content");
+
+    await act(async () => readGate.resolve());
+    await waitFor(() => preview.querySelector(".session-file-text-scroll") !== null);
+    assert.equal(preview.getAttribute("aria-busy"), null);
+    assert.equal(preview.querySelector("[role='status']"), null);
+    assert.match(preview.textContent ?? "", /loaded preview/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("Markdown preview の local file link は current resource を基準に detached Preview navigation へ戻す", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1380,6 +1468,70 @@ test("Git Diff世代切替後に古いReloadが完了しても現在のfeedback�
   }
 });
 
+test("Git Diffは新しい対象の初回取得だけ本文spinnerへ切り替えReload中は既存本文を維持する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(SessionDiffPreview, {
+        title: "next.txt · Working Tree",
+        previewRevision: 1,
+        patch: "",
+        loading: true,
+        reloadPending: true,
+        onCopyText() {},
+        async onReload() {
+          return null;
+        },
+      }));
+    });
+    const preview = container.querySelector<HTMLElement>("[aria-label='Git diff preview']");
+    assert.ok(preview);
+    assert.equal(preview.getAttribute("aria-busy"), "true");
+    assert.equal(preview.querySelector(".session-file-preview-title strong")?.textContent, "next.txt · Working Tree");
+    assert.ok(preview.querySelector(".session-file-preview-spinner"));
+    assert.equal(preview.querySelector(".session-live-diff-split"), null);
+    const initialReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Reload");
+    assert.equal(initialReload?.disabled, true);
+
+    await act(async () => {
+      root?.render(React.createElement(SessionDiffPreview, {
+        title: "next.txt · Working Tree",
+        previewRevision: 1,
+        patch: "@@ -1 +1 @@\n-old\n+new\n",
+        reloadPending: true,
+        onCopyText() {},
+        async onReload() {
+          return null;
+        },
+      }));
+    });
+    assert.equal(preview.getAttribute("aria-busy"), null);
+    assert.equal(preview.querySelector(".session-file-preview-spinner"), null);
+    assert.ok(preview.querySelector(".session-live-diff-split"));
+    const pendingReload = [...preview.querySelectorAll<HTMLButtonElement>("button")]
+      .find((button) => button.textContent === "Reloading…");
+    assert.equal(pendingReload?.disabled, true);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("Git Diff検索はReloadで一致件数が減っても現在位置を有効範囲へ収める", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
@@ -1458,6 +1610,7 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
   const restoreGlobals = installDomGlobals(dom);
   const container = dom.window.document.getElementById("root");
   let root: Root | null = null;
+  let previewOpenCount = 0;
 
   try {
     assert.ok(container);
@@ -1470,12 +1623,25 @@ test("Git DiffはSplitを既定表示にしてInlineへ切り替えられる", a
         onClose() {},
         onCopyText() {},
         onQuoteText() {},
+        async onOpenPreview() {
+          previewOpenCount += 1;
+          return null;
+        },
       }));
     });
 
     assert.ok(container.querySelector(".session-live-diff-split"));
     assert.equal(container.querySelector(".session-file-text-scroll"), null);
     assert.equal(container.querySelector("button.is-active")?.textContent, "Split");
+
+    const openPreviewButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
+      .find((button) => button.textContent === "Open Preview");
+    assert.ok(openPreviewButton);
+    await act(async () => {
+      openPreviewButton.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    assert.equal(previewOpenCount, 1);
 
     const inlineButton = Array.from(container.querySelectorAll<HTMLButtonElement>("button"))
       .find((button) => button.textContent === "Inline");

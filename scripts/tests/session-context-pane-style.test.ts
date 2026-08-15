@@ -266,17 +266,34 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
   );
   assert.match(
     stylesSource,
-    /\.session-file-preview-status,\s*\.session-file-preview-error,\s*\.session-file-preview-large-warning,\s*\.session-file-preview-metadata\s*{\s*grid-area:\s*content;/,
+    /\.session-file-preview-loading,\s*\.session-file-preview-error,\s*\.session-file-preview-large-warning,\s*\.session-file-preview-metadata\s*{\s*grid-area:\s*content;/,
   );
   assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
 });
 
-test("個別の file preview window は preview surface を外周まで広げる", async () => {
+test("個別の file preview window は外周surfaceを保ちDiff本文だけをloading表示にする", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
     stylesSource,
+    /\.file-preview-window-page\s*{[\s\S]*?background:\s*linear-gradient\(180deg,\s*#0f131a\s*0%,\s*#151a22\s*100%\);/,
+  );
+  assert.match(
+    stylesSource,
     /\.file-preview-window-page\s*>\s*\.session-file-preview\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
+  );
+  assert.match(stylesSource, /\.file-preview-loading-content\s*{[\s\S]*?grid-area:\s*content;/);
+  assert.match(
+    stylesSource,
+    /\.session-file-preview-spinner\s*{[\s\S]*?width:\s*24px;[\s\S]*?animation:\s*session-file-preview-spin\s+720ms\s+linear\s+infinite;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.file-preview-loading-title,[\s\S]*?animation:\s*none;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.session-file-preview-spinner\s*{\s*animation:\s*none;/,
   );
 });
 

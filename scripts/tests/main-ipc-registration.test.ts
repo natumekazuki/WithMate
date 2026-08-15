@@ -567,6 +567,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const openRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
+  const previewNavigationRequests: unknown[] = [];
   const { deps } = createDeps({
     resolveEventWindow: () => currentWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
@@ -576,12 +577,15 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
       window === previewWindow && sessionId === "aux-1" ? currentPreviewResource : null
     ),
     isFilePreviewTokenWindow: (window: unknown, token: string) => window === previewWindow && token === "preview-1",
-    openSessionFilePreviewWindow: async () => ({
-      status: "opened",
-      targetType: "preview-window",
-      disposition: "created",
-      resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" },
-    }),
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      previewNavigationRequests.push(request);
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition: "created",
+        resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" },
+      };
+    },
     getSessionFilePreviewWindowPayload: () => ({
       resource: currentPreviewResource,
       ownerSessionId: "session-1",
@@ -656,10 +660,22 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   assert.deepEqual(inspectRequests, []);
   assert.deepEqual(readRequests, []);
   assert.deepEqual(openRequests, [openRequest]);
-  const previewRequest = { kind: "resource", resource: openRequest };
+  const previewRequest = {
+    kind: "resource",
+    resource: openRequest,
+    view: { kind: "diff", scope: "working-tree" },
+  };
   assert.equal(
     (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as { status: string }).status,
     "opened",
+  );
+  assert.deepEqual(previewNavigationRequests, [previewRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      ...previewRequest,
+      view: { kind: "diff", scope: "invalid" },
+    }) as Promise<unknown>,
+    /view is invalid/,
   );
   const changesRequest = { sessionId: "aux-1", rootId: "workspace" };
   assert.deepEqual(await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest), {

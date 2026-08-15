@@ -1405,6 +1405,20 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
         if (!isSessionFileRootResource(request.resource)) {
           throw new TypeError("Direct file preview resources must be root-scoped.");
         }
+        if (
+          request.view !== undefined
+          && (
+            !request.view
+            || (request.view.kind !== "preview" && request.view.kind !== "diff")
+            || (
+              request.view.kind === "diff"
+              && request.view.scope !== "working-tree"
+              && request.view.scope !== "staged"
+            )
+          )
+        ) {
+          throw new TypeError("File preview window view is invalid.");
+        }
         await assertOwningSessionFileExplorerSender(event, request.resource.sessionId, deps);
       } else {
         if (typeof request.sessionId !== "string" || !request.sessionId || typeof request.target !== "string") {

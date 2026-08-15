@@ -42,6 +42,10 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadFilePreviewEntry(window: TWindow, token: string): Promise<void>;
+  navigateFilePreviewWindow?(
+    window: TWindow,
+    payload: SessionFilePreviewWindowPayload,
+  ): void;
   loadChatEntry(window: TWindow, mode: ChatEntryMode): Promise<void>;
   loadCompanionMergeReviewEntry(window: TWindow, sessionId: string): Promise<void>;
   loadCharacterEditorEntry(window: TWindow, characterId?: string | null): Promise<void>;
@@ -289,12 +293,18 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     ) {
       throw new Error("The Session is no longer active for file preview navigation.");
     }
+    const storedPayload = {
+      ...payload,
+      windowTitle: resolveSessionFilePreviewWindowTitle(payload.windowTitle),
+    };
     const resourceKey = this.makeFilePreviewResourceKey(payload.resource);
     const existingToken = this.filePreviewResourceTokens.get(resourceKey);
     const existing = existingToken ? this.reuseWindow(this.filePreviewWindows.get(existingToken) ?? null) : null;
     if (existing && existingToken) {
       await this.filePreviewLoads.get(existingToken);
-      this.assertFilePreviewWindowActive(resourceKey, existingToken, existing, payload);
+      this.assertFilePreviewWindowActive(resourceKey, existingToken, existing, storedPayload);
+      this.deps.navigateFilePreviewWindow?.(existing, storedPayload);
+      this.filePreviewStore.set(existingToken, storedPayload);
       return { window: existing, disposition: "focused" };
     }
     if (existingToken) {
@@ -305,10 +315,6 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     }
 
     const token = this.deps.generateDiffToken();
-    const storedPayload = {
-      ...payload,
-      windowTitle: resolveSessionFilePreviewWindowTitle(payload.windowTitle),
-    };
     const window = this.deps.createWindow({
       ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS,
       title: storedPayload.windowTitle,

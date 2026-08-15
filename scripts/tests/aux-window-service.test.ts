@@ -157,6 +157,7 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
   const previewLoads: string[] = [];
+  const navigations: unknown[] = [];
   let tokenSequence = 0;
   const service = new AuxWindowService({
     createWindow(options) {
@@ -169,6 +170,9 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
     async loadDiffEntry() {},
     async loadFilePreviewEntry(_window, token) {
       previewLoads.push(token);
+    },
+    navigateFilePreviewWindow(_window, nextPayload) {
+      navigations.push(nextPayload);
     },
     async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
@@ -186,7 +190,10 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   };
 
   const first = await service.openFilePreviewWindow(payload);
-  const reused = await service.openFilePreviewWindow(payload);
+  const reused = await service.openFilePreviewWindow({
+    ...payload,
+    view: { kind: "diff", scope: "working-tree" },
+  });
 
   assert.equal(first.disposition, "created");
   assert.equal(reused.disposition, "focused");
@@ -196,7 +203,13 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   assert.deepEqual(service.getFilePreviewPayload("preview-1"), {
     ...payload,
     windowTitle: "file.ts",
+    view: { kind: "diff", scope: "working-tree" },
   });
+  assert.deepEqual(navigations, [{
+    ...payload,
+    windowTitle: "file.ts",
+    view: { kind: "diff", scope: "working-tree" },
+  }]);
   assert.equal(service.isFilePreviewWindow(first.window, "session-1"), true);
   assert.deepEqual(service.getFilePreviewWindowResource(first.window, "session-1"), payload.resource);
   assert.equal(service.isFilePreviewTokenWindow(first.window, "preview-1"), true);

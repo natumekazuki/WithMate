@@ -291,6 +291,9 @@ export type WithMateWindowPickerApi = {
 export type WithMateWindowSubscriptionApi = {
   getAppBootStatus(): Promise<AppBootStatus>;
   subscribeAppBootStatus(listener: (status: AppBootStatus) => void): () => void;
+  subscribeSessionFilePreviewNavigation(
+    listener: (payload: SessionFilePreviewWindowPayload) => void,
+  ): () => void;
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
