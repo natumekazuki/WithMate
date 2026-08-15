@@ -349,6 +349,7 @@ export class AuditLogStorageV6 {
         WHERE id = ?
           AND session_id IS ?
           AND auxiliary_session_id IS ?
+          AND (phase = 'running' OR ? <> 'running')
       `).run(
         normalizePhase(entry.phase),
         entry.provider,
@@ -366,6 +367,7 @@ export class AuditLogStorageV6 {
         id,
         target.sessionId,
         target.auxiliarySessionId,
+        normalizePhase(entry.phase),
       );
       if (result.changes !== 1) {
         throw new Error(`audit log not found or target mismatch: ${id}`);

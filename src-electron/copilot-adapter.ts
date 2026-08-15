@@ -2353,10 +2353,32 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
   private async disposeSessionAndClientCache(sessionId: string): Promise<void> {
     const clientKey = this.clientKeysBySession.get(sessionId);
+    const cached = this.sessions.get(sessionId);
+    const client = clientKey ? this.clients.get(clientKey) : undefined;
     this.clientKeysBySession.delete(sessionId);
-    await this.disposeSessionCache(sessionId);
+    this.sessions.delete(sessionId);
     if (clientKey) {
-      await this.disposeClientCache(clientKey);
+      this.clients.delete(clientKey);
+    }
+    if (cached) {
+      try {
+        cached.unsubscribeBackgroundObserver?.();
+      } catch {
+        // Cache ownership is already detached; observer cleanup is best effort.
+      }
+      try {
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
+      } catch {
+        // UI projection failure must not retain the old provider ownership.
+      }
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (cached) {
+      await this.disconnectSession(cached.session);
+    }
+    if (client) {
+      await this.stopClient(client);
     }
   }
 
@@ -2643,8 +2665,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       await progressChain;
 
       if (streamState.streamErrorMessage) {
-        const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
-          .catch(() => null);
         const partialResult = await this.buildTurnResult(
           input.agentRuntimeBinding,
           prompt,
@@ -2661,7 +2681,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           selection,
           beforeSnapshot,
           beforeSnapshotStats,
-          providerQuotaTelemetry,
+          null,
         );
         throw new ProviderTurnError(
           redactor.sanitizeText(streamState.streamErrorMessage),
@@ -2670,8 +2690,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         );
       }
 
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
-        .catch(() => null);
       return this.buildTurnResult(
         input.agentRuntimeBinding,
         prompt,
@@ -2688,7 +2706,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
-        providerQuotaTelemetry,
+        null,
       );
     } catch (error) {
       if (error instanceof ProviderTurnError) {
@@ -2696,8 +2714,6 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
-        .catch(() => null);
       const partialResult = await this.buildTurnResult(
         input.agentRuntimeBinding,
         prompt,
@@ -2714,7 +2730,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
-        providerQuotaTelemetry,
+        null,
       );
       logCopilotRuntime("turn execution failed", {
         cliPath,

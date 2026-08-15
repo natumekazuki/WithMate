@@ -14,8 +14,8 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
           calls.push(`upsert:${session.id}`);
           return session as never;
         },
-        upsertTerminalSession(session) {
-          calls.push(`terminal:${session.id}`);
+        upsertTerminalSession(session, terminalCommit) {
+          calls.push(`terminal:${session.id}:${terminalCommit.auditLogId}`);
           return session as never;
         },
         upsertSessionPreservingPin(session) {
@@ -31,11 +31,19 @@ test("MainSessionPersistenceFacade は upsert/replaceAll を SessionPersistenceS
   });
 
   await facade.upsertSession({ id: "s-1" } as never);
-  await facade.upsertTerminalSession({ id: "s-1" } as never);
+  await facade.upsertTerminalSession({ id: "s-1" } as never, {
+    auditLogId: 4,
+    sessionId: "s-1",
+    phase: "completed",
+    assistantMessageSeq: 1,
+    threadId: "",
+    errorMessage: "",
+    completedAt: "2026-08-16T00:00:00.000Z",
+  });
   await facade.upsertSessionPreservingPin({ id: "s-1" } as never);
   await facade.replaceAllSessions([{ id: "s-1" }] as never);
 
-  assert.deepEqual(calls, ["upsert:s-1", "terminal:s-1", "preserve-pin:s-1", "replace:1"]);
+  assert.deepEqual(calls, ["upsert:s-1", "terminal:s-1:4", "preserve-pin:s-1", "replace:1"]);
 });
 
 test("MainSessionPersistenceFacade は running session を詳細 hydrate して interrupted に変換する", async () => {

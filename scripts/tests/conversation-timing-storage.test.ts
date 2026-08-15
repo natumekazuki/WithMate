@@ -7,6 +7,9 @@ import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { AuditLogStorageV6 } from "../../src-electron/audit-log-storage-v6.js";
+import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { buildNewSession } from "../../src/session-state.js";
+import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 
 function insertCharacter(db: DatabaseSync, id: string): void {
   db.prepare(`
@@ -59,6 +62,137 @@ function insertTurn(
 }
 
 describe("AuditLogStorageV6 conversation timing", () => {
+  it("terminal Session commitだけで次turn・再起動後のConversation Timingへ完了を公開する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-conversation-terminal-commit-"));
+    const completedAt = "2026-08-16T00:10:00.000Z";
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(userDataPath);
+      const db = new DatabaseSync(dbPath);
+      try {
+        insertCharacter(db, "char-a");
+      } finally {
+        db.close();
+      }
+
+      const sessionStorage = new SessionStorageV6(dbPath);
+      const session = sessionStorage.insertSession(buildNewSession({
+        id: "current",
+        taskTitle: "Timing commit",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        characterRuntimeSnapshot: {
+          characterId: "char-a",
+          name: "A",
+          description: "",
+          iconFilePath: "",
+          theme: { main: "#6f8cff", sub: "#6fb8c7" },
+          definitionMarkdown: "# A",
+          definitionSha256: "char-a-sha256",
+          definitionByteSize: 3,
+          snapshotAt: "2026-08-16T00:00:00.000Z",
+        },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      }));
+      const turnDb = new DatabaseSync(dbPath);
+      let auditLogId = 0;
+      try {
+        const result = turnDb.prepare(`
+          INSERT INTO session_turns_v6 (
+            session_id, phase, provider_id, user_message_seq, started_at, updated_at
+          ) VALUES (?, 'running', 'codex', 0, ?, ?)
+        `).run(session.id, "2026-08-16T00:00:00.000Z", "2026-08-16T00:00:00.000Z");
+        auditLogId = Number(result.lastInsertRowid);
+      } finally {
+        turnDb.close();
+      }
+
+      const terminalSession = {
+        ...session,
+        status: "idle" as const,
+        runState: "idle" as const,
+        messages: [
+          { role: "user" as const, text: "hello" },
+          { role: "assistant" as const, text: "done" },
+        ],
+      };
+      assert.throws(() => sessionStorage.upsertTerminalSession(terminalSession, {
+        auditLogId: auditLogId + 1,
+        sessionId: session.id,
+        phase: "completed",
+        assistantMessageSeq: 1,
+        threadId: "thread-1",
+        errorMessage: "",
+        completedAt,
+      }), /terminal commit target mismatch/);
+      assert.equal(sessionStorage.getSession(session.id)?.messages.length, 0);
+      const rollbackDb = new DatabaseSync(dbPath);
+      try {
+        const row = rollbackDb.prepare("SELECT phase FROM session_turns_v6 WHERE id = ?").get(auditLogId) as
+          | { phase: string }
+          | undefined;
+        assert.equal(row?.phase, "running");
+      } finally {
+        rollbackDb.close();
+      }
+
+      const originalGetSession = sessionStorage.getSession.bind(sessionStorage);
+      sessionStorage.getSession = () => {
+        throw new Error("read-back failed after commit");
+      };
+      const committedSession = sessionStorage.upsertTerminalSession(terminalSession, {
+        auditLogId,
+        sessionId: session.id,
+        phase: "completed",
+        assistantMessageSeq: 1,
+        threadId: "thread-1",
+        errorMessage: "",
+        completedAt,
+      });
+      sessionStorage.getSession = originalGetSession;
+      assert.equal(committedSession.messages.at(-1)?.text, "done");
+      assert.throws(() => sessionStorage.upsertTerminalSession({
+        ...terminalSession,
+        runState: "error",
+        messages: [
+          ...terminalSession.messages.slice(0, -1),
+          { role: "assistant", text: "failed" },
+        ],
+      }, {
+        auditLogId,
+        sessionId: session.id,
+        phase: "failed",
+        assistantMessageSeq: 1,
+        threadId: "thread-1",
+        errorMessage: "projection failed",
+        completedAt: "2026-08-16T00:10:01.000Z",
+      }), /terminal commit target mismatch/);
+      assert.equal(sessionStorage.getSession(session.id)?.messages.at(-1)?.text, "done");
+      sessionStorage.close();
+
+      const restartedAuditStorage = new AuditLogStorageV6(dbPath);
+      try {
+        const snapshot = restartedAuditStorage.getConversationTimingSnapshot(
+          session.id,
+          "2026-08-16T00:10:01.000Z",
+        );
+        assert.equal(snapshot.currentSessionLastCompletedAt, completedAt);
+        assert.deepEqual(snapshot.sameCharacterCompletedTurns, [{
+          startedAt: "2026-08-16T00:00:00.000Z",
+          completedAt,
+        }]);
+      } finally {
+        restartedAuditStorage.close();
+      }
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("通常Sessionの正常完了turnだけをcurrent・別Session・共同作業へ投影する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-conversation-timing-"));
     try {

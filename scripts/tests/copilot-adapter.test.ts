@@ -438,6 +438,76 @@ describe("CopilotAdapter env", () => {
     assert.equal(adapter.clients.size, 0);
   });
 
+  it("Session invalidation中の同一key再接続を旧cleanupで削除しない", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]> }>;
+      sessions: Map<string, {
+        session: { disconnect(): Promise<void> };
+        settingsKey: string;
+        backgroundTasks: Map<string, LiveBackgroundTask>;
+      }>;
+      clientKeysBySession: Map<string, string>;
+      invalidateSessionThread(sessionId: string): Promise<void>;
+    };
+    let releaseDisconnect = () => undefined;
+    const disconnectBarrier = new Promise<void>((resolve) => {
+      releaseDisconnect = resolve;
+    });
+    let signalDisconnectStarted = () => undefined;
+    const disconnectStarted = new Promise<void>((resolve) => {
+      signalDisconnectStarted = resolve;
+    });
+    let oldClientStopped = false;
+    let newClientStopped = false;
+    const oldClient = {
+      stop: async () => {
+        oldClientStopped = true;
+        return [];
+      },
+    };
+    const newClient = {
+      stop: async () => {
+        newClientStopped = true;
+        return [];
+      },
+    };
+    const newCachedSession = {
+      session: { disconnect: async () => undefined },
+      settingsKey: "new-settings",
+      backgroundTasks: new Map<string, LiveBackgroundTask>(),
+    };
+    adapter.clients.set("bound", oldClient);
+    adapter.sessions.set("session-a", {
+      session: {
+        disconnect: () => {
+          signalDisconnectStarted();
+          return disconnectBarrier;
+        },
+      },
+      settingsKey: "old-settings",
+      backgroundTasks: new Map(),
+    });
+    adapter.clientKeysBySession.set("session-a", "bound");
+
+    const invalidation = adapter.invalidateSessionThread("session-a");
+    assert.equal(adapter.clients.has("bound"), false);
+    assert.equal(adapter.sessions.has("session-a"), false);
+    assert.equal(adapter.clientKeysBySession.has("session-a"), false);
+
+    adapter.clients.set("bound", newClient);
+    adapter.sessions.set("session-a", newCachedSession);
+    adapter.clientKeysBySession.set("session-a", "bound");
+    await disconnectStarted;
+    releaseDisconnect();
+    await invalidation;
+
+    assert.equal(oldClientStopped, true);
+    assert.equal(newClientStopped, false);
+    assert.equal(adapter.clients.get("bound"), newClient);
+    assert.equal(adapter.sessions.get("session-a"), newCachedSession);
+    assert.equal(adapter.clientKeysBySession.get("session-a"), "bound");
+  });
+
   it("recoverable connection retryではclientを再生成して同じbinding generationを使う", async () => {
     const adapter = new CopilotAdapter() as unknown as {
       getClient(providerId: string, input: RunSessionTurnInput): {
@@ -1796,6 +1866,63 @@ it("Copilot bootstrap失敗projectionはbinding referenceを除去しlogical pro
       return true;
     },
   );
+});
+
+it("Session完了後のquota telemetry停止はturn resultを待たせない", async () => {
+  const input = createRunSessionInput();
+  const prompt = EMPTY_PROMPT;
+  const listeners = new Set<(event: { type: string; data: Record<string, unknown> }) => void>();
+  const session = {
+    sessionId: "thread-quota-background",
+    on(listener: (event: { type: string; data: Record<string, unknown> }) => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    async send() {
+      for (const listener of listeners) {
+        listener({ type: "session.idle", data: {} });
+      }
+    },
+    async abort() {},
+  };
+  let quotaFetchCalls = 0;
+  const adapter = new CopilotAdapter() as unknown as {
+    getSession(): Promise<{ session: typeof session; selection: ResolvedModelSelection }>;
+    fetchProviderQuotaTelemetry(): Promise<never>;
+    buildTurnResult(): Promise<RunSessionTurnResult>;
+    runSessionTurnOnce(
+      inputValue: RunSessionTurnInput,
+      promptValue: ProviderPromptComposition,
+    ): Promise<RunSessionTurnResult>;
+  };
+  adapter.getSession = async () => ({
+    session,
+    selection: {
+      requestedModel: "gpt-4.1",
+      requestedReasoningEffort: "high",
+      resolvedModel: "gpt-4.1",
+      resolvedReasoningEffort: "high",
+      modelFallbackApplied: false,
+      reasoningFallbackApplied: false,
+    },
+  });
+  adapter.fetchProviderQuotaTelemetry = () => {
+    quotaFetchCalls += 1;
+    return new Promise<never>(() => undefined);
+  };
+  adapter.buildTurnResult = async () => createPartialResult({
+    threadId: session.sessionId,
+    assistantText: "完了",
+  });
+
+  const outcome = await Promise.race([
+    adapter.runSessionTurnOnce(input, prompt),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50)),
+  ]);
+
+  assert.notEqual(outcome, "timeout");
+  assert.equal(quotaFetchCalls, 0);
+  assert.equal((outcome as RunSessionTurnResult).assistantText, "完了");
 });
 
 describe("CopilotAdapter session settings", () => {

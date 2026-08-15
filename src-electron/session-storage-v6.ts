@@ -32,6 +32,10 @@ import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
 import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
+import {
+  writeSessionTurnTerminalCommit,
+  type SessionTurnTerminalCommit,
+} from "./session-turn-terminal-commit.js";
 
 type SessionV6Row = {
   id: string;
@@ -290,29 +294,32 @@ export class SessionStorageV6 {
     return this.storeSession(session, "upsert");
   }
 
+  upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
+    return this.storeSession(session, "upsert", terminalCommit);
+  }
+
   insertSession(session: Session): Session {
     return this.storeSession(session, "create");
   }
 
-  private storeSession(session: Session, operation: "create" | "upsert"): Session {
+  private storeSession(
+    session: Session,
+    operation: "create" | "upsert",
+    terminalCommit?: SessionTurnTerminalCommit,
+  ): Session {
     const normalized = normalizeSessionForStorage(session);
+    if (terminalCommit && terminalCommit.sessionId !== normalized.id) {
+      throw new Error("terminal Session と audit marker の owner が一致しないよ。");
+    }
 
     const startedAt = Date.now();
     this.db.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
       this.writeSession(normalized, operation);
+      if (terminalCommit) {
+        writeSessionTurnTerminalCommit(this.db, terminalCommit);
+      }
       this.db.exec("COMMIT");
-      const stored = this.getSession(normalized.id) ?? normalized;
-      logSessionRunStuckInvestigation(`storage-v6.${operation}-session.done`, {
-        sessionId: normalized.id,
-        durationMs: Date.now() - startedAt,
-        messageCount: normalized.messages.length,
-        runState: normalized.runState,
-        status: normalized.status,
-        storedRunState: stored.runState,
-        storedStatus: stored.status,
-      });
-      return stored;
     } catch (error) {
       this.db.exec("ROLLBACK");
       logSessionRunStuckInvestigation(`storage-v6.${operation}-session.failed`, {
@@ -325,6 +332,23 @@ export class SessionStorageV6 {
       });
       throw error;
     }
+
+    let stored = normalized;
+    try {
+      stored = this.getSession(normalized.id) ?? normalized;
+    } catch (error) {
+      console.warn("Committed Session read-back failed", error);
+    }
+    logSessionRunStuckInvestigation(`storage-v6.${operation}-session.done`, {
+      sessionId: normalized.id,
+      durationMs: Date.now() - startedAt,
+      messageCount: normalized.messages.length,
+      runState: normalized.runState,
+      status: normalized.status,
+      storedRunState: stored.runState,
+      storedStatus: stored.status,
+    });
+    return stored;
   }
 
   replaceSessions(nextSessions: Session[]): Session[] {
