@@ -620,6 +620,7 @@ button:disabled {
 }
 
 .session-page .session-top-bar {
+  container-type: inline-size;
   padding: 10px 14px;
   overflow: visible;
 }
@@ -643,8 +644,8 @@ button:disabled {
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
-  row-gap: 8px;
-  flex-wrap: wrap;
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
   min-width: 0;
 }
 
@@ -743,6 +744,32 @@ button:disabled {
 .session-header-more-menu button:disabled {
   cursor: not-allowed;
   opacity: 0.48;
+}
+
+@container (max-width: 960px) {
+  .session-window-controls {
+    gap: 4px;
+  }
+
+  .session-window-control-group {
+    gap: 3px;
+  }
+
+  .session-window-control-group-label {
+    padding: 0;
+    font-size: 0.6rem;
+    letter-spacing: 0.03em;
+  }
+
+  .session-page .session-window-control-group .drawer-toggle {
+    padding: 6px 7px;
+    font-size: 0.75rem;
+  }
+
+  .session-header-more > summary {
+    width: 30px;
+    height: 30px;
+  }
 }
 
 .sr-only {
@@ -3754,7 +3781,7 @@ button:disabled {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 1 1 0;
 }
 
 .session-title-editor {
