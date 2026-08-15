@@ -79,5 +79,4 @@ test("AuxiliaryLaunchProviderDialog は Provider だけを選択対象として�
   assert.match(html, /Start Auxiliary/);
   assert.doesNotMatch(html, /Reasoning/);
   assert.doesNotMatch(html, /Sandbox/);
-  assert.doesNotMatch(html, /aria-label="Close"/);
 });

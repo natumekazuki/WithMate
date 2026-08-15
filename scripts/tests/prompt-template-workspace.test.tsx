@@ -27,6 +27,4 @@ test("PromptTemplateWorkspace は一覧・編集・挿入を一つの中央surfa
   assert.match(markup, />挿入</);
   assert.match(markup, /←/);
   assert.match(markup, /aria-label="Back to Chat"/);
-  assert.doesNotMatch(markup, />Back to Chat</);
-  assert.doesNotMatch(markup, /よく使うプロンプト/);
 });

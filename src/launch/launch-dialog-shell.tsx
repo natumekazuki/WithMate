@@ -57,11 +57,18 @@ export function LaunchDialogShell({
   children,
   footer,
 }: LaunchDialogShellProps) {
+  const dialogClassNameValue = [
+    "launch-dialog",
+    "panel",
+    dialogClassName ?? "",
+    showDismissControl ? "" : "launch-dialog-no-dismiss",
+  ].filter(Boolean).join(" ");
+
   return (
     <div className={className} role="dialog" aria-modal="true" aria-label={ariaLabel} onClick={onClose}>
       <section
         ref={dialogRef}
-        className={`launch-dialog panel${dialogClassName ? ` ${dialogClassName}` : ""}`}
+        className={dialogClassNameValue}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={onKeyDown}
       >

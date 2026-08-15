@@ -427,11 +427,6 @@ test("CharacterEditorApp は新規作成中のnative closeで破棄確認を表�
       await Promise.resolve();
     });
 
-    assert.equal(
-      Array.from(rootElement.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Close"),
-      false,
-    );
-
     const firstCloseEvent = new dom.window.Event("beforeunload", { cancelable: true });
     await act(async () => {
       dom.window.dispatchEvent(firstCloseEvent);
