@@ -215,6 +215,21 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
 });
 
+test("固定高のSession Headerは操作群を折り返さずタイトルを残り幅へ収める", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+  const controlsRule = stylesSource.match(/\.session-window-controls\s*{([^}]*)}/)?.[1] ?? "";
+  const titleRule = stylesSource.match(/\.session-title-shell\s*{([^}]*)}/)?.[1] ?? "";
+
+  assert.match(stylesSource, /\.session-page \.session-top-bar\s*{\s*container-type:\s*inline-size;/);
+  assert.match(controlsRule, /flex:\s*0 0 auto;/);
+  assert.match(controlsRule, /flex-wrap:\s*nowrap;/);
+  assert.match(titleRule, /flex:\s*1 1 0;/);
+  assert.match(
+    stylesSource,
+    /@container \(max-width:\s*960px\)\s*{[\s\S]*?\.session-window-controls\s*{[\s\S]*?gap:\s*4px;[\s\S]*?\.session-window-control-group-label\s*{[\s\S]*?font-size:\s*0\.6rem;[\s\S]*?\.session-page \.session-window-control-group \.drawer-toggle\s*{[\s\S]*?font-size:\s*0\.75rem;/,
+  );
+});
+
 test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-motion で補間を止める", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
