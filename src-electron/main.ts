@@ -72,6 +72,7 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import { resolveSessionFilePreviewWindowTitle } from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -128,10 +129,8 @@ import {
   createCharacterAffectTurnRecoveryFailureLogData,
   resolveCharacterAffectTurnContextFailureStage,
 } from "./character-affect-turn-recovery.js";
-import {
-  CharacterAffectTurnRetryScheduler,
-  settleCharacterAffectTurnOrScheduleRetry,
-} from "./character-affect-turn-retry-scheduler.js";
+import { CharacterAffectTurnRetryScheduler } from "./character-affect-turn-retry-scheduler.js";
+import { CharacterAffectTurnOwnershipCoordinator } from "./character-affect-turn-ownership-coordinator.js";
 import {
   drainCharacterAffectTurnSettlementBatch,
   type CharacterAffectTurnDrainCursor,
@@ -178,10 +177,15 @@ import {
   type SessionMemoryStorageAccess,
   type SessionPinStorage,
   type SessionStorageRead,
+  type SessionStorageWrite,
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
-import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
+import {
+  applyLaunchAtLoginSetting,
+  resolveAppUserModelId,
+  shouldLaunchInBackground,
+} from "./app-login-item.js";
 import { AppTrayService } from "./app-tray-service.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
@@ -235,9 +239,13 @@ import { createElectronSafeStorageKeyProtector, MemoryProtectedObjectKeyStore } 
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
+import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
+import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
@@ -256,7 +264,10 @@ const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
 const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
 const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
-app.setAppUserModelId("com.natumekazuki.withmate");
+app.setAppUserModelId(resolveAppUserModelId({
+  isPackaged: app.isPackaged,
+  execPath: process.execPath,
+}));
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
 const appLogService = new AppLogService({
@@ -368,6 +379,8 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
+const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -557,6 +570,20 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
         requireCharacterService().createRuntimeSnapshot(characterId),
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
+      agentRuntimeBindingRegistry,
+      resolveActorSession: async (sessionId) => {
+        const session = getSession(sessionId);
+        if (session) {
+          return { id: session.id, providerId: session.provider, characterId: session.characterId };
+        }
+        if (!auxiliarySessionStorage) {
+          return null;
+        }
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+        return auxiliary
+          ? { id: auxiliary.id, providerId: auxiliary.provider, characterId: auxiliary.characterId }
+          : null;
+      },
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -1237,6 +1264,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadFilePreviewEntry: (window, token) => requireWindowEntryLoader().loadFilePreviewEntry(window, token),
+          navigateFilePreviewWindow: (window, payload) => {
+            window.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, payload);
+          },
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeReviewEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
@@ -1328,6 +1358,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               return choice === 1;
             },
             closePersistentStores,
+            invalidateAllProviderSessionThreads,
+            revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
           }),
         ),
       createMainBootstrapService: () =>
@@ -1496,9 +1528,23 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 createAuxiliarySession: (input) =>
                   requireAuxiliarySessionService().createAuxiliarySession(input),
                 updateAuxiliarySession: (session) =>
-                  requireAuxiliarySessionService().updateAuxiliarySession(session),
+                  updateAuxiliarySessionWithProviderRuntimeLifecycle({
+                    session,
+                    isRunInFlight: (sessionId) =>
+                      requireAuxiliarySessionRuntimeService().isRunInFlight(sessionId),
+                    getAuxiliarySession: (sessionId) =>
+                      requireAuxiliarySessionService().getAuxiliarySession(sessionId),
+                    updateAuxiliarySession: (nextSession) =>
+                      requireAuxiliarySessionService().updateAuxiliarySession(nextSession),
+                    revokeSessionAgentRuntimeBindings: (sessionId) =>
+                      agentRuntimeBindingRegistry.revokeSession(sessionId),
+                    invalidateProviderSessionThread,
+                  }),
                 closeAuxiliarySession: async (auxiliarySessionId) => {
+                  const current = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   const closed = await requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId);
+                  agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
+                  await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
                   return closed;
                 },
@@ -1743,6 +1789,9 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      revokeProviderExecution: (sessionId, providerId) =>
+        agentRuntimeBindingRegistry.revokeProviderExecution(sessionId, providerId),
+      revokeAllProviderExecutions: () => agentRuntimeBindingRegistry.revokeAll(),
     });
   }
 
@@ -1930,7 +1979,7 @@ function deletePromptTemplate(id: string): PromptTemplate[] {
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
-  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
+  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled, app.isPackaged);
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
 }
@@ -1941,7 +1990,7 @@ function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSett
 
 async function resetAppSettings(): Promise<AppSettings> {
   const settings = requireAppSettingsStorage().resetSettings();
-  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
   return settings;
 }
 
@@ -2295,6 +2344,17 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     recordAppraisalFailure: (input) => {
       return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
     },
+    validateOwner: async () => {
+      const currentSession = await getRuntimeSession(request.session.id);
+      return Boolean(
+        currentSession
+        && currentSession.characterId === request.session.characterId
+        && hasCommittedAssistantMessage(currentSession.messages, request),
+      );
+    },
+    markDiscarded: () => {
+      settlementStorage.markDiscarded(request.correlationId);
+    },
     markSettled: () => {
       settlementStorage.markSettled(request.correlationId);
     },
@@ -2344,14 +2404,16 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
     startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
     readyCursor: characterAffectTurnDrainCursor,
     getSession: getRuntimeSession,
-    settle: (item, session) => settleCharacterAffectTurn({
-      session,
-      correlationId: item.correlationId,
-      userMessage: item.userMessage,
-      assistantMessage: item.assistantMessage,
-      assistantMessageIndex: item.assistantMessageIndex,
-      occurredAt: item.occurredAt,
-    }),
+    settle: (item, session) => characterAffectTurnOwnershipCoordinator.runExclusive(
+      () => settleCharacterAffectTurn({
+        session,
+        correlationId: item.correlationId,
+        userMessage: item.userMessage,
+        assistantMessage: item.assistantMessage,
+        assistantMessageIndex: item.assistantMessageIndex,
+        occurredAt: item.occurredAt,
+      }),
+    ),
     onDiscard: (item) => {
       writeAppLog({
         level: "warn",
@@ -2384,16 +2446,29 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
-      upsertTerminalSession: (session) => requireMainSessionPersistenceFacade().upsertTerminalSession(session),
+      upsertTerminalSession: (session, terminalCommit) =>
+        requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
       ),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      resetProviderSessionThread,
+      getProviderAgentRuntimeBinding: ({ session, provider }) =>
+        agentRuntimeBindingRegistry.issueOrReuse({
+          actorSessionId: session.id,
+          providerId: provider.id,
+          authoritySnapshot: {
+            characterId: session.characterId,
+            sessionKind: session.sessionKind,
+          },
+          operationGrants: getMemoryV6AgentRuntimeOperations(),
+        }),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2464,15 +2539,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       markCompletedTurnAppraisalReady: (correlationId) => {
         const result = requireCharacterAffectTurnSettlementStorage().markReady(correlationId);
         if (!result.updated) {
-          throw new Error(`Pending Character Affect appraisal was not found: ${correlationId}`);
+          return "absent";
         }
+        return "ready";
       },
       requireDurableCompletedTurnAppraisal: true,
-      appraiseCompletedTurn: async (input) => {
-        await settleCharacterAffectTurnOrScheduleRetry({
-          settle: () => settleCharacterAffectTurn(input),
-          scheduleRetry: () => requireCharacterAffectTurnRetryScheduler().request({ resetBackoff: true }),
-        });
+      appraiseCompletedTurn: () => {
+        requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       },
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
@@ -2596,9 +2669,27 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           auxiliarySession?.parentSessionId ?? session.id,
         );
       },
+      resolveSessionFolderPath: (sessionId) => {
+        const auxiliarySession = requireAuxiliarySessionService().getAuxiliarySession(sessionId);
+        return resolveSessionFilesDirectory(
+          app.getPath("userData"),
+          auxiliarySession?.parentSessionId ?? sessionId,
+        );
+      },
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      getProviderAgentRuntimeBinding: ({ session, provider }) =>
+        agentRuntimeBindingRegistry.issueOrReuse({
+          actorSessionId: session.id,
+          providerId: provider.id,
+          authoritySnapshot: {
+            characterId: session.characterId,
+            sessionKind: "auxiliary",
+          },
+          operationGrants: getMemoryV6AgentRuntimeOperations(),
+        }),
+      resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2668,6 +2759,7 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -2736,6 +2828,14 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
       listRunningActiveAuxiliaryParentIds: listRunningActiveAuxiliaryParentSessionIds,
+      listAuxiliarySessionRuntimeIdentities: (parentSessionIds) =>
+        parentSessionIds.flatMap((parentSessionId) =>
+          requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId).map((auxiliary) => ({
+            id: auxiliary.id,
+            parentSessionId: auxiliary.parentSessionId,
+            provider: auxiliary.provider,
+          })),
+        ),
       upsertStoredSession: (session, operation) => {
         const storage = requireSessionStorageForWrite();
         return operation === "create"
@@ -2758,11 +2858,22 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
       invalidateProviderSessionThread,
+      revokeSessionAgentRuntimeBindings: (sessionId) =>
+        agentRuntimeBindingRegistry.revokeSession(sessionId),
       closeSessionWindow: (sessionId) => {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
         requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
       },
+      upsertStoredTerminalSession: (session, terminalCommit) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.upsertTerminalSession) {
+          throw new Error("terminal Session の atomic commit storage が利用できないよ。");
+        }
+        return storage.upsertTerminalSession(session, terminalCommit);
+      },
       broadcastSessions,
+      runCharacterAffectTurnOwnershipExclusive: (operation) =>
+        characterAffectTurnOwnershipCoordinator.runExclusive(operation),
     });
   }
 
@@ -2850,7 +2961,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       recreateDatabaseFile,
       applyAppSettingsSideEffects: (settings) => {
-        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
       },
       broadcastSessions,
       broadcastAppSettings,
@@ -3165,12 +3276,16 @@ function getProviderBackgroundAdapter(providerId: string | null | undefined) {
   return requireMainProviderFacade().getProviderBackgroundAdapter(providerId);
 }
 
-function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-  requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
+async function resetProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+  await requireMainProviderFacade().resetProviderSessionThread(providerId, sessionId);
 }
 
-function invalidateAllProviderSessionThreads(): void {
-  requireMainProviderFacade().invalidateAllProviderSessionThreads();
+async function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+  await requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
+}
+
+async function invalidateAllProviderSessionThreads(): Promise<void> {
+  await requireMainProviderFacade().invalidateAllProviderSessionThreads();
 }
 
 async function listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
@@ -3921,12 +4036,17 @@ async function openSessionFilePreviewWindow(
     };
   }
   try {
-    await explorer.inspectFile(resource);
+    const descriptor = await explorer.inspectFile(resource);
     const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
     if (!ownerSessionId) {
       throw new Error("The owning Session could not be resolved.");
     }
-    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({ resource, ownerSessionId });
+    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
+      resource,
+      ownerSessionId,
+      windowTitle: resolveSessionFilePreviewWindowTitle(descriptor.name),
+      view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
+    });
     return { status: "opened", targetType: "preview-window", disposition, resource };
   } catch (error) {
     return {
@@ -4035,7 +4155,11 @@ if (!hasSingleInstanceLock) {
       await startMemoryV6RuntimeApiBestEffort();
       requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
-      applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
+      applyLaunchAtLoginSetting(
+        app,
+        requireAppSettingsStorage().getSettings().launchAtLoginEnabled,
+        app.isPackaged,
+      );
       await syncManagedMemorySkillBestEffort();
       publishAppBootStatus({
         kind: "completed",
@@ -4090,7 +4214,7 @@ if (!hasSingleInstanceLock) {
       process: "main",
       message: "App before quit",
     });
-    requireAppLifecycleService().handleBeforeQuit(event);
+    void requireAppLifecycleService().handleBeforeQuit(event);
   });
 
   app.on("will-quit", () => {

@@ -1,5 +1,11 @@
 # Companion Mode
 
+## Status
+
+Companion Modeは退役済みである。新規CompanionSessionの作成、既存CompanionSessionでの新規provider turn、Companion ReviewからのAuxiliary Session起動は受け付けない。
+
+既存データを安全に整理するため、履歴とReview UIの閲覧、selected files merge、discardは維持する。この文書のうち作成、chat、provider実行に関する節は過去実装の設計記録であり、現行の利用可能機能を示さない。runtime bindingのactor scopeにもCompanionを含めない。
+
 - 作成日: 2026-04-26
 - 対象: WithMate における human-led / branch-based Companion Mode の正式設計
 - supporting doc: archived planning notes under `docs/plans/archive/2026/04/`
@@ -78,9 +84,9 @@ UI では `apply` と `proposal` を避け、`merge`、`discard`、`changed file
 
 ## Launch Model
 
-アプリ全体の再構築中は、Home の Session 起動画面に Companion の新規作成導線を表示しない。`New Session` は Agent session の作成に固定し、既存 Companion の履歴、Review UI、保存データ、runtime 実装は維持する。
+現行製品ではCompanionの新規起動導線を持たない。`New Session`はAgent sessionの作成に固定し、既存Companionの履歴、Review UI、保存データ、merge / discard実装だけを維持する。作成、composer preview、provider turnのIPCは退役エラーを返す。
 
-Companion の設計上の起動導線は次の 3 種類とする。
+以下は退役前に設計していた起動導線の記録である。
 
 1. 既存 Session 起動画面の `Agent / Companion` toggle（現行 UI では非表示）
 2. AgentMode の Session 画面 header の `Start Companion` / `Open in Companion` 相当ボタン
@@ -88,7 +94,7 @@ Companion の設計上の起動導線は次の 3 種類とする。
 
 ### Session 起動画面
 
-現行 UI では `Agent / Companion` toggle を表示せず、Agent session の作成だけを受け付ける。Companion の新規作成を再び公開する場合は、次の既存設計を適用する。
+退役前のSession起動画面では、次の設計を想定していた。再導入時はこの記録をそのまま復元せず、現行のruntime bindingとauthority contractを改めて設計する。
 
 - `Agent` 選択時は既存 Agent session 起動を使う
 - `Companion` 選択時は Git repo root eligibility を確認する

@@ -62,9 +62,6 @@ export default function DiffApp() {
       <section className="diff-editor diff-window-shell panel rise-1 theme-accent" style={diffThemeStyle}>
         <div className="diff-titlebar">
           <h2>{diffPreview.file.path}</h2>
-          <button className="diff-close" type="button" onClick={() => window.close()}>
-            Close
-          </button>
         </div>
         <DiffViewer file={diffPreview.file} />
       </section>

@@ -32,14 +32,17 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
+import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 
 type CreateAuditLogInput = Omit<AuditLogEntry, "id">;
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 const DEFAULT_PROVIDER_CANCEL_GRACE_MS = 10_000;
 const DEFAULT_AUDIT_ENRICHMENT_GRACE_MS = 5_000;
+const DEFAULT_APPRAISAL_READY_RETRY_MS = 1_000;
 const AUDIT_ENRICHMENT_TIMEOUT = Symbol("audit-enrichment-timeout");
 
 function logSessionRunStuckInvestigation(
@@ -52,10 +55,11 @@ function logSessionRunStuckInvestigation(
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
-  upsertTerminalSession?(session: Session): Awaitable<Session>;
+  upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
+  resolveSessionFolderPath?: (sessionId: string) => string;
   resolveSessionCharacter?: (session: Session) => Promise<CharacterProfile | null>;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
@@ -85,7 +89,9 @@ export type SessionRuntimeServiceDeps = {
     assistantMessageIndex: number;
     occurredAt: string;
   }) => Awaitable<void>;
-  markCompletedTurnAppraisalReady?: (correlationId: string) => Awaitable<void>;
+  markCompletedTurnAppraisalReady?: (
+    correlationId: string,
+  ) => Awaitable<"ready" | "absent" | void>;
   requireDurableCompletedTurnAppraisal?: boolean;
   appraiseCompletedTurn?: (input: {
     session: Session;
@@ -111,7 +117,12 @@ export type SessionRuntimeServiceDeps = {
   ): Promise<LiveElicitationResponse> | LiveElicitationResponse;
   setProviderQuotaTelemetry(telemetry: ProviderQuotaTelemetry): void;
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  resetProviderSessionThread?(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  getProviderAgentRuntimeBinding?(input: {
+    session: Session;
+    provider: ModelCatalogProvider;
+  }): Awaitable<ProviderAgentRuntimeBindingProjection | null>;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -122,6 +133,7 @@ export type SessionRuntimeServiceDeps = {
   currentDate?: () => Date;
   providerCancelGraceMs?: number;
   auditEnrichmentGraceMs?: number;
+  appraisalReadyRetryMs?: number;
 };
 
 function notifySessionTurnCompletedBestEffort(
@@ -139,6 +151,93 @@ function notifySessionTurnCompletedBestEffort(
   } catch (error) {
     console.warn("Session turn completion notification failed", error);
   }
+}
+
+function invalidateProviderSessionThreadBestEffort(
+  invalidate: SessionRuntimeServiceDeps["invalidateProviderSessionThread"],
+  providerId: string | null | undefined,
+  sessionId: string,
+): void {
+  try {
+    void Promise.resolve(invalidate(providerId, sessionId))
+      .catch((error) => console.warn("Detached provider session invalidation failed", error));
+  } catch (error) {
+    console.warn("Detached provider session invalidation failed", error);
+  }
+}
+
+function appraiseCompletedTurnBestEffort(
+  appraise: SessionRuntimeServiceDeps["appraiseCompletedTurn"],
+  input: Parameters<NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>>[0],
+): void {
+  if (!appraise) {
+    return;
+  }
+
+  try {
+    void Promise.resolve(appraise(input))
+      .catch((error) => console.warn(
+        "Character affect turn appraisal failed",
+        error instanceof Error ? error.name : "UnknownError",
+      ));
+  } catch (error) {
+    console.warn(
+      "Character affect turn appraisal failed",
+      error instanceof Error ? error.name : "UnknownError",
+    );
+  }
+}
+
+async function markCompletedTurnAppraisalReadyWithRetry(
+  markReady: NonNullable<SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"]>,
+  correlationId: string,
+  retryMs: number,
+): Promise<boolean> {
+  while (true) {
+    try {
+      const result = await markReady(correlationId);
+      return result !== "absent";
+    } catch (error) {
+      console.warn(
+        "Character affect turn appraisal readiness update failed",
+        error instanceof Error ? error.name : "UnknownError",
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, retryMs));
+    }
+  }
+}
+
+function completeCompletedTurnAppraisalBestEffort(
+  markReady: SessionRuntimeServiceDeps["markCompletedTurnAppraisalReady"],
+  appraise: SessionRuntimeServiceDeps["appraiseCompletedTurn"],
+  input: Parameters<NonNullable<SessionRuntimeServiceDeps["appraiseCompletedTurn"]>>[0],
+  retryMs: number,
+): void {
+  setTimeout(() => {
+    void Promise.resolve().then(async () => {
+      if (markReady) {
+        const ready = await markCompletedTurnAppraisalReadyWithRetry(
+          markReady,
+          input.correlationId,
+          retryMs,
+        );
+        if (!ready) {
+          return;
+        }
+      }
+      appraiseCompletedTurnBestEffort(appraise, input);
+    })
+    .catch((error) => console.warn(
+      "Character affect turn background completion failed",
+      error instanceof Error ? error.name : "UnknownError",
+    ));
+  }, 0);
+}
+
+function runInBackgroundMacrotask(label: string, operation: () => Promise<void>): void {
+  setTimeout(() => {
+    void operation().catch((error) => console.warn(label, error));
+  }, 0);
 }
 
 async function waitForAuditEnrichment<T>(
@@ -622,35 +721,6 @@ export function preserveSessionTurnRequestMetadata(
   return (providerMetadata ?? []).filter((entry) => entry.kind === "session_turn_request");
 }
 
-function buildMinimalTerminalAuditEntry(params: {
-  baseEntry: CreateAuditLogInput;
-  phase: CreateAuditLogInput["phase"];
-  completedAt: string;
-  session: Pick<Session, "provider" | "model" | "reasoningEffort" | "approvalMode">;
-  threadId?: string | null;
-  errorMessage?: string;
-}): CreateAuditLogInput {
-  const correlationMetadata = preserveSessionTurnRequestMetadata(params.baseEntry.providerMetadata);
-  return {
-    ...params.baseEntry,
-    phase: params.phase,
-    createdAt: params.completedAt,
-    provider: params.session.provider,
-    model: params.session.model,
-    reasoningEffort: params.session.reasoningEffort,
-    approvalMode: params.session.approvalMode,
-    threadId: pickPreferredThreadId(params.threadId, params.baseEntry.threadId),
-    logicalPrompt: { systemText: "", inputText: "", composedText: "" },
-    transportPayload: null,
-    assistantText: "",
-    operations: [],
-    rawItemsJson: "[]",
-    providerMetadata: correlationMetadata,
-    usage: null,
-    errorMessage: params.errorMessage ?? "",
-  };
-}
-
 function buildDegradedCompletedAuditEntry(params: {
   completedAuditEntry: CreateAuditLogInput;
   auditUpdateError: unknown;
@@ -692,8 +762,11 @@ export class SessionRuntimeService {
 
   constructor(private readonly deps: SessionRuntimeServiceDeps) {}
 
-  private upsertTerminalSession(session: Session): Awaitable<Session> {
-    return this.deps.upsertTerminalSession?.(session) ?? this.deps.upsertSession(session);
+  private upsertTerminalSession(
+    session: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+  ): Awaitable<Session> {
+    return this.deps.upsertTerminalSession?.(session, terminalCommit) ?? this.deps.upsertSession(session);
   }
 
   hasInFlightRuns(): boolean {
@@ -819,7 +892,7 @@ export class SessionRuntimeService {
       : resolvedSession;
     if (shouldResetCharacterAuthoringThread) {
       session = await this.deps.upsertSession(session);
-      this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
+      await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
     }
     throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
@@ -859,6 +932,9 @@ export class SessionRuntimeService {
 
     const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
+    let agentRuntimeBinding = await Promise.resolve(
+      this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
+    );
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
@@ -881,6 +957,7 @@ export class SessionRuntimeService {
     try {
       promptForAudit = providerAdapter.composePrompt({
         session: providerSession,
+        sessionFolderPath: this.deps.resolveSessionFolderPath?.(providerSession.id),
         sessionMemory,
         projectMemoryEntries,
         character: sessionCharacter ?? undefined,
@@ -890,6 +967,7 @@ export class SessionRuntimeService {
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
+        agentRuntimeBinding,
       });
 
       runningSession = {
@@ -945,7 +1023,7 @@ export class SessionRuntimeService {
         this.deps.setLiveSessionRun(sessionId, null);
       }
       if (setupRunningSessionSaved) {
-        await Promise.resolve(this.upsertTerminalSession({
+        await Promise.resolve(this.deps.upsertSession({
           ...runningSession!,
           updatedAt: currentTimestampLabel(),
           status: "idle",
@@ -957,7 +1035,8 @@ export class SessionRuntimeService {
       }
       throw error;
     }
-    let runningAuditProgressSignature = buildRunningAuditProgressSignature(runningAuditEntry);
+    let latestObservedRunningAuditEntry = runningAuditEntry;
+    let runningAuditProgressSignature = buildRunningAuditProgressSignature(latestObservedRunningAuditEntry);
     let terminalAuditSettled = false;
     let liveProgressGeneration = 0;
     let auditWriteQueue: Promise<void> = Promise.resolve();
@@ -969,11 +1048,12 @@ export class SessionRuntimeService {
       nextRunningAuditEntry: CreateAuditLogInput,
       nextSignature: string,
     ): Promise<void> => {
+      latestObservedRunningAuditEntry = nextRunningAuditEntry;
+      runningAuditProgressSignature = nextSignature;
       auditWriteQueue = auditWriteQueue
         .then(async () => {
           await this.deps.updateAuditLog(runningAuditLog.id, nextRunningAuditEntry);
           runningAuditEntry = nextRunningAuditEntry;
-          runningAuditProgressSignature = nextSignature;
         })
         .catch((error) => {
           auditWriteError = auditWriteError ?? error;
@@ -1018,24 +1098,28 @@ export class SessionRuntimeService {
       }
 
       const nextRunningAuditEntry: CreateAuditLogInput = {
-        ...runningAuditEntry,
+        ...latestObservedRunningAuditEntry,
         phase: "running",
         provider: activeRunningSession.provider,
         model: activeRunningSession.model,
         reasoningEffort: activeRunningSession.reasoningEffort,
         approvalMode: activeRunningSession.approvalMode,
-        threadId: pickPreferredThreadId(nextLiveState.threadId, runningAuditEntry.threadId, activeRunningSession.threadId),
+        threadId: pickPreferredThreadId(
+          nextLiveState.threadId,
+          latestObservedRunningAuditEntry.threadId,
+          activeRunningSession.threadId,
+        ),
         assistantText: nextLiveState.assistantText.trim()
           ? toAuditTextPreview(nextLiveState.assistantText) ?? ""
-          : runningAuditEntry.assistantText,
+          : latestObservedRunningAuditEntry.assistantText,
         operations: (() => {
           const operations = buildLiveRunAuditOperations(nextLiveState);
-          return operations.length > 0 ? operations : runningAuditEntry.operations;
+          return operations.length > 0 ? operations : latestObservedRunningAuditEntry.operations;
         })(),
-        usage: nextLiveState.usage ?? runningAuditEntry.usage,
+        usage: nextLiveState.usage ?? latestObservedRunningAuditEntry.usage,
         errorMessage: nextLiveState.errorMessage.trim()
           ? toAuditTextPreview(nextLiveState.errorMessage) ?? ""
-          : runningAuditEntry.errorMessage,
+          : latestObservedRunningAuditEntry.errorMessage,
       };
       const nextSignature = buildRunningAuditProgressSignature(nextRunningAuditEntry);
       if (nextSignature === runningAuditProgressSignature) {
@@ -1050,6 +1134,7 @@ export class SessionRuntimeService {
       const effectiveTurnSession = this.deps.resolveProviderSession?.(turnSession) ?? turnSession;
       const providerPromise = providerAdapter.runSessionTurn({
         session: effectiveTurnSession,
+        sessionFolderPath: this.deps.resolveSessionFolderPath?.(effectiveTurnSession.id),
         sessionMemory,
         projectMemoryEntries,
         providerCatalog: provider,
@@ -1058,6 +1143,7 @@ export class SessionRuntimeService {
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
+        agentRuntimeBinding,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
@@ -1143,7 +1229,11 @@ export class SessionRuntimeService {
 
           didInternalRetry = true;
           liveProgressGeneration += 1;
-          this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+          if (this.deps.resetProviderSessionThread) {
+            await Promise.resolve(this.deps.resetProviderSessionThread(activeRunningSession.provider, sessionId));
+          } else {
+            await Promise.resolve(this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId));
+          }
           if (activeRunningSession.threadId) {
             activeRunningSession = await this.deps.upsertSession({
               ...activeRunningSession,
@@ -1167,6 +1257,7 @@ export class SessionRuntimeService {
           const resetAuditSignature = buildRunningAuditProgressSignature(resetAuditEntry);
           await flushAuditWrites();
           runningAuditEntry = resetAuditEntry;
+          latestObservedRunningAuditEntry = resetAuditEntry;
           runningAuditProgressSignature = resetAuditSignature;
           await this.deps.updateAuditLog(runningAuditLog.id, runningAuditEntry);
         }
@@ -1176,16 +1267,7 @@ export class SessionRuntimeService {
       }
 
       const completedAt = new Date().toISOString();
-      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
-      const logicalPromptEstimate = estimateLogicalPromptTokens(result.logicalPrompt);
 
-      const flushAuditStartedAt = Date.now();
-      const auditWritesDrained = await flushAuditWrites(true);
-      logSessionRunStuckInvestigation("runtime.audit-flush.done", {
-        sessionId,
-        durationMs: Date.now() - flushAuditStartedAt,
-        elapsedMs: Date.now() - investigationStartedAt,
-      });
       terminalAuditSettled = true;
       const completedSession: Session = {
         ...activeRunningSession,
@@ -1225,7 +1307,16 @@ export class SessionRuntimeService {
       }
 
       const completedSessionUpsertStartedAt = Date.now();
-      const storedCompletedSession = await this.upsertTerminalSession(completedSession);
+      const completedThreadId = pickPreferredThreadId(result.threadId, completedSession.threadId);
+      const storedCompletedSession = await this.upsertTerminalSession(completedSession, {
+        auditLogId: runningAuditLog.id,
+        sessionId,
+        phase: "completed",
+        assistantMessageSeq: assistantMessageIndex,
+        threadId: completedThreadId,
+        errorMessage: "",
+        completedAt,
+      });
       logSessionRunStuckInvestigation("runtime.completed-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - completedSessionUpsertStartedAt,
@@ -1235,33 +1326,6 @@ export class SessionRuntimeService {
         storedStatus: storedCompletedSession.status,
       });
       activeRunningSession = storedCompletedSession;
-      if (requiresDurableAppraisal) {
-        try {
-          await this.deps.markCompletedTurnAppraisalReady!(affectTurnCorrelationId);
-        } catch (error) {
-          console.warn(
-            "Character affect turn appraisal readiness update failed",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-        }
-      }
-      if (this.deps.appraiseCompletedTurn) {
-        try {
-          await this.deps.appraiseCompletedTurn({
-            session: storedCompletedSession,
-            correlationId: affectTurnCorrelationId,
-            userMessage: nextMessage,
-            assistantMessage: result.assistantText,
-            assistantMessageIndex,
-            occurredAt: completedAt,
-          });
-        } catch (error) {
-          console.warn(
-            "Character affect turn appraisal failed",
-            error instanceof Error ? error.name : "UnknownError",
-          );
-        }
-      }
       if (!runAbortController.signal.aborted) {
         notifySessionTurnCompletedBestEffort(
           this.deps.notifySessionTurnCompleted,
@@ -1269,135 +1333,145 @@ export class SessionRuntimeService {
           result.lastNonEmptyAssistantMessageText ?? "",
         );
       }
+      completeCompletedTurnAppraisalBestEffort(
+        requiresDurableAppraisal ? this.deps.markCompletedTurnAppraisalReady : undefined,
+        this.deps.appraiseCompletedTurn,
+        {
+          session: storedCompletedSession,
+          correlationId: affectTurnCorrelationId,
+          userMessage: nextMessage,
+          assistantMessage: result.assistantText,
+          assistantMessageIndex,
+          occurredAt: completedAt,
+        },
+        this.deps.appraisalReadyRetryMs ?? DEFAULT_APPRAISAL_READY_RETRY_MS,
+      );
 
-      const completedAuditEntry = buildTerminalAuditEntry({
-        baseEntry: runningAuditEntry,
-        phase: "completed",
-        completedAt,
-        session: storedCompletedSession,
-        threadId: pickPreferredThreadId(result.threadId, storedCompletedSession.threadId),
-        logicalPrompt: result.logicalPrompt,
-        transportPayload: appendTransportPayloadFields(
-          appendQuotaTelemetryToTransportPayload(
-            ensureAuditTransportPayload(result.transportPayload),
-            result.providerQuotaTelemetry,
-          ),
-          [
-            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
-            { label: "promptEstimatedChars", value: String(logicalPromptEstimate.composed.charCount) },
-            { label: "promptEstimatedTokens", value: String(logicalPromptEstimate.composed.estimatedTokens) },
-            { label: "promptSystemEstimatedChars", value: String(logicalPromptEstimate.system.charCount) },
-            { label: "promptSystemEstimatedTokens", value: String(logicalPromptEstimate.system.estimatedTokens) },
-            { label: "promptInputEstimatedChars", value: String(logicalPromptEstimate.input.charCount) },
-            { label: "promptInputEstimatedTokens", value: String(logicalPromptEstimate.input.estimatedTokens) },
-            { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
-            { label: "attachmentCount", value: String(composerPreview.attachments.length) },
-          ],
-        ),
-        assistantText: result.assistantText,
-        operations: result.operations,
-        rawItemsJson: result.rawItemsJson,
-        providerMetadata: result.providerMetadata,
-        usage: result.usage,
-        assistantMessageSeq: storedCompletedSession.messages.length - 1,
-        errorMessage: "",
-      });
-      const minimalCompletedAuditEntry = buildMinimalTerminalAuditEntry({
-        baseEntry: runningAuditEntry,
-        phase: "completed",
-        completedAt,
-        session: storedCompletedSession,
-        threadId: pickPreferredThreadId(result.threadId, storedCompletedSession.threadId),
-      });
-      const completedAuditUpdateStartedAt = Date.now();
-      try {
-        if (!auditWritesDrained) {
-          void auditWriteQueue
-            .then(() => this.deps.updateAuditLog(runningAuditLog.id, minimalCompletedAuditEntry))
-            .then(() => this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry))
-            .catch((error) => console.warn("Detached completed audit update failed", error));
-          return storedCompletedSession;
-        }
-        const minimalCompletedAuditUpdateResult = await waitForAuditEnrichment(
-          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, minimalCompletedAuditEntry)),
-          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-        );
-        if (minimalCompletedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
-          logSessionRunStuckInvestigation("runtime.completed-audit-terminal-update.timeout", {
-            sessionId,
-            auditLogId: runningAuditLog.id,
-            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-          });
-        } else {
-          runningAuditEntry = minimalCompletedAuditEntry;
-        }
-        const completedAuditUpdateResult = await waitForAuditEnrichment(
-          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry)),
-          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-        );
-        if (completedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
-          logSessionRunStuckInvestigation("runtime.completed-audit-update.timeout", {
-            sessionId,
-            auditLogId: runningAuditLog.id,
-            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-          });
-          return storedCompletedSession;
-        }
-        logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
-          sessionId,
-          auditLogId: runningAuditLog.id,
-          durationMs: Date.now() - completedAuditUpdateStartedAt,
-          elapsedMs: Date.now() - investigationStartedAt,
-          operationCount: completedAuditEntry.operations.length,
-        });
-        runningAuditEntry = completedAuditEntry;
-      } catch (auditUpdateError: unknown) {
-        logSessionRunStuckInvestigation("runtime.completed-audit-update.failed", {
-          sessionId,
-          auditLogId: runningAuditLog.id,
-          durationMs: Date.now() - completedAuditUpdateStartedAt,
-          elapsedMs: Date.now() - investigationStartedAt,
-          message: auditUpdateError instanceof Error ? auditUpdateError.message : String(auditUpdateError),
-          operationCount: completedAuditEntry.operations.length,
-        });
-        const degradedAuditEntry = buildDegradedCompletedAuditEntry({
-          completedAuditEntry,
-          auditUpdateError,
+      const completeCompletedAudit = async (): Promise<void> => {
+        const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+        const logicalPromptEstimate = estimateLogicalPromptTokens(result.logicalPrompt);
+        const completedAuditEntry = buildTerminalAuditEntry({
+          baseEntry: latestObservedRunningAuditEntry,
+          phase: "completed",
           completedAt,
+          session: storedCompletedSession,
+          threadId: completedThreadId,
+          logicalPrompt: result.logicalPrompt,
+          transportPayload: appendTransportPayloadFields(
+            appendQuotaTelemetryToTransportPayload(
+              ensureAuditTransportPayload(result.transportPayload),
+              result.providerQuotaTelemetry,
+            ),
+            [
+              { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+              { label: "promptEstimatedChars", value: String(logicalPromptEstimate.composed.charCount) },
+              { label: "promptEstimatedTokens", value: String(logicalPromptEstimate.composed.estimatedTokens) },
+              { label: "promptSystemEstimatedChars", value: String(logicalPromptEstimate.system.charCount) },
+              { label: "promptSystemEstimatedTokens", value: String(logicalPromptEstimate.system.estimatedTokens) },
+              { label: "promptInputEstimatedChars", value: String(logicalPromptEstimate.input.charCount) },
+              { label: "promptInputEstimatedTokens", value: String(logicalPromptEstimate.input.estimatedTokens) },
+              { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
+              { label: "attachmentCount", value: String(composerPreview.attachments.length) },
+            ],
+          ),
+          assistantText: result.assistantText,
+          operations: result.operations,
+          rawItemsJson: result.rawItemsJson,
+          providerMetadata: result.providerMetadata,
+          usage: result.usage,
+          assistantMessageSeq: assistantMessageIndex,
+          errorMessage: "",
         });
-        const degradedAuditUpdateStartedAt = Date.now();
+        const flushAuditStartedAt = Date.now();
+        let auditWritesDrained = false;
         try {
-          const degradedAuditUpdateResult = await waitForAuditEnrichment(
-            Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, degradedAuditEntry)),
+          auditWritesDrained = await flushAuditWrites(true);
+        } catch (auditFlushError) {
+          console.warn("Detached completed audit flush failed", auditFlushError);
+        }
+        logSessionRunStuckInvestigation("runtime.audit-flush.done", {
+          sessionId,
+          durationMs: Date.now() - flushAuditStartedAt,
+          elapsedMs: Date.now() - investigationStartedAt,
+          terminalPhase: "completed",
+        });
+        const completedAuditUpdateStartedAt = Date.now();
+        try {
+          if (!auditWritesDrained) {
+            void auditWriteQueue
+              .then(() => this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry))
+              .catch((error) => console.warn("Detached completed audit update failed", error));
+            return;
+          }
+          const completedAuditUpdateResult = await waitForAuditEnrichment(
+            Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, completedAuditEntry)),
             this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
           );
-          if (degradedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
-            logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded-timeout", {
+          if (completedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
+            logSessionRunStuckInvestigation("runtime.completed-audit-update.timeout", {
               sessionId,
               auditLogId: runningAuditLog.id,
               timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
             });
-            return storedCompletedSession;
+            return;
           }
-          logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded", {
+          logSessionRunStuckInvestigation("runtime.completed-audit-update.done", {
             sessionId,
             auditLogId: runningAuditLog.id,
-            durationMs: Date.now() - degradedAuditUpdateStartedAt,
+            durationMs: Date.now() - completedAuditUpdateStartedAt,
             elapsedMs: Date.now() - investigationStartedAt,
+            operationCount: completedAuditEntry.operations.length,
           });
-          runningAuditEntry = degradedAuditEntry;
-        } catch (degradedAuditUpdateError: unknown) {
-          logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded-failed", {
+          runningAuditEntry = completedAuditEntry;
+        } catch (auditUpdateError: unknown) {
+          logSessionRunStuckInvestigation("runtime.completed-audit-update.failed", {
             sessionId,
             auditLogId: runningAuditLog.id,
-            durationMs: Date.now() - degradedAuditUpdateStartedAt,
+            durationMs: Date.now() - completedAuditUpdateStartedAt,
             elapsedMs: Date.now() - investigationStartedAt,
-            message: degradedAuditUpdateError instanceof Error
-              ? degradedAuditUpdateError.message
-              : String(degradedAuditUpdateError),
+            message: auditUpdateError instanceof Error ? auditUpdateError.message : String(auditUpdateError),
+            operationCount: completedAuditEntry.operations.length,
           });
+          const degradedAuditEntry = buildDegradedCompletedAuditEntry({
+            completedAuditEntry,
+            auditUpdateError,
+            completedAt,
+          });
+          const degradedAuditUpdateStartedAt = Date.now();
+          try {
+            const degradedAuditUpdateResult = await waitForAuditEnrichment(
+              Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, degradedAuditEntry)),
+              this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+            );
+            if (degradedAuditUpdateResult === AUDIT_ENRICHMENT_TIMEOUT) {
+              logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded-timeout", {
+                sessionId,
+                auditLogId: runningAuditLog.id,
+                timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+              });
+              return;
+            }
+            logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded", {
+              sessionId,
+              auditLogId: runningAuditLog.id,
+              durationMs: Date.now() - degradedAuditUpdateStartedAt,
+              elapsedMs: Date.now() - investigationStartedAt,
+            });
+            runningAuditEntry = degradedAuditEntry;
+          } catch (degradedAuditUpdateError: unknown) {
+            logSessionRunStuckInvestigation("runtime.completed-audit-update.degraded-failed", {
+              sessionId,
+              auditLogId: runningAuditLog.id,
+              durationMs: Date.now() - degradedAuditUpdateStartedAt,
+              elapsedMs: Date.now() - investigationStartedAt,
+              message: degradedAuditUpdateError instanceof Error
+                ? degradedAuditUpdateError.message
+                : String(degradedAuditUpdateError),
+            });
+          }
         }
-      }
+      };
+      runInBackgroundMacrotask("Detached completed audit processing failed", completeCompletedAudit);
       return storedCompletedSession;
     } catch (error: unknown) {
       const providerTurnError = error instanceof ProviderTurnError ? error : null;
@@ -1413,7 +1487,7 @@ export class SessionRuntimeService {
       const partialResult = providerTurnError?.partialResult;
       const failedAuditThreadId = pickPreferredThreadId(
         partialResult?.threadId,
-        runningAuditEntry.threadId,
+        latestObservedRunningAuditEntry.threadId,
         this.deps.getLiveSessionRun(sessionId)?.threadId,
         activeRunningSession.threadId,
       );
@@ -1425,105 +1499,86 @@ export class SessionRuntimeService {
       );
       const nextSessionThreadId = shouldResetFailedThread ? "" : failedAuditThreadId;
       const completedAt = new Date().toISOString();
-      const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
       const failedLogicalPrompt = partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt;
-      const failedLogicalPromptEstimate = estimateLogicalPromptTokens(failedLogicalPrompt);
-      if (canceled || shouldResetFailedThread) {
-        this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
-      }
 
-      const failedFlushAuditStartedAt = Date.now();
-      const auditWritesDrained = await flushAuditWrites(true);
-      logSessionRunStuckInvestigation("runtime.audit-flush.done", {
-        sessionId,
-        durationMs: Date.now() - failedFlushAuditStartedAt,
-        elapsedMs: Date.now() - investigationStartedAt,
-        terminalPhase: canceled ? "canceled" : "failed",
-      });
       terminalAuditSettled = true;
-      const failedAuditEntry = buildTerminalAuditEntry({
-        baseEntry: runningAuditEntry,
-        phase: canceled ? "canceled" : "failed",
-        completedAt,
-        session: activeRunningSession,
-        threadId: failedAuditThreadId,
-        logicalPrompt: partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt,
-        transportPayload: appendTransportPayloadFields(
-          appendQuotaTelemetryToTransportPayload(
-            ensureAuditTransportPayload(partialResult?.transportPayload ?? null),
-            partialResult?.providerQuotaTelemetry,
+      const completeFailedAudit = async (): Promise<void> => {
+        const durationMs = calculateAuditDurationMs(runningAuditLog.createdAt, completedAt);
+        const failedLogicalPromptEstimate = estimateLogicalPromptTokens(failedLogicalPrompt);
+        const failedAuditEntry = buildTerminalAuditEntry({
+          baseEntry: latestObservedRunningAuditEntry,
+          phase: canceled ? "canceled" : "failed",
+          completedAt,
+          session: storedFailedSession,
+          threadId: failedAuditThreadId,
+          logicalPrompt: failedLogicalPrompt,
+          transportPayload: appendTransportPayloadFields(
+            appendQuotaTelemetryToTransportPayload(
+              ensureAuditTransportPayload(partialResult?.transportPayload ?? null),
+              partialResult?.providerQuotaTelemetry,
+            ),
+            [
+              { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
+              { label: "promptEstimatedChars", value: String(failedLogicalPromptEstimate.composed.charCount) },
+              { label: "promptEstimatedTokens", value: String(failedLogicalPromptEstimate.composed.estimatedTokens) },
+              { label: "promptSystemEstimatedChars", value: String(failedLogicalPromptEstimate.system.charCount) },
+              { label: "promptSystemEstimatedTokens", value: String(failedLogicalPromptEstimate.system.estimatedTokens) },
+              { label: "promptInputEstimatedChars", value: String(failedLogicalPromptEstimate.input.charCount) },
+              { label: "promptInputEstimatedTokens", value: String(failedLogicalPromptEstimate.input.estimatedTokens) },
+              { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
+              { label: "attachmentCount", value: String(composerPreview.attachments.length) },
+            ],
           ),
-          [
-            { label: "durationMs", value: durationMs === null ? null : String(durationMs) },
-            { label: "promptEstimatedChars", value: String(failedLogicalPromptEstimate.composed.charCount) },
-            { label: "promptEstimatedTokens", value: String(failedLogicalPromptEstimate.composed.estimatedTokens) },
-            { label: "promptSystemEstimatedChars", value: String(failedLogicalPromptEstimate.system.charCount) },
-            { label: "promptSystemEstimatedTokens", value: String(failedLogicalPromptEstimate.system.estimatedTokens) },
-            { label: "promptInputEstimatedChars", value: String(failedLogicalPromptEstimate.input.charCount) },
-            { label: "promptInputEstimatedTokens", value: String(failedLogicalPromptEstimate.input.estimatedTokens) },
-            { label: "projectMemoryHits", value: String(projectMemoryEntries.length) },
-            { label: "attachmentCount", value: String(composerPreview.attachments.length) },
-          ],
-        ),
-        assistantText: partialResult?.assistantText ?? "",
-        operations: partialResult?.operations ?? [],
-        rawItemsJson: partialResult?.rawItemsJson ?? "[]",
-        providerMetadata: partialResult?.providerMetadata,
-        usage: partialResult?.usage ?? null,
-        errorMessage: failureMessage,
-      });
-      const minimalFailedAuditEntry = buildMinimalTerminalAuditEntry({
-        baseEntry: runningAuditEntry,
-        phase: canceled ? "canceled" : "failed",
-        completedAt,
-        session: activeRunningSession,
-        threadId: failedAuditThreadId,
-        errorMessage: failureMessage,
-      });
-      const failedAuditUpdateStartedAt = Date.now();
-      if (auditWritesDrained) {
-        const minimalFailedAuditUpdateResult = await waitForAuditEnrichment(
-          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, minimalFailedAuditEntry)),
-          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-        );
-        if (minimalFailedAuditUpdateResult !== AUDIT_ENRICHMENT_TIMEOUT) {
-          runningAuditEntry = minimalFailedAuditEntry;
-        } else {
-          logSessionRunStuckInvestigation("runtime.terminal-audit-minimal-update.timeout", {
-            sessionId,
-            auditLogId: runningAuditLog.id,
-            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-            phase: minimalFailedAuditEntry.phase,
-          });
+          assistantText: partialResult?.assistantText ?? "",
+          operations: partialResult?.operations ?? [],
+          rawItemsJson: partialResult?.rawItemsJson ?? "[]",
+          providerMetadata: partialResult?.providerMetadata,
+          usage: partialResult?.usage ?? null,
+          assistantMessageSeq: storedFailedSession.messages.length - 1,
+          errorMessage: failureMessage,
+        });
+        const failedFlushAuditStartedAt = Date.now();
+        let auditWritesDrained = false;
+        try {
+          auditWritesDrained = await flushAuditWrites(true);
+        } catch (auditFlushError) {
+          console.warn("Detached terminal audit flush failed", auditFlushError);
         }
-        const failedAuditUpdateResult = await waitForAuditEnrichment(
-          Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry)),
-          this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-        );
-        if (failedAuditUpdateResult !== AUDIT_ENRICHMENT_TIMEOUT) {
-          logSessionRunStuckInvestigation("runtime.terminal-audit-update.done", {
-            sessionId,
-            auditLogId: runningAuditLog.id,
-            durationMs: Date.now() - failedAuditUpdateStartedAt,
-            elapsedMs: Date.now() - investigationStartedAt,
-            phase: failedAuditEntry.phase,
-            operationCount: failedAuditEntry.operations.length,
-          });
-          runningAuditEntry = failedAuditEntry;
+        logSessionRunStuckInvestigation("runtime.audit-flush.done", {
+          sessionId,
+          durationMs: Date.now() - failedFlushAuditStartedAt,
+          elapsedMs: Date.now() - investigationStartedAt,
+          terminalPhase: canceled ? "canceled" : "failed",
+        });
+        const failedAuditUpdateStartedAt = Date.now();
+        if (auditWritesDrained) {
+          const failedAuditUpdateResult = await waitForAuditEnrichment(
+            Promise.resolve(this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry)),
+            this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+          );
+          if (failedAuditUpdateResult !== AUDIT_ENRICHMENT_TIMEOUT) {
+            logSessionRunStuckInvestigation("runtime.terminal-audit-update.done", {
+              sessionId,
+              auditLogId: runningAuditLog.id,
+              durationMs: Date.now() - failedAuditUpdateStartedAt,
+              elapsedMs: Date.now() - investigationStartedAt,
+              phase: failedAuditEntry.phase,
+              operationCount: failedAuditEntry.operations.length,
+            });
+            runningAuditEntry = failedAuditEntry;
+          } else {
+            logSessionRunStuckInvestigation("runtime.terminal-audit-update.timeout", {
+              sessionId,
+              auditLogId: runningAuditLog.id,
+              timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
+            });
+          }
         } else {
-          logSessionRunStuckInvestigation("runtime.terminal-audit-update.timeout", {
-            sessionId,
-            auditLogId: runningAuditLog.id,
-            timeoutMs: this.deps.auditEnrichmentGraceMs ?? DEFAULT_AUDIT_ENRICHMENT_GRACE_MS,
-          });
+          void auditWriteQueue
+            .then(() => this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry))
+            .catch((auditError) => console.warn("Detached terminal audit update failed", auditError));
         }
-      } else {
-        void auditWriteQueue
-          .then(() => this.deps.updateAuditLog(runningAuditLog.id, minimalFailedAuditEntry))
-          .then(() => this.deps.updateAuditLog(runningAuditLog.id, failedAuditEntry))
-          .catch((auditError) => console.warn("Detached terminal audit update failed", auditError));
-      }
-
+      };
       const fallbackNotice = formatProviderFailureNotice({
         providerId: activeRunningSession.provider,
         reason: providerErrorReason,
@@ -1551,7 +1606,15 @@ export class SessionRuntimeService {
       };
 
       const failedSessionUpsertStartedAt = Date.now();
-      const storedFailedSession = await this.upsertTerminalSession(failedSession);
+      const storedFailedSession = await this.upsertTerminalSession(failedSession, {
+        auditLogId: runningAuditLog.id,
+        sessionId,
+        phase: canceled ? "canceled" : "failed",
+        assistantMessageSeq: failedSession.messages.length - 1,
+        threadId: failedAuditThreadId,
+        errorMessage: failureMessage,
+        completedAt,
+      });
       logSessionRunStuckInvestigation("runtime.terminal-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - failedSessionUpsertStartedAt,
@@ -1561,6 +1624,12 @@ export class SessionRuntimeService {
         storedStatus: storedFailedSession.status,
       });
       activeRunningSession = storedFailedSession;
+      invalidateProviderSessionThreadBestEffort(
+        this.deps.invalidateProviderSessionThread,
+        storedFailedSession.provider,
+        sessionId,
+      );
+      runInBackgroundMacrotask("Detached terminal audit processing failed", completeFailedAudit);
       return storedFailedSession;
     } finally {
       if (runningSession.provider === "copilot") {

@@ -79,6 +79,13 @@ export function resolveMemoryV6Target(
   const resolutionDeps = options.projectPathResolution === "known"
     ? { ...deps, resolveProjectByPath: deps.resolveKnownProjectByPath }
     : deps;
+  if (
+    principal.type === "session_binding"
+    && selector.owner === "character"
+    && selector.character.id !== principal.characterId
+  ) {
+    return { ok: false, error: memoryForbiddenError() };
+  }
   if (selector.owner === "user" && selector.scope === "global") {
     return withAccessCheck(principal, {
       owner: { type: "user", id: "local-user" },

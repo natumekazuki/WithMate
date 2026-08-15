@@ -214,6 +214,7 @@ var MOVE_ENTRY_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"entryId",
 	"from",
 	"to",
+	"reason",
 	"sourceMessageId",
 	"idempotencyKey"
 ]);
@@ -249,6 +250,7 @@ var MAX_SEARCH_QUERY_LENGTH = 500;
 var MAX_TITLE_LENGTH = 160;
 var MAX_PREVIEW_LENGTH = 280;
 var MAX_BODY_LENGTH = 8e3;
+var MAX_REASON_LENGTH = 1e3;
 var MAX_TAG_TYPE_LENGTH = 48;
 var MAX_TAG_VALUE_LENGTH = 96;
 var MAX_ID_LENGTH = 200;
@@ -1003,6 +1005,8 @@ function validateMemoryMoveEntryRequest(value) {
 	const to = normalizeMemoryTarget(value.to, "to");
 	if (!to.ok) return to;
 	if (JSON.stringify(from.value) === JSON.stringify(to.value)) return error("MEMORY_INVALID_FIELD", "from and to must identify different targets.", "to");
+	const reason = normalizeText(value.reason, "reason", { maxLength: MAX_REASON_LENGTH });
+	if (!reason.ok) return reason;
 	const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
 	if (!sourceMessageId.ok) return sourceMessageId;
 	const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
@@ -1014,6 +1018,7 @@ function validateMemoryMoveEntryRequest(value) {
 			entryId: entryId.value,
 			from: from.value,
 			to: to.value,
+			reason: reason.value,
 			...sourceMessageId.value === void 0 ? {} : { sourceMessageId: sourceMessageId.value },
 			...idempotencyKey.value === void 0 ? {} : { idempotencyKey: idempotencyKey.value }
 		}
@@ -1358,6 +1363,9 @@ function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonc
 	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
 }
 //#endregion
+//#region src/agent-runtime/agent-runtime-binding-contract.ts
+var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
+//#endregion
 //#region scripts/withmate-memory-runtime-client.ts
 var WithMateMemoryRuntimeExchangeError = class extends Error {
 	dispatched;
@@ -1408,6 +1416,8 @@ function usageError$1(message) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_CLI_USAGE",
 		message,
+		retryable: false,
+		conversationMayContinue: true,
 		effect: "none"
 	});
 }
@@ -1557,6 +1567,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				apiSecret: connection.api.apiSecret,
 				adapter: connection.credential.adapter,
 				adapterSecret: connection.credential.adapterSecret,
+				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
 				operation
 			}));
 		});
@@ -1569,6 +1580,11 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 			fail("Memory API request could not be dispatched.", error);
 		}
 	});
+}
+function resolveAgentRuntimeBindingReference(env = process.env) {
+	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
+	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw usageError$1("WithMate provider execution requires its runtime binding reference.");
+	return reference || void 0;
 }
 async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	const nonce = randomBytes(16).toString("base64url");
@@ -21888,7 +21904,7 @@ var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "memory.forget",
-		description: "Preview or perform an idempotent forget after an explicit user instruction and reason.",
+		description: "Preview or perform an idempotent forget for an explicit target and concrete reason.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -22092,6 +22108,7 @@ function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
 		entryId: string().min(1).max(200),
 		from: memoryTargetSchema,
 		to: memoryTargetSchema,
+		reason: string().min(1).max(1e3),
 		sourceMessageId: string().min(1).max(200).optional(),
 		idempotencyKey: string().min(1).max(200)
 	}).strict(), createMemoryToolOutputSchema(moveSuccessSchema, [
@@ -22213,7 +22230,6 @@ var affectCandidateSchema = object({
 	schemaVersion: literal("withmate-affect-v1"),
 	characterId: string().min(1),
 	userId: literal("local-user"),
-	sessionId: string().min(1),
 	layer: _enum(["relationship", "session"]),
 	targetType: _enum([
 		"user",
@@ -22224,6 +22240,20 @@ var affectCandidateSchema = object({
 		"self"
 	]),
 	targetId: string().min(1),
+	family: _enum([
+		"joy",
+		"relief",
+		"interest",
+		"anticipation",
+		"affinity",
+		"gratitude",
+		"concern",
+		"frustration",
+		"disappointment",
+		"regret",
+		"determination",
+		"other"
+	]),
 	value: affectValueSchema,
 	intensity: number().min(0).max(1),
 	reason: string().min(1),
@@ -22386,12 +22416,27 @@ var contextOutputSchema = union([object({
 				"self"
 			]),
 			targetId: string(),
+			family: _enum([
+				"joy",
+				"relief",
+				"interest",
+				"anticipation",
+				"affinity",
+				"gratitude",
+				"concern",
+				"frustration",
+				"disappointment",
+				"regret",
+				"determination",
+				"other"
+			]).nullable(),
 			label: string(),
 			valence: number(),
 			arousal: number().optional(),
 			dimensions: record(string(), number()).optional(),
 			intensity: number()
 		}).strict()),
+		evaluatedAt: string(),
 		version: string(),
 		updatedAt: string().nullable()
 	}).strict(),
@@ -22508,7 +22553,7 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
 	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
 	"Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
-	"Call character_memory.correct or character_memory.forget only after an explicit user instruction. Do not infer correction or deletion authority.",
+	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
 	"Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values.",
 	"Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
 	"Use CLI fallback only when MCP is unavailable at the transport level. Structured Memory or Character domain errors, authority denial, conflicts, replay, and migration requirements are not availability failures."
@@ -22556,7 +22601,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_memory.correct",
-		description: "Correct one Character Memory entry after an explicit user instruction, preserving supersession history.",
+		description: "Correct one Character Memory entry as an idempotent user-delegate operation, preserving supersession history.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -22566,7 +22611,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_memory.forget",
-		description: "Forget one Character Memory entry after an explicit user instruction and read back the result.",
+		description: "Forget one Character Memory entry as an idempotent user-delegate operation and read back the result.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -22596,6 +22641,17 @@ async function callRuntime(path, body, operationKind, deps) {
 		conversationMayContinue: true,
 		effect: "none"
 	});
+	let bindingReference;
+	try {
+		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+	} catch (error) {
+		if (isMemoryErrorResponse$1(error)) return createCharacterContextError("authority_denied", error.error.message, {
+			retryable: false,
+			conversationMayContinue: true,
+			effect: "none"
+		});
+		throw error;
+	}
 	const abortController = new AbortController();
 	const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
 	let dispatched = false;
@@ -22604,7 +22660,10 @@ async function callRuntime(path, body, operationKind, deps) {
 			method: "POST",
 			path,
 			body
-		}, { signal: abortController.signal });
+		}, {
+			signal: abortController.signal,
+			bindingReference
+		});
 		dispatched = true;
 		return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
 	} catch (error) {
@@ -22638,6 +22697,13 @@ async function callMemoryRuntime(operation, deps) {
 		conversationMayContinue: true,
 		effect: "none"
 	});
+	let bindingReference;
+	try {
+		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+	} catch (error) {
+		if (isMemoryErrorResponse$1(error)) return error;
+		throw error;
+	}
 	const operationPath = new URL(operation.path, "http://127.0.0.1").pathname;
 	const requestTimeoutMs = GENERAL_MEMORY_FILE_OPERATION_PATHS.has(operationPath) ? deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS$1 : deps.requestTimeoutMs ?? 1e4;
 	const abortController = new AbortController();
@@ -22648,7 +22714,10 @@ async function callMemoryRuntime(operation, deps) {
 			method: operation.method,
 			path: operation.path,
 			body: operation.body
-		}, { signal: abortController.signal });
+		}, {
+			signal: abortController.signal,
+			bindingReference
+		});
 		dispatched = true;
 		return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
 	} catch (error) {
@@ -22686,7 +22755,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 		...definitions.get("character_context.get"),
 		inputSchema: object({
 			characterId: string().min(1),
-			sessionId: string().min(1),
 			query: string().min(1).optional(),
 			memoryLimit: number().int().min(0).max(10).default(3)
 		}).strict(),
@@ -22699,7 +22767,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object({
 			characterId: string().min(1),
-			sessionId: string().min(1),
 			expectedVersion: string().min(1).optional(),
 			candidates: array(affectCandidateSchema).min(1).max(10)
 		}).strict(),
@@ -23653,11 +23720,11 @@ function validateMemoryCliRequestBody(command, body) {
 	try {
 		if (command === "context_get") return {
 			ok: true,
-			value: validateCharacterContextGetRequest(body)
+			value: validateCharacterContextGetRequest(withRuntimeActorSession(body))
 		};
 		if (command === "affect_appraise") return {
 			ok: true,
-			value: validateCharacterAffectAppraiseRequest(body)
+			value: validateCharacterAffectAppraiseRequest(withRuntimeActorSession(body, true))
 		};
 		if (command === "affect_inspect") return {
 			ok: true,
@@ -23709,6 +23776,19 @@ function validateMemoryCliRequestBody(command, body) {
 	if (command === "append") return validateMemoryAppendRequest(body);
 	if (command === "move_entry") return validateMemoryMoveEntryRequest(body);
 	return validateMemoryForgetRequest(body);
+}
+var RUNTIME_ACTOR_SESSION_PLACEHOLDER = "__withmate_runtime_actor_session__";
+function withRuntimeActorSession(body, includeCandidates = false) {
+	if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+	const request = body;
+	return {
+		...request,
+		sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER,
+		...includeCandidates && Array.isArray(request.candidates) ? { candidates: request.candidates.map((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate) ? {
+			...candidate,
+			sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER
+		} : candidate) } : {}
+	};
 }
 function buildValidateResponse(command, body) {
 	const validation = validateMemoryCliRequestBody(command, body);
@@ -23846,7 +23926,10 @@ async function runWithMateMemoryCli(args, deps = {}) {
 				path: buildRoutePath(request),
 				body: request.body,
 				...request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}
-			}, { signal: abortController.signal });
+			}, {
+				signal: abortController.signal,
+				bindingReference: resolveAgentRuntimeBindingReference(deps.env)
+			});
 			response = runtimeResponse;
 			responseJson = runtimeResponse.value;
 		} catch (error) {

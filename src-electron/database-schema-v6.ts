@@ -233,6 +233,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "layer",
     "target_type",
     "target_id",
+    "family",
     "value_json",
     "intensity",
     "reason",
@@ -564,6 +565,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && protectedObjectsSql.includes("stored_bytes >= 0")
     && affectEventsSql.includes("layer IN ('relationship', 'session')")
     && affectEventsSql.includes("target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')")
+    && affectEventsSql.includes("family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')")
     && affectEventsSql.includes("json_valid(value_json)")
     && affectEventsSql.includes("intensity >= 0 AND intensity <= 1")
     && affectEventsSql.includes("state IN ('active', 'corrected')")
@@ -1142,6 +1144,7 @@ export const CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL = `
     to_owner_id TEXT NOT NULL,
     to_scope_type TEXT NOT NULL,
     to_scope_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
     binding_id_hash TEXT NOT NULL,
     idempotency_key TEXT,
     request_fingerprint TEXT NOT NULL,
@@ -1167,6 +1170,7 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     layer TEXT NOT NULL CHECK (layer IN ('relationship', 'session')),
     target_type TEXT NOT NULL CHECK (target_type IN ('user', 'relationship', 'task', 'bug', 'artifact', 'self')),
     target_id TEXT NOT NULL,
+    family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')),
     value_json TEXT NOT NULL CHECK (json_valid(value_json)),
     intensity REAL NOT NULL CHECK (intensity >= 0 AND intensity <= 1),
     reason TEXT NOT NULL,
@@ -1519,6 +1523,20 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     const mutationEventColumns = tableColumnNames(db, "memory_mutation_events_v6");
     if (!mutationEventColumns.has("source_message_id")) {
       db.exec("ALTER TABLE memory_mutation_events_v6 ADD COLUMN source_message_id TEXT");
+    }
+  }
+
+  if (tableExists(db, "memory_move_events_v6")) {
+    const moveEventColumns = tableColumnNames(db, "memory_move_events_v6");
+    if (!moveEventColumns.has("reason")) {
+      db.exec("ALTER TABLE memory_move_events_v6 ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
+    }
+  }
+
+  if (tableExists(db, "character_affect_events_v6")) {
+    const affectEventColumns = tableColumnNames(db, "character_affect_events_v6");
+    if (!affectEventColumns.has("family")) {
+      db.exec("ALTER TABLE character_affect_events_v6 ADD COLUMN family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other'))");
     }
   }
 

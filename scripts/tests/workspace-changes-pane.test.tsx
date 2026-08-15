@@ -10,6 +10,128 @@ import type {
   FileRootGitChangeEntry,
 } from "../../src/file-explorer/file-explorer-contract.js";
 
+test("FileRootChangesPane は表示対象と明示 refresh の変更時だけ再取得する", async () => {
+  const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
+    .IS_REACT_ACT_ENVIRONMENT;
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  const previousHTMLElement = globalThis.HTMLElement;
+  const previousElement = globalThis.Element;
+  const previousNode = globalThis.Node;
+  const previousNavigator = globalThis.navigator;
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+    pretendToBeVisual: true,
+  });
+  (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
+  Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
+  Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
+  Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const { FileRootChangesPane } = await import("../../src/file-explorer/FileRootChangesPane.js");
+
+  type ChangesResult = { status: "ok"; entries: FileRootGitChangeEntry[] };
+  const rootRequests: string[] = [];
+  const changesRequests: Array<{ sessionId: string; rootId: string }> = [];
+  const pendingChanges: Array<(result: ChangesResult) => void> = [];
+  const testApi = {
+    listSessionFileRoots: async (sessionId: string) => {
+      rootRequests.push(sessionId);
+      return [
+        { id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:/repo" },
+      ];
+    },
+    listFileRootChanges: async (request: { sessionId: string; rootId: string }) => {
+      changesRequests.push(request);
+      return new Promise<ChangesResult>((resolve) => pendingChanges.push(resolve));
+    },
+  };
+  const baseProps = {
+    api: testApi,
+    sessionId: "session-1",
+    enabled: true,
+    rootsRevision: "roots-1",
+    refreshRevision: 0,
+    onOpenFile: () => undefined,
+    onOpenDiff: async () => null,
+  };
+  const completeRequest = async (index: number) => {
+    await act(async () => {
+      pendingChanges[index]?.({ status: "ok", entries: [] });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+  };
+  let root: Root | null = null;
+  try {
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootChangesPane, baseProps));
+      await Promise.resolve();
+    });
+    assert.deepEqual(rootRequests, ["session-1"]);
+    assert.deepEqual(changesRequests, [{ sessionId: "session-1", rootId: "workspace" }]);
+
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      await Promise.resolve();
+    });
+    assert.equal(rootRequests.length, 1);
+    assert.equal(changesRequests.length, 1);
+
+    await completeRequest(0);
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      dom.window.dispatchEvent(new dom.window.Event("focus"));
+      await Promise.resolve();
+    });
+    assert.equal(rootRequests.length, 1);
+    assert.equal(changesRequests.length, 1);
+
+    const refreshedProps = { ...baseProps, refreshRevision: 1 };
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, refreshedProps));
+      await Promise.resolve();
+    });
+    assert.equal(rootRequests.length, 2);
+    assert.equal(changesRequests.length, 2);
+    await completeRequest(1);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, { ...refreshedProps, rootsRevision: "roots-2" }));
+      await Promise.resolve();
+    });
+    assert.equal(rootRequests.length, 3);
+    assert.equal(changesRequests.length, 3);
+    await completeRequest(2);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootChangesPane, {
+        ...refreshedProps,
+        sessionId: "session-2",
+        rootsRevision: "roots-2",
+      }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(rootRequests, ["session-1", "session-1", "session-1", "session-2"]);
+    assert.deepEqual(changesRequests.at(-1), { sessionId: "session-2", rootId: "workspace" });
+    await completeRequest(3);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, "window", { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, "document", { configurable: true, value: previousDocument });
+    Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
+    Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
+    Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
+    dom.window.close();
+  }
+});
+
 test("FileRootChangesPane は大量の変更を constrained viewport 内で仮想化する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -80,14 +202,28 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     scopes: ["working-tree"],
     kinds: { "working-tree": "modified", staged: null },
   }));
-  const additionalEntries: FileRootGitChangeEntry[] = [{
-    relativePath: "app/src/00-shared.ts",
-    previousRelativePath: null,
-    scopes: ["working-tree"],
-    kinds: { "working-tree": "modified" },
-  }];
+  const additionalEntries: FileRootGitChangeEntry[] = [
+    {
+      relativePath: "app/src/00-shared.ts",
+      previousRelativePath: null,
+      scopes: ["working-tree"],
+      kinds: { "working-tree": "modified" },
+    },
+    {
+      relativePath: "notes.txt",
+      previousRelativePath: null,
+      scopes: ["working-tree"],
+      kinds: { "working-tree": "untracked" },
+    },
+  ];
   const requestedRootIds: string[] = [];
-  const diffRequests: FileRootFileDiffRequest[] = [];
+  const diffRequests: Array<FileRootFileDiffRequest & { openInWindow: boolean }> = [];
+  const fileRequests: Array<{
+    sessionId: string;
+    rootId: string;
+    relativePath: string;
+    openInWindow: boolean;
+  }> = [];
   let rootListFailure: Error | null = null;
   let workspaceEntries = entries;
   const testApi = {
@@ -121,9 +257,12 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
     enabled: true,
     rootsRevision: "roots-1",
     refreshRevision: 0,
-    onOpenFile: () => undefined,
-    onOpenDiff: async (request: FileRootFileDiffRequest) => {
-      diffRequests.push(request);
+    onOpenFile: async (request: { sessionId: string; rootId: string; relativePath: string }, openInWindow: boolean) => {
+      fileRequests.push({ ...request, openInWindow });
+      return null;
+    },
+    onOpenDiff: async (request: FileRootFileDiffRequest, openInWindow: boolean) => {
+      diffRequests.push({ ...request, openInWindow });
       return null;
     },
   };
@@ -156,7 +295,7 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       String(entries.length),
     );
     assert.equal(groups.find((group) => group.dataset.rootId === "additional:broken")?.style.minHeight, "78px");
-    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "230px");
+    assert.equal(groups.find((group) => group.dataset.rootId === "additional:repo")?.style.maxHeight, "260px");
     assert.equal(groups.find((group) => group.dataset.rootId === "workspace")?.style.maxHeight, "408px");
     assert.deepEqual(requestedRootIds, ["session-folder", "additional:broken", "additional:repo", "workspace"]);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /Session Folder/);
@@ -198,9 +337,56 @@ test("FileRootChangesPane は大量の変更を constrained viewport 内で仮�
       workspaceChange.click();
       await Promise.resolve();
     });
-    assert.deepEqual(diffRequests.map(({ rootId, relativePath }) => ({ rootId, relativePath })), [
-      { rootId: "additional:repo", relativePath: "app/src/00-shared.ts" },
-      { rootId: "workspace", relativePath: "src/00-shared.ts" },
+    assert.deepEqual(diffRequests.map(({ rootId, relativePath, openInWindow }) => ({
+      rootId,
+      relativePath,
+      openInWindow,
+    })), [
+      { rootId: "additional:repo", relativePath: "app/src/00-shared.ts", openInWindow: false },
+      { rootId: "workspace", relativePath: "src/00-shared.ts", openInWindow: false },
+    ]);
+
+    await act(async () => {
+      additionalChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      workspaceChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, metaKey: true }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(diffRequests.slice(2).map(({ rootId, relativePath, scope, openInWindow }) => ({
+      rootId,
+      relativePath,
+      scope,
+      openInWindow,
+    })), [
+      {
+        rootId: "additional:repo",
+        relativePath: "app/src/00-shared.ts",
+        scope: "working-tree",
+        openInWindow: true,
+      },
+      {
+        rootId: "workspace",
+        relativePath: "src/00-shared.ts",
+        scope: "working-tree",
+        openInWindow: true,
+      },
+    ]);
+
+    const untrackedChange = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".workspace-change-row")]
+      .find((button) => button.title === "notes.txt");
+    assert.ok(untrackedChange);
+    await act(async () => {
+      untrackedChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      untrackedChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      untrackedChange.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, metaKey: true }));
+      await Promise.resolve();
+    });
+    assert.deepEqual(fileRequests, [
+      { sessionId: "session-1", rootId: "additional:repo", relativePath: "notes.txt", openInWindow: false },
+      { sessionId: "session-1", rootId: "additional:repo", relativePath: "notes.txt", openInWindow: true },
+      { sessionId: "session-1", rootId: "additional:repo", relativePath: "notes.txt", openInWindow: true },
     ]);
 
     const repoList = dom.window.document.querySelector<HTMLElement>(

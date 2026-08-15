@@ -13,6 +13,8 @@ type MainProviderFacadeDeps = {
   ensureModelCatalogSeeded(): ModelCatalogSnapshot;
   codexAdapter: ProviderTurnAdapter;
   copilotAdapter: ProviderTurnAdapter;
+  revokeProviderExecution?(sessionId: string, providerId: string): void;
+  revokeAllProviderExecutions?(): void;
 };
 
 export class MainProviderFacade {
@@ -57,12 +59,20 @@ export class MainProviderFacade {
     });
   }
 
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-    this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
+  async resetProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+    await this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
   }
 
-  invalidateAllProviderSessionThreads(): void {
-    this.deps.codexAdapter.invalidateAllSessionThreads();
-    this.deps.copilotAdapter.invalidateAllSessionThreads();
+  async invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+    this.deps.revokeProviderExecution?.(sessionId, providerId?.trim() || DEFAULT_PROVIDER_ID);
+    await this.getProviderCodingAdapter(providerId).invalidateSessionThread(sessionId);
+  }
+
+  async invalidateAllProviderSessionThreads(): Promise<void> {
+    this.deps.revokeAllProviderExecutions?.();
+    await Promise.all([
+      this.deps.codexAdapter.invalidateAllSessionThreads(),
+      this.deps.copilotAdapter.invalidateAllSessionThreads(),
+    ]);
   }
 }

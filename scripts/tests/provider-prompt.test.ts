@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import { describe, it } from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
@@ -75,6 +76,47 @@ function createCharacterRuntimeSnapshot(overrides?: Partial<CharacterRuntimeSnap
 }
 
 describe("composeProviderPrompt", () => {
+  it("実行 workspace を基準に Workspace / SessionFolder / Additional Directories を system 側へ置く", () => {
+    const session = buildNewSession({
+      id: "session-1",
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "stored-workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+      allowedAdditionalDirectories: [
+        "execution-workspace/nested",
+        "external/docs",
+        "external",
+      ],
+    });
+    const prompt = composeProviderPrompt({
+      session,
+      executionWorkspacePath: "execution-workspace",
+      sessionFolderPath: "F:/user-data/session-files/session-1",
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "実行して",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+    });
+
+    assert.match(prompt.systemBodyText, /^# Workspace\n\nexecution-workspace/);
+    assert.match(prompt.systemBodyText, /# SessionFolder\n\nF:\/user-data\/session-files\/session-1/);
+    assert.match(prompt.systemBodyText, /# Additional Directories\n\n- /);
+    assert.doesNotMatch(prompt.systemBodyText, /雑多な作業ファイル|filesystem access grant|sandbox|approval policy/);
+    assert.equal(prompt.systemBodyText.includes(path.resolve("execution-workspace", "nested")), false);
+    assert.equal(prompt.systemBodyText.includes(`- ${path.resolve("external")}`), true);
+    assert.deepEqual(prompt.additionalDirectories, [path.resolve("external")]);
+    assertSectionOrder(prompt.systemBodyText, ["# Workspace", "# SessionFolder", "# Additional Directories"]);
+    assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
+  });
+
   it("Conversation Timingをinput側のUser Input直前へ置き、system側へ入れない", () => {
     const session = buildNewSession({
       taskTitle: "task",
@@ -209,7 +251,9 @@ describe("composeProviderPrompt", () => {
       attachments: [],
     });
 
-    assert.equal(prompt.systemBodyText, "");
+    assert.match(prompt.systemBodyText, /# Workspace/);
+    assert.match(prompt.systemBodyText, /# SessionFolder/);
+    assert.match(prompt.systemBodyText, /# Additional Directories\n\nなし/);
     assert.doesNotMatch(prompt.systemBodyText, /# Character/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
     assert.doesNotMatch(prompt.logicalPrompt.systemText, /# Character/);
@@ -255,11 +299,11 @@ describe("composeProviderPrompt", () => {
 
     assert.equal(prompt.inputBodyText, "");
     assert.equal(prompt.logicalPrompt.inputText, "");
-    assert.equal(prompt.logicalPrompt.composedText, "");
+    assert.equal(prompt.logicalPrompt.composedText, prompt.systemBodyText);
     assert.doesNotMatch(prompt.inputBodyText, /# User Input/);
   });
 
-  it("共通 system prompt を空文字にする", () => {
+  it("Character がなくても folder context を system prompt に残す", () => {
     const session = buildNewSession({
       taskTitle: "task",
       workspaceLabel: "workspace",
@@ -277,30 +321,35 @@ describe("composeProviderPrompt", () => {
       sessionMemory: createDefaultSessionMemory(session),
       projectMemoryEntries: [],
       providerCatalog,
-      userMessage: "system prompt が空でも user input は残ることを確認する",
+      userMessage: "folder context が system 側でも user input は残ることを確認する",
       appSettings: createDefaultAppSettings(),
       attachments: [],
     });
 
-    assert.equal(prompt.systemBodyText, "");
+    assert.match(prompt.systemBodyText, /# Workspace/);
+    assert.match(prompt.systemBodyText, /# SessionFolder/);
+    assert.match(prompt.systemBodyText, /# Additional Directories\n\nなし/);
     assert.equal(prompt.logicalPrompt.systemText, prompt.systemBodyText);
-    assert.equal(prompt.logicalPrompt.systemText, "");
+    assert.doesNotMatch(prompt.inputBodyText, /# Workspace|# SessionFolder|# Additional Directories/);
     assert.doesNotMatch(prompt.inputBodyText, /# Character/);
     assert.doesNotMatch(prompt.inputBodyText, /あなたは丁寧に説明する。/);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /# Character/);
     assert.doesNotMatch(prompt.logicalPrompt.composedText, /あなたは丁寧に説明する。/);
     assert.equal(prompt.logicalPrompt.inputText, prompt.inputBodyText);
-    assert.equal(prompt.inputBodyText, "# User Input\n\nsystem prompt が空でも user input は残ることを確認する");
+    assert.equal(prompt.inputBodyText, "# User Input\n\nfolder context が system 側でも user input は残ることを確認する");
     assert.equal(
       prompt.logicalPrompt.composedText,
       prompt.logicalPrompt.systemText
         ? `${prompt.logicalPrompt.systemText}\n\n${prompt.logicalPrompt.inputText}`
         : prompt.logicalPrompt.inputText,
     );
-    assert.match(prompt.logicalPrompt.composedText, /system prompt が空でも user input は残ることを確認する/);
+    assert.match(prompt.logicalPrompt.composedText, /folder context が system 側でも user input は残ることを確認する/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Workspace",
+      "# SessionFolder",
+      "# Additional Directories",
       "# User Input",
-      "system prompt が空でも user input は残ることを確認する",
+      "folder context が system 側でも user input は残ることを確認する",
     ]);
   });
 
@@ -370,6 +419,9 @@ describe("composeProviderPrompt", () => {
       "# Character Definition Snapshot",
       "# Output Boundary",
       "# Tool Call Presence",
+      "# Workspace",
+      "# SessionFolder",
+      "# Additional Directories",
       "# User Input",
       "続けて",
     ]);
@@ -415,9 +467,87 @@ describe("composeProviderPrompt", () => {
     assert.doesNotMatch(prompt.systemBodyText, /生成ファイル、diff、artifact summary/);
     assertSectionOrder(prompt.logicalPrompt.composedText, [
       "# Character Definition Snapshot",
+      "# Workspace",
+      "# SessionFolder",
+      "# Additional Directories",
       "# User Input",
       "character.md を改善して",
     ]);
+  });
+
+  it("固定system sectionの後ろへCharacter Affect Contextを置き、契約fieldと全effective componentを保持する", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Saved Character",
+      characterIconPath: "",
+      characterThemeColors,
+      characterRuntimeSnapshot: createCharacterRuntimeSnapshot(),
+      approvalMode: "untrusted",
+    });
+    const evaluatedAt = "2026-08-09T06:00:00.000Z";
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+      characterContext: {
+        schemaVersion: "withmate-character-context-v1",
+        characterId: "character-1",
+        sessionId: session.id,
+        baseline: {
+          definitionSha256: "sha256-character-definition",
+          snapshotAt: "2026-06-14T00:00:00.000Z",
+        },
+        affect: {
+          mode: "active",
+          effective: Array.from({ length: 13 }, (_, index) => ({
+            contributingLayers: ["session" as const],
+            targetType: "task",
+            targetId: `current-task-${index}`,
+            family: "interest",
+            label: "focused",
+            valence: 0.4,
+            intensity: 0.5,
+          })),
+          evaluatedAt,
+          version: "affect-v1-provider-prompt",
+          updatedAt: "2026-08-09T00:00:00.000Z",
+        },
+        memory: { items: [], updatedAt: null },
+        scope: { userId: "local-user", characterId: "character-1", sessionId: session.id },
+      },
+    });
+
+    const contextJson = prompt.systemBodyText.match(/# Character Affect Context[\s\S]*?```json\n([\s\S]*?)\n```/)?.[1];
+    assert.ok(contextJson);
+    const context = JSON.parse(contextJson) as {
+      characterAffect: { effective: unknown[]; evaluatedAt: string; version: string };
+      baselineRef: { definitionSha256: string; snapshotAt: string };
+    };
+    assertSectionOrder(prompt.logicalPrompt.composedText, [
+      "# Character Definition Snapshot",
+      "# Output Boundary",
+      "# Tool Call Presence",
+      "# Workspace",
+      "# SessionFolder",
+      "# Additional Directories",
+      "# Character Affect Context",
+      "# User Input",
+    ]);
+    assert.equal(context.characterAffect.effective.length, 13);
+    assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
+    assert.equal(context.characterAffect.version, "affect-v1-provider-prompt");
+    assert.deepEqual(context.baselineRef, {
+      definitionSha256: "sha256-character-definition",
+      snapshotAt: "2026-06-14T00:00:00.000Z",
+    });
   });
 
   it("character.md 内の code fence より長い外側 fence で snapshot を囲む", () => {

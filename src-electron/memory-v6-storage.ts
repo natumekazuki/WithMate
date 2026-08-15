@@ -128,6 +128,7 @@ export type MemoryV6ListTargetsInput = {
   scopeType?: MemoryV6ResolvedTarget["scope"]["type"];
   projectId?: string;
   characterId?: string;
+  allowedCharacterId?: string;
   includeEmpty?: boolean;
   limit?: number;
   cursor?: string;
@@ -161,6 +162,7 @@ export type MemoryV6MoveEntryInput = {
   entryId: string;
   from: MemoryV6ResolvedTarget;
   to: MemoryV6ResolvedTarget;
+  reason: string;
   bindingIdHash?: string;
   idempotencyKey?: string;
   requestFingerprint: string;
@@ -980,6 +982,7 @@ export class MemoryV6Storage {
       .filter((item) => input.scopeType === undefined || item.target.scope.type === input.scopeType)
       .filter((item) => input.projectId === undefined || item.project?.id === input.projectId || (item.target.scope.type === "project" && item.target.scope.id === input.projectId))
       .filter((item) => input.characterId === undefined || item.character?.id === input.characterId || (item.target.owner.type === "character" && item.target.owner.id === input.characterId))
+      .filter((item) => input.allowedCharacterId === undefined || item.target.owner.type !== "character" || item.target.owner.id === input.allowedCharacterId)
       .sort(compareInventoryItems);
     const cursor = decodeCursor(input.cursor);
     const nextIndex = cursor ? filtered.findIndex((item) => inventoryItemFollowsCursor(item, cursor)) : 0;
@@ -1224,7 +1227,7 @@ export class MemoryV6Storage {
     };
   }
 
-  listLargestFileEntries(input: { limit: number }): MemoryV6LargestFileEntry[] {
+  listLargestFileEntries(input: { limit: number; allowedCharacterId?: string }): MemoryV6LargestFileEntry[] {
     const requestedLimit = Math.floor(input.limit);
     const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(50, requestedLimit)) : 20;
     const rows = this.db.prepare(`
@@ -1239,11 +1242,12 @@ export class MemoryV6Storage {
       INNER JOIN memory_entries_v6 AS e ON e.id = o.entry_id
       WHERE o.state = 'active'
         AND e.state = 'active'
+        AND (? IS NULL OR e.owner_type <> 'character' OR e.owner_id = ?)
       GROUP BY e.id, e.title, e.preview, e.updated_at
       HAVING file_count > 0
       ORDER BY total_file_bytes DESC, e.updated_at DESC, e.id ASC
       LIMIT ?
-    `).all(limit) as Array<{
+    `).all(input.allowedCharacterId ?? null, input.allowedCharacterId ?? null, limit) as Array<{
       entry_id: string;
       title: string;
       preview: string;
@@ -1902,11 +1906,12 @@ export class MemoryV6Storage {
           to_owner_id,
           to_scope_type,
           to_scope_id,
+          reason,
           binding_id_hash,
           idempotency_key,
           request_fingerprint,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         `memory-move-${randomUUID()}`,
         input.entryId,
@@ -1918,6 +1923,7 @@ export class MemoryV6Storage {
         input.to.owner.id,
         input.to.scope.type,
         input.to.scope.id,
+        input.reason,
         bindingIdHash,
         input.idempotencyKey ?? null,
         input.requestFingerprint,

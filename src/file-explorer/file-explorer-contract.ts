@@ -68,7 +68,11 @@ export function areSessionFileResourcesEqual(
 }
 
 export type SessionFilePreviewWindowOpenRequest =
-  | { kind: "resource"; resource: SessionFileResourceRequest }
+  | {
+      kind: "resource";
+      resource: SessionFileResourceRequest;
+      view?: SessionFilePreviewWindowView;
+    }
   | {
       kind: "link";
       sessionId: string;
@@ -76,10 +80,26 @@ export type SessionFilePreviewWindowOpenRequest =
       baseResource?: SessionFileResourceRequest;
     };
 
+export type SessionFilePreviewWindowView =
+  | { kind: "preview" }
+  | { kind: "diff"; scope: FileRootGitChangeScope };
+
 export type SessionFilePreviewWindowPayload = {
   resource: SessionFileResourceRequest;
   ownerSessionId: string;
+  windowTitle: string;
+  view?: SessionFilePreviewWindowView;
 };
+
+export const FILE_PREVIEW_WINDOW_TITLE_FALLBACK = "File Preview";
+
+export function resolveSessionFilePreviewWindowTitle(fileName: string | null | undefined): string {
+  const normalizedPath = fileName?.trim().replaceAll("\\", "/") ?? "";
+  const candidate = normalizedPath.split("/").at(-1)?.trim() ?? "";
+  return candidate && candidate !== "." && candidate !== ".." && !/[\u0000-\u001f\u007f]/u.test(candidate)
+    ? candidate
+    : FILE_PREVIEW_WINDOW_TITLE_FALLBACK;
+}
 
 export type SessionFilePreviewWindowOpenResult =
   | {
@@ -182,6 +202,20 @@ export type FileRootFileDiffRequest = FileRootChangesRequest & {
   relativePath: string;
   scope: FileRootGitChangeScope;
 };
+
+export function buildFileRootDiffPreviewWindowRequest(
+  request: FileRootFileDiffRequest,
+): SessionFilePreviewWindowOpenRequest {
+  return {
+    kind: "resource",
+    resource: {
+      sessionId: request.sessionId,
+      rootId: request.rootId,
+      relativePath: request.relativePath,
+    },
+    view: { kind: "diff", scope: request.scope },
+  };
+}
 
 export type FileRootFileDiffResult =
   | { status: "ok"; relativePath: string; scope: FileRootGitChangeScope; patch: string }

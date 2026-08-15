@@ -157,6 +157,7 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];
   const previewLoads: string[] = [];
+  const navigations: unknown[] = [];
   let tokenSequence = 0;
   const service = new AuxWindowService({
     createWindow(options) {
@@ -170,6 +171,9 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
     async loadFilePreviewEntry(_window, token) {
       previewLoads.push(token);
     },
+    navigateFilePreviewWindow(_window, nextPayload) {
+      navigations.push(nextPayload);
+    },
     async loadChatEntry() {},
     async loadCompanionMergeReviewEntry() {},
     async loadCharacterEditorEntry() {},
@@ -182,17 +186,30 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   const payload = {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/file.ts" },
     ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
   };
 
   const first = await service.openFilePreviewWindow(payload);
-  const reused = await service.openFilePreviewWindow(payload);
+  const reused = await service.openFilePreviewWindow({
+    ...payload,
+    view: { kind: "diff", scope: "working-tree" },
+  });
 
   assert.equal(first.disposition, "created");
   assert.equal(reused.disposition, "focused");
   assert.equal(first.window, reused.window);
   assert.equal(stubs.length, 1);
   assert.equal(stubs[0]?.getFocusCount(), 1);
-  assert.deepEqual(service.getFilePreviewPayload("preview-1"), payload);
+  assert.deepEqual(service.getFilePreviewPayload("preview-1"), {
+    ...payload,
+    windowTitle: "file.ts",
+    view: { kind: "diff", scope: "working-tree" },
+  });
+  assert.deepEqual(navigations, [{
+    ...payload,
+    windowTitle: "file.ts",
+    view: { kind: "diff", scope: "working-tree" },
+  }]);
   assert.equal(service.isFilePreviewWindow(first.window, "session-1"), true);
   assert.deepEqual(service.getFilePreviewWindowResource(first.window, "session-1"), payload.resource);
   assert.equal(service.isFilePreviewTokenWindow(first.window, "preview-1"), true);
@@ -200,6 +217,7 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   const otherPayload = {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/other.ts" },
     ownerSessionId: "session-1",
+    windowTitle: "src/other.ts",
   };
   const other = await service.openFilePreviewWindow(otherPayload);
   assert.equal(other.disposition, "created");
@@ -212,9 +230,9 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
   assert.notEqual(reopened.window, first.window);
   assert.deepEqual(previewLoads, ["preview-1", "preview-2", "preview-3"]);
   assert.deepEqual(createdOptions, [
-    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "Preview - src/file.ts" },
-    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "Preview - src/other.ts" },
-    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "Preview - src/file.ts" },
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "file.ts" },
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "other.ts" },
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "file.ts" },
   ]);
   service.closeFilePreviewWindowsForSession("session-1");
   assert.equal(reopened.window.isDestroyed(), true);
@@ -224,9 +242,11 @@ test("AuxWindowService は同じ file preview resource を再利用し close 後
 
 test("AuxWindowService は file preview entry load 失敗時に registry と window を残さない", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
+  const createdOptions: Array<Record<string, unknown>> = [];
   let loadShouldFail = true;
   const service = new AuxWindowService({
-    createWindow() {
+    createWindow(options) {
+      createdOptions.push(options);
       const stub = createWindowStub();
       stubs.push(stub);
       return stub.window;
@@ -249,6 +269,7 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
   const payload = {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/file.ts" },
     ownerSessionId: "session-1",
+    windowTitle: "",
   };
 
   await assert.rejects(() => service.openFilePreviewWindow(payload), /entry load failed/);
@@ -259,13 +280,20 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
   const reopened = await service.openFilePreviewWindow(payload);
   assert.equal(reopened.disposition, "created");
   assert.equal(stubs.length, 2);
+  assert.deepEqual(createdOptions, [
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "File Preview" },
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "File Preview" },
+  ]);
+  assert.equal(service.getFilePreviewPayload("preview-1")?.windowTitle, "File Preview");
 });
 
 test("AuxWindowService は absolute file preview を path 単位で再利用し close 後に破棄する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
+  const createdOptions: Array<Record<string, unknown>> = [];
   let tokenSequence = 0;
   const service = new AuxWindowService({
-    createWindow() {
+    createWindow(options) {
+      createdOptions.push(options);
       const stub = createWindowStub();
       stubs.push(stub);
       return stub.window;
@@ -285,6 +313,7 @@ test("AuxWindowService は absolute file preview を path 単位で再利用し 
   const payload = {
     resource: { sessionId: "session-1", absolutePath: "C:\\outside\\notes.md" },
     ownerSessionId: "session-1",
+    windowTitle: "C:\\Users\\private\\notes.md",
   };
 
   const first = await service.openFilePreviewWindow(payload);
@@ -298,6 +327,11 @@ test("AuxWindowService は absolute file preview を path 単位で再利用し 
   const reopened = await service.openFilePreviewWindow(payload);
   assert.equal(reopened.disposition, "created");
   assert.equal(stubs.length, 2);
+  assert.deepEqual(createdOptions, [
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "notes.md" },
+    { ...FILE_PREVIEW_WINDOW_DEFAULT_BOUNDS, title: "notes.md" },
+  ]);
+  assert.equal(service.getFilePreviewPayload("absolute-preview-2")?.windowTitle, "notes.md");
 });
 
 test("AuxWindowService は大小文字だけが異なる absolute path を別 Preview として扱う", async () => {
@@ -325,10 +359,12 @@ test("AuxWindowService は大小文字だけが異なる absolute path を別 Pr
   const upper = await service.openFilePreviewWindow({
     resource: { sessionId: "session-1", absolutePath: "C:\\case-sensitive\\Report.md" },
     ownerSessionId: "session-1",
+    windowTitle: "Report.md",
   });
   const lower = await service.openFilePreviewWindow({
     resource: { sessionId: "session-1", absolutePath: "C:\\case-sensitive\\report.md" },
     ownerSessionId: "session-1",
+    windowTitle: "report.md",
   });
 
   assert.equal(upper.disposition, "created");
@@ -362,10 +398,12 @@ test("AuxWindowService は literal backslash を含む canonical path を separa
   const literalBackslash = await service.openFilePreviewWindow({
     resource: { sessionId: "session-1", absolutePath: "/tmp/a\\b" },
     ownerSessionId: "session-1",
+    windowTitle: "a\\b",
   });
   const separatorPath = await service.openFilePreviewWindow({
     resource: { sessionId: "session-1", absolutePath: "/tmp/a/b" },
     ownerSessionId: "session-1",
+    windowTitle: "b",
   });
 
   assert.equal(literalBackslash.disposition, "created");
@@ -402,6 +440,7 @@ test("AuxWindowService は entry load 中に閉じた Session を opened 扱い�
   const opening = service.openFilePreviewWindow({
     resource: { sessionId: "session-1", absolutePath: "C:\\outside\\notes.md" },
     ownerSessionId: "session-1",
+    windowTitle: "notes.md",
   });
 
   service.closeFilePreviewWindowsForSession("session-1");
@@ -440,6 +479,7 @@ test("AuxWindowService は共有 entry load 中に閉じた Session を reused �
   const payload = {
     resource: { sessionId: "session-1", absolutePath: "C:\\outside\\notes.md" },
     ownerSessionId: "session-1",
+    windowTitle: "notes.md",
   };
   const firstOpening = service.openFilePreviewWindow(payload);
   const reusedOpening = service.openFilePreviewWindow(payload);
@@ -473,6 +513,7 @@ test("AuxWindowService は close 済み Session の遅延 file preview admission
   const payload = {
     resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/file.ts" },
     ownerSessionId: "session-1",
+    windowTitle: "file.ts",
   };
 
   service.closeFilePreviewWindowsForSession("aux-1");

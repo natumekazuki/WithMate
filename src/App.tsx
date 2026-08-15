@@ -114,7 +114,6 @@ import {
   resolveComposerSendPreflight,
   type ComposerSendabilityState,
 } from "./session-composer-feedback.js";
-import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockRuntimeState,
   shouldFocusComposerForActionDockExpand,
@@ -165,6 +164,7 @@ import type {
   FileRootGitChangeScope,
   SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
+import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
   acknowledgePreviewChatMessageCount,
@@ -517,6 +517,9 @@ export default function AgentSessionWindowApp() {
     generation: number;
     patch: string;
   } | null>(null);
+  const [fileRootDiffPendingPreview, setFileRootDiffPendingPreview] = useState<
+    (FileRootFileDiffRequest & { generation: number }) | null
+  >(null);
   const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
   const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
   const [inlinePathError, setInlinePathError] = useState<{
@@ -826,6 +829,7 @@ export default function AgentSessionWindowApp() {
   const activeRunMessageCount = activeAuxiliarySession?.messages.length ?? selectedSession?.messages.length ?? 0;
   const isCentralPreviewActive = selectedFilePreview !== null
     || fileRootDiffPreview !== null
+    || fileRootDiffPendingPreview !== null
     || isPromptTemplateWorkspaceOpen;
   const beginCentralPreviewIfNeeded = useCallback(() => {
     setIsPromptTemplateWorkspaceOpen(false);
@@ -836,6 +840,7 @@ export default function AgentSessionWindowApp() {
   const closeCentralPreview = useCallback(() => {
     fileRootDiffRequestRevisionRef.current += 1;
     setFileRootDiffLoadingScope(null);
+    setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
@@ -861,6 +866,7 @@ export default function AgentSessionWindowApp() {
     setSelectedFilePreview((current) => current?.sessionId === activeRunSessionId ? current : null);
     setSelectedFileDiffScopes([]);
     setSelectedFileDiffAvailabilityMessage("");
+    setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setFileRootDiffLoadingScope(null);
   }, [activeRunSessionId]);
@@ -897,20 +903,48 @@ export default function AgentSessionWindowApp() {
       active = false;
     };
   }, [activeRunSessionId, selectedFilePreview, withmateApi]);
-  const handleOpenFileRootFile = useCallback((request: SessionFileRootResourceRequest) => {
+  const handleOpenFileRootFile = useCallback(async (
+    request: SessionFileRootResourceRequest,
+    openInWindow = false,
+  ): Promise<string | null> => {
+    if (openInWindow) {
+      if (!withmateApi) {
+        return "The file preview could not be opened.";
+      }
+      try {
+        const result = await withmateApi.openSessionFilePreviewWindow({ kind: "resource", resource: request });
+        return result.status === "opened" ? null : result.message;
+      } catch (error) {
+        return error instanceof Error ? error.message : "The file preview could not be opened.";
+      }
+    }
     fileRootDiffRequestRevisionRef.current += 1;
     beginCentralPreviewIfNeeded();
     setFileRootDiffLoadingScope(null);
+    setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(request);
-  }, [beginCentralPreviewIfNeeded]);
-  const handleShowFileRootDiff = useCallback((request: FileRootFileDiffRequest): Promise<string | null> => {
+    return null;
+  }, [beginCentralPreviewIfNeeded, withmateApi]);
+  const handleShowFileRootDiff = useCallback((
+    request: FileRootFileDiffRequest,
+    openInWindow = false,
+  ): Promise<string | null> => {
     if (!withmateApi || request.sessionId !== activeRunSessionId) {
       return Promise.resolve("Git diff is not available for this session.");
     }
+    if (openInWindow) {
+      return withmateApi.openSessionFilePreviewWindow(
+        buildFileRootDiffPreviewWindowRequest(request),
+      ).then((result) => result.status === "opened" ? null : result.message).catch((error) => (
+        error instanceof Error ? error.message : "The Git diff preview could not be opened."
+      ));
+    }
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;
+    beginCentralPreviewIfNeeded();
+    setFileRootDiffPendingPreview({ ...request, generation: revision });
     setFileRootDiffLoadingScope(request.scope);
     return withmateApi.getFileRootDiff(request).then((result) => {
       if (fileRootDiffRequestRevisionRef.current !== revision) {
@@ -919,7 +953,6 @@ export default function AgentSessionWindowApp() {
       if (result.status !== "ok") {
         return result.message;
       }
-      beginCentralPreviewIfNeeded();
       setFileRootDiffPreview({
         sessionId: request.sessionId,
         rootId: request.rootId,
@@ -928,6 +961,7 @@ export default function AgentSessionWindowApp() {
         generation: revision,
         patch: result.patch,
       });
+      setFileRootDiffPendingPreview(null);
       return null;
     }).catch((error) => (
       fileRootDiffRequestRevisionRef.current === revision
@@ -935,6 +969,7 @@ export default function AgentSessionWindowApp() {
         : null
     )).finally(() => {
       if (fileRootDiffRequestRevisionRef.current === revision) {
+        setFileRootDiffPendingPreview(null);
         setFileRootDiffLoadingScope(null);
       }
     });
@@ -946,6 +981,7 @@ export default function AgentSessionWindowApp() {
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;
     const request = { ...selectedFilePreview };
+    setFileRootDiffPendingPreview({ ...request, scope, generation: revision });
     setFileRootDiffLoadingScope(scope);
     try {
       const status = await withmateApi.listFileRootChanges({
@@ -988,6 +1024,7 @@ export default function AgentSessionWindowApp() {
         generation: revision,
         patch: result.patch,
       });
+      setFileRootDiffPendingPreview(null);
       return null;
     } catch (error) {
       return fileRootDiffRequestRevisionRef.current === revision
@@ -995,6 +1032,7 @@ export default function AgentSessionWindowApp() {
         : null;
     } finally {
       if (fileRootDiffRequestRevisionRef.current === revision) {
+        setFileRootDiffPendingPreview(null);
         setFileRootDiffLoadingScope(null);
       }
     }
@@ -1174,9 +1212,10 @@ export default function AgentSessionWindowApp() {
 
     return "";
   }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceAvailability]);
-  const composerBlockedReason = pendingSubmitSessionId === selectedSession?.id
+  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
     ? "Message submission is in progress."
-    : sessionExecutionBlockedReason;
+    : "";
+  const composerBlockedReason = composerBusyReason || sessionExecutionBlockedReason;
   const isSelectedWorkspaceAvailable = selectedSession
     ? isSessionWorkspaceAvailable(
         workspaceAvailability,
@@ -1928,12 +1967,20 @@ export default function AgentSessionWindowApp() {
     () =>
       resolveComposerSendabilityState({
         runState: selectedSessionRunState,
-        blockedReason: composerBlockedReason,
+        busyReason: composerBusyReason,
+        blockedReason: sessionExecutionBlockedReason,
         inputErrors: composerPreview.errors,
         draftText: draft,
         forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
-    [composerBlockedReason, composerPreview.errors, draft, forceComposerBlockedFeedback, selectedSessionRunState],
+    [
+      composerBusyReason,
+      composerPreview.errors,
+      draft,
+      forceComposerBlockedFeedback,
+      selectedSessionRunState,
+      sessionExecutionBlockedReason,
+    ],
   );
   const isSendDisabled = composerSendability.isSendDisabled;
   const composerSendButtonTitle = getComposerSendButtonTitle(composerSendability);
@@ -2078,13 +2125,6 @@ export default function AgentSessionWindowApp() {
     isHeaderExpanded: isSessionHeaderExpanded,
     isActionDockExpanded,
   });
-  const actionDockCompactPreview = useMemo(
-    () =>
-      buildActionDockCompactPreview(draft, selectedSessionRunState === "running", {
-        truncationSuffix: "…",
-      }),
-    [draft, selectedSessionRunState],
-  );
   useEffect(() => {
     if (!retryBanner) {
       setIsRetryDraftReplacePending(false);
@@ -2299,6 +2339,7 @@ export default function AgentSessionWindowApp() {
     } finally {
       submitLease.release();
       setPendingSubmitSessionId((current) => current === sessionId ? null : current);
+      setForceComposerBlockedFeedback(false);
     }
   };
 
@@ -2410,7 +2451,8 @@ export default function AgentSessionWindowApp() {
       const activeSendability = activeAuxiliarySession
         ? buildComposerSendabilityState({
             runState: activeAuxiliarySession.runState,
-            blockedReason: composerBlockedReason,
+            busyReason: composerBusyReason,
+            blockedReason: sessionExecutionBlockedReason,
             inputErrors: composerPreview.errors,
             draftText: activeAuxiliarySession.composerDraft,
           })
@@ -3513,15 +3555,17 @@ export default function AgentSessionWindowApp() {
   const auxiliaryComposerSendability = useMemo(
     () => buildComposerSendabilityState({
       runState: activeAuxiliarySession?.runState,
-      blockedReason: composerBlockedReason,
+      busyReason: composerBusyReason,
+      blockedReason: sessionExecutionBlockedReason,
       inputErrors: composerPreview.errors,
       draftText: activeAuxiliarySession?.composerDraft ?? "",
     }),
     [
       activeAuxiliarySession?.composerDraft,
       activeAuxiliarySession?.runState,
-      composerBlockedReason,
+      composerBusyReason,
       composerPreview.errors,
+      sessionExecutionBlockedReason,
     ],
   );
   const renderedSession = displayedSession;
@@ -3540,6 +3584,7 @@ export default function AgentSessionWindowApp() {
     };
     fileRootDiffRequestRevisionRef.current += 1;
     setFileRootDiffLoadingScope(null);
+    setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
@@ -3615,22 +3660,11 @@ export default function AgentSessionWindowApp() {
       onActiveTabChange={setFileExplorerTab}
       onRefreshChanges={() => setFileRootChangesRefreshRevision((current) => current + 1)}
       onOpenFile={(request, openInWindow) => {
-        if (openInWindow) {
-          if (!withmateApi) {
-            return;
+        void handleOpenFileRootFile(request, openInWindow).then((message) => {
+          if (message) {
+            window.alert(message);
           }
-          void withmateApi.openSessionFilePreviewWindow({ kind: "resource", resource: request })
-            .then((result) => {
-              if (result.status !== "opened") {
-                window.alert(result.message);
-              }
-            })
-            .catch((error) => {
-              window.alert(error instanceof Error ? error.message : "The file preview could not be opened.");
-            });
-          return;
-        }
-        handleOpenFileRootFile(request);
+        });
       }}
       changesContent={(
         <FileRootChangesPane
@@ -3667,17 +3701,40 @@ export default function AgentSessionWindowApp() {
       canInsert={activeAuxiliarySession
         ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
         : !isComposerDisabled}
-      onClose={closeCentralPreview}
+      onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
+    />
+  ) : fileRootDiffPendingPreview ? (
+    <SessionDiffPreview
+      title={`${fileRootDiffPendingPreview.relativePath} · ${fileRootDiffPendingPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
+      previewRevision={fileRootDiffPendingPreview.generation}
+      patch=""
+      loading
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
+      onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
+      onOpenPreview={() => handleOpenFileRootFile({
+        sessionId: fileRootDiffPendingPreview.sessionId,
+        rootId: fileRootDiffPendingPreview.rootId,
+        relativePath: fileRootDiffPendingPreview.relativePath,
+      })}
+      onReload={() => handleShowFileRootDiff(fileRootDiffPendingPreview)}
+      reloadPending
+      chatNotice={previewChatNotice}
     />
   ) : fileRootDiffPreview ? (
     <SessionDiffPreview
       title={`${fileRootDiffPreview.relativePath} · ${fileRootDiffPreview.scope === "staged" ? "Staged" : "Working Tree"}`}
       previewRevision={fileRootDiffPreview.generation}
       patch={fileRootDiffPreview.patch}
-      onClose={closeCentralPreview}
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
       onCopyText={handleCopyMessageText}
       onQuoteText={handleQuoteMessageText}
+      onOpenPreview={() => handleOpenFileRootFile({
+        sessionId: fileRootDiffPreview.sessionId,
+        rootId: fileRootDiffPreview.rootId,
+        relativePath: fileRootDiffPreview.relativePath,
+      })}
       onReload={handleReloadFileRootDiff}
       reloadPending={fileRootDiffLoadingScope === fileRootDiffPreview.scope}
       chatNotice={previewChatNotice}
@@ -3686,7 +3743,7 @@ export default function AgentSessionWindowApp() {
     <SessionFilePreview
       api={withmateApi}
       request={selectedFilePreview}
-      onClose={closeCentralPreview}
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
       onCopyText={handleCopyMessageText}
       onQuoteText={handleQuoteMessageText}
       diffScopes={selectedFileDiffScopes}
@@ -3773,15 +3830,13 @@ export default function AgentSessionWindowApp() {
         isSendDisabled: renderedIsSendDisabled,
         composerSendability: renderedComposerSendability,
         composerSendButtonTitle: renderedComposerButtonTitle,
-        isComposerBlockedFeedbackActive: forceComposerBlockedFeedback && renderedComposerSendability.shouldShowFeedback,
+        isComposerBlockedFeedbackActive:
+          forceComposerBlockedFeedback && renderedComposerSendability.feedbackTone === "blocked",
         approvalChoiceOptions,
         sandboxChoiceOptions,
         modelSelectOptions,
         selectedModelFallbackLabel,
         reasoningSelectOptions,
-        actionDockCompactPreview: activeAuxiliarySession
-          ? (renderedDraft.trim() || (activeAuxiliarySession.runState === "running" ? "実行中" : "下書きなし"))
-          : actionDockCompactPreview,
         chatNotice: isCentralPreviewActive ? actionDockChatNotice : "",
         attachmentCount: composerPreview.attachments.length,
         isActionDockExpanded,

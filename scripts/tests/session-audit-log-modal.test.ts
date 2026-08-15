@@ -60,6 +60,7 @@ describe("SessionAuditLogModal", () => {
     assert.equal(renderedCardCount, 50);
     assert.doesNotMatch(html, /audit-log-list-spacer/);
     assert.match(html, /Load More/);
+    assert.doesNotMatch(html, />Close<\/button>/);
   });
 
   it("Operations detail は operation ごとの fold を開くまで本文を描画しない", () => {

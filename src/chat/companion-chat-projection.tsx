@@ -9,6 +9,7 @@ import type {
 
 import type { CharacterProfile, DiffPreviewPayload, MessageArtifact } from "../app-state.js";
 import type { CompanionSession } from "../companion-state.js";
+import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
 import {
   type SessionActionDockCompactRowProps,
   type SessionAuditLogModalProps,
@@ -90,7 +91,7 @@ export type CompanionChatProjectionInput = {
   customAgentItems: SessionComposerExpandedProps["customAgentItems"];
   skillItems: NonNullable<ChatWindowProps["skillPickerProps"]>["items"];
   attachmentItems: SessionComposerExpandedProps["attachmentItems"];
-  additionalDirectoryItems: SessionComposerExpandedProps["additionalDirectoryItems"];
+  additionalDirectoryItems: AdditionalDirectoryItem[];
   draft: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   isComposerDisabled: boolean;
@@ -107,7 +108,6 @@ export type CompanionChatProjectionInput = {
   selectedModelFallbackLabel: string;
   reasoningOptions: SessionComposerExpandedProps["reasoningOptions"];
   selectedReasoningEffort: string;
-  actionDockCompactPreview: string;
   attachmentCount: number;
   isContextRailResizing: boolean;
   isContextRailVisible: boolean;
@@ -178,7 +178,7 @@ export type CompanionChatProjectionInput = {
   onSelectCustomAgent: SessionComposerExpandedProps["onSelectCustomAgent"];
   onSelectSkill: NonNullable<ChatWindowProps["skillPickerProps"]>["onSelectSkill"];
   onRemoveAttachment: SessionComposerExpandedProps["onRemoveAttachment"];
-  onRemoveAdditionalDirectory: SessionComposerExpandedProps["onRemoveAdditionalDirectory"];
+  onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
   onDraftFocus: () => void;
   onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -272,7 +272,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       isCustomAgentListLoading: input.isCustomAgentListLoading,
       customAgentItems: input.customAgentItems,
       attachmentItems: input.attachmentItems,
-      additionalDirectoryItems: input.additionalDirectoryItems,
       draft: input.draft,
       composerTextareaRef: input.composerTextareaRef,
       isComposerDisabled: input.isComposerDisabled,
@@ -289,7 +288,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       selectedModelFallbackLabel: input.selectedModelFallbackLabel,
       reasoningOptions: input.reasoningOptions,
       selectedReasoningEffort: input.selectedReasoningEffort,
-      actionDockCompactPreview: input.actionDockCompactPreview,
       attachmentCount: input.attachmentCount,
       onPickFile: input.onPickFile,
       onPickFolder: input.onPickFolder,
@@ -306,7 +304,6 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onJumpToBottom: input.onJumpToMessageListBottom,
       onSelectCustomAgent: input.onSelectCustomAgent,
       onRemoveAttachment: input.onRemoveAttachment,
-      onRemoveAdditionalDirectory: input.onRemoveAdditionalDirectory,
       onDraftChange: input.onDraftChange,
       onDraftFocus: input.onDraftFocus,
       onDraftKeyDown: input.onDraftKeyDown,
@@ -416,6 +413,12 @@ export function buildCompanionChatWindowProps(input: CompanionChatProjectionInpu
       onTogglePanel: input.onToggleActionDock,
     },
     composerProps: chatBodyProps.composerProps,
+    additionalDirectoryListProps: {
+      isOpen: input.isAdditionalDirectoryListOpen,
+      items: input.additionalDirectoryItems,
+      isInteractionDisabled: input.isSelectedSessionRunning || input.composerBlocked,
+      onRemove: input.onRemoveAdditionalDirectory,
+    },
     skillPickerProps: {
       isOpen: input.isSkillPickerOpen,
       isLoading: input.isSkillListLoading,

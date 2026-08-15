@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import {
@@ -118,6 +119,7 @@ describe("CharacterAffectTurnSettlementStorage", () => {
       layer: "session" as const,
       targetType: "task" as const,
       targetId: "current-task",
+      family: "interest" as const,
       value: { label: "interest", valence: 0.4 },
       intensity: 0.5,
       reason: "persist candidate identity",
@@ -215,6 +217,7 @@ describe("CharacterAffectTurnSettlementStorage", () => {
       layer: "session" as const,
       targetType: "task" as const,
       targetId: "current-task",
+      family: "interest" as const,
       value: { label: "interest", valence: 0.4 },
       intensity: 0.5,
       reason: "initial generation",
@@ -542,6 +545,178 @@ describe("CharacterAffectTurnSettlementStorage", () => {
     } finally {
       storage?.close();
       db?.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("familyなしの永続pending評価を即時隔離し、明示release後だけ新世代へ再評価する", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-family-migration-"));
+    const dbPath = path.join(directory, "settlement.db");
+    const correlationId = "turn:session-a:audit:legacy-family";
+    let storage = new CharacterAffectTurnSettlementStorage(dbPath);
+    try {
+      storage.enqueue({
+        correlationId,
+        characterId: "character-a",
+        sessionId: "session-a",
+        userMessage: "user",
+        assistantMessage: "assistant",
+        assistantMessageIndex: 1,
+        occurredAt: "2026-08-09T04:00:00.000Z",
+      });
+      storage.markReady(correlationId);
+      storage.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "affect-v1-before-family",
+        candidates: [{
+          schemaVersion: "withmate-affect-v1",
+          characterId: "character-a",
+          userId: "local-user",
+          sessionId: "session-a",
+          layer: "session",
+          targetType: "task",
+          targetId: "current-task",
+          family: "interest",
+          value: { label: "legacy free label", valence: 0.4 },
+          intensity: 0.5,
+          reason: "legacy candidate",
+          evidence: "migration test",
+          occurredAt: "2026-08-09T04:00:00.000Z",
+          idempotencyKey: `${correlationId}:0`,
+        }],
+      });
+      storage.close();
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`
+          UPDATE character_affect_turn_settlements
+          SET candidates_json = json_remove(candidates_json, '$[0].family')
+          WHERE correlation_id = ?
+        `).run(correlationId);
+      } finally {
+        db.close();
+      }
+
+      storage = new CharacterAffectTurnSettlementStorage(dbPath);
+      assert.equal(storage.listDueReadyPending("2026-08-10T00:00:00.000Z").length, 0);
+      const quarantined = storage.listQuarantined();
+      assert.equal(quarantined.length, 1);
+      assert.equal(quarantined[0]?.evaluation, null);
+      assert.equal(quarantined[0]?.lastFailure?.code, "affect_schema_version_rejected");
+      const raw = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const candidatesJson = (raw.prepare(`
+          SELECT candidates_json AS candidatesJson
+          FROM character_affect_turn_settlements WHERE correlation_id = ?
+        `).get(correlationId) as { candidatesJson: string }).candidatesJson;
+        assert.equal(JSON.parse(candidatesJson)[0].family, undefined);
+      } finally {
+        raw.close();
+      }
+
+      assert.equal(storage.releaseQuarantined(correlationId), true);
+      const released = storage.getPending(correlationId);
+      assert.equal(released?.evaluationAttempt, 1);
+      assert.equal(released?.evaluation, null);
+      storage.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 1,
+        expectedVersion: "affect-v1-after-family",
+        candidates: [{
+          schemaVersion: "withmate-affect-v1",
+          characterId: "character-a",
+          userId: "local-user",
+          sessionId: "session-a",
+          layer: "session",
+          targetType: "task",
+          targetId: "current-task",
+          family: "interest",
+          value: { label: "classified", valence: 0.4 },
+          intensity: 0.5,
+          reason: "reevaluated candidate",
+          evidence: "migration test",
+          occurredAt: "2026-08-09T04:00:00.000Z",
+          idempotencyKey: `${correlationId}:evaluation:1:0`,
+        }],
+      });
+      assert.equal(storage.getPending(correlationId)?.evaluation?.candidates[0]?.family, "interest");
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("別理由で隔離済みのfamilyなしcandidateもrelease時に破棄して新世代へ進める", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-settlement-family-release-"));
+    const dbPath = path.join(directory, "settlement.db");
+    const correlationId = "turn:session-a:audit:legacy-family-quarantined";
+    let storage = new CharacterAffectTurnSettlementStorage(dbPath);
+    try {
+      storage.enqueue({
+        correlationId,
+        characterId: "character-a",
+        sessionId: "session-a",
+        userMessage: "user",
+        assistantMessage: "assistant",
+        assistantMessageIndex: 1,
+        occurredAt: "2026-08-09T04:00:00.000Z",
+      });
+      storage.markReady(correlationId);
+      storage.saveEvaluation({
+        correlationId,
+        evaluationAttempt: 0,
+        expectedVersion: "affect-v1-before-family",
+        candidates: [{
+          schemaVersion: "withmate-affect-v1",
+          characterId: "character-a",
+          userId: "local-user",
+          sessionId: "session-a",
+          layer: "session",
+          targetType: "task",
+          targetId: "current-task",
+          family: "interest",
+          value: { label: "legacy free label", valence: 0.4 },
+          intensity: 0.5,
+          reason: "legacy candidate",
+          evidence: "migration test",
+          occurredAt: "2026-08-09T04:00:00.000Z",
+          idempotencyKey: `${correlationId}:0`,
+        }],
+      });
+      storage.close();
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        db.prepare(`
+          UPDATE character_affect_turn_settlements
+          SET candidates_json = json_remove(candidates_json, '$[0].family'),
+              quarantined_at = '2026-08-09T05:00:00.000Z',
+              last_failure_code = 'unknown_character',
+              last_failure_stage = 'appraisal',
+              last_error_name = 'Error',
+              last_error_message = 'Stored failure',
+              last_duration_ms = 1
+          WHERE correlation_id = ?
+        `).run(correlationId);
+      } finally {
+        db.close();
+      }
+
+      storage = new CharacterAffectTurnSettlementStorage(dbPath);
+      assert.equal(storage.listQuarantined()[0]?.lastFailure?.code, "unknown_character");
+      assert.equal(storage.releaseQuarantined(correlationId), true);
+      const released = storage.getPending(correlationId);
+      assert.equal(released?.quarantinedAt, null);
+      assert.equal(released?.evaluationAttempt, 1);
+      assert.equal(released?.evaluation, null);
+      storage.close();
+      storage = new CharacterAffectTurnSettlementStorage(dbPath);
+      assert.equal(storage.listQuarantined().length, 0);
+      assert.equal(storage.getPending(correlationId)?.evaluationAttempt, 1);
+    } finally {
+      storage.close();
       await rm(directory, { recursive: true, force: true });
     }
   });

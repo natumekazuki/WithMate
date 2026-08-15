@@ -12,6 +12,7 @@ import {
 } from "react";
 
 import type { MessageViewMode } from "../MessageRichText.js";
+import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
 
 import {
   SESSION_ACTION_DOCK_ID,
@@ -35,6 +36,13 @@ import { focusRovingItemByKey } from "../a11y.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
+export type ChatAdditionalDirectoryListProps = {
+  isOpen: boolean;
+  items: AdditionalDirectoryItem[];
+  isInteractionDisabled: boolean;
+  onRemove: (path: string) => void;
+};
+
 export type ChatErrorNotice = {
   id: string;
   message: string;
@@ -49,7 +57,7 @@ export type ChatErrorNotice = {
 
 export type ChatWindowProps = Omit<
   ChatScreenProps,
-  "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "errorSurface"
+  "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "supportingSurface" | "errorSurface"
 > & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
@@ -58,6 +66,7 @@ export type ChatWindowProps = Omit<
   recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
+  additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   mainContent?: ChatScreenProps["mainContent"];
@@ -270,6 +279,49 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   );
 }
 
+export function ChatAdditionalDirectoryList({
+  isOpen,
+  items,
+  isInteractionDisabled,
+  onRemove,
+}: ChatAdditionalDirectoryListProps) {
+  if (!isOpen || items.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="chat-additional-directory-surface" aria-label="許可中の追加Directory">
+      <div className="chat-additional-directory-heading">
+        <span>追加Directory</span>
+        <span className="chat-additional-directory-count">{items.length}</span>
+      </div>
+      <div className="chat-additional-directory-list">
+        {items.map((item) => (
+          <div key={item.key} className="chat-additional-directory-row" title={item.title}>
+            <span className="chat-additional-directory-copy">
+              <span className="chat-additional-directory-primary">{item.primaryLabel}</span>
+              <span className="chat-additional-directory-secondary">{item.secondaryLabel}</span>
+            </span>
+            {item.canRemove ? (
+              <button
+                type="button"
+                className="chat-additional-directory-remove"
+                onClick={() => onRemove(item.path)}
+                disabled={isInteractionDisabled}
+                aria-label={`${item.primaryLabel} を削除`}
+              >
+                ×
+              </button>
+            ) : (
+              <span className="chat-additional-directory-readonly">許可中</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // Keep every conversation surface on one chat layout. Projection builders own
 // the feature-specific props and content.
 export function ChatWindow({
@@ -280,6 +332,7 @@ export function ChatWindow({
   recoveryActions,
   isActionDockExpanded,
   composerProps,
+  additionalDirectoryListProps,
   skillPickerProps,
   compactActionDockProps,
   ...screenProps
@@ -355,6 +408,9 @@ export function ChatWindow({
         </div>
       ) : null}
       recoveryActions={recoveryActions}
+      supportingSurface={additionalDirectoryListProps ? (
+        <ChatAdditionalDirectoryList {...additionalDirectoryListProps} />
+      ) : null}
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
         <StableSessionMessageColumn
@@ -387,7 +443,12 @@ export function ChatWindow({
             aria-hidden={isActionDockExpanded}
             inert={isActionDockExpanded}
           >
-            <SessionActionDockCompactRow {...compactActionDockProps} />
+            <SessionActionDockCompactRow
+              {...compactActionDockProps}
+              showMessageViewModeControls={showMessageViewModeControls}
+              messageViewMode={messageViewMode}
+              onMessageViewModeChange={handleMessageViewModeChange}
+            />
           </div>
         </div>
       )}

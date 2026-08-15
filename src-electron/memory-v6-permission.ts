@@ -8,7 +8,16 @@ export type MemoryV6LocalUserPrincipal = {
   permissions: readonly MemoryPermission[];
 };
 
-export type MemoryV6Principal = MemoryV6LocalUserPrincipal;
+export type MemoryV6SessionBindingPrincipal = {
+  type: "session_binding";
+  bindingIdHash: string;
+  sessionId: string;
+  providerId: string;
+  characterId: string;
+  permissions: readonly MemoryPermission[];
+};
+
+export type MemoryV6Principal = MemoryV6LocalUserPrincipal | MemoryV6SessionBindingPrincipal;
 
 export const LOCAL_USER_MEMORY_PERMISSIONS: readonly MemoryPermission[] = [
   "memory.list_targets",
@@ -68,10 +77,16 @@ export function requireMemoryPermission(principal: MemoryV6Principal | null, per
   return null;
 }
 
-export function canAccessMemoryTarget(_principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {
+export function canAccessMemoryTarget(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {
   const isUserGlobalTarget = target.owner.type === "user" && target.scope.type === "global";
   const isProjectTarget = target.owner.type === "project" && target.scope.type === "project";
   const isCharacterTarget = target.owner.type === "character" && target.scope.type === "character";
   const isCharacterProjectTarget = target.owner.type === "character" && target.scope.type === "project";
-  return isUserGlobalTarget || isProjectTarget || isCharacterTarget || isCharacterProjectTarget;
+  if (!isUserGlobalTarget && !isProjectTarget && !isCharacterTarget && !isCharacterProjectTarget) {
+    return false;
+  }
+  if (principal.type === "local_user" || target.owner.type !== "character") {
+    return true;
+  }
+  return target.owner.id === principal.characterId;
 }

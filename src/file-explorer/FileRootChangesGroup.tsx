@@ -78,6 +78,7 @@ type FileRootChangesGroupProps = {
     rootId: string,
     entry: FileRootGitChangeEntry,
     scope: FileRootGitChangeScope,
+    openInWindow: boolean,
   ) => Promise<void>;
 };
 
@@ -250,7 +251,12 @@ export function FileRootChangesGroup({
                       type="button"
                       style={{ paddingLeft: `${6 + row.depth * 14}px` }}
                       disabled={!!loadingKey}
-                      onClick={() => void onOpenEntry(row.rootId, row.entry, row.scope)}
+                      onClick={(event) => void onOpenEntry(
+                        row.rootId,
+                        row.entry,
+                        row.scope,
+                        event.ctrlKey || event.metaKey,
+                      )}
                       title={row.entry.previousRelativePath
                         ? `${row.entry.previousRelativePath} → ${row.entry.relativePath}`
                         : row.entry.relativePath}

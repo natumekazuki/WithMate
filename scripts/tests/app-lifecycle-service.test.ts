@@ -88,7 +88,7 @@ test("AppLifecycleService は window-all-closed で終了不要なら app を終
   assert.deepEqual(calls, []);
 });
 
-test("AppLifecycleService は before-quit で実行中 session があり confirm が false なら終了しない", () => {
+test("AppLifecycleService は before-quit で実行中 session があり confirm が false なら終了しない", async () => {
   let prevented = false;
   const calls: string[] = [];
   const service = new AppLifecycleService({
@@ -106,9 +106,15 @@ test("AppLifecycleService は before-quit で実行中 session があり confirm
     closePersistentStores() {
       calls.push("closePersistentStores");
     },
+    async invalidateAllProviderSessionThreads() {
+      calls.push("invalidateAllProviderSessionThreads");
+    },
+    revokeAllAgentRuntimeBindings() {
+      calls.push("revokeAllAgentRuntimeBindings");
+    },
   });
 
-  service.handleBeforeQuit({
+  await service.handleBeforeQuit({
     preventDefault() {
       prevented = true;
     },
@@ -118,7 +124,7 @@ test("AppLifecycleService は before-quit で実行中 session があり confirm
   assert.deepEqual(calls, []);
 });
 
-test("AppLifecycleService は before-quit で confirm が true なら許可状態にして終了する", () => {
+test("AppLifecycleService は before-quit で confirm が true ならcleanup後に終了する", async () => {
   let prevented = false;
   const calls: string[] = [];
   const service = new AppLifecycleService({
@@ -136,21 +142,34 @@ test("AppLifecycleService は before-quit で confirm が true なら許可状�
     closePersistentStores() {
       calls.push("closePersistentStores");
     },
+    async invalidateAllProviderSessionThreads() {
+      calls.push("invalidateAllProviderSessionThreads");
+    },
+    revokeAllAgentRuntimeBindings() {
+      calls.push("revokeAllAgentRuntimeBindings");
+    },
   });
 
-  service.handleBeforeQuit({
+  await service.handleBeforeQuit({
     preventDefault() {
       prevented = true;
     },
   });
 
   assert.equal(prevented, true);
-  assert.deepEqual(calls, ["setAllowQuit", "quitApp"]);
+  assert.deepEqual(calls, [
+    "setAllowQuit",
+    "invalidateAllProviderSessionThreads",
+    "revokeAllAgentRuntimeBindings",
+    "closePersistentStores",
+    "quitApp",
+  ]);
 });
 
-test("AppLifecycleService は通常の before-quit で persistent stores を閉じる", () => {
+test("AppLifecycleService はprovider停止完了後にpersistent storesを閉じて終了する", async () => {
   let prevented = false;
   const calls: string[] = [];
+  let resolveProviderCleanup: (() => void) | null = null;
   const service = new AppLifecycleService({
     hasInFlightSessionRuns: () => false,
     getAllowQuitWithInFlightRuns: () => false,
@@ -166,14 +185,75 @@ test("AppLifecycleService は通常の before-quit で persistent stores を閉�
     closePersistentStores() {
       calls.push("closePersistentStores");
     },
+    async invalidateAllProviderSessionThreads() {
+      calls.push("invalidateAllProviderSessionThreads:start");
+      await new Promise<void>((resolve) => {
+        resolveProviderCleanup = resolve;
+      });
+      calls.push("invalidateAllProviderSessionThreads:end");
+    },
+    revokeAllAgentRuntimeBindings() {
+      calls.push("revokeAllAgentRuntimeBindings");
+    },
   });
 
-  service.handleBeforeQuit({
+  const cleanup = service.handleBeforeQuit({
     preventDefault() {
       prevented = true;
     },
   });
 
-  assert.equal(prevented, false);
-  assert.deepEqual(calls, ["closePersistentStores"]);
+  assert.equal(prevented, true);
+  assert.deepEqual(calls, ["invalidateAllProviderSessionThreads:start"]);
+
+  resolveProviderCleanup?.();
+  await cleanup;
+
+  assert.deepEqual(calls, [
+    "invalidateAllProviderSessionThreads:start",
+    "invalidateAllProviderSessionThreads:end",
+    "revokeAllAgentRuntimeBindings",
+    "closePersistentStores",
+    "quitApp",
+  ]);
+});
+
+test("AppLifecycleService はbinding revokeとpersistent store closeが失敗しても終了処理をsettleする", async () => {
+  const calls: string[] = [];
+  const service = new AppLifecycleService({
+    hasInFlightSessionRuns: () => false,
+    getAllowQuitWithInFlightRuns: () => false,
+    setAllowQuitWithInFlightRuns() {},
+    async createHomeWindow() {},
+    quitApp() {
+      calls.push("quitApp");
+    },
+    shouldQuitWhenAllWindowsClosed: () => true,
+    confirmQuitWhileRunning: () => true,
+    closePersistentStores() {
+      calls.push("closePersistentStores");
+      throw new Error("close failed");
+    },
+    async invalidateAllProviderSessionThreads() {
+      calls.push("invalidateAllProviderSessionThreads");
+    },
+    revokeAllAgentRuntimeBindings() {
+      calls.push("revokeAllAgentRuntimeBindings");
+      throw new Error("revoke failed");
+    },
+  });
+
+  await service.handleBeforeQuit({ preventDefault() {} });
+  await service.handleBeforeQuit({
+    preventDefault() {
+      assert.fail("settled cleanup must not prevent a subsequent quit request");
+    },
+  });
+
+  assert.deepEqual(calls, [
+    "invalidateAllProviderSessionThreads",
+    "revokeAllAgentRuntimeBindings",
+    "closePersistentStores",
+    "quitApp",
+  ]);
 });

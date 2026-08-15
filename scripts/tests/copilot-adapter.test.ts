@@ -4,9 +4,13 @@ import { describe, it } from "node:test";
 
 import type { PermissionRequest } from "@github/copilot-sdk";
 
-import { buildNewSession, createDefaultSessionMemory } from "../../src/app-state.js";
+import {
+  buildNewSession,
+  createDefaultSessionMemory,
+  type LiveRunStep,
+} from "../../src/app-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
-import type { ModelCatalogProvider } from "../../src/model-catalog.js";
+import type { ModelCatalogProvider, ResolvedModelSelection } from "../../src/model-catalog.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import {
   applyCopilotAssistantEvent,
@@ -38,6 +42,11 @@ import {
   toCopilotReasoningEffort,
 } from "../../src-electron/copilot-adapter.js";
 import { toProviderMetadataLogData } from "../../src-electron/provider-metadata-log.js";
+import {
+  PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+} from "../../src-electron/provider-agent-runtime-binding.js";
+import { createDisabledWorkspaceSnapshotCapture } from "../../src-electron/workspace-diff-policy.js";
 import {
   ProviderTurnError,
   type RunBackgroundStructuredPromptInput,
@@ -142,12 +151,22 @@ function createRunSessionInput(options?: {
   threadId?: string;
   model?: string;
   reasoningEffort?: RunSessionTurnInput["session"]["reasoningEffort"];
+  agentRuntimeBinding?: RunSessionTurnInput["agentRuntimeBinding"];
 }): RunSessionTurnInput {
+  const defaultAgentRuntimeBinding: NonNullable<RunSessionTurnInput["agentRuntimeBinding"]> = {
+    bindingId: "binding-default",
+    bindingReference: "opaque-reference-default",
+    providerId: "copilot",
+    executionGeneration: "generation-default",
+    transport: "env",
+    expiresAt: null,
+  };
   const {
     customAgentName = "reviewer",
     threadId = "",
     model = "gpt-4.1",
     reasoningEffort = "high",
+    agentRuntimeBinding = defaultAgentRuntimeBinding,
   } = options ?? {};
   const session = {
     ...buildNewSession({
@@ -177,6 +196,7 @@ function createRunSessionInput(options?: {
     userMessage: "hello",
     appSettings: createDefaultAppSettings(),
     attachments: [],
+    agentRuntimeBinding,
   };
 }
 
@@ -251,6 +271,491 @@ describe("CopilotAdapter env", () => {
     assert.equal(env.NODE_NO_WARNINGS, "1");
     assert.equal(env.PATH, "test-path");
     assert.equal(env.ELECTRON_RUN_AS_NODE, "1");
+  });
+
+  it("Copilot child CLIへSession generationごとのopaque referenceだけを渡す", () => {
+    const binding = {
+      bindingId: "binding-a",
+      bindingReference: "opaque-reference-a",
+      providerId: "copilot",
+      executionGeneration: "generation-a",
+      transport: "env" as const,
+      expiresAt: null,
+    };
+    const boundEnv = buildCopilotClientEnv({
+      PATH: "test-path",
+      [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: "stale-reference",
+      EMPTY: undefined,
+    }, binding);
+    const unboundEnv = buildCopilotClientEnv({
+      PATH: "test-path",
+      [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV.toLowerCase()]: "stale-reference",
+    });
+
+    assert.equal(boundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], binding.bindingReference);
+    assert.equal(boundEnv.PATH, "test-path");
+    assert.equal("EMPTY" in boundEnv, false);
+    assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], undefined);
+    assert.equal(unboundEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV.toLowerCase()], undefined);
+  });
+
+  it("Session generationごとのclientを分離しbackground clientをunboundに保つ", () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getClient(providerId: string, input: RunSessionTurnInput): {
+        client: { resolvedEnv: Record<string, string | undefined> };
+        clientKey: string;
+      };
+      getOrCreateClientByAppSettings(providerId: string, appSettings: RunSessionTurnInput["appSettings"]): {
+        resolvedEnv: Record<string, string | undefined>;
+      };
+    };
+    const before = process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV];
+    const bindingA = {
+      bindingId: "binding-a",
+      bindingReference: "opaque-reference-a",
+      providerId: "copilot",
+      executionGeneration: "generation-a",
+      transport: "env" as const,
+      expiresAt: null,
+    };
+    const bindingB = {
+      ...bindingA,
+      bindingId: "binding-b",
+      bindingReference: "opaque-reference-b",
+      executionGeneration: "generation-b",
+    };
+    const inputA = createRunSessionInput({ agentRuntimeBinding: bindingA });
+    const inputB = { ...inputA, agentRuntimeBinding: bindingB };
+
+    const clientA = adapter.getClient("copilot", inputA);
+    const clientARetry = adapter.getClient("copilot", inputA);
+    const clientB = adapter.getClient("copilot", inputB);
+    const backgroundClient = adapter.getOrCreateClientByAppSettings("copilot", inputA.appSettings);
+
+    assert.equal(clientA.client, clientARetry.client);
+    assert.notEqual(clientA.client, clientB.client);
+    assert.notEqual(clientA.clientKey, clientB.clientKey);
+    assert.equal(
+      clientA.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      bindingA.bindingReference,
+    );
+    assert.equal(
+      clientB.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      bindingB.bindingReference,
+    );
+    assert.equal(backgroundClient.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], undefined);
+    assert.equal(process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], before);
+  });
+
+  it("supported Sessionのbinding欠落をclient cache参照前に拒否する", () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, unknown>;
+      getClient(providerId: string, input: RunSessionTurnInput): unknown;
+    };
+    const input = createRunSessionInput();
+
+    assert.throws(
+      () => adapter.getClient("copilot", { ...input, agentRuntimeBinding: undefined }),
+      /requires an Agent runtime binding/,
+    );
+    assert.equal(adapter.clients.size, 0);
+  });
+
+  it("Session invalidationでbound clientを停止しbackground clientを維持する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]> }>;
+      sessions: Map<string, {
+        session: { disconnect(): Promise<void> };
+        settingsKey: string;
+        backgroundTasks: Map<string, LiveBackgroundTask>;
+      }>;
+      clientKeysBySession: Map<string, string>;
+      invalidateSessionThread(sessionId: string): Promise<void>;
+    };
+    let disconnected = false;
+    let boundStopped = false;
+    let backgroundStopped = false;
+    adapter.clients.set("bound", {
+      stop: async () => {
+        boundStopped = true;
+        return [];
+      },
+    });
+    adapter.clients.set("background", {
+      stop: async () => {
+        backgroundStopped = true;
+        return [];
+      },
+    });
+    adapter.sessions.set("session-a", {
+      session: {
+        disconnect: async () => {
+          disconnected = true;
+        },
+      },
+      settingsKey: "settings",
+      backgroundTasks: new Map(),
+    });
+    adapter.clientKeysBySession.set("session-a", "bound");
+
+    await adapter.invalidateSessionThread("session-a");
+
+    assert.equal(disconnected, true);
+    assert.equal(boundStopped, true);
+    assert.equal(backgroundStopped, false);
+    assert.deepEqual([...adapter.clients.keys()], ["background"]);
+    assert.equal(adapter.clientKeysBySession.has("session-a"), false);
+  });
+
+  it("Session disconnectがsettleしなくても期限後にbound client停止へ進む", async () => {
+    const adapter = new CopilotAdapter({ sessionDisconnectTimeoutMs: 0 }) as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]> }>;
+      sessions: Map<string, {
+        session: { disconnect(): Promise<void> };
+        settingsKey: string;
+        backgroundTasks: Map<string, LiveBackgroundTask>;
+      }>;
+      clientKeysBySession: Map<string, string>;
+      invalidateSessionThread(sessionId: string): Promise<void>;
+    };
+    let stopped = false;
+    adapter.clients.set("bound", {
+      stop: async () => {
+        stopped = true;
+        return [];
+      },
+    });
+    adapter.sessions.set("session-a", {
+      session: { disconnect: () => new Promise<void>(() => undefined) },
+      settingsKey: "settings",
+      backgroundTasks: new Map(),
+    });
+    adapter.clientKeysBySession.set("session-a", "bound");
+
+    await adapter.invalidateSessionThread("session-a");
+
+    assert.equal(stopped, true);
+    assert.equal(adapter.clients.size, 0);
+  });
+
+  it("Session invalidation中の同一key再接続を旧cleanupで削除しない", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]> }>;
+      sessions: Map<string, {
+        session: { disconnect(): Promise<void> };
+        settingsKey: string;
+        backgroundTasks: Map<string, LiveBackgroundTask>;
+      }>;
+      clientKeysBySession: Map<string, string>;
+      invalidateSessionThread(sessionId: string): Promise<void>;
+    };
+    let releaseDisconnect = () => undefined;
+    const disconnectBarrier = new Promise<void>((resolve) => {
+      releaseDisconnect = resolve;
+    });
+    let signalDisconnectStarted = () => undefined;
+    const disconnectStarted = new Promise<void>((resolve) => {
+      signalDisconnectStarted = resolve;
+    });
+    let oldClientStopped = false;
+    let newClientStopped = false;
+    const oldClient = {
+      stop: async () => {
+        oldClientStopped = true;
+        return [];
+      },
+    };
+    const newClient = {
+      stop: async () => {
+        newClientStopped = true;
+        return [];
+      },
+    };
+    const newCachedSession = {
+      session: { disconnect: async () => undefined },
+      settingsKey: "new-settings",
+      backgroundTasks: new Map<string, LiveBackgroundTask>(),
+    };
+    adapter.clients.set("bound", oldClient);
+    adapter.sessions.set("session-a", {
+      session: {
+        disconnect: () => {
+          signalDisconnectStarted();
+          return disconnectBarrier;
+        },
+      },
+      settingsKey: "old-settings",
+      backgroundTasks: new Map(),
+    });
+    adapter.clientKeysBySession.set("session-a", "bound");
+
+    const invalidation = adapter.invalidateSessionThread("session-a");
+    assert.equal(adapter.clients.has("bound"), false);
+    assert.equal(adapter.sessions.has("session-a"), false);
+    assert.equal(adapter.clientKeysBySession.has("session-a"), false);
+
+    adapter.clients.set("bound", newClient);
+    adapter.sessions.set("session-a", newCachedSession);
+    adapter.clientKeysBySession.set("session-a", "bound");
+    await disconnectStarted;
+    releaseDisconnect();
+    await invalidation;
+
+    assert.equal(oldClientStopped, true);
+    assert.equal(newClientStopped, false);
+    assert.equal(adapter.clients.get("bound"), newClient);
+    assert.equal(adapter.sessions.get("session-a"), newCachedSession);
+    assert.equal(adapter.clientKeysBySession.get("session-a"), "bound");
+  });
+
+  it("recoverable connection retryではclientを再生成して同じbinding generationを使う", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getClient(providerId: string, input: RunSessionTurnInput): {
+        client: { resolvedEnv: Record<string, string | undefined> };
+        clientKey: string;
+      };
+      clientKeysBySession: Map<string, string>;
+      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
+    };
+    const binding = {
+      bindingId: "binding-a",
+      bindingReference: "opaque-reference-a",
+      providerId: "copilot",
+      executionGeneration: "generation-a",
+      transport: "env" as const,
+      expiresAt: null,
+    };
+    const input = createRunSessionInput({ agentRuntimeBinding: binding });
+    const first = adapter.getClient("copilot", input);
+    adapter.clientKeysBySession.set(input.session.id, first.clientKey);
+
+    await adapter.resetRecoverableConnection(input);
+    const retried = adapter.getClient("copilot", input);
+
+    assert.equal(retried.clientKey, first.clientKey);
+    assert.notEqual(retried.client, first.client);
+    assert.equal(
+      retried.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      binding.bindingReference,
+    );
+  });
+
+  it("session bootstrap失敗時のrecoverable retryでもcache済みclientを再生成する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      getClient(providerId: string, input: RunSessionTurnInput): {
+        client: { resolvedEnv: Record<string, string | undefined> };
+        clientKey: string;
+      };
+      clients: Map<string, unknown>;
+      clientKeysBySession: Map<string, string>;
+      resetRecoverableConnection(input: RunSessionTurnInput): Promise<void>;
+    };
+    const binding = {
+      bindingId: "binding-a",
+      bindingReference: "opaque-reference-a",
+      providerId: "copilot",
+      executionGeneration: "generation-a",
+      transport: "env" as const,
+      expiresAt: null,
+    };
+    const input = createRunSessionInput({ agentRuntimeBinding: binding });
+    const first = adapter.getClient("copilot", input);
+
+    assert.equal(adapter.clientKeysBySession.has(input.session.id), false);
+    assert.equal(adapter.clients.has(first.clientKey), true);
+
+    await adapter.resetRecoverableConnection(input);
+    const retried = adapter.getClient("copilot", input);
+
+    assert.equal(retried.clientKey, first.clientKey);
+    assert.notEqual(retried.client, first.client);
+    assert.equal(
+      retried.client.resolvedEnv[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
+      binding.bindingReference,
+    );
+  });
+
+  it("session bootstrap失敗前にclient ownershipをSessionへ関連付ける", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clientKeysBySession: Map<string, string>;
+      getClient(): { client: unknown; clientKey: string };
+      getSession(input: RunSessionTurnInput, prompt: ProviderPromptComposition): Promise<unknown>;
+    };
+    adapter.getClient = () => ({
+      client: {
+        createSession: async () => {
+          throw new Error("bootstrap failed");
+        },
+        resumeSession: async () => {
+          throw new Error("bootstrap failed");
+        },
+      },
+      clientKey: "bootstrap-client",
+    });
+    const input = createRunSessionInput({ threadId: "" });
+
+    await assert.rejects(() => adapter.getSession(input, EMPTY_PROMPT), /bootstrap failed/);
+
+    assert.equal(adapter.clientKeysBySession.get(input.session.id), "bootstrap-client");
+  });
+
+  it("provider-wide invalidationで全sessionとclientを停止する", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]> }>;
+      sessions: Map<string, {
+        session: { disconnect(): Promise<void> };
+        settingsKey: string;
+        backgroundTasks: Map<string, LiveBackgroundTask>;
+        unsubscribeBackgroundObserver?: () => void;
+      }>;
+      clientKeysBySession: Map<string, string>;
+      invalidateAllSessionThreads(): Promise<void>;
+    };
+    let disconnectCount = 0;
+    let stopCount = 0;
+    adapter.clients.set("bound", {
+      stop: async () => {
+        stopCount += 1;
+        return [];
+      },
+    });
+    adapter.clients.set("background", {
+      stop: async () => {
+        stopCount += 1;
+        return [];
+      },
+    });
+    adapter.sessions.set("session-a", {
+      session: {
+        disconnect: async () => {
+          disconnectCount += 1;
+        },
+      },
+      settingsKey: "settings",
+      backgroundTasks: new Map(),
+    });
+    adapter.clientKeysBySession.set("session-a", "bound");
+
+    await adapter.invalidateAllSessionThreads();
+
+    assert.equal(disconnectCount, 1);
+    assert.equal(stopCount, 2);
+    assert.equal(adapter.sessions.size, 0);
+    assert.equal(adapter.clients.size, 0);
+    assert.equal(adapter.clientKeysBySession.size, 0);
+  });
+
+  it("provider-wide invalidationはdisconnectがsettleしなくても完了する", async () => {
+    const adapter = new CopilotAdapter({ sessionDisconnectTimeoutMs: 0 }) as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]> }>;
+      sessions: Map<string, {
+        session: { disconnect(): Promise<void> };
+        settingsKey: string;
+        backgroundTasks: Map<string, LiveBackgroundTask>;
+      }>;
+      invalidateAllSessionThreads(): Promise<void>;
+    };
+    let stopped = false;
+    adapter.clients.set("bound", {
+      stop: async () => {
+        stopped = true;
+        return [];
+      },
+    });
+    adapter.sessions.set("session-a", {
+      session: { disconnect: () => new Promise<void>(() => undefined) },
+      settingsKey: "settings",
+      backgroundTasks: new Map(),
+    });
+
+    await adapter.invalidateAllSessionThreads();
+
+    assert.equal(stopped, true);
+    assert.equal(adapter.sessions.size, 0);
+    assert.equal(adapter.clients.size, 0);
+  });
+
+  it("provider-wide invalidationでgraceful stopが期限超過したclientをforce stopする", async () => {
+    const adapter = new CopilotAdapter({ clientStopTimeoutMs: 0 }) as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]>; forceStop(): Promise<void> }>;
+      invalidateAllSessionThreads(): Promise<void>;
+    };
+    let forceStopped = false;
+    adapter.clients.set("bound", {
+      stop: () => new Promise<Error[]>(() => undefined),
+      forceStop: async () => {
+        forceStopped = true;
+      },
+    });
+
+    await adapter.invalidateAllSessionThreads();
+
+    assert.equal(forceStopped, true);
+    assert.equal(adapter.clients.size, 0);
+  });
+
+  it("provider-wide invalidationはforce stopがsettleしなくてもclientを解放する", async () => {
+    const adapter = new CopilotAdapter({ clientStopTimeoutMs: 0 }) as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]>; forceStop(): Promise<void> }>;
+      invalidateAllSessionThreads(): Promise<void>;
+    };
+    let forceStopCount = 0;
+    adapter.clients.set("never-settles", {
+      stop: () => new Promise<Error[]>(() => undefined),
+      forceStop: () => {
+        forceStopCount += 1;
+        return new Promise<void>(() => undefined);
+      },
+    });
+
+    await adapter.invalidateAllSessionThreads();
+
+    assert.equal(forceStopCount, 1);
+    assert.equal(adapter.clients.size, 0);
+  });
+
+  it("provider-wide invalidationはforce stopの同期throwでもclientを解放する", async () => {
+    const adapter = new CopilotAdapter({ clientStopTimeoutMs: 0 }) as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]>; forceStop(): Promise<void> }>;
+      invalidateAllSessionThreads(): Promise<void>;
+    };
+    adapter.clients.set("force-throws", {
+      stop: async () => [new Error("graceful cleanup failed")],
+      forceStop: () => {
+        throw new Error("force cleanup failed");
+      },
+    });
+
+    await adapter.invalidateAllSessionThreads();
+
+    assert.equal(adapter.clients.size, 0);
+  });
+
+  it("provider-wide invalidationでgraceful stopが失敗したclientをforce stopする", async () => {
+    const adapter = new CopilotAdapter() as unknown as {
+      clients: Map<string, { stop(): Promise<Error[]>; forceStop(): Promise<void> }>;
+      invalidateAllSessionThreads(): Promise<void>;
+    };
+    const forceStopped: string[] = [];
+    adapter.clients.set("reported-error", {
+      stop: async () => [new Error("graceful cleanup failed")],
+      forceStop: async () => {
+        forceStopped.push("reported-error");
+      },
+    });
+    adapter.clients.set("rejected", {
+      stop: async () => {
+        throw new Error("graceful cleanup rejected");
+      },
+      forceStop: async () => {
+        forceStopped.push("rejected");
+      },
+    });
+
+    await adapter.invalidateAllSessionThreads();
+
+    assert.deepEqual(forceStopped.sort(), ["rejected", "reported-error"]);
+    assert.equal(adapter.clients.size, 0);
   });
 
   it("Copilot session は設定が同じならcacheを再利用する", async () => {
@@ -1220,6 +1725,206 @@ describe("CopilotAdapter env", () => {
   });
 });
 
+it("Copilot final projectionはbinding referenceを除去しlogical promptは変更しない", async () => {
+  const bindingReference = "opaque-reference-copilot-redaction-probe";
+  const input = createRunSessionInput({
+    agentRuntimeBinding: {
+      bindingId: "binding-redaction",
+      bindingReference,
+      providerId: "copilot",
+      executionGeneration: "generation-redaction",
+      transport: "env",
+      expiresAt: null,
+    },
+  });
+  const prompt: ProviderPromptComposition = {
+    ...EMPTY_PROMPT,
+    inputBodyText: `user supplied ${bindingReference}`,
+    logicalPrompt: {
+      ...EMPTY_PROMPT.logicalPrompt,
+      inputText: `user supplied ${bindingReference}`,
+      composedText: `user supplied ${bindingReference}`,
+    },
+  };
+  const steps = new Map<string, LiveRunStep>([["command-1", {
+    id: "command-1",
+    type: "command_execution",
+    summary: "env",
+    details: `secret=${bindingReference}`,
+    status: "completed",
+  }]]);
+  const rawItems = buildCopilotStableRawItems([{
+    type: "assistant.message",
+    timestamp: new Date().toISOString(),
+    data: {
+      messageId: "message-1",
+      content: `answer ${bindingReference}`,
+    },
+  } as never], input.session.workspacePath);
+  const disabledSnapshot = createDisabledWorkspaceSnapshotCapture();
+  const selection: ResolvedModelSelection = {
+    requestedModel: input.session.model,
+    resolvedModel: input.session.model,
+    requestedReasoningEffort: input.session.reasoningEffort,
+    resolvedReasoningEffort: input.session.reasoningEffort,
+  };
+  const adapter = new CopilotAdapter() as unknown as {
+    buildTurnResult(
+      binding: RunSessionTurnInput["agentRuntimeBinding"],
+      promptValue: ProviderPromptComposition,
+      attachments: never[],
+      threadId: string,
+      assistantText: string,
+      lastAssistantText: string,
+      liveSteps: Map<string, LiveRunStep>,
+      usage: null,
+      rawItemsValue: ReturnType<typeof buildCopilotStableRawItems>,
+      workspacePath: string,
+      session: RunSessionTurnInput["session"],
+      providerCatalog: RunSessionTurnInput["providerCatalog"],
+      selectionValue: ResolvedModelSelection,
+      beforeSnapshot: Map<string, string>,
+      beforeSnapshotStats: ReturnType<typeof createDisabledWorkspaceSnapshotCapture>["stats"],
+      providerQuotaTelemetry: null,
+    ): Promise<RunSessionTurnResult>;
+  };
+
+  const result = await adapter.buildTurnResult(
+    input.agentRuntimeBinding,
+    prompt,
+    [],
+    "thread-redaction",
+    `answer ${bindingReference}`,
+    `answer ${bindingReference}`,
+    steps,
+    null,
+    rawItems,
+    input.session.workspacePath,
+    input.session,
+    input.providerCatalog,
+    selection,
+    disabledSnapshot.snapshot,
+    disabledSnapshot.stats,
+    null,
+  );
+
+  assert.match(result.logicalPrompt.composedText, new RegExp(bindingReference));
+  assert.match(JSON.stringify(result.transportPayload), new RegExp(bindingReference));
+  assert.doesNotMatch(JSON.stringify({
+    assistantText: result.assistantText,
+    lastNonEmptyAssistantMessageText: result.lastNonEmptyAssistantMessageText,
+    artifact: result.artifact,
+    operations: result.operations,
+    rawItemsJson: result.rawItemsJson,
+    providerMetadata: result.providerMetadata,
+  }), new RegExp(bindingReference));
+  assert.match(result.assistantText, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+});
+
+it("Copilot bootstrap失敗projectionはbinding referenceを除去しlogical promptは変更しない", async () => {
+  const bindingReference = "opaque-reference-copilot-bootstrap-redaction-probe";
+  const input = createRunSessionInput({
+    agentRuntimeBinding: {
+      bindingId: "binding-bootstrap-redaction",
+      bindingReference,
+      providerId: "copilot",
+      executionGeneration: "generation-bootstrap-redaction",
+      transport: "env",
+      expiresAt: null,
+    },
+  });
+  const prompt: ProviderPromptComposition = {
+    ...EMPTY_PROMPT,
+    inputBodyText: `user supplied ${bindingReference}`,
+    logicalPrompt: {
+      ...EMPTY_PROMPT.logicalPrompt,
+      inputText: `user supplied ${bindingReference}`,
+      composedText: `user supplied ${bindingReference}`,
+    },
+  };
+  const adapter = new CopilotAdapter() as unknown as {
+    getSession(): Promise<never>;
+    runSessionTurnOnce(
+      inputValue: RunSessionTurnInput,
+      promptValue: ProviderPromptComposition,
+    ): Promise<RunSessionTurnResult>;
+  };
+  adapter.getSession = async () => {
+    throw new Error(`bootstrap failed: ${bindingReference}`);
+  };
+
+  await assert.rejects(
+    () => adapter.runSessionTurnOnce(input, prompt),
+    (error: unknown) => {
+      assert.ok(error instanceof ProviderTurnError);
+      assert.doesNotMatch(error.message, new RegExp(bindingReference));
+      assert.match(error.message, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+      assert.match(error.partialResult.logicalPrompt.composedText, new RegExp(bindingReference));
+      assert.match(JSON.stringify(error.partialResult.transportPayload), new RegExp(bindingReference));
+      assert.doesNotMatch(error.partialResult.rawItemsJson, new RegExp(bindingReference));
+      assert.match(error.partialResult.rawItemsJson, new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
+      return true;
+    },
+  );
+});
+
+it("Session完了後のquota telemetry停止はturn resultを待たせない", async () => {
+  const input = createRunSessionInput();
+  const prompt = EMPTY_PROMPT;
+  const listeners = new Set<(event: { type: string; data: Record<string, unknown> }) => void>();
+  const session = {
+    sessionId: "thread-quota-background",
+    on(listener: (event: { type: string; data: Record<string, unknown> }) => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    async send() {
+      for (const listener of listeners) {
+        listener({ type: "session.idle", data: {} });
+      }
+    },
+    async abort() {},
+  };
+  let quotaFetchCalls = 0;
+  const adapter = new CopilotAdapter() as unknown as {
+    getSession(): Promise<{ session: typeof session; selection: ResolvedModelSelection }>;
+    fetchProviderQuotaTelemetry(): Promise<never>;
+    buildTurnResult(): Promise<RunSessionTurnResult>;
+    runSessionTurnOnce(
+      inputValue: RunSessionTurnInput,
+      promptValue: ProviderPromptComposition,
+    ): Promise<RunSessionTurnResult>;
+  };
+  adapter.getSession = async () => ({
+    session,
+    selection: {
+      requestedModel: "gpt-4.1",
+      requestedReasoningEffort: "high",
+      resolvedModel: "gpt-4.1",
+      resolvedReasoningEffort: "high",
+      modelFallbackApplied: false,
+      reasoningFallbackApplied: false,
+    },
+  });
+  adapter.fetchProviderQuotaTelemetry = () => {
+    quotaFetchCalls += 1;
+    return new Promise<never>(() => undefined);
+  };
+  adapter.buildTurnResult = async () => createPartialResult({
+    threadId: session.sessionId,
+    assistantText: "完了",
+  });
+
+  const outcome = await Promise.race([
+    adapter.runSessionTurnOnce(input, prompt),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 50)),
+  ]);
+
+  assert.notEqual(outcome, "timeout");
+  assert.equal(quotaFetchCalls, 0);
+  assert.equal((outcome as RunSessionTurnResult).assistantText, "完了");
+});
+
 describe("CopilotAdapter session settings", () => {
   it("max / ultra は Copilot SDK 境界で拒否する", () => {
     assert.throws(() => toCopilotReasoningEffort("max"), /max/);
@@ -1287,6 +1992,7 @@ describe("CopilotAdapter session settings", () => {
 
   it("provider-controlled permission handler は approval callback 経由の approve / deny と handler 不在を legacy kind へ橋渡しする", async () => {
     const approvedInput = createRunSessionInput();
+    const bindingReference = approvedInput.agentRuntimeBinding?.bindingReference ?? "";
     approvedInput.session.approvalMode = "on-request";
     const approvalRequests: unknown[] = [];
     approvedInput.onApprovalRequest = async (request) => {
@@ -1297,10 +2003,16 @@ describe("CopilotAdapter session settings", () => {
 
     assert.ok(approvedSettings.config.onPermissionRequest);
     const readResult = await approvedSettings.config.onPermissionRequest?.(createReadPermissionRequest(), { sessionId: "session-1" });
-    const approvedWriteResult = await approvedSettings.config.onPermissionRequest?.(createWritePermissionRequest(), { sessionId: "session-1" });
+    const approvedWriteResult = await approvedSettings.config.onPermissionRequest?.({
+      ...createWritePermissionRequest(),
+      intention: `Create ${bindingReference}`,
+      fileName: `F:/repo/${bindingReference}.txt`,
+    } as PermissionRequest, { sessionId: "session-1" });
     assert.deepEqual(readResult, { kind: "approve-once" });
     assert.deepEqual(approvedWriteResult, { kind: "approve-once" });
     assert.equal(approvalRequests.length, 1);
+    assert.doesNotMatch(JSON.stringify(approvalRequests), new RegExp(bindingReference));
+    assert.match(JSON.stringify(approvalRequests), new RegExp(PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER));
 
     const deniedInput = createRunSessionInput();
     deniedInput.session.approvalMode = "on-request";

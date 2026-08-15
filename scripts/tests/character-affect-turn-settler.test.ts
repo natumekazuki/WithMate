@@ -30,7 +30,13 @@ function context(version: string): CharacterContextResponse {
     characterId: "character-a",
     sessionId: "session-a",
     baseline: { definitionSha256: "sha", snapshotAt: "2026-08-09T00:00:00.000Z" },
-    affect: { mode: "active", effective: [], version, updatedAt: null },
+    affect: {
+      mode: "active",
+      effective: [],
+      evaluatedAt: "2026-08-09T04:00:00.000Z",
+      version,
+      updatedAt: null,
+    },
     memory: { items: [], updatedAt: null },
     scope: { userId: "local-user", characterId: "character-a", sessionId: "session-a" },
   };
@@ -45,6 +51,7 @@ function candidate(idempotencyKey: string, reason = "stable candidate"): AffectE
     layer: "session",
     targetType: "task",
     targetId: "current-task",
+    family: "interest",
     value: { label: "interest", valence: 0.4 },
     intensity: 0.5,
     reason,
@@ -203,6 +210,52 @@ describe("settleCharacterAffectTurnWithRetry", () => {
     assert.equal(drainCalls, 1);
     assert.equal(scheduled.tasks.length, 0);
     scheduler.dispose();
+  });
+
+  it("provider評価中にSession ownerが消えた場合はappraiseせずpendingを破棄する", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-affect-owner-recheck-"));
+    const storage = new CharacterAffectTurnSettlementStorage(path.join(directory, "settlement.db"));
+    const correlationId = "turn:session-a:audit:owner-recheck";
+    let appraisalCount = 0;
+    try {
+      enqueue(storage, correlationId);
+      const result = await settleCharacterAffectTurnWithRetry({
+        correlationId,
+        getPending: () => storage.getPending(correlationId),
+        async getContext() {
+          return context("v-owner-recheck");
+        },
+        async evaluate(_current, idempotencyPrefix) {
+          return [candidate(`${idempotencyPrefix}:0`)];
+        },
+        persistEvaluation(input) {
+          storage.saveEvaluation({ correlationId, ...input });
+        },
+        async appraise() {
+          appraisalCount += 1;
+          return success();
+        },
+        recordAppraisalFailure(input) {
+          return storage.recordAppraisalFailure({ correlationId, ...input });
+        },
+        async validateOwner() {
+          return false;
+        },
+        markDiscarded() {
+          storage.markDiscarded(correlationId);
+        },
+        markSettled() {
+          storage.markSettled(correlationId);
+        },
+      });
+
+      assert.deepEqual(result, { status: "settled", appraisal: null });
+      assert.equal(appraisalCount, 0);
+      assert.equal(storage.getPending(correlationId), null);
+    } finally {
+      storage.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it("unknownからversion conflictになったpendingを予約済みdrainでrestartなしにsettledへ収束させる", async () => {

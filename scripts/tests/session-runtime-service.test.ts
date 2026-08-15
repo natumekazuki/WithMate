@@ -38,6 +38,17 @@ import {
 import type { ConversationTimingContext } from "../../src-electron/conversation-timing.js";
 import type { CharacterContextResponse } from "../../src/character-context/character-context-contract.js";
 import { CharacterAffectTurnSettlementStorage } from "../../src-electron/character-affect-turn-settlement-storage.js";
+import type { SessionTurnTerminalCommit } from "../../src-electron/session-turn-terminal-commit.js";
+
+async function waitForCondition(condition: () => boolean, message: string): Promise<void> {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (condition()) {
+      return;
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail(message);
+}
 
 function createSession(overrides?: Partial<Session>): Session {
   return {
@@ -177,13 +188,16 @@ describe("SessionRuntimeService stale retry helpers", () => {
 });
 describe("SessionRuntimeService", () => {
 
-  it("各turnで最新Character contextを取得し、完了後appraisalを待ってから返す", async () => {
+  it("各turnで最新Character contextを取得し、terminal commit後はready・audit・appraisalを待たずに返す", async () => {
     let storedSession = createSession();
     let contextVersion = 0;
     let auditId = 0;
+    let completionNotificationCount = 0;
     const appraisalCorrelations: string[] = [];
     const requestCorrelations: string[] = [];
     const callOrder: string[] = [];
+    const timingCompletionSnapshots: Array<string | null> = [];
+    let lastCommittedAt: string | null = null;
     let blockCompletedAudit = false;
     let releaseCompletedAudit: (() => void) | null = null;
     const adapter: ProviderCodingAdapter = {
@@ -213,6 +227,7 @@ describe("SessionRuntimeService", () => {
       affect: {
         mode: "active",
         effective: [],
+        evaluatedAt: "2026-08-09T00:00:00.000Z",
         version: `affect-v1-${version}`,
         updatedAt: "2026-08-09T00:00:00.000Z",
       },
@@ -228,10 +243,12 @@ describe("SessionRuntimeService", () => {
         storedSession = next;
         return next;
       },
-      upsertTerminalSession(next) {
+      upsertTerminalSession(next, terminalCommit) {
         if (next.status === "idle" && next.messages.at(-1)?.role === "assistant") {
-          callOrder.push("completed-upsert");
+          callOrder.push(`completed-upsert:${terminalCommit.auditLogId}`);
+          assert.equal(terminalCommit.assistantMessageSeq, next.messages.length - 1);
         }
+        lastCommittedAt = terminalCommit.completedAt;
         storedSession = next;
         return next;
       },
@@ -254,6 +271,10 @@ describe("SessionRuntimeService", () => {
       resolveProjectMemoryEntriesForPrompt() {
         return [];
       },
+      resolveConversationTimingContext() {
+        timingCompletionSnapshots.push(lastCommittedAt);
+        return null;
+      },
       resolveCharacterContext() {
         contextVersion += 1;
         return context(contextVersion);
@@ -262,10 +283,14 @@ describe("SessionRuntimeService", () => {
         assert.equal(input.assistantMessageIndex, input.session.messages.length - 1);
         callOrder.push(`queued:${input.correlationId}`);
       },
+      markCompletedTurnAppraisalReady(correlationId) {
+        callOrder.push(`pending-ready:${correlationId}`);
+      },
+      requireDurableCompletedTurnAppraisal: true,
       async appraiseCompletedTurn(input) {
-        await Promise.resolve();
         appraisalCorrelations.push(input.correlationId);
-        callOrder.push("appraised");
+        callOrder.push("appraisal-started");
+        await new Promise<void>(() => undefined);
       },
       createAuditLog(input) {
         const requestMetadata = input.providerMetadata.find((entry) => entry.kind === "session_turn_request");
@@ -278,8 +303,11 @@ describe("SessionRuntimeService", () => {
         auditId += 1;
         return { ...createAuditLogBase(input), id: auditId };
       },
-      updateAuditLog(_id, input) {
-        if (blockCompletedAudit && input.phase === "completed") {
+      updateAuditLog(id, input) {
+        if (input.phase === "completed" && callOrder.at(-1) !== `terminal-audit:${id}`) {
+          callOrder.push(`terminal-audit:${id}`);
+        }
+        if (blockCompletedAudit && id === 3 && input.phase === "completed") {
           return new Promise<void>((resolve) => {
             releaseCompletedAudit = resolve;
           });
@@ -302,6 +330,10 @@ describe("SessionRuntimeService", () => {
       broadcastLiveSessionRun() {},
       resolvePendingApprovalRequest() {},
       resolvePendingElicitationRequest() {},
+      notifySessionTurnCompleted() {
+        completionNotificationCount += 1;
+        callOrder.push(`completion-notification:${completionNotificationCount}`);
+      },
       currentTimestampLabel,
     });
 
@@ -311,12 +343,22 @@ describe("SessionRuntimeService", () => {
       submitSource: "composer",
     });
     callOrder.push("first-returned");
+    const firstCompletedAt = lastCommittedAt;
+    assert.equal(service.isRunInFlight(storedSession.id), false);
+    assert.equal(callOrder.some((entry) => entry === `pending-ready:turn:${storedSession.id}:audit:1`), false);
+    assert.equal(callOrder.some((entry) => entry === "terminal-audit:1"), false);
     await service.runSessionTurn(storedSession.id, {
       userMessage: "second",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b2",
       submitSource: "retry",
     });
     callOrder.push("second-returned");
+
+    await waitForCondition(
+      () => appraisalCorrelations.length === 2
+        && callOrder.filter((entry) => entry.startsWith("terminal-audit:")).length === 2,
+      "ready・appraisal・terminal auditがbackgroundで完了すること",
+    );
 
     assert.equal(contextVersion, 2);
     assert.deepEqual(requestCorrelations, [
@@ -327,36 +369,38 @@ describe("SessionRuntimeService", () => {
       `turn:${storedSession.id}:audit:1`,
       `turn:${storedSession.id}:audit:2`,
     ]);
-    assert.deepEqual(callOrder, [
-      `queued:turn:${storedSession.id}:audit:1`,
-      "completed-upsert",
-      "appraised",
-      "first-returned",
-      `queued:turn:${storedSession.id}:audit:2`,
-      "completed-upsert",
-      "appraised",
-      "second-returned",
-    ]);
+    assert.equal(timingCompletionSnapshots[0], null);
+    assert.equal(timingCompletionSnapshots[1], firstCompletedAt);
+    for (const [auditId, returned] of [
+      [1, "first-returned"],
+      [2, "second-returned"],
+    ] as const) {
+      const correlationId = `turn:${storedSession.id}:audit:${auditId}`;
+      assert.ok(callOrder.indexOf(`completed-upsert:${auditId}`) < callOrder.indexOf(`completion-notification:${auditId}`));
+      assert.ok(callOrder.indexOf(`completion-notification:${auditId}`) < callOrder.indexOf(returned));
+      assert.ok(callOrder.indexOf(returned) < callOrder.indexOf(`pending-ready:${correlationId}`));
+      assert.ok(callOrder.indexOf(returned) < callOrder.indexOf(`terminal-audit:${auditId}`));
+    }
+    assert.equal(callOrder.filter((entry) => entry === "appraisal-started").length, 2);
 
     blockCompletedAudit = true;
     const completingRun = service.runSessionTurn(storedSession.id, {
       userMessage: "third",
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b3",
     });
-    for (let attempt = 0; attempt < 20 && !releaseCompletedAudit; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    const thirdResult = await completingRun;
+    callOrder.push("third-returned");
+    await waitForCondition(() => Boolean(releaseCompletedAudit), "provider完了後のbackground auditへ到達すること");
     assert.ok(releaseCompletedAudit, "provider完了後のaudit終了処理へ到達すること");
-    await assert.rejects(
-      service.runSessionTurn(storedSession.id, {
-        userMessage: "cleanup中の再送",
-        clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b4",
-      }),
-      /まだ実行中/,
-    );
+    assert.equal(thirdResult.runState, "idle");
+    assert.equal(service.isRunInFlight(storedSession.id), false);
+    const followingResult = await service.runSessionTurn(storedSession.id, {
+      userMessage: "background audit中の再送",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94b4",
+    });
+    assert.equal(followingResult.runState, "idle");
     blockCompletedAudit = false;
     releaseCompletedAudit();
-    await completingRun;
   });
 
   it("terminal audit fallback はsession turn correlationだけを保持する", () => {
@@ -479,6 +523,7 @@ describe("SessionRuntimeService", () => {
         resolvePendingApprovalRequest() {},
         resolvePendingElicitationRequest() {},
         currentTimestampLabel,
+        appraisalReadyRetryMs: 0,
       });
       return { service, completedWrites, callOrder };
     };
@@ -507,6 +552,10 @@ describe("SessionRuntimeService", () => {
       const successfulResult = await successful.service.runSessionTurn(successfulSession.id, {
         userMessage: "保存して",
       });
+      await waitForCondition(
+        () => storage.listReadyPending().length === 1,
+        "terminal commit後にbackgroundでpendingがready化されること",
+      );
       const pending = storage.listPending();
 
       assert.equal(successfulResult.runState, "idle", successfulResult.messages.at(-1)?.text);
@@ -529,6 +578,11 @@ describe("SessionRuntimeService", () => {
 
       const readinessFailureSession = createSession();
       let appraisalCalls = 0;
+      let readinessAttempts = 0;
+      let releaseReadiness = () => undefined;
+      const readinessBarrier = new Promise<void>((resolve) => {
+        releaseReadiness = resolve;
+      });
       const readinessFailure = createService(
         readinessFailureSession,
         (input) => {
@@ -543,21 +597,76 @@ describe("SessionRuntimeService", () => {
           });
         },
         undefined,
-        () => {
-          throw new Error("temporary readiness failure");
+        async (correlationId) => {
+          readinessAttempts += 1;
+          if (readinessAttempts === 1) {
+            throw new Error("temporary readiness failure");
+          }
+          await readinessBarrier;
+          storage.markReady(correlationId);
         },
         () => {
           appraisalCalls += 1;
         },
       );
-      const readinessFailureResult = await readinessFailure.service.runSessionTurn(readinessFailureSession.id, {
+      let readinessRunResolved = false;
+      const readinessFailureRun = readinessFailure.service.runSessionTurn(readinessFailureSession.id, {
         userMessage: "ready化に失敗しても完了を維持して",
       });
+      void readinessFailureRun.then(() => {
+        readinessRunResolved = true;
+      });
+
+      await waitForCondition(() => readinessAttempts >= 2, "background ready retryが2回目へ進むこと");
+
+      assert.equal(readinessRunResolved, true);
+      assert.equal(appraisalCalls, 0);
+      assert.equal(storage.getPending(`turn:${readinessFailureSession.id}:audit:1`)?.readyAt, null);
+
+      releaseReadiness();
+      const readinessFailureResult = await readinessFailureRun;
+      await waitForCondition(() => appraisalCalls === 1, "ready成功後にappraisal schedulerが起動すること");
 
       assert.equal(readinessFailureResult.runState, "idle");
       assert.equal(readinessFailure.completedWrites.length, 1);
+      assert.equal(readinessAttempts, 2);
       assert.equal(appraisalCalls, 1);
       assert.equal(readinessFailureResult.messages.filter((message) => message.role === "assistant").length, 1);
+
+      const absentSession = createSession();
+      let absentReadyCalls = 0;
+      let absentAppraisalCalls = 0;
+      const absent = createService(
+        absentSession,
+        (input) => {
+          storage.enqueue({
+            correlationId: input.correlationId,
+            characterId: input.session.characterId,
+            sessionId: input.session.id,
+            userMessage: input.userMessage,
+            assistantMessage: input.assistantMessage,
+            assistantMessageIndex: input.assistantMessageIndex,
+            occurredAt: input.occurredAt,
+          });
+        },
+        undefined,
+        () => {
+          absentReadyCalls += 1;
+          return "absent";
+        },
+        () => {
+          absentAppraisalCalls += 1;
+        },
+      );
+      const absentResult = await absent.service.runSessionTurn(absentSession.id, {
+        userMessage: "削除済みpendingは終端して",
+      });
+      await waitForCondition(() => absentReadyCalls === 1, "missing pendingのready化が一度だけ試行されること");
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+      assert.equal(absentResult.runState, "idle");
+      assert.equal(absentReadyCalls, 1);
+      assert.equal(absentAppraisalCalls, 0);
     } finally {
       storage.close();
       await rm(directory, { recursive: true, force: true });
@@ -596,12 +705,15 @@ describe("SessionRuntimeService", () => {
     };
     let composeSessionName = "";
     let runSessionName = "";
+    let composedSessionFolderPath = "";
+    let runSessionFolderPath = "";
     let notifiedSession: Session | null = null;
     let notifiedLastNonEmptyAssistantMessageText = "";
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
         composeSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
+        composedSessionFolderPath = input.sessionFolderPath ?? "";
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -617,6 +729,7 @@ describe("SessionRuntimeService", () => {
       invalidateAllSessionThreads() {},
       runSessionTurn(input) {
         runSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
+        runSessionFolderPath = input.sessionFolderPath ?? "";
         return Promise.resolve(createPartialResult({
           threadId: "thread-1",
           assistantText: "途中の案内\n\n完了したよ。",
@@ -647,6 +760,9 @@ describe("SessionRuntimeService", () => {
       },
       getProviderCodingAdapter() {
         return adapter;
+      },
+      resolveSessionFolderPath(sessionId) {
+        return `F:/user-data/session-files/${sessionId}`;
       },
       getSessionMemory() {
         return createSessionMemory(staleSession.id);
@@ -686,6 +802,8 @@ describe("SessionRuntimeService", () => {
 
     assert.equal(composeSessionName, "Fresh");
     assert.equal(runSessionName, "Fresh");
+    assert.equal(composedSessionFolderPath, `F:/user-data/session-files/${freshSession.id}`);
+    assert.equal(runSessionFolderPath, composedSessionFolderPath);
     assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
     assert.equal(notifiedSession, result);
     assert.equal(notifiedLastNonEmptyAssistantMessageText, "完了したよ。");
@@ -1279,13 +1397,14 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(() => auditUpdates.length === 3, "completed auditがbackgroundで保存されること");
 
     assert.equal(result.runState, "idle");
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(auditUpdates.length, 4);
+    assert.equal(auditUpdates.length, 3);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中経過だよ。");
     assert.equal(auditUpdates[0]?.threadId, "thread-progress");
@@ -1347,7 +1466,7 @@ describe("SessionRuntimeService", () => {
     const session = createSession({ provider: "codex" });
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let persistedAudit: UpdateAuditLogInput | null = null;
+    let terminalCommit: SessionTurnTerminalCommit | null = null;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt() {
@@ -1380,6 +1499,11 @@ describe("SessionRuntimeService", () => {
         storedSessions.push(next);
         return next;
       },
+      upsertTerminalSession(next, commit) {
+        storedSessions.push(next);
+        terminalCommit = commit;
+        return next;
+      },
       async resolveComposerPreview() {
         return { attachments: [], errors: [] } satisfies ComposerPreview;
       },
@@ -1409,7 +1533,6 @@ describe("SessionRuntimeService", () => {
         if (entry.phase === "completed" && entry.assistantText === "完了したよ。") {
           return new Promise<void>(() => {});
         }
-        persistedAudit = entry;
       },
       auditEnrichmentGraceMs: 5,
       setLiveSessionRun() {},
@@ -1438,6 +1561,11 @@ describe("SessionRuntimeService", () => {
       clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
       submitSource: "composer",
     });
+    await waitForCondition(
+      () => terminalCommit?.phase === "completed"
+        && auditUpdates.some((entry) => entry.phase === "completed" && Boolean(entry.assistantText)),
+      "atomic terminal marker保存後に詳細audit更新がbackgroundで開始すること",
+    );
 
     assert.equal(result.runState, "idle");
     assert.equal(result.status, "idle");
@@ -1446,18 +1574,156 @@ describe("SessionRuntimeService", () => {
     assert.equal(storedSessions[0]?.runState, "running");
     assert.equal(storedSessions[1]?.runState, "idle");
     assert.equal(storedSessions[1]?.messages.at(-1)?.text, "完了したよ。");
-    assert.equal(persistedAudit?.phase, "completed");
-    assert.equal(persistedAudit?.assistantText, "");
-    assert.equal(persistedAudit?.providerMetadata[0]?.kind, "session_turn_request");
-    assert.equal(
-      persistedAudit?.providerMetadata[0]?.payload.clientRequestId,
-      "7c26d875-9117-4ad5-97b5-e9af775b94bc",
-    );
+    assert.equal(terminalCommit?.phase, "completed");
+    assert.equal(terminalCommit?.assistantMessageSeq, 1);
+    assert.equal(terminalCommit?.threadId, "thread-1");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(auditUpdates.at(-1)?.operations.length, 0);
     assert.equal(auditUpdates.at(-1)?.assistantText, "完了したよ。");
     assert.equal(auditUpdates.some((entry) => entry.phase === "failed"), false);
     assert.equal(service.isRunInFlight(session.id), false);
+  });
+
+  it("pending中のrunning audit観測をcompleted・failed・canceledのterminal auditへ保持する", async () => {
+    for (const outcome of ["completed", "failed", "canceled"] as const) {
+      const session = createSession({ id: `pending-audit-${outcome}`, provider: "codex" });
+      const auditUpdates: UpdateAuditLogInput[] = [];
+      let releaseRunningAudit = () => undefined;
+      const runningAuditBarrier = new Promise<void>((resolve) => {
+        releaseRunningAudit = resolve;
+      });
+      let signalRunningAuditStarted = () => undefined;
+      const runningAuditStarted = new Promise<void>((resolve) => {
+        signalRunningAuditStarted = resolve;
+      });
+      const observedUsage = { inputTokens: 13, cachedInputTokens: 2, outputTokens: 5 };
+      const adapter: ProviderCodingAdapter = {
+        composePrompt() {
+          return {
+            systemBodyText: "system",
+            inputBodyText: "input",
+            logicalPrompt: { systemText: "system", inputText: "input", composedText: "system\ninput" },
+            imagePaths: [],
+            additionalDirectories: [],
+          };
+        },
+        async getProviderQuotaTelemetry() {
+          return null;
+        },
+        invalidateSessionThread() {},
+        invalidateAllSessionThreads() {},
+        async runSessionTurn(_input, onProgress) {
+          void onProgress?.(createLiveRunState({
+            sessionId: session.id,
+            threadId: "thread-observed",
+            assistantText: "observed partial",
+            steps: [{
+              id: "observed-step",
+              type: "command_execution",
+              summary: "npm test",
+              status: "completed",
+            }],
+            usage: observedUsage,
+          }));
+          await runningAuditStarted;
+          const partialResult = createPartialResult({
+            threadId: "thread-observed",
+            assistantText: "",
+            operations: [],
+            usage: null,
+          });
+          if (outcome === "completed") {
+            return partialResult;
+          }
+          throw new ProviderTurnError(`${outcome} turn`, partialResult, outcome === "canceled");
+        },
+      };
+      let storedSession = session;
+      const service = new SessionRuntimeService({
+        getSession(sessionId) {
+          return sessionId === session.id ? storedSession : null;
+        },
+        upsertSession(next) {
+          storedSession = next;
+          return next;
+        },
+        upsertTerminalSession(next) {
+          storedSession = next;
+          return next;
+        },
+        async resolveComposerPreview() {
+          return { attachments: [], errors: [] } satisfies ComposerPreview;
+        },
+        async resolveSessionCharacter() {
+          return createCharacter();
+        },
+        getAppSettings() {
+          return normalizeAppSettings({});
+        },
+        resolveProviderCatalog() {
+          return { snapshot: { revision: 1, providers: [createProviderCatalog()] }, provider: createProviderCatalog() };
+        },
+        getProviderCodingAdapter() {
+          return adapter;
+        },
+        getSessionMemory(current) {
+          return createSessionMemory(current.id);
+        },
+        resolveProjectMemoryEntriesForPrompt() {
+          return [];
+        },
+        createAuditLog(input) {
+          return createAuditLogBase(input);
+        },
+        updateAuditLog(_id, entry) {
+          auditUpdates.push(entry);
+          if (entry.phase === "running" && entry.operations.some((operation) => operation.summary === "npm test")) {
+            signalRunningAuditStarted();
+            return runningAuditBarrier;
+          }
+        },
+        auditEnrichmentGraceMs: 1,
+        setLiveSessionRun() {},
+        getLiveSessionRun() {
+          return null;
+        },
+        async waitForApprovalDecision(): Promise<LiveApprovalDecision> {
+          return "approve";
+        },
+        async waitForElicitationResponse() {
+          return { action: "cancel" } as const;
+        },
+        setProviderQuotaTelemetry() {},
+        setSessionContextTelemetry() {},
+        invalidateProviderSessionThread() {},
+        scheduleProviderQuotaTelemetryRefresh() {},
+        runCharacterReflection() {},
+        broadcastLiveSessionRun() {},
+        resolvePendingApprovalRequest() {},
+        resolvePendingElicitationRequest() {},
+        currentTimestampLabel,
+      });
+
+      const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+      assert.equal(service.isRunInFlight(session.id), false);
+      await new Promise<void>((resolve) => setTimeout(resolve, 10));
+      releaseRunningAudit();
+      await waitForCondition(
+        () => auditUpdates.some((entry) => entry.phase === outcome),
+        `${outcome} terminal auditが保存されること`,
+      );
+
+      const terminalAudit = auditUpdates.find((entry) => entry.phase === outcome);
+      assert.ok(terminalAudit);
+      assert.equal(terminalAudit.assistantText, "observed partial");
+      assert.deepEqual(terminalAudit.usage, observedUsage);
+      assert.deepEqual(terminalAudit.operations, [{
+        type: "command_execution",
+        summary: "npm test",
+        details: "completed",
+      }]);
+      assert.equal(result.runState, outcome === "failed" ? "error" : "idle");
+    }
   });
 
   it("成功時に backgroundTasks を保持する finally でも completed session の threadId を使う", async () => {
@@ -1668,8 +1934,17 @@ describe("SessionRuntimeService", () => {
     const baseSession = createSession();
     const storedSessions: Session[] = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
-    let canceledSessionId: string | null = null;
+    let detachedSessionId: string | null = null;
+    let cleanupStartedSessionId: string | null = null;
     let notificationCount = 0;
+    let releaseInvalidation = () => undefined;
+    const invalidationBarrier = new Promise<void>((resolve) => {
+      releaseInvalidation = resolve;
+    });
+    let signalInvalidationStarted = () => undefined;
+    const invalidationStarted = new Promise<void>((resolve) => {
+      signalInvalidationStarted = resolve;
+    });
     const partialResult: RunSessionTurnResult = {
       threadId: null,
       assistantText: "",
@@ -1692,8 +1967,12 @@ describe("SessionRuntimeService", () => {
       async getProviderQuotaTelemetry() {
         return null;
       },
-      invalidateSessionThread(sessionId) {
-        canceledSessionId = sessionId;
+      async invalidateSessionThread(sessionId) {
+        detachedSessionId = sessionId;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        cleanupStartedSessionId = sessionId;
+        signalInvalidationStarted();
+        await invalidationBarrier;
       },
       invalidateAllSessionThreads() {},
       async runSessionTurn(input, onProgress) {
@@ -1778,7 +2057,7 @@ describe("SessionRuntimeService", () => {
       setProviderQuotaTelemetry() {},
       setSessionContextTelemetry() {},
       invalidateProviderSessionThread(providerId, sessionId) {
-        adapter.invalidateSessionThread(sessionId);
+        return adapter.invalidateSessionThread(sessionId);
       },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
@@ -1791,12 +2070,19 @@ describe("SessionRuntimeService", () => {
       currentTimestampLabel,
     });
 
-    const result = await service.runSessionTurn(baseSession.id, { userMessage: "お願いします" });
+    const run = service.runSessionTurn(baseSession.id, { userMessage: "お願いします" });
+    const result = await run;
+    assert.equal(service.isRunInFlight(baseSession.id), false);
+    assert.equal(detachedSessionId, baseSession.id);
+    assert.equal(cleanupStartedSessionId, null);
+    await invalidationStarted;
+    assert.equal(cleanupStartedSessionId, baseSession.id);
+    releaseInvalidation();
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     assert.equal(result.runState, "idle");
     assert.match(result.messages.at(-1)?.text ?? "", /キャンセル/);
-    assert.equal(auditUpdates.length, 3);
+    assert.equal(auditUpdates.length, 2);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates[0]?.assistantText, "途中まで進んだよ。");
     assert.equal(auditUpdates.at(-1)?.phase, "canceled");
@@ -1828,7 +2114,7 @@ describe("SessionRuntimeService", () => {
       auditUpdates.at(-1)?.transportPayload?.fields.find((field) => field.label === "promptInputEstimatedTokens")?.value,
       "2",
     );
-    assert.equal(canceledSessionId, baseSession.id);
+    assert.equal(detachedSessionId, baseSession.id);
     assert.equal(notificationCount, 0);
   });
 
@@ -2017,6 +2303,7 @@ describe("SessionRuntimeService", () => {
     if (!resolveComposer) {
       throw new Error("composer setup が開始されていないよ。");
     }
+    assert.equal(service.isRunInFlight(session.id), true);
     service.cancelRun(session.id);
     const outcome = await Promise.race([
       runPromise.then(() => "resolved", () => "rejected"),
@@ -2269,8 +2556,11 @@ describe("SessionRuntimeService", () => {
     const session = createSession({ provider: "codex", threadId: "thread-stale" });
     const storedSessions: Session[] = [];
     const invalidated: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
+    const reset: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const auditUpdates: UpdateAuditLogInput[] = [];
     const seenThreadIds: string[] = [];
+    const seenBindingGenerations: Array<string | undefined> = [];
+    let bindingGeneration = 0;
     const timingContexts: Array<ConversationTimingContext | undefined> = [];
     const fixedObservedAt = new Date("2026-08-04T12:32:00.000Z");
     const timingContext: ConversationTimingContext = {
@@ -2304,6 +2594,7 @@ describe("SessionRuntimeService", () => {
       async runSessionTurn(input) {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
+        seenBindingGenerations.push(input.agentRuntimeBinding?.executionGeneration);
         timingContexts.push(input.conversationTimingContext);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
@@ -2339,6 +2630,17 @@ describe("SessionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
+      getProviderAgentRuntimeBinding({ session: bindingSession, provider }) {
+        bindingGeneration += 1;
+        return {
+          bindingId: `binding-${bindingGeneration}`,
+          bindingReference: `reference-${bindingGeneration}`,
+          providerId: provider.id,
+          executionGeneration: `generation-${bindingGeneration}`,
+          transport: "env",
+          expiresAt: null,
+        };
+      },
       getSessionMemory(current) {
         return createSessionMemory(current.id);
       },
@@ -2371,6 +2673,9 @@ describe("SessionRuntimeService", () => {
       invalidateProviderSessionThread(providerId, retrySessionId) {
         invalidated.push({ providerId, sessionId: retrySessionId });
       },
+      resetProviderSessionThread(providerId, retrySessionId) {
+        reset.push({ providerId, sessionId: retrySessionId });
+      },
       scheduleProviderQuotaTelemetryRefresh() {},
       runCharacterReflection() {},
       broadcastLiveSessionRun() {},
@@ -2387,16 +2692,20 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(() => auditUpdates.length === 2, "retry成功auditがbackgroundで完了すること");
 
     assert.equal(result.runState, "idle");
     assert.equal(result.threadId, "thread-fresh");
     assert.equal(result.messages.filter((message) => message.role === "user").length, 1);
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
     assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
-    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
+    assert.deepEqual(seenBindingGenerations, ["generation-1", "generation-1"]);
+    assert.equal(bindingGeneration, 1);
+    assert.deepEqual(reset, [{ providerId: "codex", sessionId: session.id }]);
+    assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 3);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 3);
+    assert.equal(auditUpdates.length, 2);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
     assert.equal(notificationCount, 1);
@@ -2768,6 +3077,7 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(() => auditUpdates.length === 2, "bootstrap retry成功auditがbackgroundで完了すること");
 
     assert.equal(attempt, 2);
     assert.equal(result.runState, "idle");
@@ -2776,7 +3086,7 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "thread-fresh");
-    assert.equal(auditUpdates.length, 3);
+    assert.equal(auditUpdates.length, 2);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "completed");
   });
@@ -2872,6 +3182,7 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(() => auditUpdates.length === 2, "bootstrap failure auditがbackgroundで完了すること");
 
     assert.equal(attempt, 2);
     assert.equal(result.runState, "error");
@@ -2883,7 +3194,7 @@ describe("SessionRuntimeService", () => {
     ]);
     assert.equal(storedSessions.length, 2);
     assert.equal(storedSessions[1]?.threadId, "");
-    assert.equal(auditUpdates.length, 3);
+    assert.equal(auditUpdates.length, 2);
     assert.equal(auditUpdates[0]?.phase, "running");
     assert.equal(auditUpdates.at(-1)?.phase, "failed");
     assert.equal(auditUpdates.at(-1)?.threadId, "thread-broken");
@@ -2992,6 +3303,10 @@ describe("SessionRuntimeService", () => {
     });
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(
+      () => auditUpdates.some((entry) => entry.phase === "completed"),
+      "approval履歴を含むcompleted auditがbackgroundで保存されること",
+    );
 
     const runningUpdate = auditUpdates.find((entry) =>
       entry.phase === "running" && entry.operations.some((operation) => operation.type === "approval_request"),
@@ -3221,6 +3536,10 @@ describe("SessionRuntimeService", () => {
     });
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(
+      () => auditUpdates.some((entry) => entry.phase === "completed"),
+      "重複command履歴を含むcompleted auditがbackgroundで保存されること",
+    );
 
     const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate);
@@ -3341,6 +3660,10 @@ describe("SessionRuntimeService", () => {
     });
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(
+      () => auditUpdates.some((entry) => entry.phase === "completed"),
+      "elicitation履歴を含むcompleted auditがbackgroundで保存されること",
+    );
 
     const runningUpdate = auditUpdates.find((entry) =>
       entry.phase === "running" && entry.operations.some((operation) => operation.type === "elicitation_request"),
@@ -3453,6 +3776,7 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "failed auditがbackgroundで保存されること");
 
     assert.equal(result.runState, "error");
     assert.equal(result.threadId, "thread-live");
@@ -3554,6 +3878,7 @@ describe("SessionRuntimeService", () => {
     });
 
     const result = await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(() => auditUpdates.at(-1)?.phase === "failed", "usage limit auditがbackgroundで保存されること");
     const expectedMessage = "Codexの使用上限に達しました。\n再実行可能時刻: Jun 12th, 2026 2:07 AM";
 
     assert.equal(result.runState, "error");
@@ -3651,7 +3976,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(attempt, 1);
     assert.equal(result.runState, "error");
     assert.match(result.messages.at(-1)?.text ?? "", /途中まで出たよ。/);
-    assert.deepEqual(invalidated, []);
+    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
   });
 
@@ -3745,7 +4070,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(attempt, 1);
     assert.equal(result.runState, "error");
     assert.match(result.messages.at(-1)?.text ?? "", /resource not found/);
-    assert.deepEqual(invalidated, []);
+    assert.deepEqual(invalidated, [{ providerId: "codex", sessionId: session.id }]);
     assert.equal(storedSessions.length, 2);
   });
 
@@ -3885,6 +4210,10 @@ describe("SessionRuntimeService", () => {
     });
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(
+      () => auditUpdates.some((entry) => entry.phase === "completed"),
+      "live progressを含むcompleted auditがbackgroundで保存されること",
+    );
 
     // progress update が複数回発生したことを確認
     assert.ok(progressUpdateCount >= 2, `progress update は 2 回以上発生すべきだが ${progressUpdateCount} 回だったよ`);
@@ -4120,6 +4449,10 @@ describe("SessionRuntimeService", () => {
     });
 
     await service.runSessionTurn(session.id, { userMessage: "お願いします" });
+    await waitForCondition(
+      () => auditUpdates.some((entry) => entry.phase === "completed"),
+      "background task履歴を含むcompleted auditがbackgroundで保存されること",
+    );
 
     const completedUpdate = auditUpdates.filter((entry) => entry.phase === "completed").at(-1);
     assert.ok(completedUpdate);

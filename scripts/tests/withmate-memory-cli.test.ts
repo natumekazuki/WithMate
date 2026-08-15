@@ -27,6 +27,7 @@ import {
   type WithMateMemoryCliDeps,
 } from "../withmate-memory.js";
 import {
+  resolveAgentRuntimeBindingReference,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -34,6 +35,20 @@ import {
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
 } from "../withmate-memory-runtime-client.js";
+
+it("provider execution markerがある場合はbinding省略をlocal-userへdowngradeしない", () => {
+  assert.throws(
+    () => resolveAgentRuntimeBindingReference({ WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1" }),
+    (error) => (
+      typeof error === "object"
+      && error !== null
+      && "error" in error
+      && (error as { error?: { message?: unknown } }).error?.message
+        === "WithMate provider execution requires its runtime binding reference."
+    ),
+  );
+  assert.equal(resolveAgentRuntimeBindingReference({}), undefined);
+});
 
 const TEST_API_SECRET = "test-api-secret";
 const TEST_OPERATOR_SECRET = "test-operator-secret";
@@ -1718,6 +1733,7 @@ describe("withmate-memory CLI", () => {
         entryId: "mem-a",
         from: target,
         to: { owner: "user", scope: "global" },
+        reason: "move to user scope",
         idempotencyKey: "move-a",
       }), "utf8");
       for (const [args, path, expectedDryRun] of [

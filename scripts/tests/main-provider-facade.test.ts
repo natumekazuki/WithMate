@@ -3,13 +3,13 @@ import test from "node:test";
 
 import { MainProviderFacade } from "../../src-electron/main-provider-facade.js";
 
-test("MainProviderFacade は provider catalog を解決し adapter 無効化を委譲する", () => {
+test("MainProviderFacade は provider catalog を解決し adapter 無効化を委譲する", async () => {
   const calls: string[] = [];
   const codexAdapter = {
     invalidateSessionThread(sessionId: string) {
       calls.push(`codex:${sessionId}`);
     },
-    invalidateAllSessionThreads() {
+    async invalidateAllSessionThreads() {
       calls.push("codex:all");
     },
   };
@@ -17,7 +17,7 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     invalidateSessionThread(sessionId: string) {
       calls.push(`copilot:${sessionId}`);
     },
-    invalidateAllSessionThreads() {
+    async invalidateAllSessionThreads() {
       calls.push("copilot:all");
     },
   };
@@ -46,17 +46,28 @@ test("MainProviderFacade は provider catalog を解決し adapter 無効化を�
     },
     codexAdapter: codexAdapter as never,
     copilotAdapter: copilotAdapter as never,
+    revokeProviderExecution(sessionId, providerId) {
+      calls.push(`binding:${providerId}:${sessionId}`);
+    },
+    revokeAllProviderExecutions() {
+      calls.push("binding:all");
+    },
   });
 
   const resolved = facade.resolveProviderCatalog("copilot");
-  facade.invalidateProviderSessionThread("copilot", "s-1");
-  facade.invalidateProviderSessionThread("codex", "s-2");
-  facade.invalidateAllProviderSessionThreads();
+  await facade.invalidateProviderSessionThread("copilot", "s-1");
+  facade.resetProviderSessionThread("codex", "s-retry");
+  await facade.invalidateProviderSessionThread("codex", "s-2");
+  await facade.invalidateAllProviderSessionThreads();
 
   assert.equal(resolved.provider.id, "copilot");
   assert.deepEqual(calls, [
+    "binding:copilot:s-1",
     "copilot:s-1",
+    "codex:s-retry",
+    "binding:codex:s-2",
     "codex:s-2",
+    "binding:all",
     "codex:all",
     "copilot:all",
   ]);
@@ -100,4 +111,6 @@ test("MainProviderFacade は未対応 provider の runtime capability を codex 
   assert.equal(capabilities.providerSupported, false);
   assert.equal(capabilities.instructionSyncSupported, false);
   assert.equal(capabilities.tokenUsageSupported, false);
+  assert.equal(capabilities.agentRuntimeBindingSupported, false);
+  assert.equal(capabilities.agentRuntimeBindingTransport, "unsupported");
 });

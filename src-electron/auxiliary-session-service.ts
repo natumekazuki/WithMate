@@ -329,6 +329,7 @@ export class AuxiliarySessionService {
       );
     const shouldPreserveDisplayAfterMessageIndex =
       hasComposerDraftChange && hasDisplayAfterMessageIndexChange;
+    const shouldResetRuntimeThread = hasRuntimeMetadataChange && !shouldPreserveRuntimeMetadata;
 
     return this.deps.getStorage().upsertAuxiliarySession({
       ...current,
@@ -347,6 +348,7 @@ export class AuxiliarySessionService {
       displayAfterMessageIndex: shouldPreserveDisplayAfterMessageIndex
         ? current.displayAfterMessageIndex
         : session.displayAfterMessageIndex,
+      threadId: shouldResetRuntimeThread ? "" : current.threadId,
       updatedAt: currentTimestampLabel(),
     });
   }

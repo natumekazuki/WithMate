@@ -121,6 +121,9 @@ describe("CompanionRuntimeService", () => {
       getProviderCodingAdapter() {
         return adapter;
       },
+      resolveSessionFolderPath(sessionId) {
+        return `F:/user-data/session-files/${sessionId}`;
+      },
       createAuditLog(input) {
         createdAuditLogs.push(input);
         return { ...input, id: 7 };
@@ -165,6 +168,7 @@ describe("CompanionRuntimeService", () => {
     assert.equal(runInput.session.approvalMode, "on-request");
     assert.equal(runInput.session.codexSandboxMode, "read-only");
     assert.equal(runInput.executionWorkspacePath, "F:/repo/.withmate/companion-worktree");
+    assert.equal(runInput.sessionFolderPath, "F:/user-data/session-files/companion-session-1");
     assert.equal(result.runState, "idle");
     assert.equal(result.threadId, "thread-1");
     assert.equal(result.model, "gpt-5.4");

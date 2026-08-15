@@ -592,6 +592,9 @@ describe("HomeLaunchDialog", () => {
     const html = renderHomeLaunchDialog();
 
     assert.ok(html.includes("Start New Session"));
+    assert.ok(html.includes('aria-label="New Session"'));
+    assert.ok(!html.includes('aria-label="Close"'));
+    assert.ok(!html.includes("launch-dialog-head"));
     assert.ok(!html.includes("Agent Mode"));
     assert.ok(!html.includes("Companion Mode"));
     assert.ok(!html.includes("Start Companion"));

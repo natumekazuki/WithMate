@@ -34,6 +34,7 @@ export type CompanionRuntimeServiceDeps = {
   updateCompanionSession(session: CompanionSession): Awaitable<CompanionSession>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
   resolveProviderSession?: (session: Session) => Session;
+  resolveSessionFolderPath?: (sessionId: string) => string;
   getAppSettings: () => AppSettings;
   resolveProviderCatalog(providerId: string | null | undefined, revision?: number | null): {
     snapshot: ModelCatalogSnapshot;
@@ -57,7 +58,7 @@ export type CompanionRuntimeServiceDeps = {
   ): Promise<LiveElicitationResponse> | LiveElicitationResponse;
   setProviderQuotaTelemetry(telemetry: ProviderQuotaTelemetry): void;
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastCompanionSessions(): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -379,6 +380,7 @@ export class CompanionRuntimeService {
       return {
         session: turnProviderSession,
         executionWorkspacePath: turnSession.worktreePath,
+        sessionFolderPath: this.deps.resolveSessionFolderPath?.(turnProviderSession.id),
         sessionMemory,
         projectMemoryEntries: [],
         character,
@@ -529,7 +531,7 @@ export class CompanionRuntimeService {
     const partialResult = providerTurnError?.partialResult;
     const message = error instanceof Error ? error.message : String(error);
     if (canceled) {
-      this.deps.invalidateProviderSessionThread(session.provider, session.id);
+      await this.deps.invalidateProviderSessionThread(session.provider, session.id);
     }
     const fallbackNotice = canceled ? "実行をキャンセルしたよ。" : `実行に失敗したよ。\n${message}`;
     const assistantText = partialResult?.assistantText.trim()

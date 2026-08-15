@@ -615,6 +615,7 @@ describe("database-schema-v6", () => {
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("source_message_id TEXT"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("result_status TEXT NOT NULL"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("'already_forgotten'"), true);
+      assert.equal(tableSql(db, "memory_move_events_v6").includes("reason TEXT NOT NULL"), true);
 
       assert.deepEqual(columnNames(db, "memory_protected_objects_v6"), [
         "object_id",
@@ -750,7 +751,7 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("ensureV6Schema は既存Memory idempotencyとmutation eventへcleanup/source列をadditive追加する", () => {
+  it("ensureV6Schema は既存Memory idempotencyとmutation/move eventへ列をadditive追加する", () => {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(`
@@ -779,6 +780,22 @@ describe("database-schema-v6", () => {
           reason TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL
         );
+        CREATE TABLE memory_move_events_v6 (
+          id TEXT PRIMARY KEY,
+          entry_id TEXT NOT NULL,
+          from_owner_type TEXT NOT NULL,
+          from_owner_id TEXT NOT NULL,
+          from_scope_type TEXT NOT NULL,
+          from_scope_id TEXT NOT NULL,
+          to_owner_type TEXT NOT NULL,
+          to_owner_id TEXT NOT NULL,
+          to_scope_type TEXT NOT NULL,
+          to_scope_id TEXT NOT NULL,
+          binding_id_hash TEXT NOT NULL,
+          idempotency_key TEXT,
+          request_fingerprint TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
         INSERT INTO memory_idempotency_keys_v6 (
           key, operation, binding_id_hash, owner_type, owner_id, scope_type, scope_id,
           response_entry_id, operation_created, request_fingerprint, cleanup_required, created_at
@@ -796,6 +813,60 @@ describe("database-schema-v6", () => {
         1,
       );
       assert.equal(columnNames(db, "memory_mutation_events_v6").includes("source_message_id"), true);
+      assert.equal(columnNames(db, "memory_move_events_v6").includes("reason"), true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ensureV6Schemaは既存Affect eventを再分類せずnullable familyとCHECKをadditive追加する", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec("PRAGMA foreign_keys = ON;");
+      for (const statement of CREATE_V6_SCHEMA_SQL) {
+        if (statement !== CREATE_V6_CHARACTER_AFFECT_TABLES_SQL) {
+          db.exec(statement);
+        }
+      }
+      db.exec(CREATE_V6_CHARACTER_AFFECT_TABLES_SQL.replace(
+        "    family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other')),\n",
+        "",
+      ));
+      db.prepare("INSERT INTO characters (id, name, created_at, updated_at) VALUES ('character-a', 'A', ?, ?)")
+        .run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+          character_id, character_snapshot_json, created_at, updated_at, last_active_at
+        ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
+      `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO character_affect_events_v6 (
+          id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
+          value_json, intensity, reason, evidence, occurred_at, idempotency_key,
+          request_fingerprint, state, created_at
+        ) VALUES ('legacy-event', 'character-a', 'local-user', 'session-a', 'session-a', 'session',
+          'bug', 'bug-1', '{"label":"legacy","valence":-0.2}', 0.5, 'reason', 'evidence',
+          '2026-08-09T01:00:00.000Z', 'legacy-key', 'legacy-fingerprint', 'active', '2026-08-09T01:00:00.000Z')
+      `).run();
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(columnNames(db, "character_affect_events_v6").includes("family"), true);
+      assert.equal(
+        (db.prepare("SELECT family FROM character_affect_events_v6 WHERE id = 'legacy-event'").get() as { family: string | null }).family,
+        null,
+      );
+      assert.throws(
+        () => db.prepare("UPDATE character_affect_events_v6 SET family = 'unknown' WHERE id = 'legacy-event'").run(),
+        /CHECK constraint failed/,
+      );
+      db.prepare("UPDATE character_affect_events_v6 SET family = 'other' WHERE id = 'legacy-event'").run();
+      assert.equal(
+        (db.prepare("SELECT family FROM character_affect_events_v6 WHERE id = 'legacy-event'").get() as { family: string }).family,
+        "other",
+      );
     } finally {
       db.close();
     }

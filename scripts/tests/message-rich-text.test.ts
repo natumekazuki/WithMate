@@ -11,6 +11,7 @@ import {
   handleMarkdownLinkClick,
   handleMarkdownLinkContextMenu,
   MessageRichText,
+  resolveCodeBlockText,
   resolveMessageMarkdownRenderMode,
 } from "../../src/MessageRichText.js";
 
@@ -109,6 +110,68 @@ test("MessageRichText は **bold** を strong として render する", () => {
   assert.match(html, /<strong class="message-inline-strong">message<\/strong>/);
 });
 
+test("MessageRichText は属性なしの正しい HTML br 記法を改行として render する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: "first<br>second<br/>third<br />fourth<BR>fifth",
+    }),
+  );
+  const dom = new JSDOM(html);
+
+  assert.equal(dom.window.document.querySelectorAll("br").length, 4);
+  assert.equal(
+    dom.window.document.querySelector(".message-paragraph")?.textContent,
+    "first\nsecond\nthird\nfourth\nfifth",
+  );
+});
+
+test("MessageRichText は対象外の raw HTML を element として render しない", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "<script>alert('x')</script>",
+        "<img src=x onerror=alert(1)>",
+        "<br onclick=alert(1)>",
+      ].join("\n"),
+    }),
+  );
+  const dom = new JSDOM(html);
+
+  assert.equal(dom.window.document.querySelector("script, img, br"), null);
+  assert.match(dom.window.document.body.textContent, /<script>alert\('x'\)<\/script>/);
+  assert.match(dom.window.document.body.textContent, /<img src=x onerror=alert\(1\)>/);
+  assert.match(dom.window.document.body.textContent, /<br onclick=alert\(1\)>/);
+});
+
+test("MessageRichText は plain text と code literal 内の HTML br 文字列を改変しない", () => {
+  const markdown = [
+    "invalid </br> closing",
+    "",
+    "plain &lt;/br&gt; text",
+    "",
+    "`inline </br> code`",
+    "",
+    "```txt",
+    "fenced </br> code",
+    "```",
+  ].join("\n");
+  const previewHtml = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const previewDom = new JSDOM(previewHtml);
+  const sourceHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: "source </br> text",
+    displayMode: "source",
+  }));
+  const sourceDom = new JSDOM(sourceHtml);
+
+  assert.equal(previewDom.window.document.querySelector("br"), null);
+  assert.match(previewDom.window.document.body.textContent, /invalid <\/br> closing/);
+  assert.match(previewDom.window.document.body.textContent, /plain <\/br> text/);
+  assert.match(previewDom.window.document.querySelector("code")?.textContent ?? "", /inline <\/br> code/);
+  assert.match(previewDom.window.document.querySelector("pre")?.textContent ?? "", /fenced <\/br> code/);
+  assert.equal(sourceDom.window.document.querySelector("br"), null);
+  assert.equal(sourceDom.window.document.querySelector("pre")?.textContent, "source </br> text");
+});
+
 test("MessageRichText の Source は元 Markdown を変換せず plain text で描画する", () => {
   const source = [
     "[link label](https://example.test/path)",
@@ -141,6 +204,160 @@ test("MessageRichText は inline code と link を優先しつつ bold を併用
   assert.match(html, /<code class="message-inline-code">\*\*literal\*\*<\/code>/);
   assert.match(html, /<strong class="message-inline-strong">/);
   assert.match(html, /<a href="src\/App\.tsx">file<\/a>/);
+});
+
+test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を表示する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "plain `inline` text",
+        "",
+        "````markdown",
+        "outer",
+        "```ts",
+        "const nested = true;",
+        "```",
+        "",
+        "````",
+        "",
+        "    indented code",
+      ].join("\n"),
+    }),
+  );
+  const dom = new JSDOM(html);
+  const copyButtons = dom.window.document.querySelectorAll<HTMLButtonElement>(".message-code-copy-button");
+
+  assert.equal(copyButtons.length, 1);
+  assert.equal(copyButtons[0]?.getAttribute("aria-label"), "コードをコピー");
+  assert.equal(copyButtons[0]?.getAttribute("title"), "コードをコピー");
+  assert.match(
+    dom.window.document.querySelector(".message-code-block")?.textContent ?? "",
+    /outer\n```ts\nconst nested = true;\n```\n/,
+  );
+  assert.equal(dom.window.document.querySelector(".message-inline-code")?.textContent, "inline");
+});
+
+test("resolveCodeBlockText は改行をLFへ揃えparser由来の末尾改行だけを除く", () => {
+  assert.equal(resolveCodeBlockText("first\r\nsecond\rthird\n\n"), "first\nsecond\nthird\n");
+  assert.equal(resolveCodeBlockText("without trailing newline"), "without trailing newline");
+});
+
+test("code block copy操作はhover・focus・disabledの視認状態を持つ", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const buttonRule = styles.match(/\.message-code-copy-button\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const hoverRule = styles.match(/\.message-code-copy-button:hover:not\(:disabled\)\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const focusRule = styles.match(/\.message-code-copy-button:focus-visible\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const disabledRule = styles.match(/\.message-code-copy-button:disabled\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(buttonRule, /color:\s*rgba\(255, 255, 255, 0\.94\);/);
+  assert.match(buttonRule, /border-radius:\s*999px;/);
+  assert.match(hoverRule, /border-color:/);
+  assert.match(hoverRule, /background:/);
+  assert.match(hoverRule, /transform:\s*translateY\(-1px\);/);
+  assert.match(focusRule, /outline:\s*2px solid var\(--teal\);/);
+  assert.match(disabledRule, /opacity:\s*0\.64;/);
+});
+
+test("MessageRichText のcode block copyは本文だけをclipboardへ渡してfeedbackを表示する", async () => {
+  const dom = new JSDOM("<div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "https://example.test/",
+  });
+  const restore = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  const root: Root | null = container ? createRoot(container) : null;
+  const copied: string[] = [];
+  let resolveWrite: (() => void) | undefined;
+  Object.defineProperty(dom.window.navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async (text: string) => {
+        copied.push(text);
+        await new Promise<void>((resolve) => {
+          resolveWrite = resolve;
+        });
+      },
+    },
+  });
+
+  try {
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: ["```ts", "const first = 1;", "", "```"].join("\n"),
+      }));
+    });
+    const button = container?.querySelector<HTMLButtonElement>(".message-code-copy-button");
+    assert.ok(button);
+
+    await act(async () => {
+      button.click();
+      button.click();
+      await Promise.resolve();
+    });
+
+    assert.deepEqual(copied, ["const first = 1;\n"]);
+    assert.equal(button.disabled, true);
+
+    await act(async () => {
+      resolveWrite?.();
+      await Promise.resolve();
+    });
+
+    assert.equal(button.disabled, false);
+    assert.equal(container?.querySelector(".message-copy-toast")?.textContent, "コードをコピーしました。");
+    assert.equal(container?.querySelector(".message-copy-toast")?.getAttribute("role"), "status");
+  } finally {
+    await act(async () => {
+      root?.unmount();
+    });
+    restore();
+    dom.window.close();
+  }
+});
+
+test("MessageRichText のcode block copy失敗はerror feedbackを表示する", async () => {
+  const dom = new JSDOM("<div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "https://example.test/",
+  });
+  const restore = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  const root: Root | null = container ? createRoot(container) : null;
+  Object.defineProperty(dom.window.navigator, "clipboard", {
+    configurable: true,
+    value: {
+      writeText: async () => {
+        throw new Error("clipboard denied");
+      },
+    },
+  });
+
+  try {
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: ["```", "copy me", "```"].join("\n"),
+      }));
+    });
+    const button = container?.querySelector<HTMLButtonElement>(".message-code-copy-button");
+    assert.ok(button);
+
+    await act(async () => {
+      button.click();
+      await Promise.resolve();
+    });
+
+    const feedback = container?.querySelector(".message-copy-toast");
+    assert.equal(feedback?.textContent, "コードのコピーに失敗しました。");
+    assert.ok(feedback?.classList.contains("error"));
+  } finally {
+    await act(async () => {
+      root?.unmount();
+    });
+    restore();
+    dom.window.close();
+  }
 });
 
 test("handleMarkdownLinkClick は Markdown link を既定ナビゲーションではなく openPath 経路へ流す", () => {
@@ -426,6 +643,31 @@ test("MessageRichText は2桁番号とnested listをsemanticなordered listと�
   );
 });
 
+test("MessageRichText は2文字ずつのindentをnested unordered listとしてrenderする", () => {
+  const markdown = [
+    "- aaa",
+    "  - bbbb with **inline** text and viewportで折り返す長い本文",
+    "    - cccc",
+    "",
+    "  child paragraph",
+  ].join("\n");
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const dom = new JSDOM(html);
+  const rootList = dom.window.document.querySelector("ul.message-list");
+  const rootItem = rootList?.querySelector(":scope > li");
+  const nestedList = rootItem?.querySelector(":scope > ul.message-list");
+  const nestedItem = nestedList?.querySelector(":scope > li");
+  const deepestList = nestedItem?.querySelector(":scope > ul.message-list");
+
+  assert.ok(rootList);
+  assert.equal(rootItem?.querySelector(":scope > .message-paragraph")?.textContent, "aaa");
+  assert.match(nestedItem?.textContent ?? "", /bbbb with inline text and viewportで折り返す長い本文/);
+  assert.equal(nestedItem?.querySelector("strong.message-inline-strong")?.textContent, "inline");
+  assert.equal(deepestList?.querySelector(":scope > li")?.textContent, "cccc");
+  assert.equal(rootItem?.querySelectorAll(":scope > .message-paragraph").length, 2);
+  assert.equal(rootItem?.querySelectorAll(":scope > .message-paragraph")[1]?.textContent, "child paragraph");
+});
+
 test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独立scroll領域にしない", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const orderedListRule = styles.match(/\.message-list\.ordered\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
@@ -464,6 +706,41 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
 
     assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
     assert.notEqual(container.querySelector("table.message-table"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("MessageRichText は light から full へ切り替わっても HTML br の改行を維持する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, { text: "first<br />second" }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.equal(container.querySelectorAll("br").length, 1);
+
+    await act(async () => {
+      await waitForAnimationFrame(dom.window);
+      await waitForAnimationFrame(dom.window);
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.equal(container.querySelectorAll("br").length, 1);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -727,6 +1004,39 @@ test("MessageRichText は slash / backslash 形式の Windows absolute image pat
   assert.match(html, /src="file:\/\/\/C:\/workspace\/image-folder\/sample\.png"/);
 });
 
+test("MessageRichText は heading 階層と thematic break の semantic HTML を保持する", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: [
+        "# ATX H1",
+        "## ATX H2",
+        "### ATX H3",
+        "#### ATX H4",
+        "##### ATX H5",
+        "###### ATX H6",
+        "",
+        "---",
+        "",
+        "Setext H1",
+        "=========",
+        "",
+        "Setext H2",
+        "---------",
+      ].join("\n"),
+    }),
+  );
+
+  assert.match(html, /<h1 class="message-heading level-1">ATX H1<\/h1>/);
+  assert.match(html, /<h2 class="message-heading level-2">ATX H2<\/h2>/);
+  assert.match(html, /<h3 class="message-heading level-3">ATX H3<\/h3>/);
+  assert.match(html, /<h4 class="message-heading level-4">ATX H4<\/h4>/);
+  assert.match(html, /<h5 class="message-heading level-5">ATX H5<\/h5>/);
+  assert.match(html, /<h6 class="message-heading level-6">ATX H6<\/h6>/);
+  assert.match(html, /<hr class="message-divider"\/>/);
+  assert.match(html, /<h1 class="message-heading level-1">Setext H1<\/h1>/);
+  assert.match(html, /<h2 class="message-heading level-2">Setext H2<\/h2>/);
+});
+
 test("MessageRichText は先頭空白付き Markdown 行でも停止せずに render できる", { timeout: 2_000 }, () => {
   const input = ["  # title", "", "  - item", "  1. first", "", "  ```ts", "const answer = 42;", "  ```"].join("\n");
   const html = renderToStaticMarkup(
@@ -735,7 +1045,7 @@ test("MessageRichText は先頭空白付き Markdown 行でも停止せずに re
     }),
   );
 
-  assert.match(html, /<h3 class="message-heading level-1">title<\/h3>/);
+  assert.match(html, /<h1 class="message-heading level-1">title<\/h1>/);
   assert.match(html, /<ul class="message-list">\s*<li>item<\/li>\s*<\/ul>/);
   assert.match(html, /<ol class="message-list ordered">\s*<li>first<\/li>\s*<\/ol>/);
   assert.match(html, /<pre class="message-code-block"><code class="message-inline-code language-ts">const answer = 42;<\/code><\/pre>/);
@@ -750,7 +1060,7 @@ test("MessageRichText は先頭空白付き Markdown を既存 block と inline 
     }),
   );
 
-  assert.match(html, /<h3 class="message-heading level-1"><strong class="message-inline-strong">title<\/strong><\/h3>/);
+  assert.match(html, /<h1 class="message-heading level-1"><strong class="message-inline-strong">title<\/strong><\/h1>/);
   assert.match(
     html,
     /<ul class="message-list">\s*<li><a href="src\/App\.tsx">file<\/a><\/li>\s*<li><code class="message-inline-code">literal<\/code><\/li>\s*<\/ul>/,

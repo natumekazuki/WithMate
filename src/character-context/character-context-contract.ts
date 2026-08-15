@@ -1,6 +1,11 @@
 import type { MemorySearchHit, MemoryEntrySummary } from "../memory-v6/memory-state.js";
 import type { MemoryForgetReason, MemoryTag, ProjectTargetRef } from "../memory-v6/memory-contract.js";
-import type { AffectEventInput, AffectLayer, AffectTargetType } from "../character-affect/affect-contract.js";
+import type {
+  AffectEventInput,
+  AffectLayer,
+  AffectTargetType,
+  CharacterAffectFamily,
+} from "../character-affect/affect-contract.js";
 
 export const CHARACTER_CONTEXT_SCHEMA_VERSION = "withmate-character-context-v1" as const;
 
@@ -46,6 +51,7 @@ export type CharacterAffectSummary = {
   contributingLayers: Array<"baseline" | AffectLayer>;
   targetType: AffectTargetType;
   targetId: string;
+  family: CharacterAffectFamily | null;
   label: string;
   valence: number;
   arousal?: number;
@@ -64,6 +70,7 @@ export type CharacterContextResponse = {
   affect: {
     mode: "shadow" | "active";
     effective: CharacterAffectSummary[];
+    evaluatedAt: string;
     version: string;
     updatedAt: string | null;
   };

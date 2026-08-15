@@ -16,7 +16,10 @@ V6 DBは起動時のidempotentなschema ensureとSQLite WALを既存境界とし
 - relationship affectとsession affectは`character_affect_events_v6`へappendする。現在状態はactive eventとreset markerからapplication serviceが投影し、状態スナップショットを正本にしない。
 - session layerの`session_id`はscope ownerとしてsession削除時にeventを削除する。relationship layerは`session_id`を持たず、発生元を`source_session_id`のprovenanceとして`ON DELETE SET NULL`で保持するため、source session削除でrelationship状態を失わない。
 - public projectionでも`sessionId`はscopeだけを表し、relationship eventとそのmutationではnullとする。発生元Sessionは`sourceSessionId`だけで表す。
-- 初期表現はlabelに、`[-1, 1]`のvalence、optional arousal/dimensions、`[0, 1]`のintensityを組み合わせる。分類語彙をenumで固定しない。
+- 自由記述のlabelに、`[-1, 1]`のvalence、optional arousal/dimensions、`[0, 1]`のintensityを組み合わせる。新規eventは集約用の固定familyも必須とし、labelを分類identityとして使わない。
+- family eventは少なくとも`targetType + targetId + family`で集約する。代表labelは減衰後の`intensity`寄与が最大のeventを使い、同値は新しい`occurredAt`、さらに同値はevent IDの昇順で決める。family追加前のlegacy eventはlabelから再分類せず、`targetType + targetId + legacy label`ごとに分離して、新規`other` familyへ混ぜない。
+- session eventのeffective projectionはread時刻を基準に、6時間half-lifeの`0.5 ^ (ageMs / halfLifeMs)`をvalence、arousal、intensity、custom dimensionsへ同じ比率で適用する。weightが0.05未満のeventはprojectionから除外する。relationship eventとbaselineは減衰させず、既存clampを維持する。
+- decayはprojectionだけに作用し、保存event、訂正、reset、idempotency ledger、state versionを書き換えない。projectionは評価基準時刻を`evaluatedAt`として返し、Conversation Timingをdecay clockに使わない。
 - optional fieldの省略と明示的なundefinedは永続化とrequest fingerprintの前に同じcanonical JSON表現へ正規化する。
 - relationship eventはtargetが`user`または`relationship`の場合だけ許可する。task、bug、artifact、selfへの感情はsession layerに留める。
 - 同じCharacter/user内のidempotency keyはrecord、correct、reset共通のledgerで所有する。operation、訂正対象、監査理由を含むrequest fingerprintが同じ場合だけ再生し、異なる要求での再利用は拒否する。
@@ -49,7 +52,9 @@ bugやtaskへの一時感情までrelationshipへ転写し得るため採用し�
 
 ## Migration and rollback
 
-schema変更はV6 DBへのadditive table/index追加とし、`ensureV6Schema`のsavepoint内で適用する。この機能の既存rowは存在しないためbackfillは不要で、失敗時はtable/index追加をまとめてrollbackする。V6の`user_version`は変更しない。
+schema変更はV6 DBへのadditive table/index/column追加とし、`ensureV6Schema`のsavepoint内で適用する。失敗時はschema追加をまとめてrollbackする。V6の`user_version`は変更しない。
+
+family列はnullableかつ固定enumのCHECK付きでadditive追加する。既存rowはNULLのまま保持し、labelからのbackfillや`other`への一括分類を行わない。新規eventはapplication validationでfamilyを必須にしてから保存する。
 
 アプリ版をrollbackした場合、旧版は追加tableを参照せず既存V6 dataを読み続けられる。感情tableを自動dropしないため、再upgrade時にevent履歴を再利用できる。物理削除が必要な場合は、別の明示的なdestructive migrationとして扱う。
 

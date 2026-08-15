@@ -1693,7 +1693,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       customAgentItems: [],
       skillItems: [],
       attachmentItems: [],
-      additionalDirectoryItems: [],
       draft: "",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: false,
@@ -1792,7 +1791,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       customAgentItems: [],
       skillItems: [],
       attachmentItems: [],
-      additionalDirectoryItems: [],
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: true,
@@ -1854,40 +1852,43 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.doesNotMatch(html, />Send<\/button>/);
 });
 
-test("SessionActionDockCompactRow は jump button を Send の左に描画する", () => {
+test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      draft: "",
-      actionDockCompactPreview: "下書きなし",
       attachmentCount: 0,
       isRunning: false,
-      isSendDisabled: true,
       showJumpToBottom: true,
-      sendButtonTitle: "送信できないよ。",
+      showMessageViewModeControls: true,
+      messageViewMode: "preview",
       onExpand() {},
       onJumpToBottom() {},
-      onSendOrCancel() {},
+      onCancel() {},
+      onMessageViewModeChange() {},
     }),
   );
 
-  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Send"));
+  assert.match(html, /末尾へ移動/);
+  assert.match(html, />Preview<\/button>/);
+  assert.match(html, />Source<\/button>/);
+  assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
+  assert.match(html, /aria-label="ActionDock を展開"/);
+  assert.doesNotMatch(html, />Send<\/button>/);
+  assert.doesNotMatch(html, /Draft|下書きなし/);
 });
 
 test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      draft: "draft",
-      actionDockCompactPreview: "draft",
       attachmentCount: 2,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",
-      isSendDisabled: false,
+      chatNotice: "New messages",
       showJumpToBottom: true,
-      sendButtonTitle: "実行をキャンセル",
+      cancelButtonTitle: "実行をキャンセル",
       onExpand() {},
       onJumpToBottom() {},
-      onSendOrCancel() {},
+      onCancel() {},
     }),
   );
 
@@ -1895,6 +1896,7 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   assert.match(html, /session-action-dock-compact-progress-button/);
   assert.match(html, /session-action-dock-compact-progress/);
   assert.match(html, /処理を実行中/);
+  assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Cancel"));
   assert.match(html, />Cancel<\/button>/);

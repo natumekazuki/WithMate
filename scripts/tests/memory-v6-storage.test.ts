@@ -1431,6 +1431,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: projectTarget,
         to: userGlobalTarget,
+        reason: "move before forget preview",
         requestFingerprint: "move-before-preview",
       });
       const eventCount = readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6");
@@ -1472,6 +1473,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: projectTarget,
         to: userGlobalTarget,
+        reason: "move to user scope",
         bindingIdHash: "local-user",
         idempotencyKey: "move-project-global",
         requestFingerprint: "fingerprint-a",
@@ -1500,9 +1502,10 @@ describe("MemoryV6Storage", () => {
           binding_id_hash: string;
           idempotency_key: string;
           request_fingerprint: string;
+          reason: string;
         }>(dbPath, `
           SELECT from_owner_type, from_owner_id, to_owner_type, to_scope_type,
-                 binding_id_hash, idempotency_key, request_fingerprint
+                 binding_id_hash, idempotency_key, request_fingerprint, reason
           FROM memory_move_events_v6
         `) },
         {
@@ -1513,6 +1516,7 @@ describe("MemoryV6Storage", () => {
           binding_id_hash: "local-user",
           idempotency_key: "move-project-global",
           request_fingerprint: "fingerprint-a",
+          reason: "move to user scope",
         },
       );
 
@@ -1542,6 +1546,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: projectTarget,
         to: userGlobalTarget,
+        reason: "rollback test",
         requestFingerprint: "rollback-move",
       }), /injected move event failure/);
       assert.equal(storage.getEntry("mem-project")?.owner.type, "project");
@@ -1556,6 +1561,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: characterTarget,
         to: userGlobalTarget,
+        reason: "target mismatch test",
         requestFingerprint: "mismatch",
       }), MemoryV6EntryNotFoundError);
       assert.equal(storage.getEntry("mem-project")?.owner.type, "project");

@@ -1,4 +1,8 @@
-import { assertValidAffectEvent } from "../src/character-affect/affect-contract.js";
+import {
+  CHARACTER_AFFECT_FAMILIES,
+  assertValidAffectEvent,
+  type CharacterAffectFamily,
+} from "../src/character-affect/affect-contract.js";
 import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
@@ -37,7 +41,7 @@ import {
 } from "./character-affect-storage.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import { countMemorySearchQueryTerms } from "./memory-v6-storage.js";
-import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
+import { createLocalUserMemoryPrincipal, type MemoryV6Principal } from "./memory-v6-permission.js";
 
 const LOCAL_USER_ID = "local-user" as const;
 
@@ -131,6 +135,10 @@ function requireExplicitAuthority(authority: CharacterOperationAuthority): Chara
   );
 }
 
+function requireMemoryMutationAuthority(authority: CharacterOperationAuthority): CharacterContextErrorResponse | null {
+  return authority.kind === "conversation" ? null : requireExplicitAuthority(authority);
+}
+
 function memoryErrorToContext(
   error: MemoryErrorResponse,
   failureEffect: "none" | "unknown",
@@ -176,10 +184,32 @@ function memoryErrorToContext(
   });
 }
 
+function rejectOtherCharacterPrincipal(
+  principal: MemoryV6Principal,
+  characterId: string,
+): CharacterContextErrorResponse | null {
+  if (principal.type !== "session_binding" || principal.characterId === characterId) {
+    return null;
+  }
+  return createCharacterContextError("authority_denied", "Memory target is not accessible.", {
+    field: "characterId",
+    retryable: false,
+    conversationMayContinue: true,
+    effect: "none",
+  });
+}
+
 export class CharacterContextApplicationService {
   private readonly principal = createLocalUserMemoryPrincipal();
   private readonly metrics = new Map<string, OperationMetric>();
   private readonly fallbackMetrics = new Map<string, number>();
+  private readonly affectMetrics = {
+    candidatesByFamily: emptyFamilyCounts(),
+    savedByFamily: emptyFamilyCounts(),
+    rejectedByFamily: emptyFamilyCounts(),
+    invalidFamilyRejections: 0,
+    schemaVersionRejections: 0,
+  };
 
   constructor(private readonly deps: CharacterContextApplicationServiceDeps) {}
 
@@ -258,12 +288,14 @@ export class CharacterContextApplicationService {
               }),
               targetType: component.targetType,
               targetId: component.targetId,
+              family: component.family,
               label: component.label,
               valence: component.valence,
               ...(component.arousal === undefined ? {} : { arousal: component.arousal }),
               ...(Object.keys(component.dimensions).length === 0 ? {} : { dimensions: { ...component.dimensions } }),
               intensity: component.intensity,
             })),
+            evaluatedAt: state.evaluatedAt,
             version: version.version,
             updatedAt: version.updatedAt,
           },
@@ -306,9 +338,21 @@ export class CharacterContextApplicationService {
       let expectedVersion = input.expectedVersion;
       for (let index = 0; index < input.candidates.length; index += 1) {
         const candidate = input.candidates[index]!;
+        const family = isCharacterAffectFamily(candidate.family) ? candidate.family : null;
+        if (family) {
+          this.affectMetrics.candidatesByFamily[family] += 1;
+        } else {
+          this.affectMetrics.invalidFamilyRejections += 1;
+        }
         try {
           assertValidAffectEvent(candidate);
         } catch (error) {
+          if (family) {
+            this.affectMetrics.rejectedByFamily[family] += 1;
+          }
+          if (candidate.schemaVersion !== "withmate-affect-v1") {
+            this.affectMetrics.schemaVersionRejections += 1;
+          }
           rejected.push({
             candidateIndex: index,
             code: "invalid_input",
@@ -324,6 +368,9 @@ export class CharacterContextApplicationService {
             memoryEntryId: result.event.memoryEntryId,
             replayed: !result.created,
           });
+          if (result.created) {
+            this.affectMetrics.savedByFamily[candidate.family] += 1;
+          }
           expectedVersion = this.deps.affectService.getStateVersion({
             characterId: input.characterId,
             userId: LOCAL_USER_ID,
@@ -331,6 +378,9 @@ export class CharacterContextApplicationService {
           }).version;
         } catch (error) {
           if (error instanceof CharacterAffectEpisodePersistenceError) {
+            if (error.eventCreated) {
+              this.affectMetrics.savedByFamily[candidate.family] += 1;
+            }
             return createCharacterContextError(
               "partial_failure",
               "Character affect was saved, but its Memory episode did not converge.",
@@ -477,9 +527,14 @@ export class CharacterContextApplicationService {
   async searchMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemorySearchResponse>> {
     return this.measure("character_memory.search", transport, "none", async () => {
       const input = validateCharacterMemorySearchRequest(request);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
@@ -496,7 +551,7 @@ export class CharacterContextApplicationService {
             character: { type: "id" as const, id: input.characterId },
             project: input.scope.project,
           };
-      const result = await this.deps.memoryService.search(this.principal, {
+      const result = await this.deps.memoryService.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         targets: [target],
         query: input.query,
@@ -519,9 +574,14 @@ export class CharacterContextApplicationService {
   async appendEpisode(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
     return this.measure("character_memory.append_episode", transport, "unknown", async () => {
       const input = validateCharacterMemoryAppendEpisodeRequest(request);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
       if (!this.deps.resolveCharacterRuntimeSnapshot(input.characterId)) {
         return createCharacterContextError("unknown_character", "Character was not found.", {
           field: "characterId",
@@ -540,6 +600,7 @@ export class CharacterContextApplicationService {
         return this.mapThrownError(error, "episode scope validation", "none");
       }
       return this.appendMemoryEpisode({
+        principal,
         characterId: input.characterId,
         idempotencyKey: input.idempotencyKey,
         episode: input.episode,
@@ -551,14 +612,20 @@ export class CharacterContextApplicationService {
   async correctMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
     return this.measure("character_memory.correct", transport, "unknown", async () => {
       const input = validateCharacterMemoryCorrectRequest(request);
-      const authorityError = requireExplicitAuthority(input.authority);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
+      const authorityError = requireMemoryMutationAuthority(input.authority);
       if (authorityError) {
         return authorityError;
       }
       return this.appendMemoryEpisode({
+        principal,
         characterId: input.characterId,
         idempotencyKey: input.idempotencyKey,
         episode: input.replacement,
@@ -572,14 +639,19 @@ export class CharacterContextApplicationService {
   async forgetMemory(
     request: unknown,
     transport: CharacterContextTransport = "internal",
+    principal: MemoryV6Principal = this.principal,
   ): Promise<CharacterContextServiceResult<CharacterMemoryMutationResponse>> {
     return this.measure("character_memory.forget", transport, "unknown", async () => {
       const input = validateCharacterMemoryForgetRequest(request);
-      const authorityError = requireExplicitAuthority(input.authority);
+      const principalError = rejectOtherCharacterPrincipal(principal, input.characterId);
+      if (principalError) {
+        return principalError;
+      }
+      const authorityError = requireMemoryMutationAuthority(input.authority);
       if (authorityError) {
         return authorityError;
       }
-      const result = this.deps.memoryService.forget(this.principal, {
+      const result = this.deps.memoryService.forget(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
         target: characterTarget(input.characterId),
         entryIds: [input.entryId],
@@ -610,17 +682,42 @@ export class CharacterContextApplicationService {
   getMetrics(): {
     operations: Record<string, OperationMetric>;
     fallbacks: Record<string, number>;
+    affect: {
+      candidatesByFamily: Record<CharacterAffectFamily, number>;
+      savedByFamily: Record<CharacterAffectFamily, number>;
+      rejectedByFamily: Record<CharacterAffectFamily, number>;
+      otherRate: number;
+      invalidFamilyRejections: number;
+      schemaVersionRejections: number;
+      versionRejections: number;
+      storage: ReturnType<CharacterAffectService["getMetrics"]>;
+    };
   } {
+    const candidateCount = Object.values(this.affectMetrics.candidatesByFamily)
+      .reduce((sum, count) => sum + count, 0);
+    const versionRejections = [...this.metrics.values()]
+      .reduce((sum, metric) => sum + metric.versionConflicts, 0);
     return {
       operations: Object.fromEntries([...this.metrics.entries()].map(([key, value]) => [key, {
         ...value,
         rejectionsByCode: { ...value.rejectionsByCode },
       }])),
       fallbacks: Object.fromEntries(this.fallbackMetrics.entries()),
+      affect: {
+        candidatesByFamily: { ...this.affectMetrics.candidatesByFamily },
+        savedByFamily: { ...this.affectMetrics.savedByFamily },
+        rejectedByFamily: { ...this.affectMetrics.rejectedByFamily },
+        otherRate: candidateCount === 0 ? 0 : this.affectMetrics.candidatesByFamily.other / candidateCount,
+        invalidFamilyRejections: this.affectMetrics.invalidFamilyRejections,
+        schemaVersionRejections: this.affectMetrics.schemaVersionRejections,
+        versionRejections,
+        storage: this.deps.affectService.getMetrics(),
+      },
     };
   }
 
   private async appendMemoryEpisode(input: {
+    principal: MemoryV6Principal;
     characterId: string;
     idempotencyKey: string;
     episode: {
@@ -640,7 +737,7 @@ export class CharacterContextApplicationService {
       ...(input.episode.observedFact ? [{ type: "evidence", value: "user-stated" }] : []),
       ...(input.episode.characterObservation ? [{ type: "evidence", value: "character-observation" }] : []),
     ];
-    const result = await this.deps.memoryService.append(this.principal, {
+    const result = await this.deps.memoryService.append(input.principal, {
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,
       target: characterTarget(input.characterId),
       kind: "context",
@@ -812,4 +909,15 @@ export class CharacterContextApplicationService {
       this.metrics.set(key, metric);
     }
   }
+}
+
+function emptyFamilyCounts(): Record<CharacterAffectFamily, number> {
+  return Object.fromEntries(CHARACTER_AFFECT_FAMILIES.map((family) => [family, 0])) as Record<
+    CharacterAffectFamily,
+    number
+  >;
+}
+
+function isCharacterAffectFamily(value: unknown): value is CharacterAffectFamily {
+  return typeof value === "string" && (CHARACTER_AFFECT_FAMILIES as readonly string[]).includes(value);
 }

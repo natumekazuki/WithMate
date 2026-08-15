@@ -144,7 +144,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
     selectedModelFallbackLabel: "GPT Test",
     reasoningSelectOptions: [{ value: "low", label: "low" }],
-    actionDockCompactPreview: "",
     attachmentCount: 0,
     isActionDockExpanded: true,
     isContextRailResizing: false,
@@ -361,6 +360,36 @@ test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを
   assert.equal("inlinePathFeedback" in props.messageColumnProps, false);
 });
 
+test("buildAgentSessionChatWindowProps は submit pending の helper feedback を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Message submission is in progress.",
+      primaryFeedback: "Message submission is in progress.",
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+  assert.equal(props.composerProps.composerSendability.feedbackTone, "helper");
+  assert.equal(props.composerProps.composerSendability.isBusy, true);
+});
+
+test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      primaryFeedback: "Message is empty.",
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+});
+
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
   const normalProps = buildAgentSessionChatWindowProps(createProjectionInput());
   const auxiliaryProps = buildAgentSessionChatWindowProps(createProjectionInput({ isAuxiliaryMode: true }));
@@ -461,7 +490,6 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
     pendingRunIndicatorText: "Agent responding",
     isMessageListFollowing: false,
     composerSendButtonTitle: "Agent stop",
-    actionDockCompactPreview: "Agent preview",
     chatNotice: "New messages",
     attachmentCount: 2,
     onCollapseActionDock,
@@ -486,16 +514,43 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
   assert.equal("onCollapse" in props.composerProps, false);
   assert.equal(props.composerProps.chatNotice, "New messages");
-  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 2);
   assert.equal(props.compactActionDockProps.chatNotice, "New messages");
   assert.equal(props.compactActionDockProps.isRunning, true);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
-  assert.equal(props.compactActionDockProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.compactActionDockProps.cancelButtonTitle, "Agent stop");
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
-  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal(props.compactActionDockProps.onCancel, onSendOrCancel);
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.deepEqual(props.additionalDirectoryListProps?.items, []);
+});
+
+test("buildAgentSessionChatWindowProps は追加Directory一覧をshared chat surfaceへ投影する", () => {
+  const onRemoveAdditionalDirectory = () => {};
+  const additionalDirectoryItems = [{
+    key: "C:/shared/docs",
+    path: "C:/shared/docs",
+    primaryLabel: "docs",
+    secondaryLabel: "C:/shared",
+    title: "C:/shared/docs",
+    canRemove: true,
+  }];
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isAdditionalDirectoryListOpen: true,
+    additionalDirectoryItems,
+    onRemoveAdditionalDirectory,
+  }));
+
+  assert.deepEqual(props.additionalDirectoryListProps, {
+    isOpen: true,
+    items: additionalDirectoryItems,
+    isInteractionDisabled: false,
+    onRemove: onRemoveAdditionalDirectory,
+  });
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.equal("onRemoveAdditionalDirectory" in props.composerProps, false);
 });
 
 test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠す", () => {
