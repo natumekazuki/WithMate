@@ -691,9 +691,20 @@ describe("memory-v6 contract validation", () => {
       entryId: "mem-a",
       from: projectTarget,
       to: userGlobalTarget,
+      reason: "move to user scope",
       idempotencyKey: "move-a",
     });
     assert.equal(move.ok, true);
+
+    const missingMoveReason = validateMemoryMoveEntryRequest({
+      schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+      entryId: "mem-a",
+      from: projectTarget,
+      to: userGlobalTarget,
+      idempotencyKey: "move-without-reason",
+    });
+    assert.equal(missingMoveReason.ok, false);
+    assert.equal(missingMoveReason.error.field, "reason");
 
     const sameTargetMove = validateMemoryMoveEntryRequest({
       schemaVersion: MEMORY_V6_SCHEMA_VERSION,

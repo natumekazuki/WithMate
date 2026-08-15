@@ -39,8 +39,8 @@ The server uses stdio. It connects to the running WithMate loopback application 
 | `character_affect.appraise` | Submit Character-owned affect candidates | bounded write | conversation authority |
 | `character_memory.search` | Cue-driven Character Memory search | none | read-only MCP route |
 | `character_memory.append_episode` | Append one shared-event episode | bounded write | conversation authority |
-| `character_memory.correct` | Supersede an episode | destructive write | explicit tool invocation maps to explicit user instruction |
-| `character_memory.forget` | Forget an episode | destructive write | explicit tool invocation maps to explicit user instruction |
+| `character_memory.correct` | Supersede an episode | destructive write | conversation authority, explicit target, reason, and idempotency key |
+| `character_memory.forget` | Forget an episode | destructive write | conversation authority, explicit target, reason, and idempotency key |
 
 The same server publishes general semantic Memory in the `memory.*` namespace:
 
@@ -53,10 +53,10 @@ The same server publishes general semantic Memory in the `memory.*` namespace:
 | `memory.list_tags` | List bounded target tag metadata | none | read-only MCP route |
 | `memory.append` | Append semantic Memory, optionally with protected files | bounded write | explicit target and required idempotency key |
 | `memory.forget` | Preview or forget entries | destructive write | explicit invocation, reason, target, and idempotency key |
-| `memory.move_entry` | Retarget one active entry | destructive write | explicit invocation, from/to targets, and idempotency key |
+| `memory.move_entry` | Retarget one active entry | destructive write | explicit invocation, reason, from/to targets, and idempotency key |
 | `memory.get_file` | Export one protected object to a new file | external file write | target validation and non-overwrite boundary |
 | `memory.export_files` | Export one entry's protected objects | external file write | target validation and non-overwrite boundary |
-| `memory.file_usage` | Read protected-object usage metadata | none | read-only MCP route |
+| `memory.file_usage` | Read protected-object usage metadata; bound agents only receive largest-entry candidates from non-Character targets and their own Character | optional | read-only MCP route |
 
 MCP write inputs do not accept a caller-supplied `authority` field. Tool annotations are client hints; the WithMate application service performs final route and authority validation.
 
@@ -66,8 +66,10 @@ General Memory targets are always explicit project, user-global, character, or c
 
 ### Required input distinctions
 
-- `character_context.get` requires `characterId` and `sessionId`; `query` is optional and `memoryLimit` defaults to 3 within 0..10.
-- `character_affect.appraise` requires 1..10 candidates. Candidate `characterId`, `sessionId`, and `userId: local-user` must match the request owner.
+- `character_context.get` requires `characterId`; the actor `sessionId` is resolved from the WithMate runtime binding. `query` is optional and `memoryLimit` defaults to 3 within 0..10.
+- `character_affect.appraise` requires 1..10 candidates. Candidate `characterId` and `userId: local-user` must match the request owner; candidate `sessionId` is supplied by the runtime binding.
+- `character_context.get` and `character_affect.appraise` reject requests without a valid runtime binding before application dispatch. A CLI argument or request-body `sessionId` does not establish actor authority.
+- `character_memory.append_episode` retains `sessionId` in its public input because the application request validates the episode's Session scope. When a runtime binding is present, the server replaces it with the actor Session before validation; the caller-supplied value never establishes actor authority.
 - An affect candidate requires `schemaVersion`, owner IDs, `layer`, explicit `targetType` and `targetId`, one of `joy`, `relief`, `interest`, `anticipation`, `affinity`, `gratitude`, `concern`, `frustration`, `disappointment`, `regret`, `determination`, or `other` as `family`, free-label value, intensity, reason, evidence, canonical UTC `occurredAt`, and `idempotencyKey`.
 - When an episode belongs to that affect event, put its `title`, `preview`, `body`, required `salience` from 0 to 1, and optional `motif` in the candidate's `memoryEpisode`. Linked `memoryEpisode` does not use `observedFact` or `characterObservation`. Do not submit the same event separately through `character_memory.append_episode`.
 - Relationship affect may target only `user` or `relationship`. Targets `task`, `bug`, `artifact`, and `self` belong to the session layer.
@@ -189,7 +191,7 @@ An exit code 3 does not make a domain rejection an MCP availability failure.
 
 ## Correction, forget, reset, and read-back
 
-Character Memory correction/forget, affect correction, relationship/session affect reset, and relationship-boundary changes require an explicit user instruction or authenticated operator authority. Confirm the target entry/event and current version before mutation.
+An agent may correct or forget Character Memory autonomously as the user's delegate. It must use its own Character scope, confirm the target entry and current version, provide a concrete reason and idempotency key, and read back the result. Affect correction, relationship/session affect reset, and relationship-boundary changes require an explicit user instruction or authenticated operator authority.
 
 After mutation:
 
@@ -218,4 +220,4 @@ Character context reports affect `mode` independently from the mutation result. 
 
 ## Runtime parity check
 
-To confirm adapter parity, read the same Character/session context through MCP `character_context.get` and CLI `context-get`. The Character scope and affect version must match. A CLI fallback must also be visible in `character-metrics` as `mcp->cli`.
+To confirm adapter parity, read the same Character/session context through MCP `character_context.get` and CLI `context-get` from the same WithMate-launched provider execution. Both adapters self-resolve the actor Session from the opaque runtime binding; an external CLI without that binding receives an authority error. The Character scope and affect version must match. A CLI fallback must also be visible in `character-metrics` as `mcp->cli`.

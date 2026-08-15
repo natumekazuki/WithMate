@@ -8,6 +8,8 @@ import { describe, it } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
+import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
+import { getMemoryV6AgentRuntimeOperations } from "../../src-electron/memory-v6-http-server.js";
 import { startMemoryV6RuntimeApi } from "../../src-electron/memory-v6-runtime.js";
 import { runWithMateMemoryCli } from "../withmate-memory.js";
 import { createWithMateMemoryMcpServer } from "../withmate-memory-mcp.js";
@@ -24,6 +26,7 @@ describe("Character context CLI / MCP integration", () => {
   it("MCP writeとCLI inspect/searchが同じstate、scope、versionをread-backする", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-character-runtime-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-character-discovery-"));
+    const bindingRegistry = new AgentRuntimeBindingRegistry();
     const runtime = await startMemoryV6RuntimeApi({
       userDataPath,
       runtimeDirectoryPath,
@@ -50,6 +53,10 @@ describe("Character context CLI / MCP integration", () => {
         definitionByteSize: 18,
         snapshotAt: "2026-08-09T00:00:00.000Z",
       } : null,
+      agentRuntimeBindingRegistry: bindingRegistry,
+      resolveActorSession: (sessionId) => sessionId === "session-a"
+        ? { id: "session-a", providerId: "codex", characterId: "character-a" }
+        : null,
     });
     const db = new DatabaseSync(runtime.dbPath);
     db.exec("PRAGMA foreign_keys = ON;");
@@ -63,8 +70,22 @@ describe("Character context CLI / MCP integration", () => {
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
     db.close();
 
-    const cliEnv = { WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath };
-    const mcpEnv = { WITHMATE_MEMORY_DISCOVERY_FILE: runtime.mcpDiscoveryFilePath };
+    const binding = bindingRegistry.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      operationGrants: getMemoryV6AgentRuntimeOperations(),
+    });
+    const cliEnv = {
+      WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
+      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+    };
+    const operatorCliEnv = {
+      WITHMATE_MEMORY_DISCOVERY_FILE: runtime.discoveryFilePath,
+    };
+    const mcpEnv = {
+      WITHMATE_MEMORY_DISCOVERY_FILE: runtime.mcpDiscoveryFilePath,
+      WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: binding.bindingReference,
+    };
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer({ env: mcpEnv });
     const client = new Client({ name: "withmate-cli-mcp-integration", version: "1.0.0" });
@@ -81,7 +102,6 @@ describe("Character context CLI / MCP integration", () => {
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
           characterId: "character-a",
-          sessionId: "session-a",
         }),
       ], { env: cliEnv, stdout: beforeOutput.stream, stderr: outputBuffer().stream }), 0);
       const before = beforeOutput.json();
@@ -89,7 +109,7 @@ describe("Character context CLI / MCP integration", () => {
       const metricsOutput = outputBuffer();
       assert.equal(await runWithMateMemoryCli([
         "character-metrics",
-      ], { env: cliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: metricsOutput.stream, stderr: outputBuffer().stream }), 0);
       assert.equal(metricsOutput.json().metrics.fallbacks["mcp->cli"], 1);
 
       const rejectedCliOutput = outputBuffer();
@@ -99,14 +119,12 @@ describe("Character context CLI / MCP integration", () => {
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
           characterId: "character-a",
-          sessionId: "session-a",
           expectedVersion: before.affect.version,
           authority: { kind: "operator", reason: "Unknown family integration check." },
           candidates: [{
             schemaVersion: "withmate-affect-v1",
             characterId: "character-a",
             userId: "local-user",
-            sessionId: "session-a",
             layer: "session",
             targetType: "task",
             targetId: "unknown-family",
@@ -127,13 +145,11 @@ describe("Character context CLI / MCP integration", () => {
         name: "character_affect.appraise",
         arguments: {
           characterId: "character-a",
-          sessionId: "session-a",
           expectedVersion: before.affect.version,
           candidates: [{
             schemaVersion: "withmate-affect-v1",
             characterId: "character-a",
             userId: "local-user",
-            sessionId: "session-a",
             layer: "session",
             targetType: "task",
             targetId: "mcp-integration",
@@ -160,7 +176,7 @@ describe("Character context CLI / MCP integration", () => {
           sessionId: "session-a",
           authority: { kind: "operator", reason: "Integration inspection." },
         }),
-      ], { env: cliEnv, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
+      ], { env: operatorCliEnv, stdout: inspectOutput.stream, stderr: outputBuffer().stream }), 0);
       const inspection = inspectOutput.json();
       assert.equal(inspection.version.version, appraisalState.version);
       assert.equal(inspection.events[0].targetId, "mcp-integration");
@@ -168,7 +184,7 @@ describe("Character context CLI / MCP integration", () => {
 
       const mcpContextCall = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a", sessionId: "session-a" },
+        arguments: { characterId: "character-a" },
       });
       assert.equal(mcpContextCall.isError, undefined, JSON.stringify(mcpContextCall));
       const mcpContext = mcpContextCall.structuredContent as Record<string, any>;
@@ -179,7 +195,6 @@ describe("Character context CLI / MCP integration", () => {
         JSON.stringify({
           schemaVersion: "withmate-character-context-v1",
           characterId: "character-a",
-          sessionId: "session-a",
         }),
       ], { env: cliEnv, stdout: cliContextOutput.stream, stderr: outputBuffer().stream }), 0);
       const cliContext = cliContextOutput.json();

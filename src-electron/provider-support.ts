@@ -11,6 +11,7 @@ import type {
   ProviderCodingAdapter,
   ProviderTurnAdapter,
 } from "./provider-runtime.js";
+import { getProviderAgentRuntimeBindingCapability } from "./provider-agent-runtime-binding.js";
 
 type ResolveProviderCatalogArgs = {
   providerId: string | null | undefined;
@@ -36,6 +37,8 @@ export type ProviderRuntimeCapabilities = {
   providerSupported: boolean;
   instructionSyncSupported: boolean;
   tokenUsageSupported: boolean;
+  agentRuntimeBindingSupported: boolean;
+  agentRuntimeBindingTransport: "env" | "unsupported";
 };
 
 const MATE_SUPPORTED_PROVIDER_IDS = new Set(["codex", "copilot"]);
@@ -75,10 +78,13 @@ export async function fetchProviderQuotaTelemetry(
 
 export function getProviderRuntimeCapabilities(args: { providerId: string }): ProviderRuntimeCapabilities {
   const providerSupported = MATE_SUPPORTED_PROVIDER_IDS.has(args.providerId);
+  const bindingCapability = getProviderAgentRuntimeBindingCapability(args.providerId);
   return {
     providerId: args.providerId,
     providerSupported,
     instructionSyncSupported: providerSupported,
     tokenUsageSupported: providerSupported,
+    agentRuntimeBindingSupported: bindingCapability.transport !== "unsupported",
+    agentRuntimeBindingTransport: bindingCapability.transport,
   };
 }

@@ -19,7 +19,9 @@ import { createOrVerifyV6FreshDatabase } from "./app-database-v6-bootstrap.js";
 import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
+  type AgentRuntimeActorSession,
 } from "./memory-v6-http-server.js";
+import type { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
 import {
   inspectMemoryProtectedObjectInputFile,
@@ -54,6 +56,10 @@ export type StartMemoryV6RuntimeApiOptions = {
   protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
   now?: () => Date;
   log?: (input: AppLogInput) => void;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
+  resolveActorSession?: (
+    sessionId: string,
+  ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
 };
 
 export type PublishMemoryV6DiscoveryFileOptions = {
@@ -352,6 +358,8 @@ export async function startMemoryV6RuntimeApi(
       operatorApiSecret,
       mcpApiSecret,
       runtimeInstanceId,
+      agentRuntimeBindingRegistry: options.agentRuntimeBindingRegistry,
+      resolveActorSession: options.resolveActorSession,
     });
     await server.start();
 

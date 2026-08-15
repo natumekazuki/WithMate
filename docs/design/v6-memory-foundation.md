@@ -536,7 +536,7 @@ WithMate起動中は、WithMate外のCodex / shell / CLIからもMemory target i
 CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。
 `local_user` principalは明示targetだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
 retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
-append / forget時のMemory entryの`source.sessionId`は`null`として保存する。
+bindingなしの外部CLIによるappend / forgetではMemory entryの`source.sessionId`を`null`として保存する。WithMateが起動したagent executionからbinding付きで操作する場合は、runtimeが解決したactor Sessionをsourceとidempotency principalへ保存する。
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
 discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`apiSecret`、`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。

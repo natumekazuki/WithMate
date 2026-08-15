@@ -200,9 +200,25 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         );
       }
       const appraise = result.tools.find((tool) => tool.name === "character_affect.appraise");
+      const contextGet = result.tools.find((tool) => tool.name === "character_context.get");
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(contextGet?.inputSchema.properties ?? {}, "sessionId"),
+        false,
+        "character_context.get must resolve actor Session from runtime binding",
+      );
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(appraise?.inputSchema.properties ?? {}, "sessionId"),
+        false,
+        "character_affect.appraise must resolve actor Session from runtime binding",
+      );
       const affectCandidateItems = appraise?.inputSchema.properties?.candidates as {
-        items?: { required?: string[]; properties?: { family?: { enum?: string[] } } };
+        items?: { required?: string[]; properties?: { family?: { enum?: string[] }; sessionId?: unknown } };
       };
+      assert.equal(
+        Object.prototype.hasOwnProperty.call(affectCandidateItems.items?.properties ?? {}, "sessionId"),
+        false,
+        "affect candidates must not accept caller-asserted actor Session",
+      );
       assert.ok(affectCandidateItems.items?.required?.includes("family"));
       assert.deepEqual(affectCandidateItems.items?.properties?.family?.enum, [
         "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
@@ -212,12 +228,10 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         name: "character_affect.appraise",
         arguments: {
           characterId: "character-a",
-          sessionId: "session-a",
           candidates: [{
             schemaVersion: "withmate-affect-v1",
             characterId: "character-a",
             userId: "local-user",
-            sessionId: "session-a",
             layer: "session",
             targetType: "task",
             targetId: "task-a",
@@ -251,6 +265,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         assert.ok(tool?.inputSchema.required?.includes("idempotencyKey"));
       }
       assert.ok(result.tools.find((tool) => tool.name === "memory.forget")?.inputSchema.required?.includes("reason"));
+      assert.ok(result.tools.find((tool) => tool.name === "memory.move_entry")?.inputSchema.required?.includes("reason"));
       assert.equal(result.tools.find((tool) => tool.name === "memory.get_file")?.annotations?.idempotentHint, false);
       assert.equal(result.tools.find((tool) => tool.name === "memory.export_files")?.annotations?.idempotentHint, false);
       assert.equal(result.tools.find((tool) => tool.name === "memory.forget")?.annotations?.destructiveHint, true);
@@ -304,7 +319,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       );
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /Character's own affect/);
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /raw conversation transcript/);
-      assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /explicit user instruction/);
+      assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /autonomous user-delegate operations/);
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /memory\.\*/);
       assert.match(CHARACTER_MCP_SERVER_INSTRUCTIONS, /Structured Memory or Character domain errors/);
     } finally {
@@ -390,6 +405,95 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
           },
         },
       ]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("managed MCPはopaque runtime bindingを専用runtime exchange optionへだけ渡す", async () => {
+    const bindingReferences: Array<string | undefined> = [];
+    const operations: WithMateMemoryRuntimeOperation[] = [];
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "opaque-binding-reference",
+      },
+      runtimeCall: async (_connection, operation, options) => {
+        operations.push(operation);
+        bindingReferences.push(options.bindingReference);
+        return {
+          ok: false,
+          status: 403,
+          value: {
+            schemaVersion: "withmate-memory-v1",
+            error: { code: "MEMORY_UNAUTHORIZED", message: "rejected", effect: "none" },
+          },
+        };
+      },
+    });
+    const client = new Client({ name: "withmate-runtime-binding-transport-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.callTool({
+        name: "memory.search",
+        arguments: {
+          targets: [{ owner: "user", scope: "global" }],
+          query: "binding transport",
+        },
+      });
+      assert.deepEqual(bindingReferences, ["opaque-binding-reference"]);
+      assert.equal(JSON.stringify(operations).includes("opaque-binding-reference"), false);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("managed MCPはrequired binding欠落をdispatch前のnon-retryable rejectionとして返す", async () => {
+    let runtimeDispatchCount = 0;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createWithMateMemoryMcpServer({
+      env: {
+        WITHMATE_MEMORY_API_URL: "http://127.0.0.1:4567",
+        WITHMATE_MEMORY_API_SECRET: "api-secret",
+        WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+        WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+      },
+      runtimeCall: async () => {
+        runtimeDispatchCount += 1;
+        throw new Error("must not dispatch");
+      },
+    });
+    const client = new Client({ name: "withmate-runtime-binding-required-test", version: "1.0.0" });
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const characterResult = await client.callTool({
+        name: "character_context.get",
+        arguments: { characterId: "character-a" },
+      });
+      const memoryResult = await client.callTool({
+        name: "memory.search",
+        arguments: {
+          targets: [{ owner: "user", scope: "global" }],
+          query: "binding required",
+        },
+      });
+
+      assert.equal((characterResult.structuredContent as any).error.code, "authority_denied");
+      assert.equal((characterResult.structuredContent as any).error.retryable, false);
+      assert.equal((characterResult.structuredContent as any).error.effect, "none");
+      assert.equal((memoryResult.structuredContent as any).error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal((memoryResult.structuredContent as any).error.retryable, false);
+      assert.equal((memoryResult.structuredContent as any).error.effect, "none");
+      assert.equal(runtimeDispatchCount, 0);
     } finally {
       await client.close();
       await server.close();
@@ -523,7 +627,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       await client.connect(clientTransport);
       const character = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a", sessionId: "session-a" },
+        arguments: { characterId: "character-a" },
       });
       const memory = await client.callTool({
         name: "memory.append",
@@ -577,7 +681,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       await client.listTools();
       const result = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a", sessionId: "session-a" },
+        arguments: { characterId: "character-a" },
       });
       assert.equal(result.isError, true);
       assert.deepEqual(result.structuredContent, {
@@ -630,7 +734,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       await client.connect(clientTransport);
       const result = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a", sessionId: "session-a" },
+        arguments: { characterId: "character-a" },
       });
       assert.equal(result.isError, true);
       assert.deepEqual(result.structuredContent, {
@@ -681,7 +785,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       await client.connect(clientTransport);
       const readResult = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a", sessionId: "session-a" },
+        arguments: { characterId: "character-a" },
       });
       const writeResult = await client.callTool({
         name: "character_memory.forget",
@@ -755,7 +859,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       await client.connect(clientTransport);
       const result = await client.callTool({
         name: "character_context.get",
-        arguments: { characterId: "character-a", sessionId: "session-a" },
+        arguments: { characterId: "character-a" },
       });
       assert.equal(result.isError, true);
       assert.equal((result.structuredContent as any).schemaVersion, "withmate-character-context-v1");
@@ -806,6 +910,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         WITHMATE_MEMORY_API_SECRET: apiSecret,
         WITHMATE_MEMORY_MCP_API_SECRET: "mcp-secret",
         WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: runtimeInstanceId,
+        WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "opaque-swap-binding",
       },
     });
     const client = new Client({ name: "withmate-mcp-peer-swap-test", version: "1.0.0" });
@@ -831,6 +936,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       assert.equal(firstHeaders.length, 1);
       assert.equal(firstHeaders[0]["x-withmate-memory-api-secret"], undefined);
       assert.equal(firstHeaders[0]["x-withmate-memory-mcp-api-secret"], undefined);
+      assert.equal(firstHeaders[0]["x-withmate-agent-runtime-binding-reference"], undefined);
       assert.equal(firstHeaders[0]["content-length"], undefined);
     } finally {
       await client.close();

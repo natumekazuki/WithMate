@@ -20,6 +20,10 @@ import { CharacterAffectStorage } from "../../src-electron/character-affect-stor
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
+import {
+  LOCAL_USER_MEMORY_PERMISSIONS,
+  type MemoryV6SessionBindingPrincipal,
+} from "../../src-electron/memory-v6-permission.js";
 
 function createFixture(options: {
   failEpisodeWrite?: boolean;
@@ -40,6 +44,12 @@ function createFixture(options: {
         id, title, state, provider_id, catalog_revision, model_id, approval_mode,
         character_id, character_snapshot_json, created_at, updated_at, last_active_at
       ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
+    `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+    db.prepare(`
+      INSERT INTO sessions_v6 (
+        id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+        character_id, character_snapshot_json, created_at, updated_at, last_active_at
+      ) VALUES ('session-b', 'B', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
   } finally {
     db.close();
@@ -129,6 +139,41 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
 }
 
 describe("CharacterContextApplicationService", () => {
+  it("session bindingは別Characterの存在有無をlookup前の同じauthority errorへ畳む", async () => {
+    const fixture = createFixture();
+    try {
+      const principal: MemoryV6SessionBindingPrincipal = {
+        type: "session_binding",
+        bindingIdHash: "binding-a",
+        sessionId: "session-a",
+        providerId: "codex",
+        characterId: "character-a",
+        permissions: LOCAL_USER_MEMORY_PERMISSIONS,
+      };
+      const request = (characterId: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId,
+        query: "existence oracle",
+        scope: { scope: "character" as const },
+        limit: 3,
+      });
+
+      const existingOther = await fixture.service.searchMemory(request("character-b"), "mcp", principal);
+      const missingOther = await fixture.service.searchMemory(request("character-missing"), "mcp", principal);
+
+      assert.equal(isCharacterContextError(existingOther), true);
+      assert.equal(isCharacterContextError(missingOther), true);
+      if (!isCharacterContextError(existingOther) || !isCharacterContextError(missingOther)) return;
+      assert.equal(existingOther.error.code, "authority_denied");
+      assert.equal(missingOther.error.code, "authority_denied");
+      assert.equal(existingOther.error.message, missingOther.error.message);
+      assert.equal(existingOther.error.field, "characterId");
+      assert.equal(missingOther.error.field, "characterId");
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("read-only Memory searchの予期しないfailureをeffect noneで返す", async () => {
     const fixture = createFixture({ failMemorySearch: true });
     try {
@@ -441,7 +486,7 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
-  it("episodeの訂正とforgetをexplicit authority、idempotency、read-back付きで行う", async () => {
+  it("episodeの訂正とforgetをconversation authority、idempotency、read-back付きで行う", async () => {
     const fixture = createFixture();
     try {
       const appended = await fixture.service.appendEpisode({
@@ -461,28 +506,11 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(isCharacterContextError(appended), false);
       if (isCharacterContextError(appended) || !appended.entry) return;
 
-      const denied = await fixture.service.correctMemory({
-        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-        characterId: "character-a",
-        entryId: appended.entry.id,
-        authority: { kind: "conversation" },
-        reason: "Correction requested.",
-        idempotencyKey: "episode-correct",
-        replacement: {
-          title: "Corrected episode",
-          body: "The corrected shared episode.",
-          preview: "Corrected episode.",
-          observedFact: "The user corrected the event.",
-        },
-      });
-      assert.equal(isCharacterContextError(denied), true);
-      if (isCharacterContextError(denied)) assert.equal(denied.error.code, "authority_denied");
-
       const corrected = await fixture.service.correctMemory({
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: appended.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user requested correction." },
+        authority: { kind: "conversation" },
         reason: "Correction requested.",
         idempotencyKey: "episode-correct",
         replacement: {
@@ -501,7 +529,7 @@ describe("CharacterContextApplicationService", () => {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: appended.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user changed the correction reason." },
+        authority: { kind: "conversation" },
         reason: "A different correction reason.",
         idempotencyKey: "episode-correct",
         replacement: {
@@ -520,7 +548,7 @@ describe("CharacterContextApplicationService", () => {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: corrected.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user requested forget." },
+        authority: { kind: "conversation" },
         reason: "incorrect",
         idempotencyKey: "episode-forget",
       });
@@ -531,7 +559,7 @@ describe("CharacterContextApplicationService", () => {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: corrected.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user changed the forget reason." },
+        authority: { kind: "conversation" },
         reason: "privacy",
         idempotencyKey: "episode-forget",
       });
@@ -554,6 +582,63 @@ describe("CharacterContextApplicationService", () => {
         assert.equal(forgetAudit.reason, "incorrect");
       } finally {
         auditDb.close();
+      }
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("Character Memory appendはbinding principalをsourceとidempotency namespaceへ引き渡す", async () => {
+    const fixture = createFixture();
+    try {
+      const principal = (sessionId: string, bindingIdHash: string): MemoryV6SessionBindingPrincipal => ({
+        type: "session_binding",
+        bindingIdHash,
+        sessionId,
+        providerId: "codex",
+        characterId: "character-a",
+        permissions: LOCAL_USER_MEMORY_PERMISSIONS,
+      });
+      const request = (sessionId: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId,
+        authority: { kind: "conversation" as const },
+        idempotencyKey: "same-key",
+        episode: {
+          title: `Episode ${sessionId}`,
+          body: `Episode body for ${sessionId}.`,
+          preview: `Episode ${sessionId}.`,
+          observedFact: `Observed in ${sessionId}.`,
+        },
+      });
+
+      const first = await fixture.service.appendEpisode(
+        request("session-a"),
+        "mcp",
+        principal("session-a", "binding-a"),
+      );
+      const second = await fixture.service.appendEpisode(
+        request("session-b"),
+        "mcp",
+        principal("session-b", "binding-b"),
+      );
+
+      assert.equal(isCharacterContextError(first), false);
+      assert.equal(isCharacterContextError(second), false);
+      if (isCharacterContextError(first) || isCharacterContextError(second)) return;
+      assert.notEqual(first.entry?.id, second.entry?.id);
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT id, source_session_id
+          FROM memory_entries_v6
+          WHERE id IN (?, ?)
+          ORDER BY source_session_id
+        `).all(first.entry?.id, second.entry?.id) as Array<{ id: string; source_session_id: string }>;
+        assert.deepEqual(rows.map((row) => row.source_session_id), ["session-a", "session-b"]);
+      } finally {
+        db.close();
       }
     } finally {
       fixture.close();

@@ -5,7 +5,18 @@ import type { AddressInfo } from "node:net";
 import { createMemoryErrorResponse, type MemoryErrorResponse } from "../src/memory-v6/memory-response-contract.js";
 import type { MemoryV6Service } from "./memory-v6-service.js";
 import type { MemoryV6Principal } from "./memory-v6-permission.js";
-import { createLocalUserMemoryPrincipal } from "./memory-v6-permission.js";
+import {
+  LOCAL_USER_MEMORY_PERMISSIONS,
+  createLocalUserMemoryPrincipal,
+} from "./memory-v6-permission.js";
+import type {
+  AgentRuntimeBindingRegistry,
+  ResolvedAgentRuntimeBinding,
+} from "./agent-runtime-binding.js";
+import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER,
+  type AgentRuntimeBindingPolicy,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
 import {
   createCharacterContextError,
   isCharacterContextError,
@@ -36,6 +47,16 @@ export type MemoryV6HttpServerOptions = {
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
   maxConcurrentRequests?: number;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
+  resolveActorSession?: (
+    sessionId: string,
+  ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+};
+
+export type AgentRuntimeActorSession = {
+  id: string;
+  providerId: string;
+  characterId: string;
 };
 
 export type MemoryV6HttpServer = {
@@ -117,6 +138,42 @@ const routeByPath = new Map<string, MemoryV6Route>([
   ["/v1/character_memory/forget", "character_memory_forget"],
   ["/v1/character_context/metrics", "character_context_metrics"],
 ]);
+
+export const MEMORY_V6_ROUTE_BINDING_POLICIES: Readonly<Record<MemoryV6Route, AgentRuntimeBindingPolicy>> = {
+  characters: "none",
+  file_usage: "optional",
+  list_targets: "optional",
+  list_entries: "optional",
+  audit: "none",
+  search: "optional",
+  get_entry: "optional",
+  get_file: "optional",
+  export_files: "optional",
+  list_tags: "optional",
+  append: "optional",
+  forget: "optional",
+  move_entry: "optional",
+  character_context_get: "required",
+  character_affect_appraise: "required",
+  character_affect_inspect: "none",
+  character_affect_correct: "none",
+  character_affect_reset: "none",
+  character_memory_search: "optional",
+  character_memory_append_episode: "optional",
+  character_memory_correct: "optional",
+  character_memory_forget: "optional",
+  character_context_metrics: "none",
+};
+
+export function agentRuntimeOperationForMemoryRoute(route: MemoryV6Route): string {
+  return `memory.route.${route}`;
+}
+
+export function getMemoryV6AgentRuntimeOperations(): string[] {
+  return (Object.keys(MEMORY_V6_ROUTE_BINDING_POLICIES) as MemoryV6Route[])
+    .filter((route) => MEMORY_V6_ROUTE_BINDING_POLICIES[route] !== "none")
+    .map(agentRuntimeOperationForMemoryRoute);
+}
 
 const mcpRoutes = new Set<MemoryV6Route>([
   "file_usage",
@@ -320,6 +377,7 @@ function createTransportAuthorityError(route: MemoryV6Route): unknown {
 
 async function routeCharacterContextRequest(
   service: CharacterContextApplicationService | undefined,
+  principal: MemoryV6Principal,
   route: MemoryV6Route,
   body: unknown,
   transport: CharacterContextTransport,
@@ -329,6 +387,17 @@ async function routeCharacterContextRequest(
   }
   if (route === "character_context_get") {
     return service.getContext(body, transport);
+  }
+  if (
+    transport === "mcp"
+    && principal.type !== "session_binding"
+    && (route === "character_memory_correct" || route === "character_memory_forget")
+  ) {
+    return createCharacterContextError(
+      "authority_denied",
+      "This operation requires a WithMate Session runtime binding.",
+      { retryable: false, conversationMayContinue: true, effect: "none" },
+    );
   }
   const authorizedBody = resolveTransportAuthority(body, route, transport);
   if (route === "character_affect_appraise") {
@@ -344,16 +413,16 @@ async function routeCharacterContextRequest(
     return service.resetAffect(authorizedBody, transport);
   }
   if (route === "character_memory_search") {
-    return service.searchMemory(body, transport);
+    return service.searchMemory(body, transport, principal);
   }
   if (route === "character_memory_append_episode") {
-    return service.appendEpisode(authorizedBody, transport);
+    return service.appendEpisode(authorizedBody, transport, principal);
   }
   if (route === "character_memory_correct") {
-    return service.correctMemory(authorizedBody, transport);
+    return service.correctMemory(authorizedBody, transport, principal);
   }
   if (route === "character_memory_forget") {
-    return service.forgetMemory(authorizedBody, transport);
+    return service.forgetMemory(authorizedBody, transport, principal);
   }
   return {
     schemaVersion: "withmate-character-context-v1",
@@ -369,15 +438,9 @@ function resolveTransportAuthority(
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return body;
   }
-  const operationRequiresExplicitAuthority = route === "character_affect_correct"
-    || route === "character_affect_reset"
-    || route === "character_memory_correct"
-    || route === "character_memory_forget";
   const authority = transport === "cli"
     ? { kind: "operator", reason: "Authenticated local CLI operation." }
-    : transport === "mcp" && operationRequiresExplicitAuthority
-      ? { kind: "explicit_user_instruction", reason: "Approved destructive MCP tool invocation." }
-      : { kind: "conversation" };
+    : { kind: "conversation" };
   return { ...(body as Record<string, unknown>), authority };
 }
 
@@ -456,6 +519,7 @@ type RuntimeExchangePayload = {
   apiSecret: string;
   adapter: CharacterContextTransport;
   adapterSecret: string;
+  bindingReference?: string;
   operation: {
     method: "GET" | "POST";
     path: string;
@@ -475,6 +539,7 @@ function parseRuntimeExchangePayload(value: unknown): RuntimeExchangePayload | n
     || typeof payload.apiSecret !== "string"
     || (payload.adapter !== "cli" && payload.adapter !== "mcp")
     || typeof payload.adapterSecret !== "string"
+    || (payload.bindingReference !== undefined && typeof payload.bindingReference !== "string")
     || !operation
     || (operation.method !== "GET" && operation.method !== "POST")
     || typeof operation.path !== "string"
@@ -503,6 +568,7 @@ async function routeResolvedRequest(input: {
   body: unknown;
   transport: CharacterContextTransport | null;
   fallbackFrom?: "mcp";
+  bindingReference?: string;
 }): Promise<unknown> {
   if (!input.transport || !canTransportInvokeRoute(input.transport, input.route)) {
     return createTransportAuthorityError(input.route);
@@ -510,18 +576,182 @@ async function routeResolvedRequest(input: {
   if (input.fallbackFrom === "mcp" && input.transport === "cli") {
     input.options.characterContextService?.recordFallback("mcp", "cli");
   }
-  const mcpGeneralPolicyError = validateMcpGeneralMutationPolicy(input.route, input.body, input.transport);
+  const bindingResolution = await resolveRouteAgentRuntimeBinding({
+    options: input.options,
+    route: input.route,
+    body: input.body,
+    bindingReference: input.bindingReference,
+  });
+  if (!bindingResolution.ok) {
+    return bindingResolution.error;
+  }
+  const mcpGeneralPolicyError = validateMcpGeneralMutationPolicy(input.route, bindingResolution.body, input.transport);
   if (mcpGeneralPolicyError) {
     return mcpGeneralPolicyError;
   }
   return input.route.startsWith("character_")
     ? routeCharacterContextRequest(
         input.options.characterContextService,
+        bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
         input.route,
-        input.body,
+        bindingResolution.body,
         input.transport,
       )
-    : routeServiceRequest(input.options.service, createLocalUserMemoryPrincipal(), input.route, input.body);
+    : routeServiceRequest(
+        input.options.service,
+        bindingResolution.principal ?? createLocalUserMemoryPrincipal(),
+        input.route,
+        bindingResolution.body,
+      );
+}
+
+type RouteBindingResolution =
+  | { ok: true; body: unknown; principal: MemoryV6Principal | null }
+  | { ok: false; error: unknown };
+
+function bindingFailure(
+  route: MemoryV6Route,
+  code: "SESSION_BINDING_REQUIRED" | "SESSION_BINDING_INVALID" | "SESSION_BINDING_FORBIDDEN",
+): unknown {
+  if (route.startsWith("character_")) {
+    return createCharacterContextError(
+      "authority_denied",
+      code === "SESSION_BINDING_REQUIRED"
+        ? "This operation requires a WithMate Session runtime binding."
+        : "The WithMate Session runtime binding is not authorized for this operation.",
+      {
+        retryable: false,
+        conversationMayContinue: true,
+        effect: "none",
+        details: { bindingFailure: code },
+      },
+    );
+  }
+  return createMemoryErrorResponse({
+    code: code === "SESSION_BINDING_REQUIRED" ? "MEMORY_PRINCIPAL_REQUIRED" : "MEMORY_FORBIDDEN",
+    message: "The Memory request does not have an authorized WithMate Session runtime binding.",
+    retryable: false,
+    conversationMayContinue: true,
+    effect: "none",
+  });
+}
+
+function hasDifferentCharacterTarget(body: unknown, characterId: string): boolean {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return false;
+  }
+  const request = body as Record<string, unknown>;
+  if (typeof request.characterId === "string" && request.characterId.trim() !== characterId) {
+    return true;
+  }
+  return Array.isArray(request.candidates) && request.candidates.some((candidate) => (
+    Boolean(candidate)
+    && typeof candidate === "object"
+    && !Array.isArray(candidate)
+    && typeof (candidate as { characterId?: unknown }).characterId === "string"
+    && (candidate as { characterId: string }).characterId.trim() !== characterId
+  ));
+}
+
+function applyActorSessionToBody(
+  route: MemoryV6Route,
+  body: unknown,
+  actorSession: AgentRuntimeActorSession,
+): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const request = body as Record<string, unknown>;
+  if (route === "character_affect_appraise") {
+    return {
+      ...request,
+      sessionId: actorSession.id,
+      candidates: Array.isArray(request.candidates)
+        ? request.candidates.map((candidate) => (
+            candidate && typeof candidate === "object" && !Array.isArray(candidate)
+              ? {
+                  ...(candidate as Record<string, unknown>),
+                  characterId: actorSession.characterId,
+                  sessionId: actorSession.id,
+                }
+              : candidate
+          ))
+        : request.candidates,
+    };
+  }
+  if (route === "character_context_get" || route === "character_memory_append_episode") {
+    return { ...request, sessionId: actorSession.id };
+  }
+  return body;
+}
+
+async function resolveRouteAgentRuntimeBinding(input: {
+  options: MemoryV6HttpServerOptions;
+  route: MemoryV6Route;
+  body: unknown;
+  bindingReference?: string;
+}): Promise<RouteBindingResolution> {
+  const policy = MEMORY_V6_ROUTE_BINDING_POLICIES[input.route];
+  if (policy === "none") {
+    if (input.bindingReference !== undefined) {
+      return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
+    }
+    return { ok: true, body: input.body, principal: null };
+  }
+  const bindingWasPresented = input.bindingReference !== undefined;
+  const reference = input.bindingReference?.trim();
+  if (!bindingWasPresented) {
+    return policy === "optional"
+      ? { ok: true, body: input.body, principal: null }
+      : { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_REQUIRED") };
+  }
+  if (!reference) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+  }
+  const resolved = input.options.agentRuntimeBindingRegistry?.resolve(
+    reference,
+    agentRuntimeOperationForMemoryRoute(input.route),
+  );
+  if (!resolved?.ok) {
+    return {
+      ok: false,
+      error: bindingFailure(input.route, resolved?.code ?? "SESSION_BINDING_REQUIRED"),
+    };
+  }
+  const actorSession = await input.options.resolveActorSession?.(resolved.binding.actorSessionId) ?? null;
+  if (
+    !actorSession
+    || actorSession.id !== resolved.binding.actorSessionId
+    || actorSession.providerId !== resolved.binding.providerId
+  ) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_INVALID") };
+  }
+  if (
+    (input.route === "character_context_get" || input.route === "character_affect_appraise")
+    && hasDifferentCharacterTarget(input.body, actorSession.characterId)
+  ) {
+    return { ok: false, error: bindingFailure(input.route, "SESSION_BINDING_FORBIDDEN") };
+  }
+  const binding = resolved.binding;
+  return {
+    ok: true,
+    body: applyActorSessionToBody(input.route, input.body, actorSession),
+    principal: createSessionBindingMemoryPrincipal(binding, actorSession),
+  };
+}
+
+function createSessionBindingMemoryPrincipal(
+  binding: ResolvedAgentRuntimeBinding,
+  actorSession: AgentRuntimeActorSession,
+): MemoryV6Principal {
+  return {
+    type: "session_binding",
+    bindingIdHash: binding.bindingIdHash,
+    sessionId: binding.actorSessionId,
+    providerId: binding.providerId,
+    characterId: actorSession.characterId,
+    permissions: LOCAL_USER_MEMORY_PERMISSIONS,
+  };
 }
 
 function validateMcpGeneralMutationPolicy(
@@ -545,8 +775,11 @@ function validateMcpGeneralMutationPolicy(
         effect: "none",
       })
   );
-  if (route === "append" || route === "move_entry") {
+  if (route === "append") {
     return requireText("idempotencyKey");
+  }
+  if (route === "move_entry") {
+    return requireText("reason") ?? requireText("idempotencyKey");
   }
   if (route === "forget") {
     return requireText("reason") ?? requireText("idempotencyKey");
@@ -663,6 +896,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           route,
           body,
           transport: payload.adapter,
+          bindingReference: payload.bindingReference,
           ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
         });
         writeJson(response, statusForMemoryResponse(result), result);
@@ -724,6 +958,9 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         route,
         body,
         transport,
+        bindingReference: typeof request.headers[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER] === "string"
+          ? request.headers[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER]
+          : undefined,
         ...(request.headers["x-withmate-fallback-from"] === "mcp" ? { fallbackFrom: "mcp" } : {}),
       });
       writeJson(response, statusForMemoryResponse(result), result);

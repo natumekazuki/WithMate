@@ -189,6 +189,7 @@ export type MemoryMoveEntryRequest = {
   entryId: string;
   from: MemoryTargetSelector;
   to: MemoryTargetSelector;
+  reason: string;
   sourceMessageId?: string;
   idempotencyKey?: string;
 };

@@ -48,6 +48,7 @@ import {
   discoverWithMateMemoryApi,
   mapRuntimeHttpFailureToCharacterContext,
   mapRuntimeHttpFailureToMemory,
+  resolveAgentRuntimeBindingReference,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -125,7 +126,7 @@ export type WithMateMemoryCliDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal },
+    options: { signal: AbortSignal; bindingReference?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
@@ -1116,10 +1117,10 @@ function validateMemoryCliRequestBody(
 ): MemoryValidationResult<unknown> {
   try {
     if (command === "context_get") {
-      return { ok: true, value: validateCharacterContextGetRequest(body) };
+      return { ok: true, value: validateCharacterContextGetRequest(withRuntimeActorSession(body)) };
     }
     if (command === "affect_appraise") {
-      return { ok: true, value: validateCharacterAffectAppraiseRequest(body) };
+      return { ok: true, value: validateCharacterAffectAppraiseRequest(withRuntimeActorSession(body, true)) };
     }
     if (command === "affect_inspect") {
       return { ok: true, value: validateCharacterAffectInspectRequest(body) };
@@ -1186,6 +1187,28 @@ function validateMemoryCliRequestBody(
     return validateMemoryMoveEntryRequest(body);
   }
   return validateMemoryForgetRequest(body);
+}
+
+const RUNTIME_ACTOR_SESSION_PLACEHOLDER = "__withmate_runtime_actor_session__";
+
+function withRuntimeActorSession(body: unknown, includeCandidates = false): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const request = body as Record<string, unknown>;
+  return {
+    ...request,
+    sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER,
+    ...(includeCandidates && Array.isArray(request.candidates)
+      ? {
+          candidates: request.candidates.map((candidate) => (
+            candidate && typeof candidate === "object" && !Array.isArray(candidate)
+              ? { ...(candidate as Record<string, unknown>), sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER }
+              : candidate
+          )),
+        }
+      : {}),
+  };
 }
 
 function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: unknown): {
@@ -1361,7 +1384,10 @@ export async function runWithMateMemoryCli(
         path: buildRoutePath(request),
         body: request.body,
         ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
-      }, { signal: abortController.signal });
+      }, {
+        signal: abortController.signal,
+        bindingReference: resolveAgentRuntimeBindingReference(deps.env),
+      });
       response = runtimeResponse;
       responseJson = runtimeResponse.value;
     } catch (error) {

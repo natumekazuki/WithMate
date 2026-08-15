@@ -26,6 +26,7 @@ import type { CodexSandboxMode } from "../src/codex-sandbox-mode.js";
 import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
+import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -47,6 +48,7 @@ export type RunSessionTurnInput = {
   attachments: ComposerAttachment[];
   conversationTimingContext?: ConversationTimingContext;
   characterContext?: CharacterContextResponse;
+  agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;
@@ -173,8 +175,8 @@ export class ProviderTurnError extends Error {
 export type ProviderCodingAdapter = {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
-  invalidateSessionThread(sessionId: string): void;
-  invalidateAllSessionThreads(): void;
+  invalidateSessionThread(sessionId: string): Promise<void>;
+  invalidateAllSessionThreads(): Promise<void>;
   runSessionTurn(
     input: RunSessionTurnInput,
     onProgress?: RunSessionTurnProgressHandler,

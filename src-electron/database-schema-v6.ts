@@ -1144,6 +1144,7 @@ export const CREATE_V6_MEMORY_MOVE_EVENTS_TABLE_SQL = `
     to_owner_id TEXT NOT NULL,
     to_scope_type TEXT NOT NULL,
     to_scope_id TEXT NOT NULL,
+    reason TEXT NOT NULL,
     binding_id_hash TEXT NOT NULL,
     idempotency_key TEXT,
     request_fingerprint TEXT NOT NULL,
@@ -1522,6 +1523,13 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     const mutationEventColumns = tableColumnNames(db, "memory_mutation_events_v6");
     if (!mutationEventColumns.has("source_message_id")) {
       db.exec("ALTER TABLE memory_mutation_events_v6 ADD COLUMN source_message_id TEXT");
+    }
+  }
+
+  if (tableExists(db, "memory_move_events_v6")) {
+    const moveEventColumns = tableColumnNames(db, "memory_move_events_v6");
+    if (!moveEventColumns.has("reason")) {
+      db.exec("ALTER TABLE memory_move_events_v6 ADD COLUMN reason TEXT NOT NULL DEFAULT ''");
     }
   }
 

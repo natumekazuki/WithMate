@@ -78,6 +78,14 @@ import {
   type BoundedAuditRawItem,
 } from "./audit-payload-limits.js";
 import { toProviderMetadataLogData } from "./provider-metadata-log.js";
+import {
+  buildProviderAgentRuntimeBindingCacheKey,
+  buildProviderAgentRuntimeBindingEnv,
+  createProviderAgentRuntimeBindingRedactor,
+  mergeDefinedProviderEnv,
+  type ProviderAgentRuntimeBindingRedactor,
+} from "./provider-agent-runtime-binding.js";
+import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 const MAX_DIFF_MATRIX_CELLS = 2_000_000;
 
 function summarizeChangedFile(kind: ChangedFile["kind"], filePath: string): string {
@@ -998,6 +1006,7 @@ async function emitLiveState(
   reasoningText: string,
   usage: AuditLogUsage | null,
   errorMessage: string,
+  redactor = createProviderAgentRuntimeBindingRedactor(null),
 ): Promise<void> {
   if (!handler) {
     return;
@@ -1006,12 +1015,12 @@ async function emitLiveState(
   await handler({
     sessionId,
     threadId: threadId ?? "",
-    assistantText: toAuditTextPreview(assistantText) ?? "",
-    reasoningText: toAuditTextPreview(reasoningText) ?? "",
-    steps: Array.from(steps.values()),
+    assistantText: redactor.sanitizeText(toAuditTextPreview(assistantText) ?? ""),
+    reasoningText: redactor.sanitizeText(toAuditTextPreview(reasoningText) ?? ""),
+    steps: redactor.sanitize(Array.from(steps.values())),
     backgroundTasks: [],
     usage,
-    errorMessage,
+    errorMessage: redactor.sanitizeText(errorMessage),
     approvalRequest: null,
     elicitationRequest: null,
   });
@@ -1193,7 +1202,10 @@ function buildCodexTurnEventLogData(event: ThreadEvent): Record<string, unknown>
   }
 }
 
-function summarizeCodexTurnStreamState(state: CodexTurnStreamState): Record<string, unknown> {
+function summarizeCodexTurnStreamState(
+  state: CodexTurnStreamState,
+  redactor: ProviderAgentRuntimeBindingRedactor,
+): Record<string, unknown> {
   return {
     threadId: state.threadId,
     itemCount: state.items.size,
@@ -1203,7 +1215,9 @@ function summarizeCodexTurnStreamState(state: CodexTurnStreamState): Record<stri
     finalAssistantTextLength: state.finalAssistantText.length,
     reasoningTextLength: state.reasoningText.length,
     hasUsage: state.usage !== null,
-    streamErrorMessage: state.streamErrorMessage || null,
+    streamErrorMessage: state.streamErrorMessage
+      ? redactor.sanitizeText(state.streamErrorMessage)
+      : null,
   };
 }
 
@@ -1450,6 +1464,7 @@ async function buildArtifact(
 
 export class CodexAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, Codex>();
+  private readonly clientKeysBySession = new Map<string, string>();
   private readonly threads = new Map<string, CachedCodexThread>();
   private readonly workspaceSnapshotIndexes = new Map<string, WorkspaceSnapshotIndex>();
 
@@ -1521,12 +1536,19 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
-  invalidateSessionThread(sessionId: string): void {
+  async invalidateSessionThread(sessionId: string): Promise<void> {
     this.threads.delete(sessionId);
+    const clientKey = this.clientKeysBySession.get(sessionId);
+    if (clientKey) {
+      this.clients.delete(clientKey);
+      this.clientKeysBySession.delete(sessionId);
+    }
   }
 
-  invalidateAllSessionThreads(): void {
+  async invalidateAllSessionThreads(): Promise<void> {
     this.threads.clear();
+    this.clients.clear();
+    this.clientKeysBySession.clear();
     this.workspaceSnapshotIndexes.clear();
   }
 
@@ -1588,10 +1610,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
     };
   }
 
-  private getClient(providerId: string, appSettings: AppSettings): { client: Codex; clientKey: string } {
+  private getClient(
+    providerId: string,
+    appSettings: AppSettings,
+    agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
+  ): { client: Codex; clientKey: string } {
     const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
     const codexPathOverride = resolvePackagedProviderBinaryPath("codex");
-    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride]);
+    const bindingCacheKey = buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding);
+    const clientKey = JSON.stringify([providerId, codingApiKey || null, codexPathOverride, bindingCacheKey]);
     const cached = this.clients.get(clientKey);
     if (cached) {
       return { client: cached, clientKey };
@@ -1600,6 +1627,10 @@ export class CodexAdapter implements ProviderTurnAdapter {
     const clientOptions = {
       ...(codingApiKey ? { apiKey: codingApiKey } : {}),
       ...(codexPathOverride ? { codexPathOverride } : {}),
+      env: mergeDefinedProviderEnv(
+        process.env,
+        buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
+      ),
     };
     const client = new Codex(clientOptions);
     this.clients.set(clientKey, client);
@@ -1607,7 +1638,16 @@ export class CodexAdapter implements ProviderTurnAdapter {
   }
 
   private getThread(input: RunSessionTurnInput): { thread: Thread; selection: ResolvedModelSelection } {
-    const { client, clientKey } = this.getClient(input.providerCatalog.id, input.appSettings);
+    const { client, clientKey } = this.getClient(
+      input.providerCatalog.id,
+      input.appSettings,
+      input.agentRuntimeBinding,
+    );
+    const previousClientKey = this.clientKeysBySession.get(input.session.id);
+    if (previousClientKey && previousClientKey !== clientKey) {
+      this.clients.delete(previousClientKey);
+    }
+    this.clientKeysBySession.set(input.session.id, clientKey);
     const nextSettings = buildCodexThreadSettings(
       input.session,
       input.providerCatalog,
@@ -1729,14 +1769,15 @@ export class CodexAdapter implements ProviderTurnAdapter {
     beforeSnapshot: WorkspaceSnapshot,
     beforeSnapshotStats: SnapshotCaptureStats,
   ): Promise<RunSessionTurnResult> {
+    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const finalItems = Array.from(items.values());
     const providerMetadata = buildCodexProviderMetadata(finalItems);
     for (const metadata of providerMetadata) {
       this.writeLog({
         level: "warn",
         kind: "provider.unsupported-response",
-        message: metadata.summary,
-        data: toProviderMetadataLogData(metadata),
+        message: redactor.sanitizeText(metadata.summary),
+        data: redactor.sanitize(toProviderMetadataLogData(metadata)),
       });
     }
     const {
@@ -1798,14 +1839,14 @@ export class CodexAdapter implements ProviderTurnAdapter {
 
     return {
       threadId,
-      assistantText: finalAssistantText,
-      lastNonEmptyAssistantMessageText,
-      artifact,
+      assistantText: redactor.sanitizeText(finalAssistantText),
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
+      artifact: redactor.sanitize(artifact),
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCodexTransportPayload(prompt),
-      operations: toAuditOperations(finalItems),
-      rawItemsJson: stringifyBoundedAuditRawItems(buildCodexStableRawItems(finalItems)),
-      providerMetadata,
+      operations: redactor.sanitize(toAuditOperations(finalItems)),
+      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(buildCodexStableRawItems(finalItems))),
+      providerMetadata: redactor.sanitize(providerMetadata),
       usage: normalizeCodexTokenUsage(usage),
       providerQuotaTelemetry: null,
     };
@@ -1823,6 +1864,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           ]
         : prompt.logicalPrompt.composedText;
     const streamState = createCodexTurnStreamState(thread.id);
+    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
 
     this.writeLog({
       level: "info",
@@ -1846,6 +1888,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
       streamState.reasoningText,
       streamState.liveUsage,
       getLiveStreamErrorMessage(streamState),
+      redactor,
     );
 
     try {
@@ -1886,11 +1929,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
               level: event.type === "turn.failed" || event.type === "error" ? "warn" : "debug",
               kind: "codex.run.stream.event",
               message: "Codex session turn stream event",
-              data: {
+              data: redactor.sanitize({
                 sessionId: input.session.id,
                 threadId: streamState.threadId,
                 ...eventLogData,
-              },
+              }),
             });
           }
           await emitLiveState(
@@ -1902,6 +1945,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
             streamState.reasoningText,
             streamState.liveUsage,
             getLiveStreamErrorMessage(streamState),
+            redactor,
           );
           // SDK turn events are authoritative. `error` can also report retry progress,
           // so keep it as the latest diagnostic until the turn settles or the stream ends.
@@ -1922,7 +1966,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
               kind: "codex.run.stream-close-failed",
               message: "Codex stream cleanup failed after a terminal event",
               data: { sessionId: input.session.id },
-              error: errorToCodexAdapterLogError(error),
+              error: redactor.sanitize(errorToCodexAdapterLogError(error)),
             });
           }),
           this.options.streamCloseGraceMs ?? DEFAULT_CODEX_STREAM_CLOSE_GRACE_MS,
@@ -1949,7 +1993,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
           message: "Codex session turn stream finished",
           data: {
             sessionId: input.session.id,
-            ...summarizeCodexTurnStreamState(streamState),
+            ...summarizeCodexTurnStreamState(streamState, redactor),
           },
         });
       }
@@ -1977,7 +2021,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
             message: "Codex session turn ignored Windows taskkill parse noise after activity",
             data: {
               sessionId: input.session.id,
-              ...summarizeCodexTurnStreamState(streamState),
+              ...summarizeCodexTurnStreamState(streamState, redactor),
             },
           });
           return partialResult;
@@ -1992,11 +2036,11 @@ export class CodexAdapter implements ProviderTurnAdapter {
           data: {
             sessionId: input.session.id,
             providerErrorReason: reason,
-            ...summarizeCodexTurnStreamState(streamState),
+            ...summarizeCodexTurnStreamState(streamState, redactor),
           },
         });
         throw new ProviderTurnError(
-          streamState.streamErrorMessage,
+          redactor.sanitizeText(streamState.streamErrorMessage),
           partialResult,
           canceled,
           reason,
@@ -2024,7 +2068,7 @@ export class CodexAdapter implements ProviderTurnAdapter {
         message: "Codex session turn completed",
         data: {
           sessionId: input.session.id,
-          ...summarizeCodexTurnStreamState(streamState),
+          ...summarizeCodexTurnStreamState(streamState, redactor),
           operationCount: result.operations.length,
           assistantTextLength: result.assistantText.length,
         },
@@ -2040,9 +2084,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
             sessionId: input.session.id,
             canceled: error.canceled,
             providerErrorReason: error.reason,
-            ...summarizeCodexTurnStreamState(streamState),
+            ...summarizeCodexTurnStreamState(streamState, redactor),
           },
-          error: errorToCodexAdapterLogError(error),
+          error: redactor.sanitize(errorToCodexAdapterLogError(error)),
         });
         throw error;
       }
@@ -2074,9 +2118,9 @@ export class CodexAdapter implements ProviderTurnAdapter {
           message: "Codex session turn ignored Windows taskkill parse noise after thrown error",
           data: {
             sessionId: input.session.id,
-            ...summarizeCodexTurnStreamState(streamState),
+            ...summarizeCodexTurnStreamState(streamState, redactor),
           },
-          error: errorToCodexAdapterLogError(error),
+          error: redactor.sanitize(errorToCodexAdapterLogError(error)),
         });
         return partialResult;
       }
@@ -2090,12 +2134,12 @@ export class CodexAdapter implements ProviderTurnAdapter {
           aborted: Boolean(input.signal?.aborted),
           canceledMessage: isCanceledProviderMessage(candidateProviderMessage),
           providerErrorReason: reason,
-          ...summarizeCodexTurnStreamState(streamState),
+          ...summarizeCodexTurnStreamState(streamState, redactor),
         },
-        error: errorToCodexAdapterLogError(error),
+        error: redactor.sanitize(errorToCodexAdapterLogError(error)),
       });
       throw new ProviderTurnError(
-        providerMessage,
+        redactor.sanitizeText(providerMessage),
         partialResult,
         canceled,
         reason,

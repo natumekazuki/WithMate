@@ -653,6 +653,19 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(clearedTelemetry, [baseSession.id]);
     assert.deepEqual(invalidatedThreads, [{ providerId: "codex", sessionId: baseSession.id }]);
 
+    const withoutThread = createSession({
+      id: "session-without-thread",
+      provider: "codex",
+      model: "codex-default",
+      threadId: "",
+    });
+    storedSessions.splice(0, storedSessions.length, withoutThread);
+    await service.updateSession({ ...withoutThread, provider: "copilot", model: "copilot-default" });
+    assert.deepEqual(invalidatedThreads, [
+      { providerId: "codex", sessionId: baseSession.id },
+      { providerId: "codex", sessionId: withoutThread.id },
+    ]);
+
     storedSessions.splice(0, storedSessions.length, createSession({ id: baseSession.id, runState: "running", status: "running" }));
     await assert.rejects(
       () => service.updateSession({ ...storedSessions[0], taskTitle: "blocked" }),
@@ -930,6 +943,8 @@ describe("SessionPersistenceService", () => {
     const deleted: string[] = [];
     const clearedBackground: string[] = [];
     const closedWindows: string[] = [];
+    const revokedBindings: string[] = [];
+    const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
 
     const service = new SessionPersistenceService({
@@ -944,6 +959,10 @@ describe("SessionPersistenceService", () => {
       },
       isSessionRunInFlight() {
         return false;
+      },
+      listAuxiliarySessionRuntimeIdentities(parentSessionIds) {
+        assert.deepEqual(parentSessionIds, [session.id]);
+        return [{ id: "auxiliary-a", parentSessionId: session.id, provider: "copilot" }];
       },
       upsertStoredSession(next) {
         storedSessions.splice(0, storedSessions.length, next);
@@ -973,7 +992,12 @@ describe("SessionPersistenceService", () => {
       },
       clearCharacterReflectionCheckpoint() {},
       clearInFlightCharacterReflection() {},
-      invalidateProviderSessionThread() {},
+      invalidateProviderSessionThread(providerId, sessionId) {
+        invalidatedThreads.push({ providerId, sessionId });
+      },
+      revokeSessionAgentRuntimeBindings(sessionId) {
+        revokedBindings.push(sessionId);
+      },
       closeSessionWindow(sessionId) {
         closedWindows.push(sessionId);
       },
@@ -985,8 +1009,13 @@ describe("SessionPersistenceService", () => {
     await service.deleteSession(session.id);
 
     assert.deepEqual(deleted, [session.id]);
-    assert.deepEqual(clearedBackground, [session.id]);
-    assert.deepEqual(closedWindows, [session.id]);
+    assert.deepEqual(clearedBackground, [session.id, "auxiliary-a"]);
+    assert.deepEqual(closedWindows, [session.id, "auxiliary-a"]);
+    assert.deepEqual(revokedBindings, [session.id, "auxiliary-a"]);
+    assert.deepEqual(invalidatedThreads, [
+      { providerId: session.provider, sessionId: session.id },
+      { providerId: "copilot", sessionId: "auxiliary-a" },
+    ]);
     assert.deepEqual(broadcastedSessionIds, [[session.id]]);
     assert.equal(storedSessions.length, 0);
   });
@@ -1386,7 +1415,11 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions[0]?.isPinned, false);
     assert.deepEqual(clearedTelemetry.sort(), ["session-a", "session-b"]);
     assert.deepEqual(clearedBackground, ["session-b"]);
-    assert.deepEqual(invalidated, [{ providerId: "copilot", sessionId: "session-a" }]);
+    assert.deepEqual(invalidated, [
+      { providerId: "codex", sessionId: "session-a" },
+      { providerId: "copilot", sessionId: "session-b" },
+      { providerId: "copilot", sessionId: "session-a" },
+    ]);
     assert.deepEqual(broadcastedSessionIds, [["session-a", "session-b"], ["session-a"]]);
     assert.deepEqual(replaceOrder, [
       "replaceStoredSessions:start",

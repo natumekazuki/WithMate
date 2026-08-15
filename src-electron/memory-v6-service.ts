@@ -173,6 +173,7 @@ function buildMoveFingerprint(input: {
     entryId: input.request.entryId,
     from: input.from,
     to: input.to,
+    reason: input.request.reason,
     sourceMessageId: input.request.sourceMessageId ?? null,
   });
 }
@@ -205,6 +206,10 @@ function bindingIdHashForPrincipal(principal: MemoryV6Principal): string {
 
 function providerIdForPrincipal(principal: MemoryV6Principal): string | null {
   return principal.providerId;
+}
+
+function sessionIdForPrincipal(principal: MemoryV6Principal): string | null {
+  return principal.type === "session_binding" ? principal.sessionId : null;
 }
 
 function stableJson(value: unknown): string {
@@ -342,7 +347,10 @@ export class MemoryV6Service {
     }
     const quotaBytes = normalizeMemoryFileQuotaBytes(this.deps.getMemoryFileQuotaBytes?.() ?? MEMORY_FILE_QUOTA_DEFAULT_BYTES);
     const largestEntries = options.includeLargestEntries
-      ? this.deps.storage.listLargestFileEntries({ limit: normalizeLargestFileEntryLimit(options.largestLimit) })
+      ? this.deps.storage.listLargestFileEntries({
+          limit: normalizeLargestFileEntryLimit(options.largestLimit),
+          ...(principal?.type === "session_binding" ? { allowedCharacterId: principal.characterId } : {}),
+        })
       : undefined;
     return createMemoryFileUsageResponse({
       quotaBytes,
@@ -389,6 +397,7 @@ export class MemoryV6Service {
       scopeType: validated.value.scope,
       projectId,
       characterId,
+      allowedCharacterId: principal.type === "session_binding" ? principal.characterId : undefined,
       includeEmpty: validated.value.includeEmpty,
       limit: validated.value.limit,
       cursor: validated.value.cursor,
@@ -801,7 +810,7 @@ export class MemoryV6Service {
           } : {}),
           source: {
             type: "agent",
-            sessionId: null,
+            sessionId: sessionIdForPrincipal(principal),
             messageId: validated.value.sourceMessageId ?? null,
             providerId: providerIdForPrincipal(principal),
             appMessageId: null,
@@ -956,7 +965,7 @@ export class MemoryV6Service {
         idempotencyKey: validated.value.idempotencyKey,
         bindingIdHash: bindingIdHashForPrincipal(principal),
         requestFingerprint,
-        sessionId: null,
+        sessionId: sessionIdForPrincipal(principal),
         sourceMessageId: validated.value.sourceMessageId ?? null,
       });
       return createMemoryForgetResponse(results);
@@ -997,6 +1006,7 @@ export class MemoryV6Service {
         entryId: validated.value.entryId,
         from: from.target,
         to: to.target,
+        reason: validated.value.reason,
         bindingIdHash: bindingIdHashForPrincipal(principal),
         idempotencyKey: validated.value.idempotencyKey,
         requestFingerprint: buildMoveFingerprint({ request: validated.value, from: from.target, to: to.target }),
@@ -1035,7 +1045,7 @@ function buildAppendRequestFingerprint(input: {
     })),
     source: {
       type: "agent",
-      sessionId: null,
+      sessionId: sessionIdForPrincipal(input.principal),
       messageId: input.request.sourceMessageId ?? null,
       providerId: providerIdForPrincipal(input.principal),
       appMessageId: null,

@@ -32,6 +32,7 @@ import { appendTransportPayloadFields, calculateAuditDurationMs } from "./audit-
 import { estimateLogicalPromptTokens } from "./prompt-token-estimate.js";
 import { toAuditTextPreview } from "./audit-payload-limits.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 
@@ -111,7 +112,12 @@ export type SessionRuntimeServiceDeps = {
   ): Promise<LiveElicitationResponse> | LiveElicitationResponse;
   setProviderQuotaTelemetry(telemetry: ProviderQuotaTelemetry): void;
   setSessionContextTelemetry(telemetry: SessionContextTelemetry): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  resetProviderSessionThread?(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  getProviderAgentRuntimeBinding?(input: {
+    session: Session;
+    provider: ModelCatalogProvider;
+  }): Awaitable<ProviderAgentRuntimeBindingProjection | null>;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -819,7 +825,7 @@ export class SessionRuntimeService {
       : resolvedSession;
     if (shouldResetCharacterAuthoringThread) {
       session = await this.deps.upsertSession(session);
-      this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
+      await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
     }
     throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
@@ -859,6 +865,9 @@ export class SessionRuntimeService {
 
     const { provider } = this.deps.resolveProviderCatalog(session.provider, session.catalogRevision);
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
+    let agentRuntimeBinding = await Promise.resolve(
+      this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
+    );
     const sessionMemory = this.deps.getSessionMemory(session);
     const projectMemoryEntries = this.deps.resolveProjectMemoryEntriesForPrompt(session, nextMessage, sessionMemory);
     const sessionCharacter = await this.deps.resolveSessionCharacter?.(session) ?? null;
@@ -890,6 +899,7 @@ export class SessionRuntimeService {
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
+        agentRuntimeBinding,
       });
 
       runningSession = {
@@ -1058,6 +1068,7 @@ export class SessionRuntimeService {
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
+        agentRuntimeBinding,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {
           const decision = this.deps.waitForApprovalDecision(sessionId, approvalRequest, runAbortController.signal);
@@ -1143,7 +1154,11 @@ export class SessionRuntimeService {
 
           didInternalRetry = true;
           liveProgressGeneration += 1;
-          this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+          if (this.deps.resetProviderSessionThread) {
+            await Promise.resolve(this.deps.resetProviderSessionThread(activeRunningSession.provider, sessionId));
+          } else {
+            await Promise.resolve(this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId));
+          }
           if (activeRunningSession.threadId) {
             activeRunningSession = await this.deps.upsertSession({
               ...activeRunningSession,
@@ -1429,7 +1444,7 @@ export class SessionRuntimeService {
       const failedLogicalPrompt = partialResult?.logicalPrompt ?? promptForAudit.logicalPrompt;
       const failedLogicalPromptEstimate = estimateLogicalPromptTokens(failedLogicalPrompt);
       if (canceled || shouldResetFailedThread) {
-        this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
+        await this.deps.invalidateProviderSessionThread(activeRunningSession.provider, sessionId);
       }
 
       const failedFlushAuditStartedAt = Date.now();

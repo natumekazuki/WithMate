@@ -615,6 +615,7 @@ describe("database-schema-v6", () => {
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("source_message_id TEXT"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("result_status TEXT NOT NULL"), true);
       assert.equal(tableSql(db, "memory_mutation_events_v6").includes("'already_forgotten'"), true);
+      assert.equal(tableSql(db, "memory_move_events_v6").includes("reason TEXT NOT NULL"), true);
 
       assert.deepEqual(columnNames(db, "memory_protected_objects_v6"), [
         "object_id",
@@ -750,7 +751,7 @@ describe("database-schema-v6", () => {
     }
   });
 
-  it("ensureV6Schema は既存Memory idempotencyとmutation eventへcleanup/source列をadditive追加する", () => {
+  it("ensureV6Schema は既存Memory idempotencyとmutation/move eventへ列をadditive追加する", () => {
     const db = new DatabaseSync(":memory:");
     try {
       db.exec(`
@@ -779,6 +780,22 @@ describe("database-schema-v6", () => {
           reason TEXT NOT NULL DEFAULT '',
           created_at TEXT NOT NULL
         );
+        CREATE TABLE memory_move_events_v6 (
+          id TEXT PRIMARY KEY,
+          entry_id TEXT NOT NULL,
+          from_owner_type TEXT NOT NULL,
+          from_owner_id TEXT NOT NULL,
+          from_scope_type TEXT NOT NULL,
+          from_scope_id TEXT NOT NULL,
+          to_owner_type TEXT NOT NULL,
+          to_owner_id TEXT NOT NULL,
+          to_scope_type TEXT NOT NULL,
+          to_scope_id TEXT NOT NULL,
+          binding_id_hash TEXT NOT NULL,
+          idempotency_key TEXT,
+          request_fingerprint TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
         INSERT INTO memory_idempotency_keys_v6 (
           key, operation, binding_id_hash, owner_type, owner_id, scope_type, scope_id,
           response_entry_id, operation_created, request_fingerprint, cleanup_required, created_at
@@ -796,6 +813,7 @@ describe("database-schema-v6", () => {
         1,
       );
       assert.equal(columnNames(db, "memory_mutation_events_v6").includes("source_message_id"), true);
+      assert.equal(columnNames(db, "memory_move_events_v6").includes("reason"), true);
     } finally {
       db.close();
     }

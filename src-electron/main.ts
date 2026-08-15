@@ -240,6 +240,9 @@ import { createElectronSafeStorageKeyProtector, MemoryProtectedObjectKeyStore } 
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
+import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
+import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
@@ -376,6 +379,7 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -565,6 +569,20 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
         requireCharacterService().createRuntimeSnapshot(characterId),
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
+      agentRuntimeBindingRegistry,
+      resolveActorSession: async (sessionId) => {
+        const session = getSession(sessionId);
+        if (session) {
+          return { id: session.id, providerId: session.provider, characterId: session.characterId };
+        }
+        if (!auxiliarySessionStorage) {
+          return null;
+        }
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+        return auxiliary
+          ? { id: auxiliary.id, providerId: auxiliary.provider, characterId: auxiliary.characterId }
+          : null;
+      },
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -1336,6 +1354,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               return choice === 1;
             },
             closePersistentStores,
+            invalidateAllProviderSessionThreads,
+            revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
           }),
         ),
       createMainBootstrapService: () =>
@@ -1504,9 +1524,23 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 createAuxiliarySession: (input) =>
                   requireAuxiliarySessionService().createAuxiliarySession(input),
                 updateAuxiliarySession: (session) =>
-                  requireAuxiliarySessionService().updateAuxiliarySession(session),
+                  updateAuxiliarySessionWithProviderRuntimeLifecycle({
+                    session,
+                    isRunInFlight: (sessionId) =>
+                      requireAuxiliarySessionRuntimeService().isRunInFlight(sessionId),
+                    getAuxiliarySession: (sessionId) =>
+                      requireAuxiliarySessionService().getAuxiliarySession(sessionId),
+                    updateAuxiliarySession: (nextSession) =>
+                      requireAuxiliarySessionService().updateAuxiliarySession(nextSession),
+                    revokeSessionAgentRuntimeBindings: (sessionId) =>
+                      agentRuntimeBindingRegistry.revokeSession(sessionId),
+                    invalidateProviderSessionThread,
+                  }),
                 closeAuxiliarySession: async (auxiliarySessionId) => {
+                  const current = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   const closed = await requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId);
+                  agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
+                  await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
                   return closed;
                 },
@@ -1751,6 +1785,9 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      revokeProviderExecution: (sessionId, providerId) =>
+        agentRuntimeBindingRegistry.revokeProviderExecution(sessionId, providerId),
+      revokeAllProviderExecutions: () => agentRuntimeBindingRegistry.revokeAll(),
     });
   }
 
@@ -2402,6 +2439,17 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      resetProviderSessionThread,
+      getProviderAgentRuntimeBinding: ({ session, provider }) =>
+        agentRuntimeBindingRegistry.issueOrReuse({
+          actorSessionId: session.id,
+          providerId: provider.id,
+          authoritySnapshot: {
+            characterId: session.characterId,
+            sessionKind: session.sessionKind,
+          },
+          operationGrants: getMemoryV6AgentRuntimeOperations(),
+        }),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2607,6 +2655,17 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      getProviderAgentRuntimeBinding: ({ session, provider }) =>
+        agentRuntimeBindingRegistry.issueOrReuse({
+          actorSessionId: session.id,
+          providerId: provider.id,
+          authoritySnapshot: {
+            characterId: session.characterId,
+            sessionKind: "auxiliary",
+          },
+          operationGrants: getMemoryV6AgentRuntimeOperations(),
+        }),
+      resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2744,6 +2803,14 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
       listRunningActiveAuxiliaryParentIds: listRunningActiveAuxiliaryParentSessionIds,
+      listAuxiliarySessionRuntimeIdentities: (parentSessionIds) =>
+        parentSessionIds.flatMap((parentSessionId) =>
+          requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId).map((auxiliary) => ({
+            id: auxiliary.id,
+            parentSessionId: auxiliary.parentSessionId,
+            provider: auxiliary.provider,
+          })),
+        ),
       upsertStoredSession: (session, operation) => {
         const storage = requireSessionStorageForWrite();
         return operation === "create"
@@ -2766,6 +2833,8 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
       invalidateProviderSessionThread,
+      revokeSessionAgentRuntimeBindings: (sessionId) =>
+        agentRuntimeBindingRegistry.revokeSession(sessionId),
       closeSessionWindow: (sessionId) => {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
         requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
@@ -3173,12 +3242,16 @@ function getProviderBackgroundAdapter(providerId: string | null | undefined) {
   return requireMainProviderFacade().getProviderBackgroundAdapter(providerId);
 }
 
-function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-  requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
+async function resetProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+  await requireMainProviderFacade().resetProviderSessionThread(providerId, sessionId);
 }
 
-function invalidateAllProviderSessionThreads(): void {
-  requireMainProviderFacade().invalidateAllProviderSessionThreads();
+async function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+  await requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
+}
+
+async function invalidateAllProviderSessionThreads(): Promise<void> {
+  await requireMainProviderFacade().invalidateAllProviderSessionThreads();
 }
 
 async function listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
@@ -4106,7 +4179,7 @@ if (!hasSingleInstanceLock) {
       process: "main",
       message: "App before quit",
     });
-    requireAppLifecycleService().handleBeforeQuit(event);
+    void requireAppLifecycleService().handleBeforeQuit(event);
   });
 
   app.on("will-quit", () => {

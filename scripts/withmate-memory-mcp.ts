@@ -12,8 +12,10 @@ import {
   callWithMateMemoryRuntime,
   createMemoryRuntimeError,
   discoverWithMateMemoryApi,
+  isMemoryErrorResponse,
   mapRuntimeHttpFailureToCharacterContext,
   mapRuntimeHttpFailureToMemory,
+  resolveAgentRuntimeBindingReference,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
@@ -29,7 +31,7 @@ type McpRuntimeDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal },
+    options: { signal: AbortSignal; bindingReference?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof import("node:fs/promises").readFile;
   requestTimeoutMs?: number;
@@ -80,7 +82,6 @@ const affectCandidateSchema = z.object({
   schemaVersion: z.literal("withmate-affect-v1"),
   characterId: z.string().min(1),
   userId: z.literal("local-user"),
-  sessionId: z.string().min(1),
   layer: z.enum(["relationship", "session"]),
   targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
   targetId: z.string().min(1),
@@ -295,7 +296,7 @@ export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
   "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
   "Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
-  "Call character_memory.correct or character_memory.forget only after an explicit user instruction. Do not infer correction or deletion authority.",
+  "Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
   "Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values.",
   "Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
   "Use CLI fallback only when MCP is unavailable at the transport level. Structured Memory or Character domain errors, authority denial, conflicts, replay, and migration requirements are not availability failures.",
@@ -324,12 +325,12 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_memory.correct",
-    description: "Correct one Character Memory entry after an explicit user instruction, preserving supersession history.",
+    description: "Correct one Character Memory entry as an idempotent user-delegate operation, preserving supersession history.",
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "character_memory.forget",
-    description: "Forget one Character Memory entry after an explicit user instruction and read back the result.",
+    description: "Forget one Character Memory entry as an idempotent user-delegate operation and read back the result.",
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
 ] as const;
@@ -362,6 +363,19 @@ async function callRuntime(
       effect: "none",
     });
   }
+  let bindingReference: string | undefined;
+  try {
+    bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+  } catch (error) {
+    if (isMemoryErrorResponse(error)) {
+      return createCharacterContextError("authority_denied", error.error.message, {
+        retryable: false,
+        conversationMayContinue: true,
+        effect: "none",
+      });
+    }
+    throw error;
+  }
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
   let dispatched = false;
@@ -370,7 +384,10 @@ async function callRuntime(
       method: "POST",
       path,
       body,
-    }, { signal: abortController.signal });
+    }, {
+      signal: abortController.signal,
+      bindingReference,
+    });
     dispatched = true;
     return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
   } catch (error) {
@@ -413,6 +430,15 @@ async function callMemoryRuntime(
       effect: "none",
     });
   }
+  let bindingReference: string | undefined;
+  try {
+    bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+  } catch (error) {
+    if (isMemoryErrorResponse(error)) {
+      return error;
+    }
+    throw error;
+  }
   const operationPath = new URL(operation.path, "http://127.0.0.1").pathname;
   const requestTimeoutMs = GENERAL_MEMORY_FILE_OPERATION_PATHS.has(operationPath)
     ? deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS
@@ -425,7 +451,10 @@ async function callMemoryRuntime(
       method: operation.method,
       path: operation.path,
       body: operation.body,
-    }, { signal: abortController.signal });
+    }, {
+      signal: abortController.signal,
+      bindingReference,
+    });
     dispatched = true;
     return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
   } catch (error) {
@@ -469,7 +498,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
     ...definitions.get("character_context.get")!,
     inputSchema: z.object({
       characterId: z.string().min(1),
-      sessionId: z.string().min(1),
       query: z.string().min(1).optional(),
       memoryLimit: z.number().int().min(0).max(10).default(3),
     }).strict(),
@@ -483,7 +511,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
     ...definitions.get("character_affect.appraise")!,
     inputSchema: z.object({
       characterId: z.string().min(1),
-      sessionId: z.string().min(1),
       expectedVersion: z.string().min(1).optional(),
       candidates: z.array(affectCandidateSchema).min(1).max(10),
     }).strict(),

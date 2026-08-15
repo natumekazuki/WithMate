@@ -490,6 +490,7 @@ describe("MemoryV6HttpServer", () => {
         entryId,
         from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         to: { owner: "user", scope: "global" },
+        reason: "move to user scope",
         idempotencyKey: "http-maintenance-move",
       });
       assert.equal(moved.status, 200);
