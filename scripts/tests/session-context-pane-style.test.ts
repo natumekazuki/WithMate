@@ -305,6 +305,51 @@ test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast�
   );
 });
 
+test("Markdown preview はchatと同じ本文line-heightとblock間隔を使う", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.message-body\.rich-text,\s*\.session-file-markdown\.rich-text\s*{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*8px;[\s\S]*?line-height:\s*1\.6;/,
+  );
+  assert.match(stylesSource, /\.message-paragraph\s*{[\s\S]*?margin:\s*0;[\s\S]*?line-height:\s*1\.6;/);
+});
+
+test("Markdown heading と thematic break は階層と全幅の区切りを視認できる", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(stylesSource, /\.message-heading\.level-1\s*{[\s\S]*?font-size:\s*1\.25rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-2\s*{[\s\S]*?font-size:\s*1\.125rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-3\s*{[\s\S]*?font-size:\s*1\.05rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-4\s*{[\s\S]*?font-size:\s*1rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-5\s*{[\s\S]*?font-size:\s*0\.95rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-6\s*{[\s\S]*?font-size:\s*0\.9rem;/);
+  assert.match(
+    stylesSource,
+    /\.message-divider\s*{[\s\S]*?width:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-block-start:\s*1px solid var\(--line\);/,
+  );
+});
+
+test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.message-list\s*{[\s\S]*?padding-inline-start:\s*1\.5em;[\s\S]*?list-style-position:\s*outside;/,
+  );
+  assert.match(stylesSource, /\.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*disc;/);
+  assert.match(
+    stylesSource,
+    /\.message-list \.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*circle;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-list \.message-list \.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*square;/,
+  );
+  assert.match(stylesSource, /\.message-list\s*>\s*li::marker\s*{\s*color:\s*currentColor;/);
+  assert.doesNotMatch(stylesSource, /\.message-list\s*{[^}]*padding-left:/);
+});
+
 test("Markdown preview は中央本文を固定幅にせずcontent領域を使う", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
