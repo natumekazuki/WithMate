@@ -6324,6 +6324,15 @@ button:disabled {
   width: 100%;
 }
 
+.turn-initiator-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
 .message-row.accent .message-avatar {
   transform: translateY(-2px);
 }

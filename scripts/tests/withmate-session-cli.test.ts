@@ -25,7 +25,11 @@ import {
   SESSION_RUNTIME_NONCE_HEADER,
   createSessionRuntimeChallenge,
 } from "../../src/session-runtime-exchange.js";
-import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
+import {
+  SESSION_RUNTIME_AGENT_OPERATION,
+  createSessionRuntimeHttpServer,
+} from "../../src-electron/session-runtime-http-server.js";
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
@@ -239,11 +243,18 @@ describe("withmate-session CLI", () => {
 
   test("verified CLI connectionはversioned operationをSession runtimeへ送る", async () => {
     const received: unknown[] = [];
+    const registry = new AgentRuntimeBindingRegistry();
+    const binding = registry.issueOrReuse({
+      actorSessionId: "session-actor",
+      providerId: "codex",
+      operationGrants: [SESSION_RUNTIME_AGENT_OPERATION],
+    });
     const runtime = createSessionRuntimeHttpServer({
       apiSecret: connection.apiSecret,
       cliSecret: connection.adapterSecret,
       mcpSecret: "mcp-secret",
       runtimeInstanceId: connection.runtimeInstanceId,
+      agentRuntimeBindingRegistry: registry,
       async handle(operation, input, adapter) {
         received.push({ operation, input, adapter });
         return {
@@ -258,7 +269,11 @@ describe("withmate-session CLI", () => {
       const port = runtime.address()?.port;
       assert.ok(port);
       const response = await callSessionRuntime(
-        { ...connection, baseUrl: `http://127.0.0.1:${port}` },
+        {
+          ...connection,
+          baseUrl: `http://127.0.0.1:${port}`,
+          agentRuntimeBindingReference: binding.bindingReference,
+        },
         { schemaVersion: "withmate-session-request-v2", operation: "turn.get", input: { sessionId: "s", executionId: "e" } },
         AbortSignal.timeout(2_000),
       );

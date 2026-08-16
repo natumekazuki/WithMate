@@ -32,7 +32,7 @@ import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
-import type { SessionQueuedTurn } from "./session-gui-execution.js";
+import type { SessionQueuedTurn, SessionTurnExecutionProjection } from "./session-turn-execution.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -2180,7 +2180,7 @@ export type SessionMessageColumnProps = {
     id: string;
     label: string;
   } | null>;
-  queuedTurns?: Array<SessionQueuedTurn | null>;
+  turnExecutions?: Array<SessionTurnExecutionProjection | null>;
   cancelingExecutionIds?: ReadonlySet<string>;
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
@@ -2515,7 +2515,7 @@ export function SessionMessageColumn({
   messages,
   messageKeys,
   messageGroups,
-  queuedTurns,
+  turnExecutions,
   cancelingExecutionIds = new Set<string>(),
   expandedArtifacts,
   messageListRef,
@@ -2625,7 +2625,7 @@ export function SessionMessageColumn({
     },
     [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
-  const firstQueuedTurnIndex = queuedTurns?.findIndex((queuedTurn) => queuedTurn !== null) ?? -1;
+  const firstQueuedTurnIndex = turnExecutions?.findIndex((execution) => execution?.state === "queued") ?? -1;
   const messageFindMatches = useMemo(() => {
     const matches: Array<
       | { kind: "message"; messageIndex: number; occurrenceIndex: number }
@@ -3045,7 +3045,16 @@ export function SessionMessageColumn({
             }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
-            const queuedTurn = queuedTurns?.[absoluteIndex] ?? null;
+            const turnExecution = turnExecutions?.[absoluteIndex] ?? null;
+            const queuedTurn = turnExecution?.state === "queued" ? turnExecution : null;
+            const turnInitiator = turnExecution?.initiator?.kind === "session"
+              ? {
+                name: turnExecution.initiator.character.name,
+                iconPath: turnExecution.initiator.character.iconFilePath,
+              }
+              : turnExecution?.initiator === null
+                ? { name: "外部", iconPath: "" }
+                : null;
             const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
             const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
             const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
@@ -3123,6 +3132,12 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
+                  </div>
+                ) : null}
+                {!isAssistant && turnInitiator ? (
+                  <div className="turn-initiator-identity">
+                    <CharacterAvatar character={turnInitiator} size="small" className="message-avatar" />
+                    <span>{turnInitiator.name}</span>
                   </div>
                 ) : null}
                 <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>

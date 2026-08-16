@@ -14,7 +14,7 @@ ADR 021で確定した非局所的な境界を本文に置き、未確定事項�
 
 ## 用語
 
-**呼び出し元agent**は、Session CLIまたはSession MCPを利用するagentである。WithMate内のSessionから呼び出す場合も、Codex AppなどWithMate外から呼び出す場合もある。
+**呼び出し元agent**は、WithMateが発行したAgent runtime bindingを持ち、Session CLIまたはSession MCPを利用するAgent Sessionである。WithMate外からのunbound Session application operationはサポートしない。
 
 **対象Session**は、requestのSession IDで明示され、Session application serviceが解決する通常Sessionである。呼び出し元agent自身のSessionと同一とは限らない。
 
@@ -91,7 +91,7 @@ MemoryとCharacter Affectのruntimeはこの図に含めない。Session runtime
 
 GUI、CLI、MCPは兄弟入口である。GUIの既存IPCをCLIまたはMCPが呼ぶ構造にはせず、共通application serviceの上でそれぞれinputとoutputを変換する。
 
-通常SessionのGUI送信もExecution registryの同じ永続`turn.enqueue` ownerへ渡す。GUI adapterは選択中Sessionのruntime optionとclient request IDを内部requestへ固定し、受付結果が不明な再送では同じIDを使ってcanonical executionへ収束する。renderer内に別queueを持たず、Main Processが投影するqueued executionを既存message listへFIFO順で表示する。queuedからrunningへadmitされたTurnは通常のlive run / transcript投影へ移り、queue投影と二重表示しない。AuxiliaryとCompanionの実行入口はこの決定の対象外とする。
+通常SessionのGUI送信もExecution registryの同じ永続`turn.enqueue` ownerへ渡す。GUI adapterは選択中Sessionのruntime optionとclient request IDを内部requestへ固定し、受付結果が不明な再送では同じIDを使ってcanonical executionへ収束する。renderer内に別queueを持たず、Main Processが全active executionを永続FIFO順で既存message listへ投影する。queuedからrunningへadmitされたTurnはexecution IDを基準に同じmessage identityとinitiatorを維持し、Session履歴へuser messageが保存された後は重複messageを作らず保存済み行へexecution metadataを結び直す。AuxiliaryとCompanionの実行入口はこの決定の対象外とする。
 
 ## Session作成と選択
 
@@ -502,7 +502,23 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `session.files.read_text` | `session files read-text` |
 | `session.files.write_text` | `session files write-text` |
 
-`session.self`はprovider実行へ発行されたruntime bindingからactor Session IDだけを解決する。caller入力でSession IDを指定または上書きできず、bindingの欠落、失効、またはgrant不足ではapplication serviceを呼ぶ前に拒否する。他のoperationは引き続き対象Session IDを明示し、`session.self`の結果を暗黙のmutation targetとして再利用しない。
+`/v1/status`、challenge、認証exchangeを除くSession runtime application operationは、provider実行へ発行されたvalidなruntime bindingを必須とする。bindingの欠落、空白、不正、失効、または`session.runtime.invoke` grant不足ではapplication handlerを呼ぶ前に拒否する。`session.self`はbindingからactor Session IDだけを返す。他のoperationは対象Session IDの明示入力を維持し、actorまたは`session.self`の結果を暗黙のtargetとして再利用しない。
+
+`turn.run`と`turn.enqueue`は、bindingのactor Session IDとcanonical Character stateから次のinitiatorをexecution作成時に確定し、`request_json`へ保存する。GUI送信は`{ kind: "user" }`を保存する。
+
+```ts
+type TurnInitiator =
+  | { kind: "user" }
+  | {
+      kind: "session";
+      sessionId: string;
+      character: { characterId: string; name: string; iconFilePath: string };
+    };
+```
+
+Session initiatorのsnapshotはrename、archive、削除後も再解決しない。iconを表示できない場合はsnapshot名と汎用avatarを使う。initiatorのない既存external requestだけをlegacyとして`外部`表示する。新規requestをanonymous、CLI、MCP、`外部`として保存しない。
+
+Turn作成fingerprintはinitiator kindとSession actor IDを含み、transport adapter、binding reference/ID/generation、Character名、icon参照を含めない。同じactor、target、payload、keyのMCP→CLI retryは同じexecutionへ収束し、別actorの同一keyはconflictになる。canonical replayはCharacter snapshot解決より先に判定する。
 
 `turn.get`は現在状態、未解決interaction、利用可能なpartial output、terminal resultを返す。重複する`turn.status`は公開しない。CLI固有の接続診断とschema表示はapplication operationに含めない。
 

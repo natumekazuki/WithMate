@@ -54,8 +54,8 @@ import type {
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
   SessionExecutionChangedEvent,
-  SessionGuiTurnExecution,
-} from "./session-gui-execution.js";
+  SessionTurnExecutionProjection,
+} from "./session-turn-execution.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import type { SessionIntegrationDiagnostics } from "./session-integration-diagnostics-state.js";
@@ -177,7 +177,7 @@ export type WithMateWindowSessionApi = {
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
-  listGuiSessionTurnExecutions(sessionId: string): Promise<SessionGuiTurnExecution[]>;
+  listSessionTurnExecutions(sessionId: string): Promise<SessionTurnExecutionProjection[]>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,

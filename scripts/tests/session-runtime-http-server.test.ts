@@ -4,6 +4,7 @@ import { connect as connectSocket, type Socket } from "node:net";
 import { test } from "node:test";
 
 import {
+  SESSION_RUNTIME_OPERATIONS,
   SESSION_RUNTIME_MAX_BODY_BYTES,
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
@@ -19,7 +20,7 @@ import {
 import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
 import {
-  SESSION_SELF_AGENT_RUNTIME_OPERATION,
+  SESSION_RUNTIME_AGENT_OPERATION,
   createSessionRuntimeHttpServer,
 } from "../../src-electron/session-runtime-http-server.js";
 
@@ -30,10 +31,133 @@ const secrets = {
   runtimeInstanceId: "runtime-1",
 };
 
+const defaultBindingRegistry = new AgentRuntimeBindingRegistry();
+const defaultBinding = defaultBindingRegistry.issueOrReuse({
+  actorSessionId: "session-actor",
+  providerId: "codex",
+  operationGrants: [SESSION_RUNTIME_AGENT_OPERATION],
+});
+const boundServerOptions = {
+  ...secrets,
+  agentRuntimeBindingRegistry: defaultBindingRegistry,
+};
+
+const turnInput = {
+  provider: "codex",
+  userMessage: "hello",
+  model: "gpt-5.4",
+  reasoningEffort: "high",
+  approvalMode: "on-request",
+  codexSandboxMode: "workspace-write",
+  attachments: [],
+} as const;
+
+const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[number], unknown> = {
+  "runtime.catalog": {},
+  "session.self": {},
+  "session.create": {
+    title: "Session", provider: "codex", catalogRevision: 4,
+    workspace: { kind: "session_folder" }, idempotencyKey: "create-key",
+  },
+  "session.list": {},
+  "session.get": { sessionId: "session-1" },
+  "session.rename": { sessionId: "session-1", title: "Renamed", idempotencyKey: "rename-key" },
+  "session.files.list": { sessionId: "session-1" },
+  "session.files.read_text": { sessionId: "session-1", relativePath: "brief.md" },
+  "session.files.write_text": {
+    sessionId: "session-1", relativePath: "brief.md", content: "brief", replace: false,
+    idempotencyKey: "write-key",
+  },
+  "turn.options": { sessionId: "session-1" },
+  "turn.run": {
+    sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",
+    responseMode: "deferred", turn: turnInput,
+  },
+  "turn.enqueue": {
+    sessionId: "session-1", catalogRevision: 4, idempotencyKey: "enqueue-key", turn: turnInput,
+  },
+  "turn.list": { sessionId: "session-1" },
+  "turn.get": { sessionId: "session-1", executionId: "execution-1" },
+  "turn.cancel": { sessionId: "session-1", executionId: "execution-1", idempotencyKey: "cancel-key" },
+  "interaction.list": { sessionId: "session-1" },
+  "interaction.respond": {
+    sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
+    response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-key",
+    responseMode: "deferred",
+  },
+  "transcript.export": {
+    sessionId: "session-1", format: "json", maxBytes: 1024, destination: { kind: "inline" },
+  },
+};
+
+test("ID-01: 全application operationはvalid bindingのtrusted actor contextだけをhandlerへ渡す", async () => {
+  const calls: Array<{ operation: string; actorSessionId: string | null }> = [];
+  const server = createSessionRuntimeHttpServer({
+    ...boundServerOptions,
+    handle: async (operation, _input, _adapter, context) => {
+      calls.push({
+        operation,
+        actorSessionId: context.agentRuntimeBinding?.actorSessionId ?? null,
+      });
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    for (const operation of SESSION_RUNTIME_OPERATIONS) {
+      const body = JSON.stringify({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation,
+        input: applicationOperationInputs[operation],
+      });
+      assert.equal((await post(address.port, exchangePayload("mcp", body))).status, 200, operation);
+    }
+    assert.deepEqual(calls, SESSION_RUNTIME_OPERATIONS.map((operation) => ({
+      operation,
+      actorSessionId: "session-actor",
+    })));
+  } finally {
+    await server.stop();
+  }
+});
+
+test("ID-01: binding missingは全application operationをhandler前に拒否する", async () => {
+  let calls = 0;
+  const server = createSessionRuntimeHttpServer({
+    ...boundServerOptions,
+    handle: async (operation) => {
+      calls += 1;
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    for (const operation of SESSION_RUNTIME_OPERATIONS) {
+      const body = JSON.stringify({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation,
+        input: applicationOperationInputs[operation],
+      });
+      const response = await post(address.port, exchangePayload("cli", body, {
+        agentRuntimeBindingReference: null,
+      }));
+      assert.equal(response.status, 403, operation);
+      assert.equal(JSON.parse(response.body).error.code, "SESSION_BINDING_REQUIRED", operation);
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("Session runtime authenticates identity and adapter before invoking handler", async () => {
   const calls: string[] = [];
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     handle: async (operation, _input, adapter) => {
       calls.push(`${adapter}:${operation}`);
       return createSessionRuntimeResult(operation, { ok: true });
@@ -69,16 +193,22 @@ test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessio
   const allowed = registry.issueOrReuse({
     actorSessionId: "session-actor",
     providerId: "codex",
-    operationGrants: [SESSION_SELF_AGENT_RUNTIME_OPERATION],
+    operationGrants: [SESSION_RUNTIME_AGENT_OPERATION],
   });
   const forbidden = registry.issueOrReuse({
     actorSessionId: "session-forbidden",
     providerId: "codex",
     operationGrants: [],
   });
+  const expired = registry.issueOrReuse({
+    actorSessionId: "session-expired",
+    providerId: "codex",
+    operationGrants: [SESSION_RUNTIME_AGENT_OPERATION],
+    expiresAt: "2000-01-01T00:00:00.000Z",
+  });
   const calls: string[] = [];
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     agentRuntimeBindingRegistry: registry,
     handle: async (operation, _input, _adapter, context) => {
       calls.push(context.agentRuntimeBinding?.actorSessionId ?? "missing");
@@ -97,16 +227,35 @@ test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessio
       input: {},
     });
 
-    assert.equal((await post(address.port, exchangePayload("mcp", body))).status, 403);
-    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+    const missing = await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: null,
+    }));
+    const blank = await post(address.port, exchangePayload("mcp", body, {
       agentRuntimeBindingReference: " ",
-    }))).status, 403);
-    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+    }));
+    const invalid = await post(address.port, exchangePayload("mcp", body, {
       agentRuntimeBindingReference: "unknown",
-    }))).status, 403);
-    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+    }));
+    const grantMissing = await post(address.port, exchangePayload("mcp", body, {
       agentRuntimeBindingReference: forbidden.bindingReference,
-    }))).status, 403);
+    }));
+    const bindingExpired = await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: expired.bindingReference,
+    }));
+    assert.deepEqual(
+      [missing, blank, invalid, grantMissing, bindingExpired].map((response) => response.status),
+      [403, 403, 403, 403, 403],
+    );
+    assert.deepEqual(
+      [missing, blank, invalid, grantMissing, bindingExpired].map((response) => JSON.parse(response.body).error.code),
+      [
+        "SESSION_BINDING_REQUIRED",
+        "SESSION_BINDING_INVALID",
+        "SESSION_BINDING_INVALID",
+        "SESSION_BINDING_FORBIDDEN",
+        "SESSION_BINDING_INVALID",
+      ],
+    );
     assert.deepEqual(calls, []);
 
     const authorized = await post(address.port, exchangePayload("mcp", body, {
@@ -129,7 +278,7 @@ test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessio
 test("Session runtime rejects a declared body over 8 MiB before handler invocation", async () => {
   let invoked = false;
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     handle: async (operation) => {
       invoked = true;
       return createSessionRuntimeResult(operation, {});
@@ -151,7 +300,7 @@ test("Session runtime rejects a declared body over 8 MiB before handler invocati
 
 test("Session runtime status proves the discovered runtime identity", async () => {
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     handle: async (operation) => createSessionRuntimeResult(operation, {}),
   });
   await server.start();
@@ -173,7 +322,7 @@ test("Session runtime status proves the discovered runtime identity", async () =
 
 test("RL-01: Session runtime replaces an oversized success response with a stable error", async () => {
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     handle: async (operation) => createSessionRuntimeResult(operation, {
       assistantText: "a".repeat(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
     }),
@@ -234,6 +383,15 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
     );
   }
   const application = new SessionExternalApplicationService({
+    resolveTurnInitiator: async (actorSessionId) => ({
+      kind: "session",
+      sessionId: actorSessionId,
+      character: {
+        characterId: "character-actor",
+        name: "Actor",
+        iconFilePath: "C:/characters/actor.png",
+      },
+    }),
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     isProviderEnabled: () => true,
     executionService: {
@@ -254,8 +412,9 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
     },
   });
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
-    handle: (operation, input) => application.execute(operation, input),
+    ...boundServerOptions,
+    handle: (operation, input, _adapter, context) =>
+      application.execute(operation, input, context.agentRuntimeBinding),
   });
   await server.start();
   try {
@@ -331,7 +490,7 @@ function createBoundarySessionResult(sessionId: string): { sessionId: string; pa
 test("HTTP-PREAUTH-01: unfinished pre-auth requestはdeadlineで破棄される", async () => {
   let invoked = false;
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     preAuthTimeoutMs: 30,
     handle: async (operation) => {
       invoked = true;
@@ -352,7 +511,7 @@ test("HTTP-PREAUTH-01: unfinished pre-auth requestはdeadlineで破棄される"
 
 test("HTTP-PREAUTH-01: stopはunfinished pre-auth socketを待たずに破棄する", async () => {
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     preAuthTimeoutMs: 30_000,
     shutdownGraceMs: 50,
     handle: async (operation) => createSessionRuntimeResult(operation, {}),
@@ -370,7 +529,7 @@ test("HTTP-PREAUTH-01: stopはunfinished pre-auth socketを待たずに破棄す
 test("HTTP-PREAUTH-01: aggregate pre-auth byte budget超過はhandler前にstable errorへ収束する", async () => {
   let invoked = false;
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     maxPreAuthAggregateBytes: 64,
     handle: async (operation) => {
       invoked = true;
@@ -400,7 +559,7 @@ test("HTTP-PREAUTH-01: aggregate pre-auth byte budget超過はhandler前にstabl
 
 test("HTTP-PREAUTH-01: 複数requestのaggregate byte budgetを共有し解放後に再受付する", async () => {
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     maxPreAuthAggregateBytes: 1_024,
     handle: async (operation) => createSessionRuntimeResult(operation, {}),
   });
@@ -431,7 +590,7 @@ test("HTTP-PREAUTH-01: 複数requestのaggregate byte budgetを共有し解放�
 
 test("HTTP-PREAUTH-01: live pre-auth connection数をhard limitする", async () => {
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     maxPreAuthConnections: 1,
     handle: async (operation) => createSessionRuntimeResult(operation, {}),
   });
@@ -454,7 +613,7 @@ test("EXT-SHUTDOWN-07: stopはstuck authenticated handlerをfinite grace後に�
   const handlerStarted = createDeferred();
   const releaseHandler = createDeferred();
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     shutdownGraceMs: 20,
     handle: async (operation) => {
       handlerStarted.resolve();
@@ -487,7 +646,7 @@ test("EXT-SHUTDOWN-07: stopはstuck authenticated handlerをfinite grace後に�
 
 test("HTTP-PREAUTH-01: stopはheader未完了socketをgrace内に破棄する", async () => {
   const server = createSessionRuntimeHttpServer({
-    ...secrets,
+    ...boundServerOptions,
     shutdownGraceMs: 30,
     handle: async (operation) => createSessionRuntimeResult(operation, {}),
   });
@@ -508,7 +667,7 @@ function exchangePayload(
   overrides: {
     apiSecret?: string;
     adapterSecret?: string;
-    agentRuntimeBindingReference?: string;
+    agentRuntimeBindingReference?: string | null;
   } = {},
 ): string {
   return JSON.stringify({
@@ -516,9 +675,9 @@ function exchangePayload(
     apiSecret: overrides.apiSecret ?? secrets.apiSecret,
     adapter,
     adapterSecret: overrides.adapterSecret ?? (adapter === "cli" ? secrets.cliSecret : secrets.mcpSecret),
-    ...(overrides.agentRuntimeBindingReference !== undefined
-      ? { agentRuntimeBindingReference: overrides.agentRuntimeBindingReference }
-      : {}),
+    ...(overrides.agentRuntimeBindingReference === null
+      ? {}
+      : { agentRuntimeBindingReference: overrides.agentRuntimeBindingReference ?? defaultBinding.bindingReference }),
     envelope: JSON.parse(envelopeBody),
   });
 }

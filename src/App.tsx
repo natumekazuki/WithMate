@@ -188,17 +188,17 @@ import {
 } from "./session-submit-coordinator.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
 import type {
-  SessionGuiTurnExecution,
+  SessionTurnExecutionProjection,
   SessionQueuedTurn,
   SessionRunningProjectionBarrier,
   SessionTurnAdmissionError,
-} from "./session-gui-execution.js";
+} from "./session-turn-execution.js";
 import {
   applySessionExecutionChangedEventWithBarrier,
   createSessionRunningProjectionBarrier,
-  mergeGuiTurnExecutionRefreshWithBarrier,
-} from "./session-gui-execution.js";
-import { appendGuiTurnExecutionsToMessageList } from "./session-queued-turn-projection.js";
+  mergeTurnExecutionRefreshWithBarrier,
+} from "./session-turn-execution.js";
+import { appendTurnExecutionsToMessageList } from "./session-queued-turn-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
@@ -553,13 +553,13 @@ export default function AgentSessionWindowApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
-  const [guiSessionTurnExecutions, setGuiSessionTurnExecutions] = useState<SessionGuiTurnExecution[]>([]);
-  const guiSessionTurnExecutionsRef = useRef<SessionGuiTurnExecution[]>([]);
+  const [sessionTurnExecutions, setSessionTurnExecutions] = useState<SessionTurnExecutionProjection[]>([]);
+  const sessionTurnExecutionsRef = useRef<SessionTurnExecutionProjection[]>([]);
   const [runningProjectionBarrier, setRunningProjectionBarrier] = useState<SessionRunningProjectionBarrier | null>(null);
   const runningProjectionBarrierRef = useRef<SessionRunningProjectionBarrier | null>(null);
   const runningProjectionReadyExecutionIdRef = useRef<string | null>(null);
   const hydrateSelectedSessionRef = useRef<() => Promise<boolean>>(async () => false);
-  const refreshGuiSessionTurnExecutionsRef = useRef<(sessionId: string) => Promise<void>>(async () => undefined);
+  const refreshSessionTurnExecutionsRef = useRef<(sessionId: string) => Promise<void>>(async () => undefined);
   const [queueAdmissionError, setQueueAdmissionError] = useState<{
     sessionId: string;
     error: SessionTurnAdmissionError;
@@ -759,10 +759,10 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     const sessionId = selectedSession?.id;
     if (!withmateApi || !sessionId) {
-      guiSessionTurnExecutionsRef.current = [];
+      sessionTurnExecutionsRef.current = [];
       runningProjectionBarrierRef.current = null;
       runningProjectionReadyExecutionIdRef.current = null;
-      setGuiSessionTurnExecutions([]);
+      setSessionTurnExecutions([]);
       setRunningProjectionBarrier(null);
       return;
     }
@@ -772,15 +772,15 @@ export default function AgentSessionWindowApp() {
     const refresh = async () => {
       const revision = ++refreshRevision;
       try {
-        const executions = await withmateApi.listGuiSessionTurnExecutions(sessionId);
+        const executions = await withmateApi.listSessionTurnExecutions(sessionId);
         if (!active || revision !== refreshRevision) return;
-        const next = mergeGuiTurnExecutionRefreshWithBarrier(
-          guiSessionTurnExecutionsRef.current,
+        const next = mergeTurnExecutionRefreshWithBarrier(
+          sessionTurnExecutionsRef.current,
           executions,
           runningProjectionBarrierRef.current,
         );
-        guiSessionTurnExecutionsRef.current = next;
-        setGuiSessionTurnExecutions(next);
+        sessionTurnExecutionsRef.current = next;
+        setSessionTurnExecutions(next);
         setQueueAdmissionError((current) => (
           current?.sessionId === sessionId &&
             current.error.code === "QUEUE_FULL" &&
@@ -792,12 +792,12 @@ export default function AgentSessionWindowApp() {
         if (active) console.error(error);
       }
     };
-    refreshGuiSessionTurnExecutionsRef.current = refresh;
+    refreshSessionTurnExecutionsRef.current = refresh;
 
-    guiSessionTurnExecutionsRef.current = [];
+    sessionTurnExecutionsRef.current = [];
     runningProjectionBarrierRef.current = null;
     runningProjectionReadyExecutionIdRef.current = null;
-    setGuiSessionTurnExecutions([]);
+    setSessionTurnExecutions([]);
     setRunningProjectionBarrier(null);
     setQueueAdmissionError((current) => current?.sessionId === sessionId ? current : null);
     void refresh();
@@ -814,15 +814,15 @@ export default function AgentSessionWindowApp() {
         });
         return;
       }
-      const current = guiSessionTurnExecutionsRef.current;
+      const current = sessionTurnExecutionsRef.current;
       const barrier = createSessionRunningProjectionBarrier(event);
       const next = applySessionExecutionChangedEventWithBarrier(
         current,
         event,
         runningProjectionBarrierRef.current,
       );
-      guiSessionTurnExecutionsRef.current = next;
-      setGuiSessionTurnExecutions(next);
+      sessionTurnExecutionsRef.current = next;
+      setSessionTurnExecutions(next);
       if (barrier) {
         runningProjectionBarrierRef.current = barrier;
         setRunningProjectionBarrier(barrier);
@@ -832,7 +832,7 @@ export default function AgentSessionWindowApp() {
     return () => {
       active = false;
       refreshRevision += 1;
-      refreshGuiSessionTurnExecutionsRef.current = async () => undefined;
+      refreshSessionTurnExecutionsRef.current = async () => undefined;
       unsubscribe();
     };
   }, [selectedSession?.id, withmateApi]);
@@ -1542,11 +1542,11 @@ export default function AgentSessionWindowApp() {
     selectedSessionLiveRun?.threadId,
   ]);
   const messageListProjection = useMemo(
-    () => appendGuiTurnExecutionsToMessageList(
+    () => appendTurnExecutionsToMessageList(
       buildMessageListProjection(displayedMessages, projectedAuxiliarySessions, selectedSession?.id, {
         liveAssistant: projectedLiveAssistant,
       }),
-      activeAuxiliarySession ? [] : guiSessionTurnExecutions,
+      activeAuxiliarySession ? [] : sessionTurnExecutions,
       selectedSession?.runState ?? "idle",
       runningProjectionBarrier?.executionId ?? null,
     ),
@@ -1555,7 +1555,7 @@ export default function AgentSessionWindowApp() {
       displayedMessages,
       projectedAuxiliarySessions,
       projectedLiveAssistant,
-      guiSessionTurnExecutions,
+      sessionTurnExecutions,
       runningProjectionBarrier?.executionId,
       selectedSession?.id,
       selectedSession?.runState,
@@ -1565,7 +1565,7 @@ export default function AgentSessionWindowApp() {
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
-  const messageListQueuedTurns = messageListProjection.queuedTurns;
+  const messageListTurnExecutions = messageListProjection.turnExecutions;
   useEffect(() => {
     if (!activeRunSessionId || !liveRunAssistantText) {
       return;
@@ -2384,7 +2384,7 @@ export default function AgentSessionWindowApp() {
         }
         enqueueRetryRef.current = null;
         setQueueAdmissionError((current) => current?.sessionId === sessionId ? null : current);
-        await refreshGuiSessionTurnExecutionsRef.current(sessionId);
+        await refreshSessionTurnExecutionsRef.current(sessionId);
         if (shouldClearDraft) {
           setDraft((current) => current === messageText ? "" : current);
         }
@@ -2480,17 +2480,17 @@ export default function AgentSessionWindowApp() {
         executionId: execution.executionId,
         clientRequestId: createSessionTurnClientRequestId(),
       });
-      const latest = await withmateApi.listGuiSessionTurnExecutions(execution.sessionId);
-      guiSessionTurnExecutionsRef.current = latest;
-      setGuiSessionTurnExecutions(latest);
+      const latest = await withmateApi.listSessionTurnExecutions(execution.sessionId);
+      sessionTurnExecutionsRef.current = latest;
+      setSessionTurnExecutions(latest);
       if (!result.ok) {
         window.alert(result.error.message);
       }
     } catch (error) {
       try {
-        const latest = await withmateApi.listGuiSessionTurnExecutions(execution.sessionId);
-        guiSessionTurnExecutionsRef.current = latest;
-        setGuiSessionTurnExecutions(latest);
+        const latest = await withmateApi.listSessionTurnExecutions(execution.sessionId);
+        sessionTurnExecutionsRef.current = latest;
+        setSessionTurnExecutions(latest);
       } catch (refreshError) {
         console.error(refreshError);
       }
@@ -3878,7 +3878,7 @@ export default function AgentSessionWindowApp() {
         displayedMessages: renderedMessages,
         displayedMessageKeys: messageListKeys,
         displayedMessageGroups: messageListGroups,
-        queuedTurns: messageListQueuedTurns,
+        turnExecutions: messageListTurnExecutions,
         cancelingExecutionIds,
         expandedArtifacts,
         sessionThemeStyle,

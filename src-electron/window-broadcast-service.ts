@@ -10,7 +10,7 @@ import type {
 import type { CompanionSessionSummary } from "../src/companion-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { PromptTemplate } from "../src/prompt-template.js";
-import type { SessionExecutionChangedEvent } from "../src/session-gui-execution.js";
+import type { SessionExecutionChangedEvent } from "../src/session-turn-execution.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,

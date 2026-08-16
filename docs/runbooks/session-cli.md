@@ -6,7 +6,7 @@
 
 ## 利用条件
 
-WithMateを起動しておく必要がある。Windows installerはinstall directoryへ`withmate-session.cmd`を配置する。Session CLI用のWindowsApps aliasは作成せず、Codex MCP登録はSettingsからinstall directory内のlauncher絶対pathを登録する。CLIを直接使う場合はinstall directory内のlauncherを明示するか、ユーザー自身がPATHを設定する。
+`schema`とtransport接続診断を除くapplication operationでは、WithMateを起動し、WithMateが発行したAgent runtime bindingを持つprovider実行内から呼び出す必要がある。Windows installerはinstall directoryへ`withmate-session.cmd`を配置する。Session CLI用のWindowsApps aliasは作成せず、Codex MCP登録はSettingsからinstall directory内のlauncher絶対pathを登録する。外部terminalからのunbound application operationはサポートしない。
 
 Windowsのruntime credentialは`%LOCALAPPDATA%\WithMate\session-runtime`へ公開される。Windowsでは`WITHMATE_SESSION_RUNTIME_DIR`による保存先変更を受理しない。ACLを安全に確定できない場合、Session runtimeはfail closedし、CLI/MCPは利用不能になる。
 
@@ -122,4 +122,4 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは`runtime.catalog`、`session.create`、`session.list`、`session.get`、`session.rename`、`session.files.list`、`session.files.read_text`、`session.files.write_text`、`turn.options`、`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`、`interaction.list`、`interaction.respond`、`transcript.export`の17操作で、入力shapeはMCPの`tools/list`を正本とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは`runtime.catalog`、`session.self`、`session.create`、`session.list`、`session.get`、`session.rename`、`session.files.list`、`session.files.read_text`、`session.files.write_text`、`turn.options`、`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`、`interaction.list`、`interaction.respond`、`transcript.export`の18操作で、入力shapeはMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。

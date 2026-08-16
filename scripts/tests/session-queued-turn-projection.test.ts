@@ -2,17 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildMessageListProjection } from "../../src/auxiliary-session-message-projection.js";
-import { appendGuiTurnExecutionsToMessageList } from "../../src/session-queued-turn-projection.js";
+import { appendTurnExecutionsToMessageList } from "../../src/session-queued-turn-projection.js";
 import type {
   SessionQueuedTurn,
   SessionRunningTurn,
-} from "../../src/session-gui-execution.js";
+} from "../../src/session-turn-execution.js";
 import {
   applySessionExecutionChangedEvent,
   applySessionExecutionChangedEventWithBarrier,
   createSessionRunningProjectionBarrier,
-  mergeGuiTurnExecutionRefreshWithBarrier,
-} from "../../src/session-gui-execution.js";
+  mergeTurnExecutionRefreshWithBarrier,
+} from "../../src/session-turn-execution.js";
 
 function queuedTurn(executionId: string, queuePosition: number, userMessage: string): SessionQueuedTurn {
   return {
@@ -20,6 +20,7 @@ function queuedTurn(executionId: string, queuePosition: number, userMessage: str
     sessionId: "session-1",
     clientRequestId: null,
     userMessage,
+    initiator: { kind: "user" },
     state: "queued",
     queuePosition,
     canCancel: true,
@@ -34,6 +35,7 @@ function runningTurn(executionId: string, userMessage: string): SessionRunningTu
     sessionId: "session-1",
     clientRequestId: null,
     userMessage,
+    initiator: { kind: "user" },
     state: "running",
     queuePosition: null,
     canCancel: false,
@@ -49,7 +51,7 @@ test("queued Turnは既存message listの末尾へMainのFIFO位置順で投影�
     "session-1",
   );
 
-  const projection = appendGuiTurnExecutionsToMessageList(base, [
+  const projection = appendTurnExecutionsToMessageList(base, [
     queuedTurn("execution-2", 2, "三つ目"),
     queuedTurn("execution-1", 1, "二つ目"),
   ], "running");
@@ -57,12 +59,12 @@ test("queued Turnは既存message listの末尾へMainのFIFO位置順で投影�
   assert.deepEqual(projection.messages.map((message) => message.text), ["実行中", "二つ目", "三つ目"]);
   assert.deepEqual(projection.keys, [
     "session-session-1-0",
-    "gui-turn-execution-execution-1",
-    "gui-turn-execution-execution-2",
+    "turn-execution-execution-1",
+    "turn-execution-execution-2",
   ]);
-  assert.equal(projection.sources[1]?.kind, "gui-turn-execution");
-  assert.equal(projection.queuedTurns[1]?.queuePosition, 1);
-  assert.equal(projection.queuedTurns[2]?.queuePosition, 2);
+  assert.equal(projection.sources[1]?.kind, "turn-execution");
+  assert.equal(projection.turnExecutions[1]?.queuePosition, 1);
+  assert.equal(projection.turnExecutions[2]?.queuePosition, 2);
 });
 
 test("runningへ昇格したGUI TurnはSession保存の反映前も同じ位置へ投影する", () => {
@@ -75,7 +77,7 @@ test("runningへ昇格したGUI TurnはSession保存の反映前も同じ位置�
     "session-1",
   );
 
-  const projection = appendGuiTurnExecutionsToMessageList(base, [
+  const projection = appendTurnExecutionsToMessageList(base, [
     queuedTurn("execution-3", 2, "三つ目"),
     runningTurn("execution-1", "二つ目"),
     queuedTurn("execution-2", 1, "その次"),
@@ -88,9 +90,9 @@ test("runningへ昇格したGUI TurnはSession保存の反映前も同じ位置�
     "その次",
     "三つ目",
   ]);
-  assert.equal(projection.sources[2]?.kind, "gui-turn-execution");
-  assert.equal(projection.queuedTurns[2], null);
-  assert.equal(projection.queuedTurns[3]?.executionId, "execution-2");
+  assert.equal(projection.sources[2]?.kind, "turn-execution");
+  assert.equal(projection.turnExecutions[2]?.executionId, "execution-1");
+  assert.equal(projection.turnExecutions[3]?.executionId, "execution-2");
 });
 
 test("Session保存へ反映済みのrunning GUI Turnは重複投影しない", () => {
@@ -104,7 +106,7 @@ test("Session保存へ反映済みのrunning GUI Turnは重複投影しない", 
     "session-1",
   );
 
-  const projection = appendGuiTurnExecutionsToMessageList(base, [
+  const projection = appendTurnExecutionsToMessageList(base, [
     runningTurn("execution-1", "二つ目"),
     queuedTurn("execution-2", 1, "その次"),
   ], "running");
@@ -116,7 +118,35 @@ test("Session保存へ反映済みのrunning GUI Turnは重複投影しない", 
     "その次",
   ]);
   assert.equal(projection.sources[2]?.kind, "session");
-  assert.equal(projection.queuedTurns[3]?.executionId, "execution-2");
+  assert.equal(projection.keys[2], "turn-execution-execution-1");
+  assert.equal(projection.turnExecutions[2]?.executionId, "execution-1");
+  assert.equal(projection.turnExecutions[3]?.executionId, "execution-2");
+});
+
+test("ID-03: 保存済みrunning user行へSession initiator tupleを結び直す", () => {
+  const base = buildMessageListProjection(
+    [{ role: "user", text: "Sessionからの依頼" }],
+    [],
+    "session-1",
+  );
+  const initiator = {
+    kind: "session" as const,
+    sessionId: "session-actor",
+    character: {
+      characterId: "character-actor",
+      name: "Actor Snapshot",
+      iconFilePath: "C:/characters/actor.png",
+    },
+  };
+  const projection = appendTurnExecutionsToMessageList(base, [{
+    ...runningTurn("execution-session", "Sessionからの依頼"),
+    initiator,
+  }], "running");
+
+  assert.equal(projection.messages.length, 1);
+  assert.equal(projection.sources[0]?.kind, "session");
+  assert.equal(projection.keys[0], "turn-execution-execution-session");
+  assert.deepEqual(projection.turnExecutions[0]?.initiator, initiator);
 });
 
 test("running状態イベントを先に適用するとSession保存が続いても昇格Turnを重複投影しない", () => {
@@ -139,7 +169,7 @@ test("running状態イベントを先に適用するとSession保存が続いて
     executionId: "execution-1",
     state: "running",
   });
-  const projection = appendGuiTurnExecutionsToMessageList(base, executions, "running");
+  const projection = appendTurnExecutionsToMessageList(base, executions, "running");
 
   assert.deepEqual(projection.messages.map((message) => message.text), [
     "一つ前の依頼",
@@ -147,8 +177,8 @@ test("running状態イベントを先に適用するとSession保存が続いて
     "二つ目",
     "その次",
   ]);
-  assert.equal(projection.queuedTurns[2], null);
-  assert.equal(projection.queuedTurns[3]?.executionId, "execution-2");
+  assert.equal(projection.turnExecutions[2]?.executionId, "execution-1");
+  assert.equal(projection.turnExecutions[3]?.executionId, "execution-2");
 });
 
 test("terminal状態イベントは対応するGUI executionだけを投影から除く", () => {
@@ -186,7 +216,7 @@ test("前Turnのrunning表示が残っていても昇格executionは永続化確
 
   assert.deepEqual(barrier, { sessionId: "session-1", executionId: "execution-1" });
   assert.deepEqual(
-    appendGuiTurnExecutionsToMessageList(base, executions, "running", barrier?.executionId).messages
+    appendTurnExecutionsToMessageList(base, executions, "running", barrier?.executionId).messages
       .map((message) => message.text),
     ["一つ前の依頼", "一つ前の応答", "二つ目"],
   );
@@ -200,7 +230,7 @@ test("running通知時にexecution一覧が空でも後続refreshのuserを永�
     state: "running" as const,
   };
   const barrier = createSessionRunningProjectionBarrier(event);
-  const executions = mergeGuiTurnExecutionRefreshWithBarrier(
+  const executions = mergeTurnExecutionRefreshWithBarrier(
     applySessionExecutionChangedEvent([], event),
     [runningTurn("execution-1", "二つ目")],
     barrier,
@@ -216,7 +246,7 @@ test("running通知時にexecution一覧が空でも後続refreshのuserを永�
 
   assert.deepEqual(barrier, { sessionId: "session-1", executionId: "execution-1" });
   assert.deepEqual(
-    appendGuiTurnExecutionsToMessageList(base, executions, "running", barrier?.executionId).messages
+    appendTurnExecutionsToMessageList(base, executions, "running", barrier?.executionId).messages
       .map((message) => message.text),
     ["一つ前の依頼", "一つ前の応答", "二つ目"],
   );
@@ -242,7 +272,7 @@ test("running refreshが通知より先着しても同じexecutionを永続化�
   );
 
   assert.deepEqual(
-    appendGuiTurnExecutionsToMessageList(base, executions, "running", barrier?.executionId).messages
+    appendTurnExecutionsToMessageList(base, executions, "running", barrier?.executionId).messages
       .map((message) => message.text),
     ["一つ前の依頼", "一つ前の応答", "二つ目"],
   );
@@ -263,13 +293,13 @@ test("terminal通知とactive refreshが先着しても永続Session hydration�
     terminalEvent,
     barrier,
   );
-  const afterRefresh = mergeGuiTurnExecutionRefreshWithBarrier(
+  const afterRefresh = mergeTurnExecutionRefreshWithBarrier(
     afterTerminal,
     [queuedTurn("execution-2", 1, "その次")],
     barrier,
   );
 
-  assert.deepEqual(afterRefresh.map((execution) => execution.executionId), ["execution-2", "execution-1"]);
+  assert.deepEqual(afterRefresh.map((execution) => execution.executionId), ["execution-1", "execution-2"]);
 });
 
 test("live responseがSession hydrationより先着しても昇格userの直下へ配置する", () => {
@@ -289,7 +319,7 @@ test("live responseがSession hydrationより先着しても昇格userの直下�
       },
     },
   );
-  const projection = appendGuiTurnExecutionsToMessageList(
+  const projection = appendTurnExecutionsToMessageList(
     base,
     [runningTurn("execution-1", "二つ目"), queuedTurn("execution-2", 1, "その次")],
     "running",

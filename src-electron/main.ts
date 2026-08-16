@@ -141,7 +141,7 @@ import {
   startSessionExternalRuntime,
   type SessionExternalRuntimeHandle,
 } from "./session-external-runtime.js";
-import { SESSION_SELF_AGENT_RUNTIME_OPERATION } from "./session-runtime-http-server.js";
+import { SESSION_RUNTIME_AGENT_OPERATION } from "./session-runtime-http-server.js";
 import {
   closeSessionRuntimeAdmission,
 } from "./session-runtime-quit-barrier.js";
@@ -455,7 +455,7 @@ const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnership
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 
 function getProviderAgentRuntimeOperations(): string[] {
-  return [...getMemoryV6AgentRuntimeOperations(), SESSION_SELF_AGENT_RUNTIME_OPERATION];
+  return [...getMemoryV6AgentRuntimeOperations(), SESSION_RUNTIME_AGENT_OPERATION];
 }
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
@@ -1768,8 +1768,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 enqueueSessionTurn: (sessionId, request) =>
                   requireMainSessionCommandFacade().enqueueSessionTurn(sessionId, request),
-                listGuiSessionTurnExecutions: (sessionId) =>
-                  requireMainSessionCommandFacade().listGuiSessionTurnExecutions(sessionId),
+                listSessionTurnExecutions: (sessionId) =>
+                  requireMainSessionCommandFacade().listSessionTurnExecutions(sessionId),
                 cancelSessionExecution: (sessionId, request) =>
                   requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
@@ -2990,6 +2990,23 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
           displayName: agent.displayName,
           description: agent.description,
         })),
+      resolveTurnInitiator: async (actorSessionId) => {
+        const session = getSession(actorSessionId);
+        const characterId = session?.characterId
+          ?? (await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(actorSessionId))?.characterId
+          ?? null;
+        if (!characterId) return null;
+        const snapshot = requireCharacterService().createRuntimeSnapshot(characterId);
+        return snapshot ? {
+          kind: "session",
+          sessionId: actorSessionId,
+          character: {
+            characterId: snapshot.characterId,
+            name: snapshot.name,
+            iconFilePath: snapshot.iconFilePath,
+          },
+        } : null;
+      },
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();
@@ -3073,7 +3090,7 @@ async function dispatchSessionExecutionTurn(
   try {
     const parsed = parseSessionExecutionTurnRequest(request);
     return await runSessionExecutionDispatch({
-      runTurn: () => parsed.source === "gui"
+      runTurn: () => parsed.catalogRevision === null
         ? requireSessionRuntimeService().runQueuedGuiSessionTurn(sessionId, parsed.turn, executionId)
         : requireSessionRuntimeService().runExternalSessionTurn(
             sessionId,

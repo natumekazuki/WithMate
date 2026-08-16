@@ -43,6 +43,6 @@ test("Companion composer は draft 変更時に stale preview errors を clear �
 test("enqueue成功後のGUI execution projectionは応答snapshotを直接追加せず共通read-backへ収束する", async () => {
   const source = await readRendererSource("App.tsx");
 
-  assert.match(source, /await refreshGuiSessionTurnExecutionsRef\.current\(sessionId\);/);
+  assert.match(source, /await refreshSessionTurnExecutionsRef\.current\(sessionId\);/);
   assert.doesNotMatch(source, /const enqueuedExecution = result\.execution;/);
 });

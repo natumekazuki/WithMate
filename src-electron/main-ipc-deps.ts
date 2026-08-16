@@ -89,8 +89,8 @@ import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
-  SessionGuiTurnExecution,
-} from "../src/session-gui-execution.js";
+  SessionTurnExecutionProjection,
+} from "../src/session-turn-execution.js";
 import type {
   CreateSessionRequest,
   DiffPreviewPayload,
@@ -324,7 +324,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
-  listGuiSessionTurnExecutions(sessionId: string): Awaitable<SessionGuiTurnExecution[]>;
+  listSessionTurnExecutions(sessionId: string): Awaitable<SessionTurnExecutionProjection[]>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,
@@ -542,7 +542,7 @@ export function createMainIpcRegistrationDeps(
     deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
     enqueueSessionTurn: args.sessionRuntime.enqueueSessionTurn,
-    listGuiSessionTurnExecutions: args.sessionRuntime.listGuiSessionTurnExecutions,
+    listSessionTurnExecutions: args.sessionRuntime.listSessionTurnExecutions,
     cancelSessionExecution: args.sessionRuntime.cancelSessionExecution,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     getMateState: args.mate.getMateState,

@@ -1199,7 +1199,7 @@ test("MainSessionCommandFacade はGUI送信をrunStateに関係なく同じ永�
   assert.equal(calls[0]?.sessionId, "s-1");
   assert.equal(calls[0]?.idempotencyKey, "11111111-1111-4111-8111-111111111111");
   assert.deepEqual(calls[0]?.request, {
-    source: "gui",
+    initiator: { kind: "user" },
     turn: {
       userMessage: "次の依頼",
       clientRequestId: "11111111-1111-4111-8111-111111111111",
@@ -1253,18 +1253,38 @@ test("MainSessionCommandFacade はQUEUE_FULLを副作用なしのGUI admission e
   });
 });
 
-test("MainSessionCommandFacade はGUIのrunningとqueuedを公開しexternal queuedを数えたFIFO位置を保つ", () => {
+test("MainSessionCommandFacade はuser/session/legacyのactive executionをFIFO順で公開する", () => {
   const records = [
     {
       id: "gui-running",
       sessionId: "s-1",
       state: "running",
       request: {
-        source: "gui",
+        initiator: { kind: "user" },
         turn: { userMessage: "running GUI request", clientRequestId: "gui-running-request" },
       },
       createdAt: "2026-08-16T00:00:00.000Z",
       updatedAt: "2026-08-16T00:00:00.000Z",
+    },
+    {
+      id: "session-1",
+      sessionId: "s-1",
+      state: "queued",
+      request: {
+        initiator: {
+          kind: "session",
+          sessionId: "actor-b",
+          character: {
+            characterId: "character-b",
+            name: "Character B",
+            iconFilePath: "C:/characters/b.png",
+          },
+        },
+        catalogRevision: 3,
+        turn: { provider: "codex", userMessage: "session request" },
+      },
+      createdAt: "2026-08-16T00:00:00.500Z",
+      updatedAt: "2026-08-16T00:00:00.500Z",
     },
     {
       id: "external-1",
@@ -1282,7 +1302,7 @@ test("MainSessionCommandFacade はGUIのrunningとqueuedを公開しexternal que
       sessionId: "s-1",
       state: "queued",
       request: {
-        source: "gui",
+        initiator: { kind: "user" },
         turn: { userMessage: "GUI request", clientRequestId: "gui-request-1" },
       },
       createdAt: "2026-08-16T00:00:01.000Z",
@@ -1311,14 +1331,47 @@ test("MainSessionCommandFacade はGUIのrunningとqueuedを公開しexternal que
     isSessionFilesWorkspace: () => false,
   });
 
-  assert.deepEqual(facade.listGuiSessionTurnExecutions("s-1"), [
+  assert.deepEqual(facade.listSessionTurnExecutions("s-1"), [
     {
       executionId: "gui-running",
       sessionId: "s-1",
       clientRequestId: "gui-running-request",
       userMessage: "running GUI request",
+      initiator: { kind: "user" },
       state: "running",
       queuePosition: null,
+      canCancel: false,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    },
+    {
+      executionId: "session-1",
+      sessionId: "s-1",
+      clientRequestId: null,
+      userMessage: "session request",
+      initiator: {
+        kind: "session",
+        sessionId: "actor-b",
+        character: {
+          characterId: "character-b",
+          name: "Character B",
+          iconFilePath: "C:/characters/b.png",
+        },
+      },
+      state: "queued",
+      queuePosition: 1,
+      canCancel: false,
+      createdAt: "2026-08-16T00:00:00.500Z",
+      updatedAt: "2026-08-16T00:00:00.500Z",
+    },
+    {
+      executionId: "external-1",
+      sessionId: "s-1",
+      clientRequestId: null,
+      userMessage: "external request",
+      initiator: null,
+      state: "queued",
+      queuePosition: 2,
       canCancel: false,
       createdAt: "2026-08-16T00:00:00.000Z",
       updatedAt: "2026-08-16T00:00:00.000Z",
@@ -1328,8 +1381,9 @@ test("MainSessionCommandFacade はGUIのrunningとqueuedを公開しexternal que
       sessionId: "s-1",
       clientRequestId: "gui-request-1",
       userMessage: "GUI request",
+      initiator: { kind: "user" },
       state: "queued",
-      queuePosition: 2,
+      queuePosition: 3,
       canCancel: true,
       createdAt: "2026-08-16T00:00:01.000Z",
       updatedAt: "2026-08-16T00:00:01.000Z",
@@ -1349,7 +1403,14 @@ test("MainSessionCommandFacade はqueued cancelをqueued限定条件でexecution
     getSessionRuntimeService: () => ({} as never),
     getSessionExecutionService: () => ({
       async enqueue() { throw new Error("unused"); },
-      getRecord() { throw new Error("unused"); },
+      getRecord() {
+        return {
+          id: "gui-1",
+          sessionId: "s-1",
+          state: "queued",
+          request: { initiator: { kind: "user" }, turn: { userMessage: "GUI request" } },
+        };
+      },
       listRecords() { return []; },
       async cancel(input: unknown) { cancelCalls.push(input); },
     }) as never,
@@ -1368,5 +1429,53 @@ test("MainSessionCommandFacade はqueued cancelをqueued限定条件でexecution
 
   assert.deepEqual(result, { ok: true });
   assert.equal((cancelCalls[0] as { expectedState?: string }).expectedState, "queued");
+});
+
+test("ID-03: Session由来とlegacy queued executionをGUI cancelへ渡さない", async () => {
+  for (const request of [
+    {
+      initiator: {
+        kind: "session",
+        sessionId: "session-actor",
+        character: { characterId: "character-actor", name: "Actor", iconFilePath: "" },
+      },
+      catalogRevision: 4,
+      turn: { provider: "codex", userMessage: "Session request" },
+    },
+    {
+      catalogRevision: 4,
+      turn: { provider: "codex", userMessage: "Legacy request" },
+    },
+  ]) {
+    let cancelInvoked = false;
+    const facade = createMainSessionCommandFacade({
+      getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+      getSessions: () => [],
+      getStoredSessionSummaries: () => [],
+      runProviderRuntimeOperationExclusive,
+      resolveSessionLaunchSelection: async () => createLaunchSelection(),
+      getSessionPersistenceService: () => ({} as never),
+      getSessionRuntimeService: () => ({} as never),
+      getSessionExecutionService: () => ({
+        getRecord: () => ({ id: "execution-1", sessionId: "s-1", state: "queued", request }),
+        listRecords: () => [],
+        async enqueue() { throw new Error("unused"); },
+        async cancel() { cancelInvoked = true; throw new Error("must not cancel"); },
+      }) as never,
+      getProviderQuotaTelemetry: () => null,
+      isProviderQuotaTelemetryStale: () => false,
+      refreshProviderQuotaTelemetry: async () => null,
+      createSessionId: () => "launch-test",
+      createSessionFilesDirectory: () => "C:/session-files/launch-test",
+      isSessionFilesWorkspace: () => false,
+    });
+
+    const result = await facade.cancelSessionExecution("s-1", {
+      executionId: "execution-1",
+      clientRequestId: "cancel-1",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(cancelInvoked, false);
+  }
 });
 
