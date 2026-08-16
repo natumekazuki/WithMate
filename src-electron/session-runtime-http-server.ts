@@ -22,11 +22,22 @@ import {
   createSessionRuntimeChallenge,
   type SessionRuntimeExchangePayload,
 } from "../src/session-runtime-exchange.js";
+import type {
+  AgentRuntimeBindingRegistry,
+  ResolvedAgentRuntimeBinding,
+} from "./agent-runtime-binding.js";
+
+export const SESSION_SELF_AGENT_RUNTIME_OPERATION = "session.self.resolve";
+
+export type SessionRuntimeInvocationContext = {
+  agentRuntimeBinding: ResolvedAgentRuntimeBinding | null;
+};
 
 export type SessionRuntimeHttpHandler = (
   operation: SessionRuntimeOperation,
   input: unknown,
   adapter: SessionRuntimeAdapterKind,
+  context: SessionRuntimeInvocationContext,
 ) => Promise<SessionRuntimeResultEnvelope | SessionRuntimeError>;
 
 export type SessionRuntimeHttpServerOptions = {
@@ -34,6 +45,7 @@ export type SessionRuntimeHttpServerOptions = {
   cliSecret: string;
   mcpSecret: string;
   runtimeInstanceId: string;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
   handle: SessionRuntimeHttpHandler;
   host?: string;
   port?: number;
@@ -203,10 +215,19 @@ export function createSessionRuntimeHttpServer(options: SessionRuntimeHttpServer
       releasePreAuth(request);
       registeredPreAuth = false;
       const envelope = parseSessionRuntimeRequestEnvelope(payload.envelope);
+      const bindingResolution = resolveInvocationContext(
+        envelope.operation,
+        payload.agentRuntimeBindingReference,
+        options.agentRuntimeBindingRegistry,
+      );
+      if (!bindingResolution.ok) {
+        writeJson(response, 403, bindingResolution.error);
+        return;
+      }
       activeHandlers += 1;
       let result: SessionRuntimeResultEnvelope | SessionRuntimeError;
       try {
-        result = await options.handle(envelope.operation, envelope.input, adapter);
+        result = await options.handle(envelope.operation, envelope.input, adapter, bindingResolution.context);
       } finally {
         activeHandlers -= 1;
         if (activeHandlers === 0) {
@@ -326,7 +347,14 @@ function parseExchangePayload(value: unknown): SessionRuntimeExchangePayload {
     throw new SessionRuntimeValidationError("Session runtime exchange payload must be an object.");
   }
   const record = value as Record<string, unknown>;
-  const allowed = ["schemaVersion", "apiSecret", "adapter", "adapterSecret", "envelope"];
+  const allowed = [
+    "schemaVersion",
+    "apiSecret",
+    "adapter",
+    "adapterSecret",
+    "agentRuntimeBindingReference",
+    "envelope",
+  ];
   if (Object.keys(record).some((key) => !allowed.includes(key))) {
     throw new SessionRuntimeValidationError("Session runtime exchange payload has an unknown field.");
   }
@@ -335,6 +363,8 @@ function parseExchangePayload(value: unknown): SessionRuntimeExchangePayload {
     || typeof record.apiSecret !== "string"
     || (record.adapter !== "cli" && record.adapter !== "mcp")
     || typeof record.adapterSecret !== "string"
+    || (record.agentRuntimeBindingReference !== undefined
+      && typeof record.agentRuntimeBindingReference !== "string")
     || !record.envelope
     || typeof record.envelope !== "object"
     || Array.isArray(record.envelope)
@@ -346,8 +376,39 @@ function parseExchangePayload(value: unknown): SessionRuntimeExchangePayload {
     apiSecret: record.apiSecret,
     adapter: record.adapter,
     adapterSecret: record.adapterSecret,
+    ...(record.agentRuntimeBindingReference !== undefined
+      ? { agentRuntimeBindingReference: record.agentRuntimeBindingReference }
+      : {}),
     envelope: record.envelope as SessionRuntimeExchangePayload["envelope"],
   };
+}
+
+function resolveInvocationContext(
+  operation: SessionRuntimeOperation,
+  bindingReference: string | undefined,
+  registry: Pick<AgentRuntimeBindingRegistry, "resolve"> | undefined,
+): { ok: true; context: SessionRuntimeInvocationContext } | { ok: false; error: SessionRuntimeError } {
+  if (operation !== "session.self") {
+    return { ok: true, context: { agentRuntimeBinding: null } };
+  }
+  if (bindingReference !== undefined && bindingReference.trim().length === 0) {
+    return { ok: false, error: bindingFailure("SESSION_BINDING_INVALID") };
+  }
+  const resolution = registry?.resolve(bindingReference, SESSION_SELF_AGENT_RUNTIME_OPERATION);
+  if (!resolution?.ok) {
+    return {
+      ok: false,
+      error: bindingFailure(resolution?.code ?? "SESSION_BINDING_REQUIRED"),
+    };
+  }
+  return { ok: true, context: { agentRuntimeBinding: resolution.binding } };
+}
+
+function bindingFailure(code: string): SessionRuntimeError {
+  return createSessionRuntimeError({
+    code,
+    message: "Session runtime actor binding is unavailable for this operation.",
+  });
 }
 
 async function readJsonBody(request: IncomingMessage, retainBytes: (bytes: number) => void): Promise<unknown> {

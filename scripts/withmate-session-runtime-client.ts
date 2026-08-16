@@ -19,6 +19,10 @@ import {
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
 } from "../src/session-runtime-exchange.js";
+import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+} from "../src/agent-runtime/agent-runtime-binding-contract.js";
 import type {
   SessionRuntimeAdapterKind,
   SessionRuntimeRequestEnvelope,
@@ -34,6 +38,7 @@ export type SessionRuntimeConnection = {
   apiSecret: string;
   adapterSecret: string;
   runtimeInstanceId: string;
+  agentRuntimeBindingReference?: string;
 };
 
 export type SessionRuntimeClientResponse = {
@@ -61,6 +66,7 @@ export async function discoverSessionRuntime(options: {
 } = {}): Promise<SessionRuntimeConnection | null> {
   const adapter = options.adapter ?? "cli";
   const env = options.env ?? process.env;
+  const agentRuntimeBindingReference = resolveAgentRuntimeBindingReference(env);
   const explicitUrl = options.apiUrl ?? env.WITHMATE_SESSION_API_URL?.trim();
   if (explicitUrl) {
     const baseUrl = normalizeLoopbackBaseUrl(explicitUrl);
@@ -73,6 +79,7 @@ export async function discoverSessionRuntime(options: {
       apiSecret: env.WITHMATE_SESSION_API_SECRET,
       adapterSecret: adapter === "cli" ? env.WITHMATE_SESSION_CLI_SECRET : env.WITHMATE_SESSION_MCP_SECRET,
       runtimeInstanceId: env.WITHMATE_SESSION_RUNTIME_INSTANCE_ID,
+      agentRuntimeBindingReference,
     });
   }
 
@@ -103,7 +110,12 @@ export async function discoverSessionRuntime(options: {
       return null;
     }
     const baseUrl = normalizeLoopbackBaseUrl(document.baseUrl);
-    return baseUrl ? buildConnection({ ...document, adapter, baseUrl }) : null;
+    return baseUrl ? buildConnection({
+      ...document,
+      adapter,
+      baseUrl,
+      agentRuntimeBindingReference,
+    }) : null;
   } catch {
     return null;
   }
@@ -143,6 +155,9 @@ export async function callSessionRuntime(
     apiSecret: connection.apiSecret,
     adapter: connection.adapter,
     adapterSecret: connection.adapterSecret,
+    ...(connection.agentRuntimeBindingReference
+      ? { agentRuntimeBindingReference: connection.agentRuntimeBindingReference }
+      : {}),
     envelope,
   });
   assertSessionRuntimeRequestBodySize(Buffer.byteLength(body, "utf8"));
@@ -294,13 +309,31 @@ function buildConnection(input: {
   apiSecret?: string;
   adapterSecret?: string;
   runtimeInstanceId?: string;
+  agentRuntimeBindingReference?: string;
 }): SessionRuntimeConnection | null {
   const apiSecret = input.apiSecret?.trim();
   const adapterSecret = input.adapterSecret?.trim();
   const runtimeInstanceId = input.runtimeInstanceId?.trim();
   return apiSecret && adapterSecret && runtimeInstanceId
-    ? { adapter: input.adapter, baseUrl: input.baseUrl, apiSecret, adapterSecret, runtimeInstanceId }
+    ? {
+        adapter: input.adapter,
+        baseUrl: input.baseUrl,
+        apiSecret,
+        adapterSecret,
+        runtimeInstanceId,
+        ...(input.agentRuntimeBindingReference
+          ? { agentRuntimeBindingReference: input.agentRuntimeBindingReference }
+          : {}),
+      }
     : null;
+}
+
+export function resolveAgentRuntimeBindingReference(env: NodeJS.ProcessEnv): string | undefined {
+  const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
+  if (!reference && env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1") {
+    throw new Error("WithMate provider execution requires its runtime binding reference.");
+  }
+  return reference || undefined;
 }
 
 export function normalizeLoopbackBaseUrl(value: string): string | null {

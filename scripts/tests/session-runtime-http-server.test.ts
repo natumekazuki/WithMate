@@ -16,8 +16,12 @@ import {
   SESSION_RUNTIME_OPERATION_PATH,
   createSessionRuntimeChallenge,
 } from "../../src/session-runtime-exchange.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
-import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
+import {
+  SESSION_SELF_AGENT_RUNTIME_OPERATION,
+  createSessionRuntimeHttpServer,
+} from "../../src-electron/session-runtime-http-server.js";
 
 const secrets = {
   apiSecret: "api-secret",
@@ -55,6 +59,68 @@ test("Session runtime authenticates identity and adapter before invoking handler
     const wrongAdapter = await post(address.port, exchangePayload("mcp", body, { adapterSecret: secrets.cliSecret }));
     assert.equal(wrongAdapter.status, 401);
     assert.deepEqual(calls, ["cli:turn.get"]);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessionだけを解決する", async () => {
+  const registry = new AgentRuntimeBindingRegistry();
+  const allowed = registry.issueOrReuse({
+    actorSessionId: "session-actor",
+    providerId: "codex",
+    operationGrants: [SESSION_SELF_AGENT_RUNTIME_OPERATION],
+  });
+  const forbidden = registry.issueOrReuse({
+    actorSessionId: "session-forbidden",
+    providerId: "codex",
+    operationGrants: [],
+  });
+  const calls: string[] = [];
+  const server = createSessionRuntimeHttpServer({
+    ...secrets,
+    agentRuntimeBindingRegistry: registry,
+    handle: async (operation, _input, _adapter, context) => {
+      calls.push(context.agentRuntimeBinding?.actorSessionId ?? "missing");
+      return createSessionRuntimeResult(operation, {
+        sessionId: context.agentRuntimeBinding?.actorSessionId,
+      });
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "session.self",
+      input: {},
+    });
+
+    assert.equal((await post(address.port, exchangePayload("mcp", body))).status, 403);
+    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: " ",
+    }))).status, 403);
+    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: "unknown",
+    }))).status, 403);
+    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: forbidden.bindingReference,
+    }))).status, 403);
+    assert.deepEqual(calls, []);
+
+    const authorized = await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: allowed.bindingReference,
+    }));
+    assert.equal(authorized.status, 200);
+    assert.equal(JSON.parse(authorized.body).result.sessionId, "session-actor");
+    assert.deepEqual(calls, ["session-actor"]);
+
+    registry.revokeSession("session-actor");
+    assert.equal((await post(address.port, exchangePayload("mcp", body, {
+      agentRuntimeBindingReference: allowed.bindingReference,
+    }))).status, 403);
+    assert.deepEqual(calls, ["session-actor"]);
   } finally {
     await server.stop();
   }
@@ -439,13 +505,20 @@ test("HTTP-PREAUTH-01: stopはheader未完了socketをgrace内に破棄する", 
 function exchangePayload(
   adapter: "cli" | "mcp",
   envelopeBody: string,
-  overrides: { apiSecret?: string; adapterSecret?: string } = {},
+  overrides: {
+    apiSecret?: string;
+    adapterSecret?: string;
+    agentRuntimeBindingReference?: string;
+  } = {},
 ): string {
   return JSON.stringify({
     schemaVersion: SESSION_RUNTIME_EXCHANGE_SCHEMA_VERSION,
     apiSecret: overrides.apiSecret ?? secrets.apiSecret,
     adapter,
     adapterSecret: overrides.adapterSecret ?? (adapter === "cli" ? secrets.cliSecret : secrets.mcpSecret),
+    ...(overrides.agentRuntimeBindingReference !== undefined
+      ? { agentRuntimeBindingReference: overrides.agentRuntimeBindingReference }
+      : {}),
     envelope: JSON.parse(envelopeBody),
   });
 }

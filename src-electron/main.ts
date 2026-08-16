@@ -141,6 +141,7 @@ import {
   startSessionExternalRuntime,
   type SessionExternalRuntimeHandle,
 } from "./session-external-runtime.js";
+import { SESSION_SELF_AGENT_RUNTIME_OPERATION } from "./session-runtime-http-server.js";
 import {
   closeSessionRuntimeAdmission,
 } from "./session-runtime-quit-barrier.js";
@@ -452,6 +453,10 @@ let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
+
+function getProviderAgentRuntimeOperations(): string[] {
+  return [...getMemoryV6AgentRuntimeOperations(), SESSION_SELF_AGENT_RUNTIME_OPERATION];
+}
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -2649,7 +2654,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
             characterId: session.characterId,
             sessionKind: session.sessionKind,
           },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
+          operationGrants: getProviderAgentRuntimeOperations(),
         }),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
@@ -2836,7 +2841,8 @@ async function startSessionExternalRuntimeBestEffort(): Promise<void> {
   }
   try {
     sessionExternalRuntime = await startSessionExternalRuntime({
-      handle: async (operation, input) => {
+      agentRuntimeBindingRegistry,
+      handle: async (operation, input, _adapter, context) => {
         const admission = sessionExecutionAdmissionGate.tryAdmit();
         if (!admission) {
           return createSessionRuntimeError({
@@ -2846,7 +2852,11 @@ async function startSessionExternalRuntimeBestEffort(): Promise<void> {
           });
         }
         try {
-          return await requireSessionExternalApplicationService().execute(operation, input);
+          return await requireSessionExternalApplicationService().execute(
+            operation,
+            input,
+            context.agentRuntimeBinding,
+          );
         } finally {
           admission.release();
         }
@@ -3158,7 +3168,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
             characterId: session.characterId,
             sessionKind: "auxiliary",
           },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
+          operationGrants: getProviderAgentRuntimeOperations(),
         }),
       resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({

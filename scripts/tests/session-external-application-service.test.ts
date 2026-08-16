@@ -10,6 +10,7 @@ import {
   createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionFileServiceError } from "../../src-electron/session-file-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
@@ -43,6 +44,35 @@ const mutationInput = {
     attachments: [],
   },
 };
+
+test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだけを公開する", async () => {
+  const service = new SessionExternalApplicationService({
+    executionService: {
+      beginShutdown() {},
+      async run() { return execution; },
+      async enqueue() { return execution; },
+      resolveReplay() { return null; },
+      get() { return execution; },
+      listPage() { return []; },
+      async cancel() { return execution; },
+      async waitForTerminal() { return execution; },
+    },
+  });
+  const registry = new AgentRuntimeBindingRegistry();
+  const projection = registry.issueOrReuse({
+    actorSessionId: "session-actor",
+    providerId: "codex",
+    operationGrants: ["session.self.resolve"],
+  });
+  const resolved = registry.resolve(projection.bindingReference, "session.self.resolve");
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) throw new Error("Expected a resolved binding.");
+
+  assert.deepEqual(await service.execute("session.self", {}, resolved.binding),
+    createSessionRuntimeResult("session.self", { sessionId: "session-actor" }));
+  const missing = await service.execute("session.self", {});
+  assert.equal("error" in missing && missing.error.code, "SESSION_BINDING_REQUIRED");
+});
 
 test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable errorを保つ", async () => {
   const calls: Array<{ operation: string; input: unknown }> = [];

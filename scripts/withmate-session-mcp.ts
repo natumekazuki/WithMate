@@ -385,6 +385,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       models: z.array(modelSchema),
     }).strict()),
   }).strict(),
+  "session.self": z.object({ sessionId: z.string() }).strict(),
   "session.create": sessionDetailSchema,
   "session.list": z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().optional() }).strict(),
   "session.get": sessionGetSchema,
@@ -426,13 +427,14 @@ function createOutputSchema(operation: SessionRuntimeOperation) {
 }
 
 export const SESSION_MCP_SERVER_INSTRUCTIONS = [
-  "Operate only the WithMate Session explicitly identified in each tool input.",
+  "Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
   "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
 ].join(" ");
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
+  { name: "session.self", title: "Resolve actor Session", description: "Resolve the current provider actor Session from its runtime binding.", readOnly: true, destructive: false },
   { name: "session.create", title: "Create Session", description: "Create a normal Session with an explicit workspace.", readOnly: false, destructive: false },
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
   { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
@@ -567,6 +569,12 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: runtimeCatalogInputSchema,
     outputSchema: createOutputSchema("runtime.catalog"),
   }, async (input) => executeOperation("runtime.catalog", input, deps));
+  server.registerTool("session.self", {
+    ...definitions.get("session.self")!,
+    annotations: annotations(definitions.get("session.self")!),
+    inputSchema: runtimeCatalogInputSchema,
+    outputSchema: createOutputSchema("session.self"),
+  }, async (input) => executeOperation("session.self", input, deps));
   server.registerTool("session.create", {
     ...definitions.get("session.create")!,
     annotations: annotations(definitions.get("session.create")!),

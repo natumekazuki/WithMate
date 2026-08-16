@@ -28,8 +28,9 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 
 ### 操作対象を明示したSessionに固定する
 
-- Session操作、Turn操作、interaction、transcript、SessionFolder操作は、requestで明示されたSessionを対象とする。
-- MCPを呼び出しているagentのSessionまたはworkspaceを暗黙の対象にしない。
+- `session.self`はprovider runtime bindingからactor Session IDだけを自己解決する。request body、prompt、workspace path、parent関係からactorを推測せず、binding欠落・失効・grant不足ではfail closedとする。
+- Session操作、Turn操作、interaction、transcript、SessionFolder操作は、`session.self`以外ではrequestで明示されたSessionを対象とする。自己解決結果を兄弟操作へ暗黙適用しない。
+- MCPを呼び出しているagentのworkspaceを暗黙の対象にしない。
 - 初期surfaceは通常Sessionだけを扱い、Auxiliary Session、Companion Session、Character Authoring Sessionは対象外とする。
 - Provider、Character、Workspace、Session kindは作成後に変更しない。外部surfaceで公開するmetadata変更はrenameに限定する。
 - Session作成ではtitleを必須とし、自動生成または省略時のfallbackを設けない。

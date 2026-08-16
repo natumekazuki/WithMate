@@ -13,7 +13,8 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 
 ## Establish the target and authority
 
-- Require an explicit target `sessionId` for Session-scoped operations. Do not infer the caller, parent, or current Session.
+- Use `session.self` to resolve the current provider actor Session from its runtime binding. Do not infer it from prompts, workspace paths, parent relationships, or user-provided IDs.
+- Require an explicit target `sessionId` for every other Session-scoped operation. `session.self` does not authorize an implicit target or replace explicit cross-Session selection.
 - Confirm the target Session's workspace identity with `session.get` before changing source or adopting results.
 - Derive permission for Session creation, Turn execution, approval, elicitation, cancellation, overwrite, and other external effects from the user's instruction. This Skill does not grant additional authority.
 - Treat another Session's output as an adoption candidate. Validate its source changes and executable contracts in the calling task before accepting them.

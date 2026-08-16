@@ -32,6 +32,7 @@ export const SESSION_RUNTIME_MAX_TURN_ATTACHMENTS = 32;
 
 export const SESSION_RUNTIME_OPERATIONS = [
   "runtime.catalog",
+  "session.self",
   "session.create",
   "session.list",
   "session.get",
@@ -69,6 +70,10 @@ export type SessionRuntimeCatalogResult = {
       reasoningEfforts: ModelReasoningEffort[];
     }>;
   }>;
+};
+
+export type SessionRuntimeSelfResult = {
+  sessionId: string;
 };
 
 export type SessionRuntimeCreateWorkspace =
@@ -296,6 +301,7 @@ export type SessionRuntimeTranscriptExportResult = SessionTranscriptExportResult
 
 export type SessionRuntimeResultByOperation = {
   "runtime.catalog": SessionRuntimeCatalogResult;
+  "session.self": SessionRuntimeSelfResult;
   "session.create": SessionRuntimeSessionDetail;
   "session.list": SessionRuntimeSessionListResult;
   "session.get": SessionRuntimeSessionGetResult;
@@ -405,7 +411,7 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) {
     throw invalid("operation", "Unsupported Session runtime operation.");
   }
-  if (operation === "runtime.catalog") {
+  if (operation === "runtime.catalog" || operation === "session.self") {
     const record = requireObject(value, "input");
     assertKeys(record, [], "input");
     return {};

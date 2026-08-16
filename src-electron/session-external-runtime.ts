@@ -14,6 +14,7 @@ import {
 import type { SessionRuntimeAdapterKind } from "../src/session-external-runtime-contract.js";
 import {
   createSessionRuntimeHttpServer,
+  type SessionRuntimeHttpServerOptions,
   type SessionRuntimeHttpHandler,
   type SessionRuntimeHttpServer,
 } from "./session-runtime-http-server.js";
@@ -21,6 +22,7 @@ import { secureWindowsRuntimePath, type RuntimeAclTargetKind } from "./runtime-p
 
 export type StartSessionExternalRuntimeOptions = {
   handle: SessionRuntimeHttpHandler;
+  agentRuntimeBindingRegistry?: SessionRuntimeHttpServerOptions["agentRuntimeBindingRegistry"];
 };
 
 export type SessionExternalRuntimeHandle = {
@@ -60,6 +62,7 @@ export async function startSessionExternalRuntime(
       cliSecret,
       mcpSecret,
       runtimeInstanceId,
+      agentRuntimeBindingRegistry: options.agentRuntimeBindingRegistry,
       handle: options.handle,
     });
     await server.start();

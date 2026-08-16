@@ -87,6 +87,7 @@ var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
 var SESSION_RUNTIME_OPERATIONS = [
 	"runtime.catalog",
+	"session.self",
 	"session.create",
 	"session.list",
 	"session.get",
@@ -125,7 +126,7 @@ function assertSessionRuntimeRequestBodySize(actualBytes, field = "requestBody")
 }
 function parseSessionRuntimeOperationInput(operation, value) {
 	if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) throw invalid("operation", "Unsupported Session runtime operation.");
-	if (operation === "runtime.catalog") {
+	if (operation === "runtime.catalog" || operation === "session.self") {
 		assertKeys(requireObject(value, "input"), [], "input");
 		return {};
 	}
@@ -589,6 +590,9 @@ function createSessionRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
 }
 //#endregion
+//#region src/agent-runtime/agent-runtime-binding-contract.ts
+var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
+//#endregion
 //#region scripts/withmate-session-runtime-client.ts
 var SessionRuntimeClientError = class extends Error {
 	dispatched;
@@ -601,6 +605,7 @@ var SessionRuntimeClientError = class extends Error {
 async function discoverSessionRuntime(options = {}) {
 	const adapter = options.adapter ?? "cli";
 	const env = options.env ?? process.env;
+	const agentRuntimeBindingReference = resolveAgentRuntimeBindingReference(env);
 	const explicitUrl = options.apiUrl ?? env.WITHMATE_SESSION_API_URL?.trim();
 	if (explicitUrl) {
 		const baseUrl = normalizeLoopbackBaseUrl(explicitUrl);
@@ -610,7 +615,8 @@ async function discoverSessionRuntime(options = {}) {
 			baseUrl,
 			apiSecret: env.WITHMATE_SESSION_API_SECRET,
 			adapterSecret: adapter === "cli" ? env.WITHMATE_SESSION_CLI_SECRET : env.WITHMATE_SESSION_MCP_SECRET,
-			runtimeInstanceId: env.WITHMATE_SESSION_RUNTIME_INSTANCE_ID
+			runtimeInstanceId: env.WITHMATE_SESSION_RUNTIME_INSTANCE_ID,
+			agentRuntimeBindingReference
 		});
 	}
 	const discoveryFilePath = options.discoveryFilePath ?? env.WITHMATE_SESSION_DISCOVERY_FILE?.trim() ?? resolveDefaultSessionRuntimeDiscoveryFilePath(env);
@@ -625,7 +631,8 @@ async function discoverSessionRuntime(options = {}) {
 		return baseUrl ? buildConnection({
 			...document,
 			adapter,
-			baseUrl
+			baseUrl,
+			agentRuntimeBindingReference
 		}) : null;
 	} catch {
 		return null;
@@ -650,6 +657,7 @@ async function callSessionRuntime(connection, envelope, signal) {
 		apiSecret: connection.apiSecret,
 		adapter: connection.adapter,
 		adapterSecret: connection.adapterSecret,
+		...connection.agentRuntimeBindingReference ? { agentRuntimeBindingReference: connection.agentRuntimeBindingReference } : {},
 		envelope
 	});
 	assertSessionRuntimeRequestBodySize(Buffer.byteLength(body, "utf8"));
@@ -778,8 +786,14 @@ function buildConnection(input) {
 		baseUrl: input.baseUrl,
 		apiSecret,
 		adapterSecret,
-		runtimeInstanceId
+		runtimeInstanceId,
+		...input.agentRuntimeBindingReference ? { agentRuntimeBindingReference: input.agentRuntimeBindingReference } : {}
 	} : null;
+}
+function resolveAgentRuntimeBindingReference(env) {
+	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
+	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw new Error("WithMate provider execution requires its runtime binding reference.");
+	return reference || void 0;
 }
 function normalizeLoopbackBaseUrl(value) {
 	try {
@@ -21303,6 +21317,7 @@ var resultSchemas = {
 			models: array(modelSchema)
 		}).strict())
 	}).strict(),
+	"session.self": object({ sessionId: string() }).strict(),
 	"session.create": sessionDetailSchema,
 	"session.list": object({
 		items: array(sessionSummarySchema),
@@ -21364,7 +21379,7 @@ function createOutputSchema(operation) {
 	return createSuccessSchema(operation);
 }
 var SESSION_MCP_SERVER_INSTRUCTIONS = [
-	"Operate only the WithMate Session explicitly identified in each tool input.",
+	"Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
 	"Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
 	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode."
 ].join(" ");
@@ -21373,6 +21388,13 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		name: "runtime.catalog",
 		title: "Get runtime catalog",
 		description: "Read the current public Provider and model catalog.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "session.self",
+		title: "Resolve actor Session",
+		description: "Resolve the current provider actor Session from its runtime binding.",
 		readOnly: true,
 		destructive: false
 	},
@@ -21582,6 +21604,12 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: runtimeCatalogInputSchema,
 		outputSchema: createOutputSchema("runtime.catalog")
 	}, async (input) => executeOperation("runtime.catalog", input, deps));
+	server.registerTool("session.self", {
+		...definitions.get("session.self"),
+		annotations: annotations(definitions.get("session.self")),
+		inputSchema: runtimeCatalogInputSchema,
+		outputSchema: createOutputSchema("session.self")
+	}, async (input) => executeOperation("session.self", input, deps));
 	server.registerTool("session.create", {
 		...definitions.get("session.create"),
 		annotations: annotations(definitions.get("session.create")),
@@ -21705,6 +21733,7 @@ var SessionCliUsageError = class extends Error {
 };
 var commandMap = /* @__PURE__ */ new Map([
 	["runtime catalog", "runtime.catalog"],
+	["session self", "session.self"],
 	["session create", "session.create"],
 	["session list", "session.list"],
 	["session get", "session.get"],
@@ -21723,7 +21752,7 @@ var commandMap = /* @__PURE__ */ new Map([
 	["transcript export", "transcript.export"],
 	["transcript export", "transcript.export"]
 ]);
-var inputlessOperationCommands = /* @__PURE__ */ new Set(["runtime catalog"]);
+var inputlessOperationCommands = /* @__PURE__ */ new Set(["runtime catalog", "session self"]);
 async function runWithMateSessionCli(args, deps = {}) {
 	const stdout = deps.stdout ?? process.stdout;
 	let format = "json";
@@ -21834,7 +21863,7 @@ async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "interaction" || args[0] === "transcript";
 	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
 	const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;

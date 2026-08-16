@@ -8,6 +8,7 @@ WithMate owns the Session database, provider adapters, loopback runtime, discove
 withmate-session status
 withmate-session schema
 withmate-session runtime catalog
+withmate-session session self
 ```
 
 These are CLI fallback commands. Use them only when the user explicitly permits CLI fallback. The MCP host owns `withmate-session mcp-server`; never run that long-lived stdio entry through a shell or command-execution tool. Register the connection from WithMate Settings, then start a new Codex Session or restart Codex if the tools are not visible.
@@ -18,7 +19,7 @@ On Windows, the packaged launcher is `<install-root>\withmate-session.cmd`. With
 
 ## CLI input and output
 
-Pass an operation input through exactly one of `--json`, `--file`, or `--stdin`. Prefer a file or stdin for shell-sensitive or multiline JSON. `runtime catalog` accepts no operation input. JSON is the automation format; `--format text` is for human inspection.
+Pass an operation input through exactly one of `--json`, `--file`, or `--stdin`. Prefer a file or stdin for shell-sensitive or multiline JSON. `runtime catalog` and `session self` accept no operation input. JSON is the automation format; `--format text` is for human inspection.
 
 The CLI returns `withmate-session-cli-output-v1`. Exit codes are:
 
@@ -34,16 +35,18 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 17 operations:
+The CLI and MCP expose the same 18 operations:
 
 - Runtime: `runtime.catalog`
-- Session: `session.create`, `session.list`, `session.get`, `session.rename`
+- Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
+
+`session.self` is a binding-required read that returns only the current provider actor's Session ID. It does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff.
 
 ## Turn lifecycle
 

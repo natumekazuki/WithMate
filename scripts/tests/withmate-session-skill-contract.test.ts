@@ -34,6 +34,7 @@ describe("withmate-session managed Skill contract", () => {
       "Codex subagents",
       "sessionId",
       "runtime.catalog",
+      "session.self",
       "turn.options",
       "turn.run",
       "turn.enqueue",

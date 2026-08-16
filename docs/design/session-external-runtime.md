@@ -482,6 +482,7 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | Application operation and MCP tool | CLI command |
 | --- | --- |
 | `runtime.catalog` | `runtime catalog` |
+| `session.self` | `session self` |
 | `session.create` | `session create` |
 | `session.list` | `session list` |
 | `session.get` | `session get` |
@@ -498,6 +499,8 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `session.files.list` | `session files list` |
 | `session.files.read_text` | `session files read-text` |
 | `session.files.write_text` | `session files write-text` |
+
+`session.self`はprovider実行へ発行されたruntime bindingからactor Session IDだけを解決する。caller入力でSession IDを指定または上書きできず、bindingの欠落、失効、またはgrant不足ではapplication serviceを呼ぶ前に拒否する。他のoperationは引き続き対象Session IDを明示し、`session.self`の結果を暗黙のmutation targetとして再利用しない。
 
 `turn.get`は現在状態、未解決interaction、利用可能なpartial output、terminal resultを返す。重複する`turn.status`は公開しない。CLI固有の接続診断とschema表示はapplication operationに含めない。
 

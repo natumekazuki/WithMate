@@ -27,6 +27,10 @@ import {
 } from "../../src/session-runtime-exchange.js";
 import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
 import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+} from "../../src/agent-runtime/agent-runtime-binding-contract.js";
+import {
   WITHMATE_SESSION_CLI_EXIT_CODES,
   WITHMATE_SESSION_CLI_SCHEMA_VERSION,
   resolveSessionCliTransportTimeoutMs,
@@ -36,6 +40,7 @@ import {
   SessionRuntimeClientError,
   callSessionRuntime,
   discoverSessionRuntime,
+  resolveAgentRuntimeBindingReference,
   type SessionRuntimeConnection,
 } from "../withmate-session-runtime-client.js";
 
@@ -57,6 +62,27 @@ function capture() {
 }
 
 describe("withmate-session CLI", () => {
+  test("SESSION-SELF-CLIENT-01: provider bindingを解決しrequired marker欠落をfail closedにする", async () => {
+    assert.equal(resolveAgentRuntimeBindingReference({
+      [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: " opaque-reference ",
+      [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1",
+    }), "opaque-reference");
+    assert.equal(resolveAgentRuntimeBindingReference({}), undefined);
+    assert.throws(
+      () => resolveAgentRuntimeBindingReference({
+        [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1",
+      }),
+      /requires its runtime binding reference/i,
+    );
+    await assert.rejects(
+      () => discoverSessionRuntime({
+        env: { [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1" },
+        discoveryFilePath: "unused",
+      }),
+      /requires its runtime binding reference/i,
+    );
+  });
+
   test("CLI-WAIT-TIMEOUT-01: wait transport timeoutはapplication waitより5秒長い", () => {
     assert.equal(resolveSessionCliTransportTimeoutMs("turn run", {
       responseMode: "wait",
@@ -303,6 +329,31 @@ describe("withmate-session CLI", () => {
       operation: "runtime.catalog",
       result: { revision: 7, providers: [] },
     });
+  });
+
+  test("SESSION-SELF-02: session selfはinput sourceなしで共通operationへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const exitCode = await runWithMateSessionCli(["session", "self"], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("session.self", { sessionId: "session-actor" }),
+        };
+      },
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "session.self",
+      input: {},
+    }]);
+    assert.deepEqual(stdout.json().result.result, { sessionId: "session-actor" });
   });
 
   test("session CRUD commandはcaller-owned idempotency keyを必須にする", async () => {

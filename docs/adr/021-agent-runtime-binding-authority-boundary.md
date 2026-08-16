@@ -16,7 +16,7 @@ Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれもclient作成時にc
 
 - Electron main processのagent runtime binding registryをopaque referenceの発行、解決、operation grant検証、generation、失効のcanonical ownerとする。active generationのreuseに必要なreferenceはprocess memory内だけに保持し、lookupと永続的なidentityにはhashを使う。provider processへは推測不能なopaque referenceだけを渡す。`expiresAt`は発行前に正規化・検証し、正規化後の期限もreuse identityへ含める。
 - binding authorityはgeneric snapshotとする。actor Session ID、provider execution generation、任意のRole/hierarchy snapshot、operation grant、発行・期限・失効情報を保持できるが、registry自身はRoleの意味やdefault permissionを発明しない。
-- 現行baseにRole契約がないため、Session/Turn mutationとCoordination Event endpointは本変更では有効化しない。後続機能はaccepted Role/hierarchy contractをbinding発行時に渡し、同じauthorizer境界を利用する。
+- 現行baseにRole契約がないため、Session/Turn mutationとCoordination Event endpointは本変更では有効化しない。binding-requiredな`session.self` readだけはactor Session IDの自己解決として許可し、対象Sessionを変更または暗黙選択するauthorityには使わない。後続機能はaccepted Role/hierarchy contractをbinding発行時に渡し、同じauthorizer境界を利用する。
 - WithMate-owned endpointはroute tableで`required`、`optional`、`none`を必ず宣言する。aliasとruntime exchangeも同じpolicyへ収束させる。
 - Session scopeのCharacter context / affectは`required`とし、解決済みactor Sessionをapplication requestへserver側で設定する。callerのSession IDはactorを上書きしない。
 - agent-facing Memory CRUDは`optional`とする。bindingがある場合はactor Sessionとproviderをsource/idempotency principalへ使用するが、targetはrequestの明示selectorを維持する。Session bindingはuser-global、明示Project、actor自身のCharacter、actor自身のCharacter+Projectを操作でき、別Characterをownerに持つtargetは拒否する。bindingがない場合は既存の認証済みlocal-user/operator経路を利用できる。

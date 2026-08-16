@@ -64,6 +64,7 @@ class SessionCliUsageError extends Error {
 
 const commandMap = new Map<string, SessionRuntimeOperation>([
   ["runtime catalog", "runtime.catalog"],
+  ["session self", "session.self"],
   ["session create", "session.create"],
   ["session list", "session.list"],
   ["session get", "session.get"],
@@ -82,7 +83,7 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["transcript export", "transcript.export"],
   ["transcript export", "transcript.export"],
 ]);
-const inputlessOperationCommands = new Set(["runtime catalog"]);
+const inputlessOperationCommands = new Set(["runtime catalog", "session self"]);
 
 export async function runWithMateSessionCli(args: readonly string[], deps: CliDeps = {}): Promise<number> {
   const stdout = deps.stdout ?? process.stdout;
@@ -217,7 +218,7 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
     : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
   }
   const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
   let json: string | undefined;

@@ -16,6 +16,7 @@ export type SessionRuntimeExchangePayload = {
   apiSecret: string;
   adapter: SessionRuntimeAdapterKind;
   adapterSecret: string;
+  agentRuntimeBindingReference?: string;
   envelope: SessionRuntimeRequestEnvelope;
 };
 

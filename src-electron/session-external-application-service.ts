@@ -68,6 +68,7 @@ import {
 import { SessionCrudError, type SessionCrudService } from "./session-crud-service.js";
 import { SessionFileServiceError, type SessionFileService } from "./session-file-service.js";
 import { SessionTranscriptServiceError, type SessionTranscriptService } from "./session-transcript-service.js";
+import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
 
 export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
@@ -104,7 +105,11 @@ export class SessionExternalApplicationService {
     this.deps.executionService.beginShutdown();
   }
 
-  async execute(operation: SessionRuntimeOperation | string, input: unknown): Promise<SessionExternalApplicationResponse> {
+  async execute(
+    operation: SessionRuntimeOperation | string,
+    input: unknown,
+    agentRuntimeBinding: ResolvedAgentRuntimeBinding | null = null,
+  ): Promise<SessionExternalApplicationResponse> {
     if (!this.accepting) {
       return createSessionRuntimeError({
         code: "RUNTIME_SHUTTING_DOWN",
@@ -117,7 +122,7 @@ export class SessionExternalApplicationService {
         operation,
         input,
       });
-      const result = await this.executeValidated(request.operation, request.input);
+      const result = await this.executeValidated(request.operation, request.input, agentRuntimeBinding);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
       return response;
@@ -129,6 +134,7 @@ export class SessionExternalApplicationService {
   private async executeValidated(
     operation: SessionRuntimeOperation,
     input: unknown,
+    agentRuntimeBinding: ResolvedAgentRuntimeBinding | null,
   ): Promise<SessionRuntimeResultByOperation[SessionRuntimeOperation]> {
     if (operation === "runtime.catalog") {
       return projectRuntimeCatalog(
@@ -136,6 +142,16 @@ export class SessionExternalApplicationService {
         this.deps.isProviderEnabled,
         (providerId) => this.isProviderSupported(providerId),
       );
+    }
+    if (operation === "session.self") {
+      if (!agentRuntimeBinding) {
+        throw new SessionRuntimeValidationError(
+          "Session runtime actor binding is required for this operation.",
+          { field: "agentRuntimeBinding" },
+          "SESSION_BINDING_REQUIRED",
+        );
+      }
+      return { sessionId: agentRuntimeBinding.actorSessionId };
     }
     if (operation === "session.create") {
       return this.deps.crudService.create(input as SessionRuntimeCreateInput);

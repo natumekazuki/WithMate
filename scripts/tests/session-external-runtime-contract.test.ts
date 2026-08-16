@@ -41,6 +41,23 @@ test("RUNTIME-CATALOG-01: runtime.catalog accepts only an explicit empty input",
   );
 });
 
+test("SESSION-SELF-01: session.selfはcaller指定のSession targetを受け付けない", () => {
+  const parsed = parseSessionRuntimeRequestEnvelope({
+    schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+    operation: "session.self",
+    input: {},
+  });
+  assert.deepEqual(parsed.input, {});
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "session.self",
+      input: { sessionId: "forged-session" },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.details.field === "input.sessionId",
+  );
+});
+
 test("EXT-TRANSCRIPT-13: transcript.export normalizes inline and SessionFolder destinations", () => {
   const inline = parseSessionRuntimeRequestEnvelope({
     schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,

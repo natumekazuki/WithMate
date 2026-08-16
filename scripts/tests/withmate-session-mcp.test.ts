@@ -92,7 +92,7 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("17 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("18 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -112,6 +112,7 @@ describe("WithMate Session MCP contract", () => {
       }
       assert.equal(result.tools.find((tool) => tool.name === "turn.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "runtime.catalog")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "session.self")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.cancel")?.annotations?.destructiveHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.run")?.annotations?.destructiveHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "turn.enqueue")?.annotations?.destructiveHint, true);
@@ -258,6 +259,30 @@ describe("WithMate Session MCP contract", () => {
         input: {},
       }]);
       assert.deepEqual((result.structuredContent as any).result, { revision: 7, providers: [] });
+    });
+  });
+
+  it("SESSION-SELF-02: session.selfを空inputのread-only operationとしてdispatchする", async () => {
+    const requests: unknown[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("session.self", { sessionId: "session-actor" }),
+        };
+      },
+    }), async (client) => {
+      const result = await client.callTool({ name: "session.self", arguments: {} });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(requests, [{
+        schemaVersion: "withmate-session-request-v2",
+        operation: "session.self",
+        input: {},
+      }]);
+      assert.deepEqual((result.structuredContent as any).result, { sessionId: "session-actor" });
     });
   });
 
