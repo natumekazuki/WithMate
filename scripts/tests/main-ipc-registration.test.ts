@@ -8,12 +8,14 @@ import {
 } from "../../src-electron/main-ipc-registration.js";
 import {
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
+  WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
   WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
   WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
@@ -35,6 +37,7 @@ import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -197,6 +200,9 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_DELETE_SESSION_CHANNEL));
   assert.ok(handlers.has(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL));
 
   const removedChannels = [
     "withmate:open-memory-management-window",
@@ -284,6 +290,59 @@ test("Session workspace validation IPC は対象 Session window の保存済み 
   );
   assert.deepEqual(resolvedSessionIds, ["session-1"]);
   assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
+});
+
+test("GUI queue IPC は対象 Session window だけにenqueue/list/cancelを許可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-2");
+  let eventWindow = sessionWindow;
+  const calls: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherWindow,
+    enqueueSessionTurn: async (sessionId: string, request: unknown) => {
+      calls.push(["enqueue", sessionId, request]);
+      return { ok: true, execution: null };
+    },
+    listQueuedSessionTurns: (sessionId: string) => {
+      calls.push(["list", sessionId]);
+      return [];
+    },
+    cancelSessionExecution: async (sessionId: string, request: unknown) => {
+      calls.push(["cancel", sessionId, request]);
+      return { ok: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const enqueueRequest = { userMessage: "next", clientRequestId: "request-1" };
+  const cancelRequest = { executionId: "execution-1", clientRequestId: "cancel-1" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL)?.({}, "session-1", enqueueRequest),
+    { ok: true, execution: null },
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL)?.({}, "session-1"), []);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL)?.({}, "session-1", cancelRequest),
+    { ok: true },
+  );
+  assert.deepEqual(calls, [
+    ["enqueue", "session-1", enqueueRequest],
+    ["list", "session-1"],
+    ["cancel", "session-1", cancelRequest],
+  ]);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL)?.({}, "session-1", enqueueRequest) as Promise<unknown>,
+    /only available from the target Session window/,
+  );
+  assert.deepEqual(calls, [
+    ["enqueue", "session-1", enqueueRequest],
+    ["list", "session-1"],
+    ["cancel", "session-1", cancelRequest],
+  ]);
 });
 
 test("Session作成はworkspaceを検証し、退役済みCompanion作成はside effect前に拒否する", async () => {

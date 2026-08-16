@@ -40,6 +40,8 @@ export type AgentSessionChatProjectionInput = {
   displayedMessages: Message[];
   displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
   displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
+  queuedTurns?: SessionMessageColumnProps["queuedTurns"];
+  cancelingExecutionIds?: SessionMessageColumnProps["cancelingExecutionIds"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
@@ -71,6 +73,7 @@ export type AgentSessionChatProjectionInput = {
   liveRunErrorMessage: string;
   inlinePathFeedback: string;
   workspaceAvailabilityMessage: string;
+  queueAdmissionNotice?: string;
   isWorkspaceAvailabilityCheckPending: boolean;
   isWorkspaceAvailable: boolean;
   isMessageListFollowing: boolean;
@@ -97,6 +100,7 @@ export type AgentSessionChatProjectionInput = {
   draft: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   isComposerDisabled: boolean;
+  allowSendWhileRunning: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerExpandedProps["composerSendability"];
   composerSendButtonTitle: string | undefined;
@@ -165,6 +169,8 @@ export type AgentSessionChatProjectionInput = {
   getChangedFilesEmptyText: SessionMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText: NonNullable<SessionMessageColumnProps["onCopyMessageText"]>;
   onQuoteMessageText: NonNullable<SessionMessageColumnProps["onQuoteMessageText"]>;
+  onCancelQueuedTurn: NonNullable<SessionMessageColumnProps["onCancelQueuedTurn"]>;
+  onCancelRun: () => void;
   onResendLastMessage: () => void;
   onEditLastMessage: () => void;
   onConfirmRetryDraftReplace: () => void;
@@ -260,6 +266,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
   const composerDockProps = buildLiveSessionComposerDockProps(
     buildLiveSessionCommonComposerDockInput({
       isRunning: input.isSelectedSessionRunning,
+      allowSendWhileRunning: input.allowSendWhileRunning,
       pendingRunIndicatorAnnouncement: input.pendingRunIndicatorAnnouncement,
       pendingRunIndicatorText: input.pendingRunIndicatorText,
       modeLabel: resolveAuxiliaryModeLabel(input.isAuxiliaryMode),
@@ -324,6 +331,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onDraftCompositionStart: input.onDraftCompositionStart,
       onDraftCompositionEnd: input.onDraftCompositionEnd,
       onSendOrCancel: input.onSendOrCancel,
+      onCancelRun: input.onCancelRun,
       onChangeApprovalMode: input.onChangeApprovalMode,
       onChangeCodexSandboxMode: input.onChangeCodexSandboxMode,
       onChangeModel: input.onChangeModel,
@@ -338,6 +346,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       messages: input.displayedMessages,
       messageKeys: input.displayedMessageKeys,
       messageGroups: input.displayedMessageGroups,
+      queuedTurns: input.queuedTurns,
+      cancelingExecutionIds: input.cancelingExecutionIds,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,
       isRunning: input.isSelectedSessionRunning,
@@ -361,6 +371,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       getChangedFilesEmptyText: input.getChangedFilesEmptyText,
       onCopyMessageText: input.onCopyMessageText,
       onQuoteMessageText: input.onQuoteMessageText,
+      onCancelQueuedTurn: input.onCancelQueuedTurn,
     }),
     composer: composerDockProps.composer,
     compactActionDock: composerDockProps.compactActionDock,
@@ -428,6 +439,11 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
             message: input.inlinePathFeedback,
             dismissLabel: "パスを開いた結果を閉じる",
             onDismiss: input.onDismissInlinePathFeedback,
+          }] : []),
+        ...(input.queueAdmissionNotice?.trim() ? [{
+            id: "queue-admission",
+            message: input.queueAdmissionNotice,
+            relatedControl: "composer" as const,
           }] : []),
       ],
     }),

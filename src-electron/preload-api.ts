@@ -21,12 +21,14 @@ import {
   WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
+  WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
   WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_DELETE_SESSION_CHANNEL,
   WITHMATE_DELETE_PROMPT_TEMPLATE_CHANNEL,
@@ -101,6 +103,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -153,6 +156,7 @@ import {
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
+  WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -379,6 +383,15 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     runSessionTurn(sessionId, request) {
       return ipcRenderer.invoke(WITHMATE_RUN_SESSION_TURN_CHANNEL, sessionId, request);
+    },
+    enqueueSessionTurn(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL, sessionId, request);
+    },
+    listQueuedSessionTurns(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL, sessionId);
+    },
+    cancelSessionExecution(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL, sessionId, request);
     },
     cancelSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, sessionId);
@@ -741,6 +754,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeSessionInvalidation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, listener);
+    },
+    subscribeSessionExecutionsChanged(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, listener);
     },
     subscribeModelCatalog(listener) {
       return subscribe(ipcRenderer, WITHMATE_MODEL_CATALOG_CHANGED_EVENT, (catalog: ModelCatalogChangedPayload) => {

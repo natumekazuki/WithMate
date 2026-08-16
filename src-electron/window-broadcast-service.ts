@@ -23,6 +23,7 @@ import {
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
+  WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT,
 } from "../src/withmate-ipc-channels.js";
 
 type WindowLike = {
@@ -51,6 +52,10 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   public broadcastSessionInvalidation(sessionIds: string[]): void {
     this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSIONS_INVALIDATED_EVENT, sessionIds);
+  }
+
+  public broadcastSessionExecutionsChanged(sessionId: string): void {
+    this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, sessionId);
   }
 
   public broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void {

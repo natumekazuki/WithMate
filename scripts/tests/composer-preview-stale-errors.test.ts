@@ -15,7 +15,7 @@ test("Agent composer は draft 変更時に stale preview errors を clear す�
   );
   assert.match(
     source,
-    /resolveComposerSendabilityState\(\{\s*runState: selectedSessionRunState,\s*busyReason: composerBusyReason,\s*blockedReason: sessionExecutionBlockedReason,\s*inputErrors: composerPreview\.errors,/,
+    /resolveComposerSendabilityState\(\{\s*runState: selectedSessionRunState,\s*allowSendWhileRunning: true,\s*busyReason: composerBusyReason,\s*blockedReason: sessionExecutionBlockedReason,\s*inputErrors: composerInputErrors,/,
   );
   assert.match(
     source,
@@ -38,4 +38,11 @@ test("Companion composer は draft 変更時に stale preview errors を clear �
     source,
     /const displayPreview = resolveComposerPreviewDisplay\(preview, appSettings\.userMicrocopyCatalog\);[\s\S]*setComposerPreview\(displayPreview\);[\s\S]*inputErrors: displayPreview\.errors,/,
   );
+});
+
+test("enqueue成功後のqueued projectionは応答snapshotを直接追加せず共通read-backへ収束する", async () => {
+  const source = await readRendererSource("App.tsx");
+
+  assert.match(source, /await refreshQueuedSessionTurnsRef\.current\(sessionId\);/);
+  assert.doesNotMatch(source, /const enqueuedExecution = result\.execution;/);
 });

@@ -173,7 +173,6 @@ import {
   observePreviewChatMessageCount,
 } from "./file-explorer/preview-chat-activity.js";
 import {
-  applyOptimisticSessionRunUpdate,
   createOwnedPendingLiveSessionRunState,
   replaceLiveRunAfterResolvedRequest,
   resolveSessionRunErrorMessage,
@@ -183,16 +182,13 @@ import {
   LatestRequestRevision,
   SessionSubmitCoordinator,
   StateMutationRevision,
-  convergeRejectedLiveRunState,
-  convergeRejectedSessionSnapshot,
-  convergeResolvedSessionProjection,
   createSessionTurnClientRequestId,
   fingerprintSessionDraft,
   mergeRefetchedSessionProjection,
-  mergeRejectedSessionDraft,
-  recoverRejectedSessionSnapshot,
 } from "./session-submit-coordinator.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
+import type { SessionQueuedTurn, SessionTurnAdmissionError } from "./session-gui-execution.js";
+import { appendQueuedTurnsToMessageList } from "./session-queued-turn-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
@@ -547,6 +543,13 @@ export default function AgentSessionWindowApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
+  const [queuedSessionTurns, setQueuedSessionTurns] = useState<SessionQueuedTurn[]>([]);
+  const refreshQueuedSessionTurnsRef = useRef<(sessionId: string) => Promise<void>>(async () => undefined);
+  const [queueAdmissionError, setQueueAdmissionError] = useState<{
+    sessionId: string;
+    error: SessionTurnAdmissionError;
+  } | null>(null);
+  const [cancelingExecutionIds, setCancelingExecutionIds] = useState<Set<string>>(() => new Set());
   const [pickerBaseDirectory, setPickerBaseDirectory] = useState("");
   const [composerCaret, setComposerCaret] = useState(0);
   const [availableSkills, setAvailableSkills] = useState<DiscoveredSkill[]>([]);
@@ -616,6 +619,11 @@ export default function AgentSessionWindowApp() {
   const fileRootDiffRequestRevisionRef = useRef(0);
   const sessionRefetchRevisionRef = useRef(new LatestRequestRevision());
   const sessionSubmitCoordinatorRef = useRef(new SessionSubmitCoordinator());
+  const enqueueRetryRef = useRef<{
+    sessionId: string;
+    messageText: string;
+    clientRequestId: string;
+  } | null>(null);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
 
   useEffect(() => {
@@ -721,6 +729,45 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
+  useEffect(() => {
+    const sessionId = selectedSession?.id;
+    if (!withmateApi || !sessionId) {
+      setQueuedSessionTurns([]);
+      return;
+    }
+
+    let active = true;
+    let refreshRevision = 0;
+    const refresh = async () => {
+      const revision = ++refreshRevision;
+      try {
+        const executions = await withmateApi.listQueuedSessionTurns(sessionId);
+        if (!active || revision !== refreshRevision) return;
+        setQueuedSessionTurns(executions);
+        setQueueAdmissionError((current) => (
+          current?.sessionId === sessionId && current.error.code === "QUEUE_FULL" && executions.length < 10
+            ? null
+            : current
+        ));
+      } catch (error) {
+        if (active) console.error(error);
+      }
+    };
+    refreshQueuedSessionTurnsRef.current = refresh;
+
+    setQueuedSessionTurns([]);
+    setQueueAdmissionError((current) => current?.sessionId === sessionId ? current : null);
+    void refresh();
+    const unsubscribe = withmateApi.subscribeSessionExecutionsChanged((changedSessionId) => {
+      if (changedSessionId === sessionId) void refresh();
+    });
+    return () => {
+      active = false;
+      refreshRevision += 1;
+      refreshQueuedSessionTurnsRef.current = async () => undefined;
+      unsubscribe();
+    };
+  }, [selectedSession?.id, withmateApi]);
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
   const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
   const selectedCompanionGroupMonitorEntries = useMemo(
@@ -1427,16 +1474,26 @@ export default function AgentSessionWindowApp() {
     selectedSessionLiveRun?.threadId,
   ]);
   const messageListProjection = useMemo(
-    () =>
+    () => appendQueuedTurnsToMessageList(
       buildMessageListProjection(displayedMessages, projectedAuxiliarySessions, selectedSession?.id, {
         liveAssistant: projectedLiveAssistant,
       }),
-    [displayedMessages, projectedAuxiliarySessions, projectedLiveAssistant, selectedSession?.id],
+      activeAuxiliarySession ? [] : queuedSessionTurns,
+    ),
+    [
+      activeAuxiliarySession,
+      displayedMessages,
+      projectedAuxiliarySessions,
+      projectedLiveAssistant,
+      queuedSessionTurns,
+      selectedSession?.id,
+    ],
   );
   const messageListMessages = messageListProjection.messages;
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
+  const messageListQueuedTurns = messageListProjection.queuedTurns;
   useEffect(() => {
     if (!activeRunSessionId || !liveRunAssistantText) {
       return;
@@ -1962,20 +2019,30 @@ export default function AgentSessionWindowApp() {
     activeAuxiliarySession,
   ]);
   const shouldProtectDraftOnRetryEdit = shouldProtectRetryEditDraft({ retryBanner, draft });
-  const isComposerDisabled = selectedSessionRunState === "running" || !!composerBlockedReason || isSelectedSessionReadOnly;
+  const queueAdmissionErrorMessage = queueAdmissionError && queueAdmissionError.sessionId === selectedSession?.id
+    ? queueAdmissionError.error.message
+    : "";
+  const queueAdmissionBlockingMessage = queueAdmissionError?.error.code === "DELIVERY_UNKNOWN"
+    ? ""
+    : queueAdmissionErrorMessage;
+  const composerInputErrors = queueAdmissionBlockingMessage
+    ? [...composerPreview.errors, queueAdmissionBlockingMessage]
+    : composerPreview.errors;
+  const isComposerDisabled = !!composerBlockedReason || isSelectedSessionReadOnly;
   const composerSendability = useMemo(
     () =>
       resolveComposerSendabilityState({
         runState: selectedSessionRunState,
+        allowSendWhileRunning: true,
         busyReason: composerBusyReason,
         blockedReason: sessionExecutionBlockedReason,
-        inputErrors: composerPreview.errors,
+        inputErrors: composerInputErrors,
         draftText: draft,
         forceBlockedFeedback: forceComposerBlockedFeedback,
       }),
     [
       composerBusyReason,
-      composerPreview.errors,
+      composerInputErrors,
       draft,
       forceComposerBlockedFeedback,
       selectedSessionRunState,
@@ -2136,7 +2203,7 @@ export default function AgentSessionWindowApp() {
   }, [selectedSession?.id]);
 
   const triggerComposerBlockedFeedback = () => {
-    if (!selectedSession || selectedSessionRunState === "running") {
+    if (!selectedSession) {
       return;
     }
 
@@ -2159,7 +2226,10 @@ export default function AgentSessionWindowApp() {
     }
     setPendingSubmitSessionId(sessionId);
 
-    const clientRequestId = createSessionTurnClientRequestId();
+    const retryRequest = enqueueRetryRef.current;
+    const clientRequestId = retryRequest?.sessionId === sessionId && retryRequest.messageText === messageText
+      ? retryRequest.clientRequestId
+      : createSessionTurnClientRequestId();
     const draftFingerprint = fingerprintSessionDraft(messageText);
 
     const investigationStartedAt = Date.now();
@@ -2208,6 +2278,7 @@ export default function AgentSessionWindowApp() {
       setComposerPreview(displayPreview);
       const { blockedMessage } = resolveComposerSendPreflight({
         runState: selectedSessionRunState,
+        allowSendWhileRunning: true,
         blockedReason: sessionExecutionBlockedReason,
         inputErrors: displayPreview.errors,
         draftText: messageText,
@@ -2217,124 +2288,61 @@ export default function AgentSessionWindowApp() {
         return;
       }
 
-      handleMessageListSend(appSettings.scrollToLatestOnSend);
-      if (options?.collapseActionDock) {
-        setIsActionDockPinnedExpanded(false);
-      }
       const shouldClearDraft = options?.clearDraft ?? true;
-      if (shouldClearDraft) {
-        setDraft((current) => current === messageText ? "" : current);
-      }
-      const updatedSession = applyOptimisticSessionRunUpdate({
-        session: selectedSession,
-        userMessage: nextMessage,
-        updatedAt: currentTimestampLabel(),
-        status: "running",
-        updateLiveRunState: (update) => setLiveRunState(update),
-        applyRunningSession: (runningSession) => setAuthoritativeSessions([runningSession]),
-      });
-      const optimisticSessionMutationRevision = sessionMutationRevisionRef.current.capture();
-      const optimisticSessionProjectionRevision = sessionProjectionRevisionRef.current.capture();
-      const optimisticLiveRunRevision = liveRunRevisionRef.current;
-      if (isCentralPreviewActive) {
-        setPreviewChatActivity((current) => acknowledgePreviewChatMessageCount(
-          current,
-          updatedSession.id,
-          updatedSession.messages.length,
-        ));
-      }
-      logSessionRunStuckInvestigation("renderer.optimistic-running-applied", {
-        sessionId: updatedSession.id,
-        clientRequestId,
-        elapsedMs: Date.now() - investigationStartedAt,
-        messageCount: updatedSession.messages.length,
-        runState: updatedSession.runState,
-        status: updatedSession.status,
-      });
 
       const request: RunSessionTurnRequest = {
         userMessage: messageText,
         clientRequestId,
         submitSource: options?.submitSource ?? "composer",
+        model: selectedSession.model,
+        reasoningEffort: selectedSession.reasoningEffort,
+        approvalMode: selectedSession.approvalMode,
+        ...(selectedSession.provider === "codex"
+          ? { codexSandboxMode: selectedSession.codexSandboxMode }
+          : { customAgentName: selectedSession.customAgentName }),
       };
       try {
-        const savedSession = await withmateApi.runSessionTurn(sessionId, request);
-        logSessionRunStuckInvestigation("renderer.run-session-turn.resolved", {
-          sessionId: savedSession.id,
+        const result = await withmateApi.enqueueSessionTurn(sessionId, request);
+        if (!result.ok) {
+          enqueueRetryRef.current = result.error.retryable
+            ? { sessionId, messageText, clientRequestId }
+            : null;
+          setQueueAdmissionError({ sessionId, error: result.error });
+          return;
+        }
+        enqueueRetryRef.current = null;
+        setQueueAdmissionError((current) => current?.sessionId === sessionId ? null : current);
+        await refreshQueuedSessionTurnsRef.current(sessionId);
+        if (shouldClearDraft) {
+          setDraft((current) => current === messageText ? "" : current);
+        }
+        handleMessageListSend(appSettings.scrollToLatestOnSend);
+        if (options?.collapseActionDock) {
+          setIsActionDockPinnedExpanded(false);
+        }
+        logSessionRunStuckInvestigation("renderer.enqueue-session-turn.resolved", {
+          sessionId,
           clientRequestId,
           elapsedMs: Date.now() - investigationStartedAt,
-          messageCount: savedSession.messages.length,
-          runState: savedSession.runState,
-          status: savedSession.status,
-          hasLiveRun: !!selectedSessionLiveRun,
+          executionId: result.execution?.executionId ?? null,
         });
-        const preserveCurrentPin = !sessionProjectionRevisionRef.current.isCurrent(
-          optimisticSessionProjectionRevision,
-        );
-        setAuthoritativeSessions((current) => [convergeResolvedSessionProjection(
-          current.find((session) => session.id === savedSession.id) ?? null,
-          savedSession,
-          preserveCurrentPin,
-        )]);
       } catch (error) {
-        logSessionRunStuckInvestigation("renderer.run-session-turn.failed", {
-          sessionId: updatedSession.id,
+        logSessionRunStuckInvestigation("renderer.enqueue-session-turn.failed", {
+          sessionId,
           clientRequestId,
           elapsedMs: Date.now() - investigationStartedAt,
-          messageCount: updatedSession.messages.length,
           errorMessage: error instanceof Error ? error.message : String(error),
         });
         console.error(error);
-        if (shouldClearDraft) {
-          setDraft((current) => mergeRejectedSessionDraft(messageText, current));
-        }
-
-        const [refreshedSessionResult, refreshedLiveRunResult] = await Promise.allSettled([
-          withmateApi.getSession(sessionId),
-          withmateApi.getLiveSessionRun(sessionId),
-          validateSessionWorkspace(selectedSession),
-        ]);
-        const canReplaceOptimisticBody = sessionMutationRevisionRef.current.isCurrent(
-          optimisticSessionMutationRevision,
-        );
-        const preserveCurrentPin = !sessionProjectionRevisionRef.current.isCurrent(
-          optimisticSessionProjectionRevision,
-        );
-        if (refreshedSessionResult.status === "fulfilled" && canReplaceOptimisticBody) {
-          setAuthoritativeSessions((current) => {
-            const currentSession = current.find((session) => session.id === sessionId) ?? null;
-            const converged = convergeRejectedSessionSnapshot(
-              currentSession,
-              updatedSession,
-              refreshedSessionResult.value,
-              true,
-              preserveCurrentPin,
-            );
-            return converged ? [converged] : [];
-          });
-        } else if (
-          canReplaceOptimisticBody
-          && (
-            refreshedLiveRunResult.status === "rejected"
-            || refreshedLiveRunResult.value === null
-          )
-        ) {
-          setAuthoritativeSessions((current) => {
-            const currentSession = current.find((session) => session.id === sessionId) ?? null;
-            const recovered = recoverRejectedSessionSnapshot(currentSession, updatedSession, true);
-            return recovered ? [recovered] : current;
-          });
-        }
-        if (liveRunRevisionRef.current === optimisticLiveRunRevision) {
-          setLiveRunState((current) => convergeRejectedLiveRunState(
-            current,
-            sessionId,
-            refreshedLiveRunResult.status === "fulfilled" ? refreshedLiveRunResult.value : null,
-            optimisticLiveRunRevision,
-            optimisticLiveRunRevision,
-          ));
-        }
-        throw error;
+        enqueueRetryRef.current = { sessionId, messageText, clientRequestId };
+        setQueueAdmissionError({
+          sessionId,
+          error: {
+            code: "DELIVERY_UNKNOWN",
+            message: "送信結果を確認できませんでした。同じ内容を再送すると登録結果を照合します。",
+            retryable: true,
+          },
+        });
       }
     } finally {
       submitLease.release();
@@ -2392,6 +2400,35 @@ export default function AgentSessionWindowApp() {
     }
   };
 
+  const handleCancelQueuedTurn = async (execution: SessionQueuedTurn) => {
+    if (!withmateApi || cancelingExecutionIds.has(execution.executionId)) return;
+    setCancelingExecutionIds((current) => new Set(current).add(execution.executionId));
+    try {
+      const result = await withmateApi.cancelSessionExecution(execution.sessionId, {
+        executionId: execution.executionId,
+        clientRequestId: createSessionTurnClientRequestId(),
+      });
+      const latest = await withmateApi.listQueuedSessionTurns(execution.sessionId);
+      setQueuedSessionTurns(latest);
+      if (!result.ok) {
+        window.alert(result.error.message);
+      }
+    } catch (error) {
+      try {
+        setQueuedSessionTurns(await withmateApi.listQueuedSessionTurns(execution.sessionId));
+      } catch (refreshError) {
+        console.error(refreshError);
+      }
+      window.alert(resolveSessionRunErrorMessage(error, "待機中Turnのキャンセルに失敗しました。"));
+    } finally {
+      setCancelingExecutionIds((current) => {
+        const next = new Set(current);
+        next.delete(execution.executionId);
+        return next;
+      });
+    }
+  };
+
   const handleResolveLiveApproval = async (request: LiveApprovalRequest, decision: "approve" | "deny") => {
     if (!withmateApi || !activeRunSessionId || approvalActionRequestId === request.requestId) {
       return;
@@ -2445,7 +2482,7 @@ export default function AgentSessionWindowApp() {
     isSubmitDisabled: () => (
       activeAuxiliarySession
         ? activeAuxiliarySession.runState === "running"
-        : composerSendability.isRunning
+        : false
     ),
     isSubmitBlocked: () => {
       const activeSendability = activeAuxiliarySession
@@ -3766,6 +3803,8 @@ export default function AgentSessionWindowApp() {
         displayedMessages: renderedMessages,
         displayedMessageKeys: messageListKeys,
         displayedMessageGroups: messageListGroups,
+        queuedTurns: messageListQueuedTurns,
+        cancelingExecutionIds,
         expandedArtifacts,
         sessionThemeStyle,
         sessionDockLayoutRef,
@@ -3799,6 +3838,7 @@ export default function AgentSessionWindowApp() {
           ? inlinePathError.message
           : "",
         workspaceAvailabilityMessage,
+        queueAdmissionNotice: queueAdmissionErrorMessage,
         isWorkspaceAvailabilityCheckPending,
         isWorkspaceAvailable: isSelectedWorkspaceAvailable,
         pendingMessageGroupId: resolvePendingAuxiliaryMessageGroupId(activeAuxiliarySession),
@@ -3827,6 +3867,7 @@ export default function AgentSessionWindowApp() {
         isComposerDisabled: activeAuxiliarySession
           ? activeAuxiliarySession.runState === "running" || !!composerBlockedReason || isAuxiliaryActionPending
           : isComposerDisabled,
+        allowSendWhileRunning: !activeAuxiliarySession,
         isSendDisabled: renderedIsSendDisabled,
         composerSendability: renderedComposerSendability,
         composerSendButtonTitle: renderedComposerButtonTitle,
@@ -3913,6 +3954,7 @@ export default function AgentSessionWindowApp() {
         getChangedFilesEmptyText,
         onCopyMessageText: handleCopyMessageText,
         onQuoteMessageText: handleQuoteMessageText,
+        onCancelQueuedTurn: (execution) => void handleCancelQueuedTurn(execution),
         onResendLastMessage: () => void handleResendLastMessage(),
         onEditLastMessage: handleEditLastMessage,
         onConfirmRetryDraftReplace: handleConfirmRetryDraftReplace,
@@ -3967,6 +4009,10 @@ export default function AgentSessionWindowApp() {
             },
             clearFeedback: () => setForceComposerBlockedFeedback(false),
           });
+          if (enqueueRetryRef.current?.messageText !== value) {
+            enqueueRetryRef.current = null;
+          }
+          setQueueAdmissionError((current) => current?.sessionId === selectedSession.id ? null : current);
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
         onDraftKeyDown: handleComposerKeyDown,
@@ -3990,16 +4036,21 @@ export default function AgentSessionWindowApp() {
               }
             : undefined,
         }),
-        onSendOrCancel: buildAuxiliaryAwareSendOrCancelHandler({
-          shouldSendAuxiliary: !!activeAuxiliarySession,
-          isAuxiliarySessionRunning: activeAuxiliarySession?.runState === "running",
-          isSelectedSessionRunning,
-          preferAuxiliarySendOverSelectedCancel: true,
-          onCancelAuxiliaryRun: handleCancelAuxiliaryRun,
-          onSendAuxiliary: handleSend,
-          onCancelSelectedSessionRun: handleCancelRun,
-          onSendSelectedSession: handleSend,
-        }),
+        onSendOrCancel: activeAuxiliarySession
+          ? buildAuxiliaryAwareSendOrCancelHandler({
+              shouldSendAuxiliary: true,
+              isAuxiliarySessionRunning: activeAuxiliarySession.runState === "running",
+              isSelectedSessionRunning,
+              preferAuxiliarySendOverSelectedCancel: true,
+              onCancelAuxiliaryRun: handleCancelAuxiliaryRun,
+              onSendAuxiliary: handleSend,
+              onCancelSelectedSessionRun: handleCancelRun,
+              onSendSelectedSession: handleSend,
+            })
+          : () => void handleSend(),
+        onCancelRun: activeAuxiliarySession
+          ? () => void handleCancelAuxiliaryRun()
+          : () => void handleCancelRun(),
         onChangeApprovalMode: buildAuxiliaryAwareRuntimeOptionChangeHandler<Session["approvalMode"]>({
           shouldUseAuxiliary: !!activeAuxiliarySession,
           onAuxiliaryChange: handleChangeAuxiliaryApproval,

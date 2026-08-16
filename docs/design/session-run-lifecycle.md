@@ -19,6 +19,7 @@ session 実行の正本を Main Process に置き、window はその投影であ
 
 - session 実行は Main Process が保持する
 - `Session Window` は session 実行の viewer / input surface として扱う
+- 通常SessionのGUI送信はidle / runningにかかわらず永続FIFO queueへ登録し、Main Processのadmissionへ統一する
 - 実行中 session の `Session Window` を閉じても、実行自体は継続する
 - `Session Window` から実行中 session を明示キャンセルできる
 - V5 preview では turn 完了後の Session Memory extraction / Character Reflection を current background task として起動しない
@@ -111,6 +112,8 @@ V5 preview では Session Memory extraction / Character Reflection trigger を c
 ### Session Run Cancel
 
 - `Session Window` の `Cancel` は Main Process の `AbortController` を通して provider 実行を止める
+- 実行中Turnの`Cancel`と新規Turnの送信は別操作とし、running中も通常Sessionのcomposerは入力とqueue登録を受け付ける
+- admission前のqueued Turnはmessage listの該当user messageから個別にキャンセルでき、実行中Turnのcancelへ暗黙に切り替えない
 - キャンセル後の session は `runState = idle` に戻る
 - setup または provider が cancel grace 後も生存する場合、表示上の turn は収束させるが、元処理の実終了までは terminating guard として in-flight admission を維持し、同一 session の再送を拒否する
 - chat にはキャンセル結果を 1 件追加する

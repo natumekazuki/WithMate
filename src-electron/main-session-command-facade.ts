@@ -1,4 +1,13 @@
+import { createHash } from "node:crypto";
+
 import type { ProviderQuotaTelemetry, RunSessionTurnRequest } from "../src/runtime-state.js";
+import type {
+  CancelSessionExecutionRequest,
+  CancelSessionExecutionResult,
+  EnqueueSessionTurnResult,
+  SessionQueuedTurn,
+  SessionTurnAdmissionError,
+} from "../src/session-gui-execution.js";
 import {
   parseSetSessionPinnedRequest,
   type CreateSessionInput,
@@ -19,6 +28,19 @@ import type { SessionLaunchSelection } from "./session-launch-selection-service.
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
 import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
 import { resolveWorkspaceDirectoryValidationMessage } from "../src/workspace-directory-validation.js";
+import {
+  SessionExecutionNotFoundError,
+  SessionExecutionOwnerMismatchError,
+  SessionExecutionShuttingDownError,
+  type SessionExecutionService,
+} from "./session-execution-service.js";
+import {
+  SessionExecutionIdempotencyConflictError,
+  SessionExecutionQueueFullError,
+  SessionExecutionStateConflictError,
+} from "./session-execution-storage-v6.js";
+import { parseSessionExecutionTurnRequest } from "./session-execution-turn-request.js";
+import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
@@ -28,6 +50,7 @@ type MainSessionCommandFacadeDeps = {
   resolveSessionLaunchSelection(providerId?: string | null): Promise<SessionLaunchSelection>;
   getSessionPersistenceService(): SessionPersistenceService;
   getSessionRuntimeService(): SessionRuntimeService;
+  getSessionExecutionService(): SessionExecutionService;
   cancelSessionRun(sessionId: string): void;
   getProviderQuotaTelemetry(providerId: string): ProviderQuotaTelemetry | null;
   isProviderQuotaTelemetryStale(telemetry: ProviderQuotaTelemetry | null): boolean;
@@ -168,6 +191,70 @@ export class MainSessionCommandFacade {
     }
   }
 
+  async enqueueSessionTurn(
+    sessionId: string,
+    request: RunSessionTurnRequest,
+  ): Promise<EnqueueSessionTurnResult> {
+    const clientRequestId = request.clientRequestId?.trim() ?? "";
+    if (!clientRequestId) {
+      return admissionFailure("INVALID_INPUT", "送信要求の識別子が不足しています。", false);
+    }
+
+    const session = this.deps.getSession(sessionId);
+    if (
+      session?.provider === "copilot" &&
+      this.deps.isProviderQuotaTelemetryStale(this.deps.getProviderQuotaTelemetry(session.provider))
+    ) {
+      void this.deps.refreshProviderQuotaTelemetry(session.provider).catch(() => undefined);
+    }
+
+    const executionRequest = {
+      source: "gui" as const,
+      turn: { ...request, clientRequestId },
+    };
+    try {
+      const execution = await this.deps.getSessionExecutionService().enqueue({
+        sessionId,
+        request: executionRequest,
+        idempotencyKey: clientRequestId,
+        requestFingerprint: fingerprintGuiTurn(sessionId, request),
+      });
+      const record = this.deps.getSessionExecutionService().getRecord(sessionId, execution.id);
+      return {
+        ok: true,
+        execution: record.state === "queued" ? projectQueuedTurns([record])[0] ?? null : null,
+      };
+    } catch (error) {
+      const mapped = mapGuiExecutionError(error);
+      if (mapped) return { ok: false, error: mapped };
+      throw error;
+    }
+  }
+
+  listQueuedSessionTurns(sessionId: string): SessionQueuedTurn[] {
+    return projectQueuedTurns(this.deps.getSessionExecutionService().listRecords(sessionId));
+  }
+
+  async cancelSessionExecution(
+    sessionId: string,
+    request: CancelSessionExecutionRequest,
+  ): Promise<CancelSessionExecutionResult> {
+    try {
+      await this.deps.getSessionExecutionService().cancel({
+        sessionId,
+        executionId: request.executionId,
+        idempotencyKey: request.clientRequestId,
+        requestFingerprint: fingerprintGuiCancel(sessionId, request),
+        expectedState: "queued",
+      });
+      return { ok: true };
+    } catch (error) {
+      const mapped = mapGuiExecutionError(error);
+      if (mapped) return { ok: false, error: mapped };
+      throw error;
+    }
+  }
+
   private async cleanupDeletedSessions(
     result: DeleteSessionsResult,
     sessionsById: ReadonlyMap<string, Pick<Session, "id" | "workspacePath">>,
@@ -184,4 +271,86 @@ export class MainSessionCommandFacade {
       await this.deps.cleanupSessionFilesDirectory?.(sessionId);
     }
   }
+}
+
+function projectQueuedTurns(
+  executions: ReturnType<SessionExecutionService["listRecords"]>,
+): SessionQueuedTurn[] {
+  return executions
+    .filter((execution) => execution.state === "queued")
+    .map((execution, index) => ({
+      execution,
+      request: parseSessionExecutionTurnRequest(execution.request),
+      queuePosition: index + 1,
+    }))
+    .filter(({ request }) => request.source === "gui")
+    .map(({ execution, request, queuePosition }) => {
+      return {
+        executionId: execution.id,
+        sessionId: execution.sessionId,
+        clientRequestId: request.turn.clientRequestId?.trim() || null,
+        userMessage: request.turn.userMessage,
+        queuePosition,
+        canCancel: true,
+        createdAt: execution.createdAt,
+        updatedAt: execution.updatedAt,
+      };
+    });
+}
+
+function fingerprintGuiTurn(sessionId: string, request: RunSessionTurnRequest): string {
+  const { clientRequestId: _clientRequestId, submitSource: _submitSource, ...effectInput } = request;
+  return fingerprint({ sessionId, turn: effectInput });
+}
+
+function fingerprintGuiCancel(sessionId: string, request: CancelSessionExecutionRequest): string {
+  return fingerprint({ sessionId, executionId: request.executionId });
+}
+
+function fingerprint(value: unknown): string {
+  return createHash("sha256").update(stableJson(value), "utf8").digest("hex");
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${stableJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function admissionFailure(code: string, message: string, retryable: boolean): EnqueueSessionTurnResult {
+  return { ok: false, error: { code, message, retryable } };
+}
+
+function mapGuiExecutionError(error: unknown): SessionTurnAdmissionError | null {
+  if (error instanceof SessionExecutionQueueFullError) {
+    return {
+      code: "QUEUE_FULL",
+      message: "このSessionは待機中のTurnが10件に達しています。",
+      retryable: true,
+    };
+  }
+  if (error instanceof SessionTurnValidationError) {
+    return { code: error.code, message: error.message, retryable: false };
+  }
+  if (error instanceof SessionExecutionIdempotencyConflictError) {
+    return { code: "IDEMPOTENCY_CONFLICT", message: error.message, retryable: false };
+  }
+  if (error instanceof SessionExecutionNotFoundError) {
+    return { code: "EXECUTION_NOT_FOUND", message: error.message, retryable: false };
+  }
+  if (error instanceof SessionExecutionOwnerMismatchError) {
+    return { code: "EXECUTION_OWNER_MISMATCH", message: error.message, retryable: false };
+  }
+  if (error instanceof SessionExecutionStateConflictError) {
+    return { code: "EXECUTION_STATE_CONFLICT", message: error.message, retryable: false };
+  }
+  if (error instanceof SessionExecutionShuttingDownError) {
+    return { code: "RUNTIME_SHUTTING_DOWN", message: error.message, retryable: true };
+  }
+  return null;
 }

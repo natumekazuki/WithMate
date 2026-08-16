@@ -32,6 +32,7 @@ import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
+import type { SessionQueuedTurn } from "./session-gui-execution.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -2179,6 +2180,8 @@ export type SessionMessageColumnProps = {
     id: string;
     label: string;
   } | null>;
+  queuedTurns?: Array<SessionQueuedTurn | null>;
+  cancelingExecutionIds?: ReadonlySet<string>;
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -2202,6 +2205,7 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
+  onCancelQueuedTurn?: (execution: SessionQueuedTurn) => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
 };
@@ -2511,6 +2515,8 @@ export function SessionMessageColumn({
   messages,
   messageKeys,
   messageGroups,
+  queuedTurns,
+  cancelingExecutionIds = new Set<string>(),
   expandedArtifacts,
   messageListRef,
   isRunning,
@@ -2533,6 +2539,7 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
+  onCancelQueuedTurn,
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
@@ -3027,6 +3034,7 @@ export function SessionMessageColumn({
             }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
+            const queuedTurn = queuedTurns?.[absoluteIndex] ?? null;
             const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
             const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
             const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
@@ -3133,6 +3141,23 @@ export function SessionMessageColumn({
                       onOpenPath={onOpenPath}
                     />
                   </div>
+
+                  {queuedTurn ? (
+                    <div className="queued-turn-status" role="status" aria-label={`待機中 ${queuedTurn.queuePosition}番目`}>
+                      <span>{`待機中 ${queuedTurn.queuePosition}`}</span>
+                      {queuedTurn.canCancel && onCancelQueuedTurn ? (
+                        <button
+                          className="drawer-toggle compact secondary queued-turn-cancel-button"
+                          type="button"
+                          onClick={() => onCancelQueuedTurn(queuedTurn)}
+                          disabled={cancelingExecutionIds.has(queuedTurn.executionId)}
+                          aria-label={`待機中 ${queuedTurn.queuePosition}番目のTurnをキャンセル`}
+                        >
+                          キャンセル
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {artifact ? (
                     <section className="artifact-shell">
@@ -3443,6 +3468,7 @@ type SessionComposerSendabilityView = {
 
 export type SessionComposerExpandedProps = {
   isRunning: boolean;
+  allowSendWhileRunning?: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
@@ -3510,6 +3536,7 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
+  onCancelRun?: () => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeModel: (value: string) => void;
@@ -3519,6 +3546,7 @@ export type SessionComposerExpandedProps = {
 
 export function SessionComposerExpanded({
   isRunning,
+  allowSendWhileRunning = false,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
@@ -3586,6 +3614,7 @@ export function SessionComposerExpanded({
   onDraftCompositionStart,
   onDraftCompositionEnd,
   onSendOrCancel,
+  onCancelRun = onSendOrCancel,
   onChangeApprovalMode,
   onChangeCodexSandboxMode,
   onChangeModel,
@@ -3779,8 +3808,9 @@ export function SessionComposerExpanded({
               <button
                 className="drawer-toggle compact danger composer-toolbar-cancel-button"
                 type="button"
-                onClick={onSendOrCancel}
-                title={sendButtonTitle}
+                onClick={onCancelRun}
+                title="実行中のTurnをキャンセル"
+                aria-label="実行中のTurnをキャンセル"
               >
                 Cancel
               </button>
@@ -4007,7 +4037,7 @@ export function SessionComposerExpanded({
           </div>
         </div>
 
-        {isRunning ? null : (
+        {isRunning && !allowSendWhileRunning ? null : (
           <button
             className="session-send-button"
             type="button"

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainSessionCommandFacade } from "../../src-electron/main-session-command-facade.js";
+import { SessionExecutionQueueFullError } from "../../src-electron/session-execution-storage-v6.js";
 import {
   ProviderRuntimeOperationCoordinator,
   type RunProviderRuntimeOperationExclusive,
@@ -58,11 +59,17 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
 type MainSessionCommandFacadeTestDeps =
   Omit<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "cancelSessionRun" | "validateWorkspaceDirectory"
+    | "dismissSessionTurnNotification"
+    | "cancelSessionRun"
+    | "validateWorkspaceDirectory"
+    | "getSessionExecutionService"
   >
   & Partial<Pick<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "cancelSessionRun" | "validateWorkspaceDirectory"
+    | "dismissSessionTurnNotification"
+    | "cancelSessionRun"
+    | "validateWorkspaceDirectory"
+    | "getSessionExecutionService"
   >>;
 
 function createMainSessionCommandFacade(
@@ -72,6 +79,12 @@ function createMainSessionCommandFacade(
     dismissSessionTurnNotification: () => undefined,
     cancelSessionRun: (sessionId) => deps.getSessionRuntimeService().cancelRun(sessionId),
     validateWorkspaceDirectory: async () => ({ valid: true }),
+    getSessionExecutionService: () => ({
+      async enqueue() { throw new Error("unused"); },
+      getRecord() { throw new Error("unused"); },
+      listRecords() { return []; },
+      async cancel() { throw new Error("unused"); },
+    }) as never,
     ...deps,
   });
 }
@@ -1127,5 +1140,208 @@ test("MainSessionCommandFacade は Workspace が利用不可なら provider runt
     /Workspace is unavailable\. Path not found\./,
   );
   assert.deepEqual(calls, ["validate:C:/missing"]);
+});
+
+test("MainSessionCommandFacade はGUI送信をrunStateに関係なく同じ永続enqueueへ渡す", async () => {
+  const calls: Array<{ sessionId: string; idempotencyKey: string; request: unknown }> = [];
+  let record: any = null;
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex", runState: "running" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({} as never),
+    getSessionExecutionService: () => ({
+      async enqueue(input: any) {
+        calls.push(input);
+        record = {
+          id: "execution-1",
+          sessionId: input.sessionId,
+          operation: "turn.enqueue",
+          state: "queued",
+          result: null,
+          errorCode: "",
+          reason: "",
+          sequence: 4,
+          request: input.request,
+          createdAt: "2026-08-16T00:00:00.000Z",
+          admittedAt: null,
+          completedAt: null,
+          updatedAt: "2026-08-16T00:00:00.000Z",
+        };
+        return record;
+      },
+      getRecord() { return record; },
+      listRecords() { return record ? [record] : []; },
+      async cancel() { throw new Error("unused"); },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.enqueueSessionTurn("s-1", {
+    userMessage: "次の依頼",
+    clientRequestId: "11111111-1111-4111-8111-111111111111",
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    approvalMode: "untrusted",
+    codexSandboxMode: "workspace-write",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.sessionId, "s-1");
+  assert.equal(calls[0]?.idempotencyKey, "11111111-1111-4111-8111-111111111111");
+  assert.deepEqual(calls[0]?.request, {
+    source: "gui",
+    turn: {
+      userMessage: "次の依頼",
+      clientRequestId: "11111111-1111-4111-8111-111111111111",
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      approvalMode: "untrusted",
+      codexSandboxMode: "workspace-write",
+    },
+  });
+  if (result.ok) {
+    assert.equal(result.execution?.userMessage, "次の依頼");
+    assert.equal(result.execution?.queuePosition, 1);
+  }
+});
+
+test("MainSessionCommandFacade はQUEUE_FULLを副作用なしのGUI admission errorへ写す", async () => {
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({} as never),
+    getSessionExecutionService: () => ({
+      async enqueue() { throw new SessionExecutionQueueFullError("s-1"); },
+      getRecord() { throw new Error("unused"); },
+      listRecords() { return []; },
+      async cancel() { throw new Error("unused"); },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.enqueueSessionTurn("s-1", {
+    userMessage: "11件目",
+    clientRequestId: "22222222-2222-4222-8222-222222222222",
+  });
+
+  assert.deepEqual(result, {
+    ok: false,
+    error: {
+      code: "QUEUE_FULL",
+      message: "このSessionは待機中のTurnが10件に達しています。",
+      retryable: true,
+    },
+  });
+});
+
+test("MainSessionCommandFacade はexternal queued TurnをGUIへ公開せずglobal FIFO位置を保つ", () => {
+  const records = [
+    {
+      id: "external-1",
+      sessionId: "s-1",
+      state: "queued",
+      request: {
+        catalogRevision: 3,
+        turn: { provider: "codex", userMessage: "external request" },
+      },
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    },
+    {
+      id: "gui-1",
+      sessionId: "s-1",
+      state: "queued",
+      request: {
+        source: "gui",
+        turn: { userMessage: "GUI request", clientRequestId: "gui-request-1" },
+      },
+      createdAt: "2026-08-16T00:00:01.000Z",
+      updatedAt: "2026-08-16T00:00:01.000Z",
+    },
+  ];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({} as never),
+    getSessionExecutionService: () => ({
+      async enqueue() { throw new Error("unused"); },
+      getRecord() { throw new Error("unused"); },
+      listRecords() { return records; },
+      async cancel() { throw new Error("unused"); },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  assert.deepEqual(facade.listQueuedSessionTurns("s-1"), [{
+    executionId: "gui-1",
+    sessionId: "s-1",
+    clientRequestId: "gui-request-1",
+    userMessage: "GUI request",
+    queuePosition: 2,
+    canCancel: true,
+    createdAt: "2026-08-16T00:00:01.000Z",
+    updatedAt: "2026-08-16T00:00:01.000Z",
+  }]);
+});
+
+test("MainSessionCommandFacade はqueued cancelをqueued限定条件でexecution ownerへ渡す", async () => {
+  const cancelCalls: unknown[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({} as never),
+    getSessionExecutionService: () => ({
+      async enqueue() { throw new Error("unused"); },
+      getRecord() { throw new Error("unused"); },
+      listRecords() { return []; },
+      async cancel(input: unknown) { cancelCalls.push(input); },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.cancelSessionExecution("s-1", {
+    executionId: "gui-1",
+    clientRequestId: "cancel-gui-1",
+  });
+
+  assert.deepEqual(result, { ok: true });
+  assert.equal((cancelCalls[0] as { expectedState?: string }).expectedState, "queued");
 });
 

@@ -66,6 +66,7 @@ projection は、表示 state がどの conversation に属するかを明示す
 - `auditSource`: Audit Log / progress history を開く source。
 
 通常 Agent ではこれらが同じ session を指す。
+通常 Agent のqueued Turnは`transcriptSource`とは別の永続execution projectionを既存message list末尾へ合成する。rendererは順序やadmissionを所有せず、queued状態のuser input、FIFO位置、cancel可否だけをMain Processから受け取る。
 Companion では review / merge workflow の source を指す。
 Auxiliary では parent Session と active Auxiliary を混ぜず、active Auxiliary 表示中は child conversation を指す。
 closed Auxiliary は read-only transcript として描画し、composer / run / audit target にはしない。

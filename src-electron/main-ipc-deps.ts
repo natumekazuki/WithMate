@@ -86,6 +86,12 @@ import type {
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type {
+  CancelSessionExecutionRequest,
+  CancelSessionExecutionResult,
+  EnqueueSessionTurnResult,
+  SessionQueuedTurn,
+} from "../src/session-gui-execution.js";
+import type {
   CreateSessionRequest,
   DiffPreviewPayload,
   MessageArtifact,
@@ -317,6 +323,12 @@ export type MainIpcSessionRuntimeDepsArgs = {
     request: DeleteSessionsLastActiveBeforeRequest | null | undefined,
   ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
+  listQueuedSessionTurns(sessionId: string): Awaitable<SessionQueuedTurn[]>;
+  cancelSessionExecution(
+    sessionId: string,
+    request: CancelSessionExecutionRequest,
+  ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
 };
 
@@ -529,6 +541,9 @@ export function createMainIpcRegistrationDeps(
     deleteSession: args.sessionRuntime.deleteSession,
     deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
+    enqueueSessionTurn: args.sessionRuntime.enqueueSessionTurn,
+    listQueuedSessionTurns: args.sessionRuntime.listQueuedSessionTurns,
+    cancelSessionExecution: args.sessionRuntime.cancelSessionExecution,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     getMateState: args.mate.getMateState,
     getMateProfile: args.mate.getMateProfile,

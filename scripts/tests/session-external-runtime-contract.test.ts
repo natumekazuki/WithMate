@@ -497,3 +497,35 @@ test("EXT-ATTACH-10: admitted attachment identityは公開投影から除外しw
   assert.deepEqual(projected.attachments, [{ kind: "file", relativePath: "brief.md" }]);
   assert.equal(projected.effectiveTurn?.provider, "codex");
 });
+
+test("GUI-QUEUE-01: GUI enqueueも外部execution投影でeffective turnを維持する", () => {
+  const projected = projectSessionExecution({
+    id: "execution-gui",
+    sessionId: "session-1",
+    operation: "turn.enqueue",
+    state: "queued",
+    result: null,
+    errorCode: "",
+    reason: "",
+    createdAt: "2026-08-16T00:00:00.000Z",
+    admittedAt: "2026-08-16T00:00:00.000Z",
+    completedAt: null,
+    updatedAt: "2026-08-16T00:00:00.000Z",
+  }, {
+    request: {
+      source: "gui",
+      turn: {
+        userMessage: "queued from GUI",
+        model: "gpt-5.4",
+        reasoningEffort: "high",
+        approvalMode: "on-request",
+        codexSandboxMode: "workspace-write",
+        attachments: [],
+      },
+    },
+  });
+
+  assert.equal(projected.effectiveTurn?.provider, "codex");
+  assert.equal(projected.effectiveTurn?.sandboxMode, "workspace-write");
+  assert.deepEqual(projected.attachments, []);
+});

@@ -1,8 +1,14 @@
 import type { RunSessionTurnRequest } from "../src/app-state.js";
 
 export type SessionExecutionTurnRequest = {
+  source: "external";
   catalogRevision: number;
   providerId: "codex" | "copilot";
+  turn: RunSessionTurnRequest;
+} | {
+  source: "gui";
+  catalogRevision: null;
+  providerId: null;
   turn: RunSessionTurnRequest;
 };
 
@@ -17,39 +23,27 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
   if (typeof request !== "object" || request === null) {
     throw new TypeError("Session execution request must be an object.");
   }
-  const executionRequest = request as { catalogRevision?: unknown; turn?: unknown };
+  const executionRequest = request as { source?: unknown; catalogRevision?: unknown; turn?: unknown };
+  if (executionRequest.source === "gui") {
+    return {
+      source: "gui",
+      catalogRevision: null,
+      providerId: null,
+      turn: parseTurn(executionRequest.turn),
+    };
+  }
   if (!Number.isSafeInteger(executionRequest.catalogRevision) || (executionRequest.catalogRevision as number) < 1) {
     throw new TypeError("Session execution catalogRevision must be a positive integer.");
   }
-  if (typeof executionRequest.turn !== "object" || executionRequest.turn === null) {
-    throw new TypeError("Session execution turn must be an object.");
-  }
-  const candidate = executionRequest.turn as Partial<Record<keyof RunSessionTurnRequest | "provider", unknown>>;
+  const candidate = requireTurn(executionRequest.turn);
   if (candidate.provider !== "codex" && candidate.provider !== "copilot") {
     throw new TypeError("Session execution provider must be codex or copilot.");
   }
-  if (typeof candidate.userMessage !== "string") {
-    throw new TypeError("Session execution userMessage must be a string.");
-  }
-  for (const key of ["model", "reasoningEffort", "approvalMode", "codexSandboxMode", "customAgentName"] as const) {
-    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
-      throw new TypeError(`Session execution ${key} must be a string.`);
-    }
-  }
   return {
+    source: "external",
     catalogRevision: executionRequest.catalogRevision as number,
     providerId: candidate.provider,
-    turn: {
-      userMessage: candidate.userMessage,
-      model: candidate.model,
-      reasoningEffort: candidate.reasoningEffort,
-      approvalMode: candidate.approvalMode,
-      codexSandboxMode: candidate.codexSandboxMode,
-      customAgentName: candidate.customAgentName,
-      attachments: Array.isArray(candidate.attachments)
-        ? candidate.attachments.map((attachment) => ({ ...(attachment as object) }))
-        : undefined,
-    } as RunSessionTurnRequest,
+    turn: parseTurn(executionRequest.turn),
   };
 }
 
@@ -57,8 +51,16 @@ export async function validateSessionExecutionTurnRequest(
   sessionId: string,
   request: unknown,
   validateTurn: ValidateSessionExecutionTurn,
+  validateGuiTurn?: (sessionId: string, turn: RunSessionTurnRequest) => Promise<void> | void,
 ): Promise<unknown> {
   const parsed = parseSessionExecutionTurnRequest(request);
+  if (parsed.source === "gui") {
+    await validateGuiTurn?.(sessionId, parsed.turn);
+    return {
+      source: "gui",
+      turn: parsed.turn,
+    };
+  }
   const validatedTurn = await validateTurn(
     sessionId,
     parsed.catalogRevision,
@@ -71,5 +73,45 @@ export async function validateSessionExecutionTurnRequest(
       provider: parsed.providerId,
       ...validatedTurn,
     },
+  };
+}
+
+function requireTurn(value: unknown): Partial<Record<keyof RunSessionTurnRequest | "provider", unknown>> {
+  if (typeof value !== "object" || value === null) {
+    throw new TypeError("Session execution turn must be an object.");
+  }
+  return value as Partial<Record<keyof RunSessionTurnRequest | "provider", unknown>>;
+}
+
+function parseTurn(value: unknown): RunSessionTurnRequest {
+  const candidate = requireTurn(value);
+  if (typeof candidate.userMessage !== "string") {
+    throw new TypeError("Session execution userMessage must be a string.");
+  }
+  for (const key of [
+    "clientRequestId",
+    "submitSource",
+    "model",
+    "reasoningEffort",
+    "approvalMode",
+    "codexSandboxMode",
+    "customAgentName",
+  ] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      throw new TypeError(`Session execution ${key} must be a string.`);
+    }
+  }
+  return {
+    userMessage: candidate.userMessage,
+    clientRequestId: candidate.clientRequestId as string | undefined,
+    submitSource: candidate.submitSource as RunSessionTurnRequest["submitSource"],
+    model: candidate.model as string | undefined,
+    reasoningEffort: candidate.reasoningEffort as RunSessionTurnRequest["reasoningEffort"],
+    approvalMode: candidate.approvalMode as RunSessionTurnRequest["approvalMode"],
+    codexSandboxMode: candidate.codexSandboxMode as RunSessionTurnRequest["codexSandboxMode"],
+    customAgentName: candidate.customAgentName as string | undefined,
+    attachments: Array.isArray(candidate.attachments)
+      ? candidate.attachments.map((attachment) => ({ ...(attachment as object) })) as RunSessionTurnRequest["attachments"]
+      : undefined,
   };
 }

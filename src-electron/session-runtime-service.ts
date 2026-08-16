@@ -948,6 +948,14 @@ export class SessionRuntimeService {
     return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision, executionId);
   }
 
+  async runQueuedGuiSessionTurn(
+    sessionId: string,
+    request: RunSessionTurnRequest,
+    executionId: string,
+  ): Promise<ExternalSessionTurnResult> {
+    return this.runSessionTurnWithCatalog(sessionId, request, null, executionId);
+  }
+
   private async runSessionTurnWithCatalog(
     sessionId: string,
     request: RunSessionTurnRequest,

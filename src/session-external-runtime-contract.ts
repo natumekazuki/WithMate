@@ -685,6 +685,7 @@ function projectEffectiveTurn(request: unknown): {
   const turn = (request as Record<string, unknown>).turn;
   if (!turn || typeof turn !== "object" || Array.isArray(turn)) return null;
   try {
+    const requestRecord = request as Record<string, unknown>;
     const turnRecord = turn as Record<string, unknown>;
     const attachments = Array.isArray(turnRecord.attachments)
       ? turnRecord.attachments.map((attachment) => {
@@ -697,7 +698,10 @@ function projectEffectiveTurn(request: unknown): {
         return publicAttachment;
       })
       : turnRecord.attachments;
-    const parsed = parseTurnRequest({ ...turnRecord, attachments });
+    const provider = requestRecord.source === "gui"
+      ? turnRecord.codexSandboxMode !== undefined ? "codex" : "copilot"
+      : turnRecord.provider;
+    const parsed = parseTurnRequest({ ...turnRecord, provider, attachments });
     return {
       effectiveTurn: parsed.provider === "codex"
         ? {
