@@ -592,7 +592,7 @@ describe("CopilotAdapter env", () => {
       },
       clientKey: "bootstrap-client",
     });
-    const input = createRunSessionInput({ threadId: "" });
+    const input = createRunSessionInput({ customAgentName: "", threadId: "" });
 
     await assert.rejects(() => adapter.getSession(input, EMPTY_PROMPT), /bootstrap failed/);
 
@@ -777,7 +777,7 @@ describe("CopilotAdapter env", () => {
       },
       clientKey: "client-key",
     });
-    const input = createRunSessionInput();
+    const input = createRunSessionInput({ customAgentName: "" });
 
     const firstSession = await adapter.getSession(input, EMPTY_PROMPT);
     const nextSession = await adapter.getSession(input, EMPTY_PROMPT);
