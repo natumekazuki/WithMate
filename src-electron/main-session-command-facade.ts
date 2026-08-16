@@ -5,7 +5,7 @@ import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
-  SessionQueuedTurn,
+  SessionGuiTurnExecution,
   SessionTurnAdmissionError,
 } from "../src/session-gui-execution.js";
 import {
@@ -219,10 +219,11 @@ export class MainSessionCommandFacade {
         idempotencyKey: clientRequestId,
         requestFingerprint: fingerprintGuiTurn(sessionId, request),
       });
-      const record = this.deps.getSessionExecutionService().getRecord(sessionId, execution.id);
       return {
         ok: true,
-        execution: record.state === "queued" ? projectQueuedTurns([record])[0] ?? null : null,
+        execution: projectGuiTurnExecutions(
+          this.deps.getSessionExecutionService().listRecords(sessionId),
+        ).find((candidate) => candidate.executionId === execution.id) ?? null,
       };
     } catch (error) {
       const mapped = mapGuiExecutionError(error);
@@ -231,8 +232,8 @@ export class MainSessionCommandFacade {
     }
   }
 
-  listQueuedSessionTurns(sessionId: string): SessionQueuedTurn[] {
-    return projectQueuedTurns(this.deps.getSessionExecutionService().listRecords(sessionId));
+  listGuiSessionTurnExecutions(sessionId: string): SessionGuiTurnExecution[] {
+    return projectGuiTurnExecutions(this.deps.getSessionExecutionService().listRecords(sessionId));
   }
 
   async cancelSessionExecution(
@@ -273,29 +274,29 @@ export class MainSessionCommandFacade {
   }
 }
 
-function projectQueuedTurns(
+function projectGuiTurnExecutions(
   executions: ReturnType<SessionExecutionService["listRecords"]>,
-): SessionQueuedTurn[] {
-  return executions
-    .filter((execution) => execution.state === "queued")
-    .map((execution, index) => ({
-      execution,
-      request: parseSessionExecutionTurnRequest(execution.request),
-      queuePosition: index + 1,
-    }))
-    .filter(({ request }) => request.source === "gui")
-    .map(({ execution, request, queuePosition }) => {
-      return {
-        executionId: execution.id,
-        sessionId: execution.sessionId,
-        clientRequestId: request.turn.clientRequestId?.trim() || null,
-        userMessage: request.turn.userMessage,
-        queuePosition,
-        canCancel: true,
-        createdAt: execution.createdAt,
-        updatedAt: execution.updatedAt,
-      };
-    });
+): SessionGuiTurnExecution[] {
+  let queuePosition = 0;
+  const projected: SessionGuiTurnExecution[] = [];
+  for (const execution of executions) {
+    if (execution.state !== "running" && execution.state !== "queued") continue;
+    const position = execution.state === "queued" ? ++queuePosition : null;
+    const request = parseSessionExecutionTurnRequest(execution.request);
+    if (request.source !== "gui") continue;
+    const base = {
+      executionId: execution.id,
+      sessionId: execution.sessionId,
+      clientRequestId: request.turn.clientRequestId?.trim() || null,
+      userMessage: request.turn.userMessage,
+      createdAt: execution.createdAt,
+      updatedAt: execution.updatedAt,
+    };
+    projected.push(execution.state === "queued"
+      ? { ...base, state: "queued", queuePosition: position!, canCancel: true }
+      : { ...base, state: "running", queuePosition: null, canCancel: false });
+  }
+  return projected;
 }
 
 function fingerprintGuiTurn(sessionId: string, request: RunSessionTurnRequest): string {

@@ -53,7 +53,8 @@ import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
-  SessionQueuedTurn,
+  SessionExecutionChangedEvent,
+  SessionGuiTurnExecution,
 } from "./session-gui-execution.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
@@ -176,7 +177,7 @@ export type WithMateWindowSessionApi = {
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
-  listQueuedSessionTurns(sessionId: string): Promise<SessionQueuedTurn[]>;
+  listGuiSessionTurnExecutions(sessionId: string): Promise<SessionGuiTurnExecution[]>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,
@@ -311,7 +312,7 @@ export type WithMateWindowSubscriptionApi = {
   ): () => void;
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
-  subscribeSessionExecutionsChanged(listener: (sessionId: string) => void): () => void;
+  subscribeSessionExecutionsChanged(listener: (event: SessionExecutionChangedEvent) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;

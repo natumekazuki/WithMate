@@ -26,10 +26,17 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
     getAllWindows: () => [home.window, session.window, closed.window],
     getHomeWindows: () => [home.window, closed.window],
     getSessionWindows: () => [session.window, closed.window],
+    getSessionWindow: (sessionId) => sessionId === "session-1" ? session.window : null,
   });
 
   service.broadcastSessionSummaries([]);
   service.broadcastSessionInvalidation(["session-1"]);
+  service.broadcastSessionExecutionsChanged({
+    kind: "state-changed",
+    sessionId: "session-1",
+    executionId: "execution-1",
+    state: "running",
+  });
   service.broadcastOpenSessionWindowIds(["session-1"]);
   service.broadcastPromptTemplates([]);
 
@@ -40,8 +47,15 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
   ]);
   assert.deepEqual(session.sent.map((entry) => entry.channel), [
     "withmate:sessions-invalidated",
+    "withmate:session-executions-changed",
     "withmate:open-session-windows-changed",
     "withmate:prompt-templates-changed",
   ]);
+  assert.deepEqual(session.sent[1]?.payload, {
+    kind: "state-changed",
+    sessionId: "session-1",
+    executionId: "execution-1",
+    state: "running",
+  });
   assert.equal(closed.sent.length, 0);
 });

@@ -1253,8 +1253,19 @@ test("MainSessionCommandFacade はQUEUE_FULLを副作用なしのGUI admission e
   });
 });
 
-test("MainSessionCommandFacade はexternal queued TurnをGUIへ公開せずglobal FIFO位置を保つ", () => {
+test("MainSessionCommandFacade はGUIのrunningとqueuedを公開しexternal queuedを数えたFIFO位置を保つ", () => {
   const records = [
+    {
+      id: "gui-running",
+      sessionId: "s-1",
+      state: "running",
+      request: {
+        source: "gui",
+        turn: { userMessage: "running GUI request", clientRequestId: "gui-running-request" },
+      },
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    },
     {
       id: "external-1",
       sessionId: "s-1",
@@ -1300,16 +1311,30 @@ test("MainSessionCommandFacade はexternal queued TurnをGUIへ公開せずgloba
     isSessionFilesWorkspace: () => false,
   });
 
-  assert.deepEqual(facade.listQueuedSessionTurns("s-1"), [{
-    executionId: "gui-1",
-    sessionId: "s-1",
-    clientRequestId: "gui-request-1",
-    userMessage: "GUI request",
-    queuePosition: 2,
-    canCancel: true,
-    createdAt: "2026-08-16T00:00:01.000Z",
-    updatedAt: "2026-08-16T00:00:01.000Z",
-  }]);
+  assert.deepEqual(facade.listGuiSessionTurnExecutions("s-1"), [
+    {
+      executionId: "gui-running",
+      sessionId: "s-1",
+      clientRequestId: "gui-running-request",
+      userMessage: "running GUI request",
+      state: "running",
+      queuePosition: null,
+      canCancel: false,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    },
+    {
+      executionId: "gui-1",
+      sessionId: "s-1",
+      clientRequestId: "gui-request-1",
+      userMessage: "GUI request",
+      state: "queued",
+      queuePosition: 2,
+      canCancel: true,
+      createdAt: "2026-08-16T00:00:01.000Z",
+      updatedAt: "2026-08-16T00:00:01.000Z",
+    },
+  ]);
 });
 
 test("MainSessionCommandFacade はqueued cancelをqueued限定条件でexecution ownerへ渡す", async () => {

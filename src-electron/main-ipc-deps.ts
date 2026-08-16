@@ -89,7 +89,7 @@ import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
-  SessionQueuedTurn,
+  SessionGuiTurnExecution,
 } from "../src/session-gui-execution.js";
 import type {
   CreateSessionRequest,
@@ -324,7 +324,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   ): Awaitable<DeleteSessionsResult>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
-  listQueuedSessionTurns(sessionId: string): Awaitable<SessionQueuedTurn[]>;
+  listGuiSessionTurnExecutions(sessionId: string): Awaitable<SessionGuiTurnExecution[]>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,
@@ -542,7 +542,7 @@ export function createMainIpcRegistrationDeps(
     deleteSessionsLastActiveBefore: args.sessionRuntime.deleteSessionsLastActiveBefore,
     runSessionTurn: args.sessionRuntime.runSessionTurn,
     enqueueSessionTurn: args.sessionRuntime.enqueueSessionTurn,
-    listQueuedSessionTurns: args.sessionRuntime.listQueuedSessionTurns,
+    listGuiSessionTurnExecutions: args.sessionRuntime.listGuiSessionTurnExecutions,
     cancelSessionExecution: args.sessionRuntime.cancelSessionExecution,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     getMateState: args.mate.getMateState,

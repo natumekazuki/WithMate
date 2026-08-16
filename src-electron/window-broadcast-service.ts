@@ -10,6 +10,7 @@ import type {
 import type { CompanionSessionSummary } from "../src/companion-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { PromptTemplate } from "../src/prompt-template.js";
+import type { SessionExecutionChangedEvent } from "../src/session-gui-execution.js";
 import {
   WITHMATE_APP_SETTINGS_CHANGED_EVENT,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
@@ -37,6 +38,7 @@ type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
   getAllWindows(): TWindow[];
   getHomeWindows(): TWindow[];
   getSessionWindows(): TWindow[];
+  getSessionWindow(sessionId: string): TWindow | null;
 };
 
 export class WindowBroadcastService<TWindow extends WindowLike> {
@@ -54,8 +56,9 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
     this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSIONS_INVALIDATED_EVENT, sessionIds);
   }
 
-  public broadcastSessionExecutionsChanged(sessionId: string): void {
-    this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, sessionId);
+  public broadcastSessionExecutionsChanged(event: SessionExecutionChangedEvent): void {
+    const window = this.options.getSessionWindow(event.sessionId);
+    this.broadcastTo(window ? [window] : [], WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, event);
   }
 
   public broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void {

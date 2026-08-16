@@ -1,6 +1,6 @@
 import type { AuxiliarySession } from "./auxiliary-session-state.js";
 import type { Message } from "./session-state.js";
-import type { SessionQueuedTurn } from "./session-gui-execution.js";
+import type { SessionGuiTurnExecution } from "./session-gui-execution.js";
 
 export type MessageListSource =
   | {
@@ -19,8 +19,8 @@ export type MessageListSource =
       threadId: string | null;
     }
   | {
-      kind: "queued-turn";
-      execution: SessionQueuedTurn;
+      kind: "gui-turn-execution";
+      execution: SessionGuiTurnExecution;
     };
 
 export type MessageListProjection = {
@@ -84,7 +84,7 @@ export function loadProjectedMessageArtifact({
     return Promise.resolve(source.artifact ?? null);
   }
 
-  if (source.kind === "live-assistant" || source.kind === "queued-turn") {
+  if (source.kind === "live-assistant" || source.kind === "gui-turn-execution") {
     return Promise.resolve(null);
   }
 

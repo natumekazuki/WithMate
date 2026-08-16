@@ -8263,7 +8263,7 @@ button:disabled {
   background: var(--surface-strong);
 }
 
-.composer-box.running textarea {
+.composer-box.running:not(.accepts-running-input) textarea {
   cursor: not-allowed;
   opacity: 0.72;
 }
@@ -9008,7 +9008,7 @@ button:disabled {
   margin-top: 12px;
 }
 
-.composer-control-row.running {
+.composer-control-row.running:not(.allow-send-while-running) {
   grid-template-columns: minmax(0, 1fr);
 }
 

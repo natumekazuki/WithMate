@@ -1854,6 +1854,8 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
   assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
   assert.match(html, />Send<\/button>/);
+  assert.match(html, /class="composer-box running accepts-running-input"/);
+  assert.match(html, /class="composer-control-row running allow-send-while-running"/);
 });
 
 test("SessionMessageColumn はqueued TurnのFIFO位置とcancel操作を既存user message内へ表示する", () => {
@@ -1864,6 +1866,7 @@ test("SessionMessageColumn はqueued TurnのFIFO位置とcancel操作を既存us
       sessionId: "session-1",
       clientRequestId: null,
       userMessage: "次の依頼",
+      state: "queued",
       queuePosition: 2,
       canCancel: true,
       createdAt: "2026-08-16T00:00:00.000Z",
@@ -1874,6 +1877,45 @@ test("SessionMessageColumn はqueued TurnのFIFO位置とcancel操作を既存us
   assert.match(html, /role="status" aria-label="待機中 2番目"/);
   assert.match(html, />待機中 2<\/span>/);
   assert.match(html, /aria-label="待機中 2番目のTurnをキャンセル"/);
+});
+
+test("SessionMessageColumn は実行中responseをqueued user messageより前へ表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [
+      { role: "user", text: "実行中の依頼" },
+      { role: "user", text: "次の依頼" },
+      { role: "user", text: "さらに次の依頼" },
+    ],
+    queuedTurns: [null, {
+      executionId: "execution-1",
+      sessionId: "session-1",
+      clientRequestId: null,
+      userMessage: "次の依頼",
+      state: "queued",
+      queuePosition: 1,
+      canCancel: true,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    }, {
+      executionId: "execution-2",
+      sessionId: "session-1",
+      clientRequestId: null,
+      userMessage: "さらに次の依頼",
+      state: "queued",
+      queuePosition: 2,
+      canCancel: true,
+      createdAt: "2026-08-16T00:00:01.000Z",
+      updatedAt: "2026-08-16T00:00:01.000Z",
+    }],
+    isRunning: true,
+    pendingMessageText: "出力を待機しています",
+  });
+
+  assert.ok(html.indexOf("実行中の依頼") < html.indexOf("出力を待機しています"));
+  assert.ok(html.indexOf("出力を待機しています") < html.indexOf("次の依頼"));
+  assert.ok(html.indexOf("次の依頼") < html.indexOf("待機中 1"));
+  assert.ok(html.indexOf("待機中 1") < html.indexOf("さらに次の依頼"));
+  assert.ok(html.indexOf("さらに次の依頼") < html.indexOf("待機中 2"));
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {

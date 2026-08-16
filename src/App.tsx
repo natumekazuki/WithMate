@@ -187,8 +187,18 @@ import {
   mergeRefetchedSessionProjection,
 } from "./session-submit-coordinator.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
-import type { SessionQueuedTurn, SessionTurnAdmissionError } from "./session-gui-execution.js";
-import { appendQueuedTurnsToMessageList } from "./session-queued-turn-projection.js";
+import type {
+  SessionGuiTurnExecution,
+  SessionQueuedTurn,
+  SessionRunningProjectionBarrier,
+  SessionTurnAdmissionError,
+} from "./session-gui-execution.js";
+import {
+  applySessionExecutionChangedEventWithBarrier,
+  createSessionRunningProjectionBarrier,
+  mergeGuiTurnExecutionRefreshWithBarrier,
+} from "./session-gui-execution.js";
+import { appendGuiTurnExecutionsToMessageList } from "./session-queued-turn-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
@@ -543,8 +553,13 @@ export default function AgentSessionWindowApp() {
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
-  const [queuedSessionTurns, setQueuedSessionTurns] = useState<SessionQueuedTurn[]>([]);
-  const refreshQueuedSessionTurnsRef = useRef<(sessionId: string) => Promise<void>>(async () => undefined);
+  const [guiSessionTurnExecutions, setGuiSessionTurnExecutions] = useState<SessionGuiTurnExecution[]>([]);
+  const guiSessionTurnExecutionsRef = useRef<SessionGuiTurnExecution[]>([]);
+  const [runningProjectionBarrier, setRunningProjectionBarrier] = useState<SessionRunningProjectionBarrier | null>(null);
+  const runningProjectionBarrierRef = useRef<SessionRunningProjectionBarrier | null>(null);
+  const runningProjectionReadyExecutionIdRef = useRef<string | null>(null);
+  const hydrateSelectedSessionRef = useRef<() => Promise<boolean>>(async () => false);
+  const refreshGuiSessionTurnExecutionsRef = useRef<(sessionId: string) => Promise<void>>(async () => undefined);
   const [queueAdmissionError, setQueueAdmissionError] = useState<{
     sessionId: string;
     error: SessionTurnAdmissionError;
@@ -642,7 +657,8 @@ export default function AgentSessionWindowApp() {
       };
     }
 
-    const hydrateSelectedSession = () => {
+    const hydrateSelectedSession = async (): Promise<boolean> => {
+      const projectionReadyExecutionId = runningProjectionReadyExecutionIdRef.current;
       const requestRevision = sessionRefetchRevisionRef.current.start();
       const mutationRevision = sessionMutationRevisionRef.current.capture();
       const projectionRevision = sessionProjectionRevisionRef.current.capture();
@@ -652,14 +668,14 @@ export default function AgentSessionWindowApp() {
         message: "Session refetch started",
         data: { sessionId: selectedId },
       });
-      void withmateApi.getSession(selectedId)
-        .then((session) => {
+      try {
+        const session = await withmateApi.getSession(selectedId);
           if (
             !active
             || !sessionRefetchRevisionRef.current.isCurrent(requestRevision)
             || !sessionMutationRevisionRef.current.isCurrent(mutationRevision)
           ) {
-            return;
+            return false;
           }
 
           setAuthoritativeSessions((current) => session
@@ -680,33 +696,44 @@ export default function AgentSessionWindowApp() {
               status: session?.status ?? null,
             },
           });
-        })
-        .catch((error) => {
-          withmateApi.reportRendererLog({
-            level: "error",
-            kind: "renderer.session-refetch.failed",
-            message: "Session refetch failed",
-            data: { sessionId: selectedId },
-            error: {
-              name: error instanceof Error ? error.name : "UnknownError",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
+        if (
+          projectionReadyExecutionId &&
+          runningProjectionBarrierRef.current?.executionId === projectionReadyExecutionId
+        ) {
+          runningProjectionBarrierRef.current = null;
+          runningProjectionReadyExecutionIdRef.current = null;
+          setRunningProjectionBarrier(null);
+        }
+        return true;
+      } catch (error) {
+        withmateApi.reportRendererLog({
+          level: "error",
+          kind: "renderer.session-refetch.failed",
+          message: "Session refetch failed",
+          data: { sessionId: selectedId },
+          error: {
+            name: error instanceof Error ? error.name : "UnknownError",
+            message: error instanceof Error ? error.message : String(error),
+          },
         });
+        return false;
+      }
     };
+    hydrateSelectedSessionRef.current = hydrateSelectedSession;
 
-    hydrateSelectedSession();
+    void hydrateSelectedSession();
 
     const unsubscribe = withmateApi.subscribeSessionInvalidation((sessionIds) => {
       if (!active || !sessionIds.includes(selectedId)) {
         return;
       }
 
-      hydrateSelectedSession();
+      void hydrateSelectedSession();
     });
 
     return () => {
       active = false;
+      hydrateSelectedSessionRef.current = async () => false;
       unsubscribe();
     };
   }, [selectedId, setAuthoritativeSessions, withmateApi]);
@@ -732,7 +759,11 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     const sessionId = selectedSession?.id;
     if (!withmateApi || !sessionId) {
-      setQueuedSessionTurns([]);
+      guiSessionTurnExecutionsRef.current = [];
+      runningProjectionBarrierRef.current = null;
+      runningProjectionReadyExecutionIdRef.current = null;
+      setGuiSessionTurnExecutions([]);
+      setRunningProjectionBarrier(null);
       return;
     }
 
@@ -741,11 +772,19 @@ export default function AgentSessionWindowApp() {
     const refresh = async () => {
       const revision = ++refreshRevision;
       try {
-        const executions = await withmateApi.listQueuedSessionTurns(sessionId);
+        const executions = await withmateApi.listGuiSessionTurnExecutions(sessionId);
         if (!active || revision !== refreshRevision) return;
-        setQueuedSessionTurns(executions);
+        const next = mergeGuiTurnExecutionRefreshWithBarrier(
+          guiSessionTurnExecutionsRef.current,
+          executions,
+          runningProjectionBarrierRef.current,
+        );
+        guiSessionTurnExecutionsRef.current = next;
+        setGuiSessionTurnExecutions(next);
         setQueueAdmissionError((current) => (
-          current?.sessionId === sessionId && current.error.code === "QUEUE_FULL" && executions.length < 10
+          current?.sessionId === sessionId &&
+            current.error.code === "QUEUE_FULL" &&
+            executions.filter((execution) => execution.state === "queued").length < 10
             ? null
             : current
         ));
@@ -753,18 +792,47 @@ export default function AgentSessionWindowApp() {
         if (active) console.error(error);
       }
     };
-    refreshQueuedSessionTurnsRef.current = refresh;
+    refreshGuiSessionTurnExecutionsRef.current = refresh;
 
-    setQueuedSessionTurns([]);
+    guiSessionTurnExecutionsRef.current = [];
+    runningProjectionBarrierRef.current = null;
+    runningProjectionReadyExecutionIdRef.current = null;
+    setGuiSessionTurnExecutions([]);
+    setRunningProjectionBarrier(null);
     setQueueAdmissionError((current) => current?.sessionId === sessionId ? current : null);
     void refresh();
-    const unsubscribe = withmateApi.subscribeSessionExecutionsChanged((changedSessionId) => {
-      if (changedSessionId === sessionId) void refresh();
+    const unsubscribe = withmateApi.subscribeSessionExecutionsChanged((event) => {
+      if (event.sessionId !== sessionId) return;
+      if (event.kind === "user-message-persisted") {
+        runningProjectionReadyExecutionIdRef.current = event.executionId;
+        void hydrateSelectedSessionRef.current().then((applied) => {
+          if (!applied || runningProjectionBarrierRef.current?.executionId === event.executionId) return;
+          if (runningProjectionReadyExecutionIdRef.current === event.executionId) {
+            runningProjectionReadyExecutionIdRef.current = null;
+          }
+          void refresh();
+        });
+        return;
+      }
+      const current = guiSessionTurnExecutionsRef.current;
+      const barrier = createSessionRunningProjectionBarrier(event);
+      const next = applySessionExecutionChangedEventWithBarrier(
+        current,
+        event,
+        runningProjectionBarrierRef.current,
+      );
+      guiSessionTurnExecutionsRef.current = next;
+      setGuiSessionTurnExecutions(next);
+      if (barrier) {
+        runningProjectionBarrierRef.current = barrier;
+        setRunningProjectionBarrier(barrier);
+      }
+      void refresh();
     });
     return () => {
       active = false;
       refreshRevision += 1;
-      refreshQueuedSessionTurnsRef.current = async () => undefined;
+      refreshGuiSessionTurnExecutionsRef.current = async () => undefined;
       unsubscribe();
     };
   }, [selectedSession?.id, withmateApi]);
@@ -1474,19 +1542,23 @@ export default function AgentSessionWindowApp() {
     selectedSessionLiveRun?.threadId,
   ]);
   const messageListProjection = useMemo(
-    () => appendQueuedTurnsToMessageList(
+    () => appendGuiTurnExecutionsToMessageList(
       buildMessageListProjection(displayedMessages, projectedAuxiliarySessions, selectedSession?.id, {
         liveAssistant: projectedLiveAssistant,
       }),
-      activeAuxiliarySession ? [] : queuedSessionTurns,
+      activeAuxiliarySession ? [] : guiSessionTurnExecutions,
+      selectedSession?.runState ?? "idle",
+      runningProjectionBarrier?.executionId ?? null,
     ),
     [
       activeAuxiliarySession,
       displayedMessages,
       projectedAuxiliarySessions,
       projectedLiveAssistant,
-      queuedSessionTurns,
+      guiSessionTurnExecutions,
+      runningProjectionBarrier?.executionId,
       selectedSession?.id,
+      selectedSession?.runState,
     ],
   );
   const messageListMessages = messageListProjection.messages;
@@ -2312,7 +2384,7 @@ export default function AgentSessionWindowApp() {
         }
         enqueueRetryRef.current = null;
         setQueueAdmissionError((current) => current?.sessionId === sessionId ? null : current);
-        await refreshQueuedSessionTurnsRef.current(sessionId);
+        await refreshGuiSessionTurnExecutionsRef.current(sessionId);
         if (shouldClearDraft) {
           setDraft((current) => current === messageText ? "" : current);
         }
@@ -2408,14 +2480,17 @@ export default function AgentSessionWindowApp() {
         executionId: execution.executionId,
         clientRequestId: createSessionTurnClientRequestId(),
       });
-      const latest = await withmateApi.listQueuedSessionTurns(execution.sessionId);
-      setQueuedSessionTurns(latest);
+      const latest = await withmateApi.listGuiSessionTurnExecutions(execution.sessionId);
+      guiSessionTurnExecutionsRef.current = latest;
+      setGuiSessionTurnExecutions(latest);
       if (!result.ok) {
         window.alert(result.error.message);
       }
     } catch (error) {
       try {
-        setQueuedSessionTurns(await withmateApi.listQueuedSessionTurns(execution.sessionId));
+        const latest = await withmateApi.listGuiSessionTurnExecutions(execution.sessionId);
+        guiSessionTurnExecutionsRef.current = latest;
+        setGuiSessionTurnExecutions(latest);
       } catch (refreshError) {
         console.error(refreshError);
       }

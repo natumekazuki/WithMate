@@ -2625,6 +2625,7 @@ export function SessionMessageColumn({
     },
     [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
+  const firstQueuedTurnIndex = queuedTurns?.findIndex((queuedTurn) => queuedTurn !== null) ?? -1;
   const messageFindMatches = useMemo(() => {
     const matches: Array<
       | { kind: "message"; messageIndex: number; occurrenceIndex: number }
@@ -2637,6 +2638,9 @@ export function SessionMessageColumn({
       });
     };
     messageRenderedSearchTexts.forEach((text, messageIndex) => {
+      if (pendingMessageGroupEndIndex < 0 && messageIndex === firstQueuedTurnIndex) {
+        appendPendingMatches();
+      }
       findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
         matches.push({ kind: "message", messageIndex, occurrenceIndex });
       });
@@ -2644,15 +2648,19 @@ export function SessionMessageColumn({
         appendPendingMatches();
       }
     });
-    if (pendingMessageGroupEndIndex < 0) {
+    if (pendingMessageGroupEndIndex < 0 && firstQueuedTurnIndex < 0) {
       appendPendingMatches();
     }
     return matches;
-  }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  }, [findQuery, firstQueuedTurnIndex, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPendingInlineContent =
     pendingMessageGroupEndIndex >= 0 &&
     virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
+  const canRenderPendingBeforeQueuedTurn =
+    pendingMessageGroupEndIndex < 0 &&
+    firstQueuedTurnIndex >= 0 &&
+    virtualMessages.some((virtualMessage) => virtualMessage.index === firstQueuedTurnIndex);
   const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
     if (!match) {
       return null;
@@ -2663,8 +2671,11 @@ export function SessionMessageColumn({
     if (pendingMessageGroupEndIndex >= 0) {
       return pendingMessageGroupEndIndex;
     }
+    if (firstQueuedTurnIndex >= 0) {
+      return firstQueuedTurnIndex;
+    }
     return messages.length > 0 ? messages.length - 1 : null;
-  }, [messages.length, pendingMessageGroupEndIndex]);
+  }, [firstQueuedTurnIndex, messages.length, pendingMessageGroupEndIndex]);
   const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
 
   useEffect(() => {
@@ -3072,6 +3083,9 @@ export function SessionMessageColumn({
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
                 data-index={absoluteIndex}
               >
+                {absoluteIndex === firstQueuedTurnIndex && canRenderPendingBeforeQueuedTurn
+                  ? renderPendingRow()
+                  : null}
                 {isMessageGroupStart && messageGroup ? (
                   <div
                     className="auxiliary-message-group-label"
@@ -3293,7 +3307,9 @@ export function SessionMessageColumn({
             );
           })}
             </div>
-            {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent ? renderPendingRow() : null}
+            {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent && !canRenderPendingBeforeQueuedTurn
+              ? renderPendingRow()
+              : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
@@ -3919,7 +3935,7 @@ export function SessionComposerExpanded({
       ) : null}
 
       <div className="composer-input-row">
-        <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+        <div className={`composer-box${isRunning ? " running" : ""}${isRunning && allowSendWhileRunning ? " accepts-running-input" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
             value={draft}
@@ -3961,7 +3977,7 @@ export function SessionComposerExpanded({
         </div>
       </div>
 
-      <div className={`composer-control-row${isRunning ? " running" : ""}`}>
+      <div className={`composer-control-row${isRunning ? " running" : ""}${isRunning && allowSendWhileRunning ? " allow-send-while-running" : ""}`}>
         <div className="composer-settings">
           {showExecutionModeControls ? (
             <>

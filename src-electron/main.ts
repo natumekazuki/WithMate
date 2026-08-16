@@ -1314,6 +1314,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           getAllWindows: () => BrowserWindow.getAllWindows(),
           getHomeWindows: () => requireAuxWindowService().listHomeWindows(),
           getSessionWindows: () => requireSessionWindowBridge().listWindows(),
+          getSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId) ?? null,
         }),
       createWindowDialogService: () =>
         new WindowDialogService({
@@ -1767,8 +1768,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
                 enqueueSessionTurn: (sessionId, request) =>
                   requireMainSessionCommandFacade().enqueueSessionTurn(sessionId, request),
-                listQueuedSessionTurns: (sessionId) =>
-                  requireMainSessionCommandFacade().listQueuedSessionTurns(sessionId),
+                listGuiSessionTurnExecutions: (sessionId) =>
+                  requireMainSessionCommandFacade().listGuiSessionTurnExecutions(sessionId),
                 cancelSessionExecution: (sessionId, request) =>
                   requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
@@ -2613,6 +2614,14 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
       upsertTerminalSession: (session, terminalCommit) =>
         requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
+      notifyExecutionUserMessagePersisted: (sessionId, executionId) => {
+        requireWindowBroadcastService().broadcastSessionExecutionsChanged({
+          kind: "user-message-persisted",
+          sessionId,
+          executionId,
+          state: "running",
+        });
+      },
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
@@ -2943,7 +2952,12 @@ function requireSessionExecutionService(): SessionExecutionService {
         sessionInteractionService?.notifyExecutionChanged(executionId);
         const execution = sessionExecutionStorage?.get(executionId);
         if (execution) {
-          requireWindowBroadcastService().broadcastSessionExecutionsChanged(execution.sessionId);
+          requireWindowBroadcastService().broadcastSessionExecutionsChanged({
+            kind: "state-changed",
+            sessionId: execution.sessionId,
+            executionId: execution.id,
+            state: execution.state,
+          });
         }
       },
       onExecutionTerminal: (executionId, reason, occurredAt) => {

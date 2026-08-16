@@ -114,7 +114,7 @@ import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
-  SessionQueuedTurn,
+  SessionGuiTurnExecution,
 } from "../src/session-gui-execution.js";
 import type {
   CreateSessionRequest,
@@ -216,7 +216,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL,
+  WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -452,7 +452,7 @@ export type MainIpcRegistrationDeps = {
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
-  listQueuedSessionTurns(sessionId: string): Awaitable<SessionQueuedTurn[]>;
+  listGuiSessionTurnExecutions(sessionId: string): Awaitable<SessionGuiTurnExecution[]>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,
@@ -686,7 +686,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "deleteSessionsLastActiveBefore"
   | "runSessionTurn"
   | "enqueueSessionTurn"
-  | "listQueuedSessionTurns"
+  | "listGuiSessionTurnExecutions"
   | "cancelSessionExecution"
   | "cancelSessionRun"
 >;
@@ -1688,9 +1688,9 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
       return deps.enqueueSessionTurn(sessionId, request);
     },
   );
-  ipcMain.handle(WITHMATE_LIST_QUEUED_SESSION_TURNS_CHANNEL, (event, sessionId: string) => {
+  ipcMain.handle(WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL, (event, sessionId: string) => {
     assertTargetSessionWindowSender(event, sessionId, deps);
-    return deps.listQueuedSessionTurns(sessionId);
+    return deps.listGuiSessionTurnExecutions(sessionId);
   });
   ipcMain.handle(
     WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
