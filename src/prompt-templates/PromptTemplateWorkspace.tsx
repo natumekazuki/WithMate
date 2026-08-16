@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { BackNavigationButton } from "../back-navigation-button.js";
 import type { PromptTemplate } from "../prompt-template.js";
 import type { WithMateWindowPromptTemplateApi } from "../withmate-window-api.js";
 
 type PromptTemplateWorkspaceProps = {
   api: WithMateWindowPromptTemplateApi;
   canInsert?: boolean;
-  onClose: () => void;
+  onBack: () => void;
   onInsert: (prompt: string) => void;
 };
 
@@ -26,7 +27,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "テンプレートを更新できませんでした。";
 }
 
-export function PromptTemplateWorkspace({ api, canInsert = true, onClose, onInsert }: PromptTemplateWorkspaceProps) {
+export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInsert }: PromptTemplateWorkspaceProps) {
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
   const [isSaving, setIsSaving] = useState(false);
@@ -150,18 +151,15 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onClose, onInse
   return (
     <section className="prompt-template-workspace" aria-label="Prompt templates">
       <header className="prompt-template-workspace-header">
-        <strong>Templates</strong>
-        <button
-          className="session-file-back-to-chat"
-          type="button"
-          onClick={() => {
+        <BackNavigationButton
+          label="Back to Chat"
+          onBack={() => {
             if (confirmDiscard()) {
-              onClose();
+              onBack();
             }
           }}
-        >
-          戻る
-        </button>
+        />
+        <strong>Templates</strong>
       </header>
 
       <div className="prompt-template-workspace-body">

@@ -193,6 +193,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:validate-workspace-directory",
     args: ["C:/workspace"],
   });
+  assert.deepEqual(await api.validateSessionWorkspace("session-1"), {
+    channel: "withmate:validate-session-workspace",
+    args: ["session-1"],
+  });
   assert.deepEqual(await api.pickSessionFiles("session-1"), {
     channel: "withmate:pick-session-files",
     args: ["session-1"],
@@ -259,6 +263,15 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.openSessionFile({ ...fileRequest, reveal: true }), {
     channel: "withmate:open-session-file",
     args: [{ ...fileRequest, reveal: true }],
+  });
+  const filePreviewRequest = {
+    kind: "resource" as const,
+    resource: fileRequest,
+    view: { kind: "diff" as const, scope: "working-tree" as const },
+  };
+  assert.deepEqual(await api.openSessionFilePreviewWindow(filePreviewRequest), {
+    channel: "withmate:open-session-file-preview-window",
+    args: [filePreviewRequest],
   });
   const imageActionRequest = { sessionId: "session-1", point: { x: 120, y: 240 } };
   assert.deepEqual(await api.copySessionFilePreviewImage(imageActionRequest), {
@@ -425,6 +438,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "openSettingsWindow",
     "openMemoryV6ReviewWindow",
     "openTerminalAtPath",
+    "validateSessionWorkspace",
     "validateWorkspaceDirectory",
     "pickDirectory",
     "pickFile",
@@ -466,6 +480,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeOpenSessionWindowIds",
     "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
+    "subscribeSessionFilePreviewNavigation",
     "subscribeSessionInvalidation",
     "subscribeSessionSummaries",
     "subscribeSessionBackgroundActivity",
@@ -540,6 +555,9 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeInvalidation = api.subscribeSessionInvalidation((sessionIds) => {
     received.push({ kind: "invalidation", sessionIds });
   });
+  const disposePreviewNavigation = api.subscribeSessionFilePreviewNavigation((payload) => {
+    received.push({ kind: "previewNavigation", payload });
+  });
   const disposeLiveRun = api.subscribeLiveSessionRun((sessionId, state) => {
     received.push({ kind: "liveRun", sessionId, state });
   });
@@ -550,11 +568,18 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
   listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
   listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
+  listeners.get("withmate:session-file-preview-navigation")?.({}, {
+    resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" },
+    ownerSessionId: "session-1",
+    windowTitle: "App.tsx",
+    view: { kind: "diff", scope: "working-tree" },
+  });
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   listeners.get("withmate:prompt-templates-changed")?.({}, [{ id: "template-1", name: "Review" }]);
   disposeSummaries();
   disposeBoot();
   disposeInvalidation();
+  disposePreviewNavigation();
   disposeLiveRun();
   disposeTemplates();
 
@@ -562,11 +587,21 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
     { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
     { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
     { kind: "invalidation", sessionIds: ["session-1"] },
+    {
+      kind: "previewNavigation",
+      payload: {
+        resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" },
+        ownerSessionId: "session-1",
+        windowTitle: "App.tsx",
+        view: { kind: "diff", scope: "working-tree" },
+      },
+    },
     { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
     { kind: "templates", templates: [{ id: "template-1", name: "Review" }] },
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);
+  assert.equal(listeners.has("withmate:session-file-preview-navigation"), false);
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
   assert.equal(listeners.has("withmate:prompt-templates-changed"), false);

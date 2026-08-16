@@ -47,6 +47,8 @@ import {
   callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
   mapRuntimeHttpFailureToCharacterContext,
+  mapRuntimeHttpFailureToMemory,
+  resolveAgentRuntimeBindingReference,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -124,7 +126,7 @@ export type WithMateMemoryCliDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal },
+    options: { signal: AbortSignal; bindingReference?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof readFile;
   requestTimeoutMs?: number;
@@ -152,6 +154,25 @@ const CHARACTER_CONTEXT_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
   "character_memory_correct",
   "character_memory_forget",
 ]);
+
+const GENERAL_MEMORY_WRITE_COMMANDS = new Set<WithMateMemoryApiCommand>([
+  "append",
+  "forget",
+  "move_entry",
+  "get_file",
+  "export_files",
+]);
+
+function generalMemoryOperationKind(request: WithMateMemoryCliRequest): "read" | "write" {
+  if (request.command === "forget"
+    && typeof request.body === "object"
+    && request.body !== null
+    && !Array.isArray(request.body)
+    && (request.body as { dryRun?: unknown }).dryRun === true) {
+    return "read";
+  }
+  return GENERAL_MEMORY_WRITE_COMMANDS.has(request.command as WithMateMemoryApiCommand) ? "write" : "read";
+}
 
 function characterRuntimeUnavailable(effect: "none" | "unknown" = "none") {
   return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
@@ -377,6 +398,7 @@ function usageError(message: string): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_CLI_USAGE",
     message,
+    effect: "none",
   });
 }
 
@@ -384,14 +406,22 @@ function notRunningError(): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_NOT_RUNNING",
     message: "WithMate Memory API is not running or could not be discovered.",
+    effect: "none",
   });
 }
 
-function requestTimeoutError(command: WithMateMemoryApiCommand, timeoutMs: number): MemoryErrorResponse {
+function requestTimeoutError(
+  command: WithMateMemoryApiCommand,
+  timeoutMs: number,
+  effect: "none" | "unknown",
+): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_REQUEST_TIMEOUT",
     message: `WithMate Memory API request timed out after ${timeoutMs}ms.`,
     field: command,
+    retryable: true,
+    conversationMayContinue: true,
+    effect,
   });
 }
 
@@ -399,6 +429,7 @@ function transportError(message: string): MemoryErrorResponse {
   return createMemoryErrorResponse({
     code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
     message,
+    effect: "none",
   });
 }
 
@@ -1086,10 +1117,10 @@ function validateMemoryCliRequestBody(
 ): MemoryValidationResult<unknown> {
   try {
     if (command === "context_get") {
-      return { ok: true, value: validateCharacterContextGetRequest(body) };
+      return { ok: true, value: validateCharacterContextGetRequest(withRuntimeActorSession(body)) };
     }
     if (command === "affect_appraise") {
-      return { ok: true, value: validateCharacterAffectAppraiseRequest(body) };
+      return { ok: true, value: validateCharacterAffectAppraiseRequest(withRuntimeActorSession(body, true)) };
     }
     if (command === "affect_inspect") {
       return { ok: true, value: validateCharacterAffectInspectRequest(body) };
@@ -1158,6 +1189,28 @@ function validateMemoryCliRequestBody(
   return validateMemoryForgetRequest(body);
 }
 
+const RUNTIME_ACTOR_SESSION_PLACEHOLDER = "__withmate_runtime_actor_session__";
+
+function withRuntimeActorSession(body: unknown, includeCandidates = false): unknown {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return body;
+  }
+  const request = body as Record<string, unknown>;
+  return {
+    ...request,
+    sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER,
+    ...(includeCandidates && Array.isArray(request.candidates)
+      ? {
+          candidates: request.candidates.map((candidate) => (
+            candidate && typeof candidate === "object" && !Array.isArray(candidate)
+              ? { ...(candidate as Record<string, unknown>), sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER }
+              : candidate
+          )),
+        }
+      : {}),
+  };
+}
+
 function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: unknown): {
   exitCode: number;
   response: unknown;
@@ -1166,7 +1219,10 @@ function buildValidateResponse(command: WithMateMemoryValidatedCommand, body: un
   if (!validation.ok) {
     return {
       exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.apiError,
-      response: createMemoryErrorResponse(validation.error),
+      response: createMemoryErrorResponse({
+        ...validation.error,
+        effect: validation.error.effect ?? "none",
+      }),
     };
   }
   return {
@@ -1328,7 +1384,10 @@ export async function runWithMateMemoryCli(
         path: buildRoutePath(request),
         body: request.body,
         ...(request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}),
-      }, { signal: abortController.signal });
+      }, {
+        signal: abortController.signal,
+        bindingReference: resolveAgentRuntimeBindingReference(deps.env),
+      });
       response = runtimeResponse;
       responseJson = runtimeResponse.value;
     } catch (error) {
@@ -1354,7 +1413,8 @@ export async function runWithMateMemoryCli(
           stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
           return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
         }
-        stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+        const effect = generalMemoryOperationKind(request) === "write" ? "unknown" : "none";
+        stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs, effect))}\n`);
         return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
       }
       if (CHARACTER_CONTEXT_COMMANDS.has(request.command as WithMateMemoryApiCommand)) {
@@ -1373,6 +1433,12 @@ export async function runWithMateMemoryCli(
         status: response.status,
         value: responseJson,
       });
+    } else {
+      responseJson = mapRuntimeHttpFailureToMemory({
+        ok: response.ok,
+        status: response.status,
+        value: responseJson,
+      }, generalMemoryOperationKind(request));
     }
     stdout.write(request.command === "audit"
       ? formatAuditOutput(responseJson, request.outputFormat ?? "json")

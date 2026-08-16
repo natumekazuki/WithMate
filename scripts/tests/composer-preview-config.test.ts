@@ -23,28 +23,28 @@ test("resolveComposerPreviewDisplay は存在しない @path エラーを microc
   const preview = resolveComposerPreviewDisplay(
     {
       attachments: [],
-      errors: ["@ のパスが見つからないよ: missing.txt"],
+      errors: ["Path not found: missing.txt"],
     },
     {
-      "composer.error.path_not_found": ["添付パスを確認してください: {path}"],
+      "composer.error.path_not_found": ["Missing attachment: {path}"],
     },
   );
 
-  assert.deepEqual(preview.errors, ["添付パスを確認してください: missing.txt"]);
+  assert.deepEqual(preview.errors, ["Missing attachment: missing.txt"]);
 });
 
 test("resolveComposerPreviewDisplay は未対応エラーをそのまま返す", () => {
   const preview = resolveComposerPreviewDisplay(
     {
       attachments: [],
-      errors: ["ワークスペース外のパスは追加ディレクトリで許可してから添付してね: ../secret.txt"],
+      errors: ["Path is outside the workspace. Add its directory before attaching: ../secret.txt"],
     },
     {
-      "composer.error.path_not_found": ["添付パスを確認してください: {path}"],
+      "composer.error.path_not_found": ["Missing attachment: {path}"],
     },
   );
 
   assert.deepEqual(preview.errors, [
-    "ワークスペース外のパスは追加ディレクトリで許可してから添付してね: ../secret.txt",
+    "Path is outside the workspace. Add its directory before attaching: ../secret.txt",
   ]);
 });

@@ -12,7 +12,7 @@ import type {
 
 export type CharacterAffectTurnSettlementResult =
   | { status: "settled"; appraisal: CharacterAffectAppraiseResponse | null }
-  | { status: "pending"; error: CharacterContextErrorResponse };
+  | { status: "pending"; phase: "context" | "appraisal"; error: CharacterContextErrorResponse };
 
 export function characterAffectTurnIdempotencyPrefix(
   correlationId: string,
@@ -64,6 +64,8 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     savedCandidateIndices: number[];
     prepareReevaluation: boolean;
   }): { reevaluationPrepared: boolean };
+  validateOwner?(): Promise<boolean>;
+  markDiscarded?(): void;
   markSettled(): void;
 }): Promise<CharacterAffectTurnSettlementResult> {
   let pending = deps.getPending();
@@ -74,7 +76,7 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
   if (!pending.evaluation) {
     const context = await deps.getContext();
     if (isCharacterContextError(context)) {
-      return { status: "pending", error: context };
+      return { status: "pending", phase: "context", error: context };
     }
     const candidates = await deps.evaluate(
       context,
@@ -97,6 +99,11 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     return { status: "settled", appraisal: null };
   }
 
+  if (deps.validateOwner && !await deps.validateOwner()) {
+    (deps.markDiscarded ?? deps.markSettled)();
+    return { status: "settled", appraisal: null };
+  }
+
   const appraisal = await deps.appraise(evaluation.expectedVersion, evaluation.candidates);
   if (!isCharacterContextError(appraisal)) {
     deps.markSettled();
@@ -110,5 +117,5 @@ export async function settleCharacterAffectTurnWithRetry(deps: {
     savedCandidateIndices: savedCandidateIndices(appraisal),
     prepareReevaluation: appraisal.error.code === "version_conflict" && effect === "none",
   });
-  return { status: "pending", error: appraisal };
+  return { status: "pending", phase: "appraisal", error: appraisal };
 }

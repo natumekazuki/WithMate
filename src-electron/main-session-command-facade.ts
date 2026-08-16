@@ -17,6 +17,8 @@ import type { SessionRuntimeService } from "./session-runtime-service.js";
 import { parseCreateSessionRequest } from "./create-session-request.js";
 import type { SessionLaunchSelection } from "./session-launch-selection-service.js";
 import type { RunProviderRuntimeOperationExclusive } from "./provider-runtime-operation-coordinator.js";
+import type { WorkspaceDirectoryValidationResult } from "../src/workspace-directory-validation.js";
+import { resolveWorkspaceDirectoryValidationMessage } from "../src/workspace-directory-validation.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
@@ -36,6 +38,7 @@ type MainSessionCommandFacadeDeps = {
   dismissSessionTurnNotification(sessionId: string): void;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
   resumeSessionExecutionQueue?(sessionId: string): Promise<void> | void;
+  validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
 };
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
@@ -144,6 +147,13 @@ export class MainSessionCommandFacade {
 
   async runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session> {
     const session = this.deps.getSession(sessionId);
+    if (session) {
+      const workspaceValidation = await this.deps.validateWorkspaceDirectory(session.workspacePath);
+      if (!workspaceValidation.valid) {
+        const detail = resolveWorkspaceDirectoryValidationMessage(workspaceValidation);
+        throw new Error(`Workspace is unavailable. ${detail} Restore it and recheck before sending messages.`);
+      }
+    }
     if (
       session?.provider === "copilot" &&
       this.deps.isProviderQuotaTelemetryStale(this.deps.getProviderQuotaTelemetry(session.provider))

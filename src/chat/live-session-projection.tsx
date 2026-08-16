@@ -5,6 +5,7 @@ import {
   type LiveSessionMessageColumnProps,
 } from "./chat-window-adapter.js";
 import { buildLiveSessionRetryBanner } from "./retry-banner-adapter.js";
+import type { ChatErrorNotice } from "./chat-window.js";
 
 export type LiveSessionRecoveryActionsInput = {
   retryBanner: SessionRetryBannerProps["retryBanner"];
@@ -19,6 +20,35 @@ export type LiveSessionRecoveryActionsInput = {
 
 export function buildLiveSessionRecoveryActions(input: LiveSessionRecoveryActionsInput) {
   return buildLiveSessionRetryBanner(input);
+}
+
+export function buildLiveSessionErrorNotices(input: {
+  composerFeedback: {
+    primaryFeedback: string;
+    secondaryFeedback: readonly string[];
+    feedbackTone: "blocked" | "helper" | null;
+    shouldShowFeedback: boolean;
+  };
+  additionalNotices?: readonly ChatErrorNotice[];
+}): ChatErrorNotice[] {
+  const additionalNotices = input.additionalNotices ?? [];
+  const feedbackMessages = input.composerFeedback.shouldShowFeedback
+    && input.composerFeedback.feedbackTone === "blocked"
+    ? [input.composerFeedback.primaryFeedback, ...input.composerFeedback.secondaryFeedback]
+      .map((message) => message.trim())
+      .filter(Boolean)
+    : [];
+  const composerNotice: ChatErrorNotice[] = feedbackMessages.length > 0
+    && !additionalNotices.some((notice) => notice.message.trim() === feedbackMessages[0])
+    ? [{
+        id: "composer-sendability",
+        message: feedbackMessages[0],
+        details: feedbackMessages.slice(1),
+        relatedControl: "composer",
+      }]
+    : [];
+
+  return [...composerNotice, ...additionalNotices];
 }
 
 export function buildLiveSessionCommonComposerDockInput(

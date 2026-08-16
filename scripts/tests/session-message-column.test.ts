@@ -179,6 +179,7 @@ function renderSessionMessageColumn(options: {
   liveApprovalRequest?: LiveApprovalRequest | null;
   liveElicitationRequest?: LiveElicitationRequest | null;
   liveRunAssistantText?: string;
+  liveRunErrorMessage?: string;
   pendingMessageText?: string;
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
@@ -200,7 +201,7 @@ function renderSessionMessageColumn(options: {
       elicitationActionRequestId: null,
       liveRunAssistantText: options.liveRunAssistantText ?? "",
       hasLiveRunAssistantText: !!options.liveRunAssistantText,
-      liveRunErrorMessage: "",
+      liveRunErrorMessage: options.liveRunErrorMessage ?? "",
       pendingMessageText: options.pendingMessageText,
       pendingMessageGroupId: options.pendingMessageGroupId,
       isMessageListFollowing: options.isMessageListFollowing ?? false,
@@ -983,9 +984,12 @@ test("SessionMessageColumn は上側rowの可変高再計測後も表示位置�
     );
     const rowAboveViewport = renderedRows.find((row) => {
       const start = Number.parseFloat(
-        row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1]
-          ?? row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1]
-          ?? "0",
+        row.style.top
+          || (
+            row.style.transform.match(/translate3d\(0,\s*([^p]+)px/)?.[1]
+            ?? row.style.transform.match(/translateY\(([^p]+)px\)/)?.[1]
+            ?? "0"
+          ),
       );
       return start < messageList.scrollTop;
     });
@@ -1269,6 +1273,46 @@ test("SessionMessageColumn は未選択時に response action を描画しない
   assert.doesNotMatch(html, />Quote</);
   assert.match(html, /data-message-text-actions="true"/);
   assert.equal((html.match(/data-message-text-actions="true"/g) ?? []).length, 1);
+});
+
+test("SessionMessageColumn は保持された assistant text を run の終了状態に関係なく response action 対象にする", () => {
+  const states = [
+    { label: "cancel前", isRunning: true, liveRunErrorMessage: "" },
+    { label: "cancel後", isRunning: false, liveRunErrorMessage: "キャンセルしました" },
+    { label: "failed", isRunning: false, liveRunErrorMessage: "実行に失敗しました" },
+    { label: "running", isRunning: true, liveRunErrorMessage: "" },
+    { label: "通常完了", isRunning: false, liveRunErrorMessage: "" },
+  ];
+
+  for (const state of states) {
+    const html = renderSessionMessageColumn({
+      messages: [{ role: "assistant", text: `${state.label}の保持済みresponse` }],
+      isRunning: state.isRunning,
+      liveRunErrorMessage: state.liveRunErrorMessage,
+      withResponseActions: true,
+    });
+
+    assert.equal(
+      (html.match(/data-message-text-actions="true"/g) ?? []).length,
+      1,
+      `${state.label}でも保持された assistant text を操作対象にする`,
+    );
+  }
+});
+
+test("SessionMessageColumn は pending response text も response action 対象にする", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "prompt" }],
+    isRunning: true,
+    pendingMessageText: "途中まで生成されたresponse",
+    withResponseActions: true,
+  });
+
+  const dom = new JSDOM(html);
+  const pendingBody = dom.window.document.querySelector("[data-pending-message-body='true']");
+  assert.ok(pendingBody);
+  assert.equal(pendingBody.getAttribute("data-message-body"), "true");
+  assert.equal(pendingBody.getAttribute("data-message-text-actions"), "true");
 });
 
 test("SessionMessageColumn は選択範囲にだけ response action toolbar を表示する", async () => {
@@ -1649,7 +1693,6 @@ test("SessionComposerExpanded は Hide を描画せず、Send を設定グルー
       customAgentItems: [],
       skillItems: [],
       attachmentItems: [],
-      additionalDirectoryItems: [],
       draft: "",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: false,
@@ -1748,7 +1791,6 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       customAgentItems: [],
       skillItems: [],
       attachmentItems: [],
-      additionalDirectoryItems: [],
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
       isComposerDisabled: true,
@@ -1810,40 +1852,43 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.doesNotMatch(html, />Send<\/button>/);
 });
 
-test("SessionActionDockCompactRow は jump button を Send の左に描画する", () => {
+test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      draft: "",
-      actionDockCompactPreview: "下書きなし",
       attachmentCount: 0,
       isRunning: false,
-      isSendDisabled: true,
       showJumpToBottom: true,
-      sendButtonTitle: "送信できないよ。",
+      showMessageViewModeControls: true,
+      messageViewMode: "preview",
       onExpand() {},
       onJumpToBottom() {},
-      onSendOrCancel() {},
+      onCancel() {},
+      onMessageViewModeChange() {},
     }),
   );
 
-  assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Send"));
+  assert.match(html, /末尾へ移動/);
+  assert.match(html, />Preview<\/button>/);
+  assert.match(html, />Source<\/button>/);
+  assert.match(html, /class="session-action-dock-compact-meta session-action-dock-compact-expand-button"/);
+  assert.match(html, /aria-label="ActionDock を展開"/);
+  assert.doesNotMatch(html, />Send<\/button>/);
+  assert.doesNotMatch(html, /Draft|下書きなし/);
 });
 
 test("SessionActionDockCompactRow は実行中の compact 表示から展開でき、jump button と Cancel を描画する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      draft: "draft",
-      actionDockCompactPreview: "draft",
       attachmentCount: 2,
       isRunning: true,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",
-      isSendDisabled: false,
+      chatNotice: "New messages",
       showJumpToBottom: true,
-      sendButtonTitle: "実行をキャンセル",
+      cancelButtonTitle: "実行をキャンセル",
       onExpand() {},
       onJumpToBottom() {},
-      onSendOrCancel() {},
+      onCancel() {},
     }),
   );
 
@@ -1851,6 +1896,7 @@ test("SessionActionDockCompactRow は実行中の compact 表示から展開で�
   assert.match(html, /session-action-dock-compact-progress-button/);
   assert.match(html, /session-action-dock-compact-progress/);
   assert.match(html, /処理を実行中/);
+  assert.match(html, /New messages/);
   assert.match(html, /session-action-dock-compact-actions/);
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Cancel"));
   assert.match(html, />Cancel<\/button>/);

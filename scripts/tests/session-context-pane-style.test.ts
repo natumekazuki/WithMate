@@ -209,11 +209,25 @@ test("Header と ActionDock は中央・左右ペインの外側に全幅 dock �
   assert.match(chatWindowSource, /session-action-dock-content session-action-dock-expanded-content/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :not\(\.composer-input-row\)\s*{[\s\S]*?flex:\s*0 0 auto;/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded > \.session-action-dock\s*{\s*overflow:\s*hidden;/);
-  assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer > :is\([\s\S]*?\.composer-path-match-list,[\s\S]*?\.composer-attachment-list,[\s\S]*?\.composer-additional-directory-list[\s\S]*?\)\s*{[\s\S]*?flex-shrink:\s*1;[\s\S]*?min-height:\s*0;[\s\S]*?overflow-y:\s*auto;/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-input-row\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
   assert.match(stylesSource, /\.session-action-dock-slot\.is-expanded \.composer-box textarea\s*{[\s\S]*?height:\s*100%;[\s\S]*?overflow-y:\s*auto;[\s\S]*?resize:\s*none;/);
   assert.doesNotMatch(sessionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
   assert.doesNotMatch(companionProjectionSource, /isHeaderResizing|onStartHeaderResize/);
+});
+
+test("固定高のSession Headerは操作群を折り返さずタイトルを残り幅へ収める", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+  const controlsRule = stylesSource.match(/\.session-window-controls\s*{([^}]*)}/)?.[1] ?? "";
+  const titleRule = stylesSource.match(/\.session-title-shell\s*{([^}]*)}/)?.[1] ?? "";
+
+  assert.match(stylesSource, /\.session-page \.session-top-bar\s*{\s*container-type:\s*inline-size;/);
+  assert.match(controlsRule, /flex:\s*0 0 auto;/);
+  assert.match(controlsRule, /flex-wrap:\s*nowrap;/);
+  assert.match(titleRule, /flex:\s*1 1 0;/);
+  assert.match(
+    stylesSource,
+    /@container \(max-width:\s*960px\)\s*{[\s\S]*?\.session-window-controls\s*{[\s\S]*?gap:\s*4px;[\s\S]*?\.session-window-control-group-label\s*{[\s\S]*?font-size:\s*0\.6rem;[\s\S]*?\.session-page \.session-window-control-group \.drawer-toggle\s*{[\s\S]*?font-size:\s*0\.75rem;/,
+  );
 });
 
 test("Session 四辺の開閉は共通 motion を使い、resize 中と reduced-motion で補間を止める", async () => {
@@ -252,17 +266,34 @@ test("file preview は条件付き find / feedback の有無にかかわらず�
   );
   assert.match(
     stylesSource,
-    /\.session-file-preview-status,\s*\.session-file-preview-error,\s*\.session-file-preview-large-warning,\s*\.session-file-preview-metadata\s*{\s*grid-area:\s*content;/,
+    /\.session-file-preview-loading,\s*\.session-file-preview-error,\s*\.session-file-preview-large-warning,\s*\.session-file-preview-metadata\s*{\s*grid-area:\s*content;/,
   );
   assert.match(stylesSource, /\.session-file-preview-feedback\s*{\s*grid-area:\s*feedback;/);
 });
 
-test("個別の file preview window は preview surface を外周まで広げる", async () => {
+test("個別の file preview window は外周surfaceを保ちDiff本文だけをloading表示にする", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
     stylesSource,
+    /\.file-preview-window-page\s*{[\s\S]*?background:\s*linear-gradient\(180deg,\s*#0f131a\s*0%,\s*#151a22\s*100%\);/,
+  );
+  assert.match(
+    stylesSource,
     /\.file-preview-window-page\s*>\s*\.session-file-preview\s*\{[\s\S]*?width:\s*100%;[\s\S]*?height:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-radius:\s*0;/,
+  );
+  assert.match(stylesSource, /\.file-preview-loading-content\s*{[\s\S]*?grid-area:\s*content;/);
+  assert.match(
+    stylesSource,
+    /\.session-file-preview-spinner\s*{[\s\S]*?width:\s*24px;[\s\S]*?animation:\s*session-file-preview-spin\s+720ms\s+linear\s+infinite;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.file-preview-loading-title,[\s\S]*?animation:\s*none;/,
+  );
+  assert.match(
+    stylesSource,
+    /@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.session-file-preview-spinner\s*{\s*animation:\s*none;/,
   );
 });
 
@@ -289,6 +320,51 @@ test("Markdown preview は暗いsurface上のlinkとMermaid errorへ高contrast�
     stylesSource,
     /\.session-file-markdown \.message-mermaid-error\s*{\s*color:\s*var\(--session-file-error\);\s*}/,
   );
+});
+
+test("Markdown preview はchatと同じ本文line-heightとblock間隔を使う", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.message-body\.rich-text,\s*\.session-file-markdown\.rich-text\s*{[\s\S]*?display:\s*grid;[\s\S]*?gap:\s*8px;[\s\S]*?line-height:\s*1\.6;/,
+  );
+  assert.match(stylesSource, /\.message-paragraph\s*{[\s\S]*?margin:\s*0;[\s\S]*?line-height:\s*1\.6;/);
+});
+
+test("Markdown heading と thematic break は階層と全幅の区切りを視認できる", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(stylesSource, /\.message-heading\.level-1\s*{[\s\S]*?font-size:\s*1\.25rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-2\s*{[\s\S]*?font-size:\s*1\.125rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-3\s*{[\s\S]*?font-size:\s*1\.05rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-4\s*{[\s\S]*?font-size:\s*1rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-5\s*{[\s\S]*?font-size:\s*0\.95rem;/);
+  assert.match(stylesSource, /\.message-heading\.level-6\s*{[\s\S]*?font-size:\s*0\.9rem;/);
+  assert.match(
+    stylesSource,
+    /\.message-divider\s*{[\s\S]*?width:\s*100%;[\s\S]*?border:\s*0;[\s\S]*?border-block-start:\s*1px solid var\(--line\);/,
+  );
+});
+
+test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async () => {
+  const stylesSource = await readFile("src/styles.css", "utf8");
+
+  assert.match(
+    stylesSource,
+    /\.message-list\s*{[\s\S]*?padding-inline-start:\s*1\.5em;[\s\S]*?list-style-position:\s*outside;/,
+  );
+  assert.match(stylesSource, /\.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*disc;/);
+  assert.match(
+    stylesSource,
+    /\.message-list \.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*circle;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.message-list \.message-list \.message-list:not\(\.ordered\)\s*{\s*list-style-type:\s*square;/,
+  );
+  assert.match(stylesSource, /\.message-list\s*>\s*li::marker\s*{\s*color:\s*currentColor;/);
+  assert.doesNotMatch(stylesSource, /\.message-list\s*{[^}]*padding-left:/);
 });
 
 test("Markdown preview は中央本文を固定幅にせずcontent領域を使う", async () => {

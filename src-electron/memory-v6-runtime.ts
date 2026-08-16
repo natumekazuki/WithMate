@@ -19,7 +19,9 @@ import { createOrVerifyV6FreshDatabase } from "./app-database-v6-bootstrap.js";
 import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
+  type AgentRuntimeActorSession,
 } from "./memory-v6-http-server.js";
+import type { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
 import {
   inspectMemoryProtectedObjectInputFile,
@@ -48,10 +50,16 @@ export type StartMemoryV6RuntimeApiOptions = {
   userDataPath: string;
   runtimeDirectoryPath?: string;
   listCharacters?: () => readonly CharacterCatalogEntry[];
+  resolveCharacterById?: (id: string) => { id: string; name: string } | null;
   resolveCharacterRuntimeSnapshot?: (characterId: string) => CharacterRuntimeSnapshot | null;
   getMemoryFileQuotaBytes?: () => number;
   protectedObjectKeyProtector?: MemoryProtectedObjectKeyProtector;
+  now?: () => Date;
   log?: (input: AppLogInput) => void;
+  agentRuntimeBindingRegistry?: Pick<AgentRuntimeBindingRegistry, "resolve">;
+  resolveActorSession?: (
+    sessionId: string,
+  ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
 };
 
 export type PublishMemoryV6DiscoveryFileOptions = {
@@ -278,6 +286,12 @@ export async function startMemoryV6RuntimeApi(
       storage,
       ...projectResolver,
       ...(options.listCharacters ? { listCharacters: options.listCharacters } : {}),
+      ...(options.resolveCharacterById ? { resolveCharacterById: options.resolveCharacterById } : options.listCharacters ? {
+        resolveCharacterById: (id) => {
+          const character = options.listCharacters?.().find((candidate) => candidate.id === id);
+          return character ? { id: character.id, name: character.name } : null;
+        },
+      } : {}),
       ...(options.getMemoryFileQuotaBytes ? { getMemoryFileQuotaBytes: options.getMemoryFileQuotaBytes } : {}),
       ...(protectedObjectKeyStore ? {
         protectedObjectImporter: {
@@ -302,7 +316,9 @@ export async function startMemoryV6RuntimeApi(
         },
       } : {}),
     });
-    affectStorage = new CharacterAffectStorage(bootstrap.dbPath);
+    affectStorage = new CharacterAffectStorage(bootstrap.dbPath, {
+      ...(options.now ? { now: options.now } : {}),
+    });
     const affectService = createCharacterAffectServiceWithMemory({
       affectStorage,
       memoryStorage: storage,
@@ -313,6 +329,23 @@ export async function startMemoryV6RuntimeApi(
       affectService,
       resolveCharacterRuntimeSnapshot: (characterId) =>
         options.resolveCharacterRuntimeSnapshot?.(characterId) ?? null,
+      onUnexpectedError: (diagnostic) => {
+        options.log?.({
+          level: "warn",
+          kind: "character-context.application.unexpected-failure",
+          process: "main",
+          message: diagnostic.safeMessage,
+          data: {
+            operation: diagnostic.operation,
+            transport: diagnostic.transport,
+            stage: diagnostic.stage,
+            errorName: diagnostic.errorName,
+            durationMs: diagnostic.durationMs,
+            queryLength: diagnostic.queryLength,
+            searchTermCount: diagnostic.searchTermCount,
+          },
+        });
+      },
     });
     const apiSecret = createRuntimeApiSecret();
     const operatorApiSecret = createRuntimeApiSecret();
@@ -325,6 +358,8 @@ export async function startMemoryV6RuntimeApi(
       operatorApiSecret,
       mcpApiSecret,
       runtimeInstanceId,
+      agentRuntimeBindingRegistry: options.agentRuntimeBindingRegistry,
+      resolveActorSession: options.resolveActorSession,
     });
     await server.start();
 

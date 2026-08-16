@@ -4,6 +4,8 @@ type LaunchDialogShellProps = {
   onClose: () => void;
   dialogRef: RefObject<HTMLElement | null>;
   onKeyDown: KeyboardEventHandler<HTMLElement>;
+  ariaLabel?: string;
+  showDismissControl?: boolean;
   className?: string;
   dialogClassName?: string;
   children: ReactNode;
@@ -48,24 +50,35 @@ export function LaunchDialogShell({
   onClose,
   dialogRef,
   onKeyDown,
+  ariaLabel,
+  showDismissControl = true,
   className = "launch-modal",
   dialogClassName,
   children,
   footer,
 }: LaunchDialogShellProps) {
+  const dialogClassNameValue = [
+    "launch-dialog",
+    "panel",
+    dialogClassName ?? "",
+    showDismissControl ? "" : "launch-dialog-no-dismiss",
+  ].filter(Boolean).join(" ");
+
   return (
-    <div className={className} role="dialog" aria-modal="true" onClick={onClose}>
+    <div className={className} role="dialog" aria-modal="true" aria-label={ariaLabel} onClick={onClose}>
       <section
         ref={dialogRef}
-        className={`launch-dialog panel${dialogClassName ? ` ${dialogClassName}` : ""}`}
+        className={dialogClassNameValue}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={onKeyDown}
       >
-        <div className="launch-dialog-head minimal">
-          <button className="diff-close" type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
+        {showDismissControl ? (
+          <div className="launch-dialog-head minimal">
+            <button className="diff-close" type="button" aria-label="Close" title="Close" onClick={onClose}>
+              <span aria-hidden="true">×</span>
+            </button>
+          </div>
+        ) : null}
 
         <div className="launch-panel minimal">
           {children}

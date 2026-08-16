@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { MEMORY_V6_SCHEMA_VERSION, type NormalizedMemoryTag } from "../../src/memory-v6/memory-contract.js";
 import { MEMORY_FILE_QUOTA_MIN_BYTES } from "../../src/provider-settings-state.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { MemoryProtectedObjectImportError } from "../../src-electron/memory-protected-object-importer.js";
-import { createMemoryV6ProjectResolver } from "../../src-electron/memory-v6-project-resolver.js";
-import { createLocalUserMemoryPrincipal } from "../../src-electron/memory-v6-permission.js";
+import { createMemoryV6ProjectResolver, listMemoryV6ProjectScopes } from "../../src-electron/memory-v6-project-resolver.js";
+import {
+  LOCAL_USER_MEMORY_PERMISSIONS,
+  createLocalUserMemoryPrincipal,
+  type MemoryV6SessionBindingPrincipal,
+} from "../../src-electron/memory-v6-permission.js";
 import type { MemoryV6ResolvedTarget } from "../../src-electron/memory-v6-schema.js";
 import { MemoryV6Service, type MemoryV6ServiceDeps } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage, type MemoryV6AppendProtectedObjectInput } from "../../src-electron/memory-v6-storage.js";
@@ -29,7 +34,7 @@ function tag(type: string, value: string): NormalizedMemoryTag {
 }
 
 async function withService<T>(
-  runner: (input: { service: MemoryV6Service; storage: MemoryV6Storage }) => T | Promise<T>,
+  runner: (input: { service: MemoryV6Service; storage: MemoryV6Storage; dbPath: string }) => T | Promise<T>,
   overrides: Partial<Pick<MemoryV6ServiceDeps, "getMemoryFileQuotaBytes" | "protectedObjectImporter" | "protectedObjectExporter">> = {},
 ): Promise<T> {
   const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-service-"));
@@ -40,25 +45,30 @@ async function withService<T>(
     getMemoryFileQuotaBytes: overrides.getMemoryFileQuotaBytes ?? (() => MEMORY_FILE_QUOTA_MIN_BYTES),
     ...(overrides.protectedObjectImporter ? { protectedObjectImporter: overrides.protectedObjectImporter } : {}),
     ...(overrides.protectedObjectExporter ? { protectedObjectExporter: overrides.protectedObjectExporter } : {}),
-    listCharacters: () => [{
-      id: "character-a",
-      name: "Character A",
+    listCharacters: () => ["a", "b"].map((suffix) => ({
+      id: `character-${suffix}`,
+      name: `Character ${suffix.toUpperCase()}`,
       description: "Test character",
       iconFilePath: "",
       theme: { main: "#111111", sub: "#222222" },
-      state: "active",
+      state: "active" as const,
       createdAt: "2026-07-03T00:00:00.000Z",
       updatedAt: "2026-07-03T00:00:00.000Z",
       archivedAt: null,
-    }],
+    })),
     resolveProjectById: (id) => ({ id, displayName: id }),
     resolveProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
       ? { id: "project-a", displayName: "Project A" }
       : null,
-    resolveCharacterById: (id) => id === "character-a" ? { id, name: "Character A" } : null,
+    resolveKnownProjectByPath: (projectPath) => projectPath === "C:/workspace/project-a"
+      ? { id: "project-a", displayName: "Project A" }
+      : null,
+    resolveCharacterById: (id) => id === "character-a" || id === "character-b"
+      ? { id, name: id === "character-a" ? "Character A" : "Character B" }
+      : null,
   });
   try {
-    return await runner({ service, storage });
+    return await runner({ service, storage, dbPath });
   } finally {
     storage.close();
     await rm(tempDirectory, { recursive: true, force: true });
@@ -79,6 +89,17 @@ function appendRequest(overrides: Record<string, unknown> = {}): Record<string, 
     preview: "serviceで検証してstorageへ渡す。",
     tags: [{ type: "topic", value: "memory" }],
     ...overrides,
+  };
+}
+
+function createSessionBindingPrincipal(characterId = "character-a"): MemoryV6SessionBindingPrincipal {
+  return {
+    type: "session_binding",
+    bindingIdHash: "binding-a",
+    sessionId: "session-a",
+    providerId: "codex",
+    characterId,
+    permissions: LOCAL_USER_MEMORY_PERMISSIONS,
   };
 }
 
@@ -124,6 +145,10 @@ describe("MemoryV6Service", () => {
         id: "character-a",
         name: "Character A",
         description: "Test character",
+      }, {
+        id: "character-b",
+        name: "Character B",
+        description: "Test character",
       }]);
       assert.equal("isDefault" in characters.characters[0], false);
       assert.equal("iconFilePath" in characters.characters[0], false);
@@ -137,6 +162,114 @@ describe("MemoryV6Service", () => {
       });
       assert.equal("error" in forget, false);
       assert.deepEqual(forget.results, [{ entryId: append.entry.id, status: "forgotten" }]);
+    });
+  });
+
+  it("session bindingはuser-global、Project、自Characterを扱い、別CharacterのCRUDを拒否する", async () => {
+    await withService(async ({ service }) => {
+      const principal = createSessionBindingPrincipal();
+      const allowedTargets = [
+        { owner: "user", scope: "global" },
+        { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        { owner: "character", scope: "character", character: { type: "id", id: "character-a" } },
+        {
+          owner: "character",
+          scope: "project",
+          character: { type: "id", id: "character-a" },
+          project: { type: "id", id: "project-a" },
+        },
+      ];
+      for (const target of allowedTargets) {
+        const result = service.search(principal, {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          targets: [target],
+          query: "Memory",
+        });
+        assert.equal("error" in result, false);
+      }
+
+      const otherTarget = {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "character-b" },
+      };
+      const append = await service.append(principal, appendRequest({
+        target: otherTarget,
+        idempotencyKey: "session-binding-other-character",
+      }));
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FORBIDDEN");
+
+      const search = service.search(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [otherTarget],
+        query: "Memory",
+      });
+      assert.equal("error" in search, true);
+      assert.equal(search.error.code, "MEMORY_FORBIDDEN");
+
+      const missingOtherCharacter = service.search(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{
+          owner: "character",
+          scope: "character",
+          character: { type: "id", id: "character-missing" },
+        }],
+        query: "Memory",
+      });
+      assert.equal("error" in missingOtherCharacter, true);
+      assert.equal(missingOtherCharacter.error.code, "MEMORY_FORBIDDEN");
+
+      const forget = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: otherTarget,
+        entryIds: ["unknown"],
+        reason: "user_request",
+        idempotencyKey: "session-binding-forget-other-character",
+      });
+      assert.equal("error" in forget, true);
+      assert.equal(forget.error.code, "MEMORY_FORBIDDEN");
+
+      const move = service.moveEntry(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "unknown",
+        from: allowedTargets[2],
+        to: otherTarget,
+        reason: "move to requested target",
+        idempotencyKey: "session-binding-move-other-character",
+      });
+      assert.equal("error" in move, true);
+      assert.equal(move.error.code, "MEMORY_FORBIDDEN");
+    });
+  });
+
+  it("session bindingのtarget inventoryは別Characterをpagination前に除外する", async () => {
+    await withService(({ service, storage }) => {
+      for (const characterId of ["character-a", "character-b"]) {
+        storage.appendEntry({
+          id: `mem-${characterId}`,
+          target: {
+            owner: { type: "character", id: characterId },
+            scope: { type: "character", id: characterId },
+          },
+          kind: "note",
+          title: characterId,
+          body: `${characterId} body`,
+          preview: characterId,
+          tags: [],
+          source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+        });
+      }
+
+      const result = service.listTargets(createSessionBindingPrincipal(), {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        owner: "character",
+        limit: 1,
+      });
+
+      assert.equal("error" in result, false);
+      assert.deepEqual(result.items.map((item) => item.target.character?.id), ["character-a"]);
+      assert.equal(result.nextCursor, undefined);
     });
   });
 
@@ -239,6 +372,68 @@ describe("MemoryV6Service", () => {
         fileCount: 1,
         updatedAt: "2026-07-04T00:00:00.000Z",
       }]);
+    });
+  });
+
+  it("bound Sessionのfile usageは他Characterのlargest entry候補を返さない", async () => {
+    await withService(async ({ service, dbPath }) => {
+      const appendEntry = async (title: string, target: Record<string, unknown>, idempotencyKey: string) => {
+        const result = await service.append(createLocalUserMemoryPrincipal(), appendRequest({
+          title,
+          preview: `${title} preview`,
+          target,
+          idempotencyKey,
+        }));
+        if ("error" in result) {
+          throw new Error(result.error.message);
+        }
+        return result.entry.id;
+      };
+      const otherCharacterEntryId = await appendEntry("Other Character", {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "character-b" },
+      }, "file-usage-other-character");
+      const ownCharacterEntryId = await appendEntry("Own Character", {
+        owner: "character",
+        scope: "character",
+        character: { type: "id", id: "character-a" },
+      }, "file-usage-own-character");
+      const projectEntryId = await appendEntry("Project", {
+        owner: "project",
+        scope: "project",
+        project: { type: "id", id: "project-a" },
+      }, "file-usage-project");
+
+      const db = new DatabaseSync(dbPath);
+      try {
+        const insert = db.prepare(`
+          INSERT INTO memory_protected_objects_v6 (
+            object_id, entry_id, state, role, media_kind, summary,
+            original_bytes, stored_bytes, created_at, updated_at, deleted_at
+          ) VALUES (?, ?, 'active', 'evidence', 'image', ?, ?, ?, ?, ?, NULL)
+        `);
+        for (const [objectId, entryId, title, bytes] of [
+          ["b".repeat(32), otherCharacterEntryId, "Other Character", 8192],
+          ["a".repeat(32), ownCharacterEntryId, "Own Character", 4096],
+          ["c".repeat(32), projectEntryId, "Project", 2048],
+        ] as const) {
+          insert.run(objectId, entryId, `${title} file`, bytes, bytes, "2026-07-04T00:00:00.000Z", "2026-07-04T00:00:00.000Z");
+        }
+      } finally {
+        db.close();
+      }
+
+      const usage = service.fileUsage(createSessionBindingPrincipal("character-a"), {
+        includeLargestEntries: true,
+        largestLimit: 10,
+      });
+
+      assert.equal("error" in usage, false);
+      assert.deepEqual(usage.largestEntries?.map((entry) => entry.entryId), [
+        ownCharacterEntryId,
+        projectEntryId,
+      ]);
     });
   });
 
@@ -350,6 +545,172 @@ describe("MemoryV6Service", () => {
         prepare: async ({ entryId }) => {
           prepareEntryId = entryId;
           return protectedObject;
+        },
+      },
+    });
+  });
+
+  it("同じidempotency keyの同時file appendはreplay側の準備済みobjectを破棄する", async () => {
+    const discardedObjectIds: string[] = [];
+    let prepareCount = 0;
+    let releasePreparations: (() => void) | null = null;
+    const bothPrepared = new Promise<void>((resolve) => {
+      releasePreparations = resolve;
+    });
+
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const request = appendRequest({
+        idempotencyKey: "concurrent-file-append-key",
+        files: [{ path: "C:/trace/dialog.png", summary: "Screenshot.", role: "evidence" }],
+      });
+      const [first, second] = await Promise.all([
+        service.append(principal, request),
+        service.append(principal, request),
+      ]);
+
+      assert.equal("error" in first, false);
+      assert.equal("error" in second, false);
+      assert.equal(first.entry.id, second.entry.id);
+      assert.equal([first.replayed, second.replayed].filter(Boolean).length, 1);
+      assert.equal(discardedObjectIds.length, 1);
+      assert.deepEqual(storage.getFileUsage(), {
+        usedBytes: 128,
+        physicalBytes: 160,
+        pendingDeleteBytes: 0,
+        objectCount: 1,
+        pendingDeleteCount: 0,
+      });
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: 128,
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: "dialog.png",
+          summary: "Screenshot.",
+        }),
+        prepare: async () => {
+          prepareCount += 1;
+          const preparationIndex = prepareCount;
+          if (prepareCount === 2) {
+            releasePreparations?.();
+          }
+          await bothPrepared;
+          return {
+            objectId: preparationIndex === 1 ? "1".repeat(32) : "2".repeat(32),
+            role: "evidence",
+            mediaKind: "image",
+            contentType: "image/png",
+            displayName: "dialog.png",
+            summary: "Screenshot.",
+            originalBytes: 128,
+            storedBytes: 160,
+            sha256: "3".repeat(64),
+            keyId: "4".repeat(32),
+          };
+        },
+        discardPrepared: async ({ objectId }) => {
+          discardedObjectIds.push(objectId);
+        },
+      },
+    });
+  });
+
+  it("同じidempotency keyの複数file appendでreplay cleanupの成否が混在してもpartialを永続化する", async () => {
+    let prepareCount = 0;
+    let discardCount = 0;
+    let releasePreparations: (() => void) | null = null;
+    let releaseFailedCleanup: (() => void) | null = null;
+    const bothPrepared = new Promise<void>((resolve) => {
+      releasePreparations = resolve;
+    });
+    const failedCleanupObserved = new Promise<void>((resolve) => {
+      releaseFailedCleanup = resolve;
+    });
+
+    await withService(async ({ service, dbPath }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      const request = appendRequest({
+        idempotencyKey: "concurrent-file-cleanup-failure",
+        files: [{ path: "C:/trace/dialog.png", summary: "Screenshot.", role: "evidence" }],
+      });
+      const results = await Promise.all([
+        service.append(principal, request),
+        service.append(principal, request),
+        service.append(principal, request),
+      ]);
+      const cleanupFailure = results.find((result) => "error" in result);
+      assert.ok(cleanupFailure && "error" in cleanupFailure);
+      assert.equal(cleanupFailure.error.code, "MEMORY_FILE_CLEANUP_FAILED");
+      assert.equal(cleanupFailure.error.effect, "partial");
+      assert.equal(results.filter((result) => !("error" in result)).length, 2);
+      const db = new (await import("node:sqlite")).DatabaseSync(dbPath, { readOnly: true });
+      let persistedRequestFingerprint = "";
+      try {
+        const row = db.prepare("SELECT cleanup_pending_count, request_fingerprint FROM memory_idempotency_keys_v6 WHERE key = ?").get("concurrent-file-cleanup-failure") as {
+          cleanup_pending_count: number;
+          request_fingerprint: string;
+        };
+        assert.equal(row.cleanup_pending_count, 1);
+        persistedRequestFingerprint = row.request_fingerprint;
+      } finally {
+        db.close();
+      }
+      const reopenedStorage = new MemoryV6Storage(dbPath);
+      try {
+        const replay = reopenedStorage.resolveAppendIdempotencyReplay({
+          target: projectTarget,
+          idempotencyKey: "concurrent-file-cleanup-failure",
+          bindingIdHash: principal.bindingIdHash,
+          requestFingerprint: persistedRequestFingerprint,
+        });
+        assert.equal(replay?.cleanupRequired, true);
+      } finally {
+        reopenedStorage.close();
+      }
+      const retry = await service.append(principal, request);
+      assert.equal("error" in retry, true);
+      assert.equal(retry.error.code, "MEMORY_FILE_CLEANUP_FAILED");
+      assert.equal(retry.error.effect, "partial");
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: 128,
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: "dialog.png",
+          summary: "Screenshot.",
+        }),
+        prepare: async () => {
+          prepareCount += 1;
+          const preparationIndex = prepareCount;
+          if (prepareCount === 3) {
+            releasePreparations?.();
+          }
+          await bothPrepared;
+          return {
+            objectId: ["5", "6", "9"][preparationIndex - 1]!.repeat(32),
+            role: "evidence",
+            mediaKind: "image",
+            contentType: "image/png",
+            displayName: "dialog.png",
+            summary: "Screenshot.",
+            originalBytes: 128,
+            storedBytes: 160,
+            sha256: "7".repeat(64),
+            keyId: "8".repeat(32),
+          };
+        },
+        discardPrepared: async () => {
+          discardCount += 1;
+          if (discardCount === 1) {
+            releaseFailedCleanup?.();
+            throw new Error("simulated cleanup failure");
+          }
+          await failedCleanupObserved;
         },
       },
     });
@@ -603,6 +964,143 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  it("file付きappendのDB失敗後にcleanupも失敗した場合は元errorを保持したpartial errorを返す", async () => {
+    const protectedObject = {
+      objectId: "9".repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: "dialog.png",
+      summary: "Screenshot.",
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: "a".repeat(64),
+      keyId: "b".repeat(32),
+    } satisfies MemoryV6AppendProtectedObjectInput;
+
+    await withService(async ({ service }) => {
+      const append = await service.append(createLocalUserMemoryPrincipal(), appendRequest({
+        idempotencyKey: "file-append-db-cleanup-error-key",
+        supersedes: ["missing-entry"],
+        files: [{ path: "C:/trace/dialog.png", summary: "Screenshot.", role: "evidence" }],
+      }));
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_CLEANUP_FAILED");
+      assert.equal(append.error.effect, "partial");
+      assert.equal(append.error.details?.originalCode, "MEMORY_ENTRY_NOT_FOUND");
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: protectedObject.originalBytes,
+          role: protectedObject.role,
+          mediaKind: protectedObject.mediaKind,
+          contentType: protectedObject.contentType,
+          displayName: protectedObject.displayName,
+          summary: protectedObject.summary,
+        }),
+        prepare: async () => protectedObject,
+        discardPrepared: async () => {
+          throw new Error("simulated cleanup failure");
+        },
+      },
+    });
+  });
+
+  it("file付きappendのgeneric DB失敗後にcleanupも失敗した場合はstorage errorを保持したpartial errorを返す", async () => {
+    const protectedObject = {
+      objectId: "f".repeat(32),
+      role: "evidence",
+      mediaKind: "image",
+      contentType: "image/png",
+      displayName: "dialog.png",
+      summary: "Screenshot.",
+      originalBytes: 128,
+      storedBytes: 160,
+      sha256: "1".repeat(64),
+      keyId: "2".repeat(32),
+    } satisfies MemoryV6AppendProtectedObjectInput;
+
+    await withService(async ({ service, storage }) => {
+      Object.defineProperty(storage, "appendEntry", {
+        value: () => {
+          throw new Error("disk I/O error");
+        },
+      });
+      const append = await service.append(createLocalUserMemoryPrincipal(), appendRequest({
+        idempotencyKey: "file-append-generic-db-cleanup-error-key",
+        files: [{ path: "C:/trace/dialog.png", summary: "Screenshot.", role: "evidence" }],
+      }));
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_CLEANUP_FAILED");
+      assert.equal(append.error.effect, "partial");
+      assert.equal(append.error.details?.originalCode, "MEMORY_STORAGE_UNAVAILABLE");
+    }, {
+      protectedObjectImporter: {
+        inspect: async () => ({
+          originalBytes: protectedObject.originalBytes,
+          role: protectedObject.role,
+          mediaKind: protectedObject.mediaKind,
+          contentType: protectedObject.contentType,
+          displayName: protectedObject.displayName,
+          summary: protectedObject.summary,
+        }),
+        prepare: async () => protectedObject,
+        discardPrepared: async () => {
+          throw new Error("simulated cleanup failure");
+        },
+      },
+    });
+  });
+
+  it("file付きappendのprepare途中失敗後にcleanupも失敗した場合はpartial errorを返す", async () => {
+    let prepareCount = 0;
+    await withService(async ({ service }) => {
+      const append = await service.append(createLocalUserMemoryPrincipal(), appendRequest({
+        idempotencyKey: "file-append-prepare-cleanup-error-key",
+        files: [
+          { path: "C:/trace/first.png", summary: "First.", role: "evidence" },
+          { path: "C:/trace/second.png", summary: "Second.", role: "evidence" },
+        ],
+      }));
+      assert.equal("error" in append, true);
+      assert.equal(append.error.code, "MEMORY_FILE_CLEANUP_FAILED");
+      assert.equal(append.error.effect, "partial");
+      assert.equal(append.error.details?.originalCode, "MEMORY_FILE_IMPORT_FAILED");
+    }, {
+      protectedObjectImporter: {
+        inspect: async (file) => ({
+          originalBytes: 128,
+          role: "evidence",
+          mediaKind: "image",
+          contentType: "image/png",
+          displayName: file.path,
+          summary: file.summary,
+        }),
+        prepare: async () => {
+          prepareCount += 1;
+          if (prepareCount === 2) {
+            throw new Error("simulated prepare failure");
+          }
+          return {
+            objectId: "c".repeat(32),
+            role: "evidence",
+            mediaKind: "image",
+            contentType: "image/png",
+            displayName: "first.png",
+            summary: "First.",
+            originalBytes: 128,
+            storedBytes: 160,
+            sha256: "d".repeat(64),
+            keyId: "e".repeat(32),
+          };
+        },
+        discardPrepared: async () => {
+          throw new Error("simulated cleanup failure");
+        },
+      },
+    });
+  });
+
   it("file付きappendのprepareは順次実行して同時read/encryptを避ける", async () => {
     const protectedObjects = [0, 1, 2].map((index) => ({
       objectId: `${index}`.repeat(32),
@@ -846,7 +1344,9 @@ describe("MemoryV6Service", () => {
   it("runtime project resolver はproject.pathからV6 project scopeを作成して解決する", async () => {
     const tempDirectory = await mkdtemp(join(tmpdir(), "withmate-memory-v6-project-resolver-"));
     const workspacePath = join(tempDirectory, "repo");
+    const destinationWorkspacePath = join(tempDirectory, "destination-repo");
     await mkdir(join(workspacePath, ".git"), { recursive: true });
+    await mkdir(join(destinationWorkspacePath, ".git"), { recursive: true });
     const { dbPath } = await createOrVerifyV6FreshDatabase(tempDirectory);
     const storage = new MemoryV6Storage(dbPath);
     const service = new MemoryV6Service({
@@ -855,6 +1355,62 @@ describe("MemoryV6Service", () => {
     });
     try {
       const principal = createLocalUserMemoryPrincipal();
+      const searchBeforeAppend = service.search(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: [{ owner: "project", scope: "project", project: { type: "path", path: workspacePath } }],
+        query: "agent payload",
+      });
+      assert.equal("error" in searchBeforeAppend, false);
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
+
+      const forgetDryRun = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "path", path: workspacePath } },
+        entryIds: ["missing-entry"],
+        reason: "user_request",
+        dryRun: true,
+      });
+      assert.equal("error" in forgetDryRun, false);
+      assert.equal(forgetDryRun.writeOccurred, false);
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
+
+      const failedAppend = await service.append(principal, appendRequest({
+        target: {
+          owner: "project",
+          scope: "project",
+          project: { type: "path", path: workspacePath },
+        },
+        supersedes: ["missing-entry"],
+      }));
+      assert.equal("error" in failedAppend, true);
+      assert.equal(failedAppend.error.code, "MEMORY_ENTRY_NOT_FOUND");
+      assert.equal(failedAppend.error.effect, "none");
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
+
+      const failedMove = service.moveEntry(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: "missing-entry",
+        from: { owner: "user", scope: "global" },
+        to: { owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } },
+        reason: "move to project scope",
+        idempotencyKey: "missing-move",
+      });
+      assert.equal("error" in failedMove, true);
+      assert.equal(failedMove.error.code, "MEMORY_ENTRY_NOT_FOUND");
+      assert.equal(failedMove.error.effect, "none");
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
+
+      const forgetMissing = service.forget(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } },
+        entryIds: ["missing-entry"],
+        reason: "user_request",
+        idempotencyKey: "forget-missing-project",
+      });
+      assert.equal("error" in forgetMissing, false);
+      assert.equal(forgetMissing.results[0].status, "not_found");
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 0);
+
       const append = await service.append(principal, appendRequest({
         target: {
           owner: "project",
@@ -863,10 +1419,22 @@ describe("MemoryV6Service", () => {
         },
       }));
       assert.equal("error" in append, false);
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 1);
+
+      const moved = service.moveEntry(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        entryId: append.entry.id,
+        from: { owner: "project", scope: "project", project: { type: "path", path: workspacePath } },
+        to: { owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } },
+        reason: "move to destination project",
+        idempotencyKey: "move-to-new-project",
+      });
+      assert.equal("error" in moved, false);
+      assert.equal(listMemoryV6ProjectScopes(dbPath).length, 2);
 
       const search = service.search(principal, {
         schemaVersion: MEMORY_V6_SCHEMA_VERSION,
-        targets: [{ owner: "project", scope: "project", project: { type: "path", path: workspacePath } }],
+        targets: [{ owner: "project", scope: "project", project: { type: "path", path: destinationWorkspacePath } }],
         query: "agent payload",
       });
       assert.equal("error" in search, false);
@@ -932,6 +1500,87 @@ describe("MemoryV6Service", () => {
     });
   });
 
+  it("list-tagsはlimitとcursorでbounded pageを返す", async () => {
+    await withService(async ({ service, storage }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      for (let index = 0; index < 3; index += 1) {
+        storage.appendEntry({
+          target: projectTarget,
+          kind: "context",
+          title: `Tag ${index}`,
+          body: `Tag body ${index}`,
+          preview: `Tag ${index}`,
+          tags: [tag("topic", `tag-${index}`)],
+          source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+          id: `mem-tag-${index}`,
+          now: `2026-01-01T00:0${index}:00.000Z`,
+        });
+      }
+      const target = [{ owner: "project", scope: "project", project: { type: "id", id: "project-a" } }];
+      const first = service.listTags(principal, { schemaVersion: MEMORY_V6_SCHEMA_VERSION, targets: target, limit: 2 });
+      assert.equal("error" in first, false);
+      assert.equal(first.tags.length, 2);
+      assert.ok(first.nextCursor);
+      const second = service.listTags(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: target,
+        limit: 2,
+        cursor: first.nextCursor,
+      });
+      assert.equal("error" in second, false);
+      assert.equal(second.tags.length, 1);
+      assert.equal(second.nextCursor, undefined);
+      assert.equal(new Set([...first.tags, ...second.tags].map((item) => item.value)).size, 3);
+      const invalidCursor = service.listTags(principal, {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        targets: target,
+        cursor: "cursor-a",
+      });
+      assert.equal("error" in invalidCursor, true);
+      assert.equal(invalidCursor.error.code, "MEMORY_INVALID_FIELD");
+      assert.equal(invalidCursor.error.field, "cursor");
+    });
+  });
+
+  it("forgetはsourceMessageIdをidempotency tupleとmutation auditへ保持する", async () => {
+    await withService(async ({ service, storage, dbPath }) => {
+      const principal = createLocalUserMemoryPrincipal();
+      storage.appendEntry({
+        target: projectTarget,
+        kind: "context",
+        title: "Forget source",
+        body: "Forget source body",
+        preview: "Forget source",
+        tags: [],
+        source: { type: "agent", sessionId: null, messageId: null, providerId: "codex" },
+        id: "mem-forget-source",
+      });
+      const request = {
+        schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+        target: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
+        entryIds: ["mem-forget-source"],
+        reason: "incorrect",
+        sourceMessageId: "message-a",
+        idempotencyKey: "forget-source-key",
+      };
+      const first = service.forget(principal, request);
+      assert.equal("error" in first, false);
+      const replay = service.forget(principal, request);
+      assert.equal("error" in replay, false);
+      assert.equal(replay.results[0].replayed, true);
+      const conflict = service.forget(principal, { ...request, sourceMessageId: "message-b" });
+      assert.equal("error" in conflict, true);
+      assert.equal(conflict.error.code, "MEMORY_IDEMPOTENCY_CONFLICT");
+      const db = new (await import("node:sqlite")).DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const row = db.prepare("SELECT source_message_id FROM memory_mutation_events_v6 WHERE operation = 'forget' AND entry_id = ?").get("mem-forget-source") as { source_message_id: string };
+        assert.equal(row.source_message_id, "message-a");
+      } finally {
+        db.close();
+      }
+    });
+  });
+
   it("forget dry-runはpreviewだけを返し、move-entryは明示target間でretargetしてretry収束する", async () => {
     await withService(async ({ service, storage }) => {
       const principal = createLocalUserMemoryPrincipal();
@@ -971,6 +1620,7 @@ describe("MemoryV6Service", () => {
         entryId: "mem-move",
         from: { owner: "project", scope: "project", project: { type: "id", id: "project-a" } },
         to: { owner: "user", scope: "global" },
+        reason: "move CLI note to user scope",
         idempotencyKey: "move-cli-note",
       };
       const moved = service.moveEntry(principal, request);

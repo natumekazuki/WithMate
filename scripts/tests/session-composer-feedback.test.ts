@@ -26,7 +26,7 @@ describe("session composer feedback", () => {
     assert.equal(getComposerSendButtonTitle(state), BLANK_DRAFT_FEEDBACK);
   });
 
-  it("forced blocked feedback で blank draft 理由を表示する", () => {
+  it("forced feedback で blank draft 理由を helper として表示する", () => {
     const state = withForcedComposerBlockedFeedback(
       buildComposerSendabilityState({
         runState: "idle",
@@ -38,8 +38,63 @@ describe("session composer feedback", () => {
     );
 
     assert.equal(state.shouldShowFeedback, true);
-    assert.equal(state.feedbackTone, "blocked");
+    assert.equal(state.feedbackTone, "helper");
     assert.equal(state.primaryFeedback, BLANK_DRAFT_FEEDBACK);
+  });
+
+  it("送信開始時に draft clear と古い forced feedback が交差しても error feedback にしない", () => {
+    const beforeSend = resolveComposerSendabilityState({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "hello",
+      forceBlockedFeedback: true,
+    });
+    const afterDraftClear = resolveComposerSendabilityState({
+      runState: "idle",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "",
+      forceBlockedFeedback: true,
+    });
+
+    assert.equal(beforeSend.shouldShowFeedback, false);
+    assert.equal(afterDraftClear.primaryFeedback, BLANK_DRAFT_FEEDBACK);
+    assert.equal(afterDraftClear.feedbackTone, "helper");
+  });
+
+  it("submit pending は通常状態では error feedback を出さず、重複操作時だけ helper として表示する", () => {
+    const pending = buildComposerSendabilityState({
+      runState: "idle",
+      busyReason: "Message submission is in progress.",
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "hello",
+    });
+
+    assert.equal(pending.isSendDisabled, true);
+    assert.equal(pending.shouldShowFeedback, false);
+    assert.equal(pending.feedbackTone, null);
+    assert.equal(getComposerSendButtonTitle(pending), "Message submission is in progress.");
+
+    const afterDuplicateSubmit = withForcedComposerBlockedFeedback(pending, true);
+    assert.equal(afterDuplicateSubmit.primaryFeedback, "Message submission is in progress.");
+    assert.equal(afterDuplicateSubmit.feedbackTone, "helper");
+    assert.equal(afterDuplicateSubmit.shouldShowFeedback, true);
+  });
+
+  it("submit pending 中も実際の input error は blocked feedback を維持する", () => {
+    const state = buildComposerSendabilityState({
+      runState: "idle",
+      busyReason: "Message submission is in progress.",
+      blockedReason: "",
+      inputErrors: ["Path not found: C:/missing"],
+      draftText: "hello",
+    });
+
+    assert.equal(state.primaryFeedback, "Path not found: C:/missing");
+    assert.equal(state.feedbackTone, "blocked");
+    assert.equal(state.shouldShowFeedback, true);
   });
 
   it("既存の blocked reason がある時は forced feedback で上書きしない", () => {
@@ -90,7 +145,7 @@ describe("session composer feedback", () => {
       draftText: "",
     });
 
-    assert.equal(getComposerSendBlockedMessage(state), "送信できない状態だよ。");
+    assert.equal(getComposerSendBlockedMessage(state), "Message cannot be sent.");
   });
 
   it("send blocked message は送信可能なら null を返す", () => {

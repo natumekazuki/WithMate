@@ -143,6 +143,7 @@ export type WithMateWindowCatalogApi = {
 export type WithMateWindowSessionApi = {
   listSessionSummaries(): Promise<SessionSummary[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
@@ -293,6 +294,9 @@ export type WithMateWindowPickerApi = {
 export type WithMateWindowSubscriptionApi = {
   getAppBootStatus(): Promise<AppBootStatus>;
   subscribeAppBootStatus(listener: (status: AppBootStatus) => void): () => void;
+  subscribeSessionFilePreviewNavigation(
+    listener: (payload: SessionFilePreviewWindowPayload) => void,
+  ): () => void;
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;

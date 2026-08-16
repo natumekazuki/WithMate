@@ -348,6 +348,7 @@ CLI は thin client とする。
 - `get-file` / `export-files` は明示 output path / output directory を必須にする。
 - `file-usage` は target 指定なしで WithMate 全体使用量を返せる read-only command とする。
 - `file-usage --largest --limit N` は容量整理候補を entry 単位で返すが、file path、object store path、key material、hash は返さない。
+- Session runtime bindingを伴うagent呼び出しでは、largest entry候補をuser-global、Project、actor自身のCharacterに限定し、別Characterのentry metadataは返さない。quota集計値はWithMate全体の利用量を示す。
 - Memory Review の export は renderer に output path や object metadata を返さず、entry id と exported count のみを返す。
 
 project / character / user-global target を伴う object access は V6 Memory foundation の explicit target policy に従う。

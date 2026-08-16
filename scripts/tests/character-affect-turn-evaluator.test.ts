@@ -36,10 +36,12 @@ describe("character affect turn evaluator", () => {
             layer: "session",
             targetType: "task",
             targetId: "current-task",
+            family: "interest",
             label: "interest",
             valence: 0.4,
             intensity: 0.6,
           }],
+          evaluatedAt: "2026-08-09T00:00:00.000Z",
           version: "affect-v1-42",
           updatedAt: "2026-08-09T00:01:00.000Z",
         },
@@ -63,6 +65,8 @@ describe("character affect turn evaluator", () => {
     });
 
     assert.match(prompt.userText, /affect-v1-42/);
+    assert.match(prompt.userText, /2026-08-09T00:00:00\.000Z/);
+    assert.equal(JSON.parse(prompt.userText).currentAffect.evaluatedAt, "2026-08-09T00:00:00.000Z");
     assert.match(prompt.userText, /直ったね/);
     assert.doesNotMatch(prompt.userText, /RAW MEMORY BODY MUST NOT LEAK/);
     assert.doesNotMatch(prompt.userText, /Private title/);
@@ -75,6 +79,7 @@ describe("character affect turn evaluator", () => {
         layer: "relationship",
         targetType: "user",
         targetId: "local-user",
+        family: "affinity",
         label: "trust",
         valence: 0.7,
         arousal: null,
@@ -105,8 +110,23 @@ describe("character affect turn evaluator", () => {
         layer: "session",
         targetType: "task",
         targetId: "current-task",
+        family: "interest",
         label: "interest",
         valence: 2,
+        arousal: null,
+        intensity: 0.5,
+        reason: "reason",
+        evidence: "evidence",
+      }],
+    }), null);
+    assert.equal(normalizeCharacterAffectTurnEvaluation({
+      candidates: [{
+        layer: "session",
+        targetType: "task",
+        targetId: "current-task",
+        family: "unknown",
+        label: "free label",
+        valence: 0,
         arousal: null,
         intensity: 0.5,
         reason: "reason",

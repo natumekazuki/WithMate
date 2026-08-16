@@ -103,6 +103,10 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     liveRunAssistantText: "",
     hasLiveRunAssistantText: false,
     liveRunErrorMessage: "",
+    inlinePathFeedback: "",
+    workspaceAvailabilityMessage: "",
+    isWorkspaceAvailabilityCheckPending: false,
+    isWorkspaceAvailable: true,
     isMessageListFollowing: true,
     retryBanner: null,
     isRetryActionDisabled: false,
@@ -140,7 +144,6 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     modelSelectOptions: [{ value: "gpt-test", label: "GPT Test" }],
     selectedModelFallbackLabel: "GPT Test",
     reasoningSelectOptions: [{ value: "low", label: "low" }],
-    actionDockCompactPreview: "",
     attachmentCount: 0,
     isActionDockExpanded: true,
     isContextRailResizing: false,
@@ -197,6 +200,8 @@ function createProjectionInput(overrides: Partial<AgentSessionChatProjectionInpu
     onResolveLiveApproval: noop,
     onResolveLiveElicitation: noop,
     onOpenInlinePath: noop,
+    onDismissInlinePathFeedback: noop,
+    onRecheckWorkspaceAvailability: noop,
     getChangedFilesEmptyText: () => "ファイル変更はありません",
     onCopyMessageText: noop,
     onQuoteMessageText: noop,
@@ -293,6 +298,96 @@ test("buildAgentSessionChatWindowProps は retry actions を共通 chat layout �
   assert.match(html, /retry-banner failed/);
   assert.match(html, />再送<\/button>/);
   assert.match(html, />編集<\/button>/);
+});
+
+test("buildAgentSessionChatWindowProps は Workspace 利用不可を共通エラー領域へ投影して操作を無効化する", () => {
+  const onRecheckWorkspaceAvailability = noop;
+  const message = "Workspace not found: C:/missing. Restore it, then recheck.";
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    workspaceAvailabilityMessage: message,
+    isWorkspaceAvailable: false,
+    onRecheckWorkspaceAvailability,
+    composerSendability: {
+      primaryFeedback: message,
+      secondaryFeedback: [],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, [{
+    id: "workspace-unavailable",
+    message,
+    relatedControl: "composer",
+    actionLabel: "Recheck",
+    isActionDisabled: false,
+    onAction: onRecheckWorkspaceAvailability,
+  }]);
+  assert.equal(props.headerProps.isTerminalDisabled, true);
+  const headerHtml = renderToStaticMarkup(React.createElement(React.Fragment, null, props.headerProps.workspaceActions));
+  assert.match(headerHtml, /disabled=""/);
+});
+
+test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを共通領域へ投影する", () => {
+  const onDismissInlinePathFeedback = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    inlinePathFeedback: "The local path was not found.",
+    onDismissInlinePathFeedback,
+    composerSendability: {
+      primaryFeedback: "Path not found: C:/missing",
+      secondaryFeedback: ["C:/missing"],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+    isActionDockExpanded: false,
+  }));
+
+  assert.deepEqual(props.errorNotices, [
+    {
+      id: "composer-sendability",
+      message: "Path not found: C:/missing",
+      details: ["C:/missing"],
+      relatedControl: "composer",
+    },
+    {
+      id: "inline-path-open",
+      message: "The local path was not found.",
+      dismissLabel: "パスを開いた結果を閉じる",
+      onDismiss: onDismissInlinePathFeedback,
+    },
+  ]);
+  assert.equal(props.isActionDockExpanded, false);
+  assert.equal("inlinePathFeedback" in props.messageColumnProps, false);
+});
+
+test("buildAgentSessionChatWindowProps は submit pending の helper feedback を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Message submission is in progress.",
+      primaryFeedback: "Message submission is in progress.",
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+  assert.equal(props.composerProps.composerSendability.feedbackTone, "helper");
+  assert.equal(props.composerProps.composerSendability.isBusy, true);
+});
+
+test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      primaryFeedback: "Message is empty.",
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    },
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
 });
 
 test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操作だけ隠す", () => {
@@ -395,7 +490,6 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
     pendingRunIndicatorText: "Agent responding",
     isMessageListFollowing: false,
     composerSendButtonTitle: "Agent stop",
-    actionDockCompactPreview: "Agent preview",
     chatNotice: "New messages",
     attachmentCount: 2,
     onCollapseActionDock,
@@ -420,16 +514,43 @@ test("buildAgentSessionChatWindowProps は composer と compact dock の live pr
   assert.equal(props.composerProps.sendButtonTitle, "Agent stop");
   assert.equal("onCollapse" in props.composerProps, false);
   assert.equal(props.composerProps.chatNotice, "New messages");
-  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Agent preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 2);
   assert.equal(props.compactActionDockProps.chatNotice, "New messages");
   assert.equal(props.compactActionDockProps.isRunning, true);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Agent responding");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
-  assert.equal(props.compactActionDockProps.sendButtonTitle, "Agent stop");
+  assert.equal(props.compactActionDockProps.cancelButtonTitle, "Agent stop");
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
-  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal(props.compactActionDockProps.onCancel, onSendOrCancel);
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.deepEqual(props.additionalDirectoryListProps?.items, []);
+});
+
+test("buildAgentSessionChatWindowProps は追加Directory一覧をshared chat surfaceへ投影する", () => {
+  const onRemoveAdditionalDirectory = () => {};
+  const additionalDirectoryItems = [{
+    key: "C:/shared/docs",
+    path: "C:/shared/docs",
+    primaryLabel: "docs",
+    secondaryLabel: "C:/shared",
+    title: "C:/shared/docs",
+    canRemove: true,
+  }];
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    isAdditionalDirectoryListOpen: true,
+    additionalDirectoryItems,
+    onRemoveAdditionalDirectory,
+  }));
+
+  assert.deepEqual(props.additionalDirectoryListProps, {
+    isOpen: true,
+    items: additionalDirectoryItems,
+    isInteractionDisabled: false,
+    onRemove: onRemoveAdditionalDirectory,
+  });
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.equal("onRemoveAdditionalDirectory" in props.composerProps, false);
 });
 
 test("buildAgentSessionChatWindowProps は Codex で custom agent picker を隠す", () => {

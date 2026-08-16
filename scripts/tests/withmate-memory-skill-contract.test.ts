@@ -30,8 +30,10 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /Use `targetType=bug` for frustration with a bug/);
     assert.match(skill, /entries in `rejected` were not/);
     assert.match(skill, /rejected candidate must not be copied into another store/);
-    assert.match(skill, /lifecycle owns the mandatory post-turn appraisal/);
-    assert.match(skill, /Do not submit the same turn again through MCP/);
+    assert.match(skill, /lifecycle owns the mandatory post-turn appraisal only/);
+    assert.match(skill, /Immediate concrete affect events remain MCP appraisal candidates/);
+    assert.match(skill, /first react naturally in the user-facing response, then call `character_affect\.appraise`/);
+    assert.match(skill, /If frustration occurs and later changes to relief, appraise both events/);
   });
 
   it("semantic duplicate、別episode、同一event retryの規則を分離する", async () => {
@@ -41,17 +43,20 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /separate event at a different time may be appended/);
     assert.match(skill, /same turn, event, timeout retry, response-loss retry, or client resend uses the unchanged request and the same idempotency key/);
     assert.match(skill, /different event or changed request uses a new key/);
+    assert.match(skill, /different occurrence times or supporting events are separate events/);
+    assert.match(skill, /semantic similarity is not a duplicate rule/);
+    assert.match(skill, /carry the `version` returned by a successful appraisal into the next appraisal/);
+    assert.match(skill, /After timeout, response loss, or `effect: unknown`, reconcile only by resending the unchanged request/);
     assert.match(skill, /Do not send a raw conversation transcript/);
     assert.match(skill, /include it as that affect candidate's `memoryEpisode`/);
     assert.match(skill, /linked shape requires `title`, `preview`, `body`, and `salience` from 0 to 1/);
     assert.match(skill, /Do not also call `character_memory\.append_episode` for the event/);
     assert.match(skill, /standalone episode that is not linked to an affect event/);
     assert.match(skill, /These fields are not part of a linked `memoryEpisode`/);
-    assert.match(skill, /Use the existing general Memory CLI for these candidates because the public Character MCP surface has no semantic append tool/);
+    assert.match(skill, /Use the general `memory\.\*` MCP tools for these candidates/);
     assert.match(skill, /explicit `project`, `user-global`, `character`, or `character\+project` target/);
-    assert.match(skill, /general `withmate-memory search` against that exact target as duplicate preflight/);
-    assert.match(skill, /general `withmate-memory append` with the same explicit target/);
-    assert.match(skill, /semantic Memory path is not an MCP fallback and does not use `--fallback-from mcp`/);
+    assert.match(skill, /Run `memory\.search` against that exact target as duplicate preflight/);
+    assert.match(skill, /use `memory\.append` with the same explicit target/);
     assert.match(skill, /Do not convert a rejected affect candidate or episode mutation into semantic Memory/);
   });
 
@@ -65,6 +70,8 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(skill, /version conflict/);
     assert.match(skill, /must not be bypassed with CLI/);
     assert.match(skill, /same running WithMate application service and persistence owner/);
+    assert.match(skill, /`MEMORY_IDEMPOTENCY_CONFLICT`/);
+    assert.match(skill, /successful general Memory retry may include `replayed: true`/);
   });
 
   it("effect certainty、read-back、shadow mode、tool可視性を区別する", async () => {
@@ -98,6 +105,21 @@ describe("withmate-memory distributed Skill contract", () => {
     ]) {
       assert.equal(reference.includes(`\`${tool}\``), true, `${tool} must be documented`);
     }
+    for (const tool of [
+      "memory.search",
+      "memory.get_entry",
+      "memory.list_targets",
+      "memory.list_entries",
+      "memory.list_tags",
+      "memory.append",
+      "memory.forget",
+      "memory.move_entry",
+      "memory.get_file",
+      "memory.export_files",
+      "memory.file_usage",
+    ]) {
+      assert.equal(reference.includes(`\`${tool}\``), true, `${tool} must be documented`);
+    }
     for (const command of [
       "context-get",
       "affect-appraise",
@@ -115,16 +137,28 @@ describe("withmate-memory distributed Skill contract", () => {
     }
     assert.match(reference, /CLI exit code is transport\/adapter status, not a replacement for the JSON domain result/);
     assert.match(reference, /`character_context\.get` returns `characterId`, `sessionId`/);
+    assert.match(reference, /actor `sessionId` is resolved from the WithMate runtime binding/);
+    assert.match(reference, /request-body `sessionId` does not establish actor authority/);
+    assert.match(reference, /`character_memory\.append_episode` retains `sessionId` in its public input/);
+    assert.match(reference, /server replaces it with the actor Session before validation/);
+    assert.match(reference, /as `family`, free-label value/);
+    assert.match(reference, /read-time `evaluatedAt`/);
+    assert.match(reference, /effective components with `family`/);
     assert.match(reference, /`character_affect\.appraise` returns `saved\[\]`, `rejected\[\]`/);
     assert.match(reference, /candidate's `memoryEpisode`/);
     assert.match(reference, /required `salience` from 0 to 1/);
     assert.match(reference, /Linked `memoryEpisode` does not use `observedFact` or `characterObservation`/);
-    assert.match(reference, /lifecycle owns mandatory post-turn appraisal/);
+    assert.match(reference, /owner of mandatory post-turn appraisal, not the sole owner of every affect mutation/);
+    assert.match(reference, /bound Agent may call `character_affect\.appraise` when it recognizes a concrete affect change/);
+    assert.match(reference, /Different occurrence times or supporting events use different keys/);
+    assert.match(reference, /use the `version` from each successful appraisal as the next request's `expectedVersion`/);
     assert.match(reference, /structured error can still identify committed or partially committed state/);
-    assert.match(reference, /general CLI with an explicit `character` or `character\+project` target for semantic Character preferences/);
-    assert.match(reference, /That use is not MCP fallback/);
+    assert.match(reference, /Use `memory\.search`, `memory\.get_entry`, and `memory\.append` with an explicit `character` or `character\+project` target/);
     assert.match(reference, /Character Memory mutations return `operation`/);
     assert.match(reference, /conversation text, Memory bodies, affect evidence text, inferred user emotion/);
+    assert.match(reference, /family-bucketed candidates\/saves\/rejections/);
+    assert.match(reference, /legacy event\/projection counts, decay exclusions/);
+    assert.match(reference, /projection cache hit\/miss\/stale counts/);
     assert.match(reference, /`bundleVersion`/);
   });
 
@@ -137,11 +171,17 @@ describe("withmate-memory distributed Skill contract", () => {
     assert.match(cli, /### append/);
     assert.match(cli, /### forget/);
     assert.match(cli, /### move-entry/);
+    assert.match(
+      cli,
+      /### move-entry[\s\S]*"reason": "Retarget this entry to user-global Memory\."[\s\S]*"idempotencyKey": "stable-move-key"/,
+    );
     assert.match(cli, /## Exit Codes/);
     assert.match(cli, /Character Context MCP and CLI Reference/);
     assert.match(cli, /Semantic Memory target shapes/);
     assert.match(cli, /A Character preference that belongs only to one project uses the combined target/);
     assert.match(cli, /"owner": "character"[\s\S]*"project": \{ "type": "path"[\s\S]*"scope": "project"/);
     assert.match(cli, /Do not silently drop either owner from a combined Character\+Project candidate/);
+    assert.match(cli, /Normal agent operations use the general `memory\.\*` tools/);
+    assert.match(cli, /A structured MCP domain error is not an availability failure/);
   });
 });

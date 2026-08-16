@@ -66,6 +66,7 @@ describe("home-settings-view-model", () => {
   it("persisted settings は resolved provider settings を埋め込む", () => {
     const draft = createDefaultAppSettings();
     draft.autoCollapseActionDockOnSend = false;
+    draft.scrollToLatestOnSend = false;
     draft.memoryExtractionProviderSettings.codex = {
       model: "missing-model",
       reasoningEffort: "high",
@@ -77,6 +78,7 @@ describe("home-settings-view-model", () => {
     const persisted = buildPersistedAppSettingsFromRows(draft, rows);
 
     assert.equal(persisted.autoCollapseActionDockOnSend, false);
+    assert.equal(persisted.scrollToLatestOnSend, false);
     assert.deepEqual(persisted.memoryExtractionProviderSettings.codex, {
       model: "gpt-5.4",
       reasoningEffort: "high",

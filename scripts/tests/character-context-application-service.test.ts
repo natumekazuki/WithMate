@@ -10,15 +10,27 @@ import {
   CHARACTER_CONTEXT_SCHEMA_VERSION,
   isCharacterContextError,
 } from "../../src/character-context/character-context-contract.js";
-import { CharacterContextApplicationService } from "../../src-electron/character-context-application-service.js";
+import {
+  CharacterContextApplicationService,
+  type CharacterContextUnexpectedErrorDiagnostic,
+} from "../../src-electron/character-context-application-service.js";
 import { CharacterAffectService } from "../../src-electron/character-affect-service.js";
 import { createCharacterAffectServiceWithMemory } from "../../src-electron/character-affect-memory-adapter.js";
 import { CharacterAffectStorage } from "../../src-electron/character-affect-storage.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
+import {
+  LOCAL_USER_MEMORY_PERMISSIONS,
+  type MemoryV6SessionBindingPrincipal,
+} from "../../src-electron/memory-v6-permission.js";
 
-function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?: boolean } = {}) {
+function createFixture(options: {
+  failEpisodeWrite?: boolean;
+  failMemorySearch?: boolean;
+  failAffectState?: boolean;
+  onUnexpectedError?(diagnostic: CharacterContextUnexpectedErrorDiagnostic): void;
+} = {}) {
   const directory = mkdtempSync(join(tmpdir(), "withmate-character-context-"));
   const dbPath = join(directory, "withmate-v6.db");
   const db = new DatabaseSync(dbPath);
@@ -33,11 +45,19 @@ function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?:
         character_id, character_snapshot_json, created_at, updated_at, last_active_at
       ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+    db.prepare(`
+      INSERT INTO sessions_v6 (
+        id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+        character_id, character_snapshot_json, created_at, updated_at, last_active_at
+      ) VALUES ('session-b', 'B', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
+    `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
   } finally {
     db.close();
   }
   const memoryStorage = new MemoryV6Storage(dbPath);
-  const affectStorage = new CharacterAffectStorage(dbPath);
+  const affectStorage = new CharacterAffectStorage(dbPath, {
+    now: () => new Date("2026-08-09T01:00:00.000Z"),
+  });
   const memoryService = new MemoryV6Service({
     storage: memoryStorage,
     resolveCharacterById: (id) => id === "character-a" ? { id, name: "A" } : null,
@@ -63,6 +83,11 @@ function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?:
         memoryStorage,
         evaluator: { async evaluate() { return []; } },
       });
+  if (options.failAffectState) {
+    affectService.getEffectiveState = () => {
+      throw new Error("C:/private/workspace secret-token must not be logged");
+    };
+  }
   const service = new CharacterContextApplicationService({
     memoryService,
     affectService,
@@ -79,6 +104,7 @@ function createFixture(options: { failEpisodeWrite?: boolean; failMemorySearch?:
           snapshotAt: "2026-08-09T00:00:00.000Z",
         }
       : null,
+    onUnexpectedError: options.onUnexpectedError,
   });
   return {
     directory,
@@ -101,6 +127,7 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
     layer: "session",
     targetType: "bug",
     targetId: "bug-1",
+    family: "interest",
     value: { label: "interest", valence: 0.4, arousal: 0.3 },
     intensity: 0.6,
     reason: "The bug became tractable.",
@@ -112,6 +139,41 @@ function affectCandidate(overrides: Partial<AffectEventInput> = {}): AffectEvent
 }
 
 describe("CharacterContextApplicationService", () => {
+  it("session bindingは別Characterの存在有無をlookup前の同じauthority errorへ畳む", async () => {
+    const fixture = createFixture();
+    try {
+      const principal: MemoryV6SessionBindingPrincipal = {
+        type: "session_binding",
+        bindingIdHash: "binding-a",
+        sessionId: "session-a",
+        providerId: "codex",
+        characterId: "character-a",
+        permissions: LOCAL_USER_MEMORY_PERMISSIONS,
+      };
+      const request = (characterId: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId,
+        query: "existence oracle",
+        scope: { scope: "character" as const },
+        limit: 3,
+      });
+
+      const existingOther = await fixture.service.searchMemory(request("character-b"), "mcp", principal);
+      const missingOther = await fixture.service.searchMemory(request("character-missing"), "mcp", principal);
+
+      assert.equal(isCharacterContextError(existingOther), true);
+      assert.equal(isCharacterContextError(missingOther), true);
+      if (!isCharacterContextError(existingOther) || !isCharacterContextError(missingOther)) return;
+      assert.equal(existingOther.error.code, "authority_denied");
+      assert.equal(missingOther.error.code, "authority_denied");
+      assert.equal(existingOther.error.message, missingOther.error.message);
+      assert.equal(existingOther.error.field, "characterId");
+      assert.equal(missingOther.error.field, "characterId");
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("read-only Memory searchの予期しないfailureをeffect noneで返す", async () => {
     const fixture = createFixture({ failMemorySearch: true });
     try {
@@ -128,6 +190,76 @@ describe("CharacterContextApplicationService", () => {
         assert.equal(result.error.effect, "none");
         assert.equal(result.error.retryable, true);
       }
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("Context内のMemory検索failureを検索量付きのstage diagnosticへ写像する", async () => {
+    const diagnostics: CharacterContextUnexpectedErrorDiagnostic[] = [];
+    const fixture = createFixture({
+      failMemorySearch: true,
+      onUnexpectedError: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    try {
+      const result = await fixture.service.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        query: "failure terms",
+        memoryLimit: 3,
+      }, "lifecycle");
+      assert.equal(isCharacterContextError(result), true);
+      if (!isCharacterContextError(result)) return;
+      assert.equal(result.error.code, "storage_unavailable");
+      assert.equal(result.error.details?.failureStage, "memory_search");
+      assert.equal(diagnostics.length, 1);
+      assert.equal(diagnostics[0]?.stage, "memory_search");
+      assert.equal(diagnostics[0]?.errorName, "Error");
+      assert.equal(diagnostics[0]?.queryLength, "failure terms".length);
+      assert.ok((diagnostics[0]?.searchTermCount ?? 0) > 0);
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("Context stage failureを内容なしの安全な診断へ分離する", async () => {
+    const diagnostics: CharacterContextUnexpectedErrorDiagnostic[] = [];
+    const fixture = createFixture({
+      failAffectState: true,
+      onUnexpectedError: (diagnostic) => diagnostics.push(diagnostic),
+    });
+    try {
+      const result = await fixture.service.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        query: "長い query terms",
+        memoryLimit: 3,
+      }, "lifecycle");
+      assert.equal(isCharacterContextError(result), true);
+      if (!isCharacterContextError(result)) return;
+      assert.equal(result.error.code, "storage_unavailable");
+      assert.equal(result.error.effect, "none");
+      assert.equal(result.error.details?.failureStage, "affect_state");
+      assert.equal(diagnostics.length, 1);
+      assert.deepEqual(
+        {
+          operation: diagnostics[0]?.operation,
+          transport: diagnostics[0]?.transport,
+          stage: diagnostics[0]?.stage,
+          errorName: diagnostics[0]?.errorName,
+        },
+        {
+          operation: "character_context.get",
+          transport: "lifecycle",
+          stage: "affect_state",
+          errorName: "Error",
+        },
+      );
+      assert.doesNotMatch(JSON.stringify(diagnostics), /private|workspace|secret-token/);
+      assert.match(diagnostics[0]?.safeMessage ?? "", /affect_state failed/);
+      assert.ok((diagnostics[0]?.durationMs ?? -1) >= 0);
     } finally {
       fixture.close();
     }
@@ -308,12 +440,53 @@ describe("CharacterContextApplicationService", () => {
       if (isCharacterContextError(unknown)) {
         assert.equal(unknown.error.code, "unknown_scope");
       }
+      assert.equal(fixture.service.getMetrics().affect.versionRejections, 1);
     } finally {
       fixture.close();
     }
   });
 
-  it("episodeの訂正とforgetをexplicit authority、idempotency、read-back付きで行う", async () => {
+  it("同じexpectedVersionの同時appraisalは一方だけcommitしてversion conflictへ収束する", async () => {
+    const fixture = createFixture();
+    try {
+      const before = await fixture.service.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+      });
+      assert.equal(isCharacterContextError(before), false);
+      if (isCharacterContextError(before)) return;
+      const request = (idempotencyKey: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        expectedVersion: before.affect.version,
+        authority: { kind: "conversation" as const },
+        candidates: [affectCandidate({ idempotencyKey })],
+      });
+      const results = await Promise.all([
+        fixture.service.appraise(request("concurrent-a")),
+        fixture.service.appraise(request("concurrent-b")),
+      ]);
+      assert.equal(results.filter((result) => !isCharacterContextError(result)).length, 1);
+      assert.equal(results.filter(
+        (result) => isCharacterContextError(result) && result.error.code === "version_conflict",
+      ).length, 1);
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        assert.equal(
+          (db.prepare("SELECT COUNT(*) AS count FROM character_affect_events_v6").get() as { count: number }).count,
+          1,
+        );
+      } finally {
+        db.close();
+      }
+    } finally {
+      fixture.close();
+    }
+  });
+
+  it("episodeの訂正とforgetをconversation authority、idempotency、read-back付きで行う", async () => {
     const fixture = createFixture();
     try {
       const appended = await fixture.service.appendEpisode({
@@ -333,28 +506,11 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(isCharacterContextError(appended), false);
       if (isCharacterContextError(appended) || !appended.entry) return;
 
-      const denied = await fixture.service.correctMemory({
-        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-        characterId: "character-a",
-        entryId: appended.entry.id,
-        authority: { kind: "conversation" },
-        reason: "Correction requested.",
-        idempotencyKey: "episode-correct",
-        replacement: {
-          title: "Corrected episode",
-          body: "The corrected shared episode.",
-          preview: "Corrected episode.",
-          observedFact: "The user corrected the event.",
-        },
-      });
-      assert.equal(isCharacterContextError(denied), true);
-      if (isCharacterContextError(denied)) assert.equal(denied.error.code, "authority_denied");
-
       const corrected = await fixture.service.correctMemory({
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: appended.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user requested correction." },
+        authority: { kind: "conversation" },
         reason: "Correction requested.",
         idempotencyKey: "episode-correct",
         replacement: {
@@ -373,7 +529,7 @@ describe("CharacterContextApplicationService", () => {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: appended.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user changed the correction reason." },
+        authority: { kind: "conversation" },
         reason: "A different correction reason.",
         idempotencyKey: "episode-correct",
         replacement: {
@@ -392,7 +548,7 @@ describe("CharacterContextApplicationService", () => {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: corrected.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user requested forget." },
+        authority: { kind: "conversation" },
         reason: "incorrect",
         idempotencyKey: "episode-forget",
       });
@@ -403,7 +559,7 @@ describe("CharacterContextApplicationService", () => {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         entryId: corrected.entry.id,
-        authority: { kind: "explicit_user_instruction", reason: "The user changed the forget reason." },
+        authority: { kind: "conversation" },
         reason: "privacy",
         idempotencyKey: "episode-forget",
       });
@@ -432,6 +588,63 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  it("Character Memory appendはbinding principalをsourceとidempotency namespaceへ引き渡す", async () => {
+    const fixture = createFixture();
+    try {
+      const principal = (sessionId: string, bindingIdHash: string): MemoryV6SessionBindingPrincipal => ({
+        type: "session_binding",
+        bindingIdHash,
+        sessionId,
+        providerId: "codex",
+        characterId: "character-a",
+        permissions: LOCAL_USER_MEMORY_PERMISSIONS,
+      });
+      const request = (sessionId: string) => ({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId,
+        authority: { kind: "conversation" as const },
+        idempotencyKey: "same-key",
+        episode: {
+          title: `Episode ${sessionId}`,
+          body: `Episode body for ${sessionId}.`,
+          preview: `Episode ${sessionId}.`,
+          observedFact: `Observed in ${sessionId}.`,
+        },
+      });
+
+      const first = await fixture.service.appendEpisode(
+        request("session-a"),
+        "mcp",
+        principal("session-a", "binding-a"),
+      );
+      const second = await fixture.service.appendEpisode(
+        request("session-b"),
+        "mcp",
+        principal("session-b", "binding-b"),
+      );
+
+      assert.equal(isCharacterContextError(first), false);
+      assert.equal(isCharacterContextError(second), false);
+      if (isCharacterContextError(first) || isCharacterContextError(second)) return;
+      assert.notEqual(first.entry?.id, second.entry?.id);
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        const rows = db.prepare(`
+          SELECT id, source_session_id
+          FROM memory_entries_v6
+          WHERE id IN (?, ?)
+          ORDER BY source_session_id
+        `).all(first.entry?.id, second.entry?.id) as Array<{ id: string; source_session_id: string }>;
+        assert.deepEqual(rows.map((row) => row.source_session_id), ["session-a", "session-b"]);
+      } finally {
+        db.close();
+      }
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("transport別結果、拒否理由、replay、fallbackを内容なしで集計する", async () => {
     const fixture = createFixture();
     try {
@@ -447,12 +660,51 @@ describe("CharacterContextApplicationService", () => {
           idempotencyKey: "invalid-relationship-target",
         })],
       }, "mcp");
+      await fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [affectCandidate({
+          family: "other",
+          idempotencyKey: "metrics-other",
+        })],
+      }, "mcp");
+      await fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [affectCandidate({
+          family: "unknown" as never,
+          idempotencyKey: "metrics-unknown",
+        })],
+      }, "mcp");
+      await fixture.service.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        authority: { kind: "conversation" },
+        candidates: [affectCandidate({
+          schemaVersion: "unknown-affect-schema" as never,
+          family: "joy",
+          idempotencyKey: "metrics-schema",
+        })],
+      }, "mcp");
       fixture.service.recordFallback("mcp", "cli");
 
       const metrics = fixture.service.getMetrics();
-      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.calls, 1);
-      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.rejectionsByCode.invalid_input, 1);
+      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.calls, 4);
+      assert.equal(metrics.operations["mcp:character_affect.appraise"]?.rejectionsByCode.invalid_input, 3);
       assert.equal(metrics.fallbacks["mcp->cli"], 1);
+      assert.equal(metrics.affect.candidatesByFamily.interest, 1);
+      assert.equal(metrics.affect.rejectedByFamily.interest, 1);
+      assert.equal(metrics.affect.candidatesByFamily.other, 1);
+      assert.equal(metrics.affect.savedByFamily.other, 1);
+      assert.equal(metrics.affect.otherRate, 1 / 3);
+      assert.equal(metrics.affect.invalidFamilyRejections, 1);
+      assert.equal(metrics.affect.schemaVersionRejections, 1);
+      assert.equal(metrics.affect.storage.eventsByFamily.other, 1);
       assert.doesNotMatch(JSON.stringify(metrics), /bug-123|invalid-relationship-target/);
     } finally {
       fixture.close();
@@ -462,13 +714,17 @@ describe("CharacterContextApplicationService", () => {
   it("Affect保存後のepisode失敗をpartial failureとして返し、成功に見せない", async () => {
     const fixture = createFixture({ failEpisodeWrite: true });
     try {
-      const result = await fixture.service.appraise({
+      const request = {
         schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
         characterId: "character-a",
         sessionId: "session-a",
-        authority: { kind: "conversation" },
+        authority: { kind: "conversation" as const },
         candidates: [affectCandidate({
           idempotencyKey: "partial-episode",
+          targetId: "private-target-id",
+          value: { label: "private-free-label", valence: 0.4 },
+          reason: "private-reason",
+          evidence: "private-evidence",
           memoryEpisode: {
             title: "Partial episode",
             body: "Episode body",
@@ -476,7 +732,8 @@ describe("CharacterContextApplicationService", () => {
             salience: 0.8,
           },
         })],
-      });
+      };
+      const result = await fixture.service.appraise(request);
 
       assert.equal(isCharacterContextError(result), true);
       if (!isCharacterContextError(result)) return;
@@ -484,6 +741,15 @@ describe("CharacterContextApplicationService", () => {
       assert.equal(result.error.effect, "committed");
       assert.equal(result.error.retryable, true);
       assert.equal(typeof result.error.details?.eventId, "string");
+      const replay = await fixture.service.appraise(request);
+      assert.equal(isCharacterContextError(replay), true);
+      if (!isCharacterContextError(replay)) return;
+      assert.equal(replay.error.effect, "committed");
+      const metrics = fixture.service.getMetrics();
+      assert.equal(metrics.affect.savedByFamily.interest, 1);
+      assert.equal(metrics.affect.storage.events, 1);
+      assert.equal(metrics.affect.storage.idempotencyReplays, 1);
+      assert.doesNotMatch(JSON.stringify(metrics), /private-target-id|private-free-label|private-reason|private-evidence/);
     } finally {
       fixture.close();
     }

@@ -14,7 +14,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - ローカル path link に `#L10` などの fragment が付いている場合は、少なくとも path 本体を開けるように fragment を無視して扱う。`:10` または `:10:4` 形式は、指定された path が存在しない場合だけ行番号または行番号と列番号として扱う
 - Markdown file preview の相対 link と相対 image は、その file の親 directory と同じ認可済み root の中で解決する
 - OS の既定アプリで file を開けない場合は理由を表示し、通常の Open から Explorer 表示へ自動で切り替えない
-- render 済み link の context menu は「リンクをコピー」を提供し、表示 label ではなく通常の Open と同じ `href` target を clipboard へ渡す。encoded URL / path は decode・normalizeしない
+- render 済み link の context menu は「リンクをコピー」を提供する。protocol-relativeを含む外部 URL は表示 label ではなく `href` target を保ち、local / `file:` / Windows absolute path は通常の Open と同じ Main process の path 解決境界で decode・filesystem path 変換して clipboard へ渡す。最終的な copy target に制御文字を含む場合は clipboard を更新せず失敗として通知する
 - HTTP / HTTPS、`mailto:`、workspace 相対 path、`file:`、Windows absolute pathをcopy対象とし、unsafe schemeで除去されたlinkと同一pageの`#` anchorは対象にしない
 - context menuはmouseの右clickに加え、focusしたlinkからShift+F10またはContext Menu keyで到達できるnative menuとする。dismissはcopy成功として通知しない
 - detached preview の navigation と root authorization は `docs/adr/020-file-preview-window-navigation.md` を正本とする

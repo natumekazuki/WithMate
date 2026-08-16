@@ -137,6 +137,8 @@ test("getProviderRuntimeCapabilities は provider と background policy から�
   assert.equal(capabilities.providerSupported, true);
   assert.equal(capabilities.instructionSyncSupported, true);
   assert.equal(capabilities.tokenUsageSupported, true);
+  assert.equal(capabilities.agentRuntimeBindingSupported, true);
+  assert.equal(capabilities.agentRuntimeBindingTransport, "env");
 });
 
 test("getProviderRuntimeCapabilities は MVP 対象外 provider の support flag を false にする", () => {
@@ -145,4 +147,14 @@ test("getProviderRuntimeCapabilities は MVP 対象外 provider の support flag
   assert.equal(capabilities.instructionSyncSupported, false);
   assert.equal(capabilities.tokenUsageSupported, false);
   assert.equal(capabilities.providerSupported, false);
+  assert.equal(capabilities.agentRuntimeBindingSupported, false);
+  assert.equal(capabilities.agentRuntimeBindingTransport, "unsupported");
+});
+
+test("getProviderRuntimeCapabilities は確認済みproviderへruntime binding capabilityを公開する", () => {
+  for (const providerId of ["codex", "copilot"]) {
+    const capabilities = getProviderRuntimeCapabilities({ providerId });
+    assert.equal(capabilities.agentRuntimeBindingSupported, true);
+    assert.equal(capabilities.agentRuntimeBindingTransport, "env");
+  }
 });

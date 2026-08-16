@@ -58,7 +58,7 @@ export type SettingsCatalogServiceDeps = {
   replaceCompanionSessions?: (nextSessions: CompanionSession[]) => Awaitable<CompanionSession[]>;
   clearProviderQuotaTelemetry(providerId: string): void;
   clearSessionContextTelemetry(sessionId: string): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
   clearAuditLogs(): Awaitable<void>;
   resetAppSettings(): Awaitable<AppSettings>;
   resetModelCatalogToBundled(): ModelCatalogSnapshot;
@@ -67,7 +67,7 @@ export type SettingsCatalogServiceDeps = {
   clearAllProviderQuotaTelemetry(): void;
   clearAllSessionContextTelemetry(): void;
   clearAllSessionBackgroundActivities(): void;
-  invalidateAllProviderSessionThreads(): void;
+  invalidateAllProviderSessionThreads(): Awaitable<void>;
   closeResetTargetWindows(): void;
   dismissSessionTurnNotification(sessionId: string): void;
   recreateDatabaseFile(): Promise<ModelCatalogSnapshot>;
@@ -301,7 +301,7 @@ export class SettingsCatalogService {
       } else {
         for (const sessionId of providerInvalidatedSessionIds) {
           const sessionProvider = previousSessions.find((session) => session.id === sessionId)?.provider ?? null;
-          this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+          await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
         }
       }
       if (hasAuxiliarySessionThreadReset) {
@@ -309,7 +309,7 @@ export class SettingsCatalogService {
       }
       for (const sessionId of providerInvalidatedAuxiliarySessionIds) {
         const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-        this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
       }
       const currentSettings = this.deps.getAppSettings();
       this.deps.broadcastAppSettings(currentSettings);
@@ -395,11 +395,11 @@ export class SettingsCatalogService {
       await this.deps.replaceCompanionSessions?.(migratedCompanionSessions);
       for (const sessionId of invalidatedAuxiliarySessionIds) {
         const sessionProvider = previousAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-        this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
       }
       for (const sessionId of invalidatedCompanionSessionIds) {
         const sessionProvider = previousCompanionSessions.find((session) => session.id === sessionId)?.provider ?? null;
-        this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+        await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
       }
       this.deps.broadcastSessions(migratedSessions.map((session) => session.id));
       this.deps.broadcastModelCatalog(nextSnapshot);
@@ -457,6 +457,9 @@ export class SettingsCatalogService {
     if (areAllResetAppDatabaseTargetsSelected(resetTargets)) {
       modelCatalog = await this.deps.recreateDatabaseFile();
       this.dismissSessionTurnNotifications(previousSessionIds);
+      this.deps.resetSessionRuntime();
+      this.deps.clearAllSessionBackgroundActivities();
+      await this.deps.invalidateAllProviderSessionThreads();
       this.deps.clearAllProviderQuotaTelemetry();
       this.deps.clearAllSessionContextTelemetry();
       appSettings = this.deps.getAppSettings();
@@ -471,7 +474,7 @@ export class SettingsCatalogService {
         this.dismissSessionTurnNotifications(previousSessionIds);
         this.deps.resetSessionRuntime();
         this.deps.clearAllSessionBackgroundActivities();
-        this.deps.invalidateAllProviderSessionThreads();
+        await this.deps.invalidateAllProviderSessionThreads();
       }
       if (appliedTargets.has("appSettings")) {
         await this.deps.resetAppSettings();
@@ -511,12 +514,12 @@ export class SettingsCatalogService {
           for (const sessionId of invalidatedAuxiliarySessionIds) {
             const sessionProvider =
               previousCatalogAuxiliarySessions.find((session) => session.id === sessionId)?.provider ?? null;
-            this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+            await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
           }
           for (const sessionId of invalidatedCompanionSessionIds) {
             const sessionProvider =
               previousCatalogCompanionSessions.find((session) => session.id === sessionId)?.provider ?? null;
-            this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+            await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
           }
         }
       }

@@ -56,10 +56,13 @@ function createSessionRequest(workspace: Record<string, unknown>): Record<string
 }
 
 type MainSessionCommandFacadeTestDeps =
-  Omit<ConstructorParameters<typeof MainSessionCommandFacade>[0], "dismissSessionTurnNotification" | "cancelSessionRun">
+  Omit<
+    ConstructorParameters<typeof MainSessionCommandFacade>[0],
+    "dismissSessionTurnNotification" | "cancelSessionRun" | "validateWorkspaceDirectory"
+  >
   & Partial<Pick<
     ConstructorParameters<typeof MainSessionCommandFacade>[0],
-    "dismissSessionTurnNotification" | "cancelSessionRun"
+    "dismissSessionTurnNotification" | "cancelSessionRun" | "validateWorkspaceDirectory"
   >>;
 
 function createMainSessionCommandFacade(
@@ -68,6 +71,7 @@ function createMainSessionCommandFacade(
   return new MainSessionCommandFacade({
     dismissSessionTurnNotification: () => undefined,
     cancelSessionRun: (sessionId) => deps.getSessionRuntimeService().cancelRun(sessionId),
+    validateWorkspaceDirectory: async () => ({ valid: true }),
     ...deps,
   });
 }
@@ -1089,5 +1093,39 @@ test("MainSessionCommandFacade は GUI run の失敗後もSession queueを再開
     /run failed/,
   );
   assert.deepEqual(calls, ["run", "resume:s-1"]);
+});
+
+test("MainSessionCommandFacade は Workspace が利用不可なら provider runtime の前で送信を拒否する", async () => {
+  const calls: string[] = [];
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "codex", workspacePath: "C:/missing" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async runSessionTurn() {
+        calls.push("run");
+        return { id: "s-1" } as never;
+      },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+    validateWorkspaceDirectory: async (targetPath) => {
+      calls.push(`validate:${String(targetPath)}`);
+      return { valid: false, reason: "missing" };
+    },
+  });
+
+  await assert.rejects(
+    facade.runSessionTurn("s-1", { userMessage: "hello" } as never),
+    /Workspace is unavailable\. Path not found\./,
+  );
+  assert.deepEqual(calls, ["validate:C:/missing"]);
 });
 

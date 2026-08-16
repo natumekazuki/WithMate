@@ -631,6 +631,7 @@ export type SessionHeaderProps = {
   showRenameButton?: boolean;
   showAuditLogButton?: boolean;
   showTerminalButton?: boolean;
+  isTerminalDisabled?: boolean;
   showDeleteButton?: boolean;
   workspaceActions?: ReactNode;
   sessionFilesActions?: ReactNode;
@@ -657,6 +658,7 @@ export function SessionHeader({
   showRenameButton = true,
   showAuditLogButton = true,
   showTerminalButton = true,
+  isTerminalDisabled = false,
   showDeleteButton = true,
   workspaceActions,
   sessionFilesActions,
@@ -729,7 +731,12 @@ export function SessionHeader({
                 <span className="session-window-control-group-label">Workspace</span>
                 {workspaceActions}
                 {showTerminalButton ? (
-                  <button className="drawer-toggle compact secondary" type="button" onClick={onOpenTerminal}>
+                  <button
+                    className="drawer-toggle compact secondary"
+                    type="button"
+                    onClick={onOpenTerminal}
+                    disabled={isTerminalDisabled}
+                  >
                     Terminal
                   </button>
                 ) : null}
@@ -848,6 +855,8 @@ export type SessionChatScreenProps = {
   messageColumn: ReactNode;
   mainContent?: ReactNode;
   workSurfaceOverlay?: ReactNode;
+  supportingSurface?: ReactNode;
+  errorSurface?: ReactNode;
   recoveryActions?: ReactNode;
   actionDock: ReactNode;
   actionDockSplitter: ReactNode;
@@ -893,6 +902,8 @@ export function SessionChatScreen({
   messageColumn,
   mainContent,
   workSurfaceOverlay = null,
+  supportingSurface = null,
+  errorSurface = null,
   recoveryActions = null,
   actionDock,
   actionDockSplitter,
@@ -964,11 +975,13 @@ export function SessionChatScreen({
           {mainContent}
         </div>
         {workSurfaceOverlay}
+        {supportingSurface}
         {recoveryActions ? (
           <div className="session-recovery-actions-slot">
             {recoveryActions}
           </div>
         ) : null}
+        {errorSurface}
       </section>
 
       {splitter}
@@ -1205,11 +1218,6 @@ export function SessionAuditLogModal({
       >
         <div className="diff-titlebar">
           <h2>Audit Log</h2>
-          <div className="diff-titlebar-actions">
-            <button className="diff-close" type="button" onClick={onClose}>
-              Close
-            </button>
-          </div>
         </div>
 
         <div className="audit-log-toolbar">
@@ -1677,6 +1685,13 @@ export class SessionPaneErrorBoundary extends Component<
   };
 
   private handleReload = () => {
+    getWithMateApi()?.reportRendererLog({
+      level: "warn",
+      kind: "renderer.reload-requested",
+      message: "Session pane reload requested from error boundary",
+      url: window.location.href,
+      data: { boundary: "session-pane" },
+    });
     window.location.reload();
   };
 
@@ -2187,8 +2202,6 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
-  inlinePathFeedback?: string;
-  onDismissInlinePathFeedback?: () => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
 };
@@ -2520,8 +2533,6 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
-  inlinePathFeedback = "",
-  onDismissInlinePathFeedback,
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
@@ -2554,7 +2565,7 @@ export function SessionMessageColumn({
       messages.length * SESSION_MESSAGE_ESTIMATED_ROW_HEIGHT - SESSION_MESSAGE_FALLBACK_VIEWPORT_HEIGHT,
     ),
     directDomUpdates: true,
-    directDomUpdatesMode: "transform",
+    directDomUpdatesMode: "position",
   });
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => (
     shouldAdjustSessionMessageScrollPosition({
@@ -2569,6 +2580,7 @@ export function SessionMessageColumn({
     liveElicitationRequest === null &&
     !liveRunErrorMessage.trim() &&
     pendingMessageText.trim().length > 0;
+  const canUsePendingMessageTextActions = !!(onCopyMessageText || onQuoteMessageText);
   const hasFindQuery = findQuery.trim().length > 0;
   const messageRenderedSearchTexts = useMemo(
     () => (hasFindQuery
@@ -2967,7 +2979,11 @@ export function SessionMessageColumn({
           />
         ) : null}
         {hasPendingMessageText ? (
-          <div data-pending-message-body="true">
+          <div
+            data-message-body="true"
+            data-message-text-actions={canUsePendingMessageTextActions ? "true" : undefined}
+            data-pending-message-body="true"
+          >
             <MessageRichText
               text={pendingMessageText}
               forceFullRender={findOpen && hasFindQuery}
@@ -2985,14 +3001,6 @@ export function SessionMessageColumn({
 
   return (
     <div className="session-message-column">
-      {inlinePathFeedback ? (
-        <div className="session-inline-path-feedback" role="alert">
-          <span>{inlinePathFeedback}</span>
-          {onDismissInlinePathFeedback ? (
-            <button type="button" onClick={onDismissInlinePathFeedback} aria-label="Dismiss path open result">×</button>
-          ) : null}
-        </div>
-      ) : null}
       <SessionContentFindBar
         open={findOpen}
         query={findQuery}
@@ -3280,42 +3288,42 @@ export function SessionMessageColumn({
 }
 
 export type SessionActionDockCompactRowProps = {
-  draft: string;
-  actionDockCompactPreview: string;
   attachmentCount: number;
   isRunning: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
   chatNotice?: string;
-  isSendDisabled: boolean;
   showJumpToBottom: boolean;
-  sendButtonTitle?: string;
+  showMessageViewModeControls?: boolean;
+  messageViewMode?: MessageViewMode;
+  cancelButtonTitle?: string;
   onExpand: () => void;
   onJumpToBottom: () => void;
-  onSendOrCancel: () => void;
+  onCancel: () => void;
+  onMessageViewModeChange?: (mode: MessageViewMode) => void;
 };
 
 export function SessionActionDockCompactRow({
-  draft,
-  actionDockCompactPreview,
   attachmentCount,
   isRunning,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
   chatNotice,
-  isSendDisabled,
   showJumpToBottom,
-  sendButtonTitle,
+  showMessageViewModeControls = false,
+  messageViewMode = "preview",
+  cancelButtonTitle,
   onExpand,
   onJumpToBottom,
-  onSendOrCancel,
+  onCancel,
+  onMessageViewModeChange = () => {},
 }: SessionActionDockCompactRowProps) {
-  if (isRunning) {
-    return (
-      <div className={`session-action-dock-compact-row running${modeLabel ? " has-mode-label" : ""}`}>
-        {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+  return (
+    <div className={`session-action-dock-compact-row${isRunning ? " running" : ""}${modeLabel ? " has-mode-label" : ""}`}>
+      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
+      {isRunning ? (
         <button
           className="session-action-dock-compact-progress session-action-dock-compact-progress-button"
           type="button"
@@ -3328,58 +3336,24 @@ export function SessionActionDockCompactRow({
             text={pendingRunIndicatorText}
           />
         </button>
-        <div className="session-action-dock-compact-actions">
-          {chatNotice ? (
-            <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
+      ) : (
+        <button
+          className="session-action-dock-compact-meta session-action-dock-compact-expand-button"
+          type="button"
+          onClick={onExpand}
+          aria-label="ActionDock を展開"
+          title="ActionDock を展開"
+        >
+          {chatNotice ? <span className="session-action-dock-compact-badge attention">{chatNotice}</span> : null}
+          {attachmentCount > 0 ? (
+            <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
           ) : null}
-          {showJumpToBottom ? (
-            <button
-              className="drawer-toggle compact secondary message-jump-bottom-button"
-              type="button"
-              onClick={onJumpToBottom}
-            >
-              末尾へ移動
-            </button>
-          ) : null}
-          <button
-            className="danger session-send-button"
-            type="button"
-            onClick={onSendOrCancel}
-            title={sendButtonTitle}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`session-action-dock-compact-row${modeLabel ? " has-mode-label" : ""}`}>
-      {modeLabel ? <span className="action-dock-mode-badge">{modeLabel}</span> : null}
-      <button
-        className="session-action-dock-compact-preview"
-        type="button"
-        onClick={onExpand}
-        title={draft.trim() ? draft : "下書きなし"}
-      >
-        <span className="session-action-dock-compact-label">Draft</span>
-        <span className={`session-action-dock-compact-text${draft.trim() ? " has-draft" : ""}`}>
-          {actionDockCompactPreview}
-        </span>
-      </button>
-      <div className="session-action-dock-compact-meta" aria-label="draft summary">
-        {chatNotice ? (
+        </button>
+      )}
+      <div className="session-action-dock-compact-actions">
+        {isRunning && chatNotice ? (
           <span className="session-action-dock-compact-badge attention">{chatNotice}</span>
         ) : null}
-        {attachmentCount > 0 ? (
-          <span className="session-action-dock-compact-badge">{`添付 ${attachmentCount}`}</span>
-        ) : null}
-        {isRunning ? (
-          <span className="session-action-dock-compact-badge running">RUN</span>
-        ) : null}
-      </div>
-      <div className="session-action-dock-compact-actions">
         {showJumpToBottom ? (
           <button
             className="drawer-toggle compact secondary message-jump-bottom-button"
@@ -3389,15 +3363,36 @@ export function SessionActionDockCompactRow({
             末尾へ移動
           </button>
         ) : null}
-        <button
-          className={isRunning ? "danger session-send-button" : "session-send-button"}
-          type="button"
-          onClick={onSendOrCancel}
-          disabled={!isRunning && isSendDisabled}
-          title={sendButtonTitle}
-        >
-          {isRunning ? "Cancel" : "Send"}
-        </button>
+        {showMessageViewModeControls ? (
+          <div className="composer-message-view-mode" role="group" aria-label="Message display mode">
+            <button
+              className="composer-message-view-mode-button"
+              type="button"
+              aria-pressed={messageViewMode === "preview"}
+              onClick={() => onMessageViewModeChange("preview")}
+            >
+              Preview
+            </button>
+            <button
+              className="composer-message-view-mode-button"
+              type="button"
+              aria-pressed={messageViewMode === "source"}
+              onClick={() => onMessageViewModeChange("source")}
+            >
+              Source
+            </button>
+          </div>
+        ) : null}
+        {isRunning ? (
+          <button
+            className="danger session-send-button"
+            type="button"
+            onClick={onCancel}
+            title={cancelButtonTitle}
+          >
+            Cancel
+          </button>
+        ) : null}
       </div>
     </div>
   );
@@ -3437,16 +3432,9 @@ type SessionAttachmentItem = {
   removeTargets: string[];
 };
 
-type SessionAdditionalDirectoryItem = {
-  key: string;
-  path: string;
-  primaryLabel: string;
-  secondaryLabel: string;
-  title: string;
-  canRemove: boolean;
-};
-
 type SessionComposerSendabilityView = {
+  isBusy?: boolean;
+  busyReason?: string;
   primaryFeedback: string;
   secondaryFeedback: string[];
   feedbackTone: "blocked" | "helper" | null;
@@ -3480,7 +3468,6 @@ export type SessionComposerExpandedProps = {
   isCustomAgentListLoading: boolean;
   customAgentItems: SessionCustomAgentItem[];
   attachmentItems: SessionAttachmentItem[];
-  additionalDirectoryItems: SessionAdditionalDirectoryItem[];
   draft: string;
   placeholder?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
@@ -3488,6 +3475,7 @@ export type SessionComposerExpandedProps = {
   isComposerDisabled: boolean;
   isSendDisabled: boolean;
   composerSendability: SessionComposerSendabilityView;
+  externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
@@ -3514,7 +3502,6 @@ export type SessionComposerExpandedProps = {
   onJumpToBottom: () => void;
   onSelectCustomAgent: (value: string | null) => void;
   onRemoveAttachment: (targets: string[]) => void;
-  onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
   onDraftFocus: () => void;
   onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
@@ -3557,7 +3544,6 @@ export function SessionComposerExpanded({
   isCustomAgentListLoading,
   customAgentItems,
   attachmentItems,
-  additionalDirectoryItems,
   draft,
   placeholder,
   composerTextareaRef,
@@ -3565,6 +3551,7 @@ export function SessionComposerExpanded({
   isComposerDisabled,
   isSendDisabled,
   composerSendability,
+  externalErrorDescriptionIds,
   sendButtonTitle,
   isComposerBlockedFeedbackActive,
   approvalOptions,
@@ -3591,7 +3578,6 @@ export function SessionComposerExpanded({
   onJumpToBottom,
   onSelectCustomAgent,
   onRemoveAttachment,
-  onRemoveAdditionalDirectory,
   onDraftChange,
   onDraftFocus,
   onDraftKeyDown,
@@ -3691,6 +3677,7 @@ export function SessionComposerExpanded({
                 onOpenPromptTemplates();
               }}
               aria-pressed={isPromptTemplateWorkspaceOpen}
+              disabled={isRunning || composerBlocked}
             >
               Template
             </button>
@@ -3901,34 +3888,6 @@ export function SessionComposerExpanded({
         </div>
       ) : null}
 
-      {isAdditionalDirectoryListOpen && additionalDirectoryItems.length > 0 ? (
-        <div className="composer-additional-directory-list">
-          {additionalDirectoryItems.map((item) => (
-            <div
-              key={item.key}
-              className="composer-additional-directory-chip"
-              title={item.title}
-            >
-              <span className="composer-additional-directory-copy">
-                <span className="composer-additional-directory-primary">{item.primaryLabel}</span>
-                <span className="composer-additional-directory-secondary">{item.secondaryLabel}</span>
-              </span>
-              {item.canRemove ? (
-                <button
-                  type="button"
-                  className="composer-additional-directory-remove"
-                  onClick={() => onRemoveAdditionalDirectory(item.path)}
-                  disabled={isRunning || composerBlocked}
-                  aria-label={`${item.primaryLabel} を削除`}
-                >
-                  ×
-                </button>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      ) : null}
-
       <div className="composer-input-row">
         <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
@@ -3943,10 +3902,18 @@ export function SessionComposerExpanded({
             onCompositionStart={onDraftCompositionStart}
             onCompositionEnd={onDraftCompositionEnd}
             disabled={isComposerDisabled}
-            aria-describedby={composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined}
+            aria-busy={composerSendability.isBusy || undefined}
+            aria-describedby={externalErrorDescriptionIds || (
+              composerSendability.shouldShowFeedback ? "composer-sendability-feedback" : undefined
+            )}
             aria-invalid={composerSendability.feedbackTone === "blocked" ? true : undefined}
           />
-          {composerSendability.shouldShowFeedback ? (
+          {composerSendability.isBusy && composerSendability.busyReason ? (
+            <span className="visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+              {composerSendability.busyReason}
+            </span>
+          ) : null}
+          {composerSendability.shouldShowFeedback && !externalErrorDescriptionIds ? (
             <div
               id="composer-sendability-feedback"
               className={`composer-sendability-feedback ${composerSendability.feedbackTone ?? "helper"}`}

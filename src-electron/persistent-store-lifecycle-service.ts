@@ -39,6 +39,7 @@ import { SessionStorageV6 } from "./session-storage-v6.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
+import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 
 type ClosableStore = {
   close(): void;
@@ -64,7 +65,9 @@ export type SessionStorageRead = AwaitableStorageMethods<
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
-> & SessionStorageRead;
+> & SessionStorageRead & {
+  upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
+};
 export type SessionPinStorage = {
   setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
 };
@@ -100,6 +103,7 @@ export type AuxiliarySessionStorageAccess = {
 };
 export type CharacterStorageAccess = {
   listCharacters(options?: { includeArchived?: boolean }): CharacterCatalogEntry[];
+  getCharacterCatalogEntry(characterId: string): CharacterCatalogEntry | null;
   getCharacter(characterId: string): CharacterDetail | null;
   createCharacter(input: CreateCharacterInput): CharacterDetail;
   updateCharacterMetadata(input: UpdateCharacterMetadataInput): CharacterDetail;
@@ -384,6 +388,10 @@ class LegacyAuxiliarySessionStorage implements AuxiliarySessionStorageAccess {
 class LegacyCharacterStorage implements CharacterStorageAccess {
   listCharacters(): CharacterCatalogEntry[] {
     return [];
+  }
+
+  getCharacterCatalogEntry(): CharacterCatalogEntry | null {
+    return null;
   }
 
   getCharacter(): CharacterDetail | null {

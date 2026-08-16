@@ -732,7 +732,7 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
     return createSessionRuntimeError({
       code: error.code,
       message: error.message,
-      retryable: error.code === "CATALOG_REVISION_STALE",
+      retryable: error.code === "CATALOG_REVISION_STALE" || error.code === "WORKSPACE_UNAVAILABLE",
     });
   }
   if (error instanceof TypeError) {

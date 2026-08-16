@@ -44,6 +44,7 @@ export type LiveSessionHeaderPropsInput = {
   canDeleteSession: boolean;
   canViewAuditLog: boolean;
   showTerminalButton?: boolean;
+  isTerminalDisabled?: boolean;
   onOpenAuditLog: () => void;
   onOpenTerminal: () => void;
   onOpenSessionFilesExplorer: () => void;
@@ -137,6 +138,7 @@ export function buildLiveSessionHeaderProps(input: LiveSessionHeaderPropsInput):
       canViewAuditLog: input.canViewAuditLog,
     }),
     showTerminalButton: input.showTerminalButton ?? true,
+    isTerminalDisabled: input.isTerminalDisabled,
     onOpenAuditLog: input.onOpenAuditLog,
     onOpenTerminal: input.onOpenTerminal,
     sessionFilesActions: createSessionFilesActions({

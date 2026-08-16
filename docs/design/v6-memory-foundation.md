@@ -536,7 +536,7 @@ WithMate起動中は、WithMate外のCodex / shell / CLIからもMemory target i
 CLI requestは、runtime secretとnonce challengeを通過した同一OS userの`local_user` principalとして扱う。
 `local_user` principalは明示targetだけを扱い、`character: current`、WithMate session context、session-bound project inferenceは使えない。
 retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
-append / forget時のMemory entryの`source.sessionId`は`null`として保存する。
+bindingなしの外部CLIによるappend / forgetではMemory entryの`source.sessionId`を`null`として保存する。WithMateが起動したagent executionからbinding付きで操作する場合は、runtimeが解決したactor Sessionをsourceとidempotency principalへ保存する。
 `--self` flagは採用しない。
 current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
 discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`apiSecret`、`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。
@@ -545,7 +545,7 @@ discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`ap
 app側writerはruntime directoryをOS userだけが読める権限で作成し、POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。discovery fileは0600相当でexclusive temporary fileから置き換える。
 current app起動配線は`src-electron/memory-v6-runtime.ts`で行う。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost APIを起動してdiscovery fileをpublishする。起動時は既存discovery fileのschema、loopback HTTP URL、`runtimeInstanceId`、nonce challengeを確認し、生きていないendpointだけstaleとして回収する。app shutdown時はcurrent fileの`runtimeInstanceId`が自分のpublishと一致する場合だけ削除する。V6 DBがinvalidなどでMemory runtimeだけ起動できない場合でも、通常app bootは継続し、discovery fileは残さない。
 全 window close では app process を終了せず、Windows でも runtime API / CLI discovery を維持する。`app.requestSingleInstanceLock()` と `second-instance` handler により、Start Menu などから再起動された場合は既存 process の Home を再表示・focus する。
-Settings の `launchAtLoginEnabled` が有効な場合、Electron login item へ `--background` 付きで登録する。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
+Settings の `launchAtLoginEnabled` が有効な場合、packaged app だけが Electron login item へ `--background` 付きで登録する。dev / visual-check の unpackaged app は、引数なしの `electron.exe` をOSの起動先へ登録しないため、保存済み設定にかかわらずlogin itemを変更しない。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
 runtime APIはapp起動ごとの短命`apiSecret`と`runtimeInstanceId`を要求する。CLIはmutation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`で`runtimeInstanceId`と`HMAC-SHA256(apiSecret, nonce)` challengeを検証し、成功した場合だけdiscovery fileまたは`WITHMATE_MEMORY_API_SECRET`から取得したsecretを`X-WithMate-Memory-Api-Secret` headerで送る。app logにはruntime endpoint URLやapp-internal secretを出さず、discovery file publishの成否とaddress familyだけを記録する。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
 CLIはsession由来の暗黙targetを扱わない。
 Memoryのowner / scope targetはcommand引数またはinput payloadで明示する。

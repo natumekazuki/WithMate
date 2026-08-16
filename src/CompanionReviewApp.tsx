@@ -53,6 +53,10 @@ import { currentTimestampLabel } from "./app-state.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import type { CompanionMergeRunSummary, CompanionSession, CompanionSessionSummary } from "./companion-state.js";
 import { createCompanionSessionSummary } from "./companion-state.js";
+import {
+  COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE,
+  shouldShowRetiredCompanionAuxiliaryHeaderActions,
+} from "./companion-retirement.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import {
   buildCompanionChatSnapshot,
@@ -134,7 +138,6 @@ import {
   resolveComposerSendabilityState,
   resolveComposerSendPreflight,
 } from "./session-composer-feedback.js";
-import { buildActionDockCompactPreview } from "./action-dock-preview.js";
 import {
   buildActionDockRuntimeState,
   shouldFocusComposerForActionDockExpand,
@@ -1233,7 +1236,8 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     messageListRef,
     isMessageListFollowing,
     handleMessageListScroll,
-    handleJumpToMessageListBottom,
+    handleMessageListSend,
+    followMessageListLatest,
   } = useSessionMessageListFollowing({
     ownerKey: activeRunSessionId,
     scrollSignature: companionMessageListScrollSignature,
@@ -1250,7 +1254,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     snapshot?.mergeReadiness.blockers.filter((blocker) => blocker.kind !== "target-branch-drift") ?? [];
   const visibleMergeWarnings =
     snapshot?.mergeReadiness.warnings.filter((warning) => warning.kind !== "merge-simulation") ?? [];
-  const runDisabled = isSelectedSessionRunning || operationRunning || !snapshot || snapshot.session.status !== "active";
+  const runDisabled = true;
   const selectedProviderCatalog = getProviderCatalog(modelCatalog?.providers ?? [], displayedSession?.provider);
   const selectedRuntimeModel = activeAuxiliarySession?.model ?? selectedModel;
   const selectedRuntimeReasoningEffort = activeAuxiliarySession?.reasoningEffort ?? selectedReasoningEffort;
@@ -1294,9 +1298,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       selectedRuntimeCodexSandboxMode,
     ],
   );
-  const companionComposerBlockedReason = snapshot?.session.status !== "active"
-    ? "この Companion は active ではないよ。"
-    : "";
+  const companionComposerBlockedReason = COMPANION_PROVIDER_EXECUTION_RETIRED_MESSAGE;
   const retryBanner = useMemo<RetryBannerState | null>(() => {
     if (!snapshot || !shouldShowRetryBanner({
       hasActiveAuxiliarySession: !!activeAuxiliarySession,
@@ -1389,7 +1391,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       isSkillPickerOpen,
       isAdditionalDirectoryListOpen,
       isRetryDraftReplacePending,
-      companionComposerSendability.shouldShowFeedback,
     ],
   });
   const {
@@ -1416,13 +1417,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
       setIsRetryDraftReplacePending(false);
     }
   }, [composerText, retryBanner]);
-  const actionDockCompactPreview = useMemo(
-    () =>
-      buildActionDockCompactPreview(activeComposerText, isSelectedSessionRunning, {
-        truncationSuffix: "...",
-      }),
-    [activeComposerText, isSelectedSessionRunning],
-  );
   const companionCharacterProfile = useCompanionCharacterProfile(displayedSession ?? snapshot?.session ?? null);
   const selectedCustomAgent = useMemo(() => {
     if (!displayedSession?.customAgentName.trim()) {
@@ -1979,7 +1973,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
   }
 
   const handleOpenAuxiliaryLaunchDialog = createAuxiliaryLaunchDialogOpenHandler({
-    canOpen: () => !!snapshot && !isAuxiliaryActionPending && !operationRunning && !isSelectedSessionRunning,
+    canOpen: () => false,
     providers: auxiliaryLaunchProviderItems,
     getSelectedProviderId: () => snapshot?.session.provider,
     openAuxiliaryLaunchDialog,
@@ -2726,6 +2720,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         throw new Error(blockedMessage);
       }
 
+      handleMessageListSend(appSettings.scrollToLatestOnSend);
       applyOptimisticSessionRunUpdate({
         session: snapshot.session,
         userMessage,
@@ -2970,7 +2965,10 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  const auxiliaryHeaderActions = snapshot
+  const auxiliaryHeaderActions = shouldShowRetiredCompanionAuxiliaryHeaderActions({
+    hasSnapshot: !!snapshot,
+    hasActiveAuxiliarySession: !!activeAuxiliarySession,
+  }) && snapshot && activeAuxiliarySession
     ? createAuxiliaryHeaderActions({
         ...resolveAuxiliaryHeaderActionState({
           isActive: !!activeAuxiliarySession,
@@ -3082,7 +3080,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         selectedModelFallbackLabel,
         reasoningOptions: reasoningSelectOptions,
         selectedReasoningEffort: selectedRuntimeReasoningEffort,
-        actionDockCompactPreview,
         attachmentCount: composerPreview.attachments.length,
         isContextRailResizing,
         isContextRailVisible,
@@ -3165,7 +3162,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onToggleSkillPicker: handleToggleSkillPicker,
         onAddAdditionalDirectory: () => void (activeAuxiliarySession ? handleAddAuxiliaryAdditionalDirectory() : handleAddAdditionalDirectory()),
         onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
-        onJumpToMessageListBottom: handleJumpToMessageListBottom,
+        onJumpToMessageListBottom: followMessageListLatest,
         onSelectCustomAgent: (value) => {
           const agent = value ? availableCustomAgents.find((entry) => entry.name === value) ?? null : null;
           if (activeAuxiliarySession) {

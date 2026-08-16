@@ -39,18 +39,38 @@ The server uses stdio. It connects to the running WithMate loopback application 
 | `character_affect.appraise` | Submit Character-owned affect candidates | bounded write | conversation authority |
 | `character_memory.search` | Cue-driven Character Memory search | none | read-only MCP route |
 | `character_memory.append_episode` | Append one shared-event episode | bounded write | conversation authority |
-| `character_memory.correct` | Supersede an episode | destructive write | explicit tool invocation maps to explicit user instruction |
-| `character_memory.forget` | Forget an episode | destructive write | explicit tool invocation maps to explicit user instruction |
+| `character_memory.correct` | Supersede an episode | destructive write | conversation authority, explicit target, reason, and idempotency key |
+| `character_memory.forget` | Forget an episode | destructive write | conversation authority, explicit target, reason, and idempotency key |
+
+The same server publishes general semantic Memory in the `memory.*` namespace:
+
+| Tool | Purpose | Mutation | Authority projection |
+| --- | --- | --- | --- |
+| `memory.search` | Search explicit general Memory targets | none | read-only MCP route |
+| `memory.get_entry` | Read one active entry with its body | none | read-only MCP route |
+| `memory.list_targets` | List bounded target inventory | none | read-only MCP route |
+| `memory.list_entries` | List one target without bodies by default | none | read-only MCP route |
+| `memory.list_tags` | List bounded target tag metadata | none | read-only MCP route |
+| `memory.append` | Append semantic Memory, optionally with protected files | bounded write | explicit target and required idempotency key |
+| `memory.forget` | Preview or forget entries | destructive write | explicit invocation, reason, target, and idempotency key |
+| `memory.move_entry` | Retarget one active entry | destructive write | explicit invocation, reason, from/to targets, and idempotency key |
+| `memory.get_file` | Export one protected object to a new file | external file write | target validation and non-overwrite boundary |
+| `memory.export_files` | Export one entry's protected objects | external file write | target validation and non-overwrite boundary |
+| `memory.file_usage` | Read protected-object usage metadata; bound agents only receive largest-entry candidates from non-Character targets and their own Character | optional | read-only MCP route |
 
 MCP write inputs do not accept a caller-supplied `authority` field. Tool annotations are client hints; the WithMate application service performs final route and authority validation.
 
-Use MCP `tools/list` as the complete MCP input/output schema. Canonical shared validation is in `src/character-context/character-context-validation.ts`, and shared TypeScript contracts are in `src/character-context/character-context-contract.ts` and `src/character-affect/affect-contract.ts`.
+Use MCP `tools/list` as the complete MCP input/output schema. General Memory validation and contracts are in `src/memory-v6/memory-validation.ts` and `src/memory-v6/memory-contract.ts`. Character validation and contracts are in `src/character-context/character-context-validation.ts`, `src/character-context/character-context-contract.ts`, and `src/character-affect/affect-contract.ts`.
+
+General Memory targets are always explicit project, user-global, character, or character+project selectors. Project path and project ID forms resolve through the same application service project resolver. General Memory MCP write inputs do not accept caller-supplied authority. Append, mutating forget, and move require an idempotency key; forget also requires a reason and supports dry-run. A successful retry reports `replayed: true`. Reusing the same key with a changed request is a structured domain conflict.
 
 ### Required input distinctions
 
-- `character_context.get` requires `characterId` and `sessionId`; `query` is optional and `memoryLimit` defaults to 3 within 0..10.
-- `character_affect.appraise` requires 1..10 candidates. Candidate `characterId`, `sessionId`, and `userId: local-user` must match the request owner.
-- An affect candidate requires `schemaVersion`, owner IDs, `layer`, explicit `targetType` and `targetId`, value, intensity, reason, evidence, canonical UTC `occurredAt`, and `idempotencyKey`.
+- `character_context.get` requires `characterId`; the actor `sessionId` is resolved from the WithMate runtime binding. `query` is optional and `memoryLimit` defaults to 3 within 0..10.
+- `character_affect.appraise` requires 1..10 candidates. Candidate `characterId` and `userId: local-user` must match the request owner; candidate `sessionId` is supplied by the runtime binding.
+- `character_context.get` and `character_affect.appraise` reject requests without a valid runtime binding before application dispatch. A CLI argument or request-body `sessionId` does not establish actor authority.
+- `character_memory.append_episode` retains `sessionId` in its public input because the application request validates the episode's Session scope. When a runtime binding is present, the server replaces it with the actor Session before validation; the caller-supplied value never establishes actor authority.
+- An affect candidate requires `schemaVersion`, owner IDs, `layer`, explicit `targetType` and `targetId`, one of `joy`, `relief`, `interest`, `anticipation`, `affinity`, `gratitude`, `concern`, `frustration`, `disappointment`, `regret`, `determination`, or `other` as `family`, free-label value, intensity, reason, evidence, canonical UTC `occurredAt`, and `idempotencyKey`.
 - When an episode belongs to that affect event, put its `title`, `preview`, `body`, required `salience` from 0 to 1, and optional `motif` in the candidate's `memoryEpisode`. Linked `memoryEpisode` does not use `observedFact` or `characterObservation`. Do not submit the same event separately through `character_memory.append_episode`.
 - Relationship affect may target only `user` or `relationship`. Targets `task`, `bug`, `artifact`, and `self` belong to the session layer.
 - `character_memory.search` requires a non-empty query and an explicit Character or Character+Project scope.
@@ -59,14 +79,14 @@ Use MCP `tools/list` as the complete MCP input/output schema. Canonical shared v
 
 ### Success output shapes
 
-- `character_context.get` returns `characterId`, `sessionId`, baseline definition digest/timestamp, affect `mode`, effective components, affect `version`/`updatedAt`, bounded Memory items/related tags/update time, and resolved `userId`/Character/Session scope. It does not return the Character Definition, raw affect events, secrets, or the complete Memory search result set.
+- `character_context.get` returns `characterId`, `sessionId`, baseline definition digest/timestamp, affect `mode`, read-time `evaluatedAt`, effective components with `family` (`null` only for unclassified legacy identity), affect `version`/`updatedAt`, bounded Memory items/related tags/update time, and resolved `userId`/Character/Session scope. It does not return the Character Definition, raw affect events, secrets, or the complete Memory search result set.
 - `character_affect.appraise` returns `saved[]`, `rejected[]`, the resulting affect `version`, and `updatedAt`. A saved item identifies `candidateIndex`, `eventId`, optional linked `memoryEntryId`, and `replayed`; a rejected item identifies its candidate index, rejection code, and message.
 - `character_memory.search` returns the resolved Character scope, bounded active `items[]`, optional `relatedTags[]`, and `sourceVersion`.
 - Character Memory mutations return `operation`, current `entry` when available, optional predecessor/creation/replay fields, `readBack`, and `sourceVersion`.
 
 The success shape is not permission to infer omitted values. Use the exact structured response and schema advertised by `tools/list`.
 
-For a normal WithMate Session turn, lifecycle-injected context identifies a lifecycle-owned turn: the in-process lifecycle owns mandatory post-turn appraisal and its linked `memoryEpisode`. External clients must not submit a second MCP appraisal for that turn. MCP appraisal is for clients without that lifecycle owner or an explicitly requested manual operation. Standalone `character_memory.append_episode` remains available only when the episode is not linked to an affect event.
+For a normal WithMate Session turn, lifecycle-injected context identifies the owner of mandatory post-turn appraisal, not the sole owner of every affect mutation during the turn. A bound Agent may call `character_affect.appraise` when it recognizes a concrete affect change, then the lifecycle may save a later post-turn event even when its meaning resembles the immediate event. Do not resend the lifecycle's same post-turn request through MCP. Standalone `character_memory.append_episode` remains available only when the episode is not linked to an affect event.
 
 ## Character CLI commands
 
@@ -84,7 +104,7 @@ The CLI is an operator/recovery adapter to the same application service:
 - `character-metrics`
 - `mcp-server`
 
-These Character-specific commands do not replace the general Memory V6 `search`, `get-entry`, and `append` commands. Use the general CLI with an explicit `character` or `character+project` target for semantic Character preferences, constraints, facts, conventions, or decisions. That use is not MCP fallback because the public Character MCP surface has no semantic append tool; do not add `--fallback-from mcp` unless an actual corresponding MCP operation failed for availability reasons.
+These Character-specific commands do not replace general semantic Memory. Use `memory.search`, `memory.get_entry`, and `memory.append` with an explicit `character` or `character+project` target for semantic Character preferences, constraints, facts, conventions, or decisions. Use the equivalent general CLI only after a transport-level MCP availability failure or for explicit operator work.
 
 Prefer `--stdin` or `--file` for request bodies. CLI Character operations require the CLI-specific authenticated adapter credential. The server derives operator authority only after that credential is verified; a request body's `authority` string or a normal runtime secret cannot elevate authority.
 
@@ -113,17 +133,21 @@ $request | withmate-memory context-get --stdin --fallback-from mcp
 
 `--fallback-from mcp` is recorded as `mcp->cli` metrics. Both adapters resolve one paired runtime generation and use the same application service and persistence. If the same runtime cannot be confirmed, do not perform a fallback write.
 
-Do not fallback for `invalid_input`, `unknown_character`, `unknown_scope`, `authority_denied`, `version_conflict`, `idempotent_replay`, `migration_required`, or any structured error from a normally responding MCP server. These are domain results, not MCP availability failures.
+Do not fallback for `invalid_input`, `unknown_character`, `unknown_scope`, `authority_denied`, `version_conflict`, `idempotent_replay`, `migration_required`, general Memory validation/target/authority/idempotency errors, or any structured error from a normally responding MCP server. These are domain results, not MCP availability failures.
 
 ## Idempotency and retry
 
 Choose an idempotency key before the first write.
 
+- Appraise each affect change when it occurs. A later resolution, reversal, or decay is a new event and does not replace the earlier event.
+- Different occurrence times or supporting events use different keys even when family, target, label, or meaning match. Affect events are not semantically deduplicated.
 - Retry the same event after timeout or response loss with the unchanged request and unchanged key.
 - A changed request uses a new key.
 - A separate event at a later time uses a new key even when it shares a motif with an older episode.
 - Reusing one key with a different request fingerprint is rejected.
 - `replayed: true` identifies an idempotent replay; it is not a newly created event.
+
+Within one turn, use the `version` from each successful appraisal as the next request's `expectedVersion`. Reconcile `effect: unknown` with the unchanged request and key. For an uncommitted `version_conflict` with `effect: none`, read the latest context and re-evaluate; if the request changes, use a new key. The later mandatory post-turn appraisal reads the latest context and follows its durable settlement contract, so an immediate appraisal does not authorize blind retry of a stale post-turn candidate.
 
 Semantic Memory and Character episodes have different duplicate rules. Equivalent active semantic preferences or constraints should not be appended repeatedly. A later distinct Character episode may be appended separately; use `motif` to relate recurring events without replacing the older episode.
 
@@ -171,7 +195,7 @@ An exit code 3 does not make a domain rejection an MCP availability failure.
 
 ## Correction, forget, reset, and read-back
 
-Character Memory correction/forget, affect correction, relationship/session affect reset, and relationship-boundary changes require an explicit user instruction or authenticated operator authority. Confirm the target entry/event and current version before mutation.
+An agent may correct or forget Character Memory autonomously as the user's delegate. It must use its own Character scope, confirm the target entry and current version, provide a concrete reason and idempotency key, and read back the result. Affect correction, relationship/session affect reset, and relationship-boundary changes require an explicit user instruction or authenticated operator authority.
 
 After mutation:
 
@@ -190,7 +214,7 @@ Run:
 withmate-memory character-metrics
 ```
 
-Metrics distinguish transport and operation calls, successes, rejections, failures, idempotent replays, version conflicts, rejection codes, total latency, and `mcp->cli` fallback counts. Lifecycle and model-driven MCP operations use distinct operation prefixes.
+Metrics distinguish transport and operation calls, successes, rejections, failures, idempotent replays, version conflicts, rejection codes, total latency, and `mcp->cli` fallback counts. Affect metrics also expose family-bucketed candidates/saves/rejections, `otherRate`, invalid-family/schema/version rejections, persisted `eventsByFamily`, legacy event/projection counts, decay exclusions, and projection cache hit/miss/stale counts. Lifecycle and model-driven MCP operations use distinct operation prefixes.
 
 Metrics and logs must not contain conversation text, Memory bodies, affect evidence text, inferred user emotion, secrets, or raw transcripts. Use an authorized inspect/search operation when content is genuinely required for recovery.
 
@@ -200,4 +224,4 @@ Character context reports affect `mode` independently from the mutation result. 
 
 ## Runtime parity check
 
-To confirm adapter parity, read the same Character/session context through MCP `character_context.get` and CLI `context-get`. The Character scope and affect version must match. A CLI fallback must also be visible in `character-metrics` as `mcp->cli`.
+To confirm adapter parity, read the same Character/session context through MCP `character_context.get` and CLI `context-get` from the same WithMate-launched provider execution. Both adapters self-resolve the actor Session from the opaque runtime binding; an external CLI without that binding receives an authority error. The Character scope and affect version must match. A CLI fallback must also be visible in `character-metrics` as `mcp->cli`.

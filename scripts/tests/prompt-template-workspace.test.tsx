@@ -15,7 +15,7 @@ test("PromptTemplateWorkspace は一覧・編集・挿入を一つの中央surfa
         deletePromptTemplate: async () => [],
         subscribePromptTemplates: () => () => {},
       }}
-      onClose={() => {}}
+      onBack={() => {}}
       onInsert={() => {}}
     />,
   );
@@ -25,6 +25,6 @@ test("PromptTemplateWorkspace は一覧・編集・挿入を一つの中央surfa
   assert.match(markup, /名前/);
   assert.match(markup, /aria-label="プロンプト"/);
   assert.match(markup, />挿入</);
-  assert.match(markup, />戻る</);
-  assert.doesNotMatch(markup, /よく使うプロンプト/);
+  assert.match(markup, /←/);
+  assert.match(markup, /aria-label="Back to Chat"/);
 });

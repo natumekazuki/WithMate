@@ -1,6 +1,6 @@
 ---
 name: withmate-memory
-description: Use injected WithMate Character context first, then use the withmate-character-context MCP server for cue-driven Character recall, Character-owned affect appraisal, and Memory episodes. Reflect before every user-facing final response, write only concrete candidates, retain the general CLI for semantic Memory, and use Character CLI commands only for MCP availability fallback or explicit operator work.
+description: Use injected WithMate Character context first, then use the withmate-character-context MCP server for general semantic Memory, cue-driven Character recall, Character-owned affect appraisal, and Memory episodes. Reflect before every user-facing final response, write only concrete candidates, and use CLI only for MCP availability fallback or explicit operator work.
 ---
 
 # WithMate Memory and Character Context
@@ -43,7 +43,13 @@ Use `character_memory.search` through MCP for Character episodes. Search Project
 
 Do not report routine search results. Mention Memory naturally only when it materially changes the answer, conflicts with the current message, the user asks what was used, or correction/forget requires target confirmation. If no relevant Memory exists, do not invent a past event.
 
-## End-of-turn reflection
+## Event-time affect appraisal and end-of-turn reflection
+
+When a concrete Character affect change occurs during a turn, first react naturally in the user-facing response, then call `character_affect.appraise` as soon as practical. Treat affect as an event history, not as one final turn state. If frustration occurs and later changes to relief, appraise both events; do not wait and keep only the relief.
+
+An immediate appraisal and the mandatory post-turn appraisal are separate event producers. Lifecycle ownership of post-turn appraisal does not prohibit immediate MCP appraisal. A later post-turn candidate may be saved even when its family, target, label, or meaning resembles an immediate event. Do not semantically deduplicate, merge, overwrite, or delete an earlier affect event because a later event resolves, reverses, or decays it.
+
+Use the latest known affect version for each appraisal. Within one turn, carry the `version` returned by a successful appraisal into the next appraisal. After timeout, response loss, or `effect: unknown`, reconcile only by resending the unchanged request with the same idempotency key. If an uncommitted `version_conflict` reports `effect: none`, get the latest context and re-evaluate; use a new key when the request changes. Never reuse one event's key for a different event.
 
 Immediately before every user-facing final response, reflect independently through three lenses:
 
@@ -71,7 +77,7 @@ Use `targetType=bug` for frustration with a bug, `targetType=task` for a task, a
 
 The response policy is temporary generation guidance. If the external schema rejects it or has no field for it, do not persist it elsewhere.
 
-For a normal WithMate Session turn with lifecycle-injected context, stop at reflection: the lifecycle owns the mandatory post-turn appraisal. Do not submit the same turn again through MCP. Call `character_affect.appraise` only when the client has no lifecycle appraisal owner, or for an explicitly requested manual operation, and only for concrete candidates.
+For a normal WithMate Session turn with lifecycle-injected context, the lifecycle owns the mandatory post-turn appraisal only. Do not resubmit that same post-turn request through MCP. Immediate concrete affect events remain MCP appraisal candidates under the event-time rules above.
 
 Treat each appraisal candidate result independently: entries in `saved` were saved; entries in `rejected` were not. A rejected candidate must not be copied into another store or described as persisted.
 
@@ -97,19 +103,20 @@ Apply duplicate handling by Memory kind:
 
 - **Semantic Memory:** for preferences, constraints, facts, conventions, or decisions, search the exact target before append. Skip or consolidate when an active entry already expresses the same meaning. Do not create a conflicting replacement without explicit correction authority.
 - **Character episode:** a separate event at a different time may be appended even when its meaning or motif resembles an older episode. Preserve each event; do not rewrite an older episode to stand for the new event.
+- **Character affect event:** different occurrence times or supporting events are separate events even when family, target, label, or meaning match. Preserve each event; semantic similarity is not a duplicate rule.
 - **Exact retry duplicate:** the same turn, event, timeout retry, response-loss retry, or client resend uses the unchanged request and the same idempotency key. A different event or changed request uses a new key.
 
 Choose the idempotency key before the first write. After an ambiguous result, retry only the unchanged request with the same key. Never reuse an earlier event's key for a later recurrence.
 
 ### Semantic Character Memory
 
-An explicit preference, constraint, fact, convention, decision, preferred name, interaction style, or relationship boundary can be semantic Memory rather than an episode or affect event. Use the existing general Memory CLI for these candidates because the public Character MCP surface has no semantic append tool:
+An explicit preference, constraint, fact, convention, decision, preferred name, interaction style, or relationship boundary can be semantic Memory rather than an episode or affect event. Use the general `memory.*` MCP tools for these candidates:
 
 1. Select an explicit `project`, `user-global`, `character`, or `character+project` target. Use `character` when the meaning follows one Character across projects, and `character+project` when it belongs only to that combination.
-2. Run general `withmate-memory search` against that exact target as duplicate preflight. Inspect an exact hit only when needed.
-3. If no active entry already expresses the meaning, use general `withmate-memory append` with the same explicit target and a stable idempotency key.
+2. Run `memory.search` against that exact target as duplicate preflight. Inspect an exact hit with `memory.get_entry` only when needed.
+3. If no active entry already expresses the meaning, use `memory.append` with the same explicit target and a stable idempotency key.
 
-This general semantic Memory path is not an MCP fallback and does not use `--fallback-from mcp`. Do not convert a rejected affect candidate or episode mutation into semantic Memory to evade its validation, authority, or error result.
+Do not convert a rejected affect candidate or episode mutation into semantic Memory to evade its validation, authority, or error result.
 
 ## MCP-first operation
 
@@ -122,13 +129,27 @@ Use the `withmate-character-context` MCP server for normal Character operations:
 - `character_memory.correct`
 - `character_memory.forget`
 
-The lifecycle may already have supplied context and completed affect appraisal. MCP is for missing context, additional recall, and explicit operations; it is not a mandatory per-turn ritual.
+Use the same MCP server for general semantic Memory:
+
+- `memory.search`
+- `memory.get_entry`
+- `memory.list_targets`
+- `memory.list_entries`
+- `memory.list_tags`
+- `memory.append`
+- `memory.forget`
+- `memory.move_entry`
+- `memory.get_file`
+- `memory.export_files`
+- `memory.file_usage`
+
+The lifecycle may already have supplied context and will own mandatory post-turn appraisal. MCP is also the event-time write path when a concrete affect change occurs during an ordinary bound Session; it is not a ceremonial call when no event occurred.
 
 Treat routine context retrieval, recall, and appraisal as background work. Do not narrate every tool call to the user.
 
-## Character CLI fallback
+## CLI fallback
 
-For Character context, affect, and episode operations that have an MCP tool, use CLI fallback only when:
+For general Memory, Character context, affect, and episode operations that have an MCP tool, use CLI fallback only when:
 
 - the MCP server is not configured;
 - the MCP server cannot start;
@@ -153,6 +174,8 @@ These are not availability failures and must not be bypassed with CLI:
 - migration required;
 - any structured error returned by a normally responding MCP server.
 
+The same rule applies to general Memory errors such as `MEMORY_INVALID_FIELD`, `MEMORY_TARGET_NOT_FOUND`, `MEMORY_FORBIDDEN`, `MEMORY_IDEMPOTENCY_CONFLICT`, and migration or storage domain errors returned by the runtime. A successful general Memory retry may include `replayed: true`; this is a reconciliation result, not a new write.
+
 Do not turn MCP errors into transport errors. Do not create fallback files, databases, or other local state.
 
 ## Effect certainty and errors
@@ -174,9 +197,10 @@ Use `retryable`, `conversationMayContinue`, `effect`, `details`, and read-back f
 
 ## Correction, forget, and reset
 
+An agent may correct, forget, or move Memory autonomously as the user's delegate when the target is explicit, the reason is concrete, and the operation is idempotent. Confirm the target entry and read back the resulting state. Use a dry-run before a bulk general Memory forget.
+
 Run these only with an explicit user instruction or operator authority:
 
-- Character Memory correction or forget;
 - relationship affect correction;
 - session or relationship affect reset;
 - relationship-boundary changes.
@@ -200,26 +224,26 @@ Always use the runtime's returned mode and save result independently. Shadow mod
 
 ## Semantic and Project Memory workflow
 
-The existing general Memory workflow remains separate from Character context, affect, and episodes:
+General semantic Memory uses the same MCP server but keeps its target and duplicate rules separate from Character episodes and affect:
 
 1. Read current repository sources of truth first.
-2. Search an explicit project, user-global, character, or character+project target only when stored semantic context could affect the current task or conversation.
-3. Inspect exact bodies only when the wording or rationale matters.
-4. For a concrete append candidate, search that target first for an active semantic duplicate.
-5. Append only reusable non-authoritative context that passes privacy and scope checks.
-6. Correct, move, or forget entries only on explicit user instruction.
+2. Use `memory.search` with an explicit project, user-global, character, or character+project target only when stored semantic context could affect the current task or conversation.
+3. Use `memory.get_entry` only when the exact body or rationale matters.
+4. For a concrete append candidate, search that exact target first for an active semantic duplicate.
+5. Use `memory.append` only for reusable non-authoritative context that passes privacy and scope checks.
+6. Move or forget entries only when the target and reason are concrete. Use `memory.forget` dry-run before a bulk forget, then read back the resulting target.
 
-Common general and Project Memory commands remain available:
+The CLI equivalents remain available for transport-level MCP fallback and explicit operator work:
 
 ```bash
 withmate-memory status
-withmate-memory list-targets
+withmate-memory list-targets --fallback-from mcp
 withmate-memory list-entries --project <absolute-repo-path> --limit 100
-withmate-memory search --project <absolute-repo-path> --query "release workflow"
-withmate-memory get-entry --file memory-get-entry.json
-withmate-memory append --file memory-entry.json
-withmate-memory forget --file forget-request.json --dry-run
-withmate-memory move-entry --file move-request.json
+withmate-memory search --project <absolute-repo-path> --query "release workflow" --fallback-from mcp
+withmate-memory get-entry --file memory-get-entry.json --fallback-from mcp
+withmate-memory append --file memory-entry.json --fallback-from mcp
+withmate-memory forget --file forget-request.json --dry-run --fallback-from mcp
+withmate-memory move-entry --file move-request.json --fallback-from mcp
 ```
 
 Use [reference/cli.md](reference/cli.md) for complete semantic and Project Memory target shapes, request bodies, pagination, protected-file operations, maintenance commands, and exit codes.

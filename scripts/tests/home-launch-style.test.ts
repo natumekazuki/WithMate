@@ -29,3 +29,27 @@ test("Workspace validation spinner は debounce 中から遅延なく描画す�
   assert.doesNotMatch(spinnerRule, /opacity:\s*0;/);
   assert.doesNotMatch(spinnerRule, /animation-delay:/);
 });
+
+test("Session 作成画面は Character 一覧だけをスクロール領域にする", async () => {
+  const [componentSource, stylesSource] = await Promise.all([
+    readFile("src/home/HomeLaunchDialog.tsx", "utf8"),
+    readFile("src/styles.css", "utf8"),
+  ]);
+  const panelRule = stylesSource.match(/\.home-launch-dialog \.launch-panel\s*{([^}]*)}/)?.[1];
+  const characterListRule = stylesSource.match(
+    /\.home-launch-character-section \.launch-character-list\s*{([^}]*)}/,
+  )?.[1];
+  const characterFocusRule = stylesSource.match(/\.launch-character-option:focus-visible\s*{([^}]*)}/)?.[1];
+
+  assert.match(componentSource, /dialogClassName="home-launch-dialog"/);
+  assert.match(componentSource, /className="launch-section minimal home-launch-character-section"/);
+  assert.ok(panelRule);
+  assert.match(panelRule, /grid-template-rows:\s*auto auto auto minmax\(0, 1fr\);/);
+  assert.match(panelRule, /overflow:\s*hidden;/);
+  assert.ok(characterListRule);
+  assert.match(characterListRule, /overflow-y:\s*auto;/);
+  assert.match(characterListRule, /overscroll-behavior:\s*contain;/);
+  assert.ok(characterFocusRule);
+  assert.match(characterFocusRule, /outline:\s*2px solid/);
+  assert.match(characterFocusRule, /outline-offset:\s*-3px;/);
+});

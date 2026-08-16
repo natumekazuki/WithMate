@@ -182,7 +182,9 @@ var LIST_TAGS_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"schemaVersion",
 	"targets",
 	"withCounts",
-	"sampleLimit"
+	"sampleLimit",
+	"limit",
+	"cursor"
 ]);
 var APPEND_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"schemaVersion",
@@ -212,6 +214,7 @@ var MOVE_ENTRY_REQUEST_KEYS = /* @__PURE__ */ new Set([
 	"entryId",
 	"from",
 	"to",
+	"reason",
 	"sourceMessageId",
 	"idempotencyKey"
 ]);
@@ -247,11 +250,11 @@ var MAX_SEARCH_QUERY_LENGTH = 500;
 var MAX_TITLE_LENGTH = 160;
 var MAX_PREVIEW_LENGTH = 280;
 var MAX_BODY_LENGTH = 8e3;
+var MAX_REASON_LENGTH = 1e3;
 var MAX_TAG_TYPE_LENGTH = 48;
 var MAX_TAG_VALUE_LENGTH = 96;
 var MAX_ID_LENGTH = 200;
 var MAX_CURSOR_LENGTH = 500;
-var MAX_LIMIT = 50;
 var MAX_MAINTENANCE_LIMIT = 200;
 var MAX_TAGS = 20;
 var MAX_SUPERSEDES = 20;
@@ -268,16 +271,49 @@ var MEMORY_ENTRY_STATES = /* @__PURE__ */ new Set([
 	"superseded",
 	"forgotten"
 ]);
+function encodeMemoryListTagsCursor(cursor) {
+	return [
+		"tag-v1",
+		String(cursor.usageCount),
+		encodeURIComponent(cursor.latestUpdatedAt),
+		encodeURIComponent(cursor.canonicalType),
+		encodeURIComponent(cursor.canonicalValue)
+	].join(":");
+}
+function decodeMemoryListTagsCursor(value) {
+	const parts = value.split(":");
+	if (parts.length !== 5 || parts[0] !== "tag-v1" || !/^\d+$/.test(parts[1] ?? "")) return null;
+	try {
+		const usageCount = Number(parts[1]);
+		const latestUpdatedAt = decodeURIComponent(parts[2] ?? "");
+		const canonicalType = decodeURIComponent(parts[3] ?? "");
+		const canonicalValue = decodeURIComponent(parts[4] ?? "");
+		const normalizedType = normalizeText(canonicalType, "cursor.tagType", { maxLength: MAX_TAG_TYPE_LENGTH });
+		const normalizedValue = normalizeText(canonicalValue, "cursor.tagValue", { maxLength: MAX_TAG_VALUE_LENGTH });
+		if (!Number.isSafeInteger(usageCount) || usageCount <= 0 || !latestUpdatedAt || !normalizedType.ok || normalizedType.value !== canonicalType || !normalizedValue.ok || normalizedValue.value !== canonicalValue || new Date(latestUpdatedAt).toISOString() !== latestUpdatedAt || canonicalizeMemoryTagPart(canonicalType) !== canonicalType || canonicalizeMemoryTagPart(canonicalValue) !== canonicalValue) return null;
+		const cursor = {
+			usageCount,
+			latestUpdatedAt,
+			canonicalType,
+			canonicalValue
+		};
+		return encodeMemoryListTagsCursor(cursor) === value ? cursor : null;
+	} catch {
+		return null;
+	}
+}
 function error(code, message, field) {
 	return {
 		ok: false,
 		error: field ? {
 			code,
 			message,
-			field
+			field,
+			effect: "none"
 		} : {
 			code,
-			message
+			message,
+			effect: "none"
 		}
 	};
 }
@@ -325,14 +361,15 @@ function normalizeText(value, field, options) {
 		value: normalized
 	};
 }
-function normalizeAbsolutePath(value, field) {
-	const normalized = normalizeText(value, field, { maxLength: MAX_FILE_PATH_LENGTH });
+function normalizeAbsolutePath(value, field, maxLength = MAX_FILE_PATH_LENGTH) {
+	const normalized = normalizeText(value, field, { maxLength });
 	if (!normalized.ok) return normalized;
 	if (!isAbsolutePathLike(normalized.value)) return error("MEMORY_INVALID_FIELD", `${field} must be an absolute path.`, field);
 	return normalized;
 }
+var MEMORY_ABSOLUTE_PATH_PATTERN = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/;
 function isAbsolutePathLike(value) {
-	return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+	return MEMORY_ABSOLUTE_PATH_PATTERN.test(value);
 }
 function normalizeOptionalText(value, field, maxLength = MAX_ID_LENGTH) {
 	if (value === void 0) return {
@@ -356,7 +393,7 @@ function normalizeOptionalBoolean(value, field) {
 		value
 	} : error("MEMORY_INVALID_FIELD", `${field} must be a boolean.`, field);
 }
-function normalizeOptionalLimit(value, field = "limit", max = MAX_LIMIT) {
+function normalizeOptionalLimit(value, field = "limit", max = 50) {
 	if (value === void 0) return {
 		ok: true,
 		value: void 0
@@ -471,7 +508,7 @@ function normalizeProjectTarget(value, field) {
 	if (value.type === "path") {
 		const unknownKeys = rejectUnknownKeys(value, PROJECT_TARGET_PATH_KEYS, field);
 		if (!unknownKeys.ok) return unknownKeys;
-		const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1e3 });
+		const projectPath = normalizeAbsolutePath(value.path, `${field}.path`, 1e3);
 		return projectPath.ok ? {
 			ok: true,
 			value: {
@@ -650,7 +687,7 @@ function validateMemorySearchRequest(value) {
 	if (!cursor.ok) return cursor;
 	let limit;
 	if (value.limit !== void 0) {
-		if (typeof value.limit !== "number" || !Number.isInteger(value.limit) || value.limit < 1 || value.limit > MAX_LIMIT) return error("MEMORY_INVALID_FIELD", `limit must be an integer from 1 to ${MAX_LIMIT}.`, "limit");
+		if (typeof value.limit !== "number" || !Number.isInteger(value.limit) || value.limit < 1 || value.limit > 50) return error("MEMORY_INVALID_FIELD", `limit must be an integer from 1 to 50.`, "limit");
 		limit = value.limit;
 	}
 	return {
@@ -849,18 +886,26 @@ function validateMemoryListTagsRequest(value) {
 	if (!schema.ok) return schema;
 	const targets = normalizeTargets(value.targets);
 	if (!targets.ok) return targets;
+	if (targets.value.length !== 1) return error("MEMORY_INVALID_TARGET", "List tags requires exactly one target.", "targets");
 	const withCounts = normalizeOptionalBoolean(value.withCounts, "withCounts");
 	if (!withCounts.ok) return withCounts;
 	const sampleLimit = normalizeOptionalLimit(value.sampleLimit, "sampleLimit");
 	if (!sampleLimit.ok) return sampleLimit;
 	if (sampleLimit.value !== void 0 && withCounts.value !== true) return error("MEMORY_INVALID_FIELD", "sampleLimit requires withCounts=true.", "sampleLimit");
+	const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+	if (!limit.ok) return limit;
+	const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+	if (!cursor.ok) return cursor;
+	if (cursor.value !== void 0 && !decodeMemoryListTagsCursor(cursor.value)) return error("MEMORY_INVALID_FIELD", "cursor must be a valid list-tags continuation cursor.", "cursor");
 	return {
 		ok: true,
 		value: {
 			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
 			targets: targets.value,
 			...withCounts.value === void 0 ? {} : { withCounts: withCounts.value },
-			...sampleLimit.value === void 0 ? {} : { sampleLimit: sampleLimit.value }
+			...sampleLimit.value === void 0 ? {} : { sampleLimit: sampleLimit.value },
+			...limit.value === void 0 ? {} : { limit: limit.value },
+			...cursor.value === void 0 ? {} : { cursor: cursor.value }
 		}
 	};
 }
@@ -960,6 +1005,8 @@ function validateMemoryMoveEntryRequest(value) {
 	const to = normalizeMemoryTarget(value.to, "to");
 	if (!to.ok) return to;
 	if (JSON.stringify(from.value) === JSON.stringify(to.value)) return error("MEMORY_INVALID_FIELD", "from and to must identify different targets.", "to");
+	const reason = normalizeText(value.reason, "reason", { maxLength: MAX_REASON_LENGTH });
+	if (!reason.ok) return reason;
 	const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
 	if (!sourceMessageId.ok) return sourceMessageId;
 	const idempotencyKey = normalizeOptionalText(value.idempotencyKey, "idempotencyKey");
@@ -971,6 +1018,7 @@ function validateMemoryMoveEntryRequest(value) {
 			entryId: entryId.value,
 			from: from.value,
 			to: to.value,
+			reason: reason.value,
 			...sourceMessageId.value === void 0 ? {} : { sourceMessageId: sourceMessageId.value },
 			...idempotencyKey.value === void 0 ? {} : { idempotencyKey: idempotencyKey.value }
 		}
@@ -1315,6 +1363,9 @@ function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonc
 	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
 }
 //#endregion
+//#region src/agent-runtime/agent-runtime-binding-contract.ts
+var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
+//#endregion
 //#region scripts/withmate-memory-runtime-client.ts
 var WithMateMemoryRuntimeExchangeError = class extends Error {
 	dispatched;
@@ -1335,16 +1386,46 @@ function mapRuntimeHttpFailureToCharacterContext(response) {
 		details: { httpStatus: response.status }
 	});
 }
+function isMemoryErrorResponse$1(value) {
+	return typeof value === "object" && value !== null && value.schemaVersion === "withmate-memory-v1" && typeof value.error?.code === "string";
+}
+function createMemoryRuntimeError(code, message, options) {
+	return createMemoryErrorResponse({
+		code,
+		message,
+		...options
+	});
+}
+function mapRuntimeHttpFailureToMemory(response, operationKind = "read") {
+	if (isMemoryErrorResponse$1(response.value)) {
+		if (response.value.error.effect) return response.value;
+		return createMemoryErrorResponse({
+			...response.value.error,
+			effect: operationKind === "write" && response.status >= 500 ? "unknown" : "none"
+		});
+	}
+	if (response.ok) return response.value;
+	return createMemoryRuntimeError(response.status === 401 ? "MEMORY_UNAUTHORIZED" : response.status === 403 ? "MEMORY_FORBIDDEN" : response.status === 404 ? "MEMORY_ROUTE_NOT_FOUND" : response.status === 413 ? "MEMORY_REQUEST_TOO_LARGE" : response.status === 415 ? "MEMORY_UNSUPPORTED_MEDIA_TYPE" : response.status === 429 ? "MEMORY_TOO_MANY_REQUESTS" : response.status >= 500 ? "MEMORY_STORAGE_UNAVAILABLE" : "MEMORY_INVALID_REQUEST", "WithMate runtime rejected the Memory request.", {
+		retryable: response.status === 429 || response.status >= 500,
+		conversationMayContinue: true,
+		effect: operationKind === "write" && response.status >= 500 ? "unknown" : "none",
+		details: { httpStatus: response.status }
+	});
+}
 function usageError$1(message) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_CLI_USAGE",
-		message
+		message,
+		retryable: false,
+		conversationMayContinue: true,
+		effect: "none"
 	});
 }
 function transportError$1(message) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
-		message
+		message,
+		effect: "none"
 	});
 }
 function readRequiredEnvValue(env, name) {
@@ -1486,6 +1567,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				apiSecret: connection.api.apiSecret,
 				adapter: connection.credential.adapter,
 				adapterSecret: connection.credential.adapterSecret,
+				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
 				operation
 			}));
 		});
@@ -1498,6 +1580,11 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 			fail("Memory API request could not be dispatched.", error);
 		}
 	});
+}
+function resolveAgentRuntimeBindingReference(env = process.env) {
+	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
+	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw usageError$1("WithMate provider execution requires its runtime binding reference.");
+	return reference || void 0;
 }
 async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
 	const nonce = randomBytes(16).toString("base64url");
@@ -21420,7 +21507,699 @@ var StdioServerTransport = class {
 	}
 };
 //#endregion
+//#region scripts/withmate-memory-mcp-general.ts
+var projectRefSchema$1 = discriminatedUnion("type", [object({
+	type: literal("id"),
+	id: string().min(1).max(200)
+}).strict(), object({
+	type: literal("path"),
+	path: string().min(1).max(1e3).regex(MEMORY_ABSOLUTE_PATH_PATTERN)
+}).strict()]);
+var characterRefSchema = object({
+	type: literal("id"),
+	id: string().min(1).max(200)
+}).strict();
+var memoryTargetSchema = union([
+	object({
+		owner: literal("project"),
+		scope: literal("project"),
+		project: projectRefSchema$1
+	}).strict(),
+	object({
+		owner: literal("character"),
+		scope: literal("character"),
+		character: characterRefSchema
+	}).strict(),
+	object({
+		owner: literal("character"),
+		scope: literal("project"),
+		character: characterRefSchema,
+		project: projectRefSchema$1
+	}).strict(),
+	object({
+		owner: literal("user"),
+		scope: literal("global")
+	}).strict()
+]);
+var memoryTagInputSchema = object({
+	type: string().min(1).max(48),
+	value: string().min(1).max(96)
+}).strict();
+var memoryTagOutputSchema = object({
+	type: string(),
+	value: string()
+}).strict();
+var memoryOwnerOutputSchema = discriminatedUnion("type", [
+	object({
+		type: literal("character"),
+		id: string()
+	}).strict(),
+	object({
+		type: literal("project"),
+		id: string()
+	}).strict(),
+	object({
+		type: literal("user"),
+		id: literal("local-user")
+	}).strict()
+]);
+var memoryScopeOutputSchema = discriminatedUnion("type", [
+	object({
+		type: literal("session"),
+		id: string()
+	}).strict(),
+	object({
+		type: literal("project"),
+		id: string()
+	}).strict(),
+	object({
+		type: literal("character"),
+		id: string()
+	}).strict(),
+	object({
+		type: literal("global"),
+		id: literal("global")
+	}).strict()
+]);
+var memoryFileOutputSchema = object({
+	objectId: string(),
+	role: _enum(MEMORY_APPEND_FILE_ROLES),
+	mediaKind: _enum([
+		"image",
+		"text",
+		"source",
+		"archive",
+		"document",
+		"other"
+	]),
+	contentType: string(),
+	displayName: string(),
+	summary: string(),
+	originalBytes: number().int().nonnegative()
+}).strict();
+var memoryEntrySummaryShape = {
+	id: string(),
+	owner: memoryOwnerOutputSchema,
+	scope: memoryScopeOutputSchema,
+	kind: _enum(MEMORY_ENTRY_KINDS),
+	title: string(),
+	preview: string(),
+	state: _enum([
+		"active",
+		"superseded",
+		"forgotten"
+	]),
+	tags: array(memoryTagOutputSchema),
+	createdAt: string(),
+	updatedAt: string(),
+	files: array(memoryFileOutputSchema).optional()
+};
+var memoryEntrySummarySchema$1 = object(memoryEntrySummaryShape).strict();
+var memorySearchHitSchema$1 = memoryEntrySummarySchema$1.omit({ state: true }).extend({ match: object({
+	fields: array(_enum([
+		"title",
+		"preview",
+		"body",
+		"tags"
+	])),
+	snippet: string().optional()
+}).strict().optional() }).strict();
+var memorySourceSchema = object({
+	type: _enum([
+		"agent",
+		"manual",
+		"migration"
+	]),
+	sessionId: string().nullable(),
+	messageId: string().nullable(),
+	providerId: string().nullable()
+}).strict();
+var memoryEntryDetailBase = object({
+	...memoryEntrySummaryShape,
+	body: string(),
+	source: memorySourceSchema,
+	supersedes: array(string()),
+	supersededBy: string().nullable(),
+	forgottenAt: string().nullable()
+}).strict();
+var memoryEntryDetailSchema = union([
+	memoryEntryDetailBase.extend({
+		state: literal("active"),
+		supersededBy: _null(),
+		forgottenAt: _null()
+	}).strict(),
+	memoryEntryDetailBase.extend({
+		state: literal("superseded"),
+		supersededBy: string(),
+		forgottenAt: _null()
+	}).strict(),
+	memoryEntryDetailBase.extend({
+		state: literal("forgotten"),
+		supersededBy: string().nullable(),
+		forgottenAt: string()
+	}).strict()
+]);
+var memoryErrorSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	error: object({
+		code: string(),
+		message: string(),
+		field: string().optional(),
+		quotaBytes: number().optional(),
+		usedBytes: number().optional(),
+		incomingBytes: number().optional(),
+		availableBytes: number().optional(),
+		allowedProjectTargets: array(string()).optional(),
+		suggestion: string().optional(),
+		retryable: boolean().optional(),
+		conversationMayContinue: boolean().optional(),
+		effect: _enum([
+			"none",
+			"committed",
+			"partial",
+			"unknown"
+		]),
+		details: record(string(), unknown()).optional()
+	}).strict()
+}).strict();
+function createMemoryToolOutputSchema(successSchema, requiredSuccessKeys) {
+	return successSchema.partial().extend({
+		schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+		error: memoryErrorSchema.shape.error.optional()
+	}).strict().superRefine((value, context) => {
+		if (successSchema.safeParse(value).success || memoryErrorSchema.safeParse(value).success) return;
+		context.addIssue({
+			code: "custom",
+			message: "Result must match either the Memory success contract or the Memory error contract."
+		});
+	}).meta({ oneOf: [{
+		required: requiredSuccessKeys,
+		not: { required: ["error"] }
+	}, { required: ["error"] }] });
+}
+var searchSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	items: array(memorySearchHitSchema$1),
+	relatedTags: array(memoryTagOutputSchema).optional(),
+	nextCursor: string().optional()
+}).strict();
+var getEntrySuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	entry: memoryEntryDetailSchema
+}).strict();
+var targetInventorySchema = object({
+	target: memoryTargetSchema,
+	owner: _enum([
+		"project",
+		"character",
+		"user"
+	]),
+	scope: _enum([
+		"project",
+		"character",
+		"global"
+	]),
+	project: object({
+		id: string(),
+		displayName: string(),
+		path: string().optional()
+	}).strict().optional(),
+	character: object({
+		id: string(),
+		displayName: string()
+	}).strict().optional(),
+	entryCount: number().int().nonnegative(),
+	tagCount: number().int().nonnegative(),
+	lastUpdatedAt: string().nullable()
+}).strict();
+var listTargetsSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	items: array(targetInventorySchema),
+	nextCursor: string().optional()
+}).strict();
+var listEntrySchema = object({
+	...memoryEntrySummaryShape,
+	body: string().optional(),
+	supersedes: array(string()),
+	supersededBy: string().nullable()
+}).strict();
+var listEntriesSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	items: array(listEntrySchema),
+	nextCursor: string().optional()
+}).strict();
+var listTagsSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	tags: array(object({
+		type: string(),
+		value: string(),
+		entryCount: number().int().nonnegative().optional(),
+		latestUpdatedAt: string().optional(),
+		samples: array(object({
+			id: string(),
+			title: string()
+		}).strict()).optional()
+	}).strict()),
+	nextCursor: string().optional()
+}).strict();
+var appendSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	entry: memoryEntrySummarySchema$1,
+	created: boolean(),
+	replayed: literal(true).optional()
+}).strict();
+var forgetSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	results: array(object({
+		entryId: string(),
+		status: _enum([
+			"forgotten",
+			"already_forgotten",
+			"not_found"
+		]),
+		replayed: literal(true).optional(),
+		entry: memoryEntrySummarySchema$1.optional(),
+		warning: literal("target_mismatch_or_not_found").optional()
+	}).strict()),
+	dryRun: literal(true).optional(),
+	writeOccurred: literal(false).optional()
+}).strict();
+var moveSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	entry: memoryEntrySummarySchema$1,
+	moved: boolean(),
+	replayed: literal(true).optional(),
+	from: memoryTargetSchema,
+	to: memoryTargetSchema
+}).strict();
+var getFileSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	objectId: string(),
+	entryId: string(),
+	outputPath: string(),
+	bytesWritten: number().int().nonnegative(),
+	contentType: string(),
+	displayName: string()
+}).strict();
+var exportedFileSchema = object({
+	objectId: string(),
+	outputPath: string(),
+	bytesWritten: number().int().nonnegative(),
+	contentType: string(),
+	displayName: string()
+}).strict();
+var exportFilesSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	entryId: string(),
+	outputDirectoryPath: string(),
+	exportedCount: number().int().nonnegative(),
+	files: array(exportedFileSchema)
+}).strict();
+var fileUsageSuccessSchema = object({
+	schemaVersion: literal(MEMORY_V6_SCHEMA_VERSION),
+	quotaBytes: number().int().nonnegative(),
+	usedBytes: number().int().nonnegative(),
+	physicalBytes: number().int().nonnegative(),
+	pendingDeleteBytes: number().int().nonnegative(),
+	availableBytes: number().int().nonnegative(),
+	objectCount: number().int().nonnegative(),
+	pendingDeleteCount: number().int().nonnegative(),
+	quotaExceeded: boolean(),
+	largestEntries: array(object({
+		entryId: string(),
+		title: string(),
+		preview: string(),
+		totalFileBytes: number().int().nonnegative(),
+		fileCount: number().int().nonnegative(),
+		updatedAt: string()
+	}).strict()).optional()
+}).strict();
+var appendFileInputSchema = object({
+	path: string().min(1).max(1e3).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "path must be absolute"),
+	summary: string().min(1).max(500),
+	role: _enum(MEMORY_APPEND_FILE_ROLES).optional(),
+	displayName: string().min(1).max(255).optional(),
+	contentType: string().min(1).max(120).optional()
+}).strict();
+var GENERAL_MEMORY_MCP_TOOL_DEFINITIONS = [
+	{
+		name: "memory.search",
+		description: "Search active general Memory in one or more explicit targets.",
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.get_entry",
+		description: "Read one active Memory entry from an explicit target, including its full body.",
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.list_targets",
+		description: "List bounded general Memory target inventory without exposing entry bodies.",
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.list_entries",
+		description: "List entries in one explicit target; bodies are omitted unless explicitly requested.",
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.list_tags",
+		description: "List tags for one explicit Memory target, optionally with bounded counts and samples.",
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.append",
+		description: "Append one idempotent general Memory entry to an explicit target, optionally importing protected files atomically.",
+		annotations: {
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.forget",
+		description: "Preview or perform an idempotent forget for an explicit target and concrete reason.",
+		annotations: {
+			readOnlyHint: false,
+			destructiveHint: true,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.move_entry",
+		description: "Move one active entry idempotently between explicit targets while preserving its identity and attachments.",
+		annotations: {
+			readOnlyHint: false,
+			destructiveHint: true,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.get_file",
+		description: "Export one protected object to a new absolute output path after target validation; existing files are not overwritten.",
+		annotations: {
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: false,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.export_files",
+		description: "Export all protected objects for one entry to new files in an absolute output directory after target validation.",
+		annotations: {
+			readOnlyHint: false,
+			destructiveHint: false,
+			idempotentHint: false,
+			openWorldHint: false
+		}
+	},
+	{
+		name: "memory.file_usage",
+		description: "Read bounded protected-object quota and usage metadata without exposing content or storage paths.",
+		annotations: {
+			readOnlyHint: true,
+			destructiveHint: false,
+			idempotentHint: true,
+			openWorldHint: false
+		}
+	}
+];
+function registerGeneralMemoryMcpTools(server, callRuntime, toolResult) {
+	const definitions = new Map(GENERAL_MEMORY_MCP_TOOL_DEFINITIONS.map((definition) => [definition.name, definition]));
+	const register = (name, inputSchema, outputSchema, operation) => {
+		server.registerTool(name, {
+			...definitions.get(name),
+			inputSchema,
+			outputSchema
+		}, async (input) => toolResult(await callRuntime(operation(input))));
+	};
+	register("memory.search", object({
+		targets: array(memoryTargetSchema).min(1).max(5),
+		query: string().min(1).max(500),
+		kinds: array(_enum(MEMORY_ENTRY_KINDS)).max(MEMORY_ENTRY_KINDS.length).optional(),
+		tags: array(memoryTagInputSchema).max(20).optional(),
+		limit: number().int().min(1).max(50).optional(),
+		cursor: string().min(1).max(500).optional()
+	}).strict(), createMemoryToolOutputSchema(searchSuccessSchema, ["schemaVersion", "items"]), (input) => ({
+		method: "POST",
+		path: "/v1/search",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "read"
+	}));
+	register("memory.get_entry", object({
+		entryId: string().min(1).max(200),
+		target: memoryTargetSchema
+	}).strict(), createMemoryToolOutputSchema(getEntrySuccessSchema, ["schemaVersion", "entry"]), (input) => ({
+		method: "POST",
+		path: "/v1/get_entry",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "read"
+	}));
+	register("memory.list_targets", object({
+		owner: _enum([
+			"project",
+			"character",
+			"user"
+		]).optional(),
+		scope: _enum([
+			"project",
+			"character",
+			"global"
+		]).optional(),
+		project: projectRefSchema$1.optional(),
+		character: characterRefSchema.optional(),
+		includeEmpty: boolean().optional(),
+		limit: number().int().min(1).max(200).optional(),
+		cursor: string().min(1).max(500).optional()
+	}).strict(), createMemoryToolOutputSchema(listTargetsSuccessSchema, ["schemaVersion", "items"]), (input) => ({
+		method: "POST",
+		path: "/v1/list_targets",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "read"
+	}));
+	register("memory.list_entries", object({
+		target: memoryTargetSchema,
+		states: array(_enum([
+			"active",
+			"superseded",
+			"forgotten"
+		])).min(1).max(3).optional(),
+		kinds: array(_enum(MEMORY_ENTRY_KINDS)).max(MEMORY_ENTRY_KINDS.length).optional(),
+		tags: array(memoryTagInputSchema).max(20).optional(),
+		includeBody: boolean().optional(),
+		limit: number().int().min(1).max(200).optional(),
+		cursor: string().min(1).max(500).optional()
+	}).strict(), createMemoryToolOutputSchema(listEntriesSuccessSchema, ["schemaVersion", "items"]), (input) => ({
+		method: "POST",
+		path: "/v1/list_entries",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "read"
+	}));
+	register("memory.list_tags", object({
+		targets: array(memoryTargetSchema).length(1),
+		withCounts: boolean().optional(),
+		sampleLimit: number().int().min(1).max(50).optional(),
+		limit: number().int().min(1).max(200).optional(),
+		cursor: string().min(1).max(500).optional()
+	}).strict().superRefine((input, context) => {
+		if (input.sampleLimit !== void 0 && input.withCounts !== true) context.addIssue({
+			code: "custom",
+			path: ["sampleLimit"],
+			message: "sampleLimit requires withCounts=true"
+		});
+	}).meta({ allOf: [{
+		if: { required: ["sampleLimit"] },
+		then: {
+			properties: { withCounts: { const: true } },
+			required: ["withCounts"]
+		}
+	}] }), createMemoryToolOutputSchema(listTagsSuccessSchema, ["schemaVersion", "tags"]), (input) => ({
+		method: "POST",
+		path: "/v1/list_tags",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "read"
+	}));
+	register("memory.append", object({
+		target: memoryTargetSchema,
+		kind: _enum(MEMORY_ENTRY_KINDS),
+		title: string().min(1).max(160),
+		body: string().min(1).max(8e3),
+		preview: string().min(1).max(280),
+		tags: array(memoryTagInputSchema).max(20),
+		supersedes: array(string().min(1).max(200)).max(20).optional(),
+		mutationReason: string().min(1).max(200).optional(),
+		files: array(appendFileInputSchema).max(10).optional(),
+		sourceMessageId: string().min(1).max(200).optional(),
+		idempotencyKey: string().min(1).max(200)
+	}).strict(), createMemoryToolOutputSchema(appendSuccessSchema, [
+		"schemaVersion",
+		"entry",
+		"created"
+	]), (input) => ({
+		method: "POST",
+		path: "/v1/append",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "write"
+	}));
+	register("memory.forget", object({
+		target: memoryTargetSchema,
+		entryIds: array(string().min(1).max(200)).min(1).max(50),
+		reason: _enum(MEMORY_FORGET_REASONS),
+		sourceMessageId: string().min(1).max(200).optional(),
+		idempotencyKey: string().min(1).max(200),
+		dryRun: boolean().optional()
+	}).strict(), createMemoryToolOutputSchema(forgetSuccessSchema, ["schemaVersion", "results"]), (input) => ({
+		method: "POST",
+		path: "/v1/forget",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: input.dryRun ? "read" : "write"
+	}));
+	register("memory.move_entry", object({
+		entryId: string().min(1).max(200),
+		from: memoryTargetSchema,
+		to: memoryTargetSchema,
+		reason: string().min(1).max(1e3),
+		sourceMessageId: string().min(1).max(200).optional(),
+		idempotencyKey: string().min(1).max(200)
+	}).strict(), createMemoryToolOutputSchema(moveSuccessSchema, [
+		"schemaVersion",
+		"entry",
+		"moved",
+		"from",
+		"to"
+	]), (input) => ({
+		method: "POST",
+		path: "/v1/move_entry",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "write"
+	}));
+	register("memory.get_file", object({
+		target: memoryTargetSchema,
+		objectId: string().min(1).max(64),
+		outputPath: string().min(1).max(1e3).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "outputPath must be absolute")
+	}).strict(), createMemoryToolOutputSchema(getFileSuccessSchema, [
+		"schemaVersion",
+		"objectId",
+		"entryId",
+		"outputPath",
+		"bytesWritten",
+		"contentType",
+		"displayName"
+	]), (input) => ({
+		method: "POST",
+		path: "/v1/get_file",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "write"
+	}));
+	register("memory.export_files", object({
+		target: memoryTargetSchema,
+		entryId: string().min(1).max(200),
+		outputDirectoryPath: string().min(1).max(1e3).regex(/^(?:\/|[A-Za-z]:[\\/]|\\\\)/, "outputDirectoryPath must be absolute")
+	}).strict(), createMemoryToolOutputSchema(exportFilesSuccessSchema, [
+		"schemaVersion",
+		"entryId",
+		"outputDirectoryPath",
+		"exportedCount",
+		"files"
+	]), (input) => ({
+		method: "POST",
+		path: "/v1/export_files",
+		body: {
+			schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+			...input
+		},
+		operationKind: "write"
+	}));
+	register("memory.file_usage", object({
+		largest: boolean().optional(),
+		limit: number().int().min(1).max(50).optional()
+	}).strict(), createMemoryToolOutputSchema(fileUsageSuccessSchema, [
+		"schemaVersion",
+		"quotaBytes",
+		"usedBytes",
+		"physicalBytes",
+		"pendingDeleteBytes",
+		"availableBytes",
+		"objectCount",
+		"pendingDeleteCount",
+		"quotaExceeded"
+	]), (input) => {
+		const query = new URLSearchParams();
+		if (input.largest === true) query.set("largest", "1");
+		if (input.limit !== void 0) query.set("limit", String(input.limit));
+		const suffix = query.toString();
+		return {
+			method: "GET",
+			path: `/v1/file_usage${suffix ? `?${suffix}` : ""}`,
+			body: {},
+			operationKind: "read"
+		};
+	});
+}
+//#endregion
 //#region scripts/withmate-memory-mcp.ts
+var DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS$1 = 3e5;
+var GENERAL_MEMORY_FILE_OPERATION_PATHS = /* @__PURE__ */ new Set([
+	"/v1/append",
+	"/v1/get_file",
+	"/v1/export_files"
+]);
 var affectValueSchema = object({
 	label: string().min(1),
 	valence: number().min(-1).max(1),
@@ -21451,7 +22230,6 @@ var affectCandidateSchema = object({
 	schemaVersion: literal("withmate-affect-v1"),
 	characterId: string().min(1),
 	userId: literal("local-user"),
-	sessionId: string().min(1),
 	layer: _enum(["relationship", "session"]),
 	targetType: _enum([
 		"user",
@@ -21462,6 +22240,20 @@ var affectCandidateSchema = object({
 		"self"
 	]),
 	targetId: string().min(1),
+	family: _enum([
+		"joy",
+		"relief",
+		"interest",
+		"anticipation",
+		"affinity",
+		"gratitude",
+		"concern",
+		"frustration",
+		"disappointment",
+		"regret",
+		"determination",
+		"other"
+	]),
 	value: affectValueSchema,
 	intensity: number().min(0).max(1),
 	reason: string().min(1),
@@ -21624,12 +22416,27 @@ var contextOutputSchema = union([object({
 				"self"
 			]),
 			targetId: string(),
+			family: _enum([
+				"joy",
+				"relief",
+				"interest",
+				"anticipation",
+				"affinity",
+				"gratitude",
+				"concern",
+				"frustration",
+				"disappointment",
+				"regret",
+				"determination",
+				"other"
+			]).nullable(),
 			label: string(),
 			valence: number(),
 			arousal: number().optional(),
 			dimensions: record(string(), number()).optional(),
 			intensity: number()
 		}).strict()),
+		evaluatedAt: string(),
 		version: string(),
 		updatedAt: string().nullable()
 	}).strict(),
@@ -21746,8 +22553,10 @@ var CHARACTER_MCP_SERVER_INSTRUCTIONS = [
 	"Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
 	"character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
 	"Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
-	"Call character_memory.correct or character_memory.forget only after an explicit user instruction. Do not infer correction or deletion authority.",
-	"Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values."
+	"Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
+	"Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values.",
+	"Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
+	"Use CLI fallback only when MCP is unavailable at the transport level. Structured Memory or Character domain errors, authority denial, conflicts, replay, and migration requirements are not availability failures."
 ].join("\n");
 var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	{
@@ -21792,7 +22601,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_memory.correct",
-		description: "Correct one Character Memory entry after an explicit user instruction, preserving supersession history.",
+		description: "Correct one Character Memory entry as an idempotent user-delegate operation, preserving supersession history.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -21802,7 +22611,7 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "character_memory.forget",
-		description: "Forget one Character Memory entry after an explicit user instruction and read back the result.",
+		description: "Forget one Character Memory entry as an idempotent user-delegate operation and read back the result.",
 		annotations: {
 			readOnlyHint: false,
 			destructiveHint: true,
@@ -21811,17 +22620,38 @@ var CHARACTER_MCP_TOOL_DEFINITIONS = [
 		}
 	}
 ];
+[...CHARACTER_MCP_TOOL_DEFINITIONS, ...GENERAL_MEMORY_MCP_TOOL_DEFINITIONS];
 async function callRuntime(path, body, operationKind, deps) {
-	const connection = await discoverWithMateMemoryApi({
-		adapter: "mcp",
-		env: deps.env,
-		readFile: deps.readFile
-	});
+	let connection;
+	try {
+		connection = await discoverWithMateMemoryApi({
+			adapter: "mcp",
+			env: deps.env,
+			readFile: deps.readFile
+		});
+	} catch {
+		return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
+			retryable: true,
+			conversationMayContinue: true,
+			effect: "none"
+		});
+	}
 	if (!connection) return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
 		retryable: true,
 		conversationMayContinue: true,
 		effect: "none"
 	});
+	let bindingReference;
+	try {
+		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+	} catch (error) {
+		if (isMemoryErrorResponse$1(error)) return createCharacterContextError("authority_denied", error.error.message, {
+			retryable: false,
+			conversationMayContinue: true,
+			effect: "none"
+		});
+		throw error;
+	}
 	const abortController = new AbortController();
 	const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
 	let dispatched = false;
@@ -21830,7 +22660,10 @@ async function callRuntime(path, body, operationKind, deps) {
 			method: "POST",
 			path,
 			body
-		}, { signal: abortController.signal });
+		}, {
+			signal: abortController.signal,
+			bindingReference
+		});
 		dispatched = true;
 		return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
 	} catch (error) {
@@ -21844,6 +22677,63 @@ async function callRuntime(path, body, operationKind, deps) {
 		clearTimeout(timeout);
 	}
 }
+async function callMemoryRuntime(operation, deps) {
+	let connection;
+	try {
+		connection = await discoverWithMateMemoryApi({
+			adapter: "mcp",
+			env: deps.env,
+			readFile: deps.readFile
+		});
+	} catch {
+		return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
+			retryable: true,
+			conversationMayContinue: true,
+			effect: "none"
+		});
+	}
+	if (!connection) return createMemoryRuntimeError("WITHMATE_NOT_RUNNING", "WithMate runtime is not available.", {
+		retryable: true,
+		conversationMayContinue: true,
+		effect: "none"
+	});
+	let bindingReference;
+	try {
+		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+	} catch (error) {
+		if (isMemoryErrorResponse$1(error)) return error;
+		throw error;
+	}
+	const operationPath = new URL(operation.path, "http://127.0.0.1").pathname;
+	const requestTimeoutMs = GENERAL_MEMORY_FILE_OPERATION_PATHS.has(operationPath) ? deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS$1 : deps.requestTimeoutMs ?? 1e4;
+	const abortController = new AbortController();
+	const timeout = setTimeout(() => abortController.abort(), requestTimeoutMs);
+	let dispatched = false;
+	try {
+		const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
+			method: operation.method,
+			path: operation.path,
+			body: operation.body
+		}, {
+			signal: abortController.signal,
+			bindingReference
+		});
+		dispatched = true;
+		return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
+	} catch (error) {
+		const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
+		return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
+			retryable: true,
+			conversationMayContinue: true,
+			effect: operation.operationKind === "write" && operationDispatched ? "unknown" : "none"
+		});
+	} finally {
+		clearTimeout(timeout);
+	}
+}
+function isMemoryError(value) {
+	return typeof value === "object" && value !== null && value.schemaVersion === "withmate-memory-v1" && typeof value.error?.code === "string";
+}
 function toolResult(value) {
 	const structured = value && typeof value === "object" ? value : { value };
 	return {
@@ -21852,7 +22742,7 @@ function toolResult(value) {
 			text: JSON.stringify(value)
 		}],
 		structuredContent: structured,
-		...isCharacterContextError(value) ? { isError: true } : {}
+		...isCharacterContextError(value) || isMemoryError(value) ? { isError: true } : {}
 	};
 }
 function createWithMateMemoryMcpServer(deps = {}) {
@@ -21865,7 +22755,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 		...definitions.get("character_context.get"),
 		inputSchema: object({
 			characterId: string().min(1),
-			sessionId: string().min(1),
 			query: string().min(1).optional(),
 			memoryLimit: number().int().min(0).max(10).default(3)
 		}).strict(),
@@ -21878,7 +22767,6 @@ function createWithMateMemoryMcpServer(deps = {}) {
 		...definitions.get("character_affect.appraise"),
 		inputSchema: object({
 			characterId: string().min(1),
-			sessionId: string().min(1),
 			expectedVersion: string().min(1).optional(),
 			candidates: array(affectCandidateSchema).min(1).max(10)
 		}).strict(),
@@ -21949,6 +22837,7 @@ function createWithMateMemoryMcpServer(deps = {}) {
 		schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
 		...input
 	}, "write", deps)));
+	registerGeneralMemoryMcpTools(server, (operation) => callMemoryRuntime(operation, deps), toolResult);
 	return server;
 }
 async function startWithMateMemoryMcpServer(deps = {}) {
@@ -21985,6 +22874,17 @@ var CHARACTER_CONTEXT_WRITE_COMMANDS = /* @__PURE__ */ new Set([
 	"character_memory_correct",
 	"character_memory_forget"
 ]);
+var GENERAL_MEMORY_WRITE_COMMANDS = /* @__PURE__ */ new Set([
+	"append",
+	"forget",
+	"move_entry",
+	"get_file",
+	"export_files"
+]);
+function generalMemoryOperationKind(request) {
+	if (request.command === "forget" && typeof request.body === "object" && request.body !== null && !Array.isArray(request.body) && request.body.dryRun === true) return "read";
+	return GENERAL_MEMORY_WRITE_COMMANDS.has(request.command) ? "write" : "read";
+}
 function characterRuntimeUnavailable(effect = "none") {
 	return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
 		retryable: true,
@@ -22265,26 +23165,32 @@ var validatableCommands = /* @__PURE__ */ new Set([
 function usageError(message) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_CLI_USAGE",
-		message
+		message,
+		effect: "none"
 	});
 }
 function notRunningError() {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_NOT_RUNNING",
-		message: "WithMate Memory API is not running or could not be discovered."
+		message: "WithMate Memory API is not running or could not be discovered.",
+		effect: "none"
 	});
 }
-function requestTimeoutError(command, timeoutMs) {
+function requestTimeoutError(command, timeoutMs, effect) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_REQUEST_TIMEOUT",
 		message: `WithMate Memory API request timed out after ${timeoutMs}ms.`,
-		field: command
+		field: command,
+		retryable: true,
+		conversationMayContinue: true,
+		effect
 	});
 }
 function transportError(message) {
 	return createMemoryErrorResponse({
 		code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
-		message
+		message,
+		effect: "none"
 	});
 }
 function isAbortError(error) {
@@ -22814,11 +23720,11 @@ function validateMemoryCliRequestBody(command, body) {
 	try {
 		if (command === "context_get") return {
 			ok: true,
-			value: validateCharacterContextGetRequest(body)
+			value: validateCharacterContextGetRequest(withRuntimeActorSession(body))
 		};
 		if (command === "affect_appraise") return {
 			ok: true,
-			value: validateCharacterAffectAppraiseRequest(body)
+			value: validateCharacterAffectAppraiseRequest(withRuntimeActorSession(body, true))
 		};
 		if (command === "affect_inspect") return {
 			ok: true,
@@ -22871,11 +23777,27 @@ function validateMemoryCliRequestBody(command, body) {
 	if (command === "move_entry") return validateMemoryMoveEntryRequest(body);
 	return validateMemoryForgetRequest(body);
 }
+var RUNTIME_ACTOR_SESSION_PLACEHOLDER = "__withmate_runtime_actor_session__";
+function withRuntimeActorSession(body, includeCandidates = false) {
+	if (!body || typeof body !== "object" || Array.isArray(body)) return body;
+	const request = body;
+	return {
+		...request,
+		sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER,
+		...includeCandidates && Array.isArray(request.candidates) ? { candidates: request.candidates.map((candidate) => candidate && typeof candidate === "object" && !Array.isArray(candidate) ? {
+			...candidate,
+			sessionId: RUNTIME_ACTOR_SESSION_PLACEHOLDER
+		} : candidate) } : {}
+	};
+}
 function buildValidateResponse(command, body) {
 	const validation = validateMemoryCliRequestBody(command, body);
 	if (!validation.ok) return {
 		exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.apiError,
-		response: createMemoryErrorResponse(validation.error)
+		response: createMemoryErrorResponse({
+			...validation.error,
+			effect: validation.error.effect ?? "none"
+		})
 	};
 	return {
 		exitCode: WITHMATE_MEMORY_CLI_EXIT_CODES.ok,
@@ -23004,7 +23926,10 @@ async function runWithMateMemoryCli(args, deps = {}) {
 				path: buildRoutePath(request),
 				body: request.body,
 				...request.fallbackFrom ? { fallbackFrom: request.fallbackFrom } : {}
-			}, { signal: abortController.signal });
+			}, {
+				signal: abortController.signal,
+				bindingReference: resolveAgentRuntimeBindingReference(deps.env)
+			});
 			response = runtimeResponse;
 			responseJson = runtimeResponse.value;
 		} catch (error) {
@@ -23023,7 +23948,8 @@ async function runWithMateMemoryCli(args, deps = {}) {
 					stdout.write(`${JSON.stringify(characterRuntimeUnavailable(effect))}\n`);
 					return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 				}
-				stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs))}\n`);
+				const effect = generalMemoryOperationKind(request) === "write" ? "unknown" : "none";
+				stdout.write(`${JSON.stringify(requestTimeoutError(request.command, operationTimeoutMs, effect))}\n`);
 				return WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 			}
 			if (CHARACTER_CONTEXT_COMMANDS.has(request.command)) {
@@ -23040,6 +23966,11 @@ async function runWithMateMemoryCli(args, deps = {}) {
 			status: response.status,
 			value: responseJson
 		});
+		else responseJson = mapRuntimeHttpFailureToMemory({
+			ok: response.ok,
+			status: response.status,
+			value: responseJson
+		}, generalMemoryOperationKind(request));
 		stdout.write(request.command === "audit" ? formatAuditOutput(responseJson, request.outputFormat ?? "json") : `${JSON.stringify(responseJson)}\n`);
 		return response.ok ? WITHMATE_MEMORY_CLI_EXIT_CODES.ok : WITHMATE_MEMORY_CLI_EXIT_CODES.apiError;
 	} catch (error) {

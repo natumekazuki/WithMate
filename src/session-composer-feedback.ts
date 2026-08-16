@@ -1,6 +1,8 @@
 export type ComposerSendabilityState = {
   isRunning: boolean;
   isBlankDraft: boolean;
+  isBusy: boolean;
+  busyReason: string;
   blockedReason: string;
   inputErrors: string[];
   primaryFeedback: string;
@@ -15,29 +17,35 @@ export type TextComposerSubmitPreflightResult =
   | { status: "blocked"; reason: "empty"; feedback: string }
   | { status: "blocked"; reason: "running" };
 
-export const BLANK_DRAFT_FEEDBACK = "メッセージを入力してください。";
-export const COMPOSER_SEND_BLOCKED_FALLBACK = "送信できない状態だよ。";
+export const BLANK_DRAFT_FEEDBACK = "Message is empty.";
+export const COMPOSER_SEND_BLOCKED_FALLBACK = "Message cannot be sent.";
 
 export function buildComposerSendabilityState({
   runState,
+  busyReason = "",
   blockedReason,
   inputErrors,
   draftText,
 }: {
   runState: string | null | undefined;
+  busyReason?: string;
   blockedReason: string;
   inputErrors: string[];
   draftText: string;
 }): ComposerSendabilityState {
   const normalizedBlockedReason = blockedReason.trim();
+  const normalizedBusyReason = busyReason.trim();
   const normalizedInputErrors = inputErrors.map((error) => error.trim()).filter(Boolean);
   const isRunning = runState === "running";
   const isBlankDraft = draftText.trim().length === 0;
+  const isBusy = normalizedBusyReason.length > 0;
 
   if (isRunning) {
     return {
       isRunning,
       isBlankDraft,
+      isBusy,
+      busyReason: normalizedBusyReason,
       blockedReason: normalizedBlockedReason,
       inputErrors: normalizedInputErrors,
       primaryFeedback: "",
@@ -61,13 +69,15 @@ export function buildComposerSendabilityState({
   return {
     isRunning,
     isBlankDraft,
+    isBusy,
+    busyReason: normalizedBusyReason,
     blockedReason: normalizedBlockedReason,
     inputErrors: normalizedInputErrors,
     primaryFeedback,
     secondaryFeedback,
     feedbackTone,
     shouldShowFeedback: !!primaryFeedback || secondaryFeedback.length > 0,
-    isSendDisabled: !!normalizedBlockedReason || normalizedInputErrors.length > 0 || isBlankDraft,
+    isSendDisabled: isBusy || !!normalizedBlockedReason || normalizedInputErrors.length > 0 || isBlankDraft,
   };
 }
 
@@ -79,23 +89,35 @@ export function withForcedComposerBlockedFeedback(
     return state;
   }
 
+  if (state.isBusy) {
+    return {
+      ...state,
+      primaryFeedback: state.busyReason,
+      secondaryFeedback: [],
+      feedbackTone: "helper",
+      shouldShowFeedback: true,
+    };
+  }
+
   return {
     ...state,
     primaryFeedback: BLANK_DRAFT_FEEDBACK,
     secondaryFeedback: [],
-    feedbackTone: "blocked",
+    feedbackTone: "helper",
     shouldShowFeedback: true,
   };
 }
 
 export function resolveComposerSendabilityState({
   runState,
+  busyReason,
   blockedReason,
   inputErrors,
   draftText,
   forceBlockedFeedback,
 }: {
   runState: string | null | undefined;
+  busyReason?: string;
   blockedReason: string;
   inputErrors: string[];
   draftText: string;
@@ -104,6 +126,7 @@ export function resolveComposerSendabilityState({
   return withForcedComposerBlockedFeedback(
     buildComposerSendabilityState({
       runState,
+      busyReason,
       blockedReason,
       inputErrors,
       draftText,
@@ -121,7 +144,9 @@ export function getComposerSendButtonTitle(state: ComposerSendabilityState): str
     return "メッセージを送信";
   }
 
-  return state.primaryFeedback || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : "送信できない状態だよ。");
+  return state.primaryFeedback
+    || state.busyReason
+    || (state.isBlankDraft ? BLANK_DRAFT_FEEDBACK : COMPOSER_SEND_BLOCKED_FALLBACK);
 }
 
 export function getComposerSendBlockedMessage(

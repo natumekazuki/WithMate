@@ -3,6 +3,7 @@ import type { Session } from "../src/session-state.js";
 import type { SessionPersistenceService } from "./session-persistence-service.js";
 import type { SessionStorageRead } from "./persistent-store-lifecycle-service.js";
 import { sessionSummariesToSessions } from "./session-summary-adapter.js";
+import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 
 type ReplaceAllSessionsOptions = {
   broadcast?: boolean;
@@ -49,6 +50,17 @@ export class MainSessionPersistenceFacade {
 
   async upsertSession(session: Session): Promise<Session> {
     return this.deps.getSessionPersistenceService().upsertSession(session);
+  }
+
+  async upsertTerminalSession(
+    session: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+  ): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertTerminalSession(session, terminalCommit);
+  }
+
+  async upsertSessionPreservingPin(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().upsertSessionPreservingPin(session);
   }
 
   async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {

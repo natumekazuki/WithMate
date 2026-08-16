@@ -4,7 +4,7 @@ import type {
   MemoryTargetSelector,
   ProjectTargetRef,
 } from "../src/memory-v6/memory-contract.js";
-import type { MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
+import type { MemoryV6ProjectScopeAdmission, MemoryV6ResolvedTarget } from "./memory-v6-schema.js";
 import {
   canAccessMemoryTarget,
   memoryForbiddenError,
@@ -14,6 +14,7 @@ import {
 export type MemoryV6ProjectContext = {
   id: string;
   displayName: string;
+  admission?: MemoryV6ProjectScopeAdmission;
 };
 
 export type MemoryV6TargetResolverDeps = {
@@ -24,7 +25,7 @@ export type MemoryV6TargetResolverDeps = {
 };
 
 export type MemoryV6TargetResolutionResult =
-  | { ok: true; target: MemoryV6ResolvedTarget }
+  | { ok: true; target: MemoryV6ResolvedTarget; projectScopeAdmissions: MemoryV6ProjectScopeAdmission[] }
   | { ok: false; error: MemoryError };
 
 function targetNotFoundError(field: string): MemoryError {
@@ -45,6 +46,8 @@ function resolveProject(ref: ProjectTargetRef, deps: MemoryV6TargetResolverDeps,
   return deps.resolveProjectByPath?.(ref.path) ?? targetNotFoundError(field);
 }
 
+export type MemoryV6ProjectPathResolution = "create" | "known";
+
 function resolveCharacter(
   ref: CharacterTargetRef,
   deps: MemoryV6TargetResolverDeps,
@@ -56,18 +59,33 @@ function resolveCharacter(
   return { id: ref.id, name: ref.id };
 }
 
-function withAccessCheck(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): MemoryV6TargetResolutionResult {
+function withAccessCheck(
+  principal: MemoryV6Principal,
+  target: MemoryV6ResolvedTarget,
+  projectScopeAdmissions: MemoryV6ProjectScopeAdmission[] = [],
+): MemoryV6TargetResolutionResult {
   if (!canAccessMemoryTarget(principal, target)) {
     return { ok: false, error: memoryForbiddenError() };
   }
-  return { ok: true, target };
+  return { ok: true, target, projectScopeAdmissions };
 }
 
 export function resolveMemoryV6Target(
   selector: MemoryTargetSelector,
   principal: MemoryV6Principal,
   deps: MemoryV6TargetResolverDeps = {},
+  options: { projectPathResolution?: MemoryV6ProjectPathResolution } = {},
 ): MemoryV6TargetResolutionResult {
+  const resolutionDeps = options.projectPathResolution === "known"
+    ? { ...deps, resolveProjectByPath: deps.resolveKnownProjectByPath }
+    : deps;
+  if (
+    principal.type === "session_binding"
+    && selector.owner === "character"
+    && selector.character.id !== principal.characterId
+  ) {
+    return { ok: false, error: memoryForbiddenError() };
+  }
   if (selector.owner === "user" && selector.scope === "global") {
     return withAccessCheck(principal, {
       owner: { type: "user", id: "local-user" },
@@ -76,14 +94,14 @@ export function resolveMemoryV6Target(
   }
 
   if (selector.owner === "project" && selector.scope === "project") {
-    const project = resolveProject(selector.project, deps, "target.project");
+    const project = resolveProject(selector.project, resolutionDeps, "target.project");
     if ("code" in project) {
       return { ok: false, error: project };
     }
     return withAccessCheck(principal, {
       owner: { type: "project", id: project.id },
       scope: { type: "project", id: project.id },
-    });
+    }, project.admission ? [project.admission] : []);
   }
 
   if (selector.owner === "character" && selector.scope === "character") {
@@ -105,14 +123,14 @@ export function resolveMemoryV6Target(
   if ("code" in character) {
     return { ok: false, error: character };
   }
-  const project = resolveProject(selector.project, deps, "target.project");
+  const project = resolveProject(selector.project, resolutionDeps, "target.project");
   if ("code" in project) {
     return { ok: false, error: project };
   }
   return withAccessCheck(principal, {
     owner: { type: "character", id: character.id },
     scope: { type: "project", id: project.id },
-  });
+  }, project.admission ? [project.admission] : []);
 }
 
 export function targetMatchesPrincipal(principal: MemoryV6Principal, target: MemoryV6ResolvedTarget): boolean {

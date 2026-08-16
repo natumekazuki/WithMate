@@ -119,7 +119,7 @@ async function resolveAttachmentCandidate(
     : null;
   const absolutePath = resolveCandidatePath(session.workspacePath, candidate.path, policy.exactPath);
   if (!absolutePath) {
-    throw new Error("空のパスは添付できないよ。");
+    throw new Error("Attachment path is empty.");
   }
 
   let resolvedAttachmentPath: string;
@@ -128,7 +128,7 @@ async function resolveAttachmentCandidate(
     resolvedAttachmentPath = await realpath(absolutePath);
     stats = await stat(resolvedAttachmentPath);
   } catch {
-    throw new Error(`${candidate.source === "text" ? "@" : "添付"} のパスが見つからないよ: ${candidate.path}`);
+    throw new Error(`Path not found: ${candidate.path}`);
   }
 
   const kind =
@@ -136,11 +136,11 @@ async function resolveAttachmentCandidate(
     (stats.isDirectory() ? "folder" : inferFileKindFromPath(resolvedAttachmentPath));
 
   if (kind === "folder" && !stats.isDirectory()) {
-    throw new Error(`フォルダとして指定したパスがフォルダじゃないよ: ${candidate.path}`);
+    throw new Error(`Expected a directory: ${candidate.path}`);
   }
 
   if ((kind === "file" || kind === "image") && !stats.isFile()) {
-    throw new Error(`ファイルとして指定したパスがファイルじゃないよ: ${candidate.path}`);
+    throw new Error(`Expected a file: ${candidate.path}`);
   }
 
   if (policy.rootRelativeOnly) {
@@ -212,7 +212,7 @@ export async function resolveComposerPreview(
       return await resolveAttachmentCandidate(session, candidate, policy);
     } catch (error) {
       return {
-        error: error instanceof Error ? error.message : "添付の解決に失敗したよ。",
+        error: error instanceof Error ? error.message : "Failed to resolve attachment.",
       } as const;
     }
   }));
@@ -221,7 +221,7 @@ export async function resolveComposerPreview(
     if ("error" in resolved) {
       const errorMessage = typeof resolved.error === "string"
         ? resolved.error
-        : "添付の解決に失敗したよ。";
+        : "Failed to resolve attachment.";
       errors.push(errorMessage);
       continue;
     }

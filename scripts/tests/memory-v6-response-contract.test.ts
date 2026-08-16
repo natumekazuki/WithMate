@@ -138,12 +138,15 @@ describe("memory-v6 response contract", () => {
 
   it("append responseはentry summaryとcreatedを返し、bodyを含めない", () => {
     const response = createMemoryAppendResponse(baseEntry, true);
+    const replay = createMemoryAppendResponse(baseEntry, true, true);
 
     assert.equal(response.schemaVersion, MEMORY_V6_SCHEMA_VERSION);
     assert.equal(response.created, true);
     assert.equal(response.entry.id, baseEntry.id);
     assert.equal(response.entry.state, "active");
     assert.equal("body" in response.entry, false);
+    assert.equal(response.replayed, undefined);
+    assert.equal(replay.replayed, true);
 
     const typed = response satisfies MemoryAppendResponse;
     assert.equal(typed.entry.preview, baseEntry.preview);

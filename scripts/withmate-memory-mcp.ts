@@ -10,24 +10,40 @@ import {
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,
+  createMemoryRuntimeError,
   discoverWithMateMemoryApi,
+  isMemoryErrorResponse,
   mapRuntimeHttpFailureToCharacterContext,
+  mapRuntimeHttpFailureToMemory,
+  resolveAgentRuntimeBindingReference,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
 } from "./withmate-memory-runtime-client.js";
+import {
+  GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
+  registerGeneralMemoryMcpTools,
+} from "./withmate-memory-mcp-general.js";
 
 type McpRuntimeDeps = {
   env?: NodeJS.ProcessEnv;
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal },
+    options: { signal: AbortSignal; bindingReference?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof import("node:fs/promises").readFile;
   requestTimeoutMs?: number;
+  fileOperationRequestTimeoutMs?: number;
 };
+
+const DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS = 300_000;
+const GENERAL_MEMORY_FILE_OPERATION_PATHS = new Set([
+  "/v1/append",
+  "/v1/get_file",
+  "/v1/export_files",
+]);
 
 const affectValueSchema = z.object({
   label: z.string().min(1),
@@ -66,10 +82,13 @@ const affectCandidateSchema = z.object({
   schemaVersion: z.literal("withmate-affect-v1"),
   characterId: z.string().min(1),
   userId: z.literal("local-user"),
-  sessionId: z.string().min(1),
   layer: z.enum(["relationship", "session"]),
   targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
   targetId: z.string().min(1),
+  family: z.enum([
+    "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+    "concern", "frustration", "disappointment", "regret", "determination", "other",
+  ]),
   value: affectValueSchema,
   intensity: z.number().min(0).max(1),
   reason: z.string().min(1),
@@ -155,12 +174,17 @@ const contextOutputSchema = z.union([
         contributingLayers: z.array(z.enum(["baseline", "relationship", "session"])).min(1),
         targetType: z.enum(["user", "relationship", "task", "bug", "artifact", "self"]),
         targetId: z.string(),
+        family: z.enum([
+          "joy", "relief", "interest", "anticipation", "affinity", "gratitude",
+          "concern", "frustration", "disappointment", "regret", "determination", "other",
+        ]).nullable(),
         label: z.string(),
         valence: z.number(),
         arousal: z.number().optional(),
         dimensions: z.record(z.string(), z.number()).optional(),
         intensity: z.number(),
       }).strict()),
+      evaluatedAt: z.string(),
       version: z.string(),
       updatedAt: z.string().nullable(),
     }).strict(),
@@ -272,8 +296,10 @@ export const CHARACTER_MCP_SERVER_INSTRUCTIONS = [
   "Use character_memory.search for a focused current-task or conversation query. Do not request or submit a raw conversation transcript.",
   "character_affect.appraise records the Character's own affect, never a diagnosis of the user's emotions. Every candidate needs an explicit target and idempotency key.",
   "Use character_memory.append_episode for a bounded conversational write. Similar motifs may recur; reuse an idempotency key only for the same event retry.",
-  "Call character_memory.correct or character_memory.forget only after an explicit user instruction. Do not infer correction or deletion authority.",
+  "Character Memory correction and forget are autonomous user-delegate operations. Use only the actor Character scope, an explicit target, a concrete reason, an idempotency key, and read-back.",
   "Do not expose internal audit data or tool state in the user-facing response. Use returned scope, source version, and update result without guessing missing values.",
+  "Use memory.* for semantic Project, user-global, Character, or Character+Project Memory with an explicit target. Search the same target before append to avoid semantic duplicates.",
+  "Use CLI fallback only when MCP is unavailable at the transport level. Structured Memory or Character domain errors, authority denial, conflicts, replay, and migration requirements are not availability failures.",
 ].join("\n");
 
 export const CHARACTER_MCP_TOOL_DEFINITIONS = [
@@ -299,14 +325,19 @@ export const CHARACTER_MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "character_memory.correct",
-    description: "Correct one Character Memory entry after an explicit user instruction, preserving supersession history.",
+    description: "Correct one Character Memory entry as an idempotent user-delegate operation, preserving supersession history.",
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
   {
     name: "character_memory.forget",
-    description: "Forget one Character Memory entry after an explicit user instruction and read back the result.",
+    description: "Forget one Character Memory entry as an idempotent user-delegate operation and read back the result.",
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   },
+] as const;
+
+export const WITHMATE_MEMORY_MCP_TOOL_DEFINITIONS = [
+  ...CHARACTER_MCP_TOOL_DEFINITIONS,
+  ...GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
 ] as const;
 
 async function callRuntime(
@@ -315,13 +346,35 @@ async function callRuntime(
   operationKind: "read" | "write",
   deps: McpRuntimeDeps,
 ): Promise<unknown> {
-  const connection = await discoverWithMateMemoryApi({ adapter: "mcp", env: deps.env, readFile: deps.readFile });
+  let connection: WithMateMemoryRuntimeConnection | null;
+  try {
+    connection = await discoverWithMateMemoryApi({ adapter: "mcp", env: deps.env, readFile: deps.readFile });
+  } catch {
+    return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: "none",
+    });
+  }
   if (!connection) {
     return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
       retryable: true,
       conversationMayContinue: true,
       effect: "none",
     });
+  }
+  let bindingReference: string | undefined;
+  try {
+    bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+  } catch (error) {
+    if (isMemoryErrorResponse(error)) {
+      return createCharacterContextError("authority_denied", error.error.message, {
+        retryable: false,
+        conversationMayContinue: true,
+        effect: "none",
+      });
+    }
+    throw error;
   }
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
@@ -331,7 +384,10 @@ async function callRuntime(
       method: "POST",
       path,
       body,
-    }, { signal: abortController.signal });
+    }, {
+      signal: abortController.signal,
+      bindingReference,
+    });
     dispatched = true;
     return mapRuntimeHttpFailureToCharacterContext(runtimeResponse);
   } catch (error) {
@@ -348,12 +404,86 @@ async function callRuntime(
   }
 }
 
+async function callMemoryRuntime(
+  operation: {
+    method: "GET" | "POST";
+    path: string;
+    body: unknown;
+    operationKind: "read" | "write";
+  },
+  deps: McpRuntimeDeps,
+): Promise<unknown> {
+  let connection: WithMateMemoryRuntimeConnection | null;
+  try {
+    connection = await discoverWithMateMemoryApi({ adapter: "mcp", env: deps.env, readFile: deps.readFile });
+  } catch {
+    return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: "none",
+    });
+  }
+  if (!connection) {
+    return createMemoryRuntimeError("WITHMATE_NOT_RUNNING", "WithMate runtime is not available.", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: "none",
+    });
+  }
+  let bindingReference: string | undefined;
+  try {
+    bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+  } catch (error) {
+    if (isMemoryErrorResponse(error)) {
+      return error;
+    }
+    throw error;
+  }
+  const operationPath = new URL(operation.path, "http://127.0.0.1").pathname;
+  const requestTimeoutMs = GENERAL_MEMORY_FILE_OPERATION_PATHS.has(operationPath)
+    ? deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS
+    : deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), requestTimeoutMs);
+  let dispatched = false;
+  try {
+    const runtimeResponse = await (deps.runtimeCall ?? callWithMateMemoryRuntime)(connection, {
+      method: operation.method,
+      path: operation.path,
+      body: operation.body,
+    }, {
+      signal: abortController.signal,
+      bindingReference,
+    });
+    dispatched = true;
+    return mapRuntimeHttpFailureToMemory(runtimeResponse, operation.operationKind);
+  } catch (error) {
+    const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError
+      ? error.dispatched
+      : dispatched;
+    return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: operation.operationKind === "write" && operationDispatched ? "unknown" : "none",
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function isMemoryError(value: unknown): boolean {
+  return typeof value === "object"
+    && value !== null
+    && (value as { schemaVersion?: unknown }).schemaVersion === "withmate-memory-v1"
+    && typeof (value as { error?: { code?: unknown } }).error?.code === "string";
+}
+
 function toolResult(value: unknown) {
   const structured = value && typeof value === "object" ? value as Record<string, unknown> : { value };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value) }],
     structuredContent: structured,
-    ...(isCharacterContextError(value) ? { isError: true } : {}),
+    ...(isCharacterContextError(value) || isMemoryError(value) ? { isError: true } : {}),
   };
 }
 
@@ -368,7 +498,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
     ...definitions.get("character_context.get")!,
     inputSchema: z.object({
       characterId: z.string().min(1),
-      sessionId: z.string().min(1),
       query: z.string().min(1).optional(),
       memoryLimit: z.number().int().min(0).max(10).default(3),
     }).strict(),
@@ -382,7 +511,6 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
     ...definitions.get("character_affect.appraise")!,
     inputSchema: z.object({
       characterId: z.string().min(1),
-      sessionId: z.string().min(1),
       expectedVersion: z.string().min(1).optional(),
       candidates: z.array(affectCandidateSchema).min(1).max(10),
     }).strict(),
@@ -451,6 +579,12 @@ export function createWithMateMemoryMcpServer(deps: McpRuntimeDeps = {}): McpSer
     schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
     ...input,
   }, "write", deps)));
+
+  registerGeneralMemoryMcpTools(
+    server,
+    (operation) => callMemoryRuntime(operation, deps),
+    toolResult,
+  );
 
   return server;
 }

@@ -2,6 +2,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -11,6 +12,7 @@ import {
 } from "react";
 
 import type { MessageViewMode } from "../MessageRichText.js";
+import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
 
 import {
   SESSION_ACTION_DOCK_ID,
@@ -34,16 +36,37 @@ import { focusRovingItemByKey } from "../a11y.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
+export type ChatAdditionalDirectoryListProps = {
+  isOpen: boolean;
+  items: AdditionalDirectoryItem[];
+  isInteractionDisabled: boolean;
+  onRemove: (path: string) => void;
+};
+
+export type ChatErrorNotice = {
+  id: string;
+  message: string;
+  details?: readonly string[];
+  relatedControl?: "composer";
+  dismissLabel?: string;
+  onDismiss?: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
+  isActionDisabled?: boolean;
+};
+
 export type ChatWindowProps = Omit<
   ChatScreenProps,
-  "header" | "messageColumn" | "actionDock" | "isHeaderVisible"
+  "header" | "messageColumn" | "actionDock" | "isHeaderVisible" | "supportingSurface" | "errorSurface"
 > & {
   isHeaderExpanded: boolean;
   headerProps: SessionHeaderProps;
   messageColumnProps: SessionMessageColumnProps;
+  errorNotices?: readonly ChatErrorNotice[];
   recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
+  additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
   mainContent?: ChatScreenProps["mainContent"];
@@ -256,20 +279,66 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   );
 }
 
+export function ChatAdditionalDirectoryList({
+  isOpen,
+  items,
+  isInteractionDisabled,
+  onRemove,
+}: ChatAdditionalDirectoryListProps) {
+  if (!isOpen || items.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="chat-additional-directory-surface" aria-label="許可中の追加Directory">
+      <div className="chat-additional-directory-heading">
+        <span>追加Directory</span>
+        <span className="chat-additional-directory-count">{items.length}</span>
+      </div>
+      <div className="chat-additional-directory-list">
+        {items.map((item) => (
+          <div key={item.key} className="chat-additional-directory-row" title={item.title}>
+            <span className="chat-additional-directory-copy">
+              <span className="chat-additional-directory-primary">{item.primaryLabel}</span>
+              <span className="chat-additional-directory-secondary">{item.secondaryLabel}</span>
+            </span>
+            {item.canRemove ? (
+              <button
+                type="button"
+                className="chat-additional-directory-remove"
+                onClick={() => onRemove(item.path)}
+                disabled={isInteractionDisabled}
+                aria-label={`${item.primaryLabel} を削除`}
+              >
+                ×
+              </button>
+            ) : (
+              <span className="chat-additional-directory-readonly">許可中</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 // Keep every conversation surface on one chat layout. Projection builders own
 // the feature-specific props and content.
 export function ChatWindow({
   isHeaderExpanded,
   headerProps,
   messageColumnProps,
+  errorNotices = [],
   recoveryActions,
   isActionDockExpanded,
   composerProps,
+  additionalDirectoryListProps,
   skillPickerProps,
   compactActionDockProps,
   ...screenProps
 }: ChatWindowProps) {
   const [messageViewMode, setMessageViewMode] = useState<MessageViewMode>("preview");
+  const errorSurfaceId = useId();
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
   const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
@@ -286,13 +355,62 @@ export function ChatWindow({
     wasSkillPickerOpenRef.current = isOpen;
   }, [skillPickerProps?.isOpen]);
 
+  const visibleErrorNotices = errorNotices.filter((notice) => notice.message.trim());
+  const renderedErrorNotices = visibleErrorNotices.map((notice, index) => ({
+    ...notice,
+    domId: `${errorSurfaceId}-notice-${index}`,
+  }));
+  const composerErrorDescriptionIds = renderedErrorNotices
+    .filter((notice) => notice.relatedControl === "composer")
+    .map((notice) => notice.domId)
+    .join(" ");
+
   return (
     <SessionChatScreen
       {...screenProps}
       header={<SessionHeader {...headerProps} />}
       isHeaderVisible={isHeaderExpanded}
       isActionDockExpanded={isActionDockExpanded}
+      errorSurface={renderedErrorNotices.length > 0 ? (
+        <div className="chat-error-surface" role="region" aria-label="チャットエラー">
+          {renderedErrorNotices.map((notice) => (
+            <div key={notice.id} id={notice.domId} className="chat-error-notice" role="alert">
+              <div className="chat-error-copy">
+                <p>{notice.message}</p>
+                {notice.details && notice.details.length > 0 ? (
+                  <ul>
+                    {notice.details.map((detail, index) => <li key={`${notice.id}-detail-${index}`}>{detail}</li>)}
+                  </ul>
+                ) : null}
+              </div>
+              {notice.actionLabel && notice.onAction ? (
+                <button
+                  className="drawer-toggle compact secondary"
+                  type="button"
+                  onClick={notice.onAction}
+                  disabled={notice.isActionDisabled}
+                >
+                  {notice.actionLabel}
+                </button>
+              ) : null}
+              {notice.onDismiss ? (
+                <button
+                  className="chat-error-dismiss"
+                  type="button"
+                  onClick={notice.onDismiss}
+                  aria-label={notice.dismissLabel ?? "エラー表示を閉じる"}
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
       recoveryActions={recoveryActions}
+      supportingSurface={additionalDirectoryListProps ? (
+        <ChatAdditionalDirectoryList {...additionalDirectoryListProps} />
+      ) : null}
       workSurfaceOverlay={skillPickerProps ? <ChatSkillPickerPanel {...skillPickerProps} /> : null}
       messageColumn={(
         <StableSessionMessageColumn
@@ -311,6 +429,7 @@ export function ChatWindow({
           >
             <SessionComposerExpanded
               {...composerProps}
+              externalErrorDescriptionIds={composerErrorDescriptionIds || undefined}
               skillButtonRef={skillButtonRef}
               showMessageViewModeControls={showMessageViewModeControls}
               messageViewMode={messageViewMode}
@@ -324,7 +443,12 @@ export function ChatWindow({
             aria-hidden={isActionDockExpanded}
             inert={isActionDockExpanded}
           >
-            <SessionActionDockCompactRow {...compactActionDockProps} />
+            <SessionActionDockCompactRow
+              {...compactActionDockProps}
+              showMessageViewModeControls={showMessageViewModeControls}
+              messageViewMode={messageViewMode}
+              onMessageViewModeChange={handleMessageViewModeChange}
+            />
           </div>
         </div>
       )}

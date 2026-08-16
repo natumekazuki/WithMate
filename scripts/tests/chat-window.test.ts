@@ -8,6 +8,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import {
   ChatDockSplitter,
+  ChatAdditionalDirectoryList,
   ChatSkillPickerPanel,
   ChatWindow,
   ChatWindowStatusScreen,
@@ -65,11 +66,7 @@ function createChatWindowProps(
       onChangeModel: noop,
       onChangeReasoningEffort: noop,
     }),
-    compactActionDockProps: createStaticTextChatCompactActionDockProps({
-      draft,
-      isRunning: false,
-      onSendOrCancel: noop,
-    }),
+    compactActionDockProps: createStaticTextChatCompactActionDockProps({}),
   };
 }
 
@@ -94,6 +91,146 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
   assert.ok(html.indexOf("File Preview") < html.indexOf("Retry Actions"));
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
+});
+
+test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
+  const props = createChatWindowProps();
+  props.isActionDockExpanded = false;
+  props.composerProps = {
+    ...props.composerProps,
+    composerSendability: {
+      primaryFeedback: "Path not found: C:/missing",
+      secondaryFeedback: ["Expected a file: C:/directory"],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+  };
+  props.errorNotices = [{
+    id: "composer-sendability",
+    message: "Path not found: C:/missing",
+    details: ["Expected a file: C:/directory"],
+    relatedControl: "composer",
+  }];
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="chat-error-surface" role="region" aria-label="チャットエラー"/);
+  assert.match(html, /class="chat-error-notice" role="alert"/);
+  assert.match(html, /Path not found: C:\/missing/);
+  assert.match(html, /Expected a file: C:\/directory/);
+  assert.match(html, /<textarea[^>]*aria-describedby="[^"]+-notice-0"[^>]*aria-invalid="true"/);
+  assert.doesNotMatch(html, /class="composer-sendability-feedback blocked"/);
+  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
+  assert.ok(html.indexOf("session-central-surface") < html.indexOf("chat-error-surface"));
+  assert.ok(html.indexOf("chat-error-surface") < html.indexOf("session-action-dock-slot"));
+});
+
+test("ChatWindow は submit pending を非表示の busy status として通知し、エラー表示しない", () => {
+  const props = createChatWindowProps();
+  props.composerProps = {
+    ...props.composerProps,
+    isComposerDisabled: true,
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Message submission is in progress.",
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /<textarea[^>]*disabled=""[^>]*aria-busy="true"/);
+  assert.match(html, /class="visually-hidden" role="status"[^>]*>Message submission is in progress\.<\/span>/);
+  assert.doesNotMatch(html, /chat-error-surface/);
+  assert.doesNotMatch(html, /composer-sendability-feedback/);
+});
+
+test("ChatWindow の共通エラー領域は owner が指定したdismissと回復操作を表示する", () => {
+  const props = createChatWindowProps();
+  props.errorNotices = [{
+    id: "workspace-unavailable",
+    message: "Workspace unavailable.",
+    dismissLabel: "Workspaceエラーを閉じる",
+    onDismiss: noop,
+    actionLabel: "Recheck",
+    onAction: noop,
+  }];
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="drawer-toggle compact secondary"[^>]*>Recheck<\/button>/);
+  assert.match(html, /aria-label="Workspaceエラーを閉じる"/);
+});
+
+test("chat work surface は補助情報と共通エラーの有無に関係なく中央contentへ可変領域を割り当てる", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const stackRule = styles.match(/\.session-message-stack\s*\{([^}]*)\}/)?.[1] ?? "";
+  const errorRule = styles.match(/\.chat-error-surface\s*\{([^}]*)\}/)?.[1] ?? "";
+  const centralRule = styles.match(/\.session-central-surface\s*\{([^}]*)\}/)?.[1] ?? "";
+
+  assert.match(stackRule, /grid-template-rows:\s*minmax\(0, 1fr\) auto auto auto/);
+  assert.match(errorRule, /grid-row:\s*4/);
+  assert.match(errorRule, /padding:\s*0 12px 12px/);
+  assert.match(centralRule, /grid-row:\s*1/);
+});
+
+test("ChatWindow は追加Directory一覧をActionDock外の共通work surfaceへ描画する", () => {
+  const props = createChatWindowProps();
+  props.isActionDockExpanded = false;
+  props.additionalDirectoryListProps = {
+    isOpen: true,
+    items: [{
+      key: "C:/shared/docs",
+      path: "C:/shared/docs",
+      primaryLabel: "docs",
+      secondaryLabel: "C:/shared",
+      title: "C:/shared/docs",
+      canRemove: true,
+    }],
+    isInteractionDisabled: false,
+    onRemove: noop,
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /class="chat-additional-directory-surface"/);
+  assert.match(html, /aria-label="許可中の追加Directory"/);
+  assert.doesNotMatch(html, /composer-additional-directory-list/);
+  assert.ok(html.indexOf("chat-additional-directory-surface") < html.indexOf("session-action-dock-slot"));
+  assert.match(html, /id="session-action-dock"[^>]*class="session-action-dock-slot is-compact"/);
+});
+
+test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影する", () => {
+  const html = renderToStaticMarkup(React.createElement(ChatAdditionalDirectoryList, {
+    isOpen: true,
+    items: [
+      {
+        key: "C:/shared/removable",
+        path: "C:/shared/removable",
+        primaryLabel: "removable",
+        secondaryLabel: "C:/shared",
+        title: "C:/shared/removable",
+        canRemove: true,
+      },
+      {
+        key: "C:/shared/allowed",
+        path: "C:/shared/allowed",
+        primaryLabel: "allowed",
+        secondaryLabel: "C:/shared",
+        title: "C:/shared/allowed",
+        canRemove: false,
+      },
+    ],
+    isInteractionDisabled: true,
+    onRemove: noop,
+  }));
+
+  assert.match(html, /class="chat-additional-directory-remove" disabled=""/);
+  assert.match(html, /aria-label="removable を削除"/);
+  assert.match(html, /class="chat-additional-directory-readonly">許可中/);
 });
 
 test("ChatWindow は preview を保持したまま Skill 候補を中央 work surface に重ねる", () => {
@@ -158,6 +295,7 @@ test("ChatSkillPickerPanel は loading・empty・error状態を区別する", ()
   assert.match(loadingHtml, /role="status"/);
   assert.match(loadingHtml, /aria-busy="true"/);
   assert.match(loadingHtml, /chat-skill-picker-spinner/);
+  assert.match(loadingHtml, /aria-label="Skill候補を閉じる">×<\/button>/);
   assert.match(emptyHtml, /使える Skill がありません/);
   assert.match(errorHtml, /class="chat-skill-picker-state error">Skill error/);
 });
@@ -320,7 +458,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   }
 });
 
-test("ChatWindow は Quote 対応 chat の表示 mode を message column と ActionDock で共有する", async () => {
+test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操作を compact ActionDock へ共有する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -347,19 +485,35 @@ test("ChatWindow は Quote 対応 chat の表示 mode を message column と Act
 
   let root: Root | null = null;
   try {
+    let expandCallCount = 0;
+    const props = createChatWindowProps({
+      messages: [],
+      isRunning: true,
+      pendingMessageText: "[label](https://example.test/source)",
+    });
+    props.isActionDockExpanded = false;
+    props.compactActionDockProps = {
+      ...props.compactActionDockProps,
+      onExpand: () => {
+        expandCallCount += 1;
+      },
+    };
     await act(async () => {
       root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
-      root.render(React.createElement(ChatWindow, createChatWindowProps({
-        messages: [],
-        isRunning: true,
-        pendingMessageText: "[label](https://example.test/source)",
-      })));
+      root.render(React.createElement(ChatWindow, props));
     });
     const sourceButton = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(
-      ".composer-message-view-mode-button",
+      ".session-action-dock-compact-content .composer-message-view-mode-button",
     )).find((button) => button.textContent === "Source");
     assert.ok(sourceButton);
     assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+
+    const expandButton = dom.window.document.querySelector<HTMLButtonElement>(
+      ".session-action-dock-compact-content .session-action-dock-compact-expand-button",
+    );
+    assert.ok(expandButton);
+    await act(async () => expandButton.click());
+    assert.equal(expandCallCount, 1);
 
     await act(async () => sourceButton.click());
 
@@ -367,6 +521,12 @@ test("ChatWindow は Quote 対応 chat の表示 mode を message column と Act
     assert.equal(source?.textContent, "[label](https://example.test/source)");
     assert.equal(dom.window.document.querySelector("[data-pending-message-body='true'] a"), null);
     assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+    assert.equal(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        ".session-action-dock-expanded-content .composer-message-view-mode-button:last-child",
+      )?.getAttribute("aria-pressed"),
+      "true",
+    );
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();
@@ -563,23 +723,20 @@ test("SessionChatScreen は dock 優先を layout class へ投影する", () => 
   assert.match(html, /layout-priority-dock/);
 });
 
-test("SessionActionDockCompactRow は preview 中の chat notice を表示する", () => {
+test("SessionActionDockCompactRow は通常時の chat notice を下書き表示なしで維持する", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {
-      draft: "",
-      actionDockCompactPreview: "下書きなし",
       attachmentCount: 0,
       isRunning: false,
       chatNotice: "New messages",
-      isSendDisabled: true,
       showJumpToBottom: false,
       onExpand() {},
       onJumpToBottom() {},
-      onSendOrCancel() {},
+      onCancel() {},
     }),
   );
 
   assert.match(html, /session-action-dock-compact-badge attention/);
   assert.match(html, />New messages<\/span>/);
-  assert.match(html, /<button class="session-action-dock-compact-preview"[^>]*>/);
+  assert.doesNotMatch(html, /Draft|下書きなし|>Send<\/button>/);
 });

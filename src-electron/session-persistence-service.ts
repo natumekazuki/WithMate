@@ -25,6 +25,8 @@ import type {
   DeleteSessionsResult,
 } from "../src/withmate-window-types.js";
 import { SessionIdCollisionError } from "./session-storage-errors.js";
+import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
+import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -42,7 +44,11 @@ export type SessionPersistenceServiceDeps = {
   getStoredSession?(sessionId: string): Awaitable<Session | null>;
   isSessionRunInFlight(sessionId: string): boolean;
   listRunningActiveAuxiliaryParentIds?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
+  listAuxiliarySessionRuntimeIdentities?(
+    parentSessionIds: readonly string[],
+  ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
+  upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
@@ -55,9 +61,11 @@ export type SessionPersistenceServiceDeps = {
   syncSessionDependencies(session: Session): void;
   clearSessionContextTelemetry(sessionId: string): void;
   clearSessionBackgroundActivities(sessionId: string): void;
-  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void;
+  invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Awaitable<void>;
+  revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
+  runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
 function isRunningSession(session: Session): boolean {
@@ -201,12 +209,15 @@ export class SessionPersistenceService {
       ),
     });
 
-    if (currentSession.provider !== updatedSession.provider) {
+    const providerChanged = currentSession.provider !== updatedSession.provider;
+    if (providerChanged) {
       this.deps.clearSessionContextTelemetry(updatedSession.id);
+      this.deps.revokeSessionAgentRuntimeBindings?.(updatedSession.id);
+      await this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
     }
 
-    if (currentSession.threadId && !updatedSession.threadId) {
-      this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
+    if (!providerChanged && currentSession.threadId && !updatedSession.threadId) {
+      await this.deps.invalidateProviderSessionThread(currentSession.provider, updatedSession.id);
     }
 
     return updatedSession;
@@ -229,16 +240,24 @@ export class SessionPersistenceService {
   }
 
   async deleteSession(sessionId: string): Promise<DeleteSessionsResult> {
-    return this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false });
+    return this.runCharacterAffectTurnOwnershipExclusive(
+      () => this.deleteSessionsByIds([sessionId], { runningPolicy: "throw", allowUncachedDeletion: false }),
+    );
   }
 
   async deleteSessionsLastActiveBefore(cutoff: DeleteSessionsLastActiveBeforeCutoff): Promise<DeleteSessionsResult> {
-    const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
-      ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
-      : (await this.deps.listStoredSessions())
-          .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
-          .map((session) => session.id);
-    return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
+    return this.runCharacterAffectTurnOwnershipExclusive(async () => {
+      const sessionIds = this.deps.listStoredSessionIdsLastActiveBefore
+        ? await this.deps.listStoredSessionIdsLastActiveBefore(cutoff)
+        : (await this.deps.listStoredSessions())
+            .filter((session) => Date.parse(session.updatedAt) < cutoff.cutoffTimestampMs)
+            .map((session) => session.id);
+      return this.deleteSessionsByIds(sessionIds, { runningPolicy: "skip", cutoff, allowUncachedDeletion: true });
+    });
+  }
+
+  private runCharacterAffectTurnOwnershipExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    return this.deps.runCharacterAffectTurnOwnershipExclusive?.(operation) ?? operation();
   }
 
   private async deleteSessionsByIds(
@@ -255,6 +274,8 @@ export class SessionPersistenceService {
     const currentSessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
     const runningActiveAuxiliaryParentIds =
       await this.deps.listRunningActiveAuxiliaryParentIds?.(uniqueSessionIds) ?? new Set<string>();
+    const auxiliaryRuntimeIdentities =
+      await this.deps.listAuxiliarySessionRuntimeIdentities?.(uniqueSessionIds) ?? [];
 
     for (const sessionId of uniqueSessionIds) {
       const session = currentSessionsById.get(sessionId);
@@ -299,9 +320,23 @@ export class SessionPersistenceService {
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
 
     for (const sessionId of deletableSessionIds) {
+      const deletedSession = currentSessionsById.get(sessionId);
+      this.deps.revokeSessionAgentRuntimeBindings?.(sessionId);
+      await this.deps.invalidateProviderSessionThread(deletedSession?.provider ?? null, sessionId);
       this.deps.clearSessionContextTelemetry(sessionId);
       this.deps.clearSessionBackgroundActivities(sessionId);
       this.deps.closeSessionWindow(sessionId);
+    }
+    const deletableParentIds = new Set(deletableSessionIds);
+    for (const auxiliary of auxiliaryRuntimeIdentities) {
+      if (!deletableParentIds.has(auxiliary.parentSessionId)) {
+        continue;
+      }
+      this.deps.revokeSessionAgentRuntimeBindings?.(auxiliary.id);
+      await this.deps.invalidateProviderSessionThread(auxiliary.provider, auxiliary.id);
+      this.deps.clearSessionContextTelemetry(auxiliary.id);
+      this.deps.clearSessionBackgroundActivities(auxiliary.id);
+      this.deps.closeSessionWindow(auxiliary.id);
     }
 
     this.deps.broadcastSessions(deletableSessionIds);
@@ -321,9 +356,32 @@ export class SessionPersistenceService {
     return this.enqueueSessionMutation(() => this.upsertSessionNow(nextSession, operation));
   }
 
+  async upsertTerminalSession(
+    nextSession: Session,
+    terminalCommit: SessionTurnTerminalCommit,
+  ): Promise<Session> {
+    return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession, terminalCommit));
+  }
+
+  async upsertSessionPreservingPin(nextSession: Session): Promise<Session> {
+    return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession));
+  }
+
+  private upsertSessionPreservingPinNow(
+    nextSession: Session,
+    terminalCommit?: SessionTurnTerminalCommit,
+  ): Promise<Session> {
+    const currentSession = this.deps.getSession(nextSession.id);
+    return this.upsertSessionNow({
+      ...nextSession,
+      isPinned: currentSession?.isPinned ?? nextSession.isPinned,
+    }, "upsert", terminalCommit);
+  }
+
   private async upsertSessionNow(
     nextSession: Session,
     operation: "create" | "upsert",
+    terminalCommit?: SessionTurnTerminalCommit,
   ): Promise<Session> {
     const startedAt = Date.now();
     const currentSession = this.deps.getSession(nextSession.id);
@@ -333,20 +391,37 @@ export class SessionPersistenceService {
 
     const sessionToStore = await this.mergeStoredMessagesForSummaryOnlySession(nextSession);
     const storeStartedAt = Date.now();
-    const stored = await this.deps.upsertStoredSession({
+    const normalizedSession = {
       ...sessionToStore,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         sessionToStore.workspacePath,
         sessionToStore.allowedAdditionalDirectories,
       ),
-    }, operation);
+    };
+    const stored = terminalCommit
+      ? await this.deps.upsertStoredTerminalSession?.(normalizedSession, terminalCommit)
+      : await this.deps.upsertStoredSession(normalizedSession, operation);
+    if (!stored) {
+      throw new Error("terminal Session の atomic commit storage が利用できないよ。");
+    }
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
-    this.syncStoredSession(stored);
-    this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    if (terminalCommit) {
+      this.runTerminalProjectionBestEffort("dependency sync", () => this.syncStoredSession(stored));
+      this.runTerminalProjectionBestEffort("cache update", () => {
+        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+      });
+    } else {
+      this.syncStoredSession(stored);
+      this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+    }
     const cacheDurationMs = Date.now() - cacheStartedAt;
     const broadcastStartedAt = Date.now();
-    this.deps.broadcastSessions([stored.id]);
+    if (terminalCommit) {
+      this.runTerminalProjectionBestEffort("broadcast", () => this.deps.broadcastSessions([stored.id]));
+    } else {
+      this.deps.broadcastSessions([stored.id]);
+    }
     logSessionRunStuckInvestigation("persistence.upsert-session.done", {
       sessionId: stored.id,
       durationMs: Date.now() - startedAt,
@@ -369,7 +444,9 @@ export class SessionPersistenceService {
       invalidateSessionIds?: Iterable<string>;
     },
   ): Promise<Session[]> {
-    return this.enqueueSessionMutation(() => this.replaceAllSessionsNow(nextSessions, options));
+    return this.enqueueSessionMutation(
+      () => this.runCharacterAffectTurnOwnershipExclusive(() => this.replaceAllSessionsNow(nextSessions, options)),
+    );
   }
 
   private async replaceAllSessionsNow(
@@ -401,6 +478,8 @@ export class SessionPersistenceService {
       const nextSession = nextSessionsById.get(previousSession.id);
       if (!nextSession || nextSession.provider !== previousSession.provider) {
         this.deps.clearSessionContextTelemetry(previousSession.id);
+        this.deps.revokeSessionAgentRuntimeBindings?.(previousSession.id);
+        await this.deps.invalidateProviderSessionThread(previousSession.provider, previousSession.id);
       }
       if (!nextSession) {
         this.deps.clearSessionBackgroundActivities(previousSession.id);
@@ -408,11 +487,12 @@ export class SessionPersistenceService {
     }
 
     for (const sessionId of options?.invalidateSessionIds ?? []) {
+      this.deps.revokeSessionAgentRuntimeBindings?.(sessionId);
       const sessionProvider =
         nextSessionsById.get(sessionId)?.provider ??
         previousSessionsById.get(sessionId)?.provider ??
         null;
-      this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
+      await this.deps.invalidateProviderSessionThread(sessionProvider, sessionId);
     }
 
     if (options?.broadcast ?? true) {
@@ -493,5 +573,13 @@ export class SessionPersistenceService {
 
   private syncStoredSession(stored: Session): void {
     this.deps.syncSessionDependencies(stored);
+  }
+
+  private runTerminalProjectionBestEffort(label: string, operation: () => void): void {
+    try {
+      operation();
+    } catch (error) {
+      console.warn(`Committed terminal Session ${label} failed`, error);
+    }
   }
 }

@@ -23,6 +23,7 @@ export type AppSettings = {
   sessionTurnNotificationEnabled: boolean;
   sessionTurnNotificationResponsePreviewEnabled: boolean;
   autoCollapseActionDockOnSend: boolean;
+  scrollToLatestOnSend: boolean;
   chatLayoutPreference: ChatLayoutPreference;
   memoryFileQuotaBytes: number;
   userMicrocopyCatalog: MicrocopyCatalog;
@@ -103,6 +104,7 @@ export function createDefaultAppSettings(): AppSettings {
     sessionTurnNotificationEnabled: true,
     sessionTurnNotificationResponsePreviewEnabled: false,
     autoCollapseActionDockOnSend: true,
+    scrollToLatestOnSend: true,
     chatLayoutPreference: { ...DEFAULT_CHAT_LAYOUT_PREFERENCE },
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
@@ -329,6 +331,8 @@ export function normalizeAppSettings(value: unknown): AppSettings {
         : false,
     autoCollapseActionDockOnSend:
       typeof candidate.autoCollapseActionDockOnSend === "boolean" ? candidate.autoCollapseActionDockOnSend : true,
+    scrollToLatestOnSend:
+      typeof candidate.scrollToLatestOnSend === "boolean" ? candidate.scrollToLatestOnSend : true,
     chatLayoutPreference: normalizeChatLayoutPreference(candidate.chatLayoutPreference),
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),

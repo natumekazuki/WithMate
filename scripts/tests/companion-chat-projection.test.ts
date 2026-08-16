@@ -144,7 +144,6 @@ function createProjectionInput(
     selectedModelFallbackLabel: "GPT Test",
     reasoningOptions: [{ value: "low", label: "low" }],
     selectedReasoningEffort: "low",
-    actionDockCompactPreview: "実行中",
     attachmentCount: 0,
     isContextRailResizing: false,
     isContextRailVisible: true,
@@ -313,6 +312,26 @@ test("buildCompanionChatWindowProps は retry actions を共通 chat layout に�
   assert.match(html, />編集<\/button>/);
 });
 
+test("buildCompanionChatWindowProps は composer error を共通領域へ投影する", () => {
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      primaryFeedback: "Path not found: C:/missing",
+      secondaryFeedback: [],
+      feedbackTone: "blocked",
+      shouldShowFeedback: true,
+    },
+    isActionDockExpanded: false,
+  }));
+
+  assert.deepEqual(props.errorNotices, [{
+    id: "composer-sendability",
+    message: "Path not found: C:/missing",
+    details: [],
+    relatedControl: "composer",
+  }]);
+  assert.equal(props.isActionDockExpanded, false);
+});
+
 test("buildCompanionChatWindowProps は retry draft 上書き確認を共通 composer に渡す", () => {
   const props = buildCompanionChatWindowProps(createProjectionInput({
     retryBanner: {
@@ -466,7 +485,6 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
     selectedModel: "gpt-companion",
     selectedReasoningEffort: "medium",
     sendButtonTitle: "Companion stop",
-    actionDockCompactPreview: "Companion preview",
     attachmentCount: 3,
     onCollapseActionDock,
     onToggleActionDock,
@@ -484,14 +502,41 @@ test("buildCompanionChatWindowProps は composer と compact dock の live props
   assert.equal(props.composerProps.selectedReasoningEffort, "medium");
   assert.equal(props.composerProps.sendButtonTitle, "Companion stop");
   assert.equal("onCollapse" in props.composerProps, false);
-  assert.equal(props.compactActionDockProps.actionDockCompactPreview, "Companion preview");
   assert.equal(props.compactActionDockProps.attachmentCount, 3);
   assert.equal(props.compactActionDockProps.pendingRunIndicatorText, "Companion が応答を生成中...");
   assert.equal(props.compactActionDockProps.showJumpToBottom, true);
-  assert.equal(props.compactActionDockProps.sendButtonTitle, "Companion stop");
+  assert.equal(props.compactActionDockProps.cancelButtonTitle, "Companion stop");
   assert.equal(props.compactActionDockProps.onExpand, onToggleActionDock);
   assert.equal(props.compactActionDockProps.onJumpToBottom, onJumpToMessageListBottom);
-  assert.equal(props.compactActionDockProps.onSendOrCancel, onSendOrCancel);
+  assert.equal(props.compactActionDockProps.onCancel, onSendOrCancel);
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.deepEqual(props.additionalDirectoryListProps?.items, []);
+});
+
+test("buildCompanionChatWindowProps は追加Directory一覧をshared chat surfaceへ投影する", () => {
+  const onRemoveAdditionalDirectory = () => {};
+  const additionalDirectoryItems = [{
+    key: "C:/shared/docs",
+    path: "C:/shared/docs",
+    primaryLabel: "docs",
+    secondaryLabel: "C:/shared",
+    title: "C:/shared/docs",
+    canRemove: true,
+  }];
+  const props = buildCompanionChatWindowProps(createProjectionInput({
+    isAdditionalDirectoryListOpen: true,
+    additionalDirectoryItems,
+    onRemoveAdditionalDirectory,
+  }));
+
+  assert.deepEqual(props.additionalDirectoryListProps, {
+    isOpen: true,
+    items: additionalDirectoryItems,
+    isInteractionDisabled: true,
+    onRemove: onRemoveAdditionalDirectory,
+  });
+  assert.equal("additionalDirectoryItems" in props.composerProps, false);
+  assert.equal("onRemoveAdditionalDirectory" in props.composerProps, false);
 });
 
 test("buildCompanionChatWindowProps は Auxiliary を含む Skill 状態を shared chat shell へ投影する", () => {

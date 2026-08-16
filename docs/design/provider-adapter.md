@@ -34,8 +34,8 @@ current runtime は shared contract の上に次の 2 adapter を持つ。
 type ProviderCodingAdapter = {
   composePrompt(input: RunSessionTurnInput): ProviderPromptComposition;
   getProviderQuotaTelemetry(input: GetProviderQuotaTelemetryInput): Promise<ProviderQuotaTelemetry | null>;
-  invalidateSessionThread(sessionId: string): void;
-  invalidateAllSessionThreads(): void;
+  invalidateSessionThread(sessionId: string): Promise<void>;
+  invalidateAllSessionThreads(): Promise<void>;
   runSessionTurn(input: {
     session: Session;
     sessionMemory: SessionMemory;

@@ -27,6 +27,7 @@ import {
   type WithMateMemoryCliDeps,
 } from "../withmate-memory.js";
 import {
+  resolveAgentRuntimeBindingReference,
   verifyRuntimeIdentity,
   WithMateMemoryRuntimeExchangeError,
   WITHMATE_MEMORY_API_SECRET_HEADER,
@@ -34,6 +35,20 @@ import {
   type WithMateMemoryRuntimeOperation,
   type WithMateMemoryRuntimeResponse,
 } from "../withmate-memory-runtime-client.js";
+
+it("provider execution markerがある場合はbinding省略をlocal-userへdowngradeしない", () => {
+  assert.throws(
+    () => resolveAgentRuntimeBindingReference({ WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1" }),
+    (error) => (
+      typeof error === "object"
+      && error !== null
+      && "error" in error
+      && (error as { error?: { message?: unknown } }).error?.message
+        === "WithMate provider execution requires its runtime binding reference."
+    ),
+  );
+  assert.equal(resolveAgentRuntimeBindingReference({}), undefined);
+});
 
 const TEST_API_SECRET = "test-api-secret";
 const TEST_OPERATOR_SECRET = "test-operator-secret";
@@ -327,6 +342,7 @@ describe("withmate-memory CLI", () => {
 
       assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.usage);
       assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_CLI_USAGE");
+      assert.equal(stdout.json().error.effect, "none");
       assert.equal(fetchCalls, 0);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });
@@ -442,6 +458,64 @@ describe("withmate-memory CLI", () => {
     assert.equal(stdout.json().error.code, "storage_unavailable");
     assert.equal(stdout.json().error.effect, "none");
     assert.equal(stdout.json().error.retryable, true);
+  });
+
+  it("一般Memoryのdispatch後response lossはreadをeffect none、writeをeffect unknownにする", async () => {
+    const cases = [
+      {
+        command: "search",
+        body: {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          targets: [{ owner: "user", scope: "global" }],
+          query: "preference",
+        },
+        expectedEffect: "none",
+      },
+      {
+        command: "append",
+        body: {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: { owner: "user", scope: "global" },
+          kind: "preference",
+          title: "Compact output",
+          body: "Prefer compact output.",
+          preview: "Compact output.",
+          tags: [],
+          idempotencyKey: "cli-general-response-loss-1",
+        },
+        expectedEffect: "unknown",
+      },
+      {
+        command: "forget",
+        body: {
+          schemaVersion: MEMORY_V6_SCHEMA_VERSION,
+          target: { owner: "user", scope: "global" },
+          entryIds: ["entry-a"],
+          reason: "user_request",
+          idempotencyKey: "cli-general-response-loss-dry-run-1",
+          dryRun: true,
+        },
+        expectedEffect: "none",
+      },
+    ];
+    for (const testCase of cases) {
+      const stdout = createOutputCapture();
+      const exitCode = await runWithMateMemoryCli([
+        testCase.command,
+        "--json",
+        JSON.stringify(testCase.body),
+      ], {
+        env: TEST_RUNTIME_ENV,
+        stdout: stdout.stream,
+        runtimeCall: async () => {
+          throw new WithMateMemoryRuntimeExchangeError("response lost", true);
+        },
+      });
+      assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
+      assert.equal(stdout.json().error.code, "WITHMATE_MEMORY_REQUEST_TIMEOUT");
+      assert.equal(stdout.json().error.effect, testCase.expectedEffect);
+      assert.equal(stdout.json().error.retryable, true);
+    }
   });
 
   it("Character writeのpre-dispatch同期failureはeffect noneを返す", async () => {
@@ -1032,6 +1106,7 @@ describe("withmate-memory CLI", () => {
     assert.equal(exitCode, WITHMATE_MEMORY_CLI_EXIT_CODES.apiError);
     assert.equal(stdout.json().error.code, "MEMORY_INVALID_FIELD");
     assert.equal(stdout.json().error.field, "kind");
+    assert.equal(stdout.json().error.effect, "none");
   });
 
   it("--stdinは明示的に標準入力からrequest bodyを読む", async () => {
@@ -1658,6 +1733,7 @@ describe("withmate-memory CLI", () => {
         entryId: "mem-a",
         from: target,
         to: { owner: "user", scope: "global" },
+        reason: "move to user scope",
         idempotencyKey: "move-a",
       }), "utf8");
       for (const [args, path, expectedDryRun] of [

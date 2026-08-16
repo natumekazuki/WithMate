@@ -52,11 +52,14 @@ import {
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
+  WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL,
   WITHMATE_RESET_APP_DATABASE_CHANNEL,
   WITHMATE_REGISTER_CODEX_SESSION_MCP_CHANNEL,
   WITHMATE_RESOLVE_LAUNCH_CHARACTER_CHANNEL,
   WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL,
+  WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL,
+  WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
@@ -248,7 +251,42 @@ test("workspace validation IPC は Home window だけから validation service �
   assert.deepEqual(validatedPaths, ["C:\\workspace"]);
 });
 
-test("Session/Companion 作成 IPC は Home だけを許可し、作成直前に同じ workspace validation を通す", async () => {
+test("Session workspace validation IPC は対象 Session window の保存済み path だけを検証する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-2");
+  let eventWindow = sessionWindow;
+  const resolvedSessionIds: string[] = [];
+  const validatedPaths: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherWindow,
+    getSession: async (sessionId: string) => {
+      resolvedSessionIds.push(sessionId);
+      return sessionId === "session-1" ? { workspacePath: "C:\\session-workspace" } : null;
+    },
+    validateWorkspaceDirectory: async (targetPath: unknown) => {
+      validatedPaths.push(targetPath);
+      return { valid: true };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const handler = handlers.get(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL);
+
+  assert.deepEqual(await handler?.({}, "session-1"), { valid: true });
+  assert.deepEqual(resolvedSessionIds, ["session-1"]);
+  assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handler?.({}, "session-1") as Promise<unknown>,
+    /only available from the target Session window/,
+  );
+  assert.deepEqual(resolvedSessionIds, ["session-1"]);
+  assert.deepEqual(validatedPaths, ["C:\\session-workspace"]);
+});
+
+test("Session作成はworkspaceを検証し、退役済みCompanion作成はside effect前に拒否する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const homeWindow = createWindowStub("http://localhost:5173/");
   const otherWindow = createWindowStub("http://localhost:5173/?mode=settings");
@@ -282,8 +320,11 @@ test("Session/Companion 作成 IPC は Home だけを許可し、作成直前に
   });
 
   await createSession?.({}, validSession);
-  await createCompanion?.({}, { workspacePath: "C:\\valid" });
-  assert.deepEqual(created, ["session", "companion"]);
+  await assert.rejects(
+    () => createCompanion?.({}, { workspacePath: "C:\\valid" }) as Promise<unknown>,
+    /Companion Mode is retired/,
+  );
+  assert.deepEqual(created, ["session"]);
 
   await assert.rejects(
     () => createSession?.({}, createSessionRequest({
@@ -296,9 +337,9 @@ test("Session/Companion 作成 IPC は Home だけを許可し、作成直前に
   );
   await assert.rejects(
     () => createCompanion?.({}, { workspacePath: "C:\\missing" }) as Promise<unknown>,
-    /Path not found\./,
+    /Companion Mode is retired/,
   );
-  assert.deepEqual(created, ["session", "companion"]);
+  assert.deepEqual(created, ["session"]);
 
   eventWindow = otherWindow;
   await assert.rejects(
@@ -309,8 +350,34 @@ test("Session/Companion 作成 IPC は Home だけを許可し、作成直前に
     () => createCompanion?.({}, { workspacePath: "C:\\valid" }) as Promise<unknown>,
     /only available from the Home window/,
   );
-  assert.deepEqual(validatedPaths, ["C:\\valid", "C:\\valid", "C:\\missing", "C:\\missing"]);
-  assert.deepEqual(created, ["session", "companion"]);
+  assert.deepEqual(validatedPaths, ["C:\\valid", "C:\\missing"]);
+  assert.deepEqual(created, ["session"]);
+});
+
+test("退役済みCompanionのpreviewとprovider turnはdepsへ到達しない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const { deps, calls } = createDeps({
+    previewCompanionComposerInput: async () => {
+      calls.push("previewCompanionComposerInput");
+      return {};
+    },
+    runCompanionSessionTurn: async () => {
+      calls.push("runCompanionSessionTurn");
+      return {};
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_PREVIEW_COMPANION_COMPOSER_INPUT_CHANNEL)?.({}, "companion-1", "hello") as Promise<unknown>,
+    /Companion provider execution is retired/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL)?.({}, "companion-1", { userMessage: "hello" }) as Promise<unknown>,
+    /Companion provider execution is retired/,
+  );
+  assert.equal(calls.includes("previewCompanionComposerInput"), false);
+  assert.equal(calls.includes("runCompanionSessionTurn"), false);
 });
 
 test("SessionFolder 作成 IPC は filesystem validation を行わず Home から作成できる", async () => {
@@ -501,6 +568,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const openRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
+  const previewNavigationRequests: unknown[] = [];
   const { deps } = createDeps({
     resolveEventWindow: () => currentWindow,
     resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
@@ -510,15 +578,19 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
       window === previewWindow && sessionId === "aux-1" ? currentPreviewResource : null
     ),
     isFilePreviewTokenWindow: (window: unknown, token: string) => window === previewWindow && token === "preview-1",
-    openSessionFilePreviewWindow: async () => ({
-      status: "opened",
-      targetType: "preview-window",
-      disposition: "created",
-      resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" },
-    }),
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      previewNavigationRequests.push(request);
+      return {
+        status: "opened",
+        targetType: "preview-window",
+        disposition: "created",
+        resource: { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" },
+      };
+    },
     getSessionFilePreviewWindowPayload: () => ({
       resource: currentPreviewResource,
       ownerSessionId: "session-1",
+      windowTitle: "current.md",
     }),
     listSessionFileRoots: async () => [{ id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:/repo" }],
     listSessionDirectory: async (request: unknown) => {
@@ -589,10 +661,22 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   assert.deepEqual(inspectRequests, []);
   assert.deepEqual(readRequests, []);
   assert.deepEqual(openRequests, [openRequest]);
-  const previewRequest = { kind: "resource", resource: openRequest };
+  const previewRequest = {
+    kind: "resource",
+    resource: openRequest,
+    view: { kind: "diff", scope: "working-tree" },
+  };
   assert.equal(
     (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, previewRequest) as { status: string }).status,
     "opened",
+  );
+  assert.deepEqual(previewNavigationRequests, [previewRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      ...previewRequest,
+      view: { kind: "diff", scope: "invalid" },
+    }) as Promise<unknown>,
+    /view is invalid/,
   );
   const changesRequest = { sessionId: "aux-1", rootId: "workspace" };
   assert.deepEqual(await handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, changesRequest), {
@@ -655,6 +739,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     {
       resource: currentPreviewResource,
       ownerSessionId: "session-1",
+      windowTitle: "current.md",
     },
   );
   assert.equal(
@@ -902,6 +987,45 @@ test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC �
   await handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", { userMessage: "hello" });
 
   assert.deepEqual(calls, ["runSessionTurn:session-1,[object Object]"]);
+});
+
+test("run-session-turn IPC拒否ログは本文を含めずclient request IDを相関情報として渡す", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const errors: Array<{ channel: string; clientRequestId?: string }> = [];
+  const { deps } = createDeps({
+    runSessionTurn: async () => {
+      throw new Error("このセッションはまだ実行中だよ。");
+    },
+    logIpcError: (input: { channel: string; clientRequestId?: string }) => {
+      errors.push(input);
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", {
+      userMessage: "ログへ出してはいけない本文",
+      clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+    }) as Promise<unknown>,
+    /まだ実行中/,
+  );
+
+  assert.deepEqual(errors.map(({ channel, clientRequestId }) => ({ channel, clientRequestId })), [{
+    channel: WITHMATE_RUN_SESSION_TURN_CHANNEL,
+    clientRequestId: "7c26d875-9117-4ad5-97b5-e9af775b94bc",
+  }]);
+  assert.doesNotMatch(JSON.stringify(errors), /ログへ出してはいけない本文/);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_SESSION_TURN_CHANNEL)?.({}, "session-1", {
+      userMessage: "please use secretprompt",
+      clientRequestId: "secretprompt",
+      submitSource: "secretprompt",
+    }) as Promise<unknown>,
+    /まだ実行中/,
+  );
+  assert.equal(errors.at(-1)?.clientRequestId, undefined);
+  assert.doesNotMatch(JSON.stringify(errors.at(-1)), /secretprompt/);
 });
 
 test("Memory V6 Review IPC は memory-review window からだけ呼び出せる", async () => {
@@ -1212,7 +1336,7 @@ test("DB reset IPC は Settings window 以外からの呼び出しを拒否す�
   assert.equal(calls.includes("resetAppDatabase"), false);
 });
 
-test("Auxiliary mutation/run IPC は対象 Session / Companion Review window から呼び出せる", async () => {
+test("Auxiliary mutationはowner windowへ限定し、Companion Reviewからの新規runを拒否する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sessionWindow = createWindowStub("http://localhost:5173/?mode=agent&sessionId=session-1");
   const companionReviewWindow = createWindowStub("http://localhost:5173/?mode=companion&sessionId=session-1");
@@ -1257,8 +1381,12 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
   });
   await handlers.get(WITHMATE_UPDATE_AUXILIARY_SESSION_CHANNEL)?.({}, auxiliarySession);
   await handlers.get(WITHMATE_CLOSE_AUXILIARY_SESSION_CHANNEL)?.({}, "aux-1");
-  eventWindow = companionReviewWindow;
   await handlers.get(WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL)?.({}, "aux-1", { userMessage: "hello" });
+  eventWindow = companionReviewWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RUN_AUXILIARY_SESSION_TURN_CHANNEL)?.({}, "aux-1", { userMessage: "hello" }) as Promise<unknown>,
+    /Companion provider execution is retired/,
+  );
   await handlers.get(WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL)?.({}, "aux-1");
 
   assert.deepEqual(calls, [
@@ -1269,6 +1397,8 @@ test("Auxiliary mutation/run IPC は対象 Session / Companion Review window か
     "closeAuxiliarySession",
     "getAuxiliarySession:aux-1",
     "runAuxiliarySessionTurn",
+    "getAuxiliarySession:aux-1",
+    "log:withmate:run-auxiliary-session-turn",
     "getAuxiliarySession:aux-1",
     "cancelAuxiliarySessionRun",
   ]);
@@ -1327,28 +1457,24 @@ test("Auxiliary create IPC は送信元 window と runtime selection mode を結
       provider: "codex",
       runtimeSelection: "latest-session",
     }) as Promise<unknown>,
-    /only supports explicit runtime selection/,
+    /Companion provider execution is retired/,
   );
-  await createHandler?.({}, {
-    parentSessionId: "session-1",
-    provider: "codex",
-    runtimeSelection: "explicit",
-    approvalMode: "never",
-    codexSandboxMode: "danger-full-access",
-  });
+  await assert.rejects(
+    () => createHandler?.({}, {
+      parentSessionId: "session-1",
+      provider: "codex",
+      runtimeSelection: "explicit",
+      approvalMode: "never",
+      codexSandboxMode: "danger-full-access",
+    }) as Promise<unknown>,
+    /Companion provider execution is retired/,
+  );
 
   assert.deepEqual(forwardedInputs, [
     {
       parentSessionId: "session-1",
       provider: "codex",
       runtimeSelection: "latest-session",
-    },
-    {
-      parentSessionId: "session-1",
-      provider: "codex",
-      runtimeSelection: "explicit",
-      approvalMode: "never",
-      codexSandboxMode: "danger-full-access",
     },
   ]);
 });

@@ -72,6 +72,7 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import { resolveSessionFilePreviewWindowTitle } from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -142,7 +143,6 @@ import {
 } from "./session-external-runtime.js";
 import {
   closeSessionRuntimeAdmission,
-  SessionRuntimeQuitBarrier,
 } from "./session-runtime-quit-barrier.js";
 import { resolveConversationTimingContext } from "./conversation-timing.js";
 import { SessionTurnNotificationService } from "./session-turn-notification-service.js";
@@ -153,9 +153,13 @@ import {
 } from "./character-affect-turn-evaluator.js";
 import { settleCharacterAffectTurnWithRetry } from "./character-affect-turn-settler.js";
 import {
-  CharacterAffectTurnRetryScheduler,
-  settleCharacterAffectTurnOrScheduleRetry,
-} from "./character-affect-turn-retry-scheduler.js";
+  characterAffectTurnThrownFailureCode,
+  createCharacterAffectTurnFailureDiagnostic,
+  createCharacterAffectTurnRecoveryFailureLogData,
+  resolveCharacterAffectTurnContextFailureStage,
+} from "./character-affect-turn-recovery.js";
+import { CharacterAffectTurnRetryScheduler } from "./character-affect-turn-retry-scheduler.js";
+import { CharacterAffectTurnOwnershipCoordinator } from "./character-affect-turn-ownership-coordinator.js";
 import {
   drainCharacterAffectTurnSettlementBatch,
   type CharacterAffectTurnDrainCursor,
@@ -215,10 +219,15 @@ import {
   type SessionMemoryStorageAccess,
   type SessionPinStorage,
   type SessionStorageRead,
+  type SessionStorageWrite,
 } from "./persistent-store-lifecycle-service.js";
 import { AppLifecycleService } from "./app-lifecycle-service.js";
 import { createAppLifecycleDeps } from "./app-lifecycle-deps.js";
-import { applyLaunchAtLoginSetting, shouldLaunchInBackground } from "./app-login-item.js";
+import {
+  applyLaunchAtLoginSetting,
+  resolveAppUserModelId,
+  shouldLaunchInBackground,
+} from "./app-login-item.js";
 import { AppTrayService } from "./app-tray-service.js";
 import { createMainBootstrapDeps } from "./main-bootstrap-deps.js";
 import { MainInfrastructureRegistry } from "./main-infrastructure-registry.js";
@@ -279,9 +288,13 @@ import { createElectronSafeStorageKeyProtector, MemoryProtectedObjectKeyStore } 
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
+import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
+import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
@@ -300,7 +313,10 @@ const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
 const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
 const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
-app.setAppUserModelId("com.natumekazuki.withmate");
+app.setAppUserModelId(resolveAppUserModelId({
+  isPackaged: app.isPackaged,
+  execPath: process.execPath,
+}));
 app.setPath("userData", fixedUserDataPath);
 const appLogsPath = path.join(fixedUserDataPath, "logs");
 const appLogService = new AppLogService({
@@ -434,6 +450,8 @@ let mainSessionCommandFacade: MainSessionCommandFacade | null = null;
 let mainSessionPersistenceFacade: MainSessionPersistenceFacade | null = null;
 let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
+const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
+const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -616,10 +634,28 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
       listCharacters: () => requireCharacterService().listCharacters(),
+      resolveCharacterById: (id) => {
+        const character = requireCharacterService().getCharacterCatalogEntry(id);
+        return character ? { id: character.id, name: character.name } : null;
+      },
       resolveCharacterRuntimeSnapshot: (characterId) =>
         requireCharacterService().createRuntimeSnapshot(characterId),
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
+      agentRuntimeBindingRegistry,
+      resolveActorSession: async (sessionId) => {
+        const session = getSession(sessionId);
+        if (session) {
+          return { id: session.id, providerId: session.provider, characterId: session.characterId };
+        }
+        if (!auxiliarySessionStorage) {
+          return null;
+        }
+        const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+        return auxiliary
+          ? { id: auxiliary.id, providerId: auxiliary.provider, characterId: auxiliary.characterId }
+          : null;
+      },
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -892,6 +928,23 @@ function attachWindowLogHandlers(window: BrowserWindow): void {
       },
     });
   });
+  window.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
+    if (!isMainFrame) {
+      return;
+    }
+    writeAppLog({
+      level: "info",
+      kind: "renderer.navigation-started",
+      process: "main",
+      message: "Renderer main-frame navigation started",
+      windowId: window.id,
+      data: {
+        url,
+        isInPlace,
+        windowTitle: readWindowTitle(window),
+      },
+    });
+  });
 }
 
 function readWindowTitle(window: BrowserWindow): string {
@@ -910,16 +963,23 @@ function readWindowUrl(window: BrowserWindow): string {
   }
 }
 
-function writeIpcErrorLog(input: { channel: string; durationMs: number; error: unknown }): void {
+function writeIpcErrorLog(input: {
+  channel: string;
+  durationMs: number;
+  error: unknown;
+  clientRequestId?: string;
+}): void {
   writeAppLog({
     level: "error",
     kind: "ipc.error",
     process: "main",
     message: `IPC failed: ${input.channel}`,
+    requestId: input.clientRequestId,
     data: {
       channel: input.channel,
       durationMs: input.durationMs,
       success: false,
+      clientRequestId: input.clientRequestId,
     },
     error: appLogService.errorToLogError(input.error),
   });
@@ -1199,7 +1259,8 @@ function isRunningSession(session: Session): boolean {
 function hasInFlightSessionRuns(): boolean {
   return requireSessionRuntimeService().hasInFlightRuns()
     || requireCompanionRuntimeService().hasInFlightRuns()
-    || requireAuxiliarySessionRuntimeService().hasInFlightRuns();
+    || requireAuxiliarySessionRuntimeService().hasInFlightRuns()
+    || sessionExecutionService?.hasInFlightExecutions() === true;
 }
 
 function isSessionRunInFlight(sessionId: string): boolean {
@@ -1306,6 +1367,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadFilePreviewEntry: (window, token) => requireWindowEntryLoader().loadFilePreviewEntry(window, token),
+          navigateFilePreviewWindow: (window, payload) => {
+            window.webContents.send(WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, payload);
+          },
           loadChatEntry: (window, mode) => requireWindowEntryLoader().loadChatEntry(window, mode),
           loadCompanionMergeReviewEntry: (window, sessionId) =>
             requireWindowEntryLoader().loadCompanionMergeReviewEntry(window, sessionId),
@@ -1396,13 +1460,18 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               return choice === 1;
             },
-            beginSessionRuntimeShutdown: () => {
+            shutdownSessionRuntime: async () => {
               sessionExternalRuntimeShuttingDown = true;
               closeSessionRuntimeAdmission({
                 executionService: sessionExecutionService,
                 applicationService: sessionExternalApplicationService,
               });
+              await stopSessionExternalRuntimeBestEffort();
+              await drainSessionExecutionsBestEffort();
             },
+            closePersistentStores,
+            invalidateAllProviderSessionThreads,
+            revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
           }),
         ),
       createMainBootstrapService: () =>
@@ -1573,9 +1642,23 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 createAuxiliarySession: (input) =>
                   requireAuxiliarySessionService().createAuxiliarySession(input),
                 updateAuxiliarySession: (session) =>
-                  requireAuxiliarySessionService().updateAuxiliarySession(session),
+                  updateAuxiliarySessionWithProviderRuntimeLifecycle({
+                    session,
+                    isRunInFlight: (sessionId) =>
+                      requireAuxiliarySessionRuntimeService().isRunInFlight(sessionId),
+                    getAuxiliarySession: (sessionId) =>
+                      requireAuxiliarySessionService().getAuxiliarySession(sessionId),
+                    updateAuxiliarySession: (nextSession) =>
+                      requireAuxiliarySessionService().updateAuxiliarySession(nextSession),
+                    revokeSessionAgentRuntimeBindings: (sessionId) =>
+                      agentRuntimeBindingRegistry.revokeSession(sessionId),
+                    invalidateProviderSessionThread,
+                  }),
                 closeAuxiliarySession: async (auxiliarySessionId) => {
+                  const current = requireAuxiliarySessionService().getAuxiliarySession(auxiliarySessionId);
                   const closed = await requireAuxiliarySessionService().closeAuxiliarySession(auxiliarySessionId);
+                  agentRuntimeBindingRegistry.revokeSession(auxiliarySessionId);
+                  await invalidateProviderSessionThread(current?.provider ?? closed.provider, auxiliarySessionId);
                   requireMainWindowFacade().closeFilePreviewWindowsForSession(auxiliarySessionId);
                   return closed;
                 },
@@ -1829,6 +1912,9 @@ function requireMainProviderFacade(): MainProviderFacade {
       ensureModelCatalogSeeded: () => requireModelCatalogStorage().ensureSeeded(),
       codexAdapter,
       copilotAdapter,
+      revokeProviderExecution: (sessionId, providerId) =>
+        agentRuntimeBindingRegistry.revokeProviderExecution(sessionId, providerId),
+      revokeAllProviderExecutions: () => agentRuntimeBindingRegistry.revokeAll(),
     });
   }
 
@@ -1863,6 +1949,8 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       cleanupSessionFilesDirectory,
       resumeSessionExecutionQueue: (sessionId) => sessionExecutionService?.resumeQueue(sessionId),
+      validateWorkspaceDirectory: (targetPath) =>
+        workspaceDirectoryValidationService.validate(targetPath),
     });
   }
 
@@ -2016,7 +2104,7 @@ function deletePromptTemplate(id: string): PromptTemplate[] {
 
 async function updateAppSettings(settings: AppSettings): Promise<AppSettings> {
   const savedSettings = await requireAppSettingsStorage().updateSettings(settings);
-  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled);
+  applyLaunchAtLoginSetting(app, savedSettings.launchAtLoginEnabled, app.isPackaged);
   void syncManagedSessionSkillBestEffort();
   await syncManagedMemorySkillBestEffort();
   return savedSettings;
@@ -2028,7 +2116,7 @@ function updateChatLayoutPreference(update: ChatLayoutPreferenceUpdate): AppSett
 
 async function resetAppSettings(): Promise<AppSettings> {
   const settings = requireAppSettingsStorage().resetSettings();
-  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+  applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
   void syncManagedSessionSkillBestEffort();
   return settings;
 }
@@ -2249,7 +2337,7 @@ function requireCharacterAffectTurnRetryScheduler(): CharacterAffectTurnRetrySch
           kind: "character-affect.lifecycle.recovery-failed",
           process: "main",
           message: "Character affect recovery did not complete",
-          error: appLogService.errorToLogError(error),
+          data: createCharacterAffectTurnRecoveryFailureLogData(error),
         });
       },
     });
@@ -2262,32 +2350,102 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     return true;
   }
   const settlementStorage = requireCharacterAffectTurnSettlementStorage();
-  if (!memoryV6RuntimeApi) {
-    return false;
-  }
-  const runtimeApi = memoryV6RuntimeApi;
   if (!hasCommittedAssistantMessage(request.session.messages, request)) {
     settlementStorage.markDiscarded(request.correlationId);
     return true;
   }
+  const attemptCount = settlementStorage.recordAttempt(request.correlationId);
+  if (attemptCount === null) {
+    return true;
+  }
+  let activeStage = "runtime" as import("./character-affect-turn-settlement-storage.js").CharacterAffectTurnFailureStage;
+  let stageStartedAt = Date.now();
+  let dispositionFailure: unknown;
+  const recordFailure = (input: {
+    code: string;
+    retryable: boolean;
+    effect?: string;
+    error?: unknown;
+  }): boolean => {
+    const diagnostic = createCharacterAffectTurnFailureDiagnostic({
+      code: input.code,
+      stage: activeStage,
+      error: input.error,
+      durationMs: Date.now() - stageStartedAt,
+    });
+    let disposition: ReturnType<CharacterAffectTurnSettlementStorage["recordFailure"]>;
+    try {
+      disposition = settlementStorage.recordFailure({
+        correlationId: request.correlationId,
+        retryable: input.retryable,
+        diagnostic,
+      });
+    } catch (error) {
+      dispositionFailure = error;
+      settlementStorage.recoverInterruptedAttempts(new Date().toISOString(), request.correlationId);
+      throw error;
+    }
+    writeAppLog({
+      level: "warn",
+      kind: disposition.state === "quarantined"
+        ? "character-affect.lifecycle.settlement-quarantined"
+        : "character-affect.lifecycle.settlement-deferred",
+      process: "main",
+      message: disposition.state === "quarantined"
+        ? "Character affect appraisal was quarantined after a bounded failure"
+        : "Character affect appraisal was deferred after a retryable failure",
+      data: {
+        sessionId: request.session.id,
+        correlationId: request.correlationId,
+        provider: request.session.provider,
+        model: request.session.model,
+        userMessageLength: request.userMessage.length,
+        assistantMessageLength: request.assistantMessage.length,
+        attemptCount: disposition.attemptCount,
+        code: diagnostic.code,
+        retryable: input.retryable,
+        effect: input.effect ?? "none",
+        stage: diagnostic.stage,
+        errorName: diagnostic.errorName,
+        durationMs: diagnostic.durationMs,
+        nextAttemptAt: disposition.nextAttemptAt,
+        quarantinedAt: disposition.quarantinedAt,
+      },
+    });
+    return disposition.state === "quarantined";
+  };
+  if (!memoryV6RuntimeApi) {
+    return recordFailure({ code: "runtime_unavailable", retryable: true });
+  }
+  const runtimeApi = memoryV6RuntimeApi;
   const character = request.session.characterRuntimeSnapshot
     ?? requireCharacterService().createRuntimeSnapshot(request.session.characterId);
   if (!character) {
-    return false;
+    return recordFailure({ code: "unknown_character", retryable: false });
   }
 
-  settlementStorage.recordAttempt(request.correlationId);
-  const settlement = await settleCharacterAffectTurnWithRetry({
+  try {
+    const settlement = await settleCharacterAffectTurnWithRetry({
     correlationId: request.correlationId,
     getPending: () => settlementStorage.getPending(request.correlationId),
-    getContext: () => runtimeApi.characterContextService.getContext({
-      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-      characterId: request.session.characterId!,
-      sessionId: request.session.id,
-      query: request.userMessage,
-      memoryLimit: 3,
-    }, "lifecycle"),
+    getContext: async () => {
+      activeStage = "context_response_assembly";
+      stageStartedAt = Date.now();
+      const result = await runtimeApi.characterContextService.getContext({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: request.session.characterId!,
+        sessionId: request.session.id,
+        query: request.userMessage,
+        memoryLimit: 3,
+      }, "lifecycle");
+      if (isCharacterContextError(result)) {
+        activeStage = resolveCharacterAffectTurnContextFailureStage(result);
+      }
+      return result;
+    },
     evaluate: async (context, idempotencyPrefix) => {
+      activeStage = "evaluation";
+      stageStartedAt = Date.now();
       const backgroundAdapter = getProviderBackgroundAdapter(request.session.provider);
       const prompt = buildCharacterAffectTurnPrompt({
         character,
@@ -2324,37 +2482,47 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
     persistEvaluation: (input) => {
       settlementStorage.saveEvaluation({ correlationId: request.correlationId, ...input });
     },
-    appraise: (expectedVersion, candidates) => runtimeApi.characterContextService.appraise({
-      schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
-      characterId: request.session.characterId!,
-      sessionId: request.session.id,
-      expectedVersion,
-      authority: { kind: "conversation" },
-      candidates,
-    }, "lifecycle"),
+    appraise: (expectedVersion, candidates) => {
+      activeStage = "appraisal";
+      stageStartedAt = Date.now();
+      return runtimeApi.characterContextService.appraise({
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: request.session.characterId!,
+        sessionId: request.session.id,
+        expectedVersion,
+        authority: { kind: "conversation" },
+        candidates,
+      }, "lifecycle");
+    },
     recordAppraisalFailure: (input) => {
       return settlementStorage.recordAppraisalFailure({ correlationId: request.correlationId, ...input });
+    },
+    validateOwner: async () => {
+      const currentSession = await getRuntimeSession(request.session.id);
+      return Boolean(
+        currentSession
+        && currentSession.characterId === request.session.characterId
+        && hasCommittedAssistantMessage(currentSession.messages, request),
+      );
+    },
+    markDiscarded: () => {
+      settlementStorage.markDiscarded(request.correlationId);
     },
     markSettled: () => {
       settlementStorage.markSettled(request.correlationId);
     },
-  });
-  if (settlement.status === "pending") {
-    writeAppLog({
-      level: "warn",
-      kind: "character-affect.lifecycle.settlement-pending",
-      process: "main",
-      message: "Character affect appraisal remains pending",
-      data: {
-        sessionId: request.session.id,
+    });
+    if (settlement.status === "pending") {
+      if (settlement.phase === "appraisal") {
+        activeStage = "appraisal";
+      }
+      return recordFailure({
         code: settlement.error.error.code,
         retryable: settlement.error.error.retryable,
         effect: settlement.error.error.effect,
-      },
-    });
-    return false;
-  }
-  if (settlement.appraisal && settlement.appraisal.rejected.length > 0) {
+      });
+    }
+    if (settlement.appraisal && settlement.appraisal.rejected.length > 0) {
       writeAppLog({
         level: "warn",
         kind: "character-affect.lifecycle.candidate-rejected",
@@ -2368,26 +2536,37 @@ async function settleCharacterAffectTurn(request: CharacterAffectTurnSettlementR
           })),
         },
       });
+    }
+    return true;
+  } catch (error) {
+    if (error === dispositionFailure) {
+      throw error;
+    }
+    return recordFailure({
+      code: characterAffectTurnThrownFailureCode(error, activeStage),
+      retryable: true,
+      error,
+    });
   }
-  return true;
 }
 
 async function drainPendingCharacterAffectTurns(): Promise<boolean> {
   const settlementStorage = requireCharacterAffectTurnSettlementStorage();
   const result = await drainCharacterAffectTurnSettlementBatch({
     storage: settlementStorage,
-    runtimeAvailable: memoryV6RuntimeApi !== null,
     startupRecoveryCutoff: characterAffectTurnStartupRecoveryCutoff,
     readyCursor: characterAffectTurnDrainCursor,
     getSession: getRuntimeSession,
-    settle: (item, session) => settleCharacterAffectTurn({
-      session,
-      correlationId: item.correlationId,
-      userMessage: item.userMessage,
-      assistantMessage: item.assistantMessage,
-      assistantMessageIndex: item.assistantMessageIndex,
-      occurredAt: item.occurredAt,
-    }),
+    settle: (item, session) => characterAffectTurnOwnershipCoordinator.runExclusive(
+      () => settleCharacterAffectTurn({
+        session,
+        correlationId: item.correlationId,
+        userMessage: item.userMessage,
+        assistantMessage: item.assistantMessage,
+        assistantMessageIndex: item.assistantMessageIndex,
+        occurredAt: item.occurredAt,
+      }),
+    ),
     onDiscard: (item) => {
       writeAppLog({
         level: "warn",
@@ -2403,8 +2582,11 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
         kind: "character-affect.lifecycle.recovery-failed",
         process: "main",
         message: "Pending Character affect appraisal remains available for recovery",
-        data: { sessionId: item.sessionId },
-        error: appLogService.errorToLogError(error),
+        data: {
+          sessionId: item.sessionId,
+          correlationId: item.correlationId,
+          ...createCharacterAffectTurnRecoveryFailureLogData(error),
+        },
       });
     },
   });
@@ -2416,7 +2598,9 @@ function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
-      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSession(session),
+      upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+      upsertTerminalSession: (session, terminalCommit) =>
+        requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
@@ -2446,13 +2630,27 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         ),
       attachmentSnapshotNamespacePath: resolveSessionAttachmentSnapshotNamespace(app.getPath("userData")),
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      validateWorkspaceDirectory: (targetPath) =>
+        workspaceDirectoryValidationService.validate(targetPath),
       isSessionCustomAgentAvailable: async (workspacePath, customAgentName) =>
         (await discoverSessionCustomAgents(workspacePath)).some(
           (agent) => agent.name.toLowerCase() === customAgentName.trim().toLowerCase(),
         ),
+      resetProviderSessionThread,
+      getProviderAgentRuntimeBinding: ({ session, provider }) =>
+        agentRuntimeBindingRegistry.issueOrReuse({
+          actorSessionId: session.id,
+          providerId: provider.id,
+          authoritySnapshot: {
+            characterId: session.characterId,
+            sessionKind: session.sessionKind,
+          },
+          operationGrants: getMemoryV6AgentRuntimeOperations(),
+        }),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2523,15 +2721,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       markCompletedTurnAppraisalReady: (correlationId) => {
         const result = requireCharacterAffectTurnSettlementStorage().markReady(correlationId);
         if (!result.updated) {
-          throw new Error(`Pending Character Affect appraisal was not found: ${correlationId}`);
+          return "absent";
         }
+        return "ready";
       },
       requireDurableCompletedTurnAppraisal: true,
-      appraiseCompletedTurn: async (input) => {
-        await settleCharacterAffectTurnOrScheduleRetry({
-          settle: () => settleCharacterAffectTurn(input),
-          scheduleRetry: () => requireCharacterAffectTurnRetryScheduler().request({ resetBackoff: true }),
-        });
+      appraiseCompletedTurn: () => {
+        requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       },
       createAuditLog: (entry) => requireAuditLogService().createAuditLog(entry),
       updateAuditLog: (id, entry) => requireAuditLogService().updateAuditLog(id, entry),
@@ -2944,9 +3140,27 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
           auxiliarySession?.parentSessionId ?? session.id,
         );
       },
+      resolveSessionFolderPath: (sessionId) => {
+        const auxiliarySession = requireAuxiliarySessionService().getAuxiliarySession(sessionId);
+        return resolveSessionFilesDirectory(
+          app.getPath("userData"),
+          auxiliarySession?.parentSessionId ?? sessionId,
+        );
+      },
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
+      getProviderAgentRuntimeBinding: ({ session, provider }) =>
+        agentRuntimeBindingRegistry.issueOrReuse({
+          actorSessionId: session.id,
+          providerId: provider.id,
+          authoritySnapshot: {
+            characterId: session.characterId,
+            sessionKind: "auxiliary",
+          },
+          operationGrants: getMemoryV6AgentRuntimeOperations(),
+        }),
+      resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -3016,6 +3230,7 @@ function requireCompanionRuntimeService(): CompanionRuntimeService {
       updateCompanionSession: (session) => requireCompanionStorage().updateSession(session),
       resolveComposerPreview,
       resolveProviderSession: (session) => appendSessionFilesDirectory(app.getPath("userData"), session),
+      resolveSessionFolderPath: (sessionId) => resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       resolveProviderCatalog,
       getProviderCodingAdapter,
@@ -3084,6 +3299,14 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       getStoredSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       isSessionRunInFlight,
       listRunningActiveAuxiliaryParentIds: listRunningActiveAuxiliaryParentSessionIds,
+      listAuxiliarySessionRuntimeIdentities: (parentSessionIds) =>
+        parentSessionIds.flatMap((parentSessionId) =>
+          requireAuxiliarySessionService().listAuxiliarySessions(parentSessionId).map((auxiliary) => ({
+            id: auxiliary.id,
+            parentSessionId: auxiliary.parentSessionId,
+            provider: auxiliary.provider,
+          })),
+        ),
       upsertStoredSession: (session, operation) => {
         const storage = requireSessionStorageForWrite();
         return operation === "create"
@@ -3106,11 +3329,22 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       clearSessionContextTelemetry,
       clearSessionBackgroundActivities,
       invalidateProviderSessionThread,
+      revokeSessionAgentRuntimeBindings: (sessionId) =>
+        agentRuntimeBindingRegistry.revokeSession(sessionId),
       closeSessionWindow: (sessionId) => {
         requireSessionWindowBridge().closeSessionWindow(sessionId);
         requireMainWindowFacade().closeFilePreviewWindowsForSession(sessionId);
       },
+      upsertStoredTerminalSession: (session, terminalCommit) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.upsertTerminalSession) {
+          throw new Error("terminal Session の atomic commit storage が利用できないよ。");
+        }
+        return storage.upsertTerminalSession(session, terminalCommit);
+      },
       broadcastSessions,
+      runCharacterAffectTurnOwnershipExclusive: (operation) =>
+        characterAffectTurnOwnershipCoordinator.runExclusive(operation),
     });
   }
 
@@ -3200,7 +3434,7 @@ function requireSettingsCatalogService(): SettingsCatalogService {
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       recreateDatabaseFile,
       applyAppSettingsSideEffects: (settings) => {
-        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled);
+        applyLaunchAtLoginSetting(app, settings.launchAtLoginEnabled, app.isPackaged);
       },
       broadcastSessions,
       broadcastAppSettings,
@@ -3601,12 +3835,16 @@ function getProviderBackgroundAdapter(providerId: string | null | undefined) {
   return requireMainProviderFacade().getProviderBackgroundAdapter(providerId);
 }
 
-function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): void {
-  requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
+async function resetProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+  await requireMainProviderFacade().resetProviderSessionThread(providerId, sessionId);
 }
 
-function invalidateAllProviderSessionThreads(): void {
-  requireMainProviderFacade().invalidateAllProviderSessionThreads();
+async function invalidateProviderSessionThread(providerId: string | null | undefined, sessionId: string): Promise<void> {
+  await requireMainProviderFacade().invalidateProviderSessionThread(providerId, sessionId);
+}
+
+async function invalidateAllProviderSessionThreads(): Promise<void> {
+  await requireMainProviderFacade().invalidateAllProviderSessionThreads();
 }
 
 async function listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {
@@ -4377,12 +4615,17 @@ async function openSessionFilePreviewWindow(
     };
   }
   try {
-    await explorer.inspectFile(resource);
+    const descriptor = await explorer.inspectFile(resource);
     const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
     if (!ownerSessionId) {
       throw new Error("The owning Session could not be resolved.");
     }
-    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({ resource, ownerSessionId });
+    const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
+      resource,
+      ownerSessionId,
+      windowTitle: resolveSessionFilePreviewWindowTitle(descriptor.name),
+      view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
+    });
     return { status: "opened", targetType: "preview-window", disposition, resource };
   } catch (error) {
     return {
@@ -4437,12 +4680,6 @@ async function openCompanionMergeWindow(sessionId: string): Promise<BrowserWindo
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  const sessionRuntimeQuitBarrier = new SessionRuntimeQuitBarrier({
-    stopRuntime: stopSessionExternalRuntimeBestEffort,
-    drainExecutions: drainSessionExecutionsBestEffort,
-    closePersistentStores,
-    quitApp: () => app.quit(),
-  });
   app.on("second-instance", () => {
     if (!app.isReady()) {
       return;
@@ -4502,7 +4739,11 @@ if (!hasSingleInstanceLock) {
       await startSessionExternalRuntimeBestEffort();
       requireCharacterAffectTurnRetryScheduler().request({ immediate: true, resetBackoff: true });
       requireAppTrayService().initialize();
-      applyLaunchAtLoginSetting(app, requireAppSettingsStorage().getSettings().launchAtLoginEnabled);
+      applyLaunchAtLoginSetting(
+        app,
+        requireAppSettingsStorage().getSettings().launchAtLoginEnabled,
+        app.isPackaged,
+      );
       void syncManagedSessionSkillBestEffort();
       await syncManagedMemorySkillBestEffort();
       publishAppBootStatus({
@@ -4558,10 +4799,10 @@ if (!hasSingleInstanceLock) {
       process: "main",
       message: "App before quit",
     });
-    requireAppLifecycleService().handleBeforeQuit(event);
+    void requireAppLifecycleService().handleBeforeQuit(event);
   });
 
-  app.on("will-quit", (event) => {
+  app.on("will-quit", () => {
     writeAppLog({
       level: "info",
       kind: "app.will-quit",
@@ -4571,6 +4812,5 @@ if (!hasSingleInstanceLock) {
     appTrayService?.dispose();
     characterAffectTurnRetryScheduler?.dispose();
     void stopMemoryV6RuntimeApiBestEffort();
-    sessionRuntimeQuitBarrier.handleWillQuit(event);
   });
 }

@@ -1,5 +1,7 @@
 export const MEMORY_V6_SCHEMA_VERSION = "withmate-memory-v1" as const;
 
+export const MEMORY_RESULT_LIMIT_MAX = 50;
+
 export type MemoryV6SchemaVersion = typeof MEMORY_V6_SCHEMA_VERSION;
 
 export type MemoryEntryState = "active" | "superseded" | "forgotten";
@@ -90,6 +92,8 @@ export type MemoryListTagsRequest = {
   targets: MemoryTargetSelector[];
   withCounts?: boolean;
   sampleLimit?: number;
+  limit?: number;
+  cursor?: string;
 };
 
 export type MemoryTargetOwner = MemoryTargetSelector["owner"];
@@ -185,6 +189,7 @@ export type MemoryMoveEntryRequest = {
   entryId: string;
   from: MemoryTargetSelector;
   to: MemoryTargetSelector;
+  reason: string;
   sourceMessageId?: string;
   idempotencyKey?: string;
 };
@@ -206,6 +211,10 @@ export type MemoryError = {
   availableBytes?: number;
   allowedProjectTargets?: string[];
   suggestion?: string;
+  retryable?: boolean;
+  conversationMayContinue?: boolean;
+  effect?: "none" | "committed" | "partial" | "unknown";
+  details?: Record<string, unknown>;
 };
 
 export type MemoryValidationResult<T> =

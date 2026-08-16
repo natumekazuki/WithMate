@@ -22,6 +22,7 @@ describe("provider-settings-state", () => {
     assert.equal(DEFAULT_BACKGROUND_TIMEOUT_SECONDS, 180);
     assert.equal(settings.memoryExtractionProviderSettings.codex.timeoutSeconds, 180);
     assert.equal(settings.autoCollapseActionDockOnSend, true);
+    assert.equal(settings.scrollToLatestOnSend, true);
     assert.deepEqual(settings.chatLayoutPreference, {
       header: "hidden",
       actionDock: "compact",
@@ -103,6 +104,11 @@ describe("provider-settings-state", () => {
   it("action dock auto close は normalize で boolean を保持し、未設定時は true に寄せる", () => {
     assert.equal(normalizeAppSettings({ autoCollapseActionDockOnSend: false }).autoCollapseActionDockOnSend, false);
     assert.equal(normalizeAppSettings({}).autoCollapseActionDockOnSend, true);
+  });
+
+  it("send scroll は normalize で boolean を保持し、未設定時は true に寄せる", () => {
+    assert.equal(normalizeAppSettings({ scrollToLatestOnSend: false }).scrollToLatestOnSend, false);
+    assert.equal(normalizeAppSettings({}).scrollToLatestOnSend, true);
   });
 
   it("chat layout preference は項目ごとに canonical enum へ normalize する", () => {

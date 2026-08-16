@@ -175,7 +175,7 @@ test("EXT-ATTACH-10: 明示attachmentはkindを検証しdispatch前のidentity�
       [{ kind: "folder", relativePath: "brief.txt" }],
     );
     assert.equal(kindMismatch.attachments.length, 0);
-    assert.match(kindMismatch.errors[0] ?? "", /フォルダ/);
+    assert.match(kindMismatch.errors[0] ?? "", /directory/);
 
     await rm(targetPath);
     await writeFile(targetPath, "second", "utf8");

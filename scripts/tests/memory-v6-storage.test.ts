@@ -1026,8 +1026,8 @@ describe("MemoryV6Storage", () => {
         bindingIdHash: "binding-hash-a",
       });
       assert.deepEqual(replay, [
-        { entryId: "mem-private", status: "forgotten" },
-        { entryId: "missing-entry", status: "not_found" },
+        { entryId: "mem-private", status: "forgotten", replayed: true },
+        { entryId: "missing-entry", status: "not_found", replayed: true },
       ]);
 
       assert.deepEqual(storage.forgetEntries({ target: projectTarget, entryIds: ["mem-private"], reason: "privacy" }), [
@@ -1118,6 +1118,28 @@ describe("MemoryV6Storage", () => {
       assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entries_v6 WHERE id = 'mem-character'"), 0);
       assert.equal(readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_entries_v6"), 1);
       assert.equal(storage.getEntry("mem-project")?.state, "active");
+
+      const admittedTarget = {
+        owner: { type: "project" as const, id: "project-admission-rollback" },
+        scope: { type: "project" as const, id: "project-admission-rollback" },
+      };
+      assert.throws(() => storage.appendEntry(baseAppend({
+        id: "mem-project",
+        target: admittedTarget,
+        projectScopeAdmissions: [{
+          id: "project-admission-rollback",
+          projectType: "git",
+          projectKey: "git:https://example.invalid/rollback.git",
+          workspacePath: "C:/workspace/rollback",
+          gitRoot: "C:/workspace/rollback",
+          gitRemoteUrl: "https://example.invalid/rollback.git",
+          displayName: "rollback",
+        }],
+      })));
+      assert.equal(readCount(
+        dbPath,
+        "SELECT COUNT(*) AS count FROM project_scopes_v6 WHERE id = 'project-admission-rollback'",
+      ), 0);
     });
   });
 
@@ -1324,6 +1346,59 @@ describe("MemoryV6Storage", () => {
     });
   });
 
+  it("tag listingはlimit+1だけを読み、cursorで重複なく全tagを列挙する", async () => {
+    await withStorage(({ storage, dbPath }) => {
+      for (let index = 0; index < 5; index += 1) {
+        storage.appendEntry(baseAppend({
+          id: `mem-tag-page-${index}`,
+          title: `Tag ${index}`,
+          tags: [tag("topic", `tag-${index}`)],
+          now: `2026-06-24T00:0${index}:00.000Z`,
+        }));
+      }
+      const first = storage.listTagStatisticsPage([projectTarget], { limit: 2, sampleLimit: 1 });
+      assert.equal(first.items.length, 2);
+      assert.ok(first.nextCursor);
+      assert.ok(first.items.every((item) => item.samples.length <= 1));
+      const second = storage.listTagStatisticsPage([projectTarget], { limit: 2, sampleLimit: 1, cursor: first.nextCursor });
+      assert.equal(second.items.length, 2);
+      assert.ok(second.nextCursor);
+      const third = storage.listTagStatisticsPage([projectTarget], { limit: 2, sampleLimit: 1, cursor: second.nextCursor });
+      assert.equal(third.items.length, 1);
+      assert.equal(third.nextCursor, undefined);
+      assert.equal(new Set([...first.items, ...second.items, ...third.items].map((item) => item.canonicalValue)).size, 5);
+      const db = new DatabaseSync(dbPath, { readOnly: true });
+      try {
+        const plan = db.prepare(`
+          EXPLAIN QUERY PLAN
+          SELECT tag_type, tag_value
+          FROM memory_target_tag_stats_v6
+          WHERE owner_type = ? AND owner_id = ? AND scope_type = ? AND scope_id = ?
+          ORDER BY usage_count DESC, latest_entry_updated_at DESC, tag_type_canonical ASC, tag_value_canonical ASC
+          LIMIT ?
+        `).all("project", "project-a", "project", "project-a", 3) as Array<{ detail: string }>;
+        assert.equal(plan.some((row) => row.detail.includes("idx_v6_memory_target_tag_stats_page")), true);
+        const cursorPlan = db.prepare(`
+          EXPLAIN QUERY PLAN
+          SELECT tag_type, tag_value
+          FROM memory_target_tag_stats_v6
+          WHERE owner_type = ? AND owner_id = ? AND scope_type = ? AND scope_id = ?
+            AND usage_count < ?
+          ORDER BY usage_count DESC, latest_entry_updated_at DESC, tag_type_canonical ASC, tag_value_canonical ASC
+          LIMIT ?
+        `).all("project", "project-a", "project", "project-a", 2, 3) as Array<{ detail: string }>;
+        assert.equal(cursorPlan.some((row) => (
+          row.detail.includes("idx_v6_memory_target_tag_stats_page")
+          && row.detail.includes("usage_count<?")
+        )), true);
+      } finally {
+        db.close();
+      }
+      storage.forgetEntries({ target: projectTarget, entryIds: ["mem-tag-page-0"], reason: "outdated" });
+      assert.equal(storage.listTagsPage([projectTarget], { limit: 10 }).items.some((item) => item.canonicalValue === "tag-0"), false);
+    });
+  });
+
   it("forget previewはtarget照合結果を返すが永続状態と監査logを変更しない", async () => {
     await withStorage(({ storage, dbPath }) => {
       storage.appendEntry(baseAppend({ id: "mem-project" }));
@@ -1356,12 +1431,14 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: projectTarget,
         to: userGlobalTarget,
+        reason: "move before forget preview",
         requestFingerprint: "move-before-preview",
       });
       const eventCount = readCount(dbPath, "SELECT COUNT(*) AS count FROM memory_mutation_events_v6");
       assert.deepEqual(storage.previewForgetEntries(forgetInput), [{
         entryId: "mem-project",
         status: "not_found",
+        replayed: true,
         warning: "target_mismatch_or_not_found",
       }]);
       assert.throws(
@@ -1396,6 +1473,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: projectTarget,
         to: userGlobalTarget,
+        reason: "move to user scope",
         bindingIdHash: "local-user",
         idempotencyKey: "move-project-global",
         requestFingerprint: "fingerprint-a",
@@ -1413,6 +1491,8 @@ describe("MemoryV6Storage", () => {
         { from_entry_id: "mem-project", to_entry_id: "mem-old" },
       );
       assert.equal(readRow<{ superseded_by_id: string }>(dbPath, "SELECT superseded_by_id FROM memory_entries_v6 WHERE id = 'mem-old'").superseded_by_id, "mem-project");
+      assert.deepEqual(storage.listTagsPage([projectTarget]).items, []);
+      assert.deepEqual(storage.listTagsPage([userGlobalTarget]).items.map((item) => item.canonicalValue), ["memory"]);
       assert.deepEqual(
         { ...readRow<{
           from_owner_type: string;
@@ -1422,9 +1502,10 @@ describe("MemoryV6Storage", () => {
           binding_id_hash: string;
           idempotency_key: string;
           request_fingerprint: string;
+          reason: string;
         }>(dbPath, `
           SELECT from_owner_type, from_owner_id, to_owner_type, to_scope_type,
-                 binding_id_hash, idempotency_key, request_fingerprint
+                 binding_id_hash, idempotency_key, request_fingerprint, reason
           FROM memory_move_events_v6
         `) },
         {
@@ -1435,6 +1516,7 @@ describe("MemoryV6Storage", () => {
           binding_id_hash: "local-user",
           idempotency_key: "move-project-global",
           request_fingerprint: "fingerprint-a",
+          reason: "move to user scope",
         },
       );
 
@@ -1464,6 +1546,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: projectTarget,
         to: userGlobalTarget,
+        reason: "rollback test",
         requestFingerprint: "rollback-move",
       }), /injected move event failure/);
       assert.equal(storage.getEntry("mem-project")?.owner.type, "project");
@@ -1478,6 +1561,7 @@ describe("MemoryV6Storage", () => {
         entryId: "mem-project",
         from: characterTarget,
         to: userGlobalTarget,
+        reason: "target mismatch test",
         requestFingerprint: "mismatch",
       }), MemoryV6EntryNotFoundError);
       assert.equal(storage.getEntry("mem-project")?.owner.type, "project");

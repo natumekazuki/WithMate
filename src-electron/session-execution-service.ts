@@ -129,6 +129,10 @@ export class SessionExecutionService {
     this.drainFailureCounts.clear();
   }
 
+  hasInFlightExecutions(): boolean {
+    return this.activeDispatches.size > 0 || this.dispatches.size > 0;
+  }
+
   async drainForShutdown(): Promise<void> {
     this.beginShutdown();
     if (!this.shutdownDrain) {

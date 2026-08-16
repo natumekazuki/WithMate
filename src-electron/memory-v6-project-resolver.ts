@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import { resolveProjectScope } from "./project-scope.js";
@@ -31,54 +31,25 @@ export function createMemoryV6ProjectResolver(dbPath: string): Pick<
       if (resolved.projectType !== "git") {
         return null;
       }
-      const now = new Date().toISOString();
       const existing = db.prepare(`
         SELECT id
         FROM project_scopes_v6
         WHERE project_type = ?
           AND project_key = ?
       `).get(resolved.projectType, resolved.projectKey) as { id: string } | undefined;
-      const projectId = existing?.id ?? `project-${randomUUID()}`;
-
-      db.prepare(`
-        INSERT INTO project_scopes_v6 (
-          id,
-          project_type,
-          project_key,
-          workspace_path,
-          git_root,
-          git_remote_url,
-          display_name,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(project_type, project_key) DO UPDATE SET
-          workspace_path = excluded.workspace_path,
-          git_root = excluded.git_root,
-          git_remote_url = excluded.git_remote_url,
-          display_name = excluded.display_name,
-          updated_at = excluded.updated_at
-      `).run(
-        projectId,
-        resolved.projectType,
-        resolved.projectKey,
-        resolved.workspacePath,
-        resolved.gitRoot ?? "",
-        resolved.gitRemoteUrl ?? "",
-        resolved.displayName,
-        now,
-        now,
-      );
-
-      const row = db.prepare(`
-        SELECT id, display_name
-        FROM project_scopes_v6
-        WHERE project_type = ?
-          AND project_key = ?
-      `).get(resolved.projectType, resolved.projectKey) as { id: string; display_name: string } | undefined;
-      return row
-        ? { id: row.id, displayName: row.display_name }
-        : { id: projectId, displayName: resolved.displayName };
+      if (existing) {
+        return {
+          id: existing.id,
+          displayName: resolved.displayName,
+          admission: { id: existing.id, ...resolved },
+        };
+      }
+      const projectId = `project-${createHash("sha256").update(resolved.projectKey, "utf8").digest("hex").slice(0, 32)}`;
+      return {
+        id: projectId,
+        displayName: resolved.displayName,
+        admission: { id: projectId, ...resolved },
+      };
     }),
     resolveKnownProjectByPath: (projectPath) => withDatabase(dbPath, (db) => {
       const resolved = resolveProjectScope(projectPath);

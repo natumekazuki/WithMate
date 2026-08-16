@@ -37,7 +37,7 @@ export const BUILT_IN_MICROCOPY_CATALOG: Record<MicrocopySlot, string[]> = {
   "retry.interrupted.title": ["前回の依頼は中断されたままです"],
   "retry.failed.title": ["前回の依頼は完了できませんでした"],
   "retry.canceled.title": ["この依頼は途中で停止しました"],
-  "composer.error.path_not_found": ["指定したパスが見つかりません: {path}"],
+  "composer.error.path_not_found": ["Path not found: {path}"],
   "empty.latest_command.waiting": ["最初の command を待機中"],
   "empty.latest_command": ["直近 run の command 記録はありません"],
   "empty.changed_files": ["ファイル変更はありません"],
@@ -45,6 +45,11 @@ export const BUILT_IN_MICROCOPY_CATALOG: Record<MicrocopySlot, string[]> = {
 };
 
 const MICROCOPY_SLOT_SET = new Set<string>(MICROCOPY_SLOTS);
+const LEGACY_PATH_NOT_FOUND_DEFAULT = ["指定したパスが見つかりません: {path}"];
+
+function isExactVariantList(value: string[], expected: readonly string[]): boolean {
+  return value.length === expected.length && value.every((entry, index) => entry === expected[index]);
+}
 
 function cloneCatalog(catalog: Record<MicrocopySlot, string[]>): Record<MicrocopySlot, string[]> {
   return Object.fromEntries(
@@ -87,10 +92,15 @@ export function normalizeUserMicrocopyCatalog(value: unknown): Record<MicrocopyS
       continue;
     }
 
-    normalized[slot as MicrocopySlot] = normalizeMicrocopyVariants(
+    const typedSlot = slot as MicrocopySlot;
+    const normalizedVariants = normalizeMicrocopyVariants(
       variants,
-      BUILT_IN_MICROCOPY_CATALOG[slot as MicrocopySlot],
+      BUILT_IN_MICROCOPY_CATALOG[typedSlot],
     );
+    normalized[typedSlot] = typedSlot === "composer.error.path_not_found"
+      && isExactVariantList(normalizedVariants, LEGACY_PATH_NOT_FOUND_DEFAULT)
+      ? [...BUILT_IN_MICROCOPY_CATALOG[typedSlot]]
+      : normalizedVariants;
   }
 
   return normalized;

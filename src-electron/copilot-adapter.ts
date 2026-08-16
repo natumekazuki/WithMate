@@ -80,6 +80,14 @@ import {
   type BoundedAuditRawItem,
 } from "./audit-payload-limits.js";
 import { toProviderMetadataLogData } from "./provider-metadata-log.js";
+import {
+  buildProviderAgentRuntimeBindingCacheKey,
+  buildProviderAgentRuntimeBindingEnv,
+  createProviderAgentRuntimeBindingRedactor,
+  mergeDefinedProviderEnv,
+  type ProviderAgentRuntimeBindingRedactor,
+} from "./provider-agent-runtime-binding.js";
+import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 
 type CopilotReasoningEffort = NonNullable<SessionConfig["reasoningEffort"]>;
 
@@ -160,11 +168,17 @@ const COPILOT_DROPPED_RAW_EVENT_TYPES = new Set([
 
 const require = createRequire(import.meta.url);
 
-export function buildCopilotClientEnv(baseEnv: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+export function buildCopilotClientEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
+): NodeJS.ProcessEnv {
   // Copilot SDK は child CLI の stderr を bootstrap failure 扱いするため、
   // Node.js の ExperimentalWarning だけで false error にならないように抑止する。
   return {
-    ...baseEnv,
+    ...mergeDefinedProviderEnv(
+      baseEnv,
+      buildProviderAgentRuntimeBindingEnv(agentRuntimeBinding),
+    ),
     NODE_NO_WARNINGS: "1",
   };
 }
@@ -205,13 +219,22 @@ export function resolveCopilotCliPath(
 function buildCopilotClientKeyFromAppSettings(
   providerId: string,
   appSettings: RunSessionTurnInput["appSettings"],
+  agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null,
 ): string {
   const codingApiKey = getProviderAppSettings(appSettings, providerId).apiKey.trim();
-  return JSON.stringify([providerId, codingApiKey || null]);
+  return JSON.stringify([
+    providerId,
+    codingApiKey || null,
+    buildProviderAgentRuntimeBindingCacheKey(agentRuntimeBinding),
+  ]);
 }
 
 function buildCopilotClientKey(providerId: string, input: RunSessionTurnInput): string {
-  return buildCopilotClientKeyFromAppSettings(providerId, input.appSettings);
+  return buildCopilotClientKeyFromAppSettings(
+    providerId,
+    input.appSettings,
+    input.agentRuntimeBinding,
+  );
 }
 
 export function isRecoverableCopilotConnectionErrorMessage(message: string): boolean {
@@ -1398,6 +1421,7 @@ function isReadOnlyPermissionRequest(request: PermissionRequest): boolean {
 }
 
 function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
+  const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
   switch (normalizeApprovalMode(input.session.approvalMode)) {
     case "never":
       return () => toPermissionDecision("approved");
@@ -1420,7 +1444,7 @@ function buildPermissionHandler(input: RunSessionTurnInput): PermissionHandler {
         }
 
         const decision = await input.onApprovalRequest(
-          buildCopilotApprovalRequest(request, input.providerCatalog.id, resolveRunWorkspacePath(input)),
+          redactor.sanitize(buildCopilotApprovalRequest(request, input.providerCatalog.id, resolveRunWorkspacePath(input))),
         );
         return toPermissionDecision(decision === "approve" ? "approved" : "denied-interactively-by-user");
       };
@@ -1487,6 +1511,7 @@ async function emitLiveState(
   reasoningText: string,
   usage: AuditLogUsage | null,
   errorMessage: string,
+  redactor = createProviderAgentRuntimeBindingRedactor(null),
 ): Promise<void> {
   if (!handler) {
     return;
@@ -1495,12 +1520,12 @@ async function emitLiveState(
   await handler({
     sessionId,
     threadId: threadId ?? "",
-    assistantText: toAuditTextPreview(assistantText) ?? "",
-    reasoningText: toAuditTextPreview(reasoningText) ?? "",
-    steps: Array.from(steps.values()),
-    backgroundTasks: sortLiveBackgroundTasks(backgroundTasks.values()),
+    assistantText: redactor.sanitizeText(toAuditTextPreview(assistantText) ?? ""),
+    reasoningText: redactor.sanitizeText(toAuditTextPreview(reasoningText) ?? ""),
+    steps: redactor.sanitize(Array.from(steps.values())),
+    backgroundTasks: redactor.sanitize(sortLiveBackgroundTasks(backgroundTasks.values())),
     usage,
-    errorMessage,
+    errorMessage: redactor.sanitizeText(errorMessage),
     approvalRequest: null,
     elicitationRequest: null,
   });
@@ -1987,13 +2012,78 @@ export async function resolveCopilotSessionForSettings(args: {
 type CopilotAdapterOptions = {
   onBackgroundTasksChanged?: (sessionId: string, tasks: LiveBackgroundTask[]) => void;
   log?: (input: CopilotAdapterLogInput) => void;
+  clientStopTimeoutMs?: number;
+  sessionDisconnectTimeoutMs?: number;
 };
+
+const COPILOT_CLIENT_STOP_TIMEOUT_MS = 5_000;
+const COPILOT_SESSION_DISCONNECT_TIMEOUT_MS = 5_000;
+
+async function disconnectCopilotSession(
+  session: Pick<CopilotSession, "disconnect">,
+  timeoutMs: number = COPILOT_SESSION_DISCONNECT_TIMEOUT_MS,
+): Promise<void> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const disconnect = session.disconnect().catch(() => undefined);
+  const timeout = new Promise<void>((resolve) => {
+    timeoutId = setTimeout(resolve, timeoutMs);
+  });
+  await Promise.race([disconnect, timeout]);
+  if (timeoutId) {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function stopCopilotClient(
+  client: CopilotClient,
+  timeoutMs: number = COPILOT_CLIENT_STOP_TIMEOUT_MS,
+): Promise<void> {
+  const gracefulStop = await settleCopilotCleanupWithin(() => client.stop(), timeoutMs);
+  if (gracefulStop.status !== "settled" || gracefulStop.value.length > 0) {
+    await settleCopilotCleanupWithin(() => client.forceStop(), timeoutMs);
+  }
+}
+
+type CopilotCleanupSettlement<T> =
+  | { status: "settled"; value: T }
+  | { status: "rejected" }
+  | { status: "timed_out" };
+
+async function settleCopilotCleanupWithin<T>(
+  operation: () => Promise<T>,
+  timeoutMs: number,
+): Promise<CopilotCleanupSettlement<T>> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  const operationSettlement: Promise<CopilotCleanupSettlement<T>> = Promise.resolve()
+    .then(operation)
+    .then(
+      (value) => ({ status: "settled", value }),
+      () => ({ status: "rejected" }),
+    );
+  const timeoutSettlement = new Promise<CopilotCleanupSettlement<T>>((resolve) => {
+    timeoutId = setTimeout(() => resolve({ status: "timed_out" }), Math.max(0, timeoutMs));
+  });
+  const settlement = await Promise.race([operationSettlement, timeoutSettlement]);
+  if (timeoutId !== null) {
+    clearTimeout(timeoutId);
+  }
+  return settlement;
+}
 
 export class CopilotAdapter implements ProviderTurnAdapter {
   private readonly clients = new Map<string, CopilotClient>();
   private readonly sessions = new Map<string, CachedCopilotSession>();
+  private readonly clientKeysBySession = new Map<string, string>();
 
   constructor(private options: CopilotAdapterOptions = {}) {}
+
+  private async stopClient(client: CopilotClient): Promise<void> {
+    await stopCopilotClient(client, this.options.clientStopTimeoutMs);
+  }
+
+  private async disconnectSession(session: Pick<CopilotSession, "disconnect">): Promise<void> {
+    await disconnectCopilotSession(session, this.options.sessionDisconnectTimeoutMs);
+  }
 
   private writeLog(input: CopilotAdapterLogInput): void {
     try {
@@ -2011,14 +2101,25 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     return SCHEMA_SUBMIT_TOOL_BACKGROUND_STRUCTURED_PROMPT_POLICY;
   }
 
-  invalidateSessionThread(sessionId: string): void {
-    void this.disposeSessionCache(sessionId);
+  async invalidateSessionThread(sessionId: string): Promise<void> {
+    await this.disposeSessionAndClientCache(sessionId);
   }
 
-  invalidateAllSessionThreads(): void {
-    for (const sessionId of this.sessions.keys()) {
-      void this.disposeSessionCache(sessionId);
-    }
+  async invalidateAllSessionThreads(): Promise<void> {
+    const sessions = [...this.sessions.entries()];
+    const clients = [...this.clients.values()];
+    this.sessions.clear();
+    this.clients.clear();
+    this.clientKeysBySession.clear();
+    const disconnects = sessions.map(async ([sessionId, cached]) => {
+      cached.unsubscribeBackgroundObserver?.();
+      this.options.onBackgroundTasksChanged?.(sessionId, []);
+      await this.disconnectSession(cached.session);
+    });
+    await Promise.all([
+      ...disconnects,
+      ...clients.map((client) => this.stopClient(client)),
+    ]);
   }
 
   async getProviderQuotaTelemetry({
@@ -2086,6 +2187,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   private getClient(providerId: string, input: RunSessionTurnInput): { client: CopilotClient; clientKey: string } {
+    const binding = input.agentRuntimeBinding;
+    if (binding?.transport !== "env" || !binding.bindingReference.trim()) {
+      throw new Error("Copilot Session provider execution requires an Agent runtime binding.");
+    }
     const codingApiKey = getProviderAppSettings(input.appSettings, providerId).apiKey.trim();
     const clientKey = buildCopilotClientKey(providerId, input);
     const cached = this.clients.get(clientKey);
@@ -2096,7 +2201,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     const cliPath = resolveCopilotCliPath();
     const client = new CopilotClient({
       connection: RuntimeConnection.forStdio({ path: cliPath }),
-      env: buildCopilotClientEnv(process.env),
+      env: buildCopilotClientEnv(process.env, input.agentRuntimeBinding),
       ...(codingApiKey ? { gitHubToken: codingApiKey, useLoggedInUser: false } : {}),
     });
     this.clients.set(clientKey, client);
@@ -2238,7 +2343,46 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     if (cached) {
       cached.unsubscribeBackgroundObserver?.();
       this.options.onBackgroundTasksChanged?.(sessionId, []);
-      await cached.session.disconnect().catch(() => undefined);
+      await this.disconnectSession(cached.session);
+    }
+  }
+
+  private async disposeClientCache(clientKey: string): Promise<void> {
+    const client = this.clients.get(clientKey);
+    this.clients.delete(clientKey);
+    if (client) {
+      await this.stopClient(client);
+    }
+  }
+
+  private async disposeSessionAndClientCache(sessionId: string): Promise<void> {
+    const clientKey = this.clientKeysBySession.get(sessionId);
+    const cached = this.sessions.get(sessionId);
+    const client = clientKey ? this.clients.get(clientKey) : undefined;
+    this.clientKeysBySession.delete(sessionId);
+    this.sessions.delete(sessionId);
+    if (clientKey) {
+      this.clients.delete(clientKey);
+    }
+    if (cached) {
+      try {
+        cached.unsubscribeBackgroundObserver?.();
+      } catch {
+        // Cache ownership is already detached; observer cleanup is best effort.
+      }
+      try {
+        this.options.onBackgroundTasksChanged?.(sessionId, []);
+      } catch {
+        // UI projection failure must not retain the old provider ownership.
+      }
+    }
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (cached) {
+      await this.disconnectSession(cached.session);
+    }
+    if (client) {
+      await this.stopClient(client);
     }
   }
 
@@ -2249,11 +2393,23 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     }
   }
 
-  private attachBackgroundTaskObserver(sessionId: string, cached: CachedCopilotSession): void {
+  private attachBackgroundTaskObserver(
+    sessionId: string,
+    cached: CachedCopilotSession,
+    redactor: ProviderAgentRuntimeBindingRedactor,
+  ): void {
     cached.unsubscribeBackgroundObserver?.();
     cached.unsubscribeBackgroundObserver = cached.session.on((event) => {
       if (!applyCopilotBackgroundTaskEvent(cached.backgroundTasks, event)) {
         return;
+      }
+
+      for (const [taskId, task] of cached.backgroundTasks.entries()) {
+        cached.backgroundTasks.set(taskId, {
+          ...task,
+          title: redactor.sanitizeText(task.title),
+          details: task.details === undefined ? undefined : redactor.sanitizeText(task.details),
+        });
       }
 
       this.options.onBackgroundTasksChanged?.(sessionId, sortLiveBackgroundTasks(cached.backgroundTasks.values()));
@@ -2261,8 +2417,14 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   private async resetRecoverableConnection(input: RunSessionTurnInput): Promise<void> {
+    const mappedClientKey = this.clientKeysBySession.get(input.session.id);
+    const currentClientKey = buildCopilotClientKey(input.providerCatalog.id, input);
+    this.clientKeysBySession.delete(input.session.id);
     await this.disposeSessionCache(input.session.id);
-    this.clients.delete(buildCopilotClientKey(input.providerCatalog.id, input));
+    await Promise.all(
+      [...new Set([mappedClientKey, currentClientKey].filter((key): key is string => Boolean(key)))]
+        .map((clientKey) => this.disposeClientCache(clientKey)),
+    );
   }
 
   private async getSession(
@@ -2270,6 +2432,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     prompt: ProviderPromptComposition,
   ): Promise<{ session: CopilotSession; selection: ResolvedModelSelection }> {
     const { client, clientKey } = this.getClient(input.providerCatalog.id, input);
+    const previousClientKey = this.clientKeysBySession.get(input.session.id);
+    this.clientKeysBySession.set(input.session.id, clientKey);
     const nextSettings = buildCopilotSessionSettings(input, prompt, clientKey);
     const resolved = await resolveCopilotSessionForSettings({
       cached: this.sessions.get(input.session.id),
@@ -2279,10 +2443,15 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       client,
     });
     if (resolved.reusedCached) {
+      this.clientKeysBySession.set(input.session.id, clientKey);
       return {
         session: resolved.session,
         selection: nextSettings.selection,
       };
+    }
+
+    if (previousClientKey && previousClientKey !== clientKey) {
+      await this.disposeClientCache(previousClientKey);
     }
 
     this.sessions.set(input.session.id, {
@@ -2290,9 +2459,14 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       settingsKey: nextSettings.settingsKey,
       backgroundTasks: new Map<string, LiveBackgroundTask>(),
     });
+    this.clientKeysBySession.set(input.session.id, clientKey);
     const nextCached = this.sessions.get(input.session.id);
     if (nextCached) {
-      this.attachBackgroundTaskObserver(input.session.id, nextCached);
+      this.attachBackgroundTaskObserver(
+        input.session.id,
+        nextCached,
+        createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding),
+      );
     }
 
     return {
@@ -2302,6 +2476,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
   }
 
   private async buildTurnResult(
+    agentRuntimeBinding: ProviderAgentRuntimeBindingProjection | null | undefined,
     prompt: ProviderPromptComposition,
     messageAttachments: NonNullable<MessageOptions["attachments"]>,
     threadId: string | null,
@@ -2318,20 +2493,21 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     beforeSnapshotStats: SnapshotCaptureStats,
     providerQuotaTelemetry: ProviderQuotaTelemetry | null,
   ): Promise<RunSessionTurnResult> {
+    const redactor = createProviderAgentRuntimeBindingRedactor(agentRuntimeBinding);
     const { snapshot: afterSnapshot, stats: afterSnapshotStats } = WORKSPACE_DIFF_CAPTURE_ENABLED
       ? await captureWorkspaceSnapshot([
           workspacePath,
           ...normalizeAllowedAdditionalDirectories(workspacePath, session.allowedAdditionalDirectories),
         ])
       : createDisabledWorkspaceSnapshotCapture();
-    const operations = toAuditOperations(steps);
-    const providerMetadata = buildCopilotProviderMetadata(rawItems);
+    const operations = redactor.sanitize(toAuditOperations(steps));
+    const providerMetadata = redactor.sanitize(buildCopilotProviderMetadata(rawItems));
     for (const metadata of providerMetadata) {
       this.writeLog({
         level: "warn",
         kind: "provider.unsupported-event",
-        message: metadata.summary,
-        data: toProviderMetadataLogData(metadata),
+        message: redactor.sanitizeText(metadata.summary),
+        data: redactor.sanitize(toProviderMetadataLogData(metadata)),
       });
     }
     const artifact = buildArtifactFromOperations({
@@ -2349,13 +2525,13 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
     return {
       threadId,
-      assistantText,
-      lastNonEmptyAssistantMessageText,
-      artifact,
+      assistantText: redactor.sanitizeText(assistantText),
+      lastNonEmptyAssistantMessageText: redactor.sanitizeText(lastNonEmptyAssistantMessageText),
+      artifact: redactor.sanitize(artifact),
       logicalPrompt: prompt.logicalPrompt,
       transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
       operations,
-      rawItemsJson: stringifyBoundedAuditRawItems(rawItems),
+      rawItemsJson: stringifyBoundedAuditRawItems(redactor.sanitize(rawItems)),
       providerMetadata,
       usage,
       providerQuotaTelemetry,
@@ -2368,6 +2544,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
     onProgress?: RunSessionTurnProgressHandler,
   ): Promise<RunSessionTurnResult> {
     const messageAttachments = buildCopilotMessageAttachments(input.attachments);
+    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
     const workspacePath = resolveRunWorkspacePath(input);
 
     const cliPath = resolveCopilotCliPath();
@@ -2389,17 +2566,17 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         model: input.session.model,
         workspacePath,
         threadId: input.session.threadId,
-        message,
+        message: redactor.sanitizeText(message),
       });
       throw new ProviderTurnError(
-        message,
+        redactor.sanitizeText(message),
         {
           threadId: input.session.threadId || null,
           assistantText: "",
           logicalPrompt: prompt.logicalPrompt,
           transportPayload: buildCopilotTransportPayload(prompt, messageAttachments),
           operations: [],
-          rawItemsJson: buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message),
+          rawItemsJson: redactor.sanitizeText(buildCopilotBootstrapDebugItems(input, cliPath, "session-bootstrap", message)),
           usage: null,
           providerQuotaTelemetry: null,
         },
@@ -2420,6 +2597,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           streamState.reasoningText,
           streamState.usage,
           streamState.streamErrorMessage,
+          redactor,
         ),
       );
       return progressChain;
@@ -2435,6 +2613,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       streamState.reasoningText,
       streamState.usage,
       streamState.streamErrorMessage,
+      redactor,
     );
 
     const unsubscribe = session.on((event) => {
@@ -2449,7 +2628,11 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       });
       if (event.type === "elicitation.requested" && input.onElicitationRequest) {
         const request = buildLiveElicitationRequestFromCopilotEvent(input.providerCatalog.id, event);
-        void Promise.resolve(input.onElicitationRequest(request))
+        const redactedRequest = {
+          ...redactor.sanitize(request),
+          requestId: request.requestId,
+        };
+        void Promise.resolve(input.onElicitationRequest(redactedRequest))
           .then((response) => respondToCopilotElicitation(session, request.requestId, response))
           .catch((error: unknown) => {
             logCopilotRuntime("elicitation handling failed", {
@@ -2458,7 +2641,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
               workspacePath,
               threadId: session.sessionId,
               requestId: request.requestId,
-              message: error instanceof Error ? error.message : String(error),
+              message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
             });
             void session.abort().catch(() => undefined);
           });
@@ -2486,9 +2669,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       await progressChain;
 
       if (streamState.streamErrorMessage) {
-        const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
-          .catch(() => null);
         const partialResult = await this.buildTurnResult(
+          input.agentRuntimeBinding,
           prompt,
           messageAttachments,
           session.sessionId,
@@ -2503,18 +2685,17 @@ export class CopilotAdapter implements ProviderTurnAdapter {
           selection,
           beforeSnapshot,
           beforeSnapshotStats,
-          providerQuotaTelemetry,
+          null,
         );
         throw new ProviderTurnError(
-          streamState.streamErrorMessage,
+          redactor.sanitizeText(streamState.streamErrorMessage),
           partialResult,
           Boolean(input.signal?.aborted) || isCanceledProviderMessage(streamState.streamErrorMessage),
         );
       }
 
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
-        .catch(() => null);
       return this.buildTurnResult(
+        input.agentRuntimeBinding,
         prompt,
         messageAttachments,
         session.sessionId,
@@ -2529,7 +2710,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
-        providerQuotaTelemetry,
+        null,
       );
     } catch (error) {
       if (error instanceof ProviderTurnError) {
@@ -2537,9 +2718,8 @@ export class CopilotAdapter implements ProviderTurnAdapter {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      const providerQuotaTelemetry = await this.fetchProviderQuotaTelemetry(input.providerCatalog.id, input.appSettings)
-        .catch(() => null);
       const partialResult = await this.buildTurnResult(
+        input.agentRuntimeBinding,
         prompt,
         messageAttachments,
         session.sessionId,
@@ -2554,7 +2734,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         selection,
         beforeSnapshot,
         beforeSnapshotStats,
-        providerQuotaTelemetry,
+        null,
       );
       logCopilotRuntime("turn execution failed", {
         cliPath,
@@ -2562,10 +2742,10 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         model: input.session.model,
         workspacePath,
         threadId: session.sessionId,
-        message,
+        message: redactor.sanitizeText(message),
       });
       throw new ProviderTurnError(
-        message,
+        redactor.sanitizeText(message),
         partialResult,
         Boolean(input.signal?.aborted) || isCanceledProviderMessage(message),
       );
@@ -2577,6 +2757,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
 
   async runSessionTurn(input: RunSessionTurnInput, onProgress?: RunSessionTurnProgressHandler): Promise<RunSessionTurnResult> {
     const prompt = this.composePrompt(input);
+    const redactor = createProviderAgentRuntimeBindingRedactor(input.agentRuntimeBinding);
 
     try {
       return await this.runSessionTurnOnce(input, prompt, onProgress);
@@ -2590,7 +2771,7 @@ export class CopilotAdapter implements ProviderTurnAdapter {
         model: input.session.model,
         workspacePath: resolveRunWorkspacePath(input),
         threadId: input.session.threadId,
-        message: error instanceof Error ? error.message : String(error),
+        message: redactor.sanitizeText(error instanceof Error ? error.message : String(error)),
       });
       await this.resetRecoverableConnection(input);
       return this.runSessionTurnOnce(input, prompt, onProgress);

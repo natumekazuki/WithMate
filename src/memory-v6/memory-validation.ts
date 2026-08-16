@@ -2,6 +2,7 @@ import {
   MEMORY_APPEND_FILE_ROLES,
   MEMORY_ENTRY_KINDS,
   MEMORY_FORGET_REASONS,
+  MEMORY_RESULT_LIMIT_MAX,
   MEMORY_V6_SCHEMA_VERSION,
   type CharacterTargetRef,
   type MemoryExportFilesRequest,
@@ -36,7 +37,7 @@ const EXPORT_FILES_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryId",
 const LIST_TARGETS_REQUEST_KEYS = new Set(["schemaVersion", "owner", "scope", "project", "character", "includeEmpty", "limit", "cursor"]);
 const LIST_ENTRIES_REQUEST_KEYS = new Set(["schemaVersion", "target", "states", "kinds", "tags", "includeBody", "limit", "cursor"]);
 const AUDIT_REQUEST_KEYS = new Set(["schemaVersion", "allTargets", "targets", "staleBefore", "limit", "cursor"]);
-const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets", "withCounts", "sampleLimit"]);
+const LIST_TAGS_REQUEST_KEYS = new Set(["schemaVersion", "targets", "withCounts", "sampleLimit", "limit", "cursor"]);
 const APPEND_REQUEST_KEYS = new Set([
   "schemaVersion",
   "target",
@@ -52,7 +53,7 @@ const APPEND_REQUEST_KEYS = new Set([
   "idempotencyKey",
 ]);
 const FORGET_REQUEST_KEYS = new Set(["schemaVersion", "target", "entryIds", "reason", "sourceMessageId", "idempotencyKey", "dryRun"]);
-const MOVE_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "from", "to", "sourceMessageId", "idempotencyKey"]);
+const MOVE_ENTRY_REQUEST_KEYS = new Set(["schemaVersion", "entryId", "from", "to", "reason", "sourceMessageId", "idempotencyKey"]);
 const PROJECT_TARGET_ID_KEYS = new Set(["type", "id"]);
 const PROJECT_TARGET_PATH_KEYS = new Set(["type", "path"]);
 const CHARACTER_TARGET_ID_KEYS = new Set(["type", "id"]);
@@ -67,11 +68,11 @@ const MAX_SEARCH_QUERY_LENGTH = 500;
 const MAX_TITLE_LENGTH = 160;
 const MAX_PREVIEW_LENGTH = 280;
 const MAX_BODY_LENGTH = 8_000;
+const MAX_REASON_LENGTH = 1_000;
 const MAX_TAG_TYPE_LENGTH = 48;
 const MAX_TAG_VALUE_LENGTH = 96;
 const MAX_ID_LENGTH = 200;
 const MAX_CURSOR_LENGTH = 500;
-const MAX_LIMIT = 50;
 const MAX_MAINTENANCE_LIMIT = 200;
 const MAX_TAGS = 20;
 const MAX_SUPERSEDES = 20;
@@ -85,10 +86,60 @@ const MAX_FORGET_ENTRY_IDS = 50;
 const MAX_TARGETS = 5;
 const MEMORY_ENTRY_STATES = new Set(["active", "superseded", "forgotten"] as const);
 
+export type MemoryListTagsCursor = {
+  usageCount: number;
+  latestUpdatedAt: string;
+  canonicalType: string;
+  canonicalValue: string;
+};
+
+export function encodeMemoryListTagsCursor(cursor: MemoryListTagsCursor): string {
+  return [
+    "tag-v1",
+    String(cursor.usageCount),
+    encodeURIComponent(cursor.latestUpdatedAt),
+    encodeURIComponent(cursor.canonicalType),
+    encodeURIComponent(cursor.canonicalValue),
+  ].join(":");
+}
+
+export function decodeMemoryListTagsCursor(value: string): MemoryListTagsCursor | null {
+  const parts = value.split(":");
+  if (parts.length !== 5 || parts[0] !== "tag-v1" || !/^\d+$/.test(parts[1] ?? "")) {
+    return null;
+  }
+  try {
+    const usageCount = Number(parts[1]);
+    const latestUpdatedAt = decodeURIComponent(parts[2] ?? "");
+    const canonicalType = decodeURIComponent(parts[3] ?? "");
+    const canonicalValue = decodeURIComponent(parts[4] ?? "");
+    const normalizedType = normalizeText(canonicalType, "cursor.tagType", { maxLength: MAX_TAG_TYPE_LENGTH });
+    const normalizedValue = normalizeText(canonicalValue, "cursor.tagValue", { maxLength: MAX_TAG_VALUE_LENGTH });
+    if (
+      !Number.isSafeInteger(usageCount)
+      || usageCount <= 0
+      || !latestUpdatedAt
+      || !normalizedType.ok
+      || normalizedType.value !== canonicalType
+      || !normalizedValue.ok
+      || normalizedValue.value !== canonicalValue
+      || new Date(latestUpdatedAt).toISOString() !== latestUpdatedAt
+      || canonicalizeMemoryTagPart(canonicalType) !== canonicalType
+      || canonicalizeMemoryTagPart(canonicalValue) !== canonicalValue
+    ) {
+      return null;
+    }
+    const cursor = { usageCount, latestUpdatedAt, canonicalType, canonicalValue };
+    return encodeMemoryListTagsCursor(cursor) === value ? cursor : null;
+  } catch {
+    return null;
+  }
+}
+
 function error(code: string, message: string, field?: string): MemoryValidationResult<never> {
   return {
     ok: false,
-    error: field ? { code, message, field } : { code, message },
+    error: field ? { code, message, field, effect: "none" } : { code, message, effect: "none" },
   };
 }
 
@@ -156,8 +207,8 @@ function normalizeText(value: unknown, field: string, options: { maxLength: numb
   return { ok: true, value: normalized };
 }
 
-function normalizeAbsolutePath(value: unknown, field: string): MemoryValidationResult<string> {
-  const normalized = normalizeText(value, field, { maxLength: MAX_FILE_PATH_LENGTH });
+function normalizeAbsolutePath(value: unknown, field: string, maxLength = MAX_FILE_PATH_LENGTH): MemoryValidationResult<string> {
+  const normalized = normalizeText(value, field, { maxLength });
   if (!normalized.ok) {
     return normalized;
   }
@@ -167,8 +218,10 @@ function normalizeAbsolutePath(value: unknown, field: string): MemoryValidationR
   return normalized;
 }
 
+export const MEMORY_ABSOLUTE_PATH_PATTERN = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/;
+
 function isAbsolutePathLike(value: string): boolean {
-  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || /^\\\\/.test(value);
+  return MEMORY_ABSOLUTE_PATH_PATTERN.test(value);
 }
 
 function normalizeOptionalText(value: unknown, field: string, maxLength = MAX_ID_LENGTH): MemoryValidationResult<string | undefined> {
@@ -193,7 +246,7 @@ function normalizeOptionalBoolean(value: unknown, field: string): MemoryValidati
     : error("MEMORY_INVALID_FIELD", `${field} must be a boolean.`, field);
 }
 
-function normalizeOptionalLimit(value: unknown, field = "limit", max = MAX_LIMIT): MemoryValidationResult<number | undefined> {
+function normalizeOptionalLimit(value: unknown, field = "limit", max = MEMORY_RESULT_LIMIT_MAX): MemoryValidationResult<number | undefined> {
   if (value === undefined) {
     return { ok: true, value: undefined };
   }
@@ -336,7 +389,7 @@ function normalizeProjectTarget(value: unknown, field: string): MemoryValidation
     if (!unknownKeys.ok) {
       return unknownKeys;
     }
-    const projectPath = normalizeText(value.path, `${field}.path`, { maxLength: 1_000 });
+    const projectPath = normalizeAbsolutePath(value.path, `${field}.path`, 1_000);
     return projectPath.ok ? { ok: true, value: { type: "path", path: projectPath.value } } : projectPath;
   }
   return error("MEMORY_INVALID_FIELD", `${field}.type must be id or path.`, `${field}.type`);
@@ -543,8 +596,8 @@ export function validateMemorySearchRequest(value: unknown): MemoryValidationRes
 
   let limit: number | undefined;
   if (value.limit !== undefined) {
-    if (typeof value.limit !== "number" || !Number.isInteger(value.limit) || value.limit < 1 || value.limit > MAX_LIMIT) {
-      return error("MEMORY_INVALID_FIELD", `limit must be an integer from 1 to ${MAX_LIMIT}.`, "limit");
+    if (typeof value.limit !== "number" || !Number.isInteger(value.limit) || value.limit < 1 || value.limit > MEMORY_RESULT_LIMIT_MAX) {
+      return error("MEMORY_INVALID_FIELD", `limit must be an integer from 1 to ${MEMORY_RESULT_LIMIT_MAX}.`, "limit");
     }
     limit = value.limit;
   }
@@ -853,6 +906,9 @@ export function validateMemoryListTagsRequest(value: unknown): MemoryValidationR
   if (!targets.ok) {
     return targets;
   }
+  if (targets.value.length !== 1) {
+    return error("MEMORY_INVALID_TARGET", "List tags requires exactly one target.", "targets");
+  }
 
   const withCounts = normalizeOptionalBoolean(value.withCounts, "withCounts");
   if (!withCounts.ok) {
@@ -865,6 +921,17 @@ export function validateMemoryListTagsRequest(value: unknown): MemoryValidationR
   if (sampleLimit.value !== undefined && withCounts.value !== true) {
     return error("MEMORY_INVALID_FIELD", "sampleLimit requires withCounts=true.", "sampleLimit");
   }
+  const limit = normalizeOptionalLimit(value.limit, "limit", MAX_MAINTENANCE_LIMIT);
+  if (!limit.ok) {
+    return limit;
+  }
+  const cursor = normalizeOptionalText(value.cursor, "cursor", MAX_CURSOR_LENGTH);
+  if (!cursor.ok) {
+    return cursor;
+  }
+  if (cursor.value !== undefined && !decodeMemoryListTagsCursor(cursor.value)) {
+    return error("MEMORY_INVALID_FIELD", "cursor must be a valid list-tags continuation cursor.", "cursor");
+  }
 
   return {
     ok: true,
@@ -873,6 +940,8 @@ export function validateMemoryListTagsRequest(value: unknown): MemoryValidationR
       targets: targets.value,
       ...(withCounts.value === undefined ? {} : { withCounts: withCounts.value }),
       ...(sampleLimit.value === undefined ? {} : { sampleLimit: sampleLimit.value }),
+      ...(limit.value === undefined ? {} : { limit: limit.value }),
+      ...(cursor.value === undefined ? {} : { cursor: cursor.value }),
     },
   };
 }
@@ -1034,6 +1103,10 @@ export function validateMemoryMoveEntryRequest(value: unknown): MemoryValidation
   if (JSON.stringify(from.value) === JSON.stringify(to.value)) {
     return error("MEMORY_INVALID_FIELD", "from and to must identify different targets.", "to");
   }
+  const reason = normalizeText(value.reason, "reason", { maxLength: MAX_REASON_LENGTH });
+  if (!reason.ok) {
+    return reason;
+  }
   const sourceMessageId = normalizeOptionalText(value.sourceMessageId, "sourceMessageId");
   if (!sourceMessageId.ok) {
     return sourceMessageId;
@@ -1049,6 +1122,7 @@ export function validateMemoryMoveEntryRequest(value: unknown): MemoryValidation
       entryId: entryId.value,
       from: from.value,
       to: to.value,
+      reason: reason.value,
       ...(sourceMessageId.value === undefined ? {} : { sourceMessageId: sourceMessageId.value }),
       ...(idempotencyKey.value === undefined ? {} : { idempotencyKey: idempotencyKey.value }),
     },

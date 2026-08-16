@@ -42,6 +42,7 @@ export function AuxiliaryLaunchProviderDialog({
       dialogRef={dialogRef}
       onKeyDown={handleDialogKeyDown}
       dialogClassName="auxiliary-provider-dialog"
+      showDismissControl={false}
       footer={
         <LaunchDialogFooter
           feedback={feedback}
