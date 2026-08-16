@@ -111,6 +111,12 @@ import {
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type {
+  CancelSessionExecutionRequest,
+  CancelSessionExecutionResult,
+  EnqueueSessionTurnResult,
+  SessionGuiTurnExecution,
+} from "../src/session-gui-execution.js";
+import type {
   CreateSessionRequest,
   DiffPreviewPayload,
   MessageArtifact,
@@ -125,10 +131,12 @@ import {
 import { parseCreateSessionRequest } from "./create-session-request.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
+  WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
   WITHMATE_CANCEL_COMPANION_SESSION_RUN_CHANNEL,
   WITHMATE_ARCHIVE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_CHARACTER_CHANNEL,
   WITHMATE_CREATE_SESSION_CHANNEL,
+  WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
   WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL,
   WITHMATE_CREATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_CREATE_MATE_CHANNEL,
@@ -208,6 +216,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -442,6 +451,12 @@ export type MainIpcRegistrationDeps = {
   ): Awaitable<DeleteSessionsResult>;
   previewComposerInput(sessionId: string, userMessage: string): Promise<unknown>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
+  listGuiSessionTurnExecutions(sessionId: string): Awaitable<SessionGuiTurnExecution[]>;
+  cancelSessionExecution(
+    sessionId: string,
+    request: CancelSessionExecutionRequest,
+  ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
@@ -670,6 +685,9 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "deleteSession"
   | "deleteSessionsLastActiveBefore"
   | "runSessionTurn"
+  | "enqueueSessionTurn"
+  | "listGuiSessionTurnExecutions"
+  | "cancelSessionExecution"
   | "cancelSessionRun"
 >;
 
@@ -1663,9 +1681,38 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_RUN_SESSION_TURN_CHANNEL, async (_event, sessionId: string, request: RunSessionTurnRequest) =>
     deps.runSessionTurn(sessionId, request),
   );
+  ipcMain.handle(
+    WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL,
+    (event, sessionId: string, request: RunSessionTurnRequest) => {
+      assertTargetSessionWindowSender(event, sessionId, deps);
+      return deps.enqueueSessionTurn(sessionId, request);
+    },
+  );
+  ipcMain.handle(WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL, (event, sessionId: string) => {
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.listGuiSessionTurnExecutions(sessionId);
+  });
+  ipcMain.handle(
+    WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
+    (event, sessionId: string, request: CancelSessionExecutionRequest) => {
+      assertTargetSessionWindowSender(event, sessionId, deps);
+      return deps.cancelSessionExecution(sessionId, request);
+    },
+  );
   ipcMain.handle(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, (_event, sessionId: string) => {
     deps.cancelSessionRun(sessionId);
   });
+}
+
+function assertTargetSessionWindowSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (!window || deps.resolveSessionWindow(sessionId) !== window) {
+    throw new Error("Session execution IPC is only available from the target Session window.");
+  }
 }
 
 function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps): void {

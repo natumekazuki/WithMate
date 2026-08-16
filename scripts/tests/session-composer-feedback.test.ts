@@ -223,6 +223,28 @@ describe("session composer feedback", () => {
     );
   });
 
+  it("通常Sessionは running 中も空入力と他のblock条件だけで送信可否を決める", () => {
+    const ready = buildComposerSendabilityState({
+      runState: "running",
+      allowSendWhileRunning: true,
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "次の依頼",
+    });
+    const blank = buildComposerSendabilityState({
+      runState: "running",
+      allowSendWhileRunning: true,
+      blockedReason: "",
+      inputErrors: [],
+      draftText: "  ",
+    });
+
+    assert.equal(ready.isSendDisabled, false);
+    assert.equal(getComposerSendButtonTitle(ready), "メッセージを送信");
+    assert.equal(blank.isSendDisabled, true);
+    assert.equal(getComposerSendButtonTitle(blank), BLANK_DRAFT_FEEDBACK);
+  });
+
   it("text composer submit preflight は送信可能な本文を trim して返す", () => {
     assert.deepEqual(
       resolveTextComposerSubmitPreflight({

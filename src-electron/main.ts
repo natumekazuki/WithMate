@@ -1314,6 +1314,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
           getAllWindows: () => BrowserWindow.getAllWindows(),
           getHomeWindows: () => requireAuxWindowService().listHomeWindows(),
           getSessionWindows: () => requireSessionWindowBridge().listWindows(),
+          getSessionWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId) ?? null,
         }),
       createWindowDialogService: () =>
         new WindowDialogService({
@@ -1765,6 +1766,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 deleteSessionsLastActiveBefore: (request) =>
                   requireMainSessionCommandFacade().deleteSessionsLastActiveBefore(request),
                 runSessionTurn: (sessionId, request) => requireMainSessionCommandFacade().runSessionTurn(sessionId, request),
+                enqueueSessionTurn: (sessionId, request) =>
+                  requireMainSessionCommandFacade().enqueueSessionTurn(sessionId, request),
+                listGuiSessionTurnExecutions: (sessionId) =>
+                  requireMainSessionCommandFacade().listGuiSessionTurnExecutions(sessionId),
+                cancelSessionExecution: (sessionId, request) =>
+                  requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
               },
               mate: {
@@ -1938,6 +1945,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
         providerRuntimeOperationCoordinator.runExclusive(operation),
       getSessionPersistenceService: () => requireSessionPersistenceService(),
       getSessionRuntimeService: () => requireSessionRuntimeService(),
+      getSessionExecutionService: () => requireSessionExecutionService(),
       cancelSessionRun: (sessionId) => cancelSessionRunFromAnySurface(sessionId),
       getProviderQuotaTelemetry: (providerId) => getProviderQuotaTelemetry(providerId),
       isProviderQuotaTelemetryStale: (telemetry) => isProviderQuotaTelemetryStale(telemetry),
@@ -2606,6 +2614,14 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
       upsertTerminalSession: (session, terminalCommit) =>
         requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
+      notifyExecutionUserMessagePersisted: (sessionId, executionId) => {
+        requireWindowBroadcastService().broadcastSessionExecutionsChanged({
+          kind: "user-message-persisted",
+          sessionId,
+          executionId,
+          state: "running",
+        });
+      },
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
         session,
         (characterId) => requireCharacterService().createRuntimeSnapshot(characterId),
@@ -2921,6 +2937,7 @@ function requireSessionExecutionService(): SessionExecutionService {
             turn,
             providerId,
           ),
+        (targetSessionId, turn) => requireSessionRuntimeService().validateSessionTurn(targetSessionId, turn),
       ),
       dispatchTurn: dispatchSessionExecutionTurn,
       cancelRunningTurn: (sessionId, executionId) => {
@@ -2931,7 +2948,18 @@ function requireSessionExecutionService(): SessionExecutionService {
       currentTimestamp: () => new Date().toISOString(),
       resolveIdempotencyExpiresAt: (createdAt) =>
         new Date(new Date(createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
-      onExecutionChanged: (executionId) => sessionInteractionService?.notifyExecutionChanged(executionId),
+      onExecutionChanged: (executionId) => {
+        sessionInteractionService?.notifyExecutionChanged(executionId);
+        const execution = sessionExecutionStorage?.get(executionId);
+        if (execution) {
+          requireWindowBroadcastService().broadcastSessionExecutionsChanged({
+            kind: "state-changed",
+            sessionId: execution.sessionId,
+            executionId: execution.id,
+            state: execution.state,
+          });
+        }
+      },
       onExecutionTerminal: (executionId, reason, occurredAt) => {
         requireSessionInteractionService().expirePendingForExecution(executionId, reason, occurredAt);
       },
@@ -3045,12 +3073,14 @@ async function dispatchSessionExecutionTurn(
   try {
     const parsed = parseSessionExecutionTurnRequest(request);
     return await runSessionExecutionDispatch({
-      runTurn: () => requireSessionRuntimeService().runExternalSessionTurn(
-        sessionId,
-        parsed.catalogRevision,
-        parsed.turn,
-        executionId,
-      ),
+      runTurn: () => parsed.source === "gui"
+        ? requireSessionRuntimeService().runQueuedGuiSessionTurn(sessionId, parsed.turn, executionId)
+        : requireSessionRuntimeService().runExternalSessionTurn(
+            sessionId,
+            parsed.catalogRevision,
+            parsed.turn,
+            executionId,
+          ),
       isCanceled: () => canceledSessionExecutionIds.has(executionId),
     });
   } finally {

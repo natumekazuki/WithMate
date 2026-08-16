@@ -438,6 +438,37 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  it("GUI-Q-03: queued限定cancelはadmission後のrunning executionを中断しない", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.run(createInput(1));
+      const queued = await fixture.service.enqueue(createInput(2));
+
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", running.id);
+      await waitFor(() => fixture.storage.get(queued.id)?.state === "running");
+
+      await assert.rejects(
+        fixture.service.cancel({
+          sessionId: "session-1",
+          executionId: queued.id,
+          idempotencyKey: "cancel-admitted-as-queued",
+          requestFingerprint: "cancel-admitted-as-queued-fingerprint",
+          expectedState: "queued",
+        }),
+        (error) => error instanceof SessionExecutionStateConflictError
+          && error.state === "running",
+      );
+      assert.deepEqual(fixture.canceledExecutions, []);
+
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", queued.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("CANCEL-IDEMPOTENCY-11: running cancelはintent保存失敗時にabort effectを起こさない", async () => {
     const fixture = await createFixture();
     try {

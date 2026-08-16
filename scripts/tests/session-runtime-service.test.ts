@@ -233,6 +233,7 @@ describe("SessionRuntimeService", () => {
     const catalogRevisions: Array<number | null | undefined> = [];
     const composerScopes: Array<"workspace" | "session-folder" | undefined> = [];
     const persistedTurnContexts: Parameters<NonNullable<SessionRuntimeServiceDeps["persistExternalTurnContext"]>>[0][] = [];
+    const persistedExecutionUserMessages: Array<{ sessionId: string; executionId: string }> = [];
     const timingCompletionSnapshots: Array<string | null> = [];
     let lastCommittedAt: string | null = null;
     let blockCompletedAudit = false;
@@ -383,6 +384,9 @@ describe("SessionRuntimeService", () => {
       persistExternalTurnContext(input) {
         persistedTurnContexts.push(input);
       },
+      notifyExecutionUserMessagePersisted(sessionId, executionId) {
+        persistedExecutionUserMessages.push({ sessionId, executionId });
+      },
       notifySessionTurnCompleted() {
         completionNotificationCount += 1;
         callOrder.push(`completion-notification:${completionNotificationCount}`);
@@ -423,6 +427,10 @@ describe("SessionRuntimeService", () => {
       approvalMode: "on-request",
       sandboxMode: "workspace-write",
       customAgentName: null,
+    }]);
+    assert.deepEqual(persistedExecutionUserMessages, [{
+      sessionId: storedSession.id,
+      executionId: "execution-1",
     }]);
     callOrder.push("first-returned");
     const firstCompletedAt = lastCommittedAt;

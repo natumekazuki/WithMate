@@ -1,5 +1,6 @@
 export type ComposerSendabilityState = {
   isRunning: boolean;
+  allowSendWhileRunning: boolean;
   isBlankDraft: boolean;
   isBusy: boolean;
   busyReason: string;
@@ -22,12 +23,14 @@ export const COMPOSER_SEND_BLOCKED_FALLBACK = "Message cannot be sent.";
 
 export function buildComposerSendabilityState({
   runState,
+  allowSendWhileRunning = false,
   busyReason = "",
   blockedReason,
   inputErrors,
   draftText,
 }: {
   runState: string | null | undefined;
+  allowSendWhileRunning?: boolean;
   busyReason?: string;
   blockedReason: string;
   inputErrors: string[];
@@ -40,9 +43,10 @@ export function buildComposerSendabilityState({
   const isBlankDraft = draftText.trim().length === 0;
   const isBusy = normalizedBusyReason.length > 0;
 
-  if (isRunning) {
+  if (isRunning && !allowSendWhileRunning) {
     return {
       isRunning,
+      allowSendWhileRunning,
       isBlankDraft,
       isBusy,
       busyReason: normalizedBusyReason,
@@ -68,6 +72,7 @@ export function buildComposerSendabilityState({
 
   return {
     isRunning,
+    allowSendWhileRunning,
     isBlankDraft,
     isBusy,
     busyReason: normalizedBusyReason,
@@ -110,6 +115,7 @@ export function withForcedComposerBlockedFeedback(
 
 export function resolveComposerSendabilityState({
   runState,
+  allowSendWhileRunning = false,
   busyReason,
   blockedReason,
   inputErrors,
@@ -117,6 +123,7 @@ export function resolveComposerSendabilityState({
   forceBlockedFeedback,
 }: {
   runState: string | null | undefined;
+  allowSendWhileRunning?: boolean;
   busyReason?: string;
   blockedReason: string;
   inputErrors: string[];
@@ -126,6 +133,7 @@ export function resolveComposerSendabilityState({
   return withForcedComposerBlockedFeedback(
     buildComposerSendabilityState({
       runState,
+      allowSendWhileRunning,
       busyReason,
       blockedReason,
       inputErrors,
@@ -136,12 +144,12 @@ export function resolveComposerSendabilityState({
 }
 
 export function getComposerSendButtonTitle(state: ComposerSendabilityState): string | undefined {
-  if (state.isRunning) {
-    return "実行をキャンセル";
-  }
-
   if (!state.isSendDisabled) {
     return "メッセージを送信";
+  }
+
+  if (state.isRunning && !state.allowSendWhileRunning) {
+    return "実行をキャンセル";
   }
 
   return state.primaryFeedback
@@ -162,12 +170,14 @@ export function getComposerSendBlockedMessage(
 
 export function resolveComposerSendPreflight({
   runState,
+  allowSendWhileRunning = false,
   blockedReason,
   inputErrors,
   draftText,
   fallbackBlockedMessage,
 }: {
   runState: string | null | undefined;
+  allowSendWhileRunning?: boolean;
   blockedReason: string;
   inputErrors: string[];
   draftText: string;
@@ -178,6 +188,7 @@ export function resolveComposerSendPreflight({
 } {
   const sendability = buildComposerSendabilityState({
     runState,
+    allowSendWhileRunning,
     blockedReason,
     inputErrors,
     draftText,

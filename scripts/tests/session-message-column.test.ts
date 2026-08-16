@@ -184,6 +184,7 @@ function renderSessionMessageColumn(options: {
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
+  queuedTurns?: SessionMessageColumnProps["queuedTurns"];
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
 }): string {
   return renderToStaticMarkup(
@@ -192,6 +193,7 @@ function renderSessionMessageColumn(options: {
       character: createCharacterProfile(),
       messages: options.messages,
       messageGroups: options.messageGroups,
+      queuedTurns: options.queuedTurns,
       expandedArtifacts: options.expandedArtifacts ?? {},
       messageListRef: createRef<HTMLDivElement>(),
       isRunning: options.isRunning ?? false,
@@ -216,6 +218,7 @@ function renderSessionMessageColumn(options: {
       },
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
+      onCancelQueuedTurn: options.queuedTurns ? () => {} : undefined,
       messageViewMode: options.messageViewMode,
     }),
   );
@@ -1770,6 +1773,7 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   const html = renderToStaticMarkup(
     React.createElement(SessionComposerExpanded, {
       isRunning: true,
+      allowSendWhileRunning: true,
       pendingRunIndicatorAnnouncement: "処理を実行中",
       pendingRunIndicatorText: "処理を実行中",
       composerBlocked: false,
@@ -1793,15 +1797,15 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
       attachmentItems: [],
       draft: "実行中の下書き",
       composerTextareaRef: createRef<HTMLTextAreaElement>(),
-      isComposerDisabled: true,
-      isSendDisabled: true,
+      isComposerDisabled: false,
+      isSendDisabled: false,
       composerSendability: {
         primaryFeedback: "",
         secondaryFeedback: [],
         feedbackTone: null,
         shouldShowFeedback: false,
       },
-      sendButtonTitle: "実行をキャンセル",
+      sendButtonTitle: "メッセージを送信",
       isComposerBlockedFeedbackActive: false,
       approvalOptions: [{ value: "untrusted", label: "untrusted" }],
       selectedApprovalMode: "untrusted",
@@ -1849,7 +1853,69 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
   assert.ok(html.indexOf("Cancel") < html.indexOf("末尾へ移動"));
   assert.ok(html.indexOf("末尾へ移動") < html.indexOf("Preview"));
   assert.match(html, /composer-toolbar-view-actions[\s\S]*末尾へ移動[\s\S]*Message display mode/);
-  assert.doesNotMatch(html, />Send<\/button>/);
+  assert.match(html, />Send<\/button>/);
+  assert.match(html, /class="composer-box running accepts-running-input"/);
+  assert.match(html, /class="composer-control-row running allow-send-while-running"/);
+});
+
+test("SessionMessageColumn はqueued TurnのFIFO位置とcancel操作を既存user message内へ表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "次の依頼" }],
+    queuedTurns: [{
+      executionId: "execution-1",
+      sessionId: "session-1",
+      clientRequestId: null,
+      userMessage: "次の依頼",
+      state: "queued",
+      queuePosition: 2,
+      canCancel: true,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    }],
+  });
+
+  assert.match(html, /role="status" aria-label="待機中 2番目"/);
+  assert.match(html, />待機中 2<\/span>/);
+  assert.match(html, /aria-label="待機中 2番目のTurnをキャンセル"/);
+});
+
+test("SessionMessageColumn は実行中responseをqueued user messageより前へ表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [
+      { role: "user", text: "実行中の依頼" },
+      { role: "user", text: "次の依頼" },
+      { role: "user", text: "さらに次の依頼" },
+    ],
+    queuedTurns: [null, {
+      executionId: "execution-1",
+      sessionId: "session-1",
+      clientRequestId: null,
+      userMessage: "次の依頼",
+      state: "queued",
+      queuePosition: 1,
+      canCancel: true,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    }, {
+      executionId: "execution-2",
+      sessionId: "session-1",
+      clientRequestId: null,
+      userMessage: "さらに次の依頼",
+      state: "queued",
+      queuePosition: 2,
+      canCancel: true,
+      createdAt: "2026-08-16T00:00:01.000Z",
+      updatedAt: "2026-08-16T00:00:01.000Z",
+    }],
+    isRunning: true,
+    pendingMessageText: "出力を待機しています",
+  });
+
+  assert.ok(html.indexOf("実行中の依頼") < html.indexOf("出力を待機しています"));
+  assert.ok(html.indexOf("出力を待機しています") < html.indexOf("次の依頼"));
+  assert.ok(html.indexOf("次の依頼") < html.indexOf("待機中 1"));
+  assert.ok(html.indexOf("待機中 1") < html.indexOf("さらに次の依頼"));
+  assert.ok(html.indexOf("さらに次の依頼") < html.indexOf("待機中 2"));
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {

@@ -49,6 +49,13 @@ import type {
 } from "./markdown-link-context-menu.js";
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { WorkspaceDirectoryValidationResult } from "./workspace-directory-validation.js";
+import type {
+  CancelSessionExecutionRequest,
+  CancelSessionExecutionResult,
+  EnqueueSessionTurnResult,
+  SessionExecutionChangedEvent,
+  SessionGuiTurnExecution,
+} from "./session-gui-execution.js";
 import type { AppDatabaseDiagnostics } from "./app-database-diagnostics-state.js";
 import type { MemoryV6Diagnostics } from "./memory-v6/memory-diagnostics-state.js";
 import type { SessionIntegrationDiagnostics } from "./session-integration-diagnostics-state.js";
@@ -169,6 +176,12 @@ export type WithMateWindowSessionApi = {
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
+  enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
+  listGuiSessionTurnExecutions(sessionId: string): Promise<SessionGuiTurnExecution[]>;
+  cancelSessionExecution(
+    sessionId: string,
+    request: CancelSessionExecutionRequest,
+  ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
@@ -299,6 +312,7 @@ export type WithMateWindowSubscriptionApi = {
   ): () => void;
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
+  subscribeSessionExecutionsChanged(listener: (event: SessionExecutionChangedEvent) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;

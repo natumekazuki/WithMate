@@ -91,6 +91,8 @@ MemoryとCharacter Affectのruntimeはこの図に含めない。Session runtime
 
 GUI、CLI、MCPは兄弟入口である。GUIの既存IPCをCLIまたはMCPが呼ぶ構造にはせず、共通application serviceの上でそれぞれinputとoutputを変換する。
 
+通常SessionのGUI送信もExecution registryの同じ永続`turn.enqueue` ownerへ渡す。GUI adapterは選択中Sessionのruntime optionとclient request IDを内部requestへ固定し、受付結果が不明な再送では同じIDを使ってcanonical executionへ収束する。renderer内に別queueを持たず、Main Processが投影するqueued executionを既存message listへFIFO順で表示する。queuedからrunningへadmitされたTurnは通常のlive run / transcript投影へ移り、queue投影と二重表示しない。AuxiliaryとCompanionの実行入口はこの決定の対象外とする。
+
 ## Session作成と選択
 
 CLIとMCPは通常Sessionを作成できる。titleは必須とし、自動生成または省略時のfallbackを設けない。Provider、Character、Workspace、Session kindは作成時に確定し、作成後は不変とする。外部surfaceでのmetadata変更はtitleのrenameだけを提供する。

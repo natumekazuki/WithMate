@@ -116,6 +116,7 @@ export type SessionRuntimeServiceDeps = {
     assistantText: string;
     updatedAt: string;
   }) => void;
+  notifyExecutionUserMessagePersisted?: (sessionId: string, executionId: string) => void;
   persistExternalTurnContext?: (input: {
     turnId: number;
     sessionId: string;
@@ -219,6 +220,19 @@ function notifySessionTurnCompletedBestEffort(
       .catch((error) => console.warn("Session turn completion notification failed", error));
   } catch (error) {
     console.warn("Session turn completion notification failed", error);
+  }
+}
+
+function notifyExecutionUserMessagePersistedBestEffort(
+  notify: SessionRuntimeServiceDeps["notifyExecutionUserMessagePersisted"],
+  sessionId: string,
+  executionId: string,
+): void {
+  if (!notify) return;
+  try {
+    notify(sessionId, executionId);
+  } catch (error) {
+    console.warn("Session execution user message persistence notification failed", error);
   }
 }
 
@@ -948,6 +962,14 @@ export class SessionRuntimeService {
     return this.runSessionTurnWithCatalog(sessionId, request, catalogRevision, executionId);
   }
 
+  async runQueuedGuiSessionTurn(
+    sessionId: string,
+    request: RunSessionTurnRequest,
+    executionId: string,
+  ): Promise<ExternalSessionTurnResult> {
+    return this.runSessionTurnWithCatalog(sessionId, request, null, executionId);
+  }
+
   private async runSessionTurnWithCatalog(
     sessionId: string,
     request: RunSessionTurnRequest,
@@ -1282,6 +1304,13 @@ export class SessionRuntimeService {
 
       const runningUpsertStartedAt = Date.now();
       await this.deps.upsertSession(runningSession);
+      if (externalExecutionId) {
+        notifyExecutionUserMessagePersistedBestEffort(
+          this.deps.notifyExecutionUserMessagePersisted,
+          sessionId,
+          externalExecutionId,
+        );
+      }
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,

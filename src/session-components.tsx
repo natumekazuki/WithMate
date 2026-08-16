@@ -32,6 +32,7 @@ import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
+import type { SessionQueuedTurn } from "./session-gui-execution.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -2179,6 +2180,8 @@ export type SessionMessageColumnProps = {
     id: string;
     label: string;
   } | null>;
+  queuedTurns?: Array<SessionQueuedTurn | null>;
+  cancelingExecutionIds?: ReadonlySet<string>;
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -2202,6 +2205,7 @@ export type SessionMessageColumnProps = {
   getChangedFilesEmptyText: (artifactKey: string, artifactHasSnapshotRisk: boolean) => string;
   onCopyMessageText?: (text: string) => void;
   onQuoteMessageText?: (text: string) => void;
+  onCancelQueuedTurn?: (execution: SessionQueuedTurn) => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
 };
@@ -2511,6 +2515,8 @@ export function SessionMessageColumn({
   messages,
   messageKeys,
   messageGroups,
+  queuedTurns,
+  cancelingExecutionIds = new Set<string>(),
   expandedArtifacts,
   messageListRef,
   isRunning,
@@ -2533,6 +2539,7 @@ export function SessionMessageColumn({
   getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
+  onCancelQueuedTurn,
   isContentActive = true,
   messageViewMode = "preview",
 }: SessionMessageColumnProps) {
@@ -2618,6 +2625,7 @@ export function SessionMessageColumn({
     },
     [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
+  const firstQueuedTurnIndex = queuedTurns?.findIndex((queuedTurn) => queuedTurn !== null) ?? -1;
   const messageFindMatches = useMemo(() => {
     const matches: Array<
       | { kind: "message"; messageIndex: number; occurrenceIndex: number }
@@ -2630,6 +2638,9 @@ export function SessionMessageColumn({
       });
     };
     messageRenderedSearchTexts.forEach((text, messageIndex) => {
+      if (pendingMessageGroupEndIndex < 0 && messageIndex === firstQueuedTurnIndex) {
+        appendPendingMatches();
+      }
       findTextMatches(text, findQuery).forEach((_, occurrenceIndex) => {
         matches.push({ kind: "message", messageIndex, occurrenceIndex });
       });
@@ -2637,15 +2648,19 @@ export function SessionMessageColumn({
         appendPendingMatches();
       }
     });
-    if (pendingMessageGroupEndIndex < 0) {
+    if (pendingMessageGroupEndIndex < 0 && firstQueuedTurnIndex < 0) {
       appendPendingMatches();
     }
     return matches;
-  }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  }, [findQuery, firstQueuedTurnIndex, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPendingInlineContent =
     pendingMessageGroupEndIndex >= 0 &&
     virtualMessages.some((virtualMessage) => virtualMessage.index === pendingMessageGroupEndIndex);
+  const canRenderPendingBeforeQueuedTurn =
+    pendingMessageGroupEndIndex < 0 &&
+    firstQueuedTurnIndex >= 0 &&
+    virtualMessages.some((virtualMessage) => virtualMessage.index === firstQueuedTurnIndex);
   const getFindMatchScrollIndex = useCallback((match: (typeof messageFindMatches)[number] | undefined) => {
     if (!match) {
       return null;
@@ -2656,8 +2671,11 @@ export function SessionMessageColumn({
     if (pendingMessageGroupEndIndex >= 0) {
       return pendingMessageGroupEndIndex;
     }
+    if (firstQueuedTurnIndex >= 0) {
+      return firstQueuedTurnIndex;
+    }
     return messages.length > 0 ? messages.length - 1 : null;
-  }, [messages.length, pendingMessageGroupEndIndex]);
+  }, [firstQueuedTurnIndex, messages.length, pendingMessageGroupEndIndex]);
   const firstFindScrollIndex = getFindMatchScrollIndex(messageFindMatches[0]);
 
   useEffect(() => {
@@ -3027,6 +3045,7 @@ export function SessionMessageColumn({
             }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
+            const queuedTurn = queuedTurns?.[absoluteIndex] ?? null;
             const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
             const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
             const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
@@ -3064,6 +3083,9 @@ export function SessionMessageColumn({
                 }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
                 data-index={absoluteIndex}
               >
+                {absoluteIndex === firstQueuedTurnIndex && canRenderPendingBeforeQueuedTurn
+                  ? renderPendingRow()
+                  : null}
                 {isMessageGroupStart && messageGroup ? (
                   <div
                     className="auxiliary-message-group-label"
@@ -3133,6 +3155,23 @@ export function SessionMessageColumn({
                       onOpenPath={onOpenPath}
                     />
                   </div>
+
+                  {queuedTurn ? (
+                    <div className="queued-turn-status" role="status" aria-label={`待機中 ${queuedTurn.queuePosition}番目`}>
+                      <span>{`待機中 ${queuedTurn.queuePosition}`}</span>
+                      {queuedTurn.canCancel && onCancelQueuedTurn ? (
+                        <button
+                          className="drawer-toggle compact secondary queued-turn-cancel-button"
+                          type="button"
+                          onClick={() => onCancelQueuedTurn(queuedTurn)}
+                          disabled={cancelingExecutionIds.has(queuedTurn.executionId)}
+                          aria-label={`待機中 ${queuedTurn.queuePosition}番目のTurnをキャンセル`}
+                        >
+                          キャンセル
+                        </button>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   {artifact ? (
                     <section className="artifact-shell">
@@ -3268,7 +3307,9 @@ export function SessionMessageColumn({
             );
           })}
             </div>
-            {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent ? renderPendingRow() : null}
+            {isRunning && hasPendingInlineContent && !canRenderGroupedPendingInlineContent && !canRenderPendingBeforeQueuedTurn
+              ? renderPendingRow()
+              : null}
             <div className="message-list-bottom-anchor" aria-hidden="true" />
           </div>
         ) : null}
@@ -3443,6 +3484,7 @@ type SessionComposerSendabilityView = {
 
 export type SessionComposerExpandedProps = {
   isRunning: boolean;
+  allowSendWhileRunning?: boolean;
   pendingRunIndicatorAnnouncement?: string;
   pendingRunIndicatorText?: string;
   modeLabel?: string;
@@ -3510,6 +3552,7 @@ export type SessionComposerExpandedProps = {
   onDraftCompositionStart: () => void;
   onDraftCompositionEnd: () => void;
   onSendOrCancel: () => void;
+  onCancelRun?: () => void;
   onChangeApprovalMode: (value: ApprovalMode) => void;
   onChangeCodexSandboxMode: (value: CodexSandboxMode) => void;
   onChangeModel: (value: string) => void;
@@ -3519,6 +3562,7 @@ export type SessionComposerExpandedProps = {
 
 export function SessionComposerExpanded({
   isRunning,
+  allowSendWhileRunning = false,
   pendingRunIndicatorAnnouncement,
   pendingRunIndicatorText,
   modeLabel,
@@ -3586,6 +3630,7 @@ export function SessionComposerExpanded({
   onDraftCompositionStart,
   onDraftCompositionEnd,
   onSendOrCancel,
+  onCancelRun = onSendOrCancel,
   onChangeApprovalMode,
   onChangeCodexSandboxMode,
   onChangeModel,
@@ -3779,8 +3824,9 @@ export function SessionComposerExpanded({
               <button
                 className="drawer-toggle compact danger composer-toolbar-cancel-button"
                 type="button"
-                onClick={onSendOrCancel}
-                title={sendButtonTitle}
+                onClick={onCancelRun}
+                title="実行中のTurnをキャンセル"
+                aria-label="実行中のTurnをキャンセル"
               >
                 Cancel
               </button>
@@ -3889,7 +3935,7 @@ export function SessionComposerExpanded({
       ) : null}
 
       <div className="composer-input-row">
-        <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
+        <div className={`composer-box${isRunning ? " running" : ""}${isRunning && allowSendWhileRunning ? " accepts-running-input" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
             value={draft}
@@ -3931,7 +3977,7 @@ export function SessionComposerExpanded({
         </div>
       </div>
 
-      <div className={`composer-control-row${isRunning ? " running" : ""}`}>
+      <div className={`composer-control-row${isRunning ? " running" : ""}${isRunning && allowSendWhileRunning ? " allow-send-while-running" : ""}`}>
         <div className="composer-settings">
           {showExecutionModeControls ? (
             <>
@@ -4007,7 +4053,7 @@ export function SessionComposerExpanded({
           </div>
         </div>
 
-        {isRunning ? null : (
+        {isRunning && !allowSendWhileRunning ? null : (
           <button
             className="session-send-button"
             type="button"

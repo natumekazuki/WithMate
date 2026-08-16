@@ -28,6 +28,7 @@ export type CancelSessionExecutionInput = {
   executionId: string;
   idempotencyKey: string;
   requestFingerprint: string;
+  expectedState?: "queued";
 };
 
 export type SessionExecutionServiceDeps = {
@@ -222,6 +223,11 @@ export class SessionExecutionService {
     return this.deps.storage.listSessionExecutions(sessionId).map(toPublicExecution);
   }
 
+  listRecords(sessionId: string): SessionExecutionStorageRecord[] {
+    this.requirePersistenceAvailable();
+    return this.deps.storage.listSessionExecutions(sessionId);
+  }
+
   listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {
     this.requirePersistenceAvailable();
     return this.deps.storage.iterateSessionExecutionsPage(sessionId, afterSequence, limit);
@@ -245,6 +251,9 @@ export class SessionExecutionService {
       input.requestFingerprint,
     );
     if (replay) {
+      if (input.expectedState && replay.state !== input.expectedState && replay.state !== "canceled") {
+        throw new SessionExecutionStateConflictError(replay.id, replay.state);
+      }
       if (replay.state === "running") {
         await this.deps.cancelRunningTurn(replay.sessionId, replay.id);
       }
@@ -258,12 +267,18 @@ export class SessionExecutionService {
         input.requestFingerprint,
       );
       if (lockedReplay) {
+        if (input.expectedState && lockedReplay.state !== input.expectedState && lockedReplay.state !== "canceled") {
+          throw new SessionExecutionStateConflictError(lockedReplay.id, lockedReplay.state);
+        }
         if (lockedReplay.state === "running") {
           await this.deps.cancelRunningTurn(lockedReplay.sessionId, lockedReplay.id);
         }
         return toPublicExecution(lockedReplay);
       }
       const execution = this.getOwned(input.sessionId, input.executionId);
+      if (input.expectedState && execution.state !== input.expectedState) {
+        throw new SessionExecutionStateConflictError(execution.id, execution.state);
+      }
       const createdAt = this.deps.currentTimestamp();
       const expiresAt = this.deps.resolveIdempotencyExpiresAt(createdAt);
       if (execution.state === "queued") {

@@ -167,6 +167,8 @@ export type LiveSessionMessageColumnProps = {
   messages: Message[];
   messageKeys?: ChatMessageColumnProps["messageKeys"];
   messageGroups?: ChatMessageColumnProps["messageGroups"];
+  queuedTurns?: ChatMessageColumnProps["queuedTurns"];
+  cancelingExecutionIds?: ChatMessageColumnProps["cancelingExecutionIds"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -190,6 +192,7 @@ export type LiveSessionMessageColumnProps = {
   getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
+  onCancelQueuedTurn?: ChatMessageColumnProps["onCancelQueuedTurn"];
 };
 
 export type LiveSessionComposerProps = Omit<
@@ -321,7 +324,7 @@ export function buildLiveSessionComposerDockProps(
       cancelButtonTitle: input.sendButtonTitle,
       onExpand: onExpandActionDock,
       onJumpToBottom: input.onJumpToBottom,
-      onCancel: input.onSendOrCancel,
+      onCancel: input.onCancelRun ?? input.onSendOrCancel,
     },
   };
 }
@@ -339,6 +342,8 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     messages: input.messages,
     messageKeys: input.messageKeys,
     messageGroups: input.messageGroups,
+    queuedTurns: input.queuedTurns,
+    cancelingExecutionIds: input.cancelingExecutionIds,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
@@ -362,6 +367,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     getChangedFilesEmptyText: input.getChangedFilesEmptyText,
     onCopyMessageText: input.onCopyMessageText,
     onQuoteMessageText: input.onQuoteMessageText,
+    onCancelQueuedTurn: input.onCancelQueuedTurn,
   };
 }
 

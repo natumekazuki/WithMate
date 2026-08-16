@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -26,7 +26,7 @@ test("resolveComposerPreview はMarkdown画像をprovider画像添付として�
     assert.equal(preview.attachments.length, 1);
     assert.equal(preview.attachments[0]?.kind, "image");
     assert.equal(preview.attachments[0]?.source, "markdown-image");
-    assert.equal(preview.attachments[0]?.absolutePath, imagePath);
+    assert.equal(preview.attachments[0]?.absolutePath, await realpath(imagePath));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -66,7 +66,7 @@ test("EXT-AUTH-01: SessionFolder policyはrelative pathだけをroot内の添付
       { rootRelativeOnly: true },
     );
     assert.deepEqual(inside.errors, []);
-    assert.equal(inside.attachments[0]?.absolutePath, path.join(sessionFolderPath, "inside.txt"));
+    assert.equal(inside.attachments[0]?.absolutePath, await realpath(path.join(sessionFolderPath, "inside.txt")));
 
     const absolute = await resolveComposerPreview(
       { workspacePath: sessionFolderPath, allowedAdditionalDirectories: [root] },
@@ -126,7 +126,7 @@ test("ATTACHMENT-REALPATH-01: SessionFolder内aliasは検証済みcanonical path
       { rootRelativeOnly: true },
     );
     assert.deepEqual(preview.errors, []);
-    assert.equal(preview.attachments[0]?.absolutePath, imagePath);
+    assert.equal(preview.attachments[0]?.absolutePath, await realpath(imagePath));
     assert.equal(preview.attachments[0]?.workspaceRelativePath, "images/actual.png");
   } finally {
     await rm(root, { recursive: true, force: true });

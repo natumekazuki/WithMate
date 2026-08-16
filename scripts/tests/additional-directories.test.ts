@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -133,7 +133,7 @@ describe("additional directories", () => {
       assert.equal(preview.errors.length, 0);
       assert.equal(preview.attachments.length, 1);
       assert.equal(preview.attachments[0]?.kind, "folder");
-      assert.equal(preview.attachments[0]?.absolutePath, sessionFilesPath);
+      assert.equal(preview.attachments[0]?.absolutePath, await realpath(sessionFilesPath));
       assert.equal(preview.attachments[0]?.isOutsideWorkspace, true);
     } finally {
       await rm(tempDirectory, { recursive: true, force: true });

@@ -345,6 +345,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
   const expectedKeys = [
     "cancelCompanionSessionRun",
     "cancelAuxiliarySessionRun",
+    "cancelSessionExecution",
     "cancelSessionRun",
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
@@ -361,6 +362,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "deleteSessionsLastActiveBefore",
     "discardCompanionSession",
     "dropCompanionTargetStash",
+    "enqueueSessionTurn",
     "exportModelCatalog",
     "exportModelCatalogFile",
     "getActiveAuxiliarySession",
@@ -409,6 +411,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listOpenCompanionReviewWindowIds",
     "listOpenSessionWindowIds",
     "listPromptTemplates",
+    "listGuiSessionTurnExecutions",
     "listSessionAuditLogSummaryPage",
     "listSessionAuditLogSummaries",
     "listSessionAuditLogs",
@@ -480,6 +483,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeOpenSessionWindowIds",
     "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
+    "subscribeSessionExecutionsChanged",
     "subscribeSessionFilePreviewNavigation",
     "subscribeSessionInvalidation",
     "subscribeSessionSummaries",
@@ -555,6 +559,9 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeInvalidation = api.subscribeSessionInvalidation((sessionIds) => {
     received.push({ kind: "invalidation", sessionIds });
   });
+  const disposeExecutionChanged = api.subscribeSessionExecutionsChanged((event) => {
+    received.push({ kind: "executionChanged", event });
+  });
   const disposePreviewNavigation = api.subscribeSessionFilePreviewNavigation((payload) => {
     received.push({ kind: "previewNavigation", payload });
   });
@@ -568,6 +575,12 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
   listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
   listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
+  listeners.get("withmate:session-executions-changed")?.({}, {
+    kind: "state-changed",
+    sessionId: "session-1",
+    executionId: "execution-1",
+    state: "running",
+  });
   listeners.get("withmate:session-file-preview-navigation")?.({}, {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" },
     ownerSessionId: "session-1",
@@ -579,6 +592,7 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   disposeSummaries();
   disposeBoot();
   disposeInvalidation();
+  disposeExecutionChanged();
   disposePreviewNavigation();
   disposeLiveRun();
   disposeTemplates();
@@ -587,6 +601,10 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
     { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
     { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
     { kind: "invalidation", sessionIds: ["session-1"] },
+    {
+      kind: "executionChanged",
+      event: { kind: "state-changed", sessionId: "session-1", executionId: "execution-1", state: "running" },
+    },
     {
       kind: "previewNavigation",
       payload: {
@@ -601,6 +619,7 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);
+  assert.equal(listeners.has("withmate:session-executions-changed"), false);
   assert.equal(listeners.has("withmate:session-file-preview-navigation"), false);
   assert.equal(listeners.has("withmate:app-boot-status"), false);
   assert.equal(listeners.has("withmate:sessions-changed"), false);
