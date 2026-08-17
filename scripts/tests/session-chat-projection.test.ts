@@ -360,6 +360,21 @@ test("buildAgentSessionChatWindowProps は composer とpath操作のエラーを
   assert.equal("inlinePathFeedback" in props.messageColumnProps, false);
 });
 
+test("ID-05: buildAgentSessionChatWindowProps は呼出元SessionのタイトルとWindow操作をmessage columnへ渡す", () => {
+  const onOpenOriginSession = () => {};
+  const originSessionDetails = [{
+    sessionId: "origin-session",
+    taskTitle: "呼出元の作業",
+  }];
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    originSessionDetails,
+    onOpenOriginSession,
+  }));
+
+  assert.deepEqual(props.messageColumnProps.originSessionDetails, originSessionDetails);
+  assert.equal(props.messageColumnProps.onOpenOriginSession, onOpenOriginSession);
+});
+
 test("buildAgentSessionChatWindowProps は submit pending の helper feedback を共通エラー領域へ投影しない", () => {
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     composerSendability: {

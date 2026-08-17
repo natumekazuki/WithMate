@@ -41,6 +41,8 @@ export type AgentSessionChatProjectionInput = {
   displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
   displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
   turnExecutions?: SessionMessageColumnProps["turnExecutions"];
+  originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
+  onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
   cancelingExecutionIds?: SessionMessageColumnProps["cancelingExecutionIds"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
@@ -347,6 +349,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       messageKeys: input.displayedMessageKeys,
       messageGroups: input.displayedMessageGroups,
       turnExecutions: input.turnExecutions,
+      originSessionDetails: input.originSessionDetails,
+      onOpenOriginSession: input.onOpenOriginSession,
       cancelingExecutionIds: input.cancelingExecutionIds,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,

@@ -518,6 +518,8 @@ type TurnInitiator =
 
 Session initiatorのsnapshotはrename、archive、削除後も再解決しない。iconを表示できない場合はsnapshot名と汎用avatarを使う。initiatorのない既存external requestだけをlegacyとして`外部`表示する。新規requestをanonymous、CLI、MCP、`外部`として保存しない。
 
+GUIでは対象Sessionの応答を左、Session initiatorとlegacy externalの入力を右へ配置し、発話主体を位置で区別する。Session initiatorのavatar下には詳細表示を置く。詳細は保存snapshotのSession IDを常に使い、呼出元Sessionが現存する場合だけ現在のタイトルを、そのSession Windowを開く操作として表示する。rename、archive、削除後の現在値で保存snapshotのCharacter名とavatarを上書きしない。呼出元Sessionが削除済みでも詳細表示と保存Session IDは維持し、欠落を説明する常設文は表示しない。
+
 Turn作成fingerprintはinitiator kindとSession actor IDを含み、transport adapter、binding reference/ID/generation、Character名、icon参照を含めない。同じactor、target、payload、keyのMCP→CLI retryは同じexecutionへ収束し、別actorの同一keyはconflictになる。canonical replayはCharacter snapshot解決より先に判定する。
 
 `turn.get`は現在状態、未解決interaction、利用可能なpartial output、terminal resultを返す。重複する`turn.status`は公開しない。CLI固有の接続診断とschema表示はapplication operationに含めない。

@@ -48,6 +48,16 @@ WithMate提供のSession向けCLI・MCP application operationをAgent runtime bi
 - Independent review trigger: idempotencyとidentity attributionを横断するためcommit固定reviewを行う。
 - Gate: ready
 
+### ID-05: origin-aware message layout and Session details
+
+- Accepted contract / exact anchor: 2026-08-17の利用者要求「別Session由来の入力は右側へ配置し、詳細にはSession IDとタイトルだけを表示する。現存する呼出元SessionのタイトルからそのWindowを開ける。Character ID、見出し、欠落説明は表示しない」。保存済みinitiator snapshotのSession IDを正本とし、現在のタイトルは現存時だけ使う。
+- Scope / semantic owner: rendererの`SessionMessageColumn`と、既存Session一覧から作るread-onlyな呼出元Session detail projection。
+- Failure mode / consumer impact: 別Session入力と対象Session応答が同じ左側に並んで発話主体を誤認する、詳細へ不要なCharacter／runtime情報や欠落説明を常設する、削除済みactorで保存Session IDまで消える、現存する呼出元Sessionへ辿れない。
+- State transitions / failure timing: active executionのqueued／running、detail開閉、actor Sessionのrename／archive／delete、icon欠落、狭幅表示。
+- Direct verification: componentで右側origin primitive、detail buttonのaccessible name、保存Session ID、現存時のタイトルリンク、削除時のSession ID維持と不要表示の不在を確認し、VisualCheckで左右配置、リンク操作、密度を確認する。
+- Independent review trigger: 既存IPCや永続schemaを変更せずrenderer内のread-only projectionで閉じるためnone。
+- Gate: ready
+
 ## Closure Map
 
 ### ID-01
@@ -90,6 +100,16 @@ WithMate提供のSession向けCLI・MCP application operationをAgent runtime bi
 - Direct checks: same actor transport retry、different actor conflict、resolver call count、persisted snapshot read-back。
 - Independent review lens: replay timingとfingerprint field set。
 
+### ID-05
+
+- Accepted anchor and meaning: target Characterの応答は左、別Session／legacy external入力は右へ置く。Session initiatorの保存snapshotをname、avatar、Session IDの正本とし、現在のSession titleは存在する場合だけWindowを開く操作として補足する。
+- Canonical owner: `SessionMessageColumn`のmessage role projectionとorigin detail disclosure。
+- Siblings in scope: running／queued Session initiator、legacy external、user initiator、target assistant response、actor Session存在／削除、狭幅layout。
+- Excluded siblings and reason: completed execution履歴との対応付けはactive execution projectionのownerではない。Session detail用の新規IPCや永続snapshot追加は、既存Session一覧で要求を満たせるため行わない。
+- Failure points: assistant classへの誤投影、detail button欠落、現在のCharacter名でsnapshotを上書き、missing actorで保存Session IDが消える、不要なCharacter ID／欠落説明が残る、タイトル操作が別Sessionを開く、Session由来queuedへcancelが生える。
+- Direct checks: renderer component interaction、typecheck、VisualCheck。
+- Independent review lens: none。
+
 ## Test Design Gate
 
 | Failure mode | Consumer / observable | Canonical owner | Check layer | Distinctness |
@@ -100,6 +120,7 @@ WithMate提供のSession向けCLI・MCP application operationをAgent runtime bi
 | retryがsnapshot再解決または二重createする | execution ID、resolver call count、保存snapshot | application service + storage idempotency | service integration | 現行fingerprintにactorがない |
 | mixed queueの順序・cancel authorityが崩れる | projected sequence、queuePosition、canCancel | main active projection | projection unit | 現行projectionはGUIだけを除外後に表示する |
 | session senderを既存message rowで識別できない | snapshot名、avatar asset、generic fallback、badge不在 | renderer message row | component + visual smoke | 現行user rowはsender identityを描画しない |
+| Session入力とtarget応答の左右が同じ、または詳細から正しい呼出元へ辿れない | origin rowの右側primitive、保存Session ID、現存時のタイトルリンク、不要表示の不在 | renderer message row + 既存Session Window IPC | component + typecheck + visual smoke | ID-03はsender表示だけで左右の意味対応と詳細操作を検証しない |
 | public type/IPC命名がGUI限定のまま残る | typecheck、IPC/preload contract | shared public boundary | typecheck + contract test | 全initiator ownerへの拡張で既存名が不正確になる |
 
 Candidate testはobservableなrequest/result/state/markupだけをassertし、private call順序、class名、snapshot全体には依存しない。正しいhelper抽出やmarkup再編で失敗せず、binding check除去、actor ID除去、initiator tuple欠落、cancel権限拡大、sender表示欠落の各最小欠陥で失敗するものだけを追加する。
@@ -120,5 +141,6 @@ Candidate testはobservableなrequest/result/state/markupだけをassertし、pr
 - ID-02: application serviceでactor Bのbindingとtarget Cの入力を分離し、run／enqueue双方の保存request、target欠落・spoof field拒否、mutation未実行を確認した。
 - ID-03: request JSONのuser／session／legacy parse、storage再起動round-trip、queued→running tuple維持、mixed FIFO、initiator別cancel可否、name／avatar／fallback／badge不在をunit・component・分離起動で確認した。
 - ID-04: fingerprintをinitiator kindとactor Session IDへ固定し、同一actorのtransport非依存retry、別actor conflict、replay先行によるsnapshot resolver未実行を確認した。
-- Worktree checks: `npm run typecheck`、`npm test`（2874 pass、0 fail、1 skip）、`npm run build`が成功した。
-- Visual check: `%APPDATA%\WithMate-visual-check`の分離プロファイルにFIFO準拠fixtureを作成し、session／user／legacyの順序、sessionのsnapshot名とicon、userだけのcancel、transport badge不在、先頭session executionのqueued→running後もidentityと表示位置が維持されることを確認した。実provider接続は行っていない。
+- ID-05: Session由来入力を右、target Characterの応答を左へ配置し、詳細表示を保存Session IDと現行Session titleのWindowリンクに限定した。actor Session削除後は保存Session IDだけが残り、Character ID、見出し、欠落説明、Session由来cancelが表示されないことをcomponent testと分離起動で確認した。
+- Worktree checks: `npm run typecheck`、`npm test`（2878 pass、0 fail、1 skip）、`npm run build`が成功した。
+- Visual check: `%APPDATA%\WithMate-visual-check`の分離プロファイルにFIFO準拠fixtureを作成し、session／user／legacyの順序、sessionのsnapshot名とicon、入力と応答の左右配置、呼出元Session titleのWindowリンク、userだけのcancel、transport badge不在、先頭session executionのqueued→running後もidentityと表示位置が維持されることを確認した。実provider接続は行っていない。

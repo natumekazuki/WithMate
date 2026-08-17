@@ -6304,6 +6304,14 @@ button:disabled {
 
 .message-row.assistant {
   grid-template-columns: 54px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 6px;
+}
+
+.message-row.session-origin {
+  grid-template-columns: minmax(0, 1fr) 54px;
+  column-gap: 10px;
+  row-gap: 6px;
 }
 
 .message-avatar-stack {
@@ -6315,6 +6323,39 @@ button:disabled {
   gap: 8px;
 }
 
+.message-row.assistant > .message-avatar-stack {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.message-character-name {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.message-row.assistant > .message-character-name {
+  grid-column: 2;
+}
+
+.message-row.assistant > .message-card {
+  grid-column: 2;
+}
+
+.message-row.session-origin > .message-avatar-stack {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.message-row.session-origin > .message-character-name,
+.message-row.session-origin > .message-card {
+  grid-column: 1;
+}
+
+.message-row.session-origin > .message-character-name {
+  text-align: right;
+}
+
 .message-row.user {
   grid-template-columns: minmax(0, 1fr);
   justify-items: stretch;
@@ -6322,15 +6363,6 @@ button:disabled {
 
 .message-row.user .message-card {
   width: 100%;
-}
-
-.turn-initiator-identity {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--muted);
-  font-size: 0.82rem;
-  font-weight: 700;
 }
 
 .message-row.accent .message-avatar {
@@ -6472,6 +6504,82 @@ button:disabled {
 
 .session-page .message-card.user {
   background: rgba(20, 27, 40, 0.98);
+}
+
+.message-card.session-origin {
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: inset -4px 0 0 rgba(148, 163, 184, 0.48);
+}
+
+.session-page .message-card.session-origin {
+  border-color: rgba(203, 213, 225, 0.18);
+  background: rgba(20, 27, 40, 0.98);
+}
+
+.origin-session-details {
+  display: grid;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.origin-session-details dl {
+  margin: 0;
+}
+
+.origin-session-details dl {
+  display: grid;
+  gap: 6px;
+}
+
+.origin-session-details dl > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.22fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.origin-session-details dt,
+.origin-session-details dd {
+  margin: 0;
+}
+
+.origin-session-details dd {
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.origin-session-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--orange);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.origin-session-link > span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.origin-session-link:hover {
+  color: var(--teal);
+}
+
+.origin-session-link:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 .queued-turn-status {
@@ -11952,6 +12060,7 @@ button:disabled {
   .session-card,
   .character-card,
   .message-row.assistant,
+  .message-row.session-origin,
   .composer-input-row,
   .composer-box,
   .choice-card {
@@ -11960,6 +12069,20 @@ button:disabled {
 
   .message-avatar-stack {
     position: static;
+  }
+
+  .message-row.assistant > .message-avatar-stack,
+  .message-row.assistant > .message-character-name,
+  .message-row.assistant > .message-card,
+  .message-row.session-origin > .message-avatar-stack,
+  .message-row.session-origin > .message-character-name,
+  .message-row.session-origin > .message-card {
+    grid-column: 1;
+    grid-row: auto;
+  }
+
+  .message-row.session-origin > .message-character-name {
+    text-align: left;
   }
 
   .home-settings-rail {

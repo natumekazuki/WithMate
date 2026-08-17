@@ -128,7 +128,7 @@ Electron Main Processが所有するin-flight execution、provider runtime、int
 - MemoryとSessionのcredentialおよび障害範囲を分離できる。
 - 呼び出し元Sessionと対象Sessionの所有関係が明示され、SessionFolderのfile authorityを対象Session内へ限定できる。
 - CLIとMCPのどちらで開始したexecutionも、もう一方から同じIDで追跡できる。
-- activeなuser、session、legacy executionは同じ永続FIFO順で既存Session message listへ投影する。Session initiatorは保存済みCharacter名とavatar、legacyだけは`外部`と汎用avatarを使い、CLI/MCPのtransport badgeは表示しない。GUI由来queued executionだけをGUIからcancelできる。
+- activeなuser、session、legacy executionは同じ永続FIFO順で既存Session message listへ投影する。対象Sessionの応答は左、sessionとlegacyの入力は右へ配置する。Session initiatorは保存済みCharacter名とavatar、legacyだけは`外部`と汎用avatarを使い、CLI/MCPのtransport badgeは表示しない。Session initiatorの詳細では保存済みSession IDを常に表示し、呼出元Sessionが現存する場合だけ現在のタイトルと、そのSession Windowを開く操作を表示する。GUI由来queued executionだけをGUIからcancelできる。
 - agentが生成した自然文を使い、呼び出し元に限定されないSession間の後続処理を構成できる。
 
 ### Negative

@@ -483,6 +483,10 @@ export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessionsBase] = useState<Session[]>([]);
+  const originSessionDetails = useMemo(() => sessions.map((session) => ({
+    sessionId: session.id,
+    taskTitle: session.taskTitle,
+  })), [sessions]);
   const sessionMutationRevisionRef = useRef(new StateMutationRevision());
   const sessionProjectionRevisionRef = useRef(new StateMutationRevision());
   const setAuthoritativeSessions = useCallback((update: SetStateAction<Session[]>) => {
@@ -3879,6 +3883,10 @@ export default function AgentSessionWindowApp() {
         displayedMessageKeys: messageListKeys,
         displayedMessageGroups: messageListGroups,
         turnExecutions: messageListTurnExecutions,
+        originSessionDetails,
+        onOpenOriginSession: withmateApi
+          ? (sessionId) => void withmateApi.openSession(sessionId)
+          : undefined,
         cancelingExecutionIds,
         expandedArtifacts,
         sessionThemeStyle,
