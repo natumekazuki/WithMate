@@ -4,15 +4,19 @@ import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { HomeMonitorEntry } from "./home-session-projection.js";
 import { HomeCharactersPanel } from "./HomeCharactersPanel.js";
 import { HomeMonitorContent } from "./HomeMonitorContent.js";
+import { ScheduleWorkspace } from "../session-schedule-workspace.js";
+import type { ScheduleSummaryProjection } from "../session-schedule-ui-projection.js";
 
 export type HomeRightPaneProps = {
-  rightPaneView: "monitor" | "characters";
+  rightPaneView: "monitor" | "characters" | "schedules";
+  schedules?: readonly ScheduleSummaryProjection[];
+  scheduleLoadState?: "loading" | "loaded" | "error";
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorWindowIcon: ReactNode;
   characterEntries: CharacterCatalogEntry[];
   characterListFeedback?: string;
-  onChangeRightPaneView: (view: "monitor" | "characters") => void;
+  onChangeRightPaneView: (view: "monitor" | "characters" | "schedules") => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
   onCreateCharacter: () => void;
@@ -24,6 +28,8 @@ export type HomeRightPaneProps = {
 
 export function HomeRightPane({
   rightPaneView,
+  schedules = [],
+  scheduleLoadState = "loaded",
   runningMonitorEntries,
   nonRunningMonitorEntries,
   monitorWindowIcon,
@@ -75,6 +81,9 @@ export function HomeRightPane({
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings
           </button>
+          <button className="launch-toggle" type="button" aria-label="スケジュールを表示" title="スケジュールを表示" onClick={() => onChangeRightPaneView("schedules")}>
+            <span aria-hidden="true">◷</span>
+          </button>
         </div>
         <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
           <button
@@ -86,6 +95,7 @@ export function HomeRightPane({
           >
             Monitor
           </button>
+          <button className={`home-pane-toggle-button ${rightPaneView === "schedules" ? "active" : ""}`.trim()} type="button" role="tab" aria-selected={rightPaneView === "schedules"} aria-label="Schedules" onClick={() => onChangeRightPaneView("schedules")}>◷</button>
           <button
             className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
             type="button"
@@ -107,7 +117,7 @@ export function HomeRightPane({
             onOpenCompanionReview={openCompanionReview}
           />
         </section>
-      ) : (
+      ) : rightPaneView === "characters" ? (
         <section className="home-monitor-panel" role="tabpanel" aria-label="Characters">
           <HomeCharactersPanel
             characters={characterEntries}
@@ -115,6 +125,10 @@ export function HomeRightPane({
             onCreateCharacter={onCreateCharacter}
             onEditCharacter={onEditCharacter}
           />
+        </section>
+      ) : (
+        <section className="home-monitor-panel" role="tabpanel" aria-label="Schedules">
+          <ScheduleWorkspace mode="list" isHome loadState={scheduleLoadState} schedules={schedules} onBack={() => onChangeRightPaneView("monitor")} onOpenSession={openSession} />
         </section>
       )}
     </section>

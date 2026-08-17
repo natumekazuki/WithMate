@@ -175,6 +175,8 @@ describe("database-schema-v6", () => {
         "session_executions_v6",
         "session_execution_idempotency_v6",
         "session_file_write_idempotency_v6",
+        "session_schedules_v6",
+        "session_schedule_fires_v6",
       ].sort());
       const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);

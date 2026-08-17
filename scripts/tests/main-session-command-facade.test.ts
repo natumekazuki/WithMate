@@ -1479,3 +1479,62 @@ test("ID-03: Session由来とlegacy queued executionをGUI cancelへ渡さない
   }
 });
 
+test("schedule enqueue replayはcurrent catalogとprovider再検証より先に解決する", async () => {
+  let validationCalled = false;
+  let enqueueCalled = false;
+  const record = {
+    id: "execution-schedule-1",
+    sessionId: "s-1",
+    state: "queued",
+    request: {
+      initiator: { kind: "user" },
+      turn: { userMessage: "scheduled", clientRequestId: "schedule-key-1" },
+    },
+    createdAt: "2026-08-18T00:00:00.000Z",
+    updatedAt: "2026-08-18T00:00:00.000Z",
+  };
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "copilot" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async validateExternalSessionTurn() {
+        validationCalled = true;
+        throw new Error("provider changed");
+      },
+    }) as never,
+    getSessionExecutionService: () => ({
+      resolveReplay: () => ({ id: record.id }),
+      listRecords: () => [record],
+      async enqueue() {
+        enqueueCalled = true;
+        throw new Error("must not enqueue replay");
+      },
+    }) as never,
+    getCurrentModelCatalogRevision: () => 8,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.enqueueScheduledSessionTurn("s-1", "codex", {
+    userMessage: "scheduled",
+    clientRequestId: "schedule-key-1",
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    approvalMode: "never",
+    codexSandboxMode: "workspace-write",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.execution?.executionId : null, record.id);
+  assert.equal(validationCalled, false);
+  assert.equal(enqueueCalled, false);
+});
+

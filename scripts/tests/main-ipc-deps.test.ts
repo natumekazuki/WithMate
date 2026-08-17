@@ -201,6 +201,16 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       },
       cancelSessionRun: () => {},
     },
+    sessionSchedules: {
+      listSessionSchedules: () => [],
+      getSessionSchedule: () => null,
+      createSessionSchedule: () => ({}) as never,
+      updateSessionSchedule: () => ({}) as never,
+      pauseSessionSchedule: () => ({}) as never,
+      resumeSessionSchedule: () => ({}) as never,
+      deleteSessionSchedule: () => {},
+      runSessionScheduleNow: () => ({}) as never,
+    },
     character: {
       async listCharacters() {
         return [];

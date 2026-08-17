@@ -117,6 +117,20 @@ import type {
   SessionTurnExecutionProjection,
 } from "../src/session-turn-execution.js";
 import type {
+  CreateSessionScheduleInput,
+  RunSessionScheduleNowInput,
+  SessionScheduleProjection,
+  SessionScheduleSummary,
+  SessionScheduleRevisionRequest,
+  UpdateSessionScheduleInput,
+} from "../src/session-schedule.js";
+import {
+  parseCreateSessionScheduleInput,
+  parseRunSessionScheduleNowInput,
+  parseSessionScheduleRevisionRequest,
+  parseUpdateSessionScheduleInput,
+} from "../src/session-schedule.js";
+import type {
   CreateSessionRequest,
   DiffPreviewPayload,
   MessageArtifact,
@@ -217,6 +231,14 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL,
+  WITHMATE_GET_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_UPDATE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_PAUSE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_RESUME_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_DELETE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_RUN_SESSION_SCHEDULE_NOW_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -458,6 +480,14 @@ export type MainIpcRegistrationDeps = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
+  listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
+  getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
+  createSessionSchedule(sessionId: string, input: CreateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
+  updateSessionSchedule(sessionId: string, input: UpdateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
+  pauseSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Awaitable<SessionScheduleProjection>;
+  resumeSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Awaitable<SessionScheduleProjection>;
+  deleteSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Awaitable<void>;
+  runSessionScheduleNow(sessionId: string, request: RunSessionScheduleNowInput): Awaitable<SessionScheduleProjection>;
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
   createMate(input: CreateMateInput): Promise<MateProfile>;
@@ -1704,6 +1734,62 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   });
 }
 
+function assertHomeScheduleSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveHomeWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.resolveHomeWindow() === window) return;
+  throw new Error("Global schedule listing is only available from the Home window.");
+}
+
+function registerSessionScheduleHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcRegistrationDeps): void {
+  ipcMain.handle(WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL, async (event, sessionId: unknown) => {
+    if (sessionId === null || sessionId === undefined || sessionId === "") {
+      assertHomeScheduleSender(event, deps);
+      return deps.listSessionSchedules(null);
+    }
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.listSessionSchedules(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_SCHEDULE_CHANNEL, async (event, sessionId: unknown, scheduleId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId || typeof scheduleId !== "string" || !scheduleId) {
+      throw new TypeError("Schedule detail request is invalid.");
+    }
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.getSessionSchedule(sessionId, scheduleId);
+  });
+  ipcMain.handle(WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL, async (event, sessionId: unknown, input: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.createSessionSchedule(sessionId, parseCreateSessionScheduleInput(input));
+  });
+  ipcMain.handle(WITHMATE_UPDATE_SESSION_SCHEDULE_CHANNEL, async (event, sessionId: unknown, input: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.updateSessionSchedule(sessionId, parseUpdateSessionScheduleInput(input));
+  });
+  const revisionMutation = (
+    channel: string,
+    operation: (sessionId: string, request: SessionScheduleRevisionRequest) => Awaitable<unknown>,
+  ) => {
+    ipcMain.handle(channel, async (event, sessionId: unknown, input: unknown) => {
+      if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+      assertTargetSessionWindowSender(event, sessionId, deps);
+      return operation(sessionId, parseSessionScheduleRevisionRequest(input));
+    });
+  };
+  revisionMutation(WITHMATE_PAUSE_SESSION_SCHEDULE_CHANNEL, (sessionId, request) => deps.pauseSessionSchedule(sessionId, request));
+  revisionMutation(WITHMATE_RESUME_SESSION_SCHEDULE_CHANNEL, (sessionId, request) => deps.resumeSessionSchedule(sessionId, request));
+  revisionMutation(WITHMATE_DELETE_SESSION_SCHEDULE_CHANNEL, (sessionId, request) => deps.deleteSessionSchedule(sessionId, request));
+  ipcMain.handle(WITHMATE_RUN_SESSION_SCHEDULE_NOW_CHANNEL, async (event, sessionId: unknown, input: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) throw new TypeError("Session ID is invalid.");
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.runSessionScheduleNow(sessionId, parseRunSessionScheduleNowInput(input));
+  });
+}
+
 function assertTargetSessionWindowSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
@@ -1764,6 +1850,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerSessionQueryHandlers(wrappedIpcMain, deps);
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
+  registerSessionScheduleHandlers(wrappedIpcMain, deps);
   registerMateHandlers(wrappedIpcMain, deps);
   registerCharacterHandlers(wrappedIpcMain, deps);
   ipcMain.on(WITHMATE_RENDERER_LOG_CHANNEL, (event, input: RendererLogInput) => {

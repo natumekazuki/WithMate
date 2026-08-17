@@ -419,6 +419,9 @@ export function isValidV6Database(dbPath: string): boolean {
     if (!hasRequiredCheckConstraints(db)) {
       return false;
     }
+    if (!hasValidScheduleSchemaIfPresent(db)) {
+      return false;
+    }
     return hasNoForeignKeyViolations(db);
   } catch {
     return false;
@@ -696,6 +699,54 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && affectMutationsSql.includes("operation IN ('record', 'reject', 'correct', 'reset', 'episode_candidate', 'link_episode')")
     && affectObservationsSql.includes("kind IN ('idempotency', 'concurrency')")
     && affectObservationsSql.includes("outcome IN ('replayed', 'rejected', 'resolved')");
+}
+
+function hasValidScheduleSchemaIfPresent(db: DatabaseSync): boolean {
+  const hasSchedules = tableExists(db, "session_schedules_v6");
+  const hasFires = tableExists(db, "session_schedule_fires_v6");
+  if (!hasSchedules && !hasFires) return true;
+  if (!hasSchedules || !hasFires) return false;
+
+  const expectedColumns = {
+    session_schedules_v6: [
+      "id", "session_id", "revision", "name", "trigger_type", "time_zone",
+      "cron_expression", "once_local_datetime", "turn_json", "state",
+      "next_fire_at", "created_at", "updated_at",
+    ],
+    session_schedule_fires_v6: [
+      "id", "schedule_id", "session_id", "schedule_revision", "trigger_type",
+      "logical_fire_at", "kind", "state", "idempotency_key", "turn_json",
+      "execution_id", "error_code", "error_message", "claimed_at", "created_at", "updated_at",
+    ],
+  } as const;
+  for (const [tableName, columns] of Object.entries(expectedColumns)) {
+    const existing = tableColumnNames(db, tableName);
+    if (!columns.every((column) => existing.has(column))) return false;
+  }
+
+  const indexes = new Set(
+    (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index'").all() as Array<{ name?: unknown }>)
+      .map((index) => index.name)
+      .filter((name): name is string => typeof name === "string"),
+  );
+  if (![
+    "idx_v6_session_schedules_session",
+    "idx_v6_session_schedule_fires_logical",
+    "idx_v6_session_schedule_fires_due",
+    "idx_v6_session_schedule_fires_schedule",
+  ].every((indexName) => indexes.has(indexName))) return false;
+
+  const scheduleSql = tableSql(db, "session_schedules_v6");
+  const fireSql = tableSql(db, "session_schedule_fires_v6");
+  return hasForeignKey(db, "session_schedules_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_schedule_fires_v6", "schedule_id", "session_schedules_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_schedule_fires_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && scheduleSql.includes("trigger_type IN ('once', 'cron')")
+    && scheduleSql.includes("state IN ('active', 'paused', 'completed', 'deleted')")
+    && scheduleSql.includes("json_valid(turn_json)")
+    && fireSql.includes("kind IN ('scheduled', 'run_now')")
+    && fireSql.includes("state IN ('pending', 'claimed', 'enqueued', 'failed')")
+    && fireSql.includes("json_valid(turn_json)");
 }
 
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {
@@ -1746,6 +1797,55 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
     ON character_affect_observations_v6(character_id, user_id, created_at DESC, id DESC);
 `;
 
+export const CREATE_V6_SESSION_SCHEDULES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_schedules_v6 (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    name TEXT NOT NULL,
+    trigger_type TEXT NOT NULL DEFAULT 'cron' CHECK (trigger_type IN ('once', 'cron')),
+    time_zone TEXT NOT NULL,
+    cron_expression TEXT,
+    once_local_datetime TEXT,
+    turn_json TEXT NOT NULL CHECK (json_valid(turn_json)),
+    state TEXT NOT NULL CHECK (state IN ('active', 'paused', 'completed', 'deleted')),
+    next_fire_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    CHECK ((trigger_type = 'cron' AND cron_expression IS NOT NULL AND once_local_datetime IS NULL) OR (trigger_type = 'once' AND cron_expression IS NULL AND once_local_datetime IS NOT NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_session_schedules_session ON session_schedules_v6(session_id, updated_at DESC);
+`;
+
+export const CREATE_V6_SESSION_SCHEDULE_FIRES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_schedule_fires_v6 (
+    id TEXT PRIMARY KEY,
+    schedule_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    schedule_revision INTEGER NOT NULL CHECK (schedule_revision >= 1),
+    trigger_type TEXT NOT NULL DEFAULT 'cron' CHECK (trigger_type IN ('once', 'cron')),
+    logical_fire_at TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('scheduled', 'run_now')),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'claimed', 'enqueued', 'failed')),
+    idempotency_key TEXT NOT NULL UNIQUE,
+    turn_json TEXT NOT NULL CHECK (json_valid(turn_json)),
+    execution_id TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    claimed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (schedule_id) REFERENCES session_schedules_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_schedule_fires_logical
+    ON session_schedule_fires_v6(schedule_id, schedule_revision, logical_fire_at)
+    WHERE kind = 'scheduled';
+  CREATE INDEX IF NOT EXISTS idx_v6_session_schedule_fires_due ON session_schedule_fires_v6(state, logical_fire_at);
+  CREATE INDEX IF NOT EXISTS idx_v6_session_schedule_fires_schedule ON session_schedule_fires_v6(schedule_id, created_at DESC);
+`;
+
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
@@ -1762,6 +1862,8 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_SCHEDULES_TABLE_SQL,
+  CREATE_V6_SESSION_SCHEDULE_FIRES_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_PUBLIC_PROGRESS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
@@ -2200,6 +2302,12 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     if (!affectEventColumns.has("family")) {
       db.exec("ALTER TABLE character_affect_events_v6 ADD COLUMN family TEXT CHECK (family IS NULL OR family IN ('joy', 'relief', 'interest', 'anticipation', 'affinity', 'gratitude', 'concern', 'frustration', 'disappointment', 'regret', 'determination', 'other'))");
     }
+  }
+
+  if (tableExists(db, "session_schedule_fires_v6")) {
+    const fireColumns = tableColumnNames(db, "session_schedule_fires_v6");
+    if (!fireColumns.has("session_id")) db.exec("ALTER TABLE session_schedule_fires_v6 ADD COLUMN session_id TEXT NOT NULL DEFAULT ''");
+    if (!fireColumns.has("turn_json")) db.exec("ALTER TABLE session_schedule_fires_v6 ADD COLUMN turn_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(turn_json))");
   }
 
 }

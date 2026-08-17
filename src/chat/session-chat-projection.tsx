@@ -33,6 +33,8 @@ import {
 
 export type AgentSessionChatProjectionInput = {
   mainContent?: ReactNode;
+  hideActionDock?: boolean;
+  composerPropsOverride?: SessionComposerExpandedProps;
   leftPane?: ReactNode;
   isFilesPaneVisible: boolean;
   selectedSession: Session;
@@ -409,7 +411,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     onOpenCompanionReview: input.onOpenCompanionReview,
   });
 
-  return buildLiveSessionWindowShellProps({
+  return {
+    ...buildLiveSessionWindowShellProps({
     mode: "agent",
     style: { ...input.sessionThemeStyle, ...input.sessionDockLayoutStyle },
     layoutRef: input.sessionDockLayoutRef,
@@ -466,7 +469,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       onPointerDown: input.isActionDockExpanded ? input.onStartActionDockResize : undefined,
       onTogglePanel: input.onToggleActionDock,
     },
-    composerProps: chatBodyProps.composerProps,
+    composerProps: input.composerPropsOverride ?? chatBodyProps.composerProps,
     additionalDirectoryListProps: {
       isOpen: input.isAdditionalDirectoryListOpen,
       items: input.additionalDirectoryItems,
@@ -497,5 +500,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     rightPaneProps,
     modals: <ChatSessionModals {...input} />,
     isAuxiliaryMode: input.isAuxiliaryMode,
-  });
+    }),
+    hideActionDock: input.hideActionDock,
+  };
 }

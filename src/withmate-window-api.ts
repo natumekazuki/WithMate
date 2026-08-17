@@ -50,6 +50,15 @@ import type {
 import type { AppBootStatus } from "./app-boot-state.js";
 import type { WorkspaceDirectoryValidationResult } from "./workspace-directory-validation.js";
 import type {
+  CreateSessionScheduleInput,
+  RunSessionScheduleNowInput,
+  SessionScheduleProjection,
+  SessionScheduleSummary,
+  SessionScheduleChangedEvent,
+  SessionScheduleRevisionRequest,
+  UpdateSessionScheduleInput,
+} from "./session-schedule.js";
+import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
@@ -203,6 +212,14 @@ export type WithMateWindowSessionApi = {
   getLiveSessionRun(sessionId: string): Promise<LiveSessionRunState | null>;
   resolveLiveApproval(sessionId: string, requestId: string, decision: LiveApprovalDecision): Promise<void>;
   resolveLiveElicitation(sessionId: string, requestId: string, response: LiveElicitationResponse): Promise<void>;
+  listSessionSchedules(sessionId?: string | null): Promise<SessionScheduleSummary[]>;
+  getSessionSchedule(sessionId: string, scheduleId: string): Promise<SessionScheduleProjection | null>;
+  createSessionSchedule(sessionId: string, input: CreateSessionScheduleInput): Promise<SessionScheduleProjection>;
+  updateSessionSchedule(sessionId: string, input: UpdateSessionScheduleInput): Promise<SessionScheduleProjection>;
+  pauseSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Promise<SessionScheduleProjection>;
+  resumeSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Promise<SessionScheduleProjection>;
+  deleteSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Promise<void>;
+  runSessionScheduleNow(sessionId: string, request: RunSessionScheduleNowInput): Promise<SessionScheduleProjection>;
 };
 
 export type WithMateWindowAuxiliaryApi = {
@@ -328,6 +345,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
+  subscribeSessionSchedules(listener: (event: SessionScheduleChangedEvent) => void): () => void;
 };
 
 export type WithMateWindowMateApi = {

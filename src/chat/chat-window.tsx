@@ -66,6 +66,7 @@ export type ChatWindowProps = Omit<
   recoveryActions?: ChatScreenProps["recoveryActions"];
   isActionDockExpanded: boolean;
   composerProps: SessionComposerExpandedProps;
+  hideActionDock?: boolean;
   additionalDirectoryListProps?: ChatAdditionalDirectoryListProps;
   skillPickerProps?: ChatSkillPickerPanelProps;
   compactActionDockProps: SessionActionDockCompactRowProps;
@@ -325,6 +326,7 @@ export function ChatAdditionalDirectoryList({
 // Keep every conversation surface on one chat layout. Projection builders own
 // the feature-specific props and content.
 export function ChatWindow({
+  hideActionDock = false,
   isHeaderExpanded,
   headerProps,
   messageColumnProps,
@@ -418,7 +420,7 @@ export function ChatWindow({
           messageViewMode={messageViewMode}
         />
       )}
-      actionDock={(
+      actionDock={hideActionDock ? null : (
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div
             className={`session-action-dock-content session-action-dock-expanded-content${

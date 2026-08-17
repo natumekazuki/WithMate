@@ -62,6 +62,7 @@ type MainSessionCommandFacadeDeps = {
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
   resumeSessionExecutionQueue?(sessionId: string): Promise<void> | void;
   validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
+  getCurrentModelCatalogRevision?(): number;
 };
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
@@ -230,6 +231,54 @@ export class MainSessionCommandFacade {
       if (mapped) return { ok: false, error: mapped };
       throw error;
     }
+  }
+
+  async enqueueScheduledSessionTurn(
+    sessionId: string,
+    provider: Session["provider"],
+    request: RunSessionTurnRequest,
+  ): Promise<EnqueueSessionTurnResult> {
+    const clientRequestId = request.clientRequestId?.trim() ?? "";
+    if (!clientRequestId) {
+      return admissionFailure("INVALID_INPUT", "送信要求の識別子が不足しています。", false);
+    }
+
+    const executionRequest = {
+      initiator: { kind: "user" as const },
+      turn: { ...request, clientRequestId },
+    };
+    const executionService = this.deps.getSessionExecutionService();
+    const replay = executionService.resolveReplay("turn.enqueue", {
+      sessionId,
+      request: executionRequest,
+      idempotencyKey: clientRequestId,
+      requestFingerprint: fingerprintGuiTurn(sessionId, request),
+    });
+    if (replay) {
+      return {
+        ok: true,
+        execution: projectSessionTurnExecutions(executionService.listRecords(sessionId))
+          .find((candidate) => candidate.executionId === replay.id) ?? null,
+      };
+    }
+
+    const catalogRevision = this.deps.getCurrentModelCatalogRevision?.();
+    if (typeof catalogRevision !== "number" || !Number.isSafeInteger(catalogRevision)) {
+      throw new Error("Current model catalog revision is unavailable.");
+    }
+    try {
+      await this.deps.getSessionRuntimeService().validateExternalSessionTurn(
+        sessionId,
+        catalogRevision,
+        request,
+        provider,
+      );
+    } catch (error) {
+      const mapped = mapGuiExecutionError(error);
+      if (mapped) return { ok: false, error: mapped };
+      throw error;
+    }
+    return this.enqueueSessionTurn(sessionId, request);
   }
 
   listSessionTurnExecutions(sessionId: string): SessionTurnExecutionProjection[] {

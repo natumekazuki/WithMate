@@ -3602,6 +3602,8 @@ export type SessionComposerExpandedProps = {
   composerSendability: SessionComposerSendabilityView;
   externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
+  sendButtonLabel?: string;
+  sendButtonIcon?: string;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
   selectedApprovalMode: ApprovalMode;
@@ -3680,6 +3682,8 @@ export function SessionComposerExpanded({
   composerSendability,
   externalErrorDescriptionIds,
   sendButtonTitle,
+  sendButtonLabel = "Send",
+  sendButtonIcon,
   isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
@@ -4143,8 +4147,9 @@ export function SessionComposerExpanded({
             onClick={onSendOrCancel}
             disabled={isSendDisabled}
             title={sendButtonTitle}
+            aria-label={sendButtonIcon ? sendButtonLabel : undefined}
           >
-            Send
+            {sendButtonIcon ? <span aria-hidden="true">{sendButtonIcon}</span> : sendButtonLabel}
           </button>
         )}
       </div>

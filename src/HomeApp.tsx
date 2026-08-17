@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
@@ -84,8 +84,10 @@ import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
 } from "./home/home-active-auxiliary-refresh.js";
+import type { ScheduleSummaryProjection } from "./session-schedule-ui-projection.js";
+import type { SessionScheduleSummary } from "./session-schedule.js";
 
-type HomeRightPaneView = "monitor" | "characters";
+type HomeRightPaneView = "monitor" | "characters" | "schedules";
 
 type HomeSessionSummariesState = {
   status: SessionSummariesLoadStatus;
@@ -138,6 +140,8 @@ export default function HomeApp() {
   const [mateAvatarUpdating, setMateAvatarUpdating] = useState(false);
   const [mateCreationFeedback, setMateCreationFeedback] = useState("");
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
+  const [scheduleSummaries, setScheduleSummaries] = useState<SessionScheduleSummary[]>([]);
+  const [scheduleLoadState, setScheduleLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
@@ -160,6 +164,24 @@ export default function HomeApp() {
   }
 
   useEffect(() => () => workspaceValidationControllerRef.current?.cancel(), []);
+
+  const refreshHomeSchedules = useCallback(async () => {
+    const api = getWithMateApi();
+    if (!api) return;
+    setScheduleLoadState("loading");
+    try {
+      setScheduleSummaries(await api.listSessionSchedules(null));
+      setScheduleLoadState("loaded");
+    } catch {
+      setScheduleLoadState("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshHomeSchedules();
+    const api = getWithMateApi();
+    return api?.subscribeSessionSchedules(() => void refreshHomeSchedules());
+  }, [refreshHomeSchedules]);
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
@@ -663,6 +685,20 @@ export default function HomeApp() {
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,
+      schedules: scheduleSummaries.map((schedule): ScheduleSummaryProjection => ({
+        id: schedule.id,
+        sessionId: schedule.sessionId,
+        revision: schedule.revision,
+        sessionTitle: sessions.find((session) => session.id === schedule.sessionId)?.taskTitle ?? schedule.sessionId,
+        name: schedule.name,
+        state: schedule.state,
+        status: schedule.state,
+        trigger: schedule.trigger,
+        nextFireAt: schedule.nextFireAt,
+        lastFireResult: schedule.latestFire?.errorMessage ?? schedule.latestFire?.state ?? null,
+        lastExecutionId: schedule.latestFire?.executionId ?? null,
+      })),
+      scheduleLoadState,
       runningMonitorEntries,
       nonRunningMonitorEntries,
       characterEntries,

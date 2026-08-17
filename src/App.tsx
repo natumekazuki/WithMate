@@ -91,6 +91,7 @@ import {
   useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import type { SessionComposerExpandedProps } from "./session-components.js";
 import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
@@ -200,6 +201,9 @@ import {
 } from "./session-turn-execution.js";
 import { appendTurnExecutionsToMessageList } from "./session-queued-turn-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { ScheduleWorkspace } from "./session-schedule-workspace.js";
+import type { ScheduleDraftProjection, ScheduleSummaryProjection } from "./session-schedule-ui-projection.js";
+import type { SessionScheduleProjection, SessionScheduleSummary, SessionScheduleTrigger, SessionScheduleTurn } from "./session-schedule.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import {
@@ -644,6 +648,138 @@ export default function AgentSessionWindowApp() {
     clientRequestId: string;
   } | null>(null);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
+  const [scheduleView, setScheduleView] = useState<"chat" | "list" | "create" | "edit">("chat");
+  const [scheduleLoadState, setScheduleLoadState] = useState<"loading" | "loaded" | "error">("loading");
+  const [sessionSchedules, setSessionSchedules] = useState<SessionScheduleSummary[]>([]);
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraftProjection | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const scheduleDraftRef = useRef<ScheduleDraftProjection | null>(null);
+  const scheduleModeActive = scheduleView !== "chat";
+
+  const refreshSessionSchedules = useCallback(async () => {
+    if (!withmateApi || !selectedId) return;
+    setScheduleLoadState("loading");
+    try {
+      setSessionSchedules(await withmateApi.listSessionSchedules(selectedId));
+      setScheduleLoadState("loaded");
+      setScheduleError(null);
+    } catch (error) {
+      setScheduleLoadState("error");
+      setScheduleError(error instanceof Error ? error.message : "Schedule list could not be loaded.");
+    }
+  }, [selectedId, withmateApi]);
+
+  useEffect(() => {
+    if (scheduleModeActive) void refreshSessionSchedules();
+  }, [refreshSessionSchedules, scheduleModeActive]);
+
+  const openScheduleList = useCallback(() => {
+    setScheduleDraft(null);
+    scheduleDraftRef.current = null;
+    setScheduleView("list");
+  }, []);
+
+  const createScheduleDraft = useCallback(() => {
+    const currentSession = sessions.find((session) => session.id === selectedId);
+    if (!currentSession) return;
+    const next: ScheduleDraftProjection = {
+      sessionId: currentSession.id,
+      name: "",
+      trigger: { type: "cron", expression: "0 9 * * 1-5", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" },
+      prompt: draft,
+      attachments: composerPreview.attachments.map((attachment) => attachment.absolutePath),
+      model: currentSession.model ?? "",
+      reasoningEffort: currentSession.reasoningEffort ?? "",
+      approvalMode: currentSession.approvalMode ?? "",
+      sandboxMode: currentSession.codexSandboxMode ?? "",
+      customAgent: currentSession.customAgentName ?? null,
+    };
+    setScheduleDraft(next);
+    scheduleDraftRef.current = next;
+    setScheduleView("create");
+  }, [composerPreview.attachments, draft, selectedId, sessions]);
+
+  const editSchedule = useCallback(async (summary: ScheduleSummaryProjection) => {
+    if (!withmateApi || !selectedId) return;
+    try {
+      const schedule = await withmateApi.getSessionSchedule(selectedId, summary.id);
+      if (!schedule) return;
+      const next: ScheduleDraftProjection = {
+        id: schedule.id,
+        sessionId: schedule.sessionId,
+        name: schedule.name,
+        trigger: schedule.trigger,
+        prompt: schedule.turn.userMessage,
+        attachments: schedule.turn.attachments?.map((attachment) => attachment.path) ?? [],
+        model: schedule.turn.model ?? "",
+        reasoningEffort: schedule.turn.reasoningEffort ?? "",
+        approvalMode: schedule.turn.approvalMode ?? "",
+        sandboxMode: schedule.turn.codexSandboxMode ?? "",
+        customAgent: schedule.turn.customAgentName ?? null,
+      };
+      setScheduleDraft(next);
+      scheduleDraftRef.current = next;
+      setScheduleView("edit");
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Schedule could not be loaded.");
+    }
+  }, [selectedId, withmateApi]);
+
+  const updateScheduleDraft = useCallback((next: ScheduleDraftProjection) => {
+    scheduleDraftRef.current = next;
+    setScheduleDraft(next);
+  }, []);
+
+  const saveScheduleDraft = useCallback(async () => {
+    const current = scheduleDraftRef.current;
+    if (!withmateApi || !selectedId || !current) return;
+    const provider = (sessions.find((session) => session.id === selectedId)?.provider ?? "codex") as SessionScheduleTurn["provider"];
+    const turn: SessionScheduleTurn = provider === "codex" ? {
+      provider,
+      userMessage: current.prompt,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort as SessionScheduleTurn["reasoningEffort"],
+      approvalMode: current.approvalMode as SessionScheduleTurn["approvalMode"],
+      codexSandboxMode: current.sandboxMode as SessionScheduleTurn["codexSandboxMode"],
+      attachments: current.attachments.map((path) => ({ path, source: "text" as const })),
+    } : {
+      provider,
+      userMessage: current.prompt,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort as SessionScheduleTurn["reasoningEffort"],
+      approvalMode: current.approvalMode as SessionScheduleTurn["approvalMode"],
+      customAgentName: current.customAgent ?? "",
+      attachments: current.attachments.map((path) => ({ path, source: "text" as const })),
+    };
+    try {
+      if (current.id) {
+        const previous = sessionSchedules.find((entry) => entry.id === current.id);
+        await withmateApi.updateSessionSchedule(selectedId, { scheduleId: current.id, expectedRevision: previous?.revision ?? 1, name: current.name, trigger: current.trigger, turn });
+      } else {
+        await withmateApi.createSessionSchedule(selectedId, { name: current.name, trigger: current.trigger, turn });
+      }
+      await refreshSessionSchedules();
+      setScheduleView("list");
+      setScheduleDraft(null);
+      scheduleDraftRef.current = null;
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Schedule could not be saved.");
+    }
+  }, [refreshSessionSchedules, selectedId, sessionSchedules, sessions, withmateApi]);
+
+  const mutateSchedule = useCallback(async (summary: ScheduleSummaryProjection, action: "pause" | "resume" | "delete" | "run") => {
+    if (!withmateApi || !selectedId) return;
+    try {
+      const request = { scheduleId: summary.id, expectedRevision: summary.revision };
+      if (action === "pause") await withmateApi.pauseSessionSchedule(selectedId, request);
+      else if (action === "resume") await withmateApi.resumeSessionSchedule(selectedId, request);
+      else if (action === "delete") await withmateApi.deleteSessionSchedule(selectedId, request);
+      else await withmateApi.runSessionScheduleNow(selectedId, { scheduleId: summary.id, requestId: crypto.randomUUID() });
+      await refreshSessionSchedules();
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Schedule operation failed.");
+    }
+  }, [refreshSessionSchedules, selectedId, withmateApi]);
 
   useEffect(() => {
     let active = true;
@@ -3710,6 +3846,13 @@ export default function AgentSessionWindowApp() {
     setIsPromptTemplateWorkspaceOpen(true);
   };
   const handleInsertPromptTemplate = (prompt: string) => {
+    if (scheduleDraftRef.current && scheduleModeActive) {
+      const current = scheduleDraftRef.current;
+      const nextPrompt = current.prompt.trim() ? `${current.prompt.trim()}\n\n${prompt}` : prompt;
+      updateScheduleDraft({ ...current, prompt: nextPrompt });
+      closeCentralPreview();
+      return;
+    }
     const insertion = insertComposerTextAtSelection(
       renderedDraft,
       prompt,
@@ -3803,7 +3946,37 @@ export default function AgentSessionWindowApp() {
         ? "Running"
         : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
           ? "New messages"
-          : "";
+        : "";
+  const scheduleSummaryProjections: ScheduleSummaryProjection[] = sessionSchedules.map((schedule) => ({
+    id: schedule.id,
+    sessionId: schedule.sessionId,
+    sessionTitle: selectedSession.taskTitle,
+    revision: schedule.revision,
+    name: schedule.name,
+    state: schedule.state,
+    status: schedule.state,
+    trigger: schedule.trigger,
+    nextFireAt: schedule.nextFireAt,
+    lastFireResult: schedule.latestFire?.errorMessage ?? schedule.latestFire?.state ?? null,
+    lastExecutionId: schedule.latestFire?.executionId ?? null,
+  }));
+  const scheduleContent = scheduleModeActive ? (
+    <ScheduleWorkspace
+      mode={scheduleView}
+      loadState={scheduleLoadState}
+      schedules={scheduleSummaryProjections}
+      draft={scheduleDraft}
+      errorMessage={scheduleError}
+      onBack={() => scheduleView === "list" ? setScheduleView("chat") : openScheduleList()}
+      onCreate={createScheduleDraft}
+      onEdit={(summary) => void editSchedule(summary)}
+      onPause={(summary) => void mutateSchedule(summary, "pause")}
+      onResume={(summary) => void mutateSchedule(summary, "resume")}
+      onDelete={(summary) => void mutateSchedule(summary, "delete")}
+      onRunNow={(summary) => void mutateSchedule(summary, "run")}
+      onDraftChange={updateScheduleDraft}
+    />
+  ) : null;
   const actionDockChatNotice = liveApprovalRequest
     ? "Approval required"
     : liveElicitationRequest
@@ -3811,7 +3984,7 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New messages"
         : "";
-  const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
+  const filePreviewContent = scheduleModeActive ? scheduleContent : isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={activeAuxiliarySession
@@ -3870,11 +4043,106 @@ export default function AgentSessionWindowApp() {
     />
   ) : undefined;
 
+  const pickScheduleAttachment = async (kind: ComposerPathPickerKind) => {
+    if (!withmateApi || !selectedSession || !scheduleDraft) return;
+    const selectedPath = await pickComposerReferencePath(
+      kind,
+      pickerBaseDirectory || selectedSession.workspacePath || null,
+      withmateApi,
+    );
+    if (!selectedPath) return;
+    const prompt = scheduleDraft.prompt.trim()
+      ? `${scheduleDraft.prompt.trim()}\n${selectedPath}`
+      : selectedPath;
+    updateScheduleDraft({
+      ...scheduleDraft,
+      prompt,
+      attachments: scheduleDraft.attachments.includes(selectedPath)
+        ? scheduleDraft.attachments
+        : [...scheduleDraft.attachments, selectedPath],
+    });
+  };
+
+  const scheduleComposerProps: SessionComposerExpandedProps | undefined = scheduleDraft ? {
+    isRunning: false,
+    composerBlocked: false,
+    canSelectCustomAgent: selectedSession.provider === "copilot",
+    showAttachmentControls: true,
+    showCustomAgentPicker: selectedSession.provider === "copilot",
+    showSkillPicker: false,
+    showPromptTemplateButton: true,
+    showAdditionalDirectoryControls: true,
+    showExecutionModeControls: true,
+    isAgentPickerOpen: false,
+    isSkillPickerOpen: false,
+    isPromptTemplateWorkspaceOpen: false,
+    isAdditionalDirectoryListOpen,
+    selectedCustomAgentLabel: scheduleDraft.customAgent ?? "Default Agent",
+    selectedCustomAgentTitle: "Copilot custom agent を選択",
+    additionalDirectoryCount: selectedSession.allowedAdditionalDirectories.length,
+    showJumpToBottom: false,
+    isCustomAgentListLoading: false,
+    customAgentItems,
+    attachmentItems: scheduleDraft.attachments.map((path) => ({
+      key: path,
+      kind: "file",
+      kindLabel: "File",
+      locationLabel: path,
+      primaryLabel: path.split(/[\\/]/).pop() ?? path,
+      secondaryLabel: "Schedule attachment",
+      title: path,
+      removeTargets: [path],
+    })),
+    draft: scheduleDraft.prompt,
+    placeholder: "Schedule prompt",
+    composerTextareaRef,
+    isComposerDisabled: false,
+    isSendDisabled: !scheduleDraft.name.trim() || !scheduleDraft.prompt.trim(),
+    composerSendability: { isBusy: false, primaryFeedback: "", secondaryFeedback: [], feedbackTone: null, shouldShowFeedback: false },
+    sendButtonTitle: "スケジュールを保存",
+    sendButtonLabel: "スケジュールを保存",
+    sendButtonIcon: "✓",
+    isComposerBlockedFeedbackActive: false,
+    approvalOptions: approvalChoiceOptions,
+    selectedApprovalMode: scheduleDraft.approvalMode as Session["approvalMode"],
+    sandboxOptions: sandboxChoiceOptions,
+    selectedCodexSandboxMode: scheduleDraft.sandboxMode as Session["codexSandboxMode"],
+    modelOptions: modelSelectOptions,
+    selectedModel: scheduleDraft.model,
+    selectedModelFallbackLabel: selectedSession.model,
+    reasoningOptions: reasoningSelectOptions,
+    selectedReasoningEffort: scheduleDraft.reasoningEffort,
+    onPickFile: () => void pickScheduleAttachment("file"),
+    onPickFolder: () => void pickScheduleAttachment("folder"),
+    onPickImage: () => void pickScheduleAttachment("image"),
+    onToggleAgentPicker: () => undefined,
+    onToggleSkillPicker: () => undefined,
+    onOpenPromptTemplates: handleOpenPromptTemplates,
+    onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
+    onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
+    onJumpToBottom: () => undefined,
+    onSelectCustomAgent: (value) => updateScheduleDraft({ ...scheduleDraft, customAgent: value }),
+    onRemoveAttachment: (targets) => updateScheduleDraft({ ...scheduleDraft, attachments: scheduleDraft.attachments.filter((path) => !targets.includes(path)) }),
+    onDraftChange: (value) => updateScheduleDraft({ ...scheduleDraft, prompt: value }),
+    onDraftFocus: () => undefined,
+    onDraftKeyDown: () => undefined,
+    onDraftSelect: () => undefined,
+    onDraftCompositionStart: () => undefined,
+    onDraftCompositionEnd: () => undefined,
+    onSendOrCancel: () => void saveScheduleDraft(),
+    onChangeApprovalMode: (value) => updateScheduleDraft({ ...scheduleDraft, approvalMode: value }),
+    onChangeCodexSandboxMode: (value) => updateScheduleDraft({ ...scheduleDraft, sandboxMode: value }),
+    onChangeModel: (value) => updateScheduleDraft({ ...scheduleDraft, model: value }),
+    onChangeReasoningEffort: (value) => updateScheduleDraft({ ...scheduleDraft, reasoningEffort: value }),
+  } : undefined;
+
   return (
     <>
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
+        hideActionDock: scheduleView === "list",
+        composerPropsOverride: scheduleComposerProps,
         leftPane: fileExplorerPane,
         isFilesPaneVisible,
         selectedSession: renderedSession,
@@ -3997,7 +4265,20 @@ export default function AgentSessionWindowApp() {
         auditLogsTotal,
         auditLogsErrorMessage,
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
-        headerActions: auxiliaryHeaderActions,
+        headerActions: (
+          <>
+            {auxiliaryHeaderActions}
+            <button
+              className="drawer-toggle compact secondary schedule-header-button"
+              type="button"
+              aria-label={scheduleModeActive ? "チャットへ戻る" : "スケジュールを開く"}
+              title={scheduleModeActive ? "チャットへ戻る" : "スケジュールを開く"}
+              onClick={scheduleModeActive ? () => setScheduleView("chat") : openScheduleList}
+            >
+              <span aria-hidden="true">{scheduleModeActive ? "←" : "◷"}</span>
+            </button>
+          </>
+        ),
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
         onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
