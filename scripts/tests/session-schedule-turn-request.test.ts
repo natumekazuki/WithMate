@@ -34,3 +34,13 @@ test("scheduled turn does not duplicate an attachment already referenced by the 
   const request = buildScheduledTurnRequest(scheduledTurn, "fire-key");
   assert.equal(request.userMessage.match(/evidence\.txt/g)?.length, 1);
 });
+
+test("scheduled turn matches Windows image references across slash formats", () => {
+  const scheduledTurn = turn();
+  scheduledTurn.userMessage = "review ![screenshot.png](C:/allowed/screenshot.png)";
+  scheduledTurn.attachments = [
+    { path: "C:\\allowed\\screenshot.png", source: "text", kind: "image" },
+  ];
+  const request = buildScheduledTurnRequest(scheduledTurn, "fire-key");
+  assert.equal(request.userMessage.match(/screenshot\.png/g)?.length, 2);
+});

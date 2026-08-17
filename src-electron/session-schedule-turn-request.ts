@@ -1,7 +1,10 @@
 import type { RunSessionTurnRequest } from "../src/runtime-state.js";
 import type { SessionScheduleTurn } from "../src/session-schedule.js";
 import { extractComposerAttachmentReferenceCandidates } from "../src/path-reference.js";
-import { buildComposerReferenceInsertionState } from "../src/session-composer-paths.js";
+import {
+  buildComposerReferenceInsertionState,
+  normalizePathForReference,
+} from "../src/session-composer-paths.js";
 
 export function buildScheduledTurnRequest(
   turn: SessionScheduleTurn,
@@ -9,10 +12,10 @@ export function buildScheduledTurnRequest(
 ): RunSessionTurnRequest {
   const existingPaths = new Set(
     extractComposerAttachmentReferenceCandidates(turn.userMessage)
-      .map((attachment) => attachment.path.trim()),
+      .map((attachment) => normalizePathForReference(attachment.path.trim())),
   );
   const missingReferences = (turn.attachments ?? [])
-    .filter((attachment) => !existingPaths.has(attachment.path.trim()))
+    .filter((attachment) => !existingPaths.has(normalizePathForReference(attachment.path.trim())))
     .map((attachment) => ({
       path: attachment.path,
       presentation: attachment.source === "markdown-image" ? "image" as const : "path" as const,
