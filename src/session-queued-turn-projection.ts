@@ -1,16 +1,16 @@
 import type { MessageListProjection } from "./auxiliary-session-message-projection.js";
-import type { SessionGuiTurnExecution, SessionQueuedTurn } from "./session-gui-execution.js";
+import type { SessionTurnExecutionProjection } from "./session-turn-execution.js";
 
-export type SessionQueuedTurnMessageProjection = MessageListProjection & {
-  queuedTurns: Array<SessionQueuedTurn | null>;
+export type SessionTurnMessageProjection = MessageListProjection & {
+  turnExecutions: Array<SessionTurnExecutionProjection | null>;
 };
 
-export function appendGuiTurnExecutionsToMessageList(
+export function appendTurnExecutionsToMessageList(
   projection: MessageListProjection,
-  executions: SessionGuiTurnExecution[],
+  executions: SessionTurnExecutionProjection[],
   sessionRunState: string,
   runningProjectionBarrierExecutionId: string | null = null,
-): SessionQueuedTurnMessageProjection {
+): SessionTurnMessageProjection {
   const runningExecution = executions.find((execution) => execution.state === "running") ?? null;
   const projectedRunningExecutions = runningExecution !== null && (
     sessionRunState !== "running" || runningExecution.executionId === runningProjectionBarrierExecutionId
@@ -25,19 +25,42 @@ export function appendGuiTurnExecutionsToMessageList(
         source.kind === "live-assistant" && source.sessionId === runningExecution?.sessionId
       ))
     : -1;
+  const persistedRunningIndex = runningExecution && projectedRunningExecutions.length === 0
+    ? projection.messages.findLastIndex((message, index) => (
+      message.role === "user"
+      && message.text === runningExecution.userMessage
+      && projection.sources[index]?.kind === "session"
+    ))
+    : -1;
   const runningPrefixLength = runningInsertIndex >= 0 ? runningInsertIndex : projection.messages.length;
   const runningMessages = projectedRunningExecutions.map((execution) => ({
     role: "user" as const,
     text: execution.userMessage,
   }));
   const runningSources = projectedRunningExecutions.map((execution) => ({
-    kind: "gui-turn-execution" as const,
+    kind: "turn-execution" as const,
     execution,
   }));
-  const runningKeys = projectedRunningExecutions.map((execution) => `gui-turn-execution-${execution.executionId}`);
+  const runningKeys = projectedRunningExecutions.map((execution) => `turn-execution-${execution.executionId}`);
   const queuedMessages = sortedQueuedTurns.map((execution) => ({ role: "user" as const, text: execution.userMessage }));
-  const queuedSources = sortedQueuedTurns.map((execution) => ({ kind: "gui-turn-execution" as const, execution }));
-  const queuedKeys = sortedQueuedTurns.map((execution) => `gui-turn-execution-${execution.executionId}`);
+  const queuedSources = sortedQueuedTurns.map((execution) => ({ kind: "turn-execution" as const, execution }));
+  const queuedKeys = sortedQueuedTurns.map((execution) => `turn-execution-${execution.executionId}`);
+  const turnExecutions: Array<SessionTurnExecutionProjection | null> = [
+    ...projection.messages.slice(0, runningPrefixLength).map(() => null),
+    ...projectedRunningExecutions,
+    ...projection.messages.slice(runningPrefixLength).map(() => null),
+    ...sortedQueuedTurns,
+  ];
+  const keys = [
+    ...projection.keys.slice(0, runningPrefixLength),
+    ...runningKeys,
+    ...projection.keys.slice(runningPrefixLength),
+    ...queuedKeys,
+  ];
+  if (persistedRunningIndex >= 0 && runningExecution) {
+    turnExecutions[persistedRunningIndex] = runningExecution;
+    keys[persistedRunningIndex] = `turn-execution-${runningExecution.executionId}`;
+  }
   return {
     messages: [
       ...projection.messages.slice(0, runningPrefixLength),
@@ -51,23 +74,13 @@ export function appendGuiTurnExecutionsToMessageList(
       ...projection.sources.slice(runningPrefixLength),
       ...queuedSources,
     ],
-    keys: [
-      ...projection.keys.slice(0, runningPrefixLength),
-      ...runningKeys,
-      ...projection.keys.slice(runningPrefixLength),
-      ...queuedKeys,
-    ],
+    keys,
     groups: [
       ...projection.groups.slice(0, runningPrefixLength),
       ...projectedRunningExecutions.map(() => null),
       ...projection.groups.slice(runningPrefixLength),
       ...sortedQueuedTurns.map(() => null),
     ],
-    queuedTurns: [
-      ...projection.messages.slice(0, runningPrefixLength).map(() => null),
-      ...projectedRunningExecutions.map(() => null),
-      ...projection.messages.slice(runningPrefixLength).map(() => null),
-      ...sortedQueuedTurns,
-    ],
+    turnExecutions,
   };
 }

@@ -28,8 +28,8 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 
 ### 操作対象を明示したSessionに固定する
 
-- `session.self`はprovider runtime bindingからactor Session IDだけを自己解決する。request body、prompt、workspace path、parent関係からactorを推測せず、binding欠落・失効・grant不足ではfail closedとする。
-- Session操作、Turn操作、interaction、transcript、SessionFolder操作は、`session.self`以外ではrequestで明示されたSessionを対象とする。自己解決結果を兄弟操作へ暗黙適用しない。
+- WithMate提供のSession CLI・MCP application operationは、すべてprovider runtime bindingを必須とする。transport credentialはCLI/MCP routeを認証し、bindingだけがactor Session IDとoperation grantを証明する。request body、prompt、workspace path、adapter種別、parent関係からactorを推測せず、binding欠落・空白・不正・失効・grant不足ではapplication serviceの副作用開始前にfail closedとする。
+- Session操作、Turn操作、interaction、transcript、SessionFolder操作の対象Sessionは、`session.self`以外ではrequestの明示値を維持する。bindingから解決したactorを暗黙targetへ補完せず、現在存在しないRoleまたはhierarchy authorizationを追加しない。
 - MCPを呼び出しているagentのworkspaceを暗黙の対象にしない。
 - 初期surfaceは通常Sessionだけを扱い、Auxiliary Session、Companion Session、Character Authoring Sessionは対象外とする。
 - Provider、Character、Workspace、Session kindは作成後に変更しない。外部surfaceで公開するmetadata変更はrenameに限定する。
@@ -40,6 +40,8 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 ### Turn実行を独立したexecutionとして扱う
 
 - `turn.run`と`turn.enqueue`が作成する各Turnは独立したexecution IDを持ち、Session IDまたはMessage IDをexecution identityとして流用しない。
+- 新規execution requestはGUI送信を`{ kind: "user" }`、CLI・MCP送信を`{ kind: "session", sessionId, character }`として保存する。Session initiatorのSession IDはbindingから、Character ID・表示名・icon参照はactor Sessionとcanonical Character stateからexecution作成時に解決する。caller入力は受け付けない。
+- Session initiatorのCharacter値はexecution作成時snapshotであり、その後のrename、archive、削除では再解決しない。initiatorを持たない既存external requestだけをlegacyとして読み込む。
 - `turn.run`の呼び出し側は`wait`または`deferred`を明示する。どちらも同じexecutionを直ちに開始し、実行方式を分岐させない。
 - `wait`はterminal result、interaction待機、またはtimeoutまで待つ。client切断とwait timeoutはexecutionをcancelしない。
 - cancel、interaction response、状態取得はSession IDとexecution IDを組にして対象を検証する。
@@ -71,6 +73,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - response mode、wait timeout、request IDなどdeliveryだけに関係する値はfingerprintへ含めない。
 - 未完了recordはterminalへ収束するまで保持する。terminal recordの再送保証期間は24時間とし、起動時と定期cleanupで期限切れrecordを除去する。
 - response lossまたはclient切断の後も、同じkeyの再送でSessionまたはTurnを重複作成しない。
+- Turn作成fingerprintはinitiator kindとSession actor IDを含み、CLI/MCP adapter、binding ID/reference/generation、Character表示名、icon参照を含めない。canonical replayをCharacter snapshot再解決より先に判定し、同じactorのMCP・CLI retryを同じexecutionへ収束させる。別actorによる同一keyとpayloadはconflictとする。
 
 ### SessionFolderを対象Sessionのmanaged file boundaryとする
 
@@ -125,6 +128,7 @@ Electron Main Processが所有するin-flight execution、provider runtime、int
 - MemoryとSessionのcredentialおよび障害範囲を分離できる。
 - 呼び出し元Sessionと対象Sessionの所有関係が明示され、SessionFolderのfile authorityを対象Session内へ限定できる。
 - CLIとMCPのどちらで開始したexecutionも、もう一方から同じIDで追跡できる。
+- activeなuser、session、legacy executionは同じ永続FIFO順で既存Session message listへ投影する。対象Sessionの応答は左、sessionとlegacyの入力は右へ配置する。Session initiatorは保存済みCharacter名とavatar、legacyだけは`外部`と汎用avatarを使い、CLI/MCPのtransport badgeは表示しない。Session initiatorの詳細では保存済みSession IDを常に表示し、呼出元Sessionが現存する場合だけ現在のタイトルと、そのSession Windowを開く操作を表示する。GUI由来queued executionだけをGUIからcancelできる。
 - agentが生成した自然文を使い、呼び出し元に限定されないSession間の後続処理を構成できる。
 
 ### Negative

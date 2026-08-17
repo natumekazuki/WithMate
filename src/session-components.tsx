@@ -32,7 +32,7 @@ import { focusRovingItemByKey, useDialogA11y } from "./a11y.js";
 import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
-import type { SessionQueuedTurn } from "./session-gui-execution.js";
+import type { SessionQueuedTurn, SessionTurnExecutionProjection } from "./session-turn-execution.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -2180,7 +2180,9 @@ export type SessionMessageColumnProps = {
     id: string;
     label: string;
   } | null>;
-  queuedTurns?: Array<SessionQueuedTurn | null>;
+  turnExecutions?: Array<SessionTurnExecutionProjection | null>;
+  originSessionDetails?: readonly SessionOriginDetails[];
+  onOpenOriginSession?: (sessionId: string) => void;
   cancelingExecutionIds?: ReadonlySet<string>;
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
@@ -2208,6 +2210,11 @@ export type SessionMessageColumnProps = {
   onCancelQueuedTurn?: (execution: SessionQueuedTurn) => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
+};
+
+export type SessionOriginDetails = {
+  sessionId: string;
+  taskTitle: string;
 };
 
 function getNonBlankSelectionText(selection: Selection): string | null {
@@ -2515,7 +2522,9 @@ export function SessionMessageColumn({
   messages,
   messageKeys,
   messageGroups,
-  queuedTurns,
+  turnExecutions,
+  originSessionDetails = [],
+  onOpenOriginSession,
   cancelingExecutionIds = new Set<string>(),
   expandedArtifacts,
   messageListRef,
@@ -2625,7 +2634,7 @@ export function SessionMessageColumn({
     },
     [hasPendingInlineContent, messageGroups, pendingMessageGroupId],
   );
-  const firstQueuedTurnIndex = queuedTurns?.findIndex((queuedTurn) => queuedTurn !== null) ?? -1;
+  const firstQueuedTurnIndex = turnExecutions?.findIndex((execution) => execution?.state === "queued") ?? -1;
   const messageFindMatches = useMemo(() => {
     const matches: Array<
       | { kind: "message"; messageIndex: number; occurrenceIndex: number }
@@ -2948,7 +2957,10 @@ export function SessionMessageColumn({
 
   const renderPendingRow = (className = "") => (
     <article className={`message-row assistant pending-row${className ? ` ${className}` : ""}`}>
-      <CharacterAvatar character={character} size="small" className="message-avatar" />
+      <div className="message-avatar-stack">
+        <CharacterAvatar character={character} size="small" className="message-avatar" />
+      </div>
+      <div className="message-character-name">{character.name}</div>
       <div className="message-card assistant pending-message-card">
         {liveApprovalRequest ? (
           <section className="live-approval-card" role="group" aria-label="承認要求">
@@ -3045,7 +3057,19 @@ export function SessionMessageColumn({
             }
             const messageKey = getMessageKey(absoluteIndex);
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
-            const queuedTurn = queuedTurns?.[absoluteIndex] ?? null;
+            const turnExecution = turnExecutions?.[absoluteIndex] ?? null;
+            const queuedTurn = turnExecution?.state === "queued" ? turnExecution : null;
+            const sessionInitiator = turnExecution?.initiator?.kind === "session"
+              ? turnExecution.initiator
+              : null;
+            const turnInitiator = sessionInitiator
+              ? {
+                name: sessionInitiator.character.name,
+                iconPath: sessionInitiator.character.iconFilePath,
+              }
+              : turnExecution?.initiator === null
+                ? { name: "外部", iconPath: "" }
+                : null;
             const previousMessageGroup = absoluteIndex > 0 ? messageGroups?.[absoluteIndex - 1] ?? null : null;
             const nextMessageGroup = messageGroups?.[absoluteIndex + 1] ?? null;
             const isMessageGroupStart = !!messageGroup && previousMessageGroup?.id !== messageGroup.id;
@@ -3060,6 +3084,16 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
+            const messageCharacter = turnInitiator ?? (isAssistant ? character : null);
+            const isExternalOrigin = turnInitiator !== null;
+            const displayedRole = isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
+            const originDetailsKey = `${artifactKey}-origin-session`;
+            const originDetailsExpanded = originDetailsKey
+              ? expandedArtifacts[originDetailsKey] ?? false
+              : false;
+            const currentOriginSession = sessionInitiator
+              ? originSessionDetails.find((details) => details.sessionId === sessionInitiator.sessionId) ?? null
+              : null;
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactHasSnapshotRisk =
@@ -3096,15 +3130,15 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
               <article
-                className={`message-row ${message.role}${message.accent ? " accent" : ""}${
+                className={`message-row ${displayedRole}${message.accent ? " accent" : ""}${
                   messageGroup ? " auxiliary-message-group-item" : ""
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
                 }`}
               >
-                {isAssistant ? (
+                {messageCharacter ? (
                   <div className="message-avatar-stack">
-                    <CharacterAvatar character={character} size="small" className="message-avatar" />
+                    <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
                     {artifact ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -3123,9 +3157,25 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
+                    {sessionInitiator ? (
+                      <button
+                        className="artifact-toggle artifact-toggle-icon"
+                        type="button"
+                        onClick={() => onToggleArtifact(originDetailsKey)}
+                        aria-expanded={originDetailsExpanded}
+                        aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
+                        aria-label={originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
+                        title="Session情報"
+                      >
+                        {originDetailsExpanded ? "−" : "i"}
+                      </button>
+                    ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
+                {messageCharacter ? (
+                  <div className="message-character-name">{messageCharacter.name}</div>
+                ) : null}
+                <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
                   {artifact && !isAssistant ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
@@ -3155,6 +3205,39 @@ export function SessionMessageColumn({
                       onOpenPath={onOpenPath}
                     />
                   </div>
+
+                  {sessionInitiator && originDetailsExpanded ? (
+                    <section
+                      id={`origin-session-panel-${turnExecution?.executionId}`}
+                      className="origin-session-details"
+                      aria-label="呼出元Session情報"
+                    >
+                      <dl>
+                        <div>
+                          <dt>Session ID</dt>
+                          <dd><code>{sessionInitiator.sessionId}</code></dd>
+                        </div>
+                        {currentOriginSession ? (
+                          <div>
+                            <dt>タイトル</dt>
+                            <dd>
+                              {onOpenOriginSession ? (
+                                <button
+                                  className="origin-session-link"
+                                  type="button"
+                                  onClick={() => onOpenOriginSession(sessionInitiator.sessionId)}
+                                  aria-label={`${currentOriginSession.taskTitle}を別Windowで開く`}
+                                >
+                                  <span>{currentOriginSession.taskTitle}</span>
+                                  <span aria-hidden="true">↗</span>
+                                </button>
+                              ) : currentOriginSession.taskTitle}
+                            </dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                    </section>
+                  ) : null}
 
                   {queuedTurn ? (
                     <div className="queued-turn-status" role="status" aria-label={`待機中 ${queuedTurn.queuePosition}番目`}>

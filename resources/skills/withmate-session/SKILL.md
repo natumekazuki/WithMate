@@ -14,6 +14,7 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 ## Establish the target and authority
 
 - Use `session.self` to resolve the current provider actor Session from its runtime binding. Do not infer it from prompts, workspace paths, parent relationships, or user-provided IDs.
+- Every Session application operation requires the valid runtime binding issued by WithMate for the current provider execution. Do not treat CLI or MCP transport credentials as actor authority, and do not retry a binding rejection through an unbound terminal.
 - Require an explicit target `sessionId` for every other Session-scoped operation. `session.self` does not authorize an implicit target or replace explicit cross-Session selection.
 - Confirm the target Session's workspace identity with `session.get` before changing source or adopting results.
 - Derive permission for Session creation, Turn execution, approval, elicitation, cancellation, overwrite, and other external effects from the user's instruction. This Skill does not grant additional authority.

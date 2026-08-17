@@ -5,9 +5,9 @@ import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
   EnqueueSessionTurnResult,
-  SessionGuiTurnExecution,
+  SessionTurnExecutionProjection,
   SessionTurnAdmissionError,
-} from "../src/session-gui-execution.js";
+} from "../src/session-turn-execution.js";
 import {
   parseSetSessionPinnedRequest,
   type CreateSessionInput,
@@ -209,7 +209,7 @@ export class MainSessionCommandFacade {
     }
 
     const executionRequest = {
-      source: "gui" as const,
+      initiator: { kind: "user" as const },
       turn: { ...request, clientRequestId },
     };
     try {
@@ -221,7 +221,7 @@ export class MainSessionCommandFacade {
       });
       return {
         ok: true,
-        execution: projectGuiTurnExecutions(
+        execution: projectSessionTurnExecutions(
           this.deps.getSessionExecutionService().listRecords(sessionId),
         ).find((candidate) => candidate.executionId === execution.id) ?? null,
       };
@@ -232,8 +232,8 @@ export class MainSessionCommandFacade {
     }
   }
 
-  listGuiSessionTurnExecutions(sessionId: string): SessionGuiTurnExecution[] {
-    return projectGuiTurnExecutions(this.deps.getSessionExecutionService().listRecords(sessionId));
+  listSessionTurnExecutions(sessionId: string): SessionTurnExecutionProjection[] {
+    return projectSessionTurnExecutions(this.deps.getSessionExecutionService().listRecords(sessionId));
   }
 
   async cancelSessionExecution(
@@ -241,6 +241,14 @@ export class MainSessionCommandFacade {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult> {
     try {
+      const execution = this.deps.getSessionExecutionService().getRecord(sessionId, request.executionId);
+      if (parseSessionExecutionTurnRequest(execution.request).initiator?.kind !== "user") {
+        return admissionFailure(
+          "EXECUTION_NOT_CANCELLABLE",
+          "このTurnはSession画面からキャンセルできません。",
+          false,
+        );
+      }
       await this.deps.getSessionExecutionService().cancel({
         sessionId,
         executionId: request.executionId,
@@ -274,26 +282,31 @@ export class MainSessionCommandFacade {
   }
 }
 
-function projectGuiTurnExecutions(
+function projectSessionTurnExecutions(
   executions: ReturnType<SessionExecutionService["listRecords"]>,
-): SessionGuiTurnExecution[] {
+): SessionTurnExecutionProjection[] {
   let queuePosition = 0;
-  const projected: SessionGuiTurnExecution[] = [];
+  const projected: SessionTurnExecutionProjection[] = [];
   for (const execution of executions) {
     if (execution.state !== "running" && execution.state !== "queued") continue;
     const position = execution.state === "queued" ? ++queuePosition : null;
     const request = parseSessionExecutionTurnRequest(execution.request);
-    if (request.source !== "gui") continue;
     const base = {
       executionId: execution.id,
       sessionId: execution.sessionId,
       clientRequestId: request.turn.clientRequestId?.trim() || null,
       userMessage: request.turn.userMessage,
+      initiator: request.initiator,
       createdAt: execution.createdAt,
       updatedAt: execution.updatedAt,
     };
     projected.push(execution.state === "queued"
-      ? { ...base, state: "queued", queuePosition: position!, canCancel: true }
+      ? {
+        ...base,
+        state: "queued",
+        queuePosition: position!,
+        canCancel: request.initiator?.kind === "user",
+      }
       : { ...base, state: "running", queuePosition: null, canCancel: false });
   }
   return projected;
@@ -301,7 +314,7 @@ function projectGuiTurnExecutions(
 
 function fingerprintGuiTurn(sessionId: string, request: RunSessionTurnRequest): string {
   const { clientRequestId: _clientRequestId, submitSource: _submitSource, ...effectInput } = request;
-  return fingerprint({ sessionId, turn: effectInput });
+  return fingerprint({ initiator: { kind: "user" }, sessionId, turn: effectInput });
 }
 
 function fingerprintGuiCancel(sessionId: string, request: CancelSessionExecutionRequest): string {

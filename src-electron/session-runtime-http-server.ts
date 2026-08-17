@@ -27,7 +27,7 @@ import type {
   ResolvedAgentRuntimeBinding,
 } from "./agent-runtime-binding.js";
 
-export const SESSION_SELF_AGENT_RUNTIME_OPERATION = "session.self.resolve";
+export const SESSION_RUNTIME_AGENT_OPERATION = "session.runtime.invoke";
 
 export type SessionRuntimeInvocationContext = {
   agentRuntimeBinding: ResolvedAgentRuntimeBinding | null;
@@ -384,17 +384,14 @@ function parseExchangePayload(value: unknown): SessionRuntimeExchangePayload {
 }
 
 function resolveInvocationContext(
-  operation: SessionRuntimeOperation,
+  _operation: SessionRuntimeOperation,
   bindingReference: string | undefined,
   registry: Pick<AgentRuntimeBindingRegistry, "resolve"> | undefined,
 ): { ok: true; context: SessionRuntimeInvocationContext } | { ok: false; error: SessionRuntimeError } {
-  if (operation !== "session.self") {
-    return { ok: true, context: { agentRuntimeBinding: null } };
-  }
   if (bindingReference !== undefined && bindingReference.trim().length === 0) {
     return { ok: false, error: bindingFailure("SESSION_BINDING_INVALID") };
   }
-  const resolution = registry?.resolve(bindingReference, SESSION_SELF_AGENT_RUNTIME_OPERATION);
+  const resolution = registry?.resolve(bindingReference, SESSION_RUNTIME_AGENT_OPERATION);
   if (!resolution?.ok) {
     return {
       ok: false,

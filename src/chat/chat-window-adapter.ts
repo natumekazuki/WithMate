@@ -167,7 +167,9 @@ export type LiveSessionMessageColumnProps = {
   messages: Message[];
   messageKeys?: ChatMessageColumnProps["messageKeys"];
   messageGroups?: ChatMessageColumnProps["messageGroups"];
-  queuedTurns?: ChatMessageColumnProps["queuedTurns"];
+  turnExecutions?: ChatMessageColumnProps["turnExecutions"];
+  originSessionDetails?: ChatMessageColumnProps["originSessionDetails"];
+  onOpenOriginSession?: ChatMessageColumnProps["onOpenOriginSession"];
   cancelingExecutionIds?: ChatMessageColumnProps["cancelingExecutionIds"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
@@ -342,7 +344,9 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     messages: input.messages,
     messageKeys: input.messageKeys,
     messageGroups: input.messageGroups,
-    queuedTurns: input.queuedTurns,
+    turnExecutions: input.turnExecutions,
+    originSessionDetails: input.originSessionDetails,
+    onOpenOriginSession: input.onOpenOriginSession,
     cancelingExecutionIds: input.cancelingExecutionIds,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,

@@ -16,7 +16,7 @@ Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれもclient作成時にc
 
 - Electron main processのagent runtime binding registryをopaque referenceの発行、解決、operation grant検証、generation、失効のcanonical ownerとする。active generationのreuseに必要なreferenceはprocess memory内だけに保持し、lookupと永続的なidentityにはhashを使う。provider processへは推測不能なopaque referenceだけを渡す。`expiresAt`は発行前に正規化・検証し、正規化後の期限もreuse identityへ含める。
 - binding authorityはgeneric snapshotとする。actor Session ID、provider execution generation、任意のRole/hierarchy snapshot、operation grant、発行・期限・失効情報を保持できるが、registry自身はRoleの意味やdefault permissionを発明しない。
-- 現行baseにRole契約がないため、Session/Turn mutationとCoordination Event endpointは本変更では有効化しない。binding-requiredな`session.self` readだけはactor Session IDの自己解決として許可し、対象Sessionを変更または暗黙選択するauthorityには使わない。後続機能はaccepted Role/hierarchy contractをbinding発行時に渡し、同じauthorizer境界を利用する。
+- Session CLI・MCPのapplication operationはbinding-requiredとし、`session.runtime.invoke` grantを共有のallowlistとして使う。bindingはactor Session identityを証明するが、対象Sessionを変更または暗黙選択するauthorityには使わない。現行operationの既存target validationを維持し、Role/hierarchy authorizationは追加しない。Coordination Event endpointは引き続き有効化しない。
 - WithMate-owned endpointはroute tableで`required`、`optional`、`none`を必ず宣言する。aliasとruntime exchangeも同じpolicyへ収束させる。
 - Session scopeのCharacter context / affectは`required`とし、解決済みactor Sessionをapplication requestへserver側で設定する。callerのSession IDはactorを上書きしない。
 - agent-facing Memory CRUDは`optional`とする。bindingがある場合はactor Sessionとproviderをsource/idempotency principalへ使用するが、targetはrequestの明示selectorを維持する。Session bindingはuser-global、明示Project、actor自身のCharacter、actor自身のCharacter+Projectを操作でき、別Characterをownerに持つtargetは拒否する。bindingがない場合は既存の認証済みlocal-user/operator経路を利用できる。
@@ -40,6 +40,7 @@ Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれもclient作成時にc
 ## Consequences
 
 - Character context / affectのcallerはactor Session IDをMCP requestへ含めずに呼び出せる。
+- Session CLI・MCPのcallerはactor Session IDとCharacter表示値をrequestへ含めず、bindingとcanonical stateからTurn initiatorを解決する。対象Session IDは兄弟operationの明示入力として維持する。
 - Memoryのtarget contractは変わらず、旧current Project / Character targetは復活しない。
 - Role/hierarchy contractの導入前にSession mutation authorityを誤って公開しない。
 - provider client cacheはSession generation単位のentryを持つため、invalidateとSession deleteで明示的なcleanupが必要になる。CopilotではSDKの`stop()`をboundedに待ち、非空のerror result、reject、またはtimeoutでは`forceStop()`へ移行する。`forceStop()`自身も同じ上限でboundedに待ち、rejectまたはtimeoutでもcleanupをsettleする。app終了はprovider cleanup完了を待ってからpersistent storeを閉じ、終了処理を再開する。provider cleanup、binding revoke、store closeの個別失敗があっても終了状態をsettleし、再quitへ到達する。

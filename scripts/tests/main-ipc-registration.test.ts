@@ -37,7 +37,7 @@ import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -201,7 +201,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_DELETE_SESSIONS_LAST_ACTIVE_BEFORE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_RUN_SESSION_TURN_CHANNEL));
   assert.ok(handlers.has(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL));
 
   const removedChannels = [
@@ -305,7 +305,7 @@ test("GUI queue IPC は対象 Session window だけにenqueue/list/cancelを許�
       calls.push(["enqueue", sessionId, request]);
       return { ok: true, execution: null };
     },
-    listGuiSessionTurnExecutions: (sessionId: string) => {
+    listSessionTurnExecutions: (sessionId: string) => {
       calls.push(["list", sessionId]);
       return [];
     },
@@ -322,7 +322,7 @@ test("GUI queue IPC は対象 Session window だけにenqueue/list/cancelを許�
     await handlers.get(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL)?.({}, "session-1", enqueueRequest),
     { ok: true, execution: null },
   );
-  assert.deepEqual(await handlers.get(WITHMATE_LIST_GUI_SESSION_TURN_EXECUTIONS_CHANNEL)?.({}, "session-1"), []);
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL)?.({}, "session-1"), []);
   assert.deepEqual(
     await handlers.get(WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL)?.({}, "session-1", cancelRequest),
     { ok: true },

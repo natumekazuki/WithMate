@@ -1,12 +1,13 @@
 import type { RunSessionTurnRequest } from "../src/app-state.js";
+import type { TurnInitiator } from "../src/session-execution.js";
 
 export type SessionExecutionTurnRequest = {
-  source: "external";
+  initiator: Extract<TurnInitiator, { kind: "session" }> | null;
   catalogRevision: number;
   providerId: "codex" | "copilot";
   turn: RunSessionTurnRequest;
 } | {
-  source: "gui";
+  initiator: Extract<TurnInitiator, { kind: "user" }>;
   catalogRevision: null;
   providerId: null;
   turn: RunSessionTurnRequest;
@@ -23,10 +24,16 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
   if (typeof request !== "object" || request === null) {
     throw new TypeError("Session execution request must be an object.");
   }
-  const executionRequest = request as { source?: unknown; catalogRevision?: unknown; turn?: unknown };
-  if (executionRequest.source === "gui") {
+  const executionRequest = request as {
+    source?: unknown;
+    initiator?: unknown;
+    catalogRevision?: unknown;
+    turn?: unknown;
+  };
+  const initiator = parseInitiator(executionRequest.initiator);
+  if (initiator?.kind === "user" || (initiator === undefined && executionRequest.source === "gui")) {
     return {
-      source: "gui",
+      initiator: { kind: "user" },
       catalogRevision: null,
       providerId: null,
       turn: parseTurn(executionRequest.turn),
@@ -40,7 +47,7 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
     throw new TypeError("Session execution provider must be codex or copilot.");
   }
   return {
-    source: "external",
+    initiator: initiator?.kind === "session" ? initiator : null,
     catalogRevision: executionRequest.catalogRevision as number,
     providerId: candidate.provider,
     turn: parseTurn(executionRequest.turn),
@@ -54,10 +61,10 @@ export async function validateSessionExecutionTurnRequest(
   validateGuiTurn?: (sessionId: string, turn: RunSessionTurnRequest) => Promise<void> | void,
 ): Promise<unknown> {
   const parsed = parseSessionExecutionTurnRequest(request);
-  if (parsed.source === "gui") {
+  if (parsed.catalogRevision === null) {
     await validateGuiTurn?.(sessionId, parsed.turn);
     return {
-      source: "gui",
+      initiator: parsed.initiator,
       turn: parsed.turn,
     };
   }
@@ -68,10 +75,59 @@ export async function validateSessionExecutionTurnRequest(
     parsed.providerId,
   );
   return {
+    ...(parsed.initiator ? { initiator: parsed.initiator } : {}),
     catalogRevision: parsed.catalogRevision,
     turn: {
       provider: parsed.providerId,
       ...validatedTurn,
+    },
+  };
+}
+
+function parseInitiator(value: unknown): TurnInitiator | null | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Session execution initiator must be an object.");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (candidate.kind === "user") {
+    if (Object.keys(candidate).some((key) => key !== "kind")) {
+      throw new TypeError("Session execution user initiator has an unknown field.");
+    }
+    return { kind: "user" };
+  }
+  if (candidate.kind !== "session") {
+    throw new TypeError("Session execution initiator kind is invalid.");
+  }
+  if (Object.keys(candidate).some((key) => key !== "kind" && key !== "sessionId" && key !== "character")) {
+    throw new TypeError("Session execution Session initiator has an unknown field.");
+  }
+  if (typeof candidate.sessionId !== "string" || !candidate.sessionId.trim()) {
+    throw new TypeError("Session execution initiator Session ID is required.");
+  }
+  if (!candidate.character || typeof candidate.character !== "object" || Array.isArray(candidate.character)) {
+    throw new TypeError("Session execution initiator character is required.");
+  }
+  const character = candidate.character as Record<string, unknown>;
+  if (Object.keys(character).some((key) => !["characterId", "name", "iconFilePath"].includes(key))) {
+    throw new TypeError("Session execution initiator character has an unknown field.");
+  }
+  if (typeof character.characterId !== "string" || !character.characterId.trim()) {
+    throw new TypeError("Session execution initiator character ID is required.");
+  }
+  if (typeof character.name !== "string" || !character.name.trim()) {
+    throw new TypeError("Session execution initiator character name is required.");
+  }
+  if (typeof character.iconFilePath !== "string") {
+    throw new TypeError("Session execution initiator character icon path must be a string.");
+  }
+  return {
+    kind: "session",
+    sessionId: candidate.sessionId,
+    character: {
+      characterId: character.characterId,
+      name: character.name,
+      iconFilePath: character.iconFilePath,
     },
   };
 }

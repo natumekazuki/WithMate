@@ -10,6 +10,15 @@ test("EXT-ATTACH-10: validation後もdispatch envelopeとattachment identityを�
   const validated = await validateSessionExecutionTurnRequest(
     "session-1",
     {
+      initiator: {
+        kind: "session",
+        sessionId: "session-actor",
+        character: {
+          characterId: "character-actor",
+          name: "Actor",
+          iconFilePath: "C:/characters/actor.png",
+        },
+      },
       catalogRevision: 7,
       turn: {
         provider: "copilot",
@@ -37,8 +46,7 @@ test("EXT-ATTACH-10: validation後もdispatch envelopeとattachment identityを�
   );
 
   const reparsed = parseSessionExecutionTurnRequest(validated);
-  assert.equal(reparsed.source, "external");
-  if (reparsed.source !== "external") throw new Error("external request expected");
+  assert.equal(reparsed.initiator?.kind, "session");
   assert.equal(reparsed.catalogRevision, 7);
   assert.equal(reparsed.providerId, "copilot");
   assert.equal(reparsed.turn.attachments?.[0]?.identity?.canonicalRelativePath, "brief.md");
@@ -49,7 +57,7 @@ test("GUI queue requestはclient request IDを含む通常Session Turnとしてv
   const validated = await validateSessionExecutionTurnRequest(
     "session-1",
     {
-      source: "gui",
+      initiator: { kind: "user" },
       turn: {
         userMessage: "次の依頼",
         clientRequestId: "11111111-1111-4111-8111-111111111111",
@@ -70,8 +78,39 @@ test("GUI queue requestはclient request IDを含む通常Session Turnとしてv
   );
 
   const reparsed = parseSessionExecutionTurnRequest(validated);
-  assert.equal(reparsed.source, "gui");
+  assert.deepEqual(reparsed.initiator, { kind: "user" });
   assert.equal(reparsed.catalogRevision, null);
   assert.equal(reparsed.turn.clientRequestId, "11111111-1111-4111-8111-111111111111");
   assert.equal(guiValidationCount, 1);
+});
+
+test("initiatorなしの旧external requestだけをlegacyとして読み込む", () => {
+  const legacy = parseSessionExecutionTurnRequest({
+    catalogRevision: 3,
+    turn: {
+      provider: "codex",
+      userMessage: "legacy request",
+    },
+  });
+  assert.equal(legacy.initiator, null);
+  assert.equal(legacy.catalogRevision, 3);
+
+  const legacyGui = parseSessionExecutionTurnRequest({
+    source: "gui",
+    turn: { userMessage: "legacy GUI request" },
+  });
+  assert.deepEqual(legacyGui.initiator, { kind: "user" });
+  assert.equal(legacyGui.catalogRevision, null);
+});
+
+test("Session initiatorは完全なidentity tupleだけを受け付ける", () => {
+  assert.throws(() => parseSessionExecutionTurnRequest({
+    initiator: {
+      kind: "session",
+      sessionId: "session-actor",
+      character: { characterId: "character-actor", name: "Actor" },
+    },
+    catalogRevision: 3,
+    turn: { provider: "codex", userMessage: "invalid" },
+  }), /icon path/i);
 });

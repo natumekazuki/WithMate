@@ -46,7 +46,7 @@ The CLI and MCP expose the same 18 operations:
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
 
-`session.self` is a binding-required read that returns only the current provider actor's Session ID. It does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff.
+Every application operation requires the valid runtime binding issued by WithMate for the current provider execution. `session.self` returns only that binding's actor Session ID and does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff; the actor is never used as an implicit target.
 
 ## Turn lifecycle
 

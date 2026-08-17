@@ -10,7 +10,7 @@ import {
   createSessionRuntimeResult,
 } from "../../src/session-external-runtime-contract.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
-import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
+import { AgentRuntimeBindingRegistry, type ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionFileServiceError } from "../../src-electron/session-file-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
@@ -45,8 +45,40 @@ const mutationInput = {
   },
 };
 
+const actorBinding: ResolvedAgentRuntimeBinding = {
+  bindingId: "binding-actor",
+  bindingIdHash: "binding-hash-actor",
+  actorSessionId: "session-actor",
+  providerId: "codex",
+  executionGeneration: "generation-actor",
+  authoritySnapshot: {},
+  operationGrants: ["session.runtime.invoke"],
+  createdAt: "2026-08-11T00:00:00.000Z",
+  expiresAt: null,
+};
+
+const resolveTurnInitiator = async (actorSessionId: string) => ({
+  kind: "session" as const,
+  sessionId: actorSessionId,
+  character: {
+    characterId: `character-${actorSessionId}`,
+    name: `Character ${actorSessionId}`,
+    iconFilePath: `C:/characters/${actorSessionId}.png`,
+  },
+});
+
+function executeBound(
+  service: SessionExternalApplicationService,
+  operation: Parameters<SessionExternalApplicationService["execute"]>[0],
+  input: unknown,
+  binding: ResolvedAgentRuntimeBinding | null = actorBinding,
+) {
+  return service.execute(operation, input, binding);
+}
+
 test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだけを公開する", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     executionService: {
       beginShutdown() {},
       async run() { return execution; },
@@ -62,21 +94,22 @@ test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだ�
   const projection = registry.issueOrReuse({
     actorSessionId: "session-actor",
     providerId: "codex",
-    operationGrants: ["session.self.resolve"],
+    operationGrants: ["session.runtime.invoke"],
   });
-  const resolved = registry.resolve(projection.bindingReference, "session.self.resolve");
+  const resolved = registry.resolve(projection.bindingReference, "session.runtime.invoke");
   assert.equal(resolved.ok, true);
   if (!resolved.ok) throw new Error("Expected a resolved binding.");
 
-  assert.deepEqual(await service.execute("session.self", {}, resolved.binding),
+  assert.deepEqual(await executeBound(service, "session.self", {}, resolved.binding),
     createSessionRuntimeResult("session.self", { sessionId: "session-actor" }));
-  const missing = await service.execute("session.self", {});
+  const missing = await executeBound(service, "session.self", {}, null);
   assert.equal("error" in missing && missing.error.code, "SESSION_BINDING_REQUIRED");
 });
 
 test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable errorを保つ", async () => {
   const calls: Array<{ operation: string; input: unknown }> = [];
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() { throw new Error("unused"); },
@@ -96,11 +129,11 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
     },
   });
 
-  const listResponse = await service.execute("session.list", {});
+  const listResponse = await executeBound(service, "session.list", {});
   assert.deepEqual(calls, [{ operation: "list", input: { limit: 50 } }]);
   assert.equal("result" in listResponse, true);
 
-  const getResponse = await service.execute("session.get", { sessionId: "missing" });
+  const getResponse = await executeBound(service, "session.get", { sessionId: "missing" });
   assert.equal("error" in getResponse && getResponse.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
 });
@@ -114,6 +147,7 @@ test("EXT-TRANSCRIPT-13: transcript.exportを専用serviceへdispatchし結果�
   };
   const result = { destination: "inline" as const, format: "json" as const, byteLength: 2, content: "{}" };
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     executionService: {} as never,
     crudService: {} as never,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
@@ -125,7 +159,7 @@ test("EXT-TRANSCRIPT-13: transcript.exportを専用serviceへdispatchし結果�
       return result;
     } },
   });
-  const response = await service.execute("transcript.export", input);
+  const response = await executeBound(service, "transcript.export", input);
   assert.deepEqual(response, {
     schemaVersion: "withmate-session-result-v2",
     operation: "transcript.export",
@@ -135,12 +169,13 @@ test("EXT-TRANSCRIPT-13: transcript.exportを専用serviceへdispatchし結果�
 
 test("EXT-TRANSCRIPT-13: inline transcript.exportの予期しないfailureはnot_appliedを返す", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     executionService: {} as never,
     crudService: {} as never,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     transcriptService: { export: async () => { throw new Error("publish response lost"); } },
   });
-  const response = await service.execute("transcript.export", {
+  const response = await executeBound(service, "transcript.export", {
     sessionId: "session-1",
     format: "json",
     maxBytes: 1024,
@@ -151,12 +186,13 @@ test("EXT-TRANSCRIPT-13: inline transcript.exportの予期しないfailureはnot
 
 test("EXT-TRANSCRIPT-13: SessionFolder transcript.exportの予期しないfailureはindeterminateを返す", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     executionService: {} as never,
     crudService: {} as never,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     transcriptService: { export: async () => { throw new Error("publish response lost"); } },
   });
-  const response = await service.execute("transcript.export", {
+  const response = await executeBound(service, "transcript.export", {
     sessionId: "session-1", format: "json", maxBytes: 1024,
     destination: { kind: "session_folder", relativePath: "transcript.json", replace: false, idempotencyKey: "export-1" },
   });
@@ -166,6 +202,7 @@ test("EXT-TRANSCRIPT-13: SessionFolder transcript.exportの予期しないfailur
 test("SF-ADAPTER-02: Session file operationsを同じapplication serviceへdispatchする", async () => {
   const calls: Array<{ operation: string; input: unknown }> = [];
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -201,9 +238,9 @@ test("SF-ADAPTER-02: Session file operationsを同じapplication serviceへdispa
     },
   });
 
-  await service.execute("session.files.list", { sessionId: "session-1" });
-  await service.execute("session.files.read_text", { sessionId: "session-1", relativePath: "brief.md" });
-  await service.execute("session.files.write_text", {
+  await executeBound(service, "session.files.list", { sessionId: "session-1" });
+  await executeBound(service, "session.files.read_text", { sessionId: "session-1", relativePath: "brief.md" });
+  await executeBound(service, "session.files.write_text", {
     sessionId: "session-1",
     relativePath: "brief.md",
     content: "hello",
@@ -224,6 +261,7 @@ test("SF-ADAPTER-02: Session file operationsを同じapplication serviceへdispa
 
 test("SF-EFFECT-01: publish後のtyped file errorをindeterminateとsafe identifiers付きで返す", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -256,7 +294,7 @@ test("SF-EFFECT-01: publish後のtyped file errorをindeterminateとsafe identif
     },
   });
 
-  const response = await service.execute("session.files.write_text", {
+  const response = await executeBound(service, "session.files.write_text", {
     sessionId: "session-1",
     relativePath: "brief.md",
     content: "hello",
@@ -271,6 +309,7 @@ test("SF-EFFECT-01: publish後のtyped file errorをindeterminateとsafe identif
 
 test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過をappliedとして返す", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() { throw new Error("unused"); },
@@ -290,14 +329,14 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
     },
   });
 
-  const createResponse = await service.execute("session.create", {
+  const createResponse = await executeBound(service, "session.create", {
     title: "New Session",
     provider: "codex",
     catalogRevision: 4,
     workspace: { kind: "session_folder" },
     idempotencyKey: "create-key",
   });
-  const renameResponse = await service.execute("session.rename", {
+  const renameResponse = await executeBound(service, "session.rename", {
     sessionId: "session-1",
     title: "Renamed Session",
     idempotencyKey: "rename-key",
@@ -339,6 +378,7 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
     );
   }
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -358,19 +398,19 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
     },
   });
 
-  const createResponse = await service.execute("session.create", {
+  const createResponse = await executeBound(service, "session.create", {
     title: "New Session",
     provider: "codex",
     catalogRevision: 4,
     workspace: { kind: "session_folder" },
     idempotencyKey: "create-key",
   });
-  const renameResponse = await service.execute("session.rename", {
+  const renameResponse = await executeBound(service, "session.rename", {
     sessionId: "session-1",
     title: "Renamed Session",
     idempotencyKey: "rename-key",
   });
-  const runResponse = await service.execute("turn.run", mutationInput);
+  const runResponse = await executeBound(service, "turn.run", mutationInput);
 
   assert.deepEqual(
     [createResponse, renameResponse, runResponse].map((response) => "error" in response && response.error.effect),
@@ -394,6 +434,7 @@ function createBoundarySessionResult(sessionId: string): { sessionId: string; pa
 
 test("READ-EFFECT-01: read-only operationの予期しない例外はnot_appliedへ収束する", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -413,7 +454,7 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
     },
   });
 
-  const response = await service.execute("session.get", { sessionId: "session-1" });
+  const response = await executeBound(service, "session.get", { sessionId: "session-1" });
   assert.equal("error" in response && response.error.code, "RUNTIME_UNAVAILABLE");
   assert.equal("error" in response && response.error.effect, "not_applied");
 });
@@ -421,6 +462,7 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
   let executionInvoked = false;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({
       revision: 7,
       providers: [{
@@ -477,7 +519,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
     },
   });
 
-  const response = await service.execute("runtime.catalog", {});
+  const response = await executeBound(service, "runtime.catalog", {});
 
   assert.equal(executionInvoked, false);
   assert.deepEqual(response, {
@@ -513,6 +555,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
 test("RUNTIME-CATALOG-01: catalog欠落時はread-only errorへ収束しseedやexecutionへ触れない", async () => {
   let executionInvoked = false;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => null,
     executionService: {
       beginShutdown() { executionInvoked = true; },
@@ -526,7 +569,7 @@ test("RUNTIME-CATALOG-01: catalog欠落時はread-only errorへ収束しseedやe
     },
   });
 
-  const response = await service.execute("runtime.catalog", {});
+  const response = await executeBound(service, "runtime.catalog", {});
 
   assert.equal(executionInvoked, false);
   assert.equal("error" in response && response.error.code, "RUNTIME_UNAVAILABLE");
@@ -538,6 +581,7 @@ test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だ�
   let executionInvoked = false;
   let catalogReads = 0;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => {
       catalogReads += 1;
       return {
@@ -583,7 +627,7 @@ test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だ�
     },
   });
 
-  const response = await service.execute("turn.options", { sessionId: "session-1" });
+  const response = await executeBound(service, "turn.options", { sessionId: "session-1" });
 
   assert.equal(executionInvoked, false);
   assert.equal(catalogReads, 1);
@@ -613,6 +657,7 @@ test("TURN-OPTIONS: 対象Sessionと同じcatalog snapshotからpublic候補だ�
 
 test("TURN-OPTIONS: 対象Session欠落とprovider欠落をread-only errorへ写像する", async () => {
   const createService = (get: () => Promise<never>) => new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 9, providers: [] }),
     isProviderEnabled: () => true,
     executionService: {
@@ -633,13 +678,13 @@ test("TURN-OPTIONS: 対象Session欠落とprovider欠落をread-only errorへ写
     },
   });
 
-  const missing = await createService(async () => {
+  const missing = await executeBound(createService(async () => {
     throw new SessionCrudError("SESSION_NOT_FOUND", "missing");
-  }).execute("turn.options", { sessionId: "missing" });
-  const providerMissing = await createService(async () => ({
+  }), "turn.options", { sessionId: "missing" });
+  const providerMissing = await executeBound(createService(async () => ({
     sessionId: "session-1",
     provider: { id: "codex", catalogRevision: 2 },
-  } as never)).execute("turn.options", { sessionId: "session-1" });
+  } as never)), "turn.options", { sessionId: "session-1" });
 
   assert.equal("error" in missing && missing.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in missing && missing.error.effect, "not_applied");
@@ -649,6 +694,7 @@ test("TURN-OPTIONS: 対象Session欠落とprovider欠落をread-only errorへ写
 
 test("TURN-OPTIONS-PROJECTION-05: public projectionの8 MiB超過を副作用なしで拒否する", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({
       revision: 9,
       providers: [{
@@ -680,7 +726,7 @@ test("TURN-OPTIONS-PROJECTION-05: public projectionの8 MiB超過を副作用な
     },
   });
 
-  const response = await service.execute("turn.options", { sessionId: "session-1" });
+  const response = await executeBound(service, "turn.options", { sessionId: "session-1" });
 
   assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in response && response.error.effect, "not_applied");
@@ -688,6 +734,7 @@ test("TURN-OPTIONS-PROJECTION-05: public projectionの8 MiB超過を副作用な
 
 test("TURN-OPTIONS-CAPABILITY-04: 非対応providerとdisabled providerを候補投影前に拒否する", async () => {
   const createService = (providerId: string, enabled: boolean) => new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({
       revision: 9,
       providers: [{
@@ -723,8 +770,8 @@ test("TURN-OPTIONS-CAPABILITY-04: 非対応providerとdisabled providerを候補
     },
   });
 
-  const unsupported = await createService("unknown", true).execute("turn.options", { sessionId: "session-1" });
-  const disabled = await createService("codex", false).execute("turn.options", { sessionId: "session-1" });
+  const unsupported = await executeBound(createService("unknown", true), "turn.options", { sessionId: "session-1" });
+  const disabled = await executeBound(createService("codex", false), "turn.options", { sessionId: "session-1" });
 
   assert.equal("error" in unsupported && unsupported.error.code, "RUNTIME_UNAVAILABLE");
   assert.equal("error" in unsupported && unsupported.error.effect, "not_applied");
@@ -734,6 +781,7 @@ test("TURN-OPTIONS-CAPABILITY-04: 非対応providerとdisabled providerを候補
 
 test("EXT-PROVIDER-01: Copilot turn.optionsはpublic custom agentだけを投影する", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({
       revision: 5,
       providers: [{
@@ -769,7 +817,7 @@ test("EXT-PROVIDER-01: Copilot turn.optionsはpublic custom agentだけを投影
     },
   });
 
-  const response = await service.execute("turn.options", { sessionId: "session-1" });
+  const response = await executeBound(service, "turn.options", { sessionId: "session-1" });
   assert.equal("result" in response && response.result.provider.id, "copilot");
   assert.deepEqual("result" in response && "customAgents" in response.result && response.result.customAgents, [
     { name: "", displayName: "Default", description: "" },
@@ -781,6 +829,7 @@ test("EXT-PROVIDER-01: Copilot turn.optionsはpublic custom agentだけを投影
 test("Session application service persists catalog revision with the turn and returns an allowlisted projection", async () => {
   const runInputs: unknown[] = [];
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -800,7 +849,7 @@ test("Session application service persists catalog revision with the turn and re
       async waitForTerminal() { throw new Error("unused"); },
     },
   });
-  const response = await service.execute("turn.run", mutationInput);
+  const response = await executeBound(service, "turn.run", mutationInput);
   assert.equal("result" in response, true);
   assert.equal(runInputs.length, 1);
   assert.deepEqual(
@@ -808,6 +857,7 @@ test("Session application service persists catalog revision with the turn and re
     {
       sessionId: "session-1",
       request: {
+        initiator: await resolveTurnInitiator("session-actor"),
         catalogRevision: 4,
         turn: mutationInput.turn,
       },
@@ -825,6 +875,7 @@ test("Session application service persists catalog revision with the turn and re
 test("Session application service rejects a stale catalog before creating an execution", async () => {
   let invoked = false;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 5, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -837,7 +888,7 @@ test("Session application service rejects a stale catalog before creating an exe
       async waitForTerminal() { throw new Error("unused"); },
     },
   });
-  const response = await service.execute("turn.run", mutationInput);
+  const response = await executeBound(service, "turn.run", mutationInput);
   assert.equal(invoked, false);
   assert.equal("error" in response && response.error.code, "CATALOG_REVISION_STALE");
   assert.equal("error" in response && response.error.effect, "not_applied");
@@ -846,6 +897,7 @@ test("Session application service rejects a stale catalog before creating an exe
 test("Session application service rejects an unknown operation before invoking execution dependencies", async () => {
   let invoked = false;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -859,7 +911,7 @@ test("Session application service rejects an unknown operation before invoking e
     },
   });
 
-  const response = await service.execute("turn.delete", { sessionId: "session-1", executionId: "execution-1" });
+  const response = await executeBound(service, "turn.delete", { sessionId: "session-1", executionId: "execution-1" });
 
   assert.equal(invoked, false);
   assert.equal("error" in response && response.error.code, "INVALID_INPUT");
@@ -869,6 +921,7 @@ test("Session application service rejects an unknown operation before invoking e
 test("Session application service validates the operation payload before invoking execution dependencies", async () => {
   let invoked = false;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -882,7 +935,7 @@ test("Session application service validates the operation payload before invokin
     },
   });
 
-  const response = await service.execute("turn.cancel", { sessionId: "session-1", idempotencyKey: "wrong-shape" });
+  const response = await executeBound(service, "turn.cancel", { sessionId: "session-1", idempotencyKey: "wrong-shape" });
 
   assert.equal(invoked, false);
   assert.equal("error" in response && response.error.code, "INVALID_INPUT");
@@ -897,6 +950,7 @@ test("Session application service binds list cursors to the requested Session", 
   }));
   const pageRequests: Array<{ afterSequence: number | null; limit: number }> = [];
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -912,19 +966,19 @@ test("Session application service binds list cursors to the requested Session", 
       async waitForTerminal() { throw new Error("unused"); },
     },
   });
-  const first = await service.execute("turn.list", { sessionId: "session-1", limit: 2 });
+  const first = await executeBound(service, "turn.list", { sessionId: "session-1", limit: 2 });
   assert.ok("result" in first);
   const cursor = (first.result as { nextCursor: string }).nextCursor;
   assert.deepEqual(pageRequests, [{ afterSequence: null, limit: 3 }]);
   items.push({ ...execution, id: "execution-4", sequence: 4 });
-  const second = await service.execute("turn.list", { sessionId: "session-1", limit: 2, cursor });
+  const second = await executeBound(service, "turn.list", { sessionId: "session-1", limit: 2, cursor });
   assert.deepEqual(
     "result" in second
       ? (second.result as { items: SessionExecution[] }).items.map((item) => item.id)
       : [],
     ["execution-3", "execution-4"],
   );
-  const invalid = await service.execute("turn.list", { sessionId: "session-2", limit: 2, cursor });
+  const invalid = await executeBound(service, "turn.list", { sessionId: "session-2", limit: 2, cursor });
   assert.equal("error" in invalid && invalid.error.code, "INVALID_CURSOR");
 });
 
@@ -932,6 +986,7 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
   const largeResult = { assistantText: "a".repeat(5 * 1024 * 1024) };
   let materialized = 0;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -952,7 +1007,7 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
     },
   });
 
-  const response = await service.execute("turn.list", { sessionId: "session-1", limit: 2 });
+  const response = await executeBound(service, "turn.list", { sessionId: "session-1", limit: 2 });
 
   assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in response && response.error.effect, "not_applied");
@@ -961,6 +1016,7 @@ test("RL-01: turn.list rejects an aggregate public response over 8 MiB", async (
 
 test("RL-01: applied turn.run reports an oversized inline result with applied effect", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -976,7 +1032,7 @@ test("RL-01: applied turn.run reports an oversized inline result with applied ef
     },
   });
 
-  const response = await service.execute("turn.run", mutationInput);
+  const response = await executeBound(service, "turn.run", mutationInput);
 
   assert.equal("error" in response && response.error.code, "CONTENT_TOO_LARGE");
   assert.equal("error" in response && response.error.effect, "applied");
@@ -986,7 +1042,12 @@ test("RL-01: applied turn.run reports an oversized inline result with applied ef
 
 test("I-01: canonical replayはcatalog revision更新後もstale validationより先に解決する", async () => {
   let runInvoked = false;
+  let initiatorResolveCount = 0;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator: async (actorSessionId) => {
+      initiatorResolveCount += 1;
+      return resolveTurnInitiator(actorSessionId);
+    },
     currentModelCatalog: () => ({ revision: 5, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -1000,9 +1061,109 @@ test("I-01: canonical replayはcatalog revision更新後もstale validationよ�
     },
   });
 
-  const response = await service.execute("turn.run", mutationInput);
+  const response = await executeBound(service, "turn.run", mutationInput);
 
   assert.equal("result" in response, true);
+  assert.equal(runInvoked, false);
+  assert.equal(initiatorResolveCount, 0);
+});
+
+test("ID-02/ID-04: actorとtargetを分離しfingerprintをstable actor identityへ結び付ける", async () => {
+  const mutations: Array<{ operation: "run" | "enqueue"; input: any }> = [];
+  let snapshotRevision = 0;
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator: async (actorSessionId) => {
+      snapshotRevision += 1;
+      return {
+        kind: "session",
+        sessionId: actorSessionId,
+        character: {
+          characterId: `character-${actorSessionId}`,
+          name: `Actor ${snapshotRevision}`,
+          iconFilePath: `C:/characters/${snapshotRevision}.png`,
+        },
+      };
+    },
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run(input) {
+        mutations.push({ operation: "run", input });
+        return { ...execution, sessionId: input.sessionId };
+      },
+      async enqueue(input) {
+        mutations.push({ operation: "enqueue", input });
+        return { ...execution, sessionId: input.sessionId, operation: "turn.enqueue", state: "queued" };
+      },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+  const actorB = { ...actorBinding, actorSessionId: "session-b" };
+  const actorD = { ...actorBinding, actorSessionId: "session-d" };
+  const targetCInput = { ...mutationInput, sessionId: "session-c" };
+
+  await executeBound(service, "turn.run", targetCInput, actorB);
+  await executeBound(service, "turn.run", targetCInput, actorB);
+  await executeBound(service, "turn.run", targetCInput, actorD);
+  const { responseMode: _responseMode, waitTimeoutMs: _waitTimeoutMs, ...enqueueTargetCInput } = targetCInput;
+  await executeBound(service, "turn.enqueue", enqueueTargetCInput, actorB);
+
+  assert.deepEqual(mutations.map(({ operation, input }) => ({
+    operation,
+    targetSessionId: input.sessionId,
+    actorSessionId: input.request.initiator.sessionId,
+  })), [
+    { operation: "run", targetSessionId: "session-c", actorSessionId: "session-b" },
+    { operation: "run", targetSessionId: "session-c", actorSessionId: "session-b" },
+    { operation: "run", targetSessionId: "session-c", actorSessionId: "session-d" },
+    { operation: "enqueue", targetSessionId: "session-c", actorSessionId: "session-b" },
+  ]);
+  assert.equal(mutations[0]?.input.requestFingerprint, mutations[1]?.input.requestFingerprint);
+  assert.notEqual(mutations[0]?.input.requestFingerprint, mutations[2]?.input.requestFingerprint);
+  assert.equal(mutations[0]?.input.requestFingerprint, mutations[3]?.input.requestFingerprint);
+  assert.notEqual(
+    mutations[0]?.input.request.initiator.character.name,
+    mutations[1]?.input.request.initiator.character.name,
+  );
+
+  const beforeInvalid = mutations.length;
+  const spoofed = await executeBound(service, "turn.run", {
+    ...targetCInput,
+    actorSessionId: "spoofed-actor",
+    character: { characterId: "spoofed-character" },
+  }, actorB);
+  const missingTarget = await executeBound(service, "turn.enqueue", {
+    ...targetCInput,
+    sessionId: undefined,
+  }, actorB);
+  assert.equal("error" in spoofed && spoofed.error.code, "INVALID_INPUT");
+  assert.equal("error" in missingTarget && missingTarget.error.code, "INVALID_INPUT");
+  assert.equal(mutations.length, beforeInvalid);
+});
+
+test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexecutionを作成しない", async () => {
+  let runInvoked = false;
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator: async () => null,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    executionService: {
+      beginShutdown() {},
+      async run() { runInvoked = true; return execution; },
+      async enqueue() { runInvoked = true; return execution; },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+  const response = await executeBound(service, "turn.run", mutationInput);
+  assert.equal("error" in response && response.error.code, "SESSION_INITIATOR_UNAVAILABLE");
+  assert.equal("error" in response && response.error.effect, "not_applied");
   assert.equal(runInvoked, false);
 });
 
@@ -1010,6 +1171,7 @@ test("LC-01: shutdown admission後はapplication dependencyを呼ばずnot_appli
   let invoked = false;
   let executionShutdownBegun = false;
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() { executionShutdownBegun = true; },
@@ -1024,7 +1186,7 @@ test("LC-01: shutdown admission後はapplication dependencyを呼ばずnot_appli
   });
   service.beginShutdown();
 
-  const response = await service.execute("turn.run", mutationInput);
+  const response = await executeBound(service, "turn.run", mutationInput);
 
   assert.equal(invoked, false);
   assert.equal(executionShutdownBegun, true);
@@ -1034,6 +1196,7 @@ test("LC-01: shutdown admission後はapplication dependencyを呼ばずnot_appli
 
 test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ写像する", async () => {
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -1049,7 +1212,7 @@ test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ�
     },
   });
 
-  const response = await service.execute("turn.run", mutationInput);
+  const response = await executeBound(service, "turn.run", mutationInput);
 
   assert.equal("error" in response && response.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in response && response.error.retryable, false);
@@ -1072,6 +1235,7 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpu
     updatedAt: "2026-08-13T00:01:00.000Z",
   };
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     isProviderEnabled: () => true,
     isProviderSupported: () => true,
@@ -1094,7 +1258,7 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: respondはanswered interactionとpu
       async get() { throw new Error("unused"); }, async rename() { throw new Error("unused"); },
     },
   });
-  const response = await service.execute("interaction.respond", {
+  const response = await executeBound(service, "interaction.respond", {
     sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
     response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1", responseMode: "deferred",
   });
@@ -1120,6 +1284,7 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: turn.run waitはCopilotでも最初
     attachments: [],
   };
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {},
@@ -1146,7 +1311,7 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: turn.run waitはCopilotでも最初
     } as never,
   });
 
-  const response = await service.execute("turn.run", {
+  const response = await executeBound(service, "turn.run", {
     ...mutationInput,
     turn: copilotTurn,
     responseMode: "wait",
@@ -1169,6 +1334,7 @@ test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending i
     createdAt: "now", resolvedAt: "now", updatedAt: "now",
   };
   const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     executionService: {
       beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
@@ -1194,7 +1360,7 @@ test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending i
     } as never,
   });
 
-  const response = await service.execute("interaction.respond", {
+  const response = await executeBound(service, "interaction.respond", {
     sessionId: "session-1", executionId: "execution-1", interactionId: "interaction-1",
     response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-1",
     responseMode: "wait", waitTimeoutMs: 500,

@@ -411,7 +411,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listOpenCompanionReviewWindowIds",
     "listOpenSessionWindowIds",
     "listPromptTemplates",
-    "listGuiSessionTurnExecutions",
+    "listSessionTurnExecutions",
     "listSessionAuditLogSummaryPage",
     "listSessionAuditLogSummaries",
     "listSessionAuditLogs",

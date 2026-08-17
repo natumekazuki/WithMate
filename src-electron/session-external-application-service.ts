@@ -39,7 +39,7 @@ import {
   type SessionRuntimeTranscriptExportInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { SessionExecution } from "../src/session-execution.js";
+import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
 import {
   SessionInteractionContinuationUnavailableError,
   SessionInteractionKindMismatchError,
@@ -91,6 +91,7 @@ export type SessionExternalApplicationServiceDeps = {
     displayName: string;
     description: string;
   }>>;
+  resolveTurnInitiator(actorSessionId: string): Promise<Extract<TurnInitiator, { kind: "session" }> | null>;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
@@ -108,7 +109,7 @@ export class SessionExternalApplicationService {
   async execute(
     operation: SessionRuntimeOperation | string,
     input: unknown,
-    agentRuntimeBinding: ResolvedAgentRuntimeBinding | null = null,
+    agentRuntimeBinding: ResolvedAgentRuntimeBinding | null,
   ): Promise<SessionExternalApplicationResponse> {
     if (!this.accepting) {
       return createSessionRuntimeError({
@@ -122,6 +123,13 @@ export class SessionExternalApplicationService {
         operation,
         input,
       });
+      if (!agentRuntimeBinding) {
+        throw new SessionRuntimeValidationError(
+          "Session runtime actor binding is required for this operation.",
+          { field: "agentRuntimeBinding" },
+          "SESSION_BINDING_REQUIRED",
+        );
+      }
       const result = await this.executeValidated(request.operation, request.input, agentRuntimeBinding);
       const response = createSessionRuntimeResult(request.operation, result);
       assertApplicationResponseSize(request.operation, result, response);
@@ -134,7 +142,7 @@ export class SessionExternalApplicationService {
   private async executeValidated(
     operation: SessionRuntimeOperation,
     input: unknown,
-    agentRuntimeBinding: ResolvedAgentRuntimeBinding | null,
+    agentRuntimeBinding: ResolvedAgentRuntimeBinding,
   ): Promise<SessionRuntimeResultByOperation[SessionRuntimeOperation]> {
     if (operation === "runtime.catalog") {
       return projectRuntimeCatalog(
@@ -144,13 +152,6 @@ export class SessionExternalApplicationService {
       );
     }
     if (operation === "session.self") {
-      if (!agentRuntimeBinding) {
-        throw new SessionRuntimeValidationError(
-          "Session runtime actor binding is required for this operation.",
-          { field: "agentRuntimeBinding" },
-          "SESSION_BINDING_REQUIRED",
-        );
-      }
       return { sessionId: agentRuntimeBinding.actorSessionId };
     }
     if (operation === "session.create") {
@@ -178,10 +179,10 @@ export class SessionExternalApplicationService {
       return this.turnOptions((input as SessionRuntimeSessionInput).sessionId);
     }
     if (operation === "turn.run") {
-      return this.run(input as SessionRuntimeRunInput);
+      return this.run(input as SessionRuntimeRunInput, agentRuntimeBinding);
     }
     if (operation === "turn.enqueue") {
-      return this.enqueue(input as SessionRuntimeEnqueueInput);
+      return this.enqueue(input as SessionRuntimeEnqueueInput, agentRuntimeBinding);
     }
     if (operation === "turn.list") {
       return this.list(input as SessionRuntimeListInput);
@@ -210,18 +211,29 @@ export class SessionExternalApplicationService {
     throw new SessionRuntimeValidationError("Unsupported Session runtime operation.", { field: "operation" });
   }
 
-  private async run(input: SessionRuntimeRunInput): Promise<SessionRuntimePublicExecution> {
+  private async run(
+    input: SessionRuntimeRunInput,
+    agentRuntimeBinding: ResolvedAgentRuntimeBinding,
+  ): Promise<SessionRuntimePublicExecution> {
+    const initiatorIdentity = sessionInitiatorIdentity(agentRuntimeBinding.actorSessionId);
     const mutation = {
       sessionId: input.sessionId,
       request: { catalogRevision: input.catalogRevision, turn: input.turn },
       idempotencyKey: input.idempotencyKey,
-      requestFingerprint: fingerprintMutation(input),
+      requestFingerprint: fingerprintMutation(input, initiatorIdentity),
     };
     const replay = this.deps.executionService.resolveReplay("turn.run", mutation);
     if (!replay) {
       this.requireCurrentCatalog(input.catalogRevision);
     }
-    const execution = replay ?? await this.deps.executionService.run(mutation);
+    const execution = replay ?? await this.deps.executionService.run({
+      ...mutation,
+      request: {
+        initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
+        catalogRevision: input.catalogRevision,
+        turn: input.turn,
+      },
+    });
     if (input.responseMode === "deferred") {
       return this.projectExecution(execution.sessionId, execution.id, execution);
     }
@@ -288,19 +300,44 @@ export class SessionExternalApplicationService {
     return result;
   }
 
-  private async enqueue(input: SessionRuntimeEnqueueInput): Promise<SessionRuntimePublicExecution> {
+  private async enqueue(
+    input: SessionRuntimeEnqueueInput,
+    agentRuntimeBinding: ResolvedAgentRuntimeBinding,
+  ): Promise<SessionRuntimePublicExecution> {
+    const initiatorIdentity = sessionInitiatorIdentity(agentRuntimeBinding.actorSessionId);
     const mutation = {
       sessionId: input.sessionId,
       request: { catalogRevision: input.catalogRevision, turn: input.turn },
       idempotencyKey: input.idempotencyKey,
-      requestFingerprint: fingerprintMutation(input),
+      requestFingerprint: fingerprintMutation(input, initiatorIdentity),
     };
     const replay = this.deps.executionService.resolveReplay("turn.enqueue", mutation);
     if (!replay) {
       this.requireCurrentCatalog(input.catalogRevision);
     }
-    const execution = replay ?? await this.deps.executionService.enqueue(mutation);
+    const execution = replay ?? await this.deps.executionService.enqueue({
+      ...mutation,
+      request: {
+        initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
+        catalogRevision: input.catalogRevision,
+        turn: input.turn,
+      },
+    });
     return this.projectExecution(execution.sessionId, execution.id, execution);
+  }
+
+  private async requireTurnInitiator(
+    actorSessionId: string,
+  ): Promise<Extract<TurnInitiator, { kind: "session" }>> {
+    const initiator = await this.deps.resolveTurnInitiator(actorSessionId);
+    if (!initiator || initiator.sessionId !== actorSessionId) {
+      throw new SessionRuntimeValidationError(
+        "The actor Session character snapshot is unavailable.",
+        { sessionId: actorSessionId },
+        "SESSION_INITIATOR_UNAVAILABLE",
+      );
+    }
+    return initiator;
   }
 
   private list(input: SessionRuntimeListInput): { items: SessionRuntimePublicExecution[]; nextCursor?: string } {
@@ -550,12 +587,22 @@ function projectionResourceDetails(
   return {};
 }
 
-function fingerprintMutation(input: SessionRuntimeEnqueueInput): string {
+function fingerprintMutation(
+  input: SessionRuntimeEnqueueInput,
+  initiator: Pick<Extract<TurnInitiator, { kind: "session" }>, "kind" | "sessionId">,
+): string {
   return createHash("sha256").update(stableJson({
+    initiator,
     sessionId: input.sessionId,
     catalogRevision: input.catalogRevision,
     turn: input.turn,
   }), "utf8").digest("hex");
+}
+
+function sessionInitiatorIdentity(
+  actorSessionId: string,
+): Pick<Extract<TurnInitiator, { kind: "session" }>, "kind" | "sessionId"> {
+  return { kind: "session", sessionId: actorSessionId };
 }
 
 function fingerprintCancel(input: SessionRuntimeCancelInput): string {

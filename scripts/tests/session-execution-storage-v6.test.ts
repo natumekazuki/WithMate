@@ -66,6 +66,40 @@ function enqueueInput(index: number) {
 }
 
 describe("SessionExecutionStorageV6", () => {
+  it("ID-03: restart loadとqueuedからrunningへの遷移でinitiator tupleを維持する", async () => {
+    const fixture = await createFixture();
+    const initiator = {
+      kind: "session" as const,
+      sessionId: "session-actor",
+      character: {
+        characterId: "character-actor",
+        name: "Actor Snapshot",
+        iconFilePath: "C:/characters/actor.png",
+      },
+    };
+    try {
+      fixture.storage.enqueue({
+        ...enqueueInput(1),
+        request: {
+          initiator,
+          catalogRevision: 4,
+          turn: { provider: "codex", userMessage: "queued request" },
+        },
+      });
+      fixture.storage.close();
+      const restarted = new SessionExecutionStorageV6(fixture.dbPath);
+      try {
+        assert.deepEqual((restarted.get("execution-1")?.request as any).initiator, initiator);
+        restarted.admitNextQueued("session-1", "2026-08-10T00:01:00.000Z");
+        assert.deepEqual((restarted.get("execution-1")?.request as any).initiator, initiator);
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("PG-01: execution履歴をsequence keysetとlimitでページングする", async () => {
     const fixture = await createFixture();
     try {

@@ -1,25 +1,26 @@
-type SessionGuiTurnExecutionBase = {
+type SessionTurnExecutionProjectionBase = {
   executionId: string;
   sessionId: string;
   clientRequestId: string | null;
   userMessage: string;
+  initiator: import("./session-execution.js").TurnInitiator | null;
   createdAt: string;
   updatedAt: string;
 };
 
-export type SessionRunningTurn = SessionGuiTurnExecutionBase & {
+export type SessionRunningTurn = SessionTurnExecutionProjectionBase & {
   state: "running";
   queuePosition: null;
   canCancel: false;
 };
 
-export type SessionQueuedTurn = SessionGuiTurnExecutionBase & {
+export type SessionQueuedTurn = SessionTurnExecutionProjectionBase & {
   state: "queued";
   queuePosition: number;
-  canCancel: true;
+  canCancel: boolean;
 };
 
-export type SessionGuiTurnExecution = SessionRunningTurn | SessionQueuedTurn;
+export type SessionTurnExecutionProjection = SessionRunningTurn | SessionQueuedTurn;
 
 export type SessionExecutionChangedEvent =
   | {
@@ -51,9 +52,9 @@ export function createSessionRunningProjectionBarrier(
 }
 
 export function applySessionExecutionChangedEvent(
-  current: readonly SessionGuiTurnExecution[],
+  current: readonly SessionTurnExecutionProjection[],
   event: SessionExecutionChangedEvent,
-): SessionGuiTurnExecution[] {
+): SessionTurnExecutionProjection[] {
   if (event.kind === "user-message-persisted") return [...current];
   return current.flatMap((execution) => {
     if (execution.sessionId !== event.sessionId || execution.executionId !== event.executionId) {
@@ -72,10 +73,10 @@ export function applySessionExecutionChangedEvent(
 }
 
 export function applySessionExecutionChangedEventWithBarrier(
-  current: readonly SessionGuiTurnExecution[],
+  current: readonly SessionTurnExecutionProjection[],
   event: SessionExecutionChangedEvent,
   barrier: SessionRunningProjectionBarrier | null,
-): SessionGuiTurnExecution[] {
+): SessionTurnExecutionProjection[] {
   if (
     event.kind === "state-changed" &&
     event.state !== "running" &&
@@ -86,18 +87,35 @@ export function applySessionExecutionChangedEventWithBarrier(
   return applySessionExecutionChangedEvent(current, event);
 }
 
-export function mergeGuiTurnExecutionRefreshWithBarrier(
-  current: readonly SessionGuiTurnExecution[],
-  refreshed: readonly SessionGuiTurnExecution[],
+export function mergeTurnExecutionRefreshWithBarrier(
+  current: readonly SessionTurnExecutionProjection[],
+  refreshed: readonly SessionTurnExecutionProjection[],
   barrier: SessionRunningProjectionBarrier | null,
-): SessionGuiTurnExecution[] {
+): SessionTurnExecutionProjection[] {
   if (!barrier || refreshed.some((execution) => execution.executionId === barrier.executionId)) {
     return [...refreshed];
   }
   const retained = current.find((execution) => (
     execution.executionId === barrier.executionId && execution.state === "running"
   ));
-  return retained ? [...refreshed, retained] : [...refreshed];
+  if (!retained) return [...refreshed];
+
+  const refreshedById = new Map(refreshed.map((execution) => [execution.executionId, execution]));
+  const merged: SessionTurnExecutionProjection[] = [];
+  for (const execution of current) {
+    if (execution.executionId === retained.executionId) {
+      merged.push(retained);
+      continue;
+    }
+    const refreshedExecution = refreshedById.get(execution.executionId);
+    if (!refreshedExecution) continue;
+    merged.push(refreshedExecution);
+    refreshedById.delete(execution.executionId);
+  }
+  for (const execution of refreshed) {
+    if (refreshedById.delete(execution.executionId)) merged.push(execution);
+  }
+  return merged;
 }
 
 export type SessionTurnAdmissionError = {
@@ -107,7 +125,7 @@ export type SessionTurnAdmissionError = {
 };
 
 export type EnqueueSessionTurnResult =
-  | { ok: true; execution: SessionGuiTurnExecution | null }
+  | { ok: true; execution: SessionTurnExecutionProjection | null }
   | { ok: false; error: SessionTurnAdmissionError };
 
 export type CancelSessionExecutionRequest = {

@@ -184,7 +184,9 @@ function renderSessionMessageColumn(options: {
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
-  queuedTurns?: SessionMessageColumnProps["queuedTurns"];
+  turnExecutions?: SessionMessageColumnProps["turnExecutions"];
+  originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
+  onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
 }): string {
   return renderToStaticMarkup(
@@ -193,7 +195,9 @@ function renderSessionMessageColumn(options: {
       character: createCharacterProfile(),
       messages: options.messages,
       messageGroups: options.messageGroups,
-      queuedTurns: options.queuedTurns,
+      turnExecutions: options.turnExecutions,
+      originSessionDetails: options.originSessionDetails,
+      onOpenOriginSession: options.onOpenOriginSession,
       expandedArtifacts: options.expandedArtifacts ?? {},
       messageListRef: createRef<HTMLDivElement>(),
       isRunning: options.isRunning ?? false,
@@ -218,7 +222,7 @@ function renderSessionMessageColumn(options: {
       },
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
-      onCancelQueuedTurn: options.queuedTurns ? () => {} : undefined,
+      onCancelQueuedTurn: options.turnExecutions ? () => {} : undefined,
       messageViewMode: options.messageViewMode,
     }),
   );
@@ -1861,11 +1865,12 @@ test("SessionComposerExpanded は実行中の操作後に jump button と表示�
 test("SessionMessageColumn はqueued TurnのFIFO位置とcancel操作を既存user message内へ表示する", () => {
   const html = renderSessionMessageColumn({
     messages: [{ role: "user", text: "次の依頼" }],
-    queuedTurns: [{
+    turnExecutions: [{
       executionId: "execution-1",
       sessionId: "session-1",
       clientRequestId: null,
       userMessage: "次の依頼",
+      initiator: { kind: "user" },
       state: "queued",
       queuePosition: 2,
       canCancel: true,
@@ -1886,11 +1891,12 @@ test("SessionMessageColumn は実行中responseをqueued user messageより前�
       { role: "user", text: "次の依頼" },
       { role: "user", text: "さらに次の依頼" },
     ],
-    queuedTurns: [null, {
+    turnExecutions: [null, {
       executionId: "execution-1",
       sessionId: "session-1",
       clientRequestId: null,
       userMessage: "次の依頼",
+      initiator: { kind: "user" },
       state: "queued",
       queuePosition: 1,
       canCancel: true,
@@ -1901,6 +1907,7 @@ test("SessionMessageColumn は実行中responseをqueued user messageより前�
       sessionId: "session-1",
       clientRequestId: null,
       userMessage: "さらに次の依頼",
+      initiator: { kind: "user" },
       state: "queued",
       queuePosition: 2,
       canCancel: true,
@@ -1912,10 +1919,149 @@ test("SessionMessageColumn は実行中responseをqueued user messageより前�
   });
 
   assert.ok(html.indexOf("実行中の依頼") < html.indexOf("出力を待機しています"));
+  assert.match(html, /message-character-name">Test Character</);
   assert.ok(html.indexOf("出力を待機しています") < html.indexOf("次の依頼"));
   assert.ok(html.indexOf("次の依頼") < html.indexOf("待機中 1"));
   assert.ok(html.indexOf("待機中 1") < html.indexOf("さらに次の依頼"));
   assert.ok(html.indexOf("さらに次の依頼") < html.indexOf("待機中 2"));
+});
+
+test("ID-03: Session initiatorは右側originとしてsnapshot名とavatar fallbackを表示しcancelやtransport badgeを出さない", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "Sessionからの依頼" }],
+    turnExecutions: [{
+      executionId: "execution-session",
+      sessionId: "session-target",
+      clientRequestId: null,
+      userMessage: "Sessionからの依頼",
+      initiator: {
+        kind: "session",
+        sessionId: "session-actor",
+        character: {
+          characterId: "character-actor",
+          name: "呼出元",
+          iconFilePath: "",
+        },
+      },
+      state: "queued",
+      queuePosition: 1,
+      canCancel: false,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    }],
+  });
+
+  assert.match(html, /class="message-row session-origin/);
+  assert.match(html, /class="message-character-name">呼出元/);
+  assert.match(html, /class="message-card session-origin/);
+  assert.match(html, /avatar-fallback">呼/);
+  assert.match(html, /aria-label="呼出元Session情報を開く"/);
+  assert.doesNotMatch(html, /Turnをキャンセル/);
+  assert.doesNotMatch(html, />CLI<|>MCP</);
+});
+
+test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトルリンクだけを展開する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "別Sessionからの依頼" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [{
+      executionId: "execution-session-origin",
+      sessionId: "session-1",
+      clientRequestId: "request-1",
+      userMessage: "別Sessionからの依頼",
+      initiator: {
+        kind: "session",
+        sessionId: "actor-session",
+        character: {
+          characterId: "character-snapshot",
+          name: "保存済み呼出元",
+          iconFilePath: "",
+        },
+      },
+      state: "queued",
+      queuePosition: 1,
+      canCancel: false,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    }],
+    originSessionDetails: [{
+      sessionId: "actor-session",
+      taskTitle: "現在の呼出元Session",
+    }],
+    onOpenOriginSession() {},
+  });
+
+  assert.match(html, /aria-label="呼出元Session情報を閉じる"/);
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /aria-label="呼出元Session情報"/);
+  assert.match(html, /現在の呼出元Session/);
+  assert.match(html, /aria-label="現在の呼出元Sessionを別Windowで開く"/);
+  assert.match(html, /actor-session/);
+  assert.doesNotMatch(html, /Character ID|character-snapshot|Workspace|Branch|Provider \/ Model|>呼出元Session</);
+});
+
+test("ID-05: 呼出元Session削除後は保存Session IDだけを展開する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "削除済みSessionからの依頼" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [{
+      executionId: "execution-deleted-origin",
+      sessionId: "session-1",
+      clientRequestId: null,
+      userMessage: "削除済みSessionからの依頼",
+      initiator: {
+        kind: "session",
+        sessionId: "deleted-session",
+        character: {
+          characterId: "deleted-character",
+          name: "保存済みの名前",
+          iconFilePath: "",
+        },
+      },
+      state: "running",
+      queuePosition: null,
+      canCancel: false,
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+    }],
+    originSessionDetails: [],
+  });
+
+  assert.match(html, /aria-label="呼出元Session情報"/);
+  assert.match(html, /deleted-session/);
+  assert.doesNotMatch(html, /現在のSession情報は利用できません|Character ID|deleted-character|>呼出元Session</);
+});
+
+test("SessionMessageColumn は対象Session Character名をpersisted responseへ表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "assistant", text: "対象Sessionからの返答" }],
+  });
+
+  assert.match(html, /class="message-row assistant/);
+  assert.match(html, /class="message-character-name">Test Character/);
+  assert.match(html, /class="message-card assistant/);
+  assert.match(html, /対象Sessionからの返答/);
+});
+
+test("ID-03: initiatorなしのlegacy executionだけを外部として表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "旧形式" }],
+    turnExecutions: [{
+      executionId: "execution-legacy",
+      sessionId: "session-target",
+      clientRequestId: null,
+      userMessage: "旧形式",
+      initiator: null,
+      state: "queued",
+      queuePosition: 1,
+      canCancel: false,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:00.000Z",
+    }],
+  });
+  assert.match(html, /class="message-row session-origin/);
+  assert.match(html, /class="message-character-name">外部/);
+  assert.doesNotMatch(html, /Turnをキャンセル/);
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {

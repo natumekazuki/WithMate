@@ -698,7 +698,8 @@ function projectEffectiveTurn(request: unknown): {
         return publicAttachment;
       })
       : turnRecord.attachments;
-    const provider = requestRecord.source === "gui"
+    const initiator = requestRecord.initiator as Record<string, unknown> | undefined;
+    const provider = initiator?.kind === "user" || requestRecord.source === "gui"
       ? turnRecord.codexSandboxMode !== undefined ? "codex" : "copilot"
       : turnRecord.provider;
     const parsed = parseTurnRequest({ ...turnRecord, provider, attachments });
