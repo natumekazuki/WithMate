@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildScheduleDraftComposerState,
   buildScheduleWorkspaceProjection,
   cloneScheduleDraft,
   type ScheduleDraftProjection,
@@ -74,4 +75,39 @@ test("home projection is read-only", () => {
     canMutate: false,
   });
   assert.equal(projection.canMutate, false);
+});
+
+test("schedule draft canonicalizes composer attachment references for removal", () => {
+  const composerState = buildScheduleDraftComposerState(
+    "Review @src/report.txt and ![chart](C:/workspace/assets/chart.png)",
+    [
+      {
+        id: "file-1",
+        kind: "file",
+        source: "text",
+        absolutePath: "C:\\workspace\\src\\report.txt",
+        displayPath: "src/report.txt",
+        workspaceRelativePath: "src/report.txt",
+        isOutsideWorkspace: false,
+      },
+      {
+        id: "image-1",
+        kind: "image",
+        source: "markdown-image",
+        absolutePath: "C:\\workspace\\assets\\chart.png",
+        displayPath: "assets/chart.png",
+        workspaceRelativePath: "assets/chart.png",
+        isOutsideWorkspace: false,
+      },
+    ],
+  );
+
+  assert.deepEqual(composerState.attachments, [
+    "C:\\workspace\\src\\report.txt",
+    "C:\\workspace\\assets\\chart.png",
+  ]);
+  assert.equal(
+    composerState.prompt,
+    "Review and @C:\\workspace\\src\\report.txt ![chart.png](C:/workspace/assets/chart.png)",
+  );
 });

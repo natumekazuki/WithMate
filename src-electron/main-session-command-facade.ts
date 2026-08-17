@@ -267,7 +267,9 @@ export class MainSessionCommandFacade {
       throw new Error("Current model catalog revision is unavailable.");
     }
     try {
-      await this.deps.getSessionRuntimeService().validateExternalSessionTurn(
+      const runtimeService = this.deps.getSessionRuntimeService();
+      await runtimeService.validateSessionTurn(sessionId, request);
+      await runtimeService.validateExternalSessionTurn(
         sessionId,
         catalogRevision,
         request,

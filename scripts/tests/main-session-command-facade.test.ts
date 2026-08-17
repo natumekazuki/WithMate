@@ -1506,6 +1506,10 @@ test("schedule enqueue replayはcurrent catalogとprovider再検証より先に�
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () => ({} as never),
     getSessionRuntimeService: () => ({
+      async validateSessionTurn() {
+        validationCalled = true;
+        throw new Error("permission changed");
+      },
       async validateExternalSessionTurn() {
         validationCalled = true;
         throw new Error("provider changed");
@@ -1553,6 +1557,7 @@ test("schedule attachmentはordinary enqueue validationでcurrent additional-dir
   await writeFile(attachmentPath, "evidence", "utf8");
 
   let allowedAdditionalDirectories = [additionalPath];
+  let quotaRefreshes = 0;
   type ScheduledExecutionRecord = {
     id: string;
     sessionId: string;
@@ -1598,13 +1603,25 @@ test("schedule attachmentはordinary enqueue validationでcurrent additional-dir
     },
   };
   const facade = createMainSessionCommandFacade({
-    getSession: () => ({ id: "s-1", provider: "codex" }) as never,
+    getSession: () => ({ id: "s-1", provider: "copilot" }) as never,
     getSessions: () => [],
     getStoredSessionSummaries: () => [],
     runProviderRuntimeOperationExclusive,
     resolveSessionLaunchSelection: async () => createLaunchSelection(),
     getSessionPersistenceService: () => ({} as never),
     getSessionRuntimeService: () => ({
+      async validateSessionTurn(_sessionId: string, request: { userMessage: string }) {
+        const preview = await resolveComposerPreview(
+          { workspacePath, allowedAdditionalDirectories },
+          request.userMessage,
+        );
+        if (preview.errors.length > 0) {
+          throw new SessionTurnValidationError(
+            "INVALID_INPUT",
+            preview.errors[0] ?? "attachment validation failed",
+          );
+        }
+      },
       async validateExternalSessionTurn() {
         return undefined;
       },
@@ -1612,40 +1629,45 @@ test("schedule attachmentはordinary enqueue validationでcurrent additional-dir
     getSessionExecutionService: () => executionService as never,
     getCurrentModelCatalogRevision: () => 8,
     getProviderQuotaTelemetry: () => null,
-    isProviderQuotaTelemetryStale: () => false,
-    refreshProviderQuotaTelemetry: async () => null,
+    isProviderQuotaTelemetryStale: () => true,
+    refreshProviderQuotaTelemetry: async () => {
+      quotaRefreshes += 1;
+      return null;
+    },
     createSessionId: () => "launch-test",
     createSessionFilesDirectory: () => "C:/session-files/launch-test",
     isSessionFilesWorkspace: () => false,
   });
   try {
-    const valid = await facade.enqueueScheduledSessionTurn("s-1", "codex", {
+    const valid = await facade.enqueueScheduledSessionTurn("s-1", "copilot", {
       userMessage: `review @"${attachmentPath}"`,
       clientRequestId: "schedule-attachment-valid",
       model: "gpt-5.6",
       reasoningEffort: "high",
       approvalMode: "never",
-      codexSandboxMode: "workspace-write",
+      customAgentName: "",
     });
     assert.equal(valid.ok, true);
     assert.equal(durableEffects, 1);
+    assert.equal(quotaRefreshes, 1);
     assert.match(
       (records[0]?.request as { turn: { userMessage: string } }).turn.userMessage,
       /evidence\.txt/,
     );
 
     allowedAdditionalDirectories = [];
-    const rejected = await facade.enqueueScheduledSessionTurn("s-1", "codex", {
+    const rejected = await facade.enqueueScheduledSessionTurn("s-1", "copilot", {
       userMessage: `review @"${attachmentPath}"`,
       clientRequestId: "schedule-attachment-rejected",
       model: "gpt-5.6",
       reasoningEffort: "high",
       approvalMode: "never",
-      codexSandboxMode: "workspace-write",
+      customAgentName: "",
     });
     assert.equal(rejected.ok, false);
     assert.equal(rejected.ok ? null : rejected.error.code, "INVALID_INPUT");
     assert.equal(durableEffects, 1);
+    assert.equal(quotaRefreshes, 1);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

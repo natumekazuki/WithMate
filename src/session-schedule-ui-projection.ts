@@ -3,6 +3,11 @@ import type {
   SessionScheduleState,
   SessionScheduleTrigger,
 } from "./session-schedule.js";
+import type { ComposerAttachment } from "./runtime-state.js";
+import {
+  buildComposerReferenceInsertionState,
+  removePathReferenceTokensFromDraft,
+} from "./session-composer-paths.js";
 
 export type ScheduleTriggerProjection = SessionScheduleTrigger;
 export type ScheduleStatusProjection = SessionScheduleState;
@@ -50,6 +55,32 @@ export function cloneScheduleDraft(
     ...draft,
     trigger: { ...draft.trigger },
     attachments: [...draft.attachments],
+  };
+}
+
+export function buildScheduleDraftComposerState(
+  prompt: string,
+  attachments: readonly ComposerAttachment[],
+): Pick<ScheduleDraftProjection, "prompt" | "attachments"> {
+  const attachmentPaths = attachments.map((attachment) => attachment.absolutePath);
+  const removalTargets = attachments.flatMap((attachment) => [
+    attachment.absolutePath,
+    attachment.displayPath,
+    attachment.workspaceRelativePath,
+  ]).filter((path): path is string => Boolean(path));
+  const promptWithoutReferences = removePathReferenceTokensFromDraft(prompt, removalTargets);
+  const insertion = buildComposerReferenceInsertionState(
+    promptWithoutReferences,
+    promptWithoutReferences.length,
+    attachments.map((attachment) => ({
+      path: attachment.absolutePath,
+      presentation: attachment.source === "markdown-image" ? "image" : "path",
+    })),
+  );
+
+  return {
+    prompt: insertion?.draft ?? promptWithoutReferences,
+    attachments: attachmentPaths,
   };
 }
 

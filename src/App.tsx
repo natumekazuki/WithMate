@@ -132,6 +132,7 @@ import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-pro
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildComposerReferenceInsertionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
   type ComposerReferenceInput,
@@ -202,7 +203,11 @@ import {
 import { appendTurnExecutionsToMessageList } from "./session-queued-turn-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { ScheduleWorkspace } from "./session-schedule-workspace.js";
-import type { ScheduleDraftProjection, ScheduleSummaryProjection } from "./session-schedule-ui-projection.js";
+import {
+  buildScheduleDraftComposerState,
+  type ScheduleDraftProjection,
+  type ScheduleSummaryProjection,
+} from "./session-schedule-ui-projection.js";
 import type { SessionScheduleProjection, SessionScheduleSummary, SessionScheduleTrigger, SessionScheduleTurn } from "./session-schedule.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
@@ -699,12 +704,13 @@ export default function AgentSessionWindowApp() {
   const createScheduleDraft = useCallback(() => {
     const currentSession = sessions.find((session) => session.id === selectedId);
     if (!currentSession) return;
+    const composerState = buildScheduleDraftComposerState(draft, composerPreview.attachments);
     const next: ScheduleDraftProjection = {
       sessionId: currentSession.id,
       name: "",
       trigger: { type: "cron", expression: "0 9 * * 1-5", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" },
-      prompt: draft,
-      attachments: composerPreview.attachments.map((attachment) => attachment.absolutePath),
+      prompt: composerState.prompt,
+      attachments: composerState.attachments,
       model: currentSession.model ?? "",
       reasoningEffort: currentSession.reasoningEffort ?? "",
       approvalMode: currentSession.approvalMode ?? "",
@@ -4071,9 +4077,16 @@ export default function AgentSessionWindowApp() {
       withmateApi,
     );
     if (!selectedPath) return;
-    const prompt = scheduleDraft.prompt.trim()
-      ? `${scheduleDraft.prompt.trim()}\n${selectedPath}`
-      : selectedPath;
+    const prompt = scheduleDraft.attachments.includes(selectedPath)
+      ? scheduleDraft.prompt
+      : buildComposerReferenceInsertionState(
+          scheduleDraft.prompt,
+          scheduleDraft.prompt.length,
+          [{
+            path: selectedPath,
+            presentation: kind === "image" ? "image" : "path",
+          }],
+        )?.draft ?? scheduleDraft.prompt;
     updateScheduleDraft({
       ...scheduleDraft,
       prompt,
