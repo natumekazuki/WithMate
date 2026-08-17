@@ -1,6 +1,12 @@
-import type { ApprovalMode } from "./approval-mode.js";
-import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
-import type { ModelReasoningEffort } from "./model-catalog.js";
+import { APPROVAL_MODE_VALUES, type ApprovalMode } from "./approval-mode.js";
+import {
+  CODEX_SANDBOX_MODE_VALUES,
+  type CodexSandboxMode,
+} from "./codex-sandbox-mode.js";
+import {
+  isModelReasoningEffort,
+  type ModelReasoningEffort,
+} from "./model-catalog.js";
 import type {
   ComposerAttachmentInput,
   RunSessionTurnRequest,
@@ -129,21 +135,23 @@ function parseScheduleTurn(value: unknown): SessionScheduleTurn {
     throw new TypeError("Schedule turn provider is invalid.");
   const userMessage = nonEmptyString(record.userMessage, "Schedule prompt");
   const model = nonEmptyString(record.model, "Schedule model");
-  const reasoningEffort = nonEmptyString(
-    record.reasoningEffort,
-    "Schedule reasoning effort",
-  ) as SessionScheduleTurn["reasoningEffort"];
-  const approvalMode = nonEmptyString(
-    record.approvalMode,
-    "Schedule approval mode",
-  ) as SessionScheduleTurn["approvalMode"];
+  if (!isModelReasoningEffort(record.reasoningEffort))
+    throw new TypeError("Schedule reasoning effort is invalid.");
+  const reasoningEffort = record.reasoningEffort;
+  if (!APPROVAL_MODE_VALUES.includes(record.approvalMode as ApprovalMode))
+    throw new TypeError("Schedule approval mode is invalid.");
+  const approvalMode = record.approvalMode as ApprovalMode;
   let codexSandboxMode: SessionScheduleTurn["codexSandboxMode"];
   let customAgentName: string | undefined;
   if (record.provider === "codex") {
-    codexSandboxMode = nonEmptyString(
-      record.codexSandboxMode,
-      "Schedule sandbox mode",
-    ) as SessionScheduleTurn["codexSandboxMode"];
+    if (
+      !CODEX_SANDBOX_MODE_VALUES.includes(
+        record.codexSandboxMode as CodexSandboxMode,
+      )
+    ) {
+      throw new TypeError("Schedule sandbox mode is invalid.");
+    }
+    codexSandboxMode = record.codexSandboxMode as CodexSandboxMode;
     if (
       record.customAgentName !== undefined &&
       record.customAgentName !== null

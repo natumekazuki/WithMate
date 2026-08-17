@@ -342,6 +342,9 @@ export function ScheduleWorkspace(props: ScheduleWorkspaceProps) {
       className={`schedule-workspace${projection.mode === "list" ? " is-list" : " is-editor"}`}
       data-schedule-state={projection.state}
     >
+      {projection.errorMessage && projection.state !== "error" ? (
+        <p className="schedule-workspace-error" role="alert">{projection.errorMessage}</p>
+      ) : null}
       {projection.state === "loading" ? (
         <div
           className="schedule-workspace-loading"

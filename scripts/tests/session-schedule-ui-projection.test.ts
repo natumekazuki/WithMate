@@ -46,6 +46,15 @@ test("schedule workspace exposes loading, empty, and error states", () => {
     }).state,
     "error",
   );
+  const mutationError = buildScheduleWorkspaceProjection({
+    mode: "editor",
+    loadState: "loaded",
+    schedules: [],
+    draft,
+    errorMessage: "invalid cron",
+  });
+  assert.equal(mutationError.state, "editor");
+  assert.equal(mutationError.errorMessage, "invalid cron");
 });
 
 test("schedule editor projection does not share draft attachments or trigger state", () => {

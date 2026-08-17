@@ -136,6 +136,7 @@ import { SessionExecutionAdmissionGate } from "./session-execution-admission-gat
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
 import { SessionScheduleStorageV6 } from "./session-schedule-storage-v6.js";
 import { SessionScheduleService } from "./session-schedule-service.js";
+import { buildScheduledTurnRequest } from "./session-schedule-turn-request.js";
 import {
   collapseMissedSessionScheduleFire,
   nextSessionScheduleTriggerInstant,
@@ -2968,21 +2969,6 @@ async function stopSessionExternalRuntimeBestEffort(): Promise<void> {
   }
 }
 
-function toScheduledTurnRequest(turn: SessionScheduleTurn, clientRequestId: string): RunSessionTurnRequest {
-  // GUI attachment references are embedded in userMessage by the ActionDock.
-  // The saved inputs remain available for editing, while the current composer
-  // preview revalidates their paths and additional-directory permission at fire time.
-  return {
-    userMessage: turn.userMessage,
-    clientRequestId,
-    model: turn.model,
-    reasoningEffort: turn.reasoningEffort,
-    approvalMode: turn.approvalMode,
-    codexSandboxMode: turn.codexSandboxMode,
-    customAgentName: turn.customAgentName,
-  };
-}
-
 function requireSessionScheduleService(): SessionScheduleService {
   if (!sessionScheduleService) {
     if (!dbPath) throw new Error("DB path が初期化されていないよ。");
@@ -2995,10 +2981,15 @@ function requireSessionScheduleService(): SessionScheduleService {
       validateScheduleTurn: async (sessionId, turn) => {
         const snapshot = getModelCatalog(null);
         if (!snapshot) throw new Error("Current model catalog is unavailable.");
+        const request = buildScheduledTurnRequest(
+          turn,
+          `schedule-validation-${crypto.randomUUID()}`,
+        );
+        await requireSessionRuntimeService().validateSessionTurn(sessionId, request);
         await requireSessionRuntimeService().validateExternalSessionTurn(
           sessionId,
           snapshot.revision,
-          toScheduledTurnRequest(turn, `schedule-validation-${crypto.randomUUID()}`),
+          request,
           turn.provider,
         );
         return turn;
@@ -3018,7 +3009,7 @@ function requireSessionScheduleService(): SessionScheduleService {
         const result = await requireMainSessionCommandFacade().enqueueScheduledSessionTurn(
           sessionId,
           turn.provider,
-          toScheduledTurnRequest(turn, idempotencyKey),
+          buildScheduledTurnRequest(turn, idempotencyKey),
         );
         if (!result.ok) {
           if (result.error.code === "RUNTIME_SHUTTING_DOWN") throw new SessionExecutionShuttingDownError();

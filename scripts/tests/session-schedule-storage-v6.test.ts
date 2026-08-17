@@ -103,6 +103,50 @@ test("schedule storage enforces limit, atomic claim, immutable replay and tombst
   }
 });
 
+test("deleted schedule tombstone is purged only after its replayable fire settles", async () => {
+  const f = await fixture();
+  const storage = new SessionScheduleStorageV6(f.path);
+  try {
+    const schedule = storage.create(input("deleted-replay"));
+    storage.claimDueFire(
+      schedule.id,
+      schedule.revision,
+      schedule.nextFireAt!,
+      "2026-01-01T01:00:00.000Z",
+      "2026-01-01T02:00:00.000Z",
+      "deleted-fire",
+      "deleted-key",
+      "2026-01-01T01:00:00.000Z",
+    );
+
+    storage.deleteSchedule({
+      id: schedule.id,
+      expectedRevision: schedule.revision,
+      updatedAt: "2026-01-01T01:01:00.000Z",
+    });
+
+    const db = (storage as any).db as DatabaseSync;
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM session_schedules_v6 WHERE id=?").get(schedule.id) as { n: number }).n,
+      1,
+    );
+    const settled = storage.settleEnqueued(
+      "deleted-fire",
+      "execution-1",
+      "2026-01-01T01:02:00.000Z",
+    );
+    assert.equal(settled.executionId, "execution-1");
+    assert.equal(
+      (db.prepare("SELECT COUNT(*) AS n FROM session_schedules_v6 WHERE id=?").get(schedule.id) as { n: number }).n,
+      0,
+    );
+    assert.equal(storage.getFire("deleted-fire"), null);
+  } finally {
+    storage.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
 test("terminal retention keeps newest 50 and never deletes pending/claimed", async () => {
   const f = await fixture();
   const s = new SessionScheduleStorageV6(f.path);

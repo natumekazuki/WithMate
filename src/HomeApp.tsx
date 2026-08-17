@@ -142,6 +142,7 @@ export default function HomeApp() {
   const [mateProfileEditorOpen, setMateProfileEditorOpen] = useState(false);
   const [scheduleSummaries, setScheduleSummaries] = useState<SessionScheduleSummary[]>([]);
   const [scheduleLoadState, setScheduleLoadState] = useState<"loading" | "loaded" | "error">("loading");
+  const scheduleRefreshGenerationRef = useRef(0);
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
@@ -168,11 +169,15 @@ export default function HomeApp() {
   const refreshHomeSchedules = useCallback(async () => {
     const api = getWithMateApi();
     if (!api) return;
+    const generation = ++scheduleRefreshGenerationRef.current;
     setScheduleLoadState("loading");
     try {
-      setScheduleSummaries(await api.listSessionSchedules(null));
+      const next = await api.listSessionSchedules(null);
+      if (generation !== scheduleRefreshGenerationRef.current) return;
+      setScheduleSummaries(next);
       setScheduleLoadState("loaded");
     } catch {
+      if (generation !== scheduleRefreshGenerationRef.current) return;
       setScheduleLoadState("error");
     }
   }, []);

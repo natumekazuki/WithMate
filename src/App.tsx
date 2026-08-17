@@ -652,31 +652,48 @@ export default function AgentSessionWindowApp() {
   const [scheduleLoadState, setScheduleLoadState] = useState<"loading" | "loaded" | "error">("loading");
   const [sessionSchedules, setSessionSchedules] = useState<SessionScheduleSummary[]>([]);
   const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraftProjection | null>(null);
+  const [scheduleLoadError, setScheduleLoadError] = useState<string | null>(null);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const scheduleRefreshGenerationRef = useRef(0);
   const scheduleDraftRef = useRef<ScheduleDraftProjection | null>(null);
   const scheduleModeActive = scheduleView !== "chat";
 
   const refreshSessionSchedules = useCallback(async () => {
     if (!withmateApi || !selectedId) return;
+    const generation = ++scheduleRefreshGenerationRef.current;
     setScheduleLoadState("loading");
     try {
-      setSessionSchedules(await withmateApi.listSessionSchedules(selectedId));
+      const next = await withmateApi.listSessionSchedules(selectedId);
+      if (generation !== scheduleRefreshGenerationRef.current) return;
+      setSessionSchedules(next);
       setScheduleLoadState("loaded");
-      setScheduleError(null);
+      setScheduleLoadError(null);
     } catch (error) {
+      if (generation !== scheduleRefreshGenerationRef.current) return;
       setScheduleLoadState("error");
-      setScheduleError(error instanceof Error ? error.message : "Schedule list could not be loaded.");
+      setScheduleLoadError(error instanceof Error ? error.message : "Schedule list could not be loaded.");
     }
   }, [selectedId, withmateApi]);
 
   useEffect(() => {
     if (scheduleModeActive) void refreshSessionSchedules();
-  }, [refreshSessionSchedules, scheduleModeActive]);
+    if (!withmateApi || !selectedId) return;
+    return withmateApi.subscribeSessionSchedules((event) => {
+      if (event.sessionId === selectedId) void refreshSessionSchedules();
+    });
+  }, [refreshSessionSchedules, scheduleModeActive, selectedId, withmateApi]);
 
   const openScheduleList = useCallback(() => {
     setScheduleDraft(null);
     scheduleDraftRef.current = null;
     setScheduleView("list");
+    setScheduleError(null);
+  }, []);
+  const openScheduleChat = useCallback(() => {
+    setScheduleDraft(null);
+    scheduleDraftRef.current = null;
+    setScheduleError(null);
+    setScheduleView("chat");
   }, []);
 
   const createScheduleDraft = useCallback(() => {
@@ -728,11 +745,13 @@ export default function AgentSessionWindowApp() {
   const updateScheduleDraft = useCallback((next: ScheduleDraftProjection) => {
     scheduleDraftRef.current = next;
     setScheduleDraft(next);
+    setScheduleError(null);
   }, []);
 
   const saveScheduleDraft = useCallback(async () => {
     const current = scheduleDraftRef.current;
     if (!withmateApi || !selectedId || !current) return;
+    setScheduleError(null);
     const provider = (sessions.find((session) => session.id === selectedId)?.provider ?? "codex") as SessionScheduleTurn["provider"];
     const turn: SessionScheduleTurn = provider === "codex" ? {
       provider,
@@ -769,6 +788,7 @@ export default function AgentSessionWindowApp() {
 
   const mutateSchedule = useCallback(async (summary: ScheduleSummaryProjection, action: "pause" | "resume" | "delete" | "run") => {
     if (!withmateApi || !selectedId) return;
+    setScheduleError(null);
     try {
       const request = { scheduleId: summary.id, expectedRevision: summary.revision };
       if (action === "pause") await withmateApi.pauseSessionSchedule(selectedId, request);
@@ -3966,8 +3986,8 @@ export default function AgentSessionWindowApp() {
       loadState={scheduleLoadState}
       schedules={scheduleSummaryProjections}
       draft={scheduleDraft}
-      errorMessage={scheduleError}
-      onBack={() => scheduleView === "list" ? setScheduleView("chat") : openScheduleList()}
+      errorMessage={scheduleError ?? scheduleLoadError}
+      onBack={() => scheduleView === "list" ? openScheduleChat() : openScheduleList()}
       onCreate={createScheduleDraft}
       onEdit={(summary) => void editSchedule(summary)}
       onPause={(summary) => void mutateSchedule(summary, "pause")}
@@ -4063,7 +4083,7 @@ export default function AgentSessionWindowApp() {
     });
   };
 
-  const scheduleComposerProps: SessionComposerExpandedProps | undefined = scheduleDraft ? {
+  const scheduleComposerProps: SessionComposerExpandedProps | undefined = scheduleDraft && scheduleModeActive ? {
     isRunning: false,
     composerBlocked: false,
     canSelectCustomAgent: selectedSession.provider === "copilot",
@@ -4122,7 +4142,14 @@ export default function AgentSessionWindowApp() {
     onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
     onJumpToBottom: () => undefined,
     onSelectCustomAgent: (value) => updateScheduleDraft({ ...scheduleDraft, customAgent: value }),
-    onRemoveAttachment: (targets) => updateScheduleDraft({ ...scheduleDraft, attachments: scheduleDraft.attachments.filter((path) => !targets.includes(path)) }),
+    onRemoveAttachment: (targets) => createPathReferenceRemovalHandler({
+      getDraft: () => scheduleDraft.prompt,
+      applyRemoval: ({ draft: prompt }, removed) => updateScheduleDraft({
+        ...scheduleDraft,
+        prompt,
+        attachments: scheduleDraft.attachments.filter((path) => !removed.includes(path)),
+      }),
+    })(targets),
     onDraftChange: (value) => updateScheduleDraft({ ...scheduleDraft, prompt: value }),
     onDraftFocus: () => undefined,
     onDraftKeyDown: () => undefined,
@@ -4273,7 +4300,7 @@ export default function AgentSessionWindowApp() {
               type="button"
               aria-label={scheduleModeActive ? "チャットへ戻る" : "スケジュールを開く"}
               title={scheduleModeActive ? "チャットへ戻る" : "スケジュールを開く"}
-              onClick={scheduleModeActive ? () => setScheduleView("chat") : openScheduleList}
+              onClick={scheduleModeActive ? openScheduleChat : openScheduleList}
             >
               <span aria-hidden="true">{scheduleModeActive ? "←" : "◷"}</span>
             </button>

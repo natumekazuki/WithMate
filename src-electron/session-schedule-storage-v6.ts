@@ -236,13 +236,16 @@ export class SessionScheduleStorageV6 implements SessionScheduleStorage {
     expectedRevision: number;
     updatedAt: string;
   }): void {
-    const r = this.db
-      .prepare(
-        "UPDATE session_schedules_v6 SET state='deleted',revision=revision+1,next_fire_at=NULL,updated_at=? WHERE id=? AND revision=?",
-      )
-      .run(input.updatedAt, input.id, input.expectedRevision);
-    if (!r.changes)
-      throw new SessionScheduleConflictError("Schedule revision changed.");
+    tx(this.db, () => {
+      const r = this.db
+        .prepare(
+          "UPDATE session_schedules_v6 SET state='deleted',revision=revision+1,next_fire_at=NULL,updated_at=? WHERE id=? AND revision=?",
+        )
+        .run(input.updatedAt, input.id, input.expectedRevision);
+      if (!r.changes)
+        throw new SessionScheduleConflictError("Schedule revision changed.");
+      this.purgeDeletedScheduleIfReplayed(input.id);
+    });
   }
   update(input: UpdateSessionScheduleInput): SessionSchedule {
     return tx(this.db, () => {
@@ -498,8 +501,9 @@ export class SessionScheduleStorageV6 implements SessionScheduleStorage {
           "UPDATE session_schedules_v6 SET state='paused',revision=revision+1,next_fire_at=NULL,updated_at=? WHERE id=? AND revision=? AND state <> 'deleted'",
         )
         .run(now, fire.schedule_id, fire.schedule_revision);
+      const settled = this.getFire(fireId)!;
       this.cleanupFires(fireId);
-      return this.getFire(fireId)!;
+      return settled;
     });
   }
   settleEnqueuedAndCompleteOnce(
@@ -524,8 +528,9 @@ export class SessionScheduleStorageV6 implements SessionScheduleStorage {
           "UPDATE session_schedules_v6 SET state='completed',revision=revision+1,next_fire_at=NULL,updated_at=? WHERE id=? AND revision=? AND trigger_type='once' AND state <> 'deleted'",
         )
         .run(now, fire.schedule_id, fire.schedule_revision);
+      const settled = this.getFire(fireId)!;
       this.cleanupFires(fireId);
-      return this.getFire(fireId)!;
+      return settled;
     });
   }
   private settleFire(
@@ -544,8 +549,9 @@ export class SessionScheduleStorageV6 implements SessionScheduleStorage {
         .run(state, executionId, errorCode, errorMessage, now, id);
       if (!result.changes)
         throw new SessionScheduleConflictError("Fire state changed.");
+      const settled = this.getFire(id)!;
       this.cleanupFires(id);
-      return this.getFire(id)!;
+      return settled;
     });
   }
   private cleanupFires(fireId: string): void {
@@ -558,6 +564,21 @@ export class SessionScheduleStorageV6 implements SessionScheduleStorage {
         "DELETE FROM session_schedule_fires_v6 WHERE schedule_id=? AND state IN ('enqueued','failed') AND id NOT IN (SELECT id FROM session_schedule_fires_v6 WHERE schedule_id=? AND state IN ('enqueued','failed') ORDER BY created_at DESC,id DESC LIMIT 50)",
       )
       .run(row.schedule_id, row.schedule_id);
+    this.purgeDeletedScheduleIfReplayed(row.schedule_id);
+  }
+  private purgeDeletedScheduleIfReplayed(scheduleId: string): void {
+    const pending = (
+      this.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM session_schedule_fires_v6 WHERE schedule_id=? AND state IN ('pending','claimed')",
+        )
+        .get(scheduleId) as { n: number }
+    ).n;
+    if (pending === 0) {
+      this.db
+        .prepare("DELETE FROM session_schedules_v6 WHERE id=? AND state='deleted'")
+        .run(scheduleId);
+    }
   }
   getFire(id: string): SessionScheduleFire | null {
     const r = this.db
