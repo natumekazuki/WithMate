@@ -141,7 +141,7 @@ import {
   collapseMissedSessionScheduleFire,
   nextSessionScheduleTriggerInstant,
   validateSessionScheduleTrigger,
-} from "./session-schedule-trigger.js";
+} from "../src/session-schedule-trigger.js";
 import {
   parseSessionExecutionTurnRequest,
   validateSessionExecutionTurnRequest,

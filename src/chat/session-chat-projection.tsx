@@ -33,6 +33,7 @@ import {
 
 export type AgentSessionChatProjectionInput = {
   mainContent?: ReactNode;
+  isMainContentWorkspace?: boolean;
   hideActionDock?: boolean;
   composerPropsOverride?: SessionComposerExpandedProps;
   leftPane?: ReactNode;
@@ -456,6 +457,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     }),
     recoveryActions,
     mainContent: input.mainContent,
+    baseClassName: input.isMainContentWorkspace ? "session-workspace-mode" : undefined,
     isActionDockExpanded: input.isActionDockExpanded,
     headerSplitterProps: {
       isPanelExpanded: input.isSessionHeaderExpanded,
@@ -495,8 +497,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       ariaLabel: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
       title: input.isFilesPaneVisible ? "File Explorer を非表示" : "File Explorer を表示",
     },
-    isLeftPaneVisible: input.isFilesPaneVisible,
-    isRightPaneVisible: input.isContextRailVisible,
+    isLeftPaneVisible: input.isMainContentWorkspace ? false : input.isFilesPaneVisible,
+    isRightPaneVisible: input.isMainContentWorkspace ? false : input.isContextRailVisible,
     rightPaneProps,
     modals: <ChatSessionModals {...input} />,
     isAuxiliaryMode: input.isAuxiliaryMode,

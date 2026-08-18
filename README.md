@@ -48,9 +48,9 @@ WithMate は、`Codex CLI / GitHub Copilot CLI` 相当の coding agent 体験を
 
 Session Header の時計アイコンから、その Session のスケジュール一覧を開けます。作成または編集を選ぶと、通常の Action Dock がスケジュール用の入力へ切り替わり、プロンプト、添付、Model、Depth、Approval、Sandbox または Custom Agent を設定できます。チャットの下書きとは別に保存されます。
 
-- 一回限りの実行は、ローカル日時と IANA time zone を指定します。過去日時、存在しない時刻、曖昧な時刻は保存できません。
+- 一回限りの実行は、PCのローカル日時を指定します。保存時のOS time zoneを使用するため、画面でtime zoneを選ぶ必要はありません。過去日時、存在しない時刻、曖昧な時刻は保存できません。
 - 定期実行は `minute hour day-of-month month day-of-week` の 5 field Cron で指定します。秒 field、名前、macro、`L`、`W`、`#`、`?` は利用できません。
-- Home Window の時計アイコンでは、全 Session のスケジュールを確認できます。Home では編集せず、対象の Session Window を開いて操作します。
+- Home Window の `Schedules` タブでは、全 Session のスケジュールを確認できます。Home では編集せず、対象の Session Window を開いて操作します。
 - WithMate の終了中や PC の休止中に複数回の予定を過ぎた場合、再開後は最新の一回だけを実行します。WithMate が終了している間は実行されません。
 - 発火した Turn は通常の Session queue に追加されます。キューが上限に達している場合や、保存後に Model／添付先の許可が無効になった場合は実行されず、結果がスケジュール一覧へ表示されます。
 

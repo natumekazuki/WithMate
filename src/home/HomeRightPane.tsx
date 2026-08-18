@@ -81,9 +81,6 @@ export function HomeRightPane({
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings
           </button>
-          <button className="launch-toggle" type="button" aria-label="スケジュールを表示" title="スケジュールを表示" onClick={() => onChangeRightPaneView("schedules")}>
-            <span aria-hidden="true">◷</span>
-          </button>
         </div>
         <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
           <button
@@ -95,7 +92,15 @@ export function HomeRightPane({
           >
             Monitor
           </button>
-          <button className={`home-pane-toggle-button ${rightPaneView === "schedules" ? "active" : ""}`.trim()} type="button" role="tab" aria-selected={rightPaneView === "schedules"} aria-label="Schedules" onClick={() => onChangeRightPaneView("schedules")}>◷</button>
+          <button
+            className={`home-pane-toggle-button ${rightPaneView === "schedules" ? "active" : ""}`.trim()}
+            type="button"
+            role="tab"
+            aria-selected={rightPaneView === "schedules"}
+            onClick={() => onChangeRightPaneView("schedules")}
+          >
+            Schedules
+          </button>
           <button
             className={`home-pane-toggle-button ${rightPaneView === "characters" ? "active" : ""}`.trim()}
             type="button"

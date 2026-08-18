@@ -5,6 +5,7 @@ import {
   buildScheduleDraftComposerState,
   buildScheduleWorkspaceProjection,
   cloneScheduleDraft,
+  resolveSystemScheduleTimeZone,
   type ScheduleDraftProjection,
 } from "../../src/session-schedule-ui-projection.js";
 
@@ -75,6 +76,10 @@ test("home projection is read-only", () => {
     canMutate: false,
   });
   assert.equal(projection.canMutate, false);
+});
+
+test("schedule editor resolves an IANA time zone from the current OS", () => {
+  assert.match(resolveSystemScheduleTimeZone(), /^[^/]+(?:\/[^/]+)+$|^UTC$/);
 });
 
 test("schedule draft canonicalizes composer attachment references for removal", () => {

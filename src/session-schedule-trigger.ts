@@ -196,6 +196,25 @@ export function nextSessionScheduleTriggerInstant(
   }
   throw new Error("Cron next occurrence could not be found.");
 }
+
+export function listNextSessionScheduleTriggerInstants(
+  trigger: Parameters<typeof nextSessionScheduleTriggerInstant>[0],
+  after: Date,
+  count = 5,
+): Date[] {
+  if (!Number.isInteger(count) || count < 1 || count > 10) {
+    throw new Error("Schedule preview count must be between 1 and 10.");
+  }
+  const instants: Date[] = [];
+  let cursor = after;
+  for (let index = 0; index < count; index += 1) {
+    const next = nextSessionScheduleTriggerInstant(trigger, cursor);
+    instants.push(next);
+    cursor = next;
+  }
+  return instants;
+}
+
 export function validateSessionScheduleTrigger(
   trigger: Parameters<typeof nextSessionScheduleTriggerInstant>[0],
   now = new Date(),

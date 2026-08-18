@@ -370,9 +370,10 @@ export function ChatWindow({
   return (
     <SessionChatScreen
       {...screenProps}
+      className={`${screenProps.className ?? ""}${hideActionDock ? " is-action-dock-hidden" : ""}`.trim()}
       header={<SessionHeader {...headerProps} />}
       isHeaderVisible={isHeaderExpanded}
-      isActionDockExpanded={isActionDockExpanded}
+      isActionDockExpanded={hideActionDock ? false : isActionDockExpanded}
       errorSurface={renderedErrorNotices.length > 0 ? (
         <div className="chat-error-surface" role="region" aria-label="チャットエラー">
           {renderedErrorNotices.map((notice) => (
@@ -420,6 +421,7 @@ export function ChatWindow({
           messageViewMode={messageViewMode}
         />
       )}
+      actionDockSplitter={hideActionDock ? null : screenProps.actionDockSplitter}
       actionDock={hideActionDock ? null : (
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div

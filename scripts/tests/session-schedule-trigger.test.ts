@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   collapseMissedSessionScheduleFire,
+  listNextSessionScheduleTriggerInstants,
   nextSessionScheduleTriggerInstant,
   validateSessionScheduleTrigger,
-} from "../../src-electron/session-schedule-trigger.js";
+} from "../../src/session-schedule-trigger.js";
 
 test("once rejects past, invalid zone, DST gap and accepts future", () => {
   const now = new Date("2026-08-18T00:00:00Z");
@@ -84,5 +85,26 @@ test("cron handles DST gap/fold, DOW 7 and latest missed", () => {
       new Date("2026-08-18T00:03:30Z"),
     )?.toISOString(),
     "2026-08-18T00:03:00.000Z",
+  );
+});
+
+test("cron preview returns consecutive canonical occurrences", () => {
+  const preview = listNextSessionScheduleTriggerInstants(
+    {
+      type: "cron",
+      expression: "*/15 * * * *",
+      timeZone: "UTC",
+    },
+    new Date("2026-08-18T00:07:00Z"),
+    4,
+  );
+  assert.deepEqual(
+    preview.map((instant) => instant.toISOString()),
+    [
+      "2026-08-18T00:15:00.000Z",
+      "2026-08-18T00:30:00.000Z",
+      "2026-08-18T00:45:00.000Z",
+      "2026-08-18T01:00:00.000Z",
+    ],
   );
 });

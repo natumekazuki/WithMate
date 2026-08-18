@@ -93,6 +93,21 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
 });
 
+test("ChatWindow は workspace 一覧で ActionDock と splitter を一緒に隠す", () => {
+  const props = createChatWindowProps();
+  props.className = "session-workspace-mode";
+  props.mainContent = React.createElement("div", null, "Schedule list");
+  props.hideActionDock = true;
+  props.actionDockSplitter = React.createElement("div", null, "Action splitter");
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /session-workspace-mode is-action-dock-hidden/);
+  assert.ok(html.includes("Schedule list"));
+  assert.ok(!html.includes("Action splitter"));
+  assert.ok(!html.includes("session-action-dock-content"));
+});
+
 test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;

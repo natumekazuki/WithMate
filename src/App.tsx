@@ -205,6 +205,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { ScheduleWorkspace } from "./session-schedule-workspace.js";
 import {
   buildScheduleDraftComposerState,
+  resolveSystemScheduleTimeZone,
   type ScheduleDraftProjection,
   type ScheduleSummaryProjection,
 } from "./session-schedule-ui-projection.js";
@@ -704,11 +705,18 @@ export default function AgentSessionWindowApp() {
   const createScheduleDraft = useCallback(() => {
     const currentSession = sessions.find((session) => session.id === selectedId);
     if (!currentSession) return;
+    let timeZone: string;
+    try {
+      timeZone = resolveSystemScheduleTimeZone();
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "PCのローカルタイムを取得できませんでした。");
+      return;
+    }
     const composerState = buildScheduleDraftComposerState(draft, composerPreview.attachments);
     const next: ScheduleDraftProjection = {
       sessionId: currentSession.id,
       name: "",
-      trigger: { type: "cron", expression: "0 9 * * 1-5", timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC" },
+      trigger: { type: "cron", expression: "0 9 * * 1-5", timeZone },
       prompt: composerState.prompt,
       attachments: composerState.attachments,
       model: currentSession.model ?? "",
@@ -731,7 +739,7 @@ export default function AgentSessionWindowApp() {
         id: schedule.id,
         sessionId: schedule.sessionId,
         name: schedule.name,
-        trigger: schedule.trigger,
+        trigger: { ...schedule.trigger, timeZone: resolveSystemScheduleTimeZone() },
         prompt: schedule.turn.userMessage,
         attachments: schedule.turn.attachments?.map((attachment) => attachment.path) ?? [],
         model: schedule.turn.model ?? "",
@@ -777,11 +785,12 @@ export default function AgentSessionWindowApp() {
       attachments: current.attachments.map((path) => ({ path, source: "text" as const })),
     };
     try {
+      const trigger = { ...current.trigger, timeZone: resolveSystemScheduleTimeZone() } as SessionScheduleTrigger;
       if (current.id) {
         const previous = sessionSchedules.find((entry) => entry.id === current.id);
-        await withmateApi.updateSessionSchedule(selectedId, { scheduleId: current.id, expectedRevision: previous?.revision ?? 1, name: current.name, trigger: current.trigger, turn });
+        await withmateApi.updateSessionSchedule(selectedId, { scheduleId: current.id, expectedRevision: previous?.revision ?? 1, name: current.name, trigger, turn });
       } else {
-        await withmateApi.createSessionSchedule(selectedId, { name: current.name, trigger: current.trigger, turn });
+        await withmateApi.createSessionSchedule(selectedId, { name: current.name, trigger, turn });
       }
       await refreshSessionSchedules();
       setScheduleView("list");
@@ -4181,6 +4190,7 @@ export default function AgentSessionWindowApp() {
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
+        isMainContentWorkspace: scheduleModeActive,
         hideActionDock: scheduleView === "list",
         composerPropsOverride: scheduleComposerProps,
         leftPane: fileExplorerPane,

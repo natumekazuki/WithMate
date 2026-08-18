@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { BackNavigationButton } from "./back-navigation-button.js";
+import { listNextSessionScheduleTriggerInstants } from "./session-schedule-trigger.js";
 import {
   buildScheduleWorkspaceProjection,
   type ScheduleDraftProjection,
@@ -25,6 +26,7 @@ export type ScheduleWorkspaceProps = {
   onRunNow?: (schedule: ScheduleSummaryProjection) => void;
   onOpenSession?: (sessionId: string) => void;
   onDraftChange?: (draft: ScheduleDraftProjection) => void;
+  previewNow?: Date;
 };
 
 function ScheduleIconButton({
@@ -56,8 +58,18 @@ function ScheduleIconButton({
 
 function formatTrigger(trigger: ScheduleSummaryProjection["trigger"]): string {
   return trigger.type === "cron"
-    ? `${trigger.expression} · ${trigger.timeZone}`
-    : `${trigger.localDateTime} · ${trigger.timeZone}`;
+    ? trigger.expression
+    : trigger.localDateTime.replace("T", " ");
+}
+
+function formatPreviewInstant(instant: Date): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: "numeric",
+    day: "numeric",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(instant);
 }
 
 function statusLabel(status: ScheduleSummaryProjection["status"]): string {
@@ -100,7 +112,10 @@ function ScheduleList({
       aria-labelledby="schedule-list-title"
     >
       <div className="schedule-workspace-toolbar">
-        <h1 id="schedule-list-title">スケジュール</h1>
+        <div className="schedule-workspace-title-group">
+          <h1 id="schedule-list-title" className={isHome ? "visually-hidden" : undefined}>スケジュール</h1>
+          {!isHome ? <span className="schedule-workspace-count">{schedules.length}</span> : null}
+        </div>
         {!isHome ? (
           <ScheduleIconButton
             label="スケジュールを作成"
@@ -126,15 +141,15 @@ function ScheduleList({
               <span className="schedule-list-session">
                 {isHome ? schedule.sessionTitle : "このSession"}
               </span>
-              <span className="schedule-list-trigger">
-                {formatTrigger(schedule.trigger)}
-              </span>
-              <span className="schedule-list-next">
-                次回:{" "}
-                {schedule.nextFireAt
-                  ? new Date(schedule.nextFireAt).toLocaleString()
-                  : "—"}
-              </span>
+              <div className="schedule-list-timing">
+                <span className="schedule-list-trigger">
+                  <span aria-hidden="true">{schedule.trigger.type === "cron" ? "↻" : "◷"}</span>
+                  {formatTrigger(schedule.trigger)}
+                </span>
+                <span className="schedule-list-next">
+                  次回 {schedule.nextFireAt ? new Date(schedule.nextFireAt).toLocaleString() : "—"}
+                </span>
+              </div>
               {schedule.lastFireResult ? (
                 <span className="schedule-list-result">
                   直近: {schedule.lastFireResult}
@@ -202,7 +217,8 @@ function ScheduleEditor({
   draft,
   onDraftChange,
   onBack,
-}: Pick<ScheduleWorkspaceProps, "draft" | "onDraftChange" | "onBack">) {
+  previewNow,
+}: Pick<ScheduleWorkspaceProps, "draft" | "onDraftChange" | "onBack" | "previewNow">) {
   const currentDraft = draft;
   if (!currentDraft) {
     return (
@@ -230,6 +246,19 @@ function ScheduleEditor({
       } as ScheduleDraftProjection["trigger"],
     });
   };
+  let preview: Date[] = [];
+  let previewError = false;
+  if (currentDraft.trigger.type === "cron" && currentDraft.trigger.expression.trim()) {
+    try {
+      preview = listNextSessionScheduleTriggerInstants(
+        currentDraft.trigger,
+        previewNow ?? new Date(),
+        5,
+      );
+    } catch {
+      previewError = true;
+    }
+  }
 
   return (
     <section
@@ -237,13 +266,15 @@ function ScheduleEditor({
       aria-labelledby="schedule-editor-title"
     >
       <div className="schedule-workspace-editor-toolbar">
-        <BackNavigationButton label="スケジュール一覧へ戻る" onBack={onBack} />
-        <h1 id="schedule-editor-title">
-          {currentDraft.id ? "スケジュールを編集" : "スケジュールを作成"}
-        </h1>
+        <div className="schedule-editor-heading">
+          <BackNavigationButton label="スケジュール一覧へ戻る" onBack={onBack} />
+          <h1 id="schedule-editor-title">
+            {currentDraft.id ? "スケジュールを編集" : "スケジュールを作成"}
+          </h1>
+        </div>
       </div>
       <div className="schedule-editor-fields">
-        <label>
+        <label className="schedule-name-field">
           <span>名前</span>
           <input
             value={currentDraft.name}
@@ -279,7 +310,7 @@ function ScheduleEditor({
           </select>
         </label>
         {currentDraft.trigger.type === "cron" ? (
-          <label>
+          <label className="schedule-trigger-field">
             <span>Cron式</span>
             <input
               value={currentDraft.trigger.expression}
@@ -290,7 +321,7 @@ function ScheduleEditor({
             />
           </label>
         ) : (
-          <label>
+          <label className="schedule-trigger-field">
             <span>実行日時</span>
             <input
               type="datetime-local"
@@ -301,17 +332,28 @@ function ScheduleEditor({
             />
           </label>
         )}
-        <label>
-          <span>タイムゾーン</span>
-          <input
-            value={currentDraft.trigger.timeZone}
-            onChange={(event) =>
-              updateTrigger({ timeZone: event.target.value })
-            }
-            placeholder="Asia/Tokyo"
-          />
-        </label>
       </div>
+      {currentDraft.trigger.type === "cron" ? (
+        <section className="schedule-preview" aria-labelledby="schedule-preview-title" aria-live="polite">
+          <div className="schedule-preview-heading">
+            <span aria-hidden="true">◷</span>
+            <h2 id="schedule-preview-title">次回の実行予定</h2>
+          </div>
+          {previewError ? (
+            <p className="schedule-preview-error">Cron式を確認してください。</p>
+          ) : preview.length > 0 ? (
+            <ol>
+              {preview.map((instant) => (
+                <li key={instant.toISOString()}>
+                  <time dateTime={instant.toISOString()}>{formatPreviewInstant(instant)}</time>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p>式を入力すると、ここに予定を表示します。</p>
+          )}
+        </section>
+      ) : null}
     </section>
   );
 }
@@ -339,7 +381,7 @@ export function ScheduleWorkspace(props: ScheduleWorkspaceProps) {
 
   return (
     <main
-      className={`schedule-workspace${projection.mode === "list" ? " is-list" : " is-editor"}`}
+      className={`schedule-workspace${projection.mode === "list" ? " is-list" : " is-editor"}${props.isHome ? " is-home" : ""}`}
       data-schedule-state={projection.state}
     >
       {projection.errorMessage && projection.state !== "error" ? (
@@ -364,7 +406,7 @@ export function ScheduleWorkspace(props: ScheduleWorkspaceProps) {
           aria-labelledby="schedule-list-title"
         >
           <div className="schedule-workspace-toolbar">
-            <h1 id="schedule-list-title">スケジュール</h1>
+            <h1 id="schedule-list-title" className={props.isHome ? "visually-hidden" : undefined}>スケジュール</h1>
             {!props.isHome ? (
               <ScheduleIconButton
                 label="スケジュールを作成"
@@ -373,13 +415,17 @@ export function ScheduleWorkspace(props: ScheduleWorkspaceProps) {
               />
             ) : null}
           </div>
-          <p>スケジュールはありません。</p>
+          <div className="schedule-empty-copy">
+            <span className="schedule-empty-icon" aria-hidden="true">◷</span>
+            <p>スケジュールはありません。</p>
+          </div>
         </section>
       ) : projection.state === "editor" ? (
         <ScheduleEditor
           draft={projection.draft}
           onDraftChange={props.onDraftChange}
           onBack={props.onBack}
+          previewNow={props.previewNow}
         />
       ) : (
         <ScheduleList

@@ -367,7 +367,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Home のschedule一覧は全Sessionの状態確認専用とし、各行から所有Sessionを開ける。作成、編集、pause、resume、run now、deleteは表示しない
 - Session Headerのschedule iconは中央message listをschedule一覧へ置き換える。一覧中はActionDockを隠し、作成・編集時だけ既存ActionDockをschedule draftのprompt、attachment、Model、Depth、Approval、Sandbox、Custom Agent入力へ切り替える
 - schedule draftはchat draftとSessionの現在入力設定から独立させる。Add Directoryだけは既存どおりSessionの許可対象を即時更新し、scheduleへ許可snapshotを保存しない
-- scheduleの戻る、追加、編集、pause、resume、run now、delete、保存は意味が一意なicon-only controlとし、visible textを置かない場合も`aria-label`と`title`を持たせる。状態、Cron式、time zone、次回予定、error、execution IDは文字で表示する
+- scheduleの戻る、追加、編集、pause、resume、run now、delete、保存は意味が一意なicon-only controlとし、visible textを置かない場合も`aria-label`と`title`を持たせる。状態、Cron式、次回予定、error、execution IDは文字で表示する。time zoneは保存時のOSローカルzoneを内部へ記録し、入力項目や一覧項目として表示しない
+- Sessionのschedule一覧ではActionDockと左右の補助paneを隠す。作成または編集へ入ったときだけActionDockをschedule入力として表示し、Cron式の直下に次の5回の実行予定をOSローカル時刻で表示する
 - Session の作成・更新・削除は Main Process 経由で永続化する
 - Session の実行中イベントは Main Process から live state として IPC 中継する
 - Home の `Session Monitor` は Main Process の `sessionWindows` を thin IPC bridge で参照し、開いている `Session Window` の session だけを表示する

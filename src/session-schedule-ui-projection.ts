@@ -48,6 +48,14 @@ export type ScheduleWorkspaceProjection = {
   errorMessage: string | null;
 };
 
+export function resolveSystemScheduleTimeZone(): string {
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone?.trim();
+  if (!timeZone) {
+    throw new Error("PCのローカルタイムゾーンを取得できませんでした。");
+  }
+  return timeZone;
+}
+
 export function cloneScheduleDraft(
   draft: ScheduleDraftProjection,
 ): ScheduleDraftProjection {
