@@ -10,6 +10,7 @@ export type RetryBannerState = {
   badge: string;
   title: string;
   lastRequestText: string;
+  terminalFailureNotification?: import("../session-external-runtime-contract.js").SessionRuntimeTerminalFailureNotificationProjection | null;
 };
 
 export type RetryBannerSource = {

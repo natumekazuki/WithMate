@@ -2104,6 +2104,7 @@ export type SessionRetryBannerProps = {
     badge: string;
     title: string;
     lastRequestText: string;
+    terminalFailureNotification?: import("./session-external-runtime-contract.js").SessionRuntimeTerminalFailureNotificationProjection | null;
   } | null;
   isRetryActionDisabled: boolean;
   isRetryEditDisabled: boolean;
@@ -2141,6 +2142,11 @@ export function SessionRetryBanner({
           </span>
         </div>
       </div>
+      {retryBanner.terminalFailureNotification ? (
+        <p className="resume-banner-notification-status" role="status">
+          {terminalFailureNotificationLabel(retryBanner.terminalFailureNotification)}
+        </p>
+      ) : null}
       <div className="resume-banner-actions">
         <button type="button" onClick={onResendLastMessage} disabled={isRetryActionDisabled}>
           再送
@@ -2169,6 +2175,24 @@ export function SessionRetryBanner({
       ) : null}
     </section>
   );
+}
+
+function terminalFailureNotificationLabel(
+  notification: NonNullable<SessionRetryBannerProps["retryBanner"]>["terminalFailureNotification"] & {},
+): string {
+  const target = `通知先 ${notification.targetSessionId}`;
+  switch (notification.state) {
+    case "armed":
+      return `${target} · 失敗時に通知`;
+    case "pending":
+      return `${target} · 通知待機中`;
+    case "enqueued":
+      return `${target} · 通知を登録済み (${notification.notificationExecutionId ?? "execution不明"})`;
+    case "failed":
+      return `${target} · 通知失敗 (${notification.errorCode ?? "UNKNOWN"})`;
+    case "not_triggered":
+      return `${target} · 通知対象外`;
+  }
 }
 
 export type SessionMessageColumnProps = {

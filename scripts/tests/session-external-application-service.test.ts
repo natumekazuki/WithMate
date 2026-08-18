@@ -1040,6 +1040,48 @@ test("RL-01: applied turn.run reports an oversized inline result with applied ef
   assert.equal("error" in response && response.error.details.executionId, "execution-1");
 });
 
+test("TN-PROJ-06: turn.run/enqueue/get/listは同じterminal notification projectorを使う", async () => {
+  const projectedNotification = {
+    targetSessionId: "target-session",
+    state: "pending" as const,
+    notificationExecutionId: null,
+    errorCode: null,
+    updatedAt: "2026-08-18T00:00:01.000Z",
+  };
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    projectTerminalFailureNotification: () => projectedNotification,
+    executionService: {
+      beginShutdown() {},
+      async run() { return execution; },
+      async enqueue() { return { ...execution, operation: "turn.enqueue", state: "queued" }; },
+      resolveReplay() { return null; },
+      get() { return execution; },
+      *listPage() { yield { ...execution, sequence: 1 }; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { return execution; },
+    },
+  });
+  const { responseMode: _responseMode, ...enqueueInput } = mutationInput;
+  const responses = [
+    await executeBound(service, "turn.run", mutationInput),
+    await executeBound(service, "turn.enqueue", enqueueInput),
+    await executeBound(service, "turn.get", { sessionId: "session-1", executionId: "execution-1" }),
+    await executeBound(service, "turn.list", { sessionId: "session-1" }),
+  ];
+
+  const projections = responses.map((response) => {
+    assert.ok("result" in response);
+    if (!("result" in response)) throw new Error("Expected application result.");
+    return response.operation === "turn.list"
+      ? (response.result as { items: Array<{ terminalFailureNotification: unknown }> }).items[0]
+        ?.terminalFailureNotification
+      : (response.result as { terminalFailureNotification: unknown }).terminalFailureNotification;
+  });
+  assert.deepEqual(projections, Array.from({ length: 4 }, () => projectedNotification));
+});
+
 test("I-01: canonical replayはcatalog revision更新後もstale validationより先に解決する", async () => {
   let runInvoked = false;
   let initiatorResolveCount = 0;
@@ -1164,6 +1206,111 @@ test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexe
   const response = await executeBound(service, "turn.run", mutationInput);
   assert.equal("error" in response && response.error.code, "SESSION_INITIATOR_UNAVAILABLE");
   assert.equal("error" in response && response.error.effect, "not_applied");
+  assert.equal(runInvoked, false);
+});
+
+test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsource snapshotをactorと分離して保存する", async () => {
+  const mutations: any[] = [];
+  const resolvedSessions: string[] = [];
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator: async (sessionId) => ({
+      kind: "session",
+      sessionId,
+      character: {
+        characterId: `character-${sessionId}`,
+        name: `Character ${sessionId}`,
+        iconFilePath: `C:/characters/${sessionId}.png`,
+      },
+    }),
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    crudService: {
+      async get(sessionId: string) {
+        resolvedSessions.push(sessionId);
+        if (sessionId === "missing-session") {
+          throw new SessionCrudError("SESSION_NOT_FOUND", "missing", false, { sessionId });
+        }
+        return { sessionId, sessionKind: "default" } as any;
+      },
+    },
+    executionService: {
+      beginShutdown() {},
+      async run(input: any) {
+        mutations.push(input);
+        return { ...execution, sessionId: input.sessionId };
+      },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  } as any);
+  const actor = { ...actorBinding, actorSessionId: "actor-session" };
+  const configured = {
+    ...mutationInput,
+    sessionId: "source-session",
+    terminalFailureNotification: { targetSessionId: "target-session" },
+  };
+
+  const accepted = await executeBound(service, "turn.run", configured, actor);
+  assert.equal("result" in accepted, true);
+  assert.equal(mutations.length, 1);
+  assert.equal(mutations[0].input?.request, undefined);
+  assert.equal(mutations[0].request.initiator.sessionId, "actor-session");
+  assert.equal(mutations[0].request.terminalFailureNotification.targetSessionId, "target-session");
+  assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.sessionId, "source-session");
+  assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.character.name,
+    "Character source-session");
+  assert.deepEqual(resolvedSessions, ["source-session", "target-session"]);
+
+  const beforeRejected = mutations.length;
+  const same = await executeBound(service, "turn.run", {
+    ...configured,
+    idempotencyKey: "same-target-key",
+    terminalFailureNotification: { targetSessionId: "source-session" },
+  }, actor);
+  const missing = await executeBound(service, "turn.run", {
+    ...configured,
+    idempotencyKey: "missing-target-key",
+    terminalFailureNotification: { targetSessionId: "missing-session" },
+  }, actor);
+  assert.equal("error" in same && same.error.code, "TERMINAL_NOTIFICATION_SAME_SESSION");
+  assert.equal("error" in missing && missing.error.code, "SESSION_NOT_FOUND");
+  assert.equal(mutations.length, beforeRejected);
+
+  await executeBound(service, "turn.run", {
+    ...configured,
+    idempotencyKey: "different-target-key",
+    terminalFailureNotification: { targetSessionId: "other-target" },
+  }, actor);
+  assert.notEqual(mutations[0].requestFingerprint, mutations[1].requestFingerprint);
+});
+
+test("TN-AUTH-01: canonical replayはtargetとsource snapshotのcurrent解決より先に返る", async () => {
+  let resolved = 0;
+  let runInvoked = false;
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator: async () => { resolved += 1; return null; },
+    currentModelCatalog: () => null,
+    crudService: { async get() { resolved += 1; throw new Error("must not resolve"); } },
+    executionService: {
+      beginShutdown() {},
+      async run() { runInvoked = true; return execution; },
+      async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return execution; },
+      get() { return execution; },
+      listPage() { return []; },
+      async cancel() { return execution; },
+      async waitForTerminal() { return execution; },
+    },
+  } as any);
+  const response = await executeBound(service, "turn.run", {
+    ...mutationInput,
+    terminalFailureNotification: { targetSessionId: "target-session" },
+  });
+  assert.equal("result" in response, true);
+  assert.equal(resolved, 0);
   assert.equal(runInvoked, false);
 });
 

@@ -179,6 +179,18 @@ export type SessionRuntimeTurnRequest = SessionRuntimeTurnRequestBase & (
   }
 );
 
+export type SessionRuntimeTerminalFailureNotificationInput = {
+  targetSessionId: string;
+};
+
+export type SessionRuntimeTerminalFailureNotificationProjection = {
+  targetSessionId: string;
+  state: "armed" | "pending" | "enqueued" | "failed" | "not_triggered";
+  notificationExecutionId: string | null;
+  errorCode: string | null;
+  updatedAt: string;
+};
+
 type SessionRuntimeTurnOptionsBase = {
   sessionId: string;
   catalogRevision: number;
@@ -260,6 +272,7 @@ export type SessionRuntimePublicExecution = Omit<SessionExecution, "result"> & {
     truncated: boolean;
     updatedAt: string;
   } | null;
+  terminalFailureNotification: SessionRuntimeTerminalFailureNotificationProjection | null;
 };
 
 export type SessionRuntimeTurnListResult = {
@@ -327,6 +340,7 @@ export type SessionRuntimeRunInput = {
   responseMode: "wait" | "deferred";
   waitTimeoutMs?: number;
   turn: SessionRuntimeTurnRequest;
+  terminalFailureNotification?: SessionRuntimeTerminalFailureNotificationInput;
 };
 
 export type SessionRuntimeEnqueueInput = Omit<SessionRuntimeRunInput, "responseMode" | "waitTimeoutMs">;
@@ -606,6 +620,7 @@ export function projectSessionExecution(
       truncated: boolean;
       updatedAt: string;
     } | null;
+    terminalFailureNotification?: SessionRuntimeTerminalFailureNotificationProjection | null;
   } = {},
 ): SessionRuntimePublicExecution {
   try {
@@ -628,6 +643,7 @@ export function projectSessionExecution(
         ? projectSessionInteraction(observation.pendingInteraction)
         : null,
       partialOutput: observation.partialOutput ?? null,
+      terminalFailureNotification: observation.terminalFailureNotification ?? null,
     };
   } catch (error) {
     if (error instanceof SessionRuntimeProjectionLimitError) {
@@ -744,7 +760,15 @@ function projectTurnResult(result: unknown): { assistantText: string } | null {
 
 function parseTurnRunInput(value: unknown): SessionRuntimeRunInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "catalogRevision", "idempotencyKey", "responseMode", "waitTimeoutMs", "turn"], "input");
+  assertKeys(record, [
+    "sessionId",
+    "catalogRevision",
+    "idempotencyKey",
+    "responseMode",
+    "waitTimeoutMs",
+    "turn",
+    "terminalFailureNotification",
+  ], "input");
   const responseMode = requireEnum(record.responseMode, ["wait", "deferred"] as const, "responseMode");
   if (responseMode === "deferred" && record.waitTimeoutMs !== undefined) {
     throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
@@ -760,7 +784,13 @@ function parseTurnRunInput(value: unknown): SessionRuntimeRunInput {
 
 function parseTurnEnqueueInput(value: unknown): SessionRuntimeEnqueueInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "catalogRevision", "idempotencyKey", "turn"], "input");
+  assertKeys(record, [
+    "sessionId",
+    "catalogRevision",
+    "idempotencyKey",
+    "turn",
+    "terminalFailureNotification",
+  ], "input");
   return parseTurnMutationBase(record);
 }
 
@@ -770,6 +800,22 @@ function parseTurnMutationBase(record: Record<string, unknown>): SessionRuntimeE
     catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
     turn: parseTurnRequest(record.turn),
+    ...(record.terminalFailureNotification === undefined
+      ? {}
+      : { terminalFailureNotification: parseTerminalFailureNotificationInput(record.terminalFailureNotification) }),
+  };
+}
+
+function parseTerminalFailureNotificationInput(
+  value: unknown,
+): SessionRuntimeTerminalFailureNotificationInput {
+  const record = requireObject(value, "terminalFailureNotification");
+  assertKeys(record, ["targetSessionId"], "terminalFailureNotification");
+  return {
+    targetSessionId: requireNonEmptyString(
+      record.targetSessionId,
+      "terminalFailureNotification.targetSessionId",
+    ),
   };
 }
 

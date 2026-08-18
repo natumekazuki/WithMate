@@ -114,3 +114,52 @@ test("Session initiatorは完全なidentity tupleだけを受け付ける", () =
     turn: { provider: "codex", userMessage: "invalid" },
   }), /icon path/i);
 });
+
+test("TN-SNAPSHOT-02: terminal通知targetとsource Session snapshotをtupleで保存しlegacyへ推測しない", async () => {
+  const sourceSession = {
+    kind: "session" as const,
+    sessionId: "source-session",
+    character: {
+      characterId: "source-character",
+      name: "Source Character",
+      iconFilePath: "C:/characters/source.png",
+    },
+  };
+  const validated = await validateSessionExecutionTurnRequest(
+    "source-session",
+    {
+      initiator: {
+        kind: "session",
+        sessionId: "actor-session",
+        character: { characterId: "actor", name: "Actor", iconFilePath: "C:/actor.png" },
+      },
+      catalogRevision: 9,
+      terminalFailureNotification: {
+        contractVersion: 1,
+        targetSessionId: "target-session",
+        sourceSession,
+      },
+      turn: { provider: "codex", userMessage: "work" },
+    },
+    async (_sessionId, _revision, turn) => turn,
+  );
+
+  assert.deepEqual(parseSessionExecutionTurnRequest(validated).terminalFailureNotification, {
+    contractVersion: 1,
+    targetSessionId: "target-session",
+    sourceSession,
+  });
+  assert.equal(parseSessionExecutionTurnRequest({
+    catalogRevision: 1,
+    turn: { provider: "codex", userMessage: "legacy" },
+  }).terminalFailureNotification, null);
+  assert.throws(() => parseSessionExecutionTurnRequest({
+    catalogRevision: 1,
+    terminalFailureNotification: {
+      contractVersion: 1,
+      targetSessionId: "target-session",
+      sourceSession: { kind: "session", sessionId: "source-session", character: { name: "missing tuple" } },
+    },
+    turn: { provider: "codex", userMessage: "invalid" },
+  }), /character ID/i);
+});

@@ -52,6 +52,7 @@ const publicExecution = {
   attachments: [],
   pendingInteraction: null,
   partialOutput: null,
+  terminalFailureNotification: null,
 };
 const publicSession = {
   sessionId: "s1",
@@ -352,6 +353,7 @@ describe("WithMate Session MCP contract", () => {
           catalogRevision: 5,
           idempotencyKey: "run-1",
           responseMode: "deferred",
+          terminalFailureNotification: { targetSessionId: "target-session" },
           turn,
         },
       })).isError, undefined);
@@ -361,6 +363,7 @@ describe("WithMate Session MCP contract", () => {
           sessionId: "session-1",
           catalogRevision: 5,
           idempotencyKey: "enqueue-1",
+          terminalFailureNotification: { targetSessionId: "target-session" },
           turn,
         },
       })).isError, undefined);
@@ -374,8 +377,23 @@ describe("WithMate Session MCP contract", () => {
         },
       });
       assert.equal(invalid.isError, true);
+      const invalidNotification = await client.callTool({
+        name: "turn.enqueue",
+        arguments: {
+          sessionId: "session-1",
+          catalogRevision: 5,
+          idempotencyKey: "enqueue-3",
+          terminalFailureNotification: { targetSessionId: "target-session", characterId: "spoof" },
+          turn,
+        },
+      });
+      assert.equal(invalidNotification.isError, true);
     });
     assert.deepEqual(requests.map((request) => request.operation), ["turn.run", "turn.enqueue"]);
+    assert.deepEqual(requests.map((request) => request.input.terminalFailureNotification), [
+      { targetSessionId: "target-session" },
+      { targetSessionId: "target-session" },
+    ]);
   });
 
   it("EXT-RESULT-03: turn.runはenqueue executionをoperation別result schemaで拒否する", async () => {

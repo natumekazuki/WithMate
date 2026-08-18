@@ -277,7 +277,8 @@ function parseTurnRunInput(value) {
 		"idempotencyKey",
 		"responseMode",
 		"waitTimeoutMs",
-		"turn"
+		"turn",
+		"terminalFailureNotification"
 	], "input");
 	const responseMode = requireEnum(record.responseMode, ["wait", "deferred"], "responseMode");
 	if (responseMode === "deferred" && record.waitTimeoutMs !== void 0) throw invalid("waitTimeoutMs", "waitTimeoutMs is only valid when responseMode is wait.");
@@ -293,7 +294,8 @@ function parseTurnEnqueueInput(value) {
 		"sessionId",
 		"catalogRevision",
 		"idempotencyKey",
-		"turn"
+		"turn",
+		"terminalFailureNotification"
 	], "input");
 	return parseTurnMutationBase(record);
 }
@@ -302,8 +304,14 @@ function parseTurnMutationBase(record) {
 		sessionId: requireNonEmptyString(record.sessionId, "sessionId"),
 		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
-		turn: parseTurnRequest(record.turn)
+		turn: parseTurnRequest(record.turn),
+		...record.terminalFailureNotification === void 0 ? {} : { terminalFailureNotification: parseTerminalFailureNotificationInput(record.terminalFailureNotification) }
 	};
+}
+function parseTerminalFailureNotificationInput(value) {
+	const record = requireObject(value, "terminalFailureNotification");
+	assertKeys(record, ["targetSessionId"], "terminalFailureNotification");
+	return { targetSessionId: requireNonEmptyString(record.targetSessionId, "terminalFailureNotification.targetSessionId") };
 }
 function parseTurnRequest(value) {
 	const record = requireObject(value, "turn");
@@ -20889,7 +20897,8 @@ var mutationBaseShape = {
 	sessionId: nonEmptyStringSchema,
 	catalogRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema,
-	turn: turnSchema
+	turn: turnSchema,
+	terminalFailureNotification: object({ targetSessionId: nonEmptyStringSchema }).strict().optional()
 };
 var runInputSchema = object({
 	...mutationBaseShape,
@@ -21131,6 +21140,19 @@ function createExecutionSchema(operation) {
 		partialOutput: object({
 			assistantText: string(),
 			truncated: boolean(),
+			updatedAt: string()
+		}).strict().nullable(),
+		terminalFailureNotification: object({
+			targetSessionId: string(),
+			state: _enum([
+				"armed",
+				"pending",
+				"enqueued",
+				"failed",
+				"not_triggered"
+			]),
+			notificationExecutionId: string().nullable(),
+			errorCode: string().nullable(),
 			updatedAt: string()
 		}).strict().nullable()
 	}).strict();

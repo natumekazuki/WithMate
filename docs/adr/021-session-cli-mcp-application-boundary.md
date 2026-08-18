@@ -64,7 +64,11 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - 引き継ぎ先は呼び出し元または親Sessionに固定しない。統括SessionがSession Bを作成し、BへSession CのIDを渡して、Bが完了後にCへ競合確認を依頼する構成を許可する。
 - 初期promptへ呼び出し元Sessionを自動注入する`runtime.context`は設けない。必要なSession IDはSession作成resultまたは明示的な指示から渡す。
 - 通常Sessionのprovider promptには実行対象自身のSession IDだけを含める。これはagentが自分のSessionを識別するための実行文脈であり、呼び出し元または親Sessionを伝える`runtime.context`とは分ける。
-- agentが`turn.enqueue`を呼ぶ前に失敗または中断した場合、引き継ぎは作成されない。統括側は保持したexecution IDを`turn.get`で確認できる。terminal failureを別Sessionへ自動enqueueする機能は初期surfaceに含めない。
+- `turn.run`と`turn.enqueue`は、単一の通常Sessionを指定するoptionalなterminal failure通知設定を受け付ける。通知先はrequestで明示し、binding actor、caller、parent、source Sessionから補完しない。sourceと通知先が同一ならexecution作成前に拒否する。
+- 通知設定を持つsource executionは、source Sessionのcanonical Character identityを作成時にsnapshotする。requestからsender表示値を受け取らず、targetとsnapshotを解決できない場合はsource executionを作成しない。通知先はTurn作成fingerprintへ含め、canonical replayをcurrent SessionとCharacterの再解決より先に行う。
+- source executionが`failed`または`interrupted`へterminal commitした後だけ、保存済みsnapshotをinitiatorとする通知Turnを既存の`turn.enqueue` ownerへ登録する。`completed`と`canceled`は通知せず、通知execution自身へ通知設定を継承しない。
+- terminal callbackはwake-upに限定し、配送の正本はdurable delivery recordと起動時reconciliationに置く。delivery identityとenqueue idempotency keyはsource execution、terminal state、target Session、契約versionから導出する。enqueue後のresponse loss、settle前crash、再起動retryは同じkeyへ収束させる。
+- transient failureはterminal確定から24時間、5秒開始の指数backoff、最大5分で再試行する。permanent failureまたは期限切れはdeliveryだけを`failed`へ確定し、source executionのterminal state、result、errorを変更しない。
 
 ### mutationをidempotencyで収束させる
 
@@ -74,6 +78,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - 未完了recordはterminalへ収束するまで保持する。terminal recordの再送保証期間は24時間とし、起動時と定期cleanupで期限切れrecordを除去する。
 - response lossまたはclient切断の後も、同じkeyの再送でSessionまたはTurnを重複作成しない。
 - Turn作成fingerprintはinitiator kindとSession actor IDを含み、CLI/MCP adapter、binding ID/reference/generation、Character表示名、icon参照を含めない。canonical replayをCharacter snapshot再解決より先に判定し、同じactorのMCP・CLI retryを同じexecutionへ収束させる。別actorによる同一keyとpayloadはconflictとする。
+- terminal failure通知を指定したTurn作成fingerprintは通知先Session IDも含む。同じkeyで通知先だけを変更した再送はconflictとする。
 
 ### SessionFolderを対象Sessionのmanaged file boundaryとする
 
@@ -96,6 +101,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - MCP protocolの失敗とtool executionの失敗を分ける。application errorは共通のstable code、human-readable message、retry可能性、副作用の状態、safe detailsを持ち、message解析を機械判定に使わせない。
 - inline textとloopback requestには上書き不能なhard size limitを設ける。SessionFolderへのtranscript exportはより大きい既定値を持ち、callerが`maxBytes`を明示した場合だけserver hard maximumまで拡張する。大きいexportは全量をmemoryへ保持せずatomicにstreaming writeする。
 - exact tool名、requestとresponseのfield、error code、pagination、size limitはtype、schema、shared validation、executable contractを正本とする。このADRへ網羅的なAPI仕様を複製しない。
+- terminal failure通知は未設定を`null`、非terminalを`armed`、対象外terminalを`not_triggered`、配送を`pending`、`enqueued`、`failed`として同じexecutionへ投影する。通知promptはsource executionのpublic projectionだけから構成し、raw result、stack、credential、system prompt、private pathを含めない。
 
 ## Alternatives
 

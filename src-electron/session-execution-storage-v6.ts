@@ -303,6 +303,16 @@ export class SessionExecutionStorageV6 {
     return rows.map((row) => row.session_id);
   }
 
+  listTerminalFailureNotificationCandidates(): SessionExecutionStorageRecord[] {
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM session_executions_v6
+      WHERE state IN ('failed', 'interrupted')
+      ORDER BY sequence ASC
+    `).all() as SessionExecutionRow[];
+    return rows.map(parseExecution);
+  }
+
   admitNextQueued(sessionId: string, admittedAt: string): SessionExecutionStorageRecord | null {
     return this.transaction(() => {
       const running = this.db.prepare(`

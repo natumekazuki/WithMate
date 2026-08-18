@@ -1,16 +1,26 @@
 import type { RunSessionTurnRequest } from "../src/app-state.js";
 import type { TurnInitiator } from "../src/session-execution.js";
 
+export const TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION = 1 as const;
+
+export type SessionExecutionTerminalFailureNotification = {
+  contractVersion: typeof TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION;
+  targetSessionId: string;
+  sourceSession: Extract<TurnInitiator, { kind: "session" }>;
+};
+
 export type SessionExecutionTurnRequest = {
   initiator: Extract<TurnInitiator, { kind: "session" }> | null;
   catalogRevision: number;
   providerId: "codex" | "copilot";
   turn: RunSessionTurnRequest;
+  terminalFailureNotification: SessionExecutionTerminalFailureNotification | null;
 } | {
   initiator: Extract<TurnInitiator, { kind: "user" }>;
   catalogRevision: null;
   providerId: null;
   turn: RunSessionTurnRequest;
+  terminalFailureNotification: null;
 };
 
 export type ValidateSessionExecutionTurn = (
@@ -37,6 +47,7 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
       catalogRevision: null,
       providerId: null,
       turn: parseTurn(executionRequest.turn),
+      terminalFailureNotification: null,
     };
   }
   if (!Number.isSafeInteger(executionRequest.catalogRevision) || (executionRequest.catalogRevision as number) < 1) {
@@ -51,6 +62,9 @@ export function parseSessionExecutionTurnRequest(request: unknown): SessionExecu
     catalogRevision: executionRequest.catalogRevision as number,
     providerId: candidate.provider,
     turn: parseTurn(executionRequest.turn),
+    terminalFailureNotification: parseTerminalFailureNotification(
+      (executionRequest as { terminalFailureNotification?: unknown }).terminalFailureNotification,
+    ),
   };
 }
 
@@ -77,10 +91,41 @@ export async function validateSessionExecutionTurnRequest(
   return {
     ...(parsed.initiator ? { initiator: parsed.initiator } : {}),
     catalogRevision: parsed.catalogRevision,
+    ...(parsed.terminalFailureNotification
+      ? { terminalFailureNotification: parsed.terminalFailureNotification }
+      : {}),
     turn: {
       provider: parsed.providerId,
       ...validatedTurn,
     },
+  };
+}
+
+function parseTerminalFailureNotification(
+  value: unknown,
+): SessionExecutionTerminalFailureNotification | null {
+  if (value === undefined || value === null) return null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Session execution terminal failure notification must be an object.");
+  }
+  const candidate = value as Record<string, unknown>;
+  if (Object.keys(candidate).some((key) => !["contractVersion", "targetSessionId", "sourceSession"].includes(key))) {
+    throw new TypeError("Session execution terminal failure notification has an unknown field.");
+  }
+  if (candidate.contractVersion !== TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION) {
+    throw new TypeError("Session execution terminal failure notification version is invalid.");
+  }
+  if (typeof candidate.targetSessionId !== "string" || !candidate.targetSessionId.trim()) {
+    throw new TypeError("Session execution terminal failure notification target Session ID is required.");
+  }
+  const sourceSession = parseInitiator(candidate.sourceSession);
+  if (!sourceSession || sourceSession.kind !== "session") {
+    throw new TypeError("Session execution terminal failure notification source Session is required.");
+  }
+  return {
+    contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
+    targetSessionId: candidate.targetSessionId,
+    sourceSession,
   };
 }
 

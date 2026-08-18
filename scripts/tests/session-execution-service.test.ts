@@ -810,6 +810,56 @@ describe("SessionExecutionService", () => {
       await rm(fixture.directory, { recursive: true, force: true });
     }
   });
+
+  it("TN-TERM-03: terminal observer例外はsource commitと次のFIFO admissionを巻き戻さない", async () => {
+    const fixture = await createFixture({
+      onExecutionTerminal: () => { throw new Error("observer failed"); },
+    });
+    try {
+      const first = await fixture.service.enqueue(createInput(1));
+      const second = await fixture.service.enqueue(createInput(2));
+      await waitFor(() => fixture.dispatches.has(first.id));
+      fixture.dispatches.get(first.id)?.resolve({
+        state: "failed",
+        result: null,
+        errorCode: "PROVIDER_FAILURE",
+        reason: "session_runtime_failed",
+      });
+      const terminal = await fixture.service.waitForTerminal("session-1", first.id);
+      assert.equal(terminal.state, "failed");
+      await waitFor(() => fixture.dispatches.has(second.id));
+      assert.equal(fixture.storage.get(second.id)?.state, "running");
+      fixture.dispatches.get(second.id)?.resolve({ state: "completed", result: null });
+      await fixture.service.waitForTerminal("session-1", second.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("TN-TERM-03: restart interruptはcommit済みstateをterminal observerへ通知する", async () => {
+    const terminal: Array<{ id: string; state: string | undefined }> = [];
+    let fixture: Awaited<ReturnType<typeof createFixture>>;
+    fixture = await createFixture({
+      onExecutionTerminal: (id) => terminal.push({ id, state: fixture.storage.get(id)?.state }),
+    });
+    try {
+      fixture.storage.startImmediate({
+        id: "restart-source",
+        sessionId: "session-1",
+        request: { userMessage: "running before restart" },
+        idempotencyKey: "restart-source-key",
+        requestFingerprint: "restart-source-fingerprint",
+        createdAt: "2026-08-10T00:00:00.000Z",
+        expiresAt: "2026-08-11T00:00:00.000Z",
+      });
+      await fixture.service.reconcileAfterRestart();
+      assert.deepEqual(terminal, [{ id: "restart-source", state: "interrupted" }]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
 });
 
 function createDeferredDispatch(): DeferredDispatch {

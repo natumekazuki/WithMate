@@ -23,6 +23,7 @@ import {
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
@@ -177,6 +178,7 @@ describe("database-schema-v6", () => {
         "session_file_write_idempotency_v6",
         "session_schedules_v6",
         "session_schedule_fires_v6",
+        "session_terminal_failure_notification_deliveries_v6",
       ].sort());
       const userVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
       assert.equal(userVersion.user_version, APP_DATABASE_V6_SCHEMA_VERSION);
@@ -186,6 +188,10 @@ describe("database-schema-v6", () => {
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL), true);
+      assert.equal(
+        CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL),
+        true,
+      );
     } finally {
       db.close();
     }
@@ -203,6 +209,7 @@ describe("database-schema-v6", () => {
             && statement !== CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL
             && statement !== CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL
             && statement !== CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL
+            && statement !== CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL
           ) {
             oldDb.exec(statement);
           }
@@ -221,13 +228,77 @@ describe("database-schema-v6", () => {
         assert.equal(tableNames(upgradedDb).includes("session_execution_idempotency_v6"), true);
         assert.equal(tableNames(upgradedDb).includes("session_crud_idempotency_v6"), true);
         assert.equal(tableNames(upgradedDb).includes("session_file_write_idempotency_v6"), true);
+        assert.equal(
+          tableNames(upgradedDb).includes("session_terminal_failure_notification_deliveries_v6"),
+          true,
+        );
         ensureV6Schema(upgradedDb);
         assert.equal(tableNames(upgradedDb).filter((name) => name === "session_crud_idempotency_v6").length, 1);
+        assert.equal(
+          tableNames(upgradedDb).filter((name) => name === "session_terminal_failure_notification_deliveries_v6").length,
+          1,
+        );
       } finally {
         upgradedDb.close();
       }
     } finally {
       rmSync(dirPath, { recursive: true, force: true });
+    }
+  });
+
+  it("TN-MIGRATE-07: delivery migrationはempty/populated DBへ再実行可能で既存executionを保持する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE session_terminal_failure_notification_deliveries_v6;");
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id,
+          approval_mode, created_at, updated_at, last_active_at
+        ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+      `).run(
+        "existing-session",
+        "Existing",
+        "2026-08-18T00:00:00.000Z",
+        "2026-08-18T00:00:00.000Z",
+        "2026-08-18T00:00:00.000Z",
+      );
+      db.prepare(`
+        INSERT INTO session_executions_v6 (
+          id, session_id, operation, state, request_json, created_at, updated_at
+        ) VALUES (?, ?, 'turn.enqueue', 'queued', '{}', ?, ?)
+      `).run(
+        "existing-execution",
+        "existing-session",
+        "2026-08-18T00:00:00.000Z",
+        "2026-08-18T00:00:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(tableNames(db).filter((name) =>
+        name === "session_terminal_failure_notification_deliveries_v6").length, 1);
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6").get() as { count: number }).count,
+        1,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TN-MIGRATE-07: malformed delivery tableは途中適用せずmigrationを拒否する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE session_terminal_failure_notification_deliveries_v6;");
+      db.exec("CREATE TABLE session_terminal_failure_notification_deliveries_v6 (id TEXT PRIMARY KEY);");
+      const beforeTables = tableNames(db);
+
+      assert.throws(() => ensureV6Schema(db), /delivery schema is invalid/);
+      assert.deepEqual(tableNames(db), beforeTables);
+      assert.deepEqual(columnNames(db, "session_terminal_failure_notification_deliveries_v6"), ["id"]);
+    } finally {
+      db.close();
     }
   });
 

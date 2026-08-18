@@ -2218,6 +2218,13 @@ export default function AgentSessionWindowApp() {
     }
 
     const { kind, lastRequestText, terminalAuditLog } = source;
+    const terminalFailureNotification = [...sessionTurnExecutions]
+      .reverse()
+      .find((execution) => (
+        execution.state !== "queued"
+        && execution.state !== "running"
+        && execution.terminalFailureNotification !== null
+      ))?.terminalFailureNotification ?? null;
 
     switch (kind) {
       case "interrupted":
@@ -2231,6 +2238,7 @@ export default function AgentSessionWindowApp() {
             lastRequestText,
           ]),
           lastRequestText,
+          terminalFailureNotification,
         };
       case "failed":
         return {
@@ -2243,6 +2251,7 @@ export default function AgentSessionWindowApp() {
             lastRequestText,
           ]),
           lastRequestText,
+          terminalFailureNotification,
         };
       case "canceled":
         return {
@@ -2256,6 +2265,7 @@ export default function AgentSessionWindowApp() {
             terminalAuditLog?.id,
           ]),
           lastRequestText,
+          terminalFailureNotification,
         };
       default:
         return null;
@@ -2267,6 +2277,7 @@ export default function AgentSessionWindowApp() {
     selectedSessionAuditLogs,
     selectedSessionCharacter?.name,
     selectedSessionRunState,
+    sessionTurnExecutions,
     isSelectedSessionReadOnly,
     activeAuxiliarySession,
   ]);

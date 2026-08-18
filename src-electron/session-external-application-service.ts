@@ -36,6 +36,7 @@ import {
   type SessionRuntimeSessionInput,
   type SessionRuntimeSessionListInput,
   type SessionRuntimeTurnOptionsResult,
+  type SessionRuntimeTerminalFailureNotificationProjection,
   type SessionRuntimeTranscriptExportInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
@@ -69,6 +70,10 @@ import { SessionCrudError, type SessionCrudService } from "./session-crud-servic
 import { SessionFileServiceError, type SessionFileService } from "./session-file-service.js";
 import { SessionTranscriptServiceError, type SessionTranscriptService } from "./session-transcript-service.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
+import {
+  TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
+  type SessionExecutionTerminalFailureNotification,
+} from "./session-execution-turn-request.js";
 
 export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
@@ -92,6 +97,10 @@ export type SessionExternalApplicationServiceDeps = {
     description: string;
   }>>;
   resolveTurnInitiator(actorSessionId: string): Promise<Extract<TurnInitiator, { kind: "session" }> | null>;
+  projectTerminalFailureNotification?(
+    execution: SessionExecution,
+    request: unknown,
+  ): SessionRuntimeTerminalFailureNotificationProjection | null;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
@@ -231,6 +240,7 @@ export class SessionExternalApplicationService {
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
+        ...await this.resolveTerminalFailureNotification(input),
         turn: input.turn,
       },
     });
@@ -320,10 +330,35 @@ export class SessionExternalApplicationService {
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
+        ...await this.resolveTerminalFailureNotification(input),
         turn: input.turn,
       },
     });
     return this.projectExecution(execution.sessionId, execution.id, execution);
+  }
+
+  private async resolveTerminalFailureNotification(
+    input: SessionRuntimeEnqueueInput,
+  ): Promise<{ terminalFailureNotification?: SessionExecutionTerminalFailureNotification }> {
+    const notification = input.terminalFailureNotification;
+    if (!notification) return {};
+    if (notification.targetSessionId === input.sessionId) {
+      throw new SessionRuntimeValidationError(
+        "The terminal failure notification target must differ from the source Session.",
+        { sessionId: input.sessionId, targetSessionId: notification.targetSessionId },
+        "TERMINAL_NOTIFICATION_SAME_SESSION",
+      );
+    }
+    await this.deps.crudService.get(input.sessionId);
+    await this.deps.crudService.get(notification.targetSessionId);
+    const sourceSession = await this.requireTurnInitiator(input.sessionId);
+    return {
+      terminalFailureNotification: {
+        contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
+        targetSessionId: notification.targetSessionId,
+        sourceSession,
+      },
+    };
   }
 
   private async requireTurnInitiator(
@@ -383,6 +418,10 @@ export class SessionExternalApplicationService {
       request: "request" in record ? record.request : undefined,
       pendingInteraction: this.deps.interactionService?.getPendingForExecution(executionId) ?? null,
       partialOutput: this.deps.progressStorage?.get(executionId) ?? null,
+      terminalFailureNotification: this.deps.projectTerminalFailureNotification?.(
+        record,
+        "request" in record ? record.request : undefined,
+      ) ?? null,
     });
   }
 
@@ -596,6 +635,7 @@ function fingerprintMutation(
     sessionId: input.sessionId,
     catalogRevision: input.catalogRevision,
     turn: input.turn,
+    terminalFailureNotification: input.terminalFailureNotification ?? null,
   }), "utf8").digest("hex");
 }
 
