@@ -264,6 +264,7 @@ import {
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerSource,
+  resolveRetryBannerTerminalFailureNotification,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
@@ -2218,13 +2219,10 @@ export default function AgentSessionWindowApp() {
     }
 
     const { kind, lastRequestText, terminalAuditLog } = source;
-    const terminalFailureNotification = [...sessionTurnExecutions]
-      .reverse()
-      .find((execution) => (
-        execution.state !== "queued"
-        && execution.state !== "running"
-        && execution.terminalFailureNotification !== null
-      ))?.terminalFailureNotification ?? null;
+    const terminalFailureNotification = resolveRetryBannerTerminalFailureNotification({
+      source,
+      executions: sessionTurnExecutions,
+    });
 
     switch (kind) {
       case "interrupted":

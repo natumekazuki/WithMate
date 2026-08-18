@@ -690,6 +690,7 @@ function buildRunningAuditEntry(params: {
   logicalPrompt: CreateAuditLogInput["logicalPrompt"];
   threadId?: string;
   clientRequestId?: string | null;
+  executionId?: string | null;
   submitSource?: RunSessionTurnRequest["submitSource"];
 }): CreateAuditLogInput {
   return {
@@ -708,14 +709,15 @@ function buildRunningAuditEntry(params: {
     assistantText: "",
     operations: [],
     rawItemsJson: "[]",
-    providerMetadata: params.clientRequestId
+    providerMetadata: params.clientRequestId || params.executionId
       ? [{
           provider: params.session.provider,
           kind: "session_turn_request",
           source: "session-runtime-service.run-session-turn",
           summary: "Session turn request correlation",
           payload: {
-            clientRequestId: params.clientRequestId,
+            ...(params.clientRequestId ? { clientRequestId: params.clientRequestId } : {}),
+            ...(params.executionId ? { executionId: params.executionId } : {}),
             submitSource: params.submitSource ?? null,
           },
         }]
@@ -1335,6 +1337,7 @@ export class SessionRuntimeService {
         session: runtimeOptionSession,
         logicalPrompt: promptForAudit.logicalPrompt,
         clientRequestId,
+        executionId: externalExecutionId,
         submitSource: submitSource ?? undefined,
       });
       const runningAuditCreateStartedAt = Date.now();

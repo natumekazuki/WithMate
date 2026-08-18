@@ -111,12 +111,13 @@ function toSummary(entry: AuditLogEntry): AuditLogSummary {
     transportPayload: _transportPayload,
     assistantText,
     rawItemsJson: _rawItemsJson,
-    providerMetadata: _providerMetadata,
+    providerMetadata,
     operations,
     ...summary
   } = entry;
   return {
     ...summary,
+    ...resolveSessionTurnExecutionId(providerMetadata),
     operations: operations.map((operation) => ({
       type: operation.type,
       summary: operation.summary,
@@ -124,6 +125,19 @@ function toSummary(entry: AuditLogEntry): AuditLogSummary {
     assistantTextPreview: assistantText.length > 500 ? assistantText.slice(0, 500) : assistantText,
     detailAvailable: true,
   };
+}
+
+function resolveSessionTurnExecutionId(
+  metadata: AuditLogEntry["providerMetadata"],
+): Pick<AuditLogSummary, "executionId"> {
+  const correlation = metadata?.find((entry) => entry.kind === "session_turn_request");
+  if (!correlation || typeof correlation.payload !== "object" || correlation.payload === null) {
+    return {};
+  }
+  const executionId = "executionId" in correlation.payload ? correlation.payload.executionId : null;
+  return typeof executionId === "string" && executionId.trim().length > 0
+    ? { executionId }
+    : {};
 }
 
 function normalizePageRequest(request?: AuditLogSummaryPageRequest | null): { cursor: number | null; limit: number } {
@@ -855,7 +869,7 @@ export class AuditLogStorageV6 {
       SELECT kind, summary, ${
         options.includeOperationDetails
           ? "payload_json"
-          : "CASE WHEN kind IN ('operation', 'raw_items', 'logical_prompt', 'transport_payload', 'provider_metadata') THEN '' ELSE payload_json END AS payload_json"
+          : "CASE WHEN kind IN ('operation', 'raw_items', 'logical_prompt', 'transport_payload') THEN '' ELSE payload_json END AS payload_json"
       }
       FROM session_turn_provider_outputs_v6
       WHERE turn_id = ?

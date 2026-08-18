@@ -535,12 +535,19 @@ describe("AuditLogStorageV6", () => {
             responseType: "new_item",
             summary: "Unsupported Codex item: new_item",
             payload: { type: "new_item" },
+          }, {
+            provider: "codex",
+            kind: "session_turn_request",
+            source: "session-runtime-service.run-session-turn",
+            summary: "Session turn request correlation",
+            payload: { executionId: "execution-1" },
           }],
         }));
 
         const summary = storage.listSessionAuditLogSummaries("session-v6")[0];
         assert.equal(summary?.sandboxMode, "workspace-write");
         assert.equal(summary?.userMessageSeq, 4);
+        assert.equal(summary?.executionId, "execution-1");
         assert.equal("providerMetadata" in (summary ?? {}), false);
 
         const raw = storage.getSessionAuditLogDetailSection("session-v6", created.id, "raw");
@@ -551,6 +558,12 @@ describe("AuditLogStorageV6", () => {
           responseType: "new_item",
           summary: "Unsupported Codex item: new_item",
           payload: { type: "new_item" },
+        }, {
+          provider: "codex",
+          kind: "session_turn_request",
+          source: "session-runtime-service.run-session-turn",
+          summary: "Session turn request correlation",
+          payload: { executionId: "execution-1" },
         }]);
       } finally {
         storage.close();

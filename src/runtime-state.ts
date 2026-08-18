@@ -108,6 +108,7 @@ export type AuditLogSummary = Omit<
   AuditLogEntry,
   "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson" | "providerMetadata"
 > & {
+  executionId?: string;
   assistantTextPreview: string;
   detailAvailable: boolean;
 };
