@@ -82,6 +82,24 @@ test("schedule editor resolves an IANA time zone from the current OS", () => {
   assert.match(resolveSystemScheduleTimeZone(), /^[^/]+(?:\/[^/]+)+$|^UTC$/);
 });
 
+test("schedule editor rejects a missing OS time zone without fallback", () => {
+  const originalResolvedOptions = Intl.DateTimeFormat.prototype.resolvedOptions;
+  Intl.DateTimeFormat.prototype.resolvedOptions = () => ({
+    locale: "ja-JP",
+    calendar: "gregory",
+    numberingSystem: "latn",
+    timeZone: "",
+  });
+  try {
+    assert.throws(
+      () => resolveSystemScheduleTimeZone(),
+      /PCのローカルタイムゾーンを取得できませんでした/,
+    );
+  } finally {
+    Intl.DateTimeFormat.prototype.resolvedOptions = originalResolvedOptions;
+  }
+});
+
 test("schedule draft canonicalizes composer attachment references for removal", () => {
   const composerState = buildScheduleDraftComposerState(
     "Review @src/report.txt and ![chart](C:/workspace/assets/chart.png)",
