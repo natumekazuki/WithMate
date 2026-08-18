@@ -4191,7 +4191,6 @@ export default function AgentSessionWindowApp() {
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
-        hideActionDock: scheduleView === "list",
         composerPropsOverride: scheduleComposerProps,
         leftPane: fileExplorerPane,
         isFilesPaneVisible,

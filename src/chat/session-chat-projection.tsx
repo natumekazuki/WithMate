@@ -33,7 +33,6 @@ import {
 
 export type AgentSessionChatProjectionInput = {
   mainContent?: ReactNode;
-  hideActionDock?: boolean;
   composerPropsOverride?: SessionComposerExpandedProps;
   leftPane?: ReactNode;
   isFilesPaneVisible: boolean;
@@ -501,6 +500,5 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     modals: <ChatSessionModals {...input} />,
     isAuxiliaryMode: input.isAuxiliaryMode,
     }),
-    hideActionDock: input.hideActionDock,
   };
 }
