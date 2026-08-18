@@ -10,13 +10,6 @@ import {
   type ScheduleWorkspaceMode,
 } from "./session-schedule-ui-projection.js";
 
-const CRON_PRESETS = [
-  { label: "毎時", expression: "0 * * * *" },
-  { label: "毎日 9:00", expression: "0 9 * * *" },
-  { label: "平日 9:00", expression: "0 9 * * 1-5" },
-  { label: "毎週 月曜 9:00", expression: "0 9 * * 1" },
-] as const;
-
 export type ScheduleWorkspaceProps = {
   mode: ScheduleWorkspaceMode;
   loadState: ScheduleWorkspaceLoadState;
@@ -223,9 +216,6 @@ function ScheduleEditor({
   };
   let preview: Date[] = [];
   let previewError = false;
-  const currentCronExpression = currentDraft.trigger.type === "cron"
-    ? currentDraft.trigger.expression
-    : null;
   if (currentDraft.trigger.type === "cron" && currentDraft.trigger.expression.trim()) {
     try {
       preview = listNextSessionScheduleTriggerInstants(
@@ -279,8 +269,8 @@ function ScheduleEditor({
                   })
             }
           >
-            <option value="cron">定期実行</option>
-            <option value="once">1回実行</option>
+            <option value="cron">Cron</option>
+            <option value="once">Once</option>
           </select>
         </div>
         {currentDraft.trigger.type === "cron" ? (
@@ -292,19 +282,6 @@ function ScheduleEditor({
                 updateTrigger({ expression: event.target.value })
               }
             />
-            <div className="schedule-cron-presets" role="group" aria-label="Cron入力候補">
-              {CRON_PRESETS.map((preset) => (
-                <button
-                  key={preset.expression}
-                  type="button"
-                  aria-pressed={currentCronExpression === preset.expression}
-                  title={preset.expression}
-                  onClick={() => updateTrigger({ expression: preset.expression })}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
           </div>
         ) : (
           <div className="schedule-trigger-field">

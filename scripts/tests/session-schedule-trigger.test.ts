@@ -7,20 +7,27 @@ import {
   validateSessionScheduleTrigger,
 } from "../../src/session-schedule-trigger.js";
 
-test("once rejects past, invalid zone, DST gap and accepts future", () => {
-  const now = new Date("2026-08-18T00:00:00Z");
+const now = new Date("2026-08-18T00:00:00Z");
+
+test("once rejects a past local date-time", () => {
   assert.throws(() =>
     validateSessionScheduleTrigger(
       { type: "once", localDateTime: "2026-08-17T10:00", timeZone: "UTC" },
       now,
     ),
   );
+});
+
+test("once rejects an invalid IANA time zone", () => {
   assert.throws(() =>
     validateSessionScheduleTrigger(
       { type: "once", localDateTime: "2026-08-19T10:00", timeZone: "Not/Zone" },
       now,
     ),
   );
+});
+
+test("once rejects a local date-time in a DST gap", () => {
   assert.throws(() =>
     validateSessionScheduleTrigger(
       {
@@ -31,13 +38,16 @@ test("once rejects past, invalid zone, DST gap and accepts future", () => {
       now,
     ),
   );
-  validateSessionScheduleTrigger(
-    { type: "once", localDateTime: "2026-08-19T10:00", timeZone: "UTC" },
-    now,
-  );
 });
 
-test("cron handles DST gap/fold, DOW 7 and latest missed", () => {
+test("once accepts a valid future local date-time", () => {
+  assert.doesNotThrow(() => validateSessionScheduleTrigger(
+    { type: "once", localDateTime: "2026-08-19T10:00", timeZone: "UTC" },
+    now,
+  ));
+});
+
+test("cron skips a local occurrence in a DST gap", () => {
   const ny = {
     type: "cron" as const,
     expression: "30 2 * * *",
@@ -50,6 +60,9 @@ test("cron handles DST gap/fold, DOW 7 and latest missed", () => {
     ).toISOString(),
     "2026-03-09T06:30:00.000Z",
   );
+});
+
+test("cron chooses one canonical occurrence in a DST fold", () => {
   const fold = {
     type: "cron" as const,
     expression: "30 1 * * *",
@@ -62,6 +75,9 @@ test("cron handles DST gap/fold, DOW 7 and latest missed", () => {
     ).toISOString(),
     "2026-11-01T05:30:00.000Z",
   );
+});
+
+test("cron accepts 7 as Sunday", () => {
   const sunday = {
     type: "cron" as const,
     expression: "0 0 * * 7",
@@ -74,6 +90,9 @@ test("cron handles DST gap/fold, DOW 7 and latest missed", () => {
     ).getUTCDay(),
     0,
   );
+});
+
+test("missed cron occurrences collapse to the latest logical fire", () => {
   const frequent = {
     type: "cron" as const,
     expression: "*/1 * * * *",

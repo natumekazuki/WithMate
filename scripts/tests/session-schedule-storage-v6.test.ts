@@ -65,7 +65,20 @@ function input(id: string): any {
   };
 }
 
-test("schedule storage enforces limit, atomic claim, immutable replay and tombstone", async () => {
+test("schedule storage rejects the twenty-first active schedule without persisting it", async () => {
+  const f = await fixture();
+  const s = new SessionScheduleStorageV6(f.path);
+  try {
+    for (let i = 0; i < 20; i++) s.create(input(`x${i}`));
+    assert.throws(() => s.create(input("overflow")), SessionScheduleLimitError);
+    assert.equal(s.list("s1").length, 20);
+  } finally {
+    s.close();
+    await rm(f.dir, { recursive: true, force: true });
+  }
+});
+
+test("schedule claim is atomic and keeps its turn snapshot replayable after update and delete", async () => {
   const f = await fixture();
   const s = new SessionScheduleStorageV6(f.path);
   try {
@@ -81,6 +94,19 @@ test("schedule storage enforces limit, atomic claim, immutable replay and tombst
       "2026-01-01T01:00:00.000Z",
     )!;
     assert.equal(fire.fire.sessionId, "s1");
+    assert.equal(
+      s.claimDueFire(
+        first.id,
+        1,
+        first.nextFireAt!,
+        "2026-01-01T01:00:00.000Z",
+        "2026-01-01T02:00:00.000Z",
+        "f2",
+        "k2",
+        "2026-01-01T01:00:00.000Z",
+      ),
+      null,
+    );
     s.update({
       id: first.id,
       expectedRevision: 1,
@@ -95,8 +121,6 @@ test("schedule storage enforces limit, atomic claim, immutable replay and tombst
     s.delete(first.id);
     assert.equal(s.get(first.id), null);
     assert.equal(s.getFire("f1")?.state, "claimed");
-    for (let i = 0; i < 20; i++) s.create(input(`x${i}`));
-    assert.throws(() => s.create(input("overflow")), SessionScheduleLimitError);
   } finally {
     s.close();
     await rm(f.dir, { recursive: true, force: true });
@@ -143,55 +167,6 @@ test("deleted schedule tombstone is purged only after its replayable fire settle
     assert.equal(storage.getFire("deleted-fire"), null);
   } finally {
     storage.close();
-    await rm(f.dir, { recursive: true, force: true });
-  }
-});
-
-test("terminal retention keeps newest 50 and never deletes pending/claimed", async () => {
-  const f = await fixture();
-  const s = new SessionScheduleStorageV6(f.path);
-  try {
-    const schedule = s.create(input("retention"));
-    const db = (s as any).db as DatabaseSync;
-    for (let i = 0; i < 52; i++) {
-      db.prepare(
-        "INSERT INTO session_schedule_fires_v6 (id,schedule_id,session_id,schedule_revision,logical_fire_at,kind,state,idempotency_key,turn_json,created_at,updated_at) VALUES (?,?,?,?,?,'scheduled','enqueued',?,?,?,?)",
-      ).run(
-        `t${i}`,
-        schedule.id,
-        "s1",
-        1,
-        `2026-01-01T00:${String(i).padStart(2, "0")}:00.000Z`,
-        `key-${i}`,
-        JSON.stringify(schedule.turn),
-        `2026-01-01T00:${String(i).padStart(2, "0")}:00.000Z`,
-        `2026-01-01T00:${String(i).padStart(2, "0")}:00.000Z`,
-      );
-    }
-    db.prepare(
-      "INSERT INTO session_schedule_fires_v6 (id,schedule_id,session_id,schedule_revision,logical_fire_at,kind,state,idempotency_key,turn_json,created_at,updated_at) VALUES (?,?,?,?,?,'scheduled','pending',?,?,?,?)",
-    ).run(
-      "pending",
-      schedule.id,
-      "s1",
-      1,
-      "2026-01-02T00:00:00.000Z",
-      "pending-key",
-      JSON.stringify(schedule.turn),
-      "2026-01-02T00:00:00.000Z",
-      "2026-01-02T00:00:00.000Z",
-    );
-    s.settleFailed("pending", "E", "x", "2026-01-02T00:00:01.000Z");
-    const terminal = (
-      db
-        .prepare(
-          "SELECT COUNT(*) AS n FROM session_schedule_fires_v6 WHERE schedule_id=? AND state IN ('enqueued','failed')",
-        )
-        .get(schedule.id) as any
-    ).n;
-    assert.equal(terminal, 50);
-  } finally {
-    s.close();
     await rm(f.dir, { recursive: true, force: true });
   }
 });

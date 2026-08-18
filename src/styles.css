@@ -5036,37 +5036,6 @@ button:disabled {
 
 .schedule-preview p { margin: 0; color: var(--schedule-muted); font-size: 0.8rem; }
 .schedule-preview .schedule-preview-error { color: #fca5a5; }
-.schedule-cron-presets {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.schedule-cron-presets button {
-  min-height: 28px;
-  padding: 4px 9px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.035);
-  color: var(--schedule-muted);
-  cursor: pointer;
-  font: inherit;
-  font-size: 0.76rem;
-}
-
-.schedule-cron-presets button:hover,
-.schedule-cron-presets button:focus-visible,
-.schedule-cron-presets button[aria-pressed="true"] {
-  border-color: rgba(111, 140, 255, 0.44);
-  background: rgba(111, 140, 255, 0.14);
-  color: var(--schedule-ink);
-}
-
-.schedule-cron-presets button:focus-visible {
-  outline: 2px solid rgba(111, 140, 255, 0.72);
-  outline-offset: 1px;
-}
 .schedule-editor-action-dock { margin: 0 calc(var(--space-4, 16px) * -1); }
 .schedule-editor-footer { justify-content: flex-end; }
 .schedule-workspace-loading { display: grid; place-items: center; min-height: 180px; }

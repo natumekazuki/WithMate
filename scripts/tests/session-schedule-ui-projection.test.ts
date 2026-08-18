@@ -68,16 +68,6 @@ test("schedule editor projection does not share draft attachments or trigger sta
   assert.equal(draft.trigger.expression, "0 9 * * 1-5");
 });
 
-test("home projection is read-only", () => {
-  const projection = buildScheduleWorkspaceProjection({
-    mode: "list",
-    loadState: "loaded",
-    schedules: [],
-    canMutate: false,
-  });
-  assert.equal(projection.canMutate, false);
-});
-
 test("schedule editor resolves an IANA time zone from the current OS", () => {
   assert.match(resolveSystemScheduleTimeZone(), /^[^/]+(?:\/[^/]+)+$|^UTC$/);
 });

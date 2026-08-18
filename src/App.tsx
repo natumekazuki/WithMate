@@ -692,12 +692,14 @@ export default function AgentSessionWindowApp() {
   const openScheduleList = useCallback(() => {
     setScheduleDraft(null);
     scheduleDraftRef.current = null;
+    setIsSkillPickerOpen(false);
     setScheduleView("list");
     setScheduleError(null);
   }, []);
   const openScheduleChat = useCallback(() => {
     setScheduleDraft(null);
     scheduleDraftRef.current = null;
+    setIsSkillPickerOpen(false);
     setScheduleError(null);
     setScheduleView("chat");
   }, []);
@@ -727,6 +729,7 @@ export default function AgentSessionWindowApp() {
     };
     setScheduleDraft(next);
     scheduleDraftRef.current = next;
+    setIsSkillPickerOpen(false);
     setScheduleView("create");
   }, [composerPreview.attachments, draft, selectedId, sessions]);
 
@@ -750,6 +753,7 @@ export default function AgentSessionWindowApp() {
       };
       setScheduleDraft(next);
       scheduleDraftRef.current = next;
+      setIsSkillPickerOpen(false);
       setScheduleView("edit");
     } catch (error) {
       setScheduleError(error instanceof Error ? error.message : "Schedule could not be loaded.");
@@ -2776,6 +2780,24 @@ export default function AgentSessionWindowApp() {
     restoreComposerTextareaFocusAndCaret,
   });
 
+  const handleSelectScheduleSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
+    getProvider: () => selectedSession?.provider,
+    getDraft: () => scheduleDraftRef.current?.prompt ?? "",
+    getTextarea: () => composerTextareaRef.current,
+    setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+    setCaret: setComposerCaret,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+    applyDraft: (nextPrompt, nextCaret) => {
+      const current = scheduleDraftRef.current;
+      if (!current) {
+        return;
+      }
+      mainComposerCaretRef.current = nextCaret;
+      updateScheduleDraft({ ...current, prompt: nextPrompt });
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
+
   const closeAgentPicker = createAgentPickerCloseHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
   });
@@ -4111,12 +4133,12 @@ export default function AgentSessionWindowApp() {
     canSelectCustomAgent: selectedSession.provider === "copilot",
     showAttachmentControls: true,
     showCustomAgentPicker: selectedSession.provider === "copilot",
-    showSkillPicker: false,
+    showSkillPicker: true,
     showPromptTemplateButton: true,
     showAdditionalDirectoryControls: true,
     showExecutionModeControls: true,
     isAgentPickerOpen: false,
-    isSkillPickerOpen: false,
+    isSkillPickerOpen,
     isPromptTemplateWorkspaceOpen: false,
     isAdditionalDirectoryListOpen,
     selectedCustomAgentLabel: scheduleDraft.customAgent ?? "Default Agent",
@@ -4159,7 +4181,7 @@ export default function AgentSessionWindowApp() {
     onPickFolder: () => void pickScheduleAttachment("folder"),
     onPickImage: () => void pickScheduleAttachment("image"),
     onToggleAgentPicker: () => undefined,
-    onToggleSkillPicker: () => undefined,
+    onToggleSkillPicker: handleToggleSkillPicker,
     onOpenPromptTemplates: handleOpenPromptTemplates,
     onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
     onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
@@ -4397,6 +4419,10 @@ export default function AgentSessionWindowApp() {
         onSelectSkill: (skillId) => {
           const skill = availableSkills.find((entry) => entry.id === skillId);
           if (skill) {
+            if (scheduleDraftRef.current && scheduleModeActive) {
+              handleSelectScheduleSkill(skill);
+              return;
+            }
             if (activeAuxiliarySession) {
               void handleSelectAuxiliarySkill(skill);
               return;

@@ -988,7 +988,7 @@ describe("HomeMonitorContent", () => {
 describe("HomeRightPane", () => {
   const noOp = (..._args: unknown[]) => undefined;
 
-  const renderHomeRightPane = (rightPaneView: "monitor" | "characters" | "schedules", characters = [{
+  const renderHomeRightPane = (rightPaneView: "monitor" | "characters", characters = [{
     id: "char-1",
     name: "Mia",
     description: "説明文",
@@ -1110,18 +1110,6 @@ describe("HomeRightPane", () => {
     assert.doesNotMatch(characterHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
     assertNoMateTalkChatSurface(monitorHtml);
     assertNoMateTalkChatSurface(characterHtml);
-  });
-
-  it("Schedules は right pane の一つのタブとして表示し、上部アクションへ重複させない", () => {
-    const html = renderHomeRightPane("schedules");
-    const tablistMatch = html.match(/<div class="home-pane-toggle" role="tablist" aria-label="Home right pane">[\s\S]*?<\/div>/);
-
-    assert.ok(tablistMatch);
-    assert.ok(tablistMatch[0].includes("Monitor"));
-    assert.ok(tablistMatch[0].includes("Schedules"));
-    assert.ok(tablistMatch[0].includes("Characters"));
-    assert.ok(!html.includes('aria-label="スケジュールを表示"'));
-    assert.ok(!html.includes('aria-label="スケジュールを作成"'));
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {
