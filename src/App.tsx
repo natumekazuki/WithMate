@@ -205,6 +205,7 @@ import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { ScheduleWorkspace } from "./session-schedule-workspace.js";
 import {
   buildScheduleDraftComposerState,
+  projectScheduleLastFire,
   resolveSystemScheduleTimeZone,
   type ScheduleDraftProjection,
   type ScheduleSummaryProjection,
@@ -4014,8 +4015,7 @@ export default function AgentSessionWindowApp() {
     status: schedule.state,
     trigger: schedule.trigger,
     nextFireAt: schedule.nextFireAt,
-    lastFireResult: schedule.latestFire?.errorMessage ?? schedule.latestFire?.state ?? null,
-    lastExecutionId: schedule.latestFire?.executionId ?? null,
+    ...projectScheduleLastFire(schedule.latestFire),
   }));
   const scheduleContent = scheduleModeActive ? (
     <ScheduleWorkspace

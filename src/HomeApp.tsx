@@ -84,7 +84,10 @@ import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
 } from "./home/home-active-auxiliary-refresh.js";
-import type { ScheduleSummaryProjection } from "./session-schedule-ui-projection.js";
+import {
+  projectScheduleLastFire,
+  type ScheduleSummaryProjection,
+} from "./session-schedule-ui-projection.js";
 import type { SessionScheduleSummary } from "./session-schedule.js";
 
 type HomeRightPaneView = "monitor" | "characters" | "schedules";
@@ -700,8 +703,7 @@ export default function HomeApp() {
         status: schedule.state,
         trigger: schedule.trigger,
         nextFireAt: schedule.nextFireAt,
-        lastFireResult: schedule.latestFire?.errorMessage ?? schedule.latestFire?.state ?? null,
-        lastExecutionId: schedule.latestFire?.executionId ?? null,
+        ...projectScheduleLastFire(schedule.latestFire),
       })),
       scheduleLoadState,
       runningMonitorEntries,

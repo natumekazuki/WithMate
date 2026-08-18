@@ -5,6 +5,7 @@ import {
   buildScheduleDraftComposerState,
   buildScheduleWorkspaceProjection,
   cloneScheduleDraft,
+  projectScheduleLastFire,
   resolveSystemScheduleTimeZone,
   type ScheduleDraftProjection,
 } from "../../src/session-schedule-ui-projection.js";
@@ -57,6 +58,25 @@ test("schedule workspace exposes loading, empty, and error states", () => {
   });
   assert.equal(mutationError.state, "editor");
   assert.equal(mutationError.errorMessage, "invalid cron");
+});
+
+test("schedule last-fire projection only exposes terminal result state", () => {
+  assert.deepEqual(projectScheduleLastFire(null), {
+    lastFireAt: null,
+    lastFireStatus: null,
+  });
+  assert.deepEqual(projectScheduleLastFire({ state: "pending", updatedAt: "2026-08-18T12:00:00.000Z" }), {
+    lastFireAt: null,
+    lastFireStatus: null,
+  });
+  assert.deepEqual(projectScheduleLastFire({ state: "enqueued", updatedAt: "2026-08-18T12:01:00.000Z" }), {
+    lastFireAt: "2026-08-18T12:01:00.000Z",
+    lastFireStatus: "success",
+  });
+  assert.deepEqual(projectScheduleLastFire({ state: "failed", updatedAt: "2026-08-18T12:02:00.000Z" }), {
+    lastFireAt: "2026-08-18T12:02:00.000Z",
+    lastFireStatus: "error",
+  });
 });
 
 test("schedule editor projection does not share draft attachments or trigger state", () => {

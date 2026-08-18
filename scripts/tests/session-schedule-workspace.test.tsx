@@ -31,8 +31,8 @@ const schedule: ScheduleSummaryProjection = {
   status: "paused",
   trigger: draft.trigger,
   nextFireAt: null,
-  lastFireResult: null,
-  lastExecutionId: null,
+  lastFireAt: null,
+  lastFireStatus: null,
 };
 
 async function withRenderedWorkspace(
@@ -115,6 +115,47 @@ test("paused schedule routes run-now and resume to distinct operations", async (
         resume.click();
       });
       assert.deepEqual(operations, ["run-now", "resume"]);
+    },
+  );
+});
+
+test("invalid cron preview exposes the concise parser error", async () => {
+  await withRenderedWorkspace(
+    <ScheduleWorkspace
+      mode="create"
+      loadState="loaded"
+      schedules={[]}
+      draft={{
+        ...draft,
+        trigger: { ...draft.trigger, expression: "not a cron expression" },
+      }}
+      onBack={() => undefined}
+    />,
+    async (document) => {
+      const bodyText = document.body.textContent ?? "";
+      assert.match(bodyText, /Invalid cron expression\./);
+      assert.doesNotMatch(bodyText, /Cron式を確認してください/);
+    },
+  );
+});
+
+test("schedule list shows the terminal time and result without an execution id", async () => {
+  await withRenderedWorkspace(
+    <ScheduleWorkspace
+      mode="list"
+      loadState="loaded"
+      schedules={[{
+        ...schedule,
+        lastFireAt: "2026-08-18T12:01:00.000Z",
+        lastFireStatus: "success",
+      }]}
+      onBack={() => undefined}
+    />,
+    async (document) => {
+      const bodyText = document.body.textContent ?? "";
+      assert.match(bodyText, /最終実行/);
+      assert.match(bodyText, /成功/);
+      assert.doesNotMatch(bodyText, /Execution:/);
     },
   );
 });

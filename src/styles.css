@@ -4887,8 +4887,7 @@ button:disabled {
 .schedule-list-session,
 .schedule-list-trigger,
 .schedule-list-next,
-.schedule-list-result,
-.schedule-list-execution {
+.schedule-list-result {
   color: var(--schedule-muted);
   font-size: 0.82rem;
 }

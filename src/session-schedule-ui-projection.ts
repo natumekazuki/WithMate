@@ -1,4 +1,5 @@
 import type {
+  SessionScheduleFire,
   SessionScheduleProjection,
   SessionScheduleState,
   SessionScheduleTrigger,
@@ -11,6 +12,7 @@ import {
 
 export type ScheduleTriggerProjection = SessionScheduleTrigger;
 export type ScheduleStatusProjection = SessionScheduleState;
+export type ScheduleLastFireStatus = "success" | "error";
 
 export type ScheduleSummaryProjection = Pick<
   SessionScheduleProjection,
@@ -18,9 +20,27 @@ export type ScheduleSummaryProjection = Pick<
 > & {
   sessionTitle: string;
   status: ScheduleStatusProjection;
-  lastFireResult?: string | null;
-  lastExecutionId?: string | null;
+  lastFireAt: string | null;
+  lastFireStatus: ScheduleLastFireStatus | null;
 };
+
+export function projectScheduleLastFire(
+  fire: Pick<SessionScheduleFire, "state" | "updatedAt"> | null,
+): {
+  lastFireAt: string | null;
+  lastFireStatus: ScheduleLastFireStatus | null;
+} {
+  if (!fire || (fire.state !== "enqueued" && fire.state !== "failed")) {
+    return {
+      lastFireAt: null,
+      lastFireStatus: null,
+    };
+  }
+  return {
+    lastFireAt: fire.updatedAt,
+    lastFireStatus: fire.state === "failed" ? "error" : "success",
+  };
+}
 
 export type ScheduleDraftProjection = {
   id?: string;

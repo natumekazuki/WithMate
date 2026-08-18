@@ -124,11 +124,10 @@ function ScheduleList({
           次回 {schedule.nextFireAt ? new Date(schedule.nextFireAt).toLocaleString() : "—"}
         </span>
       </div>
-      {schedule.lastFireResult ? (
-        <span className="schedule-list-result">直近: {schedule.lastFireResult}</span>
-      ) : null}
-      {schedule.lastExecutionId ? (
-        <span className="schedule-list-execution">Execution: {schedule.lastExecutionId}</span>
+      {schedule.lastFireAt && schedule.lastFireStatus ? (
+        <span className="schedule-list-result">
+          最終実行 {new Date(schedule.lastFireAt).toLocaleString()} {schedule.lastFireStatus === "success" ? "成功" : "エラー"}
+        </span>
       ) : null}
     </div>
   );
@@ -299,7 +298,7 @@ function ScheduleEditor({
       {currentDraft.trigger.type === "cron" && (previewError || preview.length > 0) ? (
         <section className="schedule-preview" aria-label="次回の実行予定" aria-live="polite">
           {previewError ? (
-            <p className="schedule-preview-error">Cron式を確認してください。</p>
+            <p className="schedule-preview-error">Invalid cron expression.</p>
           ) : (
             <ol>
               {preview.map((instant) => (
