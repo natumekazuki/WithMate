@@ -4136,7 +4136,8 @@ export default function AgentSessionWindowApp() {
       removeTargets: [path],
     })),
     draft: scheduleDraft.prompt,
-    placeholder: "Schedule prompt",
+    placeholder: "",
+    composerTextareaLabel: "スケジュールのプロンプト",
     composerTextareaRef,
     isComposerDisabled: false,
     isSendDisabled: !scheduleDraft.name.trim() || !scheduleDraft.prompt.trim(),
@@ -4190,7 +4191,6 @@ export default function AgentSessionWindowApp() {
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
-        isMainContentWorkspace: scheduleModeActive,
         hideActionDock: scheduleView === "list",
         composerPropsOverride: scheduleComposerProps,
         leftPane: fileExplorerPane,

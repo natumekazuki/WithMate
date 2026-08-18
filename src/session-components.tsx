@@ -3595,6 +3595,7 @@ export type SessionComposerExpandedProps = {
   attachmentItems: SessionAttachmentItem[];
   draft: string;
   placeholder?: string;
+  composerTextareaLabel?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   skillButtonRef?: RefObject<HTMLButtonElement | null>;
   isComposerDisabled: boolean;
@@ -3675,6 +3676,7 @@ export function SessionComposerExpanded({
   attachmentItems,
   draft,
   placeholder,
+  composerTextareaLabel,
   composerTextareaRef,
   skillButtonRef,
   isComposerDisabled,
@@ -4027,6 +4029,7 @@ export function SessionComposerExpanded({
             ref={composerTextareaRef}
             value={draft}
             placeholder={placeholder}
+            aria-label={composerTextareaLabel}
             onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
             onFocus={onDraftFocus}
             onKeyDown={onDraftKeyDown}

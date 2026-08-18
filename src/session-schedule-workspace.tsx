@@ -106,6 +106,33 @@ function ScheduleList({
   | "onRunNow"
   | "onOpenSession"
 > & { canMutate: boolean }) {
+  const renderMain = (schedule: ScheduleSummaryProjection) => (
+    <div className="schedule-list-main">
+      <div className="schedule-list-heading">
+        <strong>{schedule.name}</strong>
+        <span className="schedule-status" data-status={schedule.status}>
+          {statusLabel(schedule.status)}
+        </span>
+      </div>
+      {isHome ? <span className="schedule-list-session">{schedule.sessionTitle}</span> : null}
+      <div className="schedule-list-timing">
+        <span className="schedule-list-trigger">
+          <span aria-hidden="true">{schedule.trigger.type === "cron" ? "↻" : "◷"}</span>
+          {formatTrigger(schedule.trigger)}
+        </span>
+        <span className="schedule-list-next">
+          次回 {schedule.nextFireAt ? new Date(schedule.nextFireAt).toLocaleString() : "—"}
+        </span>
+      </div>
+      {schedule.lastFireResult ? (
+        <span className="schedule-list-result">直近: {schedule.lastFireResult}</span>
+      ) : null}
+      {schedule.lastExecutionId ? (
+        <span className="schedule-list-execution">Execution: {schedule.lastExecutionId}</span>
+      ) : null}
+    </div>
+  );
+
   return (
     <section
       className="schedule-workspace-list"
@@ -124,87 +151,29 @@ function ScheduleList({
           />
         ) : null}
       </div>
-      <div className="schedule-list" role="list" aria-label="スケジュール一覧">
-        {schedules.map((schedule) => (
-          <article
+      <div className="schedule-list" aria-label="スケジュール一覧">
+        {schedules.map((schedule) => isHome ? (
+          <button
             key={schedule.id}
-            className={`schedule-list-row status-${schedule.status}`}
-            role="listitem"
+            type="button"
+            className={`schedule-list-row schedule-list-row-button status-${schedule.status}`}
+            onClick={() => onOpenSession?.(schedule.sessionId)}
           >
-            <div className="schedule-list-main">
-              <div className="schedule-list-heading">
-                <strong>{schedule.name}</strong>
-                <span className="schedule-status" data-status={schedule.status}>
-                  {statusLabel(schedule.status)}
-                </span>
-              </div>
-              <span className="schedule-list-session">
-                {isHome ? schedule.sessionTitle : "このSession"}
-              </span>
-              <div className="schedule-list-timing">
-                <span className="schedule-list-trigger">
-                  <span aria-hidden="true">{schedule.trigger.type === "cron" ? "↻" : "◷"}</span>
-                  {formatTrigger(schedule.trigger)}
-                </span>
-                <span className="schedule-list-next">
-                  次回 {schedule.nextFireAt ? new Date(schedule.nextFireAt).toLocaleString() : "—"}
-                </span>
-              </div>
-              {schedule.lastFireResult ? (
-                <span className="schedule-list-result">
-                  直近: {schedule.lastFireResult}
-                </span>
+            {renderMain(schedule)}
+            <span className="schedule-list-open-icon" aria-hidden="true">↗</span>
+          </button>
+        ) : (
+          <article key={schedule.id} className={`schedule-list-row status-${schedule.status}`}>
+            {renderMain(schedule)}
+            <div className="schedule-list-actions" role="group" aria-label={`${schedule.name} の操作`}>
+              <ScheduleIconButton label="スケジュールを編集" icon="✎" onClick={() => onEdit?.(schedule)} />
+              <ScheduleIconButton label="今すぐ実行" icon="⚡" onClick={() => onRunNow?.(schedule)} />
+              {schedule.status === "paused" ? (
+                <ScheduleIconButton label="スケジュールを再開" icon="▶" onClick={() => onResume?.(schedule)} />
+              ) : schedule.status === "active" ? (
+                <ScheduleIconButton label="スケジュールを一時停止" icon="Ⅱ" onClick={() => onPause?.(schedule)} />
               ) : null}
-              {schedule.lastExecutionId ? (
-                <span className="schedule-list-execution">
-                  Execution: {schedule.lastExecutionId}
-                </span>
-              ) : null}
-            </div>
-            <div
-              className="schedule-list-actions"
-              role="group"
-              aria-label={`${schedule.name} の操作`}
-            >
-              {isHome ? (
-                <ScheduleIconButton
-                  label="所有Sessionを開く"
-                  icon="↗"
-                  onClick={() => onOpenSession?.(schedule.sessionId)}
-                />
-              ) : (
-                <>
-                  <ScheduleIconButton
-                    label="スケジュールを編集"
-                    icon="✎"
-                    onClick={() => onEdit?.(schedule)}
-                  />
-                  <ScheduleIconButton
-                    label="今すぐ実行"
-                    icon="▶"
-                    onClick={() => onRunNow?.(schedule)}
-                  />
-                  {schedule.status === "paused" ? (
-                    <ScheduleIconButton
-                      label="スケジュールを再開"
-                      icon="▶"
-                      onClick={() => onResume?.(schedule)}
-                    />
-                  ) : schedule.status === "active" ? (
-                    <ScheduleIconButton
-                      label="スケジュールを一時停止"
-                      icon="Ⅱ"
-                      onClick={() => onPause?.(schedule)}
-                    />
-                  ) : null}
-                  <ScheduleIconButton
-                    label="スケジュールを削除"
-                    icon="⌫"
-                    danger
-                    onClick={() => onDelete?.(schedule)}
-                  />
-                </>
-              )}
+              <ScheduleIconButton label="スケジュールを削除" icon="⌫" danger onClick={() => onDelete?.(schedule)} />
             </div>
           </article>
         ))}
@@ -263,27 +232,23 @@ function ScheduleEditor({
   return (
     <section
       className="schedule-workspace-editor"
-      aria-labelledby="schedule-editor-title"
+      aria-label="スケジュール設定"
     >
       <div className="schedule-workspace-editor-toolbar">
-        <div className="schedule-editor-heading">
-          <BackNavigationButton label="スケジュール一覧へ戻る" onBack={onBack} />
-          <h1 id="schedule-editor-title">
-            {currentDraft.id ? "スケジュールを編集" : "スケジュールを作成"}
-          </h1>
-        </div>
+        <BackNavigationButton label="スケジュール一覧へ戻る" onBack={onBack} />
       </div>
       <div className="schedule-editor-fields">
-        <label className="schedule-name-field">
-          <span>名前</span>
+        <div className="schedule-name-field">
           <input
+            aria-label="名前"
+            placeholder="名前"
             value={currentDraft.name}
             onChange={(event) => update({ name: event.target.value })}
           />
-        </label>
-        <label>
-          <span>実行形式</span>
+        </div>
+        <div>
           <select
+            aria-label="実行形式"
             value={currentDraft.trigger.type}
             onChange={(event) =>
               event.target.value === "cron"
@@ -308,40 +273,35 @@ function ScheduleEditor({
             <option value="cron">Cron</option>
             <option value="once">1回のみ</option>
           </select>
-        </label>
+        </div>
         {currentDraft.trigger.type === "cron" ? (
-          <label className="schedule-trigger-field">
-            <span>Cron式</span>
+          <div className="schedule-trigger-field">
             <input
+              aria-label="Cron式"
               value={currentDraft.trigger.expression}
               onChange={(event) =>
                 updateTrigger({ expression: event.target.value })
               }
-              placeholder="分 時 日 月 曜日"
             />
-          </label>
+          </div>
         ) : (
-          <label className="schedule-trigger-field">
-            <span>実行日時</span>
+          <div className="schedule-trigger-field">
             <input
+              aria-label="実行日時"
               type="datetime-local"
               value={currentDraft.trigger.localDateTime}
               onChange={(event) =>
                 updateTrigger({ localDateTime: event.target.value })
               }
             />
-          </label>
+          </div>
         )}
       </div>
-      {currentDraft.trigger.type === "cron" ? (
-        <section className="schedule-preview" aria-labelledby="schedule-preview-title" aria-live="polite">
-          <div className="schedule-preview-heading">
-            <span aria-hidden="true">◷</span>
-            <h2 id="schedule-preview-title">次回の実行予定</h2>
-          </div>
+      {currentDraft.trigger.type === "cron" && (previewError || preview.length > 0) ? (
+        <section className="schedule-preview" aria-label="次回の実行予定" aria-live="polite">
           {previewError ? (
             <p className="schedule-preview-error">Cron式を確認してください。</p>
-          ) : preview.length > 0 ? (
+          ) : (
             <ol>
               {preview.map((instant) => (
                 <li key={instant.toISOString()}>
@@ -349,8 +309,6 @@ function ScheduleEditor({
                 </li>
               ))}
             </ol>
-          ) : (
-            <p>式を入力すると、ここに予定を表示します。</p>
           )}
         </section>
       ) : null}

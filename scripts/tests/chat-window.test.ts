@@ -93,19 +93,39 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
 });
 
-test("ChatWindow は workspace 一覧で ActionDock と splitter を一緒に隠す", () => {
+test("ChatWindow は中央一覧だけを差し替え、paneを保ったままActionDockを隠す", () => {
   const props = createChatWindowProps();
-  props.className = "session-workspace-mode";
   props.mainContent = React.createElement("div", null, "Schedule list");
   props.hideActionDock = true;
   props.actionDockSplitter = React.createElement("div", null, "Action splitter");
+  props.leftPane = React.createElement("div", null, "Files pane");
+  props.rightPane = React.createElement("div", null, "Context pane");
+  props.isLeftPaneVisible = true;
+  props.isRightPaneVisible = true;
 
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
-  assert.match(html, /session-workspace-mode is-action-dock-hidden/);
+  assert.match(html, /is-left-pane-visible is-right-pane-visible is-action-dock-hidden/);
+  assert.ok(!html.includes("session-workspace-mode"));
   assert.ok(html.includes("Schedule list"));
+  assert.ok(html.includes("Files pane"));
+  assert.ok(html.includes("Context pane"));
   assert.ok(!html.includes("Action splitter"));
   assert.ok(!html.includes("session-action-dock-content"));
+});
+
+test("ChatWindow composer はplaceholderなしでもaccessible nameを維持する", () => {
+  const props = createChatWindowProps();
+  props.composerProps = {
+    ...props.composerProps,
+    placeholder: "",
+    composerTextareaLabel: "スケジュールのプロンプト",
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /<textarea[^>]*aria-label="スケジュールのプロンプト"/);
+  assert.doesNotMatch(html, /placeholder="Schedule prompt"/);
 });
 
 test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
