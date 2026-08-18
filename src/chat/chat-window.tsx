@@ -418,6 +418,7 @@ export function ChatWindow({
           messageViewMode={messageViewMode}
         />
       )}
+      actionDockSplitter={screenProps.actionDockSplitter}
       actionDock={(
         <div className={`session-action-dock${isActionDockExpanded ? "" : " compact"}`}>
           <div

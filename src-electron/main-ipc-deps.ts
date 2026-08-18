@@ -122,6 +122,14 @@ import type {
   UpdatePromptTemplateInput,
 } from "../src/prompt-template.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
+import type {
+  CreateSessionScheduleInput,
+  RunSessionScheduleNowInput,
+  SessionScheduleProjection,
+  SessionScheduleRevisionRequest,
+  SessionScheduleSummary,
+  UpdateSessionScheduleInput,
+} from "../src/session-schedule.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
@@ -332,6 +340,17 @@ export type MainIpcSessionRuntimeDepsArgs = {
   cancelSessionRun(sessionId: string): void;
 };
 
+export type MainIpcSessionScheduleDepsArgs = {
+  listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
+  getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
+  createSessionSchedule(sessionId: string, input: CreateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
+  updateSessionSchedule(sessionId: string, input: UpdateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
+  pauseSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Awaitable<SessionScheduleProjection>;
+  resumeSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Awaitable<SessionScheduleProjection>;
+  deleteSessionSchedule(sessionId: string, request: SessionScheduleRevisionRequest): Awaitable<void>;
+  runSessionScheduleNow(sessionId: string, request: RunSessionScheduleNowInput): Awaitable<SessionScheduleProjection>;
+};
+
 export type MainIpcMateDepsArgs = {
   getMateState(): Awaitable<MateStorageState>;
   getMateProfile(): Awaitable<MateProfile | null>;
@@ -361,6 +380,7 @@ export type CreateMainIpcRegistrationDepsArgs = {
   auxiliary?: MainIpcAuxiliaryDepsArgs;
   companion: MainIpcCompanionDepsArgs;
   sessionRuntime: MainIpcSessionRuntimeDepsArgs;
+  sessionSchedules: MainIpcSessionScheduleDepsArgs;
   mate: MainIpcMateDepsArgs;
   character: MainIpcCharacterDepsArgs;
 };
@@ -545,6 +565,14 @@ export function createMainIpcRegistrationDeps(
     listSessionTurnExecutions: args.sessionRuntime.listSessionTurnExecutions,
     cancelSessionExecution: args.sessionRuntime.cancelSessionExecution,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
+    listSessionSchedules: args.sessionSchedules.listSessionSchedules,
+    getSessionSchedule: args.sessionSchedules.getSessionSchedule,
+    createSessionSchedule: args.sessionSchedules.createSessionSchedule,
+    updateSessionSchedule: args.sessionSchedules.updateSessionSchedule,
+    pauseSessionSchedule: args.sessionSchedules.pauseSessionSchedule,
+    resumeSessionSchedule: args.sessionSchedules.resumeSessionSchedule,
+    deleteSessionSchedule: args.sessionSchedules.deleteSessionSchedule,
+    runSessionScheduleNow: args.sessionSchedules.runSessionScheduleNow,
     getMateState: args.mate.getMateState,
     getMateProfile: args.mate.getMateProfile,
     createMate: args.mate.createMate,

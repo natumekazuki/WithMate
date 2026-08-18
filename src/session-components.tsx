@@ -3595,6 +3595,7 @@ export type SessionComposerExpandedProps = {
   attachmentItems: SessionAttachmentItem[];
   draft: string;
   placeholder?: string;
+  composerTextareaLabel?: string;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   skillButtonRef?: RefObject<HTMLButtonElement | null>;
   isComposerDisabled: boolean;
@@ -3602,6 +3603,8 @@ export type SessionComposerExpandedProps = {
   composerSendability: SessionComposerSendabilityView;
   externalErrorDescriptionIds?: string;
   sendButtonTitle?: string;
+  sendButtonLabel?: string;
+  sendButtonIcon?: string;
   isComposerBlockedFeedbackActive: boolean;
   approvalOptions: Array<{ value: ApprovalMode; label: string }>;
   selectedApprovalMode: ApprovalMode;
@@ -3673,6 +3676,7 @@ export function SessionComposerExpanded({
   attachmentItems,
   draft,
   placeholder,
+  composerTextareaLabel,
   composerTextareaRef,
   skillButtonRef,
   isComposerDisabled,
@@ -3680,6 +3684,8 @@ export function SessionComposerExpanded({
   composerSendability,
   externalErrorDescriptionIds,
   sendButtonTitle,
+  sendButtonLabel = "Send",
+  sendButtonIcon,
   isComposerBlockedFeedbackActive,
   approvalOptions,
   selectedApprovalMode,
@@ -4023,6 +4029,7 @@ export function SessionComposerExpanded({
             ref={composerTextareaRef}
             value={draft}
             placeholder={placeholder}
+            aria-label={composerTextareaLabel}
             onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
             onFocus={onDraftFocus}
             onKeyDown={onDraftKeyDown}
@@ -4143,8 +4150,9 @@ export function SessionComposerExpanded({
             onClick={onSendOrCancel}
             disabled={isSendDisabled}
             title={sendButtonTitle}
+            aria-label={sendButtonIcon ? sendButtonLabel : undefined}
           >
-            Send
+            {sendButtonIcon ? <span aria-hidden="true">{sendButtonIcon}</span> : sendButtonLabel}
           </button>
         )}
       </div>

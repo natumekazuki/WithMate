@@ -93,6 +93,19 @@ test("ChatWindow は preview と compact ActionDock の間に recovery actions �
   assert.ok(html.indexOf("Retry Actions") < html.indexOf("session-action-dock-slot"));
 });
 
+test("ChatWindow composer はplaceholderなしでもaccessible nameを維持する", () => {
+  const props = createChatWindowProps();
+  props.composerProps = {
+    ...props.composerProps,
+    placeholder: "",
+    composerTextareaLabel: "スケジュールのプロンプト",
+  };
+
+  const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
+
+  assert.match(html, /<textarea[^>]*aria-label="スケジュールのプロンプト"/);
+});
+
 test("ChatWindow は ActionDock の展開状態に依存しない共通エラー領域を描画する", () => {
   const props = createChatWindowProps();
   props.isActionDockExpanded = false;

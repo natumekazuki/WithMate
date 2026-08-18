@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainSessionCommandFacade } from "../../src-electron/main-session-command-facade.js";
+import { resolveComposerPreview } from "../../src-electron/composer-attachments.js";
+import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 import { SessionExecutionQueueFullError } from "../../src-electron/session-execution-storage-v6.js";
 import {
   ProviderRuntimeOperationCoordinator,
@@ -1476,6 +1481,195 @@ test("ID-03: Session由来とlegacy queued executionをGUI cancelへ渡さない
     });
     assert.equal(result.ok, false);
     assert.equal(cancelInvoked, false);
+  }
+});
+
+test("schedule enqueue replayはcurrent catalogとprovider再検証より先に解決する", async () => {
+  let validationCalled = false;
+  let enqueueCalled = false;
+  const record = {
+    id: "execution-schedule-1",
+    sessionId: "s-1",
+    state: "queued",
+    request: {
+      initiator: { kind: "user" },
+      turn: { userMessage: "scheduled", clientRequestId: "schedule-key-1" },
+    },
+    createdAt: "2026-08-18T00:00:00.000Z",
+    updatedAt: "2026-08-18T00:00:00.000Z",
+  };
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "copilot" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async validateSessionTurn() {
+        validationCalled = true;
+        throw new Error("permission changed");
+      },
+      async validateExternalSessionTurn() {
+        validationCalled = true;
+        throw new Error("provider changed");
+      },
+    }) as never,
+    getSessionExecutionService: () => ({
+      resolveReplay: () => ({ id: record.id }),
+      listRecords: () => [record],
+      async enqueue() {
+        enqueueCalled = true;
+        throw new Error("must not enqueue replay");
+      },
+    }) as never,
+    getCurrentModelCatalogRevision: () => 8,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.enqueueScheduledSessionTurn("s-1", "codex", {
+    userMessage: "scheduled",
+    clientRequestId: "schedule-key-1",
+    model: "gpt-5.6",
+    reasoningEffort: "high",
+    approvalMode: "never",
+    codexSandboxMode: "workspace-write",
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.ok ? result.execution?.executionId : null, record.id);
+  assert.equal(validationCalled, false);
+  assert.equal(enqueueCalled, false);
+});
+
+test("schedule attachmentはordinary enqueue validationでcurrent additional-directory permissionを再検証する", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "withmate-schedule-attachment-"));
+  const workspacePath = path.join(directory, "workspace");
+  const additionalPath = path.join(directory, "additional");
+  const attachmentPath = path.join(additionalPath, "evidence.txt");
+  await mkdir(workspacePath, { recursive: true });
+  await mkdir(additionalPath, { recursive: true });
+  await writeFile(attachmentPath, "evidence", "utf8");
+
+  let allowedAdditionalDirectories = [additionalPath];
+  let quotaRefreshes = 0;
+  type ScheduledExecutionRecord = {
+    id: string;
+    sessionId: string;
+    state: "queued";
+    request: {
+      initiator: { kind: "user" };
+      turn: { userMessage: string; clientRequestId: string };
+    };
+    createdAt: string;
+    updatedAt: string;
+  };
+  const records: ScheduledExecutionRecord[] = [];
+  let durableEffects = 0;
+  const executionService = {
+    resolveReplay: () => null,
+    listRecords: () => records,
+    async enqueue(input: { sessionId: string; request: unknown }) {
+      const request = input.request as {
+        initiator: { kind: "user" };
+        turn: { userMessage: string; clientRequestId: string };
+      };
+      const preview = await resolveComposerPreview(
+        { workspacePath, allowedAdditionalDirectories },
+        request.turn.userMessage,
+      );
+      if (preview.errors.length > 0) {
+        throw new SessionTurnValidationError(
+          "INVALID_INPUT",
+          preview.errors[0] ?? "attachment validation failed",
+        );
+      }
+      durableEffects += 1;
+      const record = {
+        id: `execution-${durableEffects}`,
+        sessionId: input.sessionId,
+        state: "queued",
+        request,
+        createdAt: "2026-08-18T00:00:00.000Z",
+        updatedAt: "2026-08-18T00:00:00.000Z",
+      };
+      records.push(record);
+      return { id: record.id };
+    },
+  };
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({ id: "s-1", provider: "copilot" }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async validateSessionTurn(_sessionId: string, request: { userMessage: string }) {
+        const preview = await resolveComposerPreview(
+          { workspacePath, allowedAdditionalDirectories },
+          request.userMessage,
+        );
+        if (preview.errors.length > 0) {
+          throw new SessionTurnValidationError(
+            "INVALID_INPUT",
+            preview.errors[0] ?? "attachment validation failed",
+          );
+        }
+      },
+      async validateExternalSessionTurn() {
+        return undefined;
+      },
+    }) as never,
+    getSessionExecutionService: () => executionService as never,
+    getCurrentModelCatalogRevision: () => 8,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => true,
+    refreshProviderQuotaTelemetry: async () => {
+      quotaRefreshes += 1;
+      return null;
+    },
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+  try {
+    const valid = await facade.enqueueScheduledSessionTurn("s-1", "copilot", {
+      userMessage: `review @"${attachmentPath}"`,
+      clientRequestId: "schedule-attachment-valid",
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      approvalMode: "never",
+      customAgentName: "",
+    });
+    assert.equal(valid.ok, true);
+    assert.equal(durableEffects, 1);
+    assert.equal(quotaRefreshes, 1);
+    assert.match(
+      (records[0]?.request as { turn: { userMessage: string } }).turn.userMessage,
+      /evidence\.txt/,
+    );
+
+    allowedAdditionalDirectories = [];
+    const rejected = await facade.enqueueScheduledSessionTurn("s-1", "copilot", {
+      userMessage: `review @"${attachmentPath}"`,
+      clientRequestId: "schedule-attachment-rejected",
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      approvalMode: "never",
+      customAgentName: "",
+    });
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.ok ? null : rejected.error.code, "INVALID_INPUT");
+    assert.equal(durableEffects, 1);
+    assert.equal(quotaRefreshes, 1);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

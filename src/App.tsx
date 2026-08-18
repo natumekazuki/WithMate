@@ -91,6 +91,7 @@ import {
   useMessageListAuxiliarySessions,
 } from "./auxiliary-render-projections.js";
 import { ChatWindow, ChatWindowStatusScreen } from "./chat/chat-window.js";
+import type { SessionComposerExpandedProps } from "./session-components.js";
 import { resolveSkillDiscoveryRequest } from "./skill-discovery-request.js";
 import { applySessionDocumentTitle, resolveAgentSessionDocumentTitle } from "./chat/window-title.js";
 import { resolveAuditLogOwner } from "./chat/audit-log-owner.js";
@@ -131,6 +132,7 @@ import { runAuxiliarySkillPromptInsertionOperation } from "./auxiliary-skill-pro
 import {
   buildAdditionalDirectoryItems,
   buildComposerAttachmentItems,
+  buildComposerReferenceInsertionState,
   pickComposerReferencePath,
   type ComposerPathPickerKind,
   type ComposerReferenceInput,
@@ -200,6 +202,15 @@ import {
 } from "./session-turn-execution.js";
 import { appendTurnExecutionsToMessageList } from "./session-queued-turn-projection.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { ScheduleWorkspace } from "./session-schedule-workspace.js";
+import {
+  buildScheduleDraftComposerState,
+  projectScheduleLastFire,
+  resolveSystemScheduleTimeZone,
+  type ScheduleDraftProjection,
+  type ScheduleSummaryProjection,
+} from "./session-schedule-ui-projection.js";
+import type { SessionScheduleProjection, SessionScheduleSummary, SessionScheduleTrigger, SessionScheduleTurn } from "./session-schedule.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import {
@@ -644,6 +655,171 @@ export default function AgentSessionWindowApp() {
     clientRequestId: string;
   } | null>(null);
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
+  const [scheduleView, setScheduleView] = useState<"chat" | "list" | "create" | "edit">("chat");
+  const [scheduleLoadState, setScheduleLoadState] = useState<"loading" | "loaded" | "error">("loading");
+  const [sessionSchedules, setSessionSchedules] = useState<SessionScheduleSummary[]>([]);
+  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraftProjection | null>(null);
+  const [scheduleLoadError, setScheduleLoadError] = useState<string | null>(null);
+  const [scheduleError, setScheduleError] = useState<string | null>(null);
+  const scheduleRefreshGenerationRef = useRef(0);
+  const scheduleDraftRef = useRef<ScheduleDraftProjection | null>(null);
+  const scheduleModeActive = scheduleView !== "chat";
+
+  const refreshSessionSchedules = useCallback(async () => {
+    if (!withmateApi || !selectedId) return;
+    const generation = ++scheduleRefreshGenerationRef.current;
+    setScheduleLoadState("loading");
+    try {
+      const next = await withmateApi.listSessionSchedules(selectedId);
+      if (generation !== scheduleRefreshGenerationRef.current) return;
+      setSessionSchedules(next);
+      setScheduleLoadState("loaded");
+      setScheduleLoadError(null);
+    } catch (error) {
+      if (generation !== scheduleRefreshGenerationRef.current) return;
+      setScheduleLoadState("error");
+      setScheduleLoadError(error instanceof Error ? error.message : "Schedule list could not be loaded.");
+    }
+  }, [selectedId, withmateApi]);
+
+  useEffect(() => {
+    if (scheduleModeActive) void refreshSessionSchedules();
+    if (!withmateApi || !selectedId) return;
+    return withmateApi.subscribeSessionSchedules((event) => {
+      if (event.sessionId === selectedId) void refreshSessionSchedules();
+    });
+  }, [refreshSessionSchedules, scheduleModeActive, selectedId, withmateApi]);
+
+  const openScheduleList = useCallback(() => {
+    setScheduleDraft(null);
+    scheduleDraftRef.current = null;
+    setIsSkillPickerOpen(false);
+    setScheduleView("list");
+    setScheduleError(null);
+  }, []);
+  const openScheduleChat = useCallback(() => {
+    setScheduleDraft(null);
+    scheduleDraftRef.current = null;
+    setIsSkillPickerOpen(false);
+    setScheduleError(null);
+    setScheduleView("chat");
+  }, []);
+
+  const createScheduleDraft = useCallback(() => {
+    const currentSession = sessions.find((session) => session.id === selectedId);
+    if (!currentSession) return;
+    let timeZone: string;
+    try {
+      timeZone = resolveSystemScheduleTimeZone();
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "PCのローカルタイムを取得できませんでした。");
+      return;
+    }
+    const composerState = buildScheduleDraftComposerState(draft, composerPreview.attachments);
+    const next: ScheduleDraftProjection = {
+      sessionId: currentSession.id,
+      name: "",
+      trigger: { type: "cron", expression: "0 9 * * 1-5", timeZone },
+      prompt: composerState.prompt,
+      attachments: composerState.attachments,
+      model: currentSession.model ?? "",
+      reasoningEffort: currentSession.reasoningEffort ?? "",
+      approvalMode: currentSession.approvalMode ?? "",
+      sandboxMode: currentSession.codexSandboxMode ?? "",
+      customAgent: currentSession.customAgentName ?? null,
+    };
+    setScheduleDraft(next);
+    scheduleDraftRef.current = next;
+    setIsSkillPickerOpen(false);
+    setScheduleView("create");
+  }, [composerPreview.attachments, draft, selectedId, sessions]);
+
+  const editSchedule = useCallback(async (summary: ScheduleSummaryProjection) => {
+    if (!withmateApi || !selectedId) return;
+    try {
+      const schedule = await withmateApi.getSessionSchedule(selectedId, summary.id);
+      if (!schedule) return;
+      const next: ScheduleDraftProjection = {
+        id: schedule.id,
+        sessionId: schedule.sessionId,
+        name: schedule.name,
+        trigger: { ...schedule.trigger, timeZone: resolveSystemScheduleTimeZone() },
+        prompt: schedule.turn.userMessage,
+        attachments: schedule.turn.attachments?.map((attachment) => attachment.path) ?? [],
+        model: schedule.turn.model ?? "",
+        reasoningEffort: schedule.turn.reasoningEffort ?? "",
+        approvalMode: schedule.turn.approvalMode ?? "",
+        sandboxMode: schedule.turn.codexSandboxMode ?? "",
+        customAgent: schedule.turn.customAgentName ?? null,
+      };
+      setScheduleDraft(next);
+      scheduleDraftRef.current = next;
+      setIsSkillPickerOpen(false);
+      setScheduleView("edit");
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Schedule could not be loaded.");
+    }
+  }, [selectedId, withmateApi]);
+
+  const updateScheduleDraft = useCallback((next: ScheduleDraftProjection) => {
+    scheduleDraftRef.current = next;
+    setScheduleDraft(next);
+    setScheduleError(null);
+  }, []);
+
+  const saveScheduleDraft = useCallback(async () => {
+    const current = scheduleDraftRef.current;
+    if (!withmateApi || !selectedId || !current) return;
+    setScheduleError(null);
+    const provider = (sessions.find((session) => session.id === selectedId)?.provider ?? "codex") as SessionScheduleTurn["provider"];
+    const turn: SessionScheduleTurn = provider === "codex" ? {
+      provider,
+      userMessage: current.prompt,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort as SessionScheduleTurn["reasoningEffort"],
+      approvalMode: current.approvalMode as SessionScheduleTurn["approvalMode"],
+      codexSandboxMode: current.sandboxMode as SessionScheduleTurn["codexSandboxMode"],
+      attachments: current.attachments.map((path) => ({ path, source: "text" as const })),
+    } : {
+      provider,
+      userMessage: current.prompt,
+      model: current.model,
+      reasoningEffort: current.reasoningEffort as SessionScheduleTurn["reasoningEffort"],
+      approvalMode: current.approvalMode as SessionScheduleTurn["approvalMode"],
+      customAgentName: current.customAgent ?? "",
+      attachments: current.attachments.map((path) => ({ path, source: "text" as const })),
+    };
+    try {
+      const trigger = { ...current.trigger, timeZone: resolveSystemScheduleTimeZone() } as SessionScheduleTrigger;
+      if (current.id) {
+        const previous = sessionSchedules.find((entry) => entry.id === current.id);
+        await withmateApi.updateSessionSchedule(selectedId, { scheduleId: current.id, expectedRevision: previous?.revision ?? 1, name: current.name, trigger, turn });
+      } else {
+        await withmateApi.createSessionSchedule(selectedId, { name: current.name, trigger, turn });
+      }
+      await refreshSessionSchedules();
+      setScheduleView("list");
+      setScheduleDraft(null);
+      scheduleDraftRef.current = null;
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Schedule could not be saved.");
+    }
+  }, [refreshSessionSchedules, selectedId, sessionSchedules, sessions, withmateApi]);
+
+  const mutateSchedule = useCallback(async (summary: ScheduleSummaryProjection, action: "pause" | "resume" | "delete" | "run") => {
+    if (!withmateApi || !selectedId) return;
+    setScheduleError(null);
+    try {
+      const request = { scheduleId: summary.id, expectedRevision: summary.revision };
+      if (action === "pause") await withmateApi.pauseSessionSchedule(selectedId, request);
+      else if (action === "resume") await withmateApi.resumeSessionSchedule(selectedId, request);
+      else if (action === "delete") await withmateApi.deleteSessionSchedule(selectedId, request);
+      else await withmateApi.runSessionScheduleNow(selectedId, { scheduleId: summary.id, requestId: crypto.randomUUID() });
+      await refreshSessionSchedules();
+    } catch (error) {
+      setScheduleError(error instanceof Error ? error.message : "Schedule operation failed.");
+    }
+  }, [refreshSessionSchedules, selectedId, withmateApi]);
 
   useEffect(() => {
     let active = true;
@@ -2605,6 +2781,24 @@ export default function AgentSessionWindowApp() {
     restoreComposerTextareaFocusAndCaret,
   });
 
+  const handleSelectScheduleSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
+    getProvider: () => selectedSession?.provider,
+    getDraft: () => scheduleDraftRef.current?.prompt ?? "",
+    getTextarea: () => composerTextareaRef.current,
+    setActionDockPinnedExpanded: setIsActionDockPinnedExpanded,
+    setCaret: setComposerCaret,
+    setSkillPickerOpen: setIsSkillPickerOpen,
+    applyDraft: (nextPrompt, nextCaret) => {
+      const current = scheduleDraftRef.current;
+      if (!current) {
+        return;
+      }
+      mainComposerCaretRef.current = nextCaret;
+      updateScheduleDraft({ ...current, prompt: nextPrompt });
+    },
+    restoreComposerTextareaFocusAndCaret,
+  });
+
   const closeAgentPicker = createAgentPickerCloseHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
   });
@@ -3710,6 +3904,13 @@ export default function AgentSessionWindowApp() {
     setIsPromptTemplateWorkspaceOpen(true);
   };
   const handleInsertPromptTemplate = (prompt: string) => {
+    if (scheduleDraftRef.current && scheduleModeActive) {
+      const current = scheduleDraftRef.current;
+      const nextPrompt = current.prompt.trim() ? `${current.prompt.trim()}\n\n${prompt}` : prompt;
+      updateScheduleDraft({ ...current, prompt: nextPrompt });
+      closeCentralPreview();
+      return;
+    }
     const insertion = insertComposerTextAtSelection(
       renderedDraft,
       prompt,
@@ -3803,7 +4004,36 @@ export default function AgentSessionWindowApp() {
         ? "Running"
         : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
           ? "New messages"
-          : "";
+        : "";
+  const scheduleSummaryProjections: ScheduleSummaryProjection[] = sessionSchedules.map((schedule) => ({
+    id: schedule.id,
+    sessionId: schedule.sessionId,
+    sessionTitle: selectedSession.taskTitle,
+    revision: schedule.revision,
+    name: schedule.name,
+    state: schedule.state,
+    status: schedule.state,
+    trigger: schedule.trigger,
+    nextFireAt: schedule.nextFireAt,
+    ...projectScheduleLastFire(schedule.latestFire),
+  }));
+  const scheduleContent = scheduleModeActive ? (
+    <ScheduleWorkspace
+      mode={scheduleView}
+      loadState={scheduleLoadState}
+      schedules={scheduleSummaryProjections}
+      draft={scheduleDraft}
+      errorMessage={scheduleError ?? scheduleLoadError}
+      onBack={() => scheduleView === "list" ? openScheduleChat() : openScheduleList()}
+      onCreate={createScheduleDraft}
+      onEdit={(summary) => void editSchedule(summary)}
+      onPause={(summary) => void mutateSchedule(summary, "pause")}
+      onResume={(summary) => void mutateSchedule(summary, "resume")}
+      onDelete={(summary) => void mutateSchedule(summary, "delete")}
+      onRunNow={(summary) => void mutateSchedule(summary, "run")}
+      onDraftChange={updateScheduleDraft}
+    />
+  ) : null;
   const actionDockChatNotice = liveApprovalRequest
     ? "Approval required"
     : liveElicitationRequest
@@ -3811,7 +4041,7 @@ export default function AgentSessionWindowApp() {
       : previewChatActivity.hasUnreadMessages && previewChatActivity.ownerSessionId === activeRunSessionId
         ? "New messages"
         : "";
-  const filePreviewContent = isPromptTemplateWorkspaceOpen && withmateApi ? (
+  const filePreviewContent = scheduleModeActive ? scheduleContent : isPromptTemplateWorkspaceOpen && withmateApi ? (
     <PromptTemplateWorkspace
       api={withmateApi}
       canInsert={activeAuxiliarySession
@@ -3870,11 +4100,120 @@ export default function AgentSessionWindowApp() {
     />
   ) : undefined;
 
+  const pickScheduleAttachment = async (kind: ComposerPathPickerKind) => {
+    if (!withmateApi || !selectedSession || !scheduleDraft) return;
+    const selectedPath = await pickComposerReferencePath(
+      kind,
+      pickerBaseDirectory || selectedSession.workspacePath || null,
+      withmateApi,
+    );
+    if (!selectedPath) return;
+    const prompt = scheduleDraft.attachments.includes(selectedPath)
+      ? scheduleDraft.prompt
+      : buildComposerReferenceInsertionState(
+          scheduleDraft.prompt,
+          scheduleDraft.prompt.length,
+          [{
+            path: selectedPath,
+            presentation: kind === "image" ? "image" : "path",
+          }],
+        )?.draft ?? scheduleDraft.prompt;
+    updateScheduleDraft({
+      ...scheduleDraft,
+      prompt,
+      attachments: scheduleDraft.attachments.includes(selectedPath)
+        ? scheduleDraft.attachments
+        : [...scheduleDraft.attachments, selectedPath],
+    });
+  };
+
+  const scheduleComposerProps: SessionComposerExpandedProps | undefined = scheduleDraft && scheduleModeActive ? {
+    isRunning: false,
+    composerBlocked: false,
+    canSelectCustomAgent: selectedSession.provider === "copilot",
+    showAttachmentControls: true,
+    showCustomAgentPicker: selectedSession.provider === "copilot",
+    showSkillPicker: true,
+    showPromptTemplateButton: true,
+    showAdditionalDirectoryControls: true,
+    showExecutionModeControls: true,
+    isAgentPickerOpen: false,
+    isSkillPickerOpen,
+    isPromptTemplateWorkspaceOpen: false,
+    isAdditionalDirectoryListOpen,
+    selectedCustomAgentLabel: scheduleDraft.customAgent ?? "Default Agent",
+    selectedCustomAgentTitle: "Copilot custom agent を選択",
+    additionalDirectoryCount: selectedSession.allowedAdditionalDirectories.length,
+    showJumpToBottom: false,
+    isCustomAgentListLoading: false,
+    customAgentItems,
+    attachmentItems: scheduleDraft.attachments.map((path) => ({
+      key: path,
+      kind: "file",
+      kindLabel: "File",
+      locationLabel: path,
+      primaryLabel: path.split(/[\\/]/).pop() ?? path,
+      secondaryLabel: "Schedule attachment",
+      title: path,
+      removeTargets: [path],
+    })),
+    draft: scheduleDraft.prompt,
+    placeholder: "",
+    composerTextareaLabel: "スケジュールのプロンプト",
+    composerTextareaRef,
+    isComposerDisabled: false,
+    isSendDisabled: !scheduleDraft.name.trim() || !scheduleDraft.prompt.trim(),
+    composerSendability: { isBusy: false, primaryFeedback: "", secondaryFeedback: [], feedbackTone: null, shouldShowFeedback: false },
+    sendButtonTitle: "スケジュールを保存",
+    sendButtonLabel: "スケジュールを保存",
+    sendButtonIcon: "✓",
+    isComposerBlockedFeedbackActive: false,
+    approvalOptions: approvalChoiceOptions,
+    selectedApprovalMode: scheduleDraft.approvalMode as Session["approvalMode"],
+    sandboxOptions: sandboxChoiceOptions,
+    selectedCodexSandboxMode: scheduleDraft.sandboxMode as Session["codexSandboxMode"],
+    modelOptions: modelSelectOptions,
+    selectedModel: scheduleDraft.model,
+    selectedModelFallbackLabel: selectedSession.model,
+    reasoningOptions: reasoningSelectOptions,
+    selectedReasoningEffort: scheduleDraft.reasoningEffort,
+    onPickFile: () => void pickScheduleAttachment("file"),
+    onPickFolder: () => void pickScheduleAttachment("folder"),
+    onPickImage: () => void pickScheduleAttachment("image"),
+    onToggleAgentPicker: () => undefined,
+    onToggleSkillPicker: handleToggleSkillPicker,
+    onOpenPromptTemplates: handleOpenPromptTemplates,
+    onAddAdditionalDirectory: () => void handleAddAdditionalDirectory(),
+    onToggleAdditionalDirectoryList: handleToggleAdditionalDirectoryList,
+    onJumpToBottom: () => undefined,
+    onSelectCustomAgent: (value) => updateScheduleDraft({ ...scheduleDraft, customAgent: value }),
+    onRemoveAttachment: (targets) => createPathReferenceRemovalHandler({
+      getDraft: () => scheduleDraft.prompt,
+      applyRemoval: ({ draft: prompt }, removed) => updateScheduleDraft({
+        ...scheduleDraft,
+        prompt,
+        attachments: scheduleDraft.attachments.filter((path) => !removed.includes(path)),
+      }),
+    })(targets),
+    onDraftChange: (value) => updateScheduleDraft({ ...scheduleDraft, prompt: value }),
+    onDraftFocus: () => undefined,
+    onDraftKeyDown: () => undefined,
+    onDraftSelect: () => undefined,
+    onDraftCompositionStart: () => undefined,
+    onDraftCompositionEnd: () => undefined,
+    onSendOrCancel: () => void saveScheduleDraft(),
+    onChangeApprovalMode: (value) => updateScheduleDraft({ ...scheduleDraft, approvalMode: value }),
+    onChangeCodexSandboxMode: (value) => updateScheduleDraft({ ...scheduleDraft, sandboxMode: value }),
+    onChangeModel: (value) => updateScheduleDraft({ ...scheduleDraft, model: value }),
+    onChangeReasoningEffort: (value) => updateScheduleDraft({ ...scheduleDraft, reasoningEffort: value }),
+  } : undefined;
+
   return (
     <>
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
+        composerPropsOverride: scheduleComposerProps,
         leftPane: fileExplorerPane,
         isFilesPaneVisible,
         selectedSession: renderedSession,
@@ -3997,7 +4336,20 @@ export default function AgentSessionWindowApp() {
         auditLogsTotal,
         auditLogsErrorMessage,
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
-        headerActions: auxiliaryHeaderActions,
+        headerActions: (
+          <>
+            {auxiliaryHeaderActions}
+            <button
+              className="drawer-toggle compact secondary schedule-header-button"
+              type="button"
+              aria-label={scheduleModeActive ? "チャットへ戻る" : "スケジュールを開く"}
+              title={scheduleModeActive ? "チャットへ戻る" : "スケジュールを開く"}
+              onClick={scheduleModeActive ? openScheduleChat : openScheduleList}
+            >
+              <span aria-hidden="true">{scheduleModeActive ? "←" : "◷"}</span>
+            </button>
+          </>
+        ),
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
         onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
@@ -4067,6 +4419,10 @@ export default function AgentSessionWindowApp() {
         onSelectSkill: (skillId) => {
           const skill = availableSkills.find((entry) => entry.id === skillId);
           if (skill) {
+            if (scheduleDraftRef.current && scheduleModeActive) {
+              handleSelectScheduleSkill(skill);
+              return;
+            }
             if (activeAuxiliarySession) {
               void handleSelectAuxiliarySkill(skill);
               return;

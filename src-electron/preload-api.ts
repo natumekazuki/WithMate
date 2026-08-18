@@ -73,6 +73,15 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL,
+  WITHMATE_GET_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_UPDATE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_PAUSE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_RESUME_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_DELETE_SESSION_SCHEDULE_CHANNEL,
+  WITHMATE_RUN_SESSION_SCHEDULE_NOW_CHANNEL,
+  WITHMATE_SESSION_SCHEDULES_CHANGED_EVENT,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -422,6 +431,30 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     resolveLiveElicitation(sessionId, requestId, response) {
       return ipcRenderer.invoke(WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL, sessionId, requestId, response);
+    },
+    listSessionSchedules(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL, sessionId ?? null);
+    },
+    getSessionSchedule(sessionId, scheduleId) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_SCHEDULE_CHANNEL, sessionId, scheduleId);
+    },
+    createSessionSchedule(sessionId, input) {
+      return ipcRenderer.invoke(WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL, sessionId, input);
+    },
+    updateSessionSchedule(sessionId, input) {
+      return ipcRenderer.invoke(WITHMATE_UPDATE_SESSION_SCHEDULE_CHANNEL, sessionId, input);
+    },
+    pauseSessionSchedule(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_PAUSE_SESSION_SCHEDULE_CHANNEL, sessionId, request);
+    },
+    resumeSessionSchedule(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_RESUME_SESSION_SCHEDULE_CHANNEL, sessionId, request);
+    },
+    deleteSessionSchedule(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_DELETE_SESSION_SCHEDULE_CHANNEL, sessionId, request);
+    },
+    runSessionScheduleNow(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_RUN_SESSION_SCHEDULE_NOW_CHANNEL, sessionId, request);
     },
   };
 }
@@ -800,6 +833,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeCompanionSessionSummaries(listener) {
       return subscribe(ipcRenderer, WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, listener);
+    },
+    subscribeSessionSchedules(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_SCHEDULES_CHANGED_EVENT, listener);
     },
   };
 }

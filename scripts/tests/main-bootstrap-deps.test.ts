@@ -151,6 +151,16 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         runSessionTurn: async () => ({}) as never,
         cancelSessionRun: () => {},
       },
+      sessionSchedules: {
+        listSessionSchedules: () => [],
+        getSessionSchedule: () => null,
+        createSessionSchedule: () => ({}) as never,
+        updateSessionSchedule: () => ({}) as never,
+        pauseSessionSchedule: () => ({}) as never,
+        resumeSessionSchedule: () => ({}) as never,
+        deleteSessionSchedule: () => {},
+        runSessionScheduleNow: () => ({}) as never,
+      },
       character: {
         listCharacters: async () => [],
         getCharacter: async () => null,

@@ -16,6 +16,8 @@ type HomeRightPaneHandlers = {
 
 export type HomeRightPanePropsInput = {
   rightPaneView: HomeRightPaneProps["rightPaneView"];
+  schedules?: HomeRightPaneProps["schedules"];
+  scheduleLoadState?: HomeRightPaneProps["scheduleLoadState"];
   runningMonitorEntries: HomeMonitorEntry[];
   nonRunningMonitorEntries: HomeMonitorEntry[];
   monitorWindowIcon: ReactNode;
@@ -27,6 +29,8 @@ export type HomeRightPanePropsInput = {
 
 export function buildHomeRightPaneProps({
   rightPaneView,
+  schedules,
+  scheduleLoadState,
   runningMonitorEntries,
   nonRunningMonitorEntries,
   monitorWindowIcon,
@@ -37,6 +41,8 @@ export function buildHomeRightPaneProps({
 }: HomeRightPanePropsInput): HomeRightPaneProps {
   return {
     rightPaneView,
+    schedules,
+    scheduleLoadState,
     runningMonitorEntries,
     nonRunningMonitorEntries,
     monitorWindowIcon,
