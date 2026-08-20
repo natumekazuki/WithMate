@@ -53,6 +53,7 @@ export type SessionTerminalFailureNotificationServiceDeps = {
 const RETRY_DEADLINE_MS = 24 * 60 * 60 * 1000;
 const RETRY_INITIAL_DELAY_MS = 5_000;
 const RETRY_MAX_DELAY_MS = 5 * 60 * 1000;
+const RECONCILIATION_BATCH_SIZE = 100;
 
 export class SessionTerminalFailureNotificationService {
   private started = false;
@@ -61,6 +62,9 @@ export class SessionTerminalFailureNotificationService {
   private workRequested = false;
   private timer: SessionTerminalFailureNotificationTimerHandle | null = null;
   private retryAfterFailure = false;
+  private startupClaimsReleased = false;
+  private startupReconciliationPending = true;
+  private readonly wakeExecutionIds = new Set<string>();
 
   constructor(private readonly deps: SessionTerminalFailureNotificationServiceDeps) {}
 
@@ -71,8 +75,9 @@ export class SessionTerminalFailureNotificationService {
     await this.requestWork();
   }
 
-  wake(): void {
+  wake(sourceExecutionId?: string): void {
     if (!this.started || this.stopped) return;
+    if (sourceExecutionId?.trim()) this.wakeExecutionIds.add(sourceExecutionId);
     void this.requestWork().catch((error) => this.reportBackgroundError(error));
   }
 
@@ -105,48 +110,76 @@ export class SessionTerminalFailureNotificationService {
   }
 
   private async workLoop(): Promise<void> {
-    this.deps.storage.releaseClaimsForStartup(this.now().toISOString());
+    if (!this.startupClaimsReleased) {
+      this.deps.storage.releaseClaimsForStartup(this.now().toISOString());
+      this.startupClaimsReleased = true;
+    }
     do {
       this.workRequested = false;
-      this.reconcileTerminalExecutions();
+      this.reconcileWokenExecutions();
+      this.reconcileStartupBatch();
       this.failExpired();
       await this.drainDue();
+      if (this.startupReconciliationPending || this.wakeExecutionIds.size > 0) {
+        this.workRequested = true;
+        await yieldToEventLoop();
+      }
     } while (!this.stopped && this.workRequested);
     this.retryAfterFailure = false;
   }
 
-  private reconcileTerminalExecutions(): void {
-    for (const execution of this.deps.executionStorage.listTerminalFailureNotificationCandidates()) {
-      if (this.deps.storage.getBySourceExecutionId(execution.id)) continue;
-      const inspected = inspectNotification(execution.request);
-      if (!inspected.targetSessionId) continue;
-      const terminalAt = execution.completedAt ?? execution.updatedAt;
-      const identity = deriveDeliveryIdentity({
-        sourceExecutionId: execution.id,
-        terminalState: execution.state as "failed" | "interrupted",
-        targetSessionId: inspected.targetSessionId,
-      });
-      const delivery = this.deps.storage.createPending({
-        ...identity,
-        sourceExecutionId: execution.id,
-        sourceSessionId: execution.sessionId,
-        terminalState: execution.state as "failed" | "interrupted",
-        targetSessionId: inspected.targetSessionId,
-        contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
-        createdAt: terminalAt,
-        deadlineAt: new Date(parseTimestamp(terminalAt) + RETRY_DEADLINE_MS).toISOString(),
+  private reconcileWokenExecutions(): void {
+    const executionIds = Array.from(this.wakeExecutionIds).slice(0, RECONCILIATION_BATCH_SIZE);
+    for (const executionId of executionIds) {
+      const execution = this.deps.executionStorage.get(executionId);
+      if (execution) this.reconcileExecution(execution, false);
+      this.wakeExecutionIds.delete(executionId);
+    }
+  }
+
+  private reconcileStartupBatch(): void {
+    if (!this.startupReconciliationPending) return;
+    const executions = this.deps.executionStorage.listTerminalFailureNotificationCandidates(
+      RECONCILIATION_BATCH_SIZE,
+    );
+    for (const execution of executions) this.reconcileExecution(execution, true);
+    this.startupReconciliationPending = executions.length === RECONCILIATION_BATCH_SIZE;
+  }
+
+  private reconcileExecution(
+    execution: SessionExecutionStorageRecord,
+    deliveryKnownMissing: boolean,
+  ): void {
+    if (execution.state !== "failed" && execution.state !== "interrupted") return;
+    if (!deliveryKnownMissing && this.deps.storage.getBySourceExecutionId(execution.id)) return;
+    const inspected = inspectNotification(execution.request);
+    if (!inspected.targetSessionId) return;
+    const terminalAt = execution.completedAt ?? execution.updatedAt;
+    const identity = deriveDeliveryIdentity({
+      sourceExecutionId: execution.id,
+      terminalState: execution.state,
+      targetSessionId: inspected.targetSessionId,
+    });
+    const delivery = this.deps.storage.createPending({
+      ...identity,
+      sourceExecutionId: execution.id,
+      sourceSessionId: execution.sessionId,
+      terminalState: execution.state,
+      targetSessionId: inspected.targetSessionId,
+      contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
+      createdAt: terminalAt,
+      deadlineAt: new Date(parseTimestamp(terminalAt) + RETRY_DEADLINE_MS).toISOString(),
+    });
+    this.notifyChanged(execution.id);
+    if (!inspected.notification || inspected.notification.sourceSession.sessionId !== execution.sessionId) {
+      this.deps.storage.settleFailed({
+        deliveryId: delivery.id,
+        claimToken: null,
+        errorCode: "SENDER_SNAPSHOT_INVALID",
+        errorMessage: "The saved source Session sender snapshot is invalid.",
+        settledAt: this.now().toISOString(),
       });
       this.notifyChanged(execution.id);
-      if (!inspected.notification || inspected.notification.sourceSession.sessionId !== execution.sessionId) {
-        this.deps.storage.settleFailed({
-          deliveryId: delivery.id,
-          claimToken: null,
-          errorCode: "SENDER_SNAPSHOT_INVALID",
-          errorMessage: "The saved source Session sender snapshot is invalid.",
-          settledAt: this.now().toISOString(),
-        });
-        this.notifyChanged(execution.id);
-      }
     }
   }
 
@@ -390,4 +423,8 @@ function requireNonEmpty(value: string | null, name: string): string {
   const normalized = value?.trim() ?? "";
   if (!normalized) throw new TypeError(`${name} is required.`);
   return normalized;
+}
+
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
 }

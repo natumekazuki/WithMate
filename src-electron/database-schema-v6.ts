@@ -1127,6 +1127,11 @@ export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_v6_session_executions_session_state_sequence
     ON session_executions_v6(session_id, state, sequence ASC);
 
+  CREATE INDEX IF NOT EXISTS idx_v6_session_executions_terminal_notification_sequence
+    ON session_executions_v6(sequence ASC)
+    WHERE state IN ('failed', 'interrupted')
+      AND json_type(request_json, '$.terminalFailureNotification.targetSessionId') = 'text';
+
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_executions_one_running
     ON session_executions_v6(session_id)
     WHERE state = 'running';

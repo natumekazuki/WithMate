@@ -44,6 +44,7 @@ export type SessionExecutionServiceDeps = {
     | "interruptRunningForRestart"
     | "interruptRunningForShutdown"
     | "listSessionExecutions"
+    | "listSessionExecutionProjectionRecords"
     | "listSessionExecutionsPage"
     | "iterateSessionExecutionsPage"
     | "listQueuedSessionIds"
@@ -226,7 +227,7 @@ export class SessionExecutionService {
 
   listRecords(sessionId: string): SessionExecutionStorageRecord[] {
     this.requirePersistenceAvailable();
-    return this.deps.storage.listSessionExecutions(sessionId);
+    return this.deps.storage.listSessionExecutionProjectionRecords(sessionId);
   }
 
   listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {

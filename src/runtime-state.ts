@@ -84,6 +84,7 @@ export type AuditTransportPayload = {
 export type AuditLogEntry = {
   id: number;
   sessionId: string;
+  executionId?: string;
   createdAt: string;
   phase: AuditLogPhase;
   provider: string;
@@ -108,7 +109,6 @@ export type AuditLogSummary = Omit<
   AuditLogEntry,
   "logicalPrompt" | "transportPayload" | "assistantText" | "rawItemsJson" | "providerMetadata"
 > & {
-  executionId?: string;
   assistantTextPreview: string;
   detailAvailable: boolean;
 };

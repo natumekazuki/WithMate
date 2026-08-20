@@ -3195,7 +3195,7 @@ function requireSessionExecutionService(): SessionExecutionService {
             error: appLogService.errorToLogError(error),
           });
         } finally {
-          sessionTerminalFailureNotificationService?.wake();
+          sessionTerminalFailureNotificationService?.wake(executionId);
         }
       },
     });
@@ -4112,7 +4112,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
   characterAffectTurnSettlementStorage = new CharacterAffectTurnSettlementStorage(dbPath);
-  requireSessionExecutionService();
+  await startSessionExecutionRuntime();
   appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   startWalMaintenance();
   startSessionExecutionMaintenance();
@@ -4710,6 +4710,10 @@ async function recoverInterruptedSessions(): Promise<void> {
   await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
   await requireCompanionRuntimeService().recoverInterruptedSessions();
   requireAuxiliarySessionService().recoverInterruptedSessions();
+  await startSessionExecutionRuntime();
+}
+
+async function startSessionExecutionRuntime(): Promise<void> {
   await requireSessionExecutionService().reconcileAfterRestart();
   await requireSessionTerminalFailureNotificationService().start();
   await requireSessionScheduleService().start();

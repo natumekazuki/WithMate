@@ -303,13 +303,49 @@ export class SessionExecutionStorageV6 {
     return rows.map((row) => row.session_id);
   }
 
-  listTerminalFailureNotificationCandidates(): SessionExecutionStorageRecord[] {
+  listTerminalFailureNotificationCandidates(limit: number): SessionExecutionStorageRecord[] {
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw new TypeError("Terminal failure notification candidate limit must be a positive integer.");
+    }
+    const rows = this.db.prepare(`
+      SELECT execution.*
+      FROM session_executions_v6 AS execution
+      WHERE execution.state IN ('failed', 'interrupted')
+        AND json_type(
+          execution.request_json,
+          '$.terminalFailureNotification.targetSessionId'
+        ) = 'text'
+        AND length(trim(json_extract(
+          execution.request_json,
+          '$.terminalFailureNotification.targetSessionId'
+        ))) > 0
+        AND NOT EXISTS (
+          SELECT 1
+          FROM session_terminal_failure_notification_deliveries_v6 AS delivery
+          WHERE delivery.source_execution_id = execution.id
+        )
+      ORDER BY execution.sequence ASC
+      LIMIT ?
+    `).all(limit) as SessionExecutionRow[];
+    return rows.map(parseExecution);
+  }
+
+  listSessionExecutionProjectionRecords(sessionId: string): SessionExecutionStorageRecord[] {
     const rows = this.db.prepare(`
       SELECT *
       FROM session_executions_v6
-      WHERE state IN ('failed', 'interrupted')
+      WHERE session_id = ?
+        AND (
+          state IN ('queued', 'running')
+          OR sequence = (
+            SELECT MAX(sequence)
+            FROM session_executions_v6
+            WHERE session_id = ?
+              AND state IN ('completed', 'failed', 'canceled', 'interrupted')
+          )
+        )
       ORDER BY sequence ASC
-    `).all() as SessionExecutionRow[];
+    `).all(sessionId, sessionId) as SessionExecutionRow[];
     return rows.map(parseExecution);
   }
 

@@ -123,6 +123,34 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  it("TN-BOUND-08: GUI projection sourceはactive executionと最新terminalだけへ制限する", async () => {
+    const fixture = await createFixture();
+    try {
+      for (let index = 1; index <= 20; index += 1) {
+        fixture.storage.startImmediate(enqueueInput(index));
+        fixture.storage.completeRunning({
+          executionId: `execution-${index}`,
+          state: "failed",
+          result: null,
+          errorCode: "PROVIDER_FAILURE",
+          reason: "session_runtime_failed",
+          completedAt: `2026-08-10T00:01:${String(index).padStart(2, "0")}.000Z`,
+          expiresAt: EXPIRES_AT,
+        });
+      }
+      fixture.storage.enqueue(enqueueInput(21));
+      fixture.storage.enqueue(enqueueInput(22));
+
+      assert.deepEqual(
+        fixture.storage.listSessionExecutionProjectionRecords("session-1").map((execution) => execution.id),
+        ["execution-20", "execution-21", "execution-22"],
+      );
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("Q-01: 待機中executionを10件に制限し、runningは件数へ含めない", async () => {
     const fixture = await createFixture();
     try {

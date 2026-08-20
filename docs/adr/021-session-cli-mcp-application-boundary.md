@@ -68,6 +68,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - 通知設定を持つsource executionは、source Sessionのcanonical Character identityを作成時にsnapshotする。requestからsender表示値を受け取らず、targetとsnapshotを解決できない場合はsource executionを作成しない。通知先はTurn作成fingerprintへ含め、canonical replayをcurrent SessionとCharacterの再解決より先に行う。
 - source executionが`failed`または`interrupted`へterminal commitした後だけ、保存済みsnapshotをinitiatorとする通知Turnを既存の`turn.enqueue` ownerへ登録する。`completed`と`canceled`は通知せず、通知execution自身へ通知設定を継承しない。
 - terminal callbackはwake-upに限定し、配送の正本はdurable delivery recordと起動時reconciliationに置く。delivery identityとenqueue idempotency keyはsource execution、terminal state、target Session、契約versionから導出する。enqueue後のresponse loss、settle前crash、再起動retryは同じkeyへ収束させる。
+- 通常のterminal callbackは確定したexecutionだけをwake-upし、起動時reconciliationは通知設定がありdelivery未作成のterminal executionをbounded batchで列挙する。DB全再作成後もexecution recovery、notification dispatcher、schedule workerを同じruntime activation boundaryから再起動する。
 - transient failureはterminal確定から24時間、5秒開始の指数backoff、最大5分で再試行する。permanent failureまたは期限切れはdeliveryだけを`failed`へ確定し、source executionのterminal state、result、errorを変更しない。
 
 ### mutationをidempotencyで収束させる
@@ -102,6 +103,7 @@ MCPを呼び出すagent自身のSessionと、操作対象として指定するWi
 - inline textとloopback requestには上書き不能なhard size limitを設ける。SessionFolderへのtranscript exportはより大きい既定値を持ち、callerが`maxBytes`を明示した場合だけserver hard maximumまで拡張する。大きいexportは全量をmemoryへ保持せずatomicにstreaming writeする。
 - exact tool名、requestとresponseのfield、error code、pagination、size limitはtype、schema、shared validation、executable contractを正本とする。このADRへ網羅的なAPI仕様を複製しない。
 - terminal failure通知は未設定を`null`、非terminalを`armed`、対象外terminalを`not_triggered`、配送を`pending`、`enqueued`、`failed`として同じexecutionへ投影する。通知promptはsource executionのpublic projectionだけから構成し、raw result、stack、credential、system prompt、private pathを含めない。
+- GUIの常駐execution projectionはactive executionと最新terminal executionに限定し、全履歴取得はcursor paginationを持つ`turn.list`へ分離する。
 
 ## Alternatives
 

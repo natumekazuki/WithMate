@@ -56,6 +56,7 @@ type ProviderOutputV6Row = {
   kind: string;
   summary: string;
   payload_json: string;
+  execution_id?: unknown;
 };
 
 type InterimMessageV6Row = {
@@ -111,13 +112,12 @@ function toSummary(entry: AuditLogEntry): AuditLogSummary {
     transportPayload: _transportPayload,
     assistantText,
     rawItemsJson: _rawItemsJson,
-    providerMetadata,
+    providerMetadata: _providerMetadata,
     operations,
     ...summary
   } = entry;
   return {
     ...summary,
-    ...resolveSessionTurnExecutionId(providerMetadata),
     operations: operations.map((operation) => ({
       type: operation.type,
       summary: operation.summary,
@@ -127,7 +127,7 @@ function toSummary(entry: AuditLogEntry): AuditLogSummary {
   };
 }
 
-function resolveSessionTurnExecutionId(
+function resolveLegacySessionTurnExecutionId(
   metadata: AuditLogEntry["providerMetadata"],
 ): Pick<AuditLogSummary, "executionId"> {
   const correlation = metadata?.find((entry) => entry.kind === "session_turn_request");
@@ -135,6 +135,15 @@ function resolveSessionTurnExecutionId(
     return {};
   }
   const executionId = "executionId" in correlation.payload ? correlation.payload.executionId : null;
+  return typeof executionId === "string" && executionId.trim().length > 0
+    ? { executionId }
+    : {};
+}
+
+function resolveExecutionIdFromProviderOutputs(
+  outputs: readonly ProviderOutputV6Row[],
+): Pick<AuditLogEntry, "executionId"> {
+  const executionId = outputs.find((output) => typeof output.execution_id === "string")?.execution_id;
   return typeof executionId === "string" && executionId.trim().length > 0
     ? { executionId }
     : {};
@@ -869,8 +878,13 @@ export class AuditLogStorageV6 {
       SELECT kind, summary, ${
         options.includeOperationDetails
           ? "payload_json"
-          : "CASE WHEN kind IN ('operation', 'raw_items', 'logical_prompt', 'transport_payload') THEN '' ELSE payload_json END AS payload_json"
-      }
+          : "CASE WHEN kind IN ('operation', 'raw_items', 'logical_prompt', 'transport_payload', 'provider_metadata') THEN '' ELSE payload_json END AS payload_json"
+      }, CASE
+        WHEN kind = 'provider_metadata'
+          AND json_extract(payload_json, '$.value.kind') = 'session_turn_request'
+        THEN json_extract(payload_json, '$.value.payload.executionId')
+        ELSE NULL
+      END AS execution_id
       FROM session_turn_provider_outputs_v6
       WHERE turn_id = ?
       ORDER BY seq ASC
@@ -880,6 +894,7 @@ export class AuditLogStorageV6 {
     return {
       id: row.id,
       sessionId: row.session_id ?? row.auxiliary_session_id ?? "",
+      ...resolveExecutionIdFromProviderOutputs(outputRows),
       createdAt: row.started_at,
       phase: row.phase,
       provider: row.provider_id,
@@ -932,6 +947,7 @@ export class AuditLogStorageV6 {
     return {
       id: row.id,
       sessionId: row.session_id ?? row.auxiliary_session_id ?? "",
+      ...resolveLegacySessionTurnExecutionId(providerMetadata),
       createdAt: row.created_at,
       phase: normalizePhase(typeof metadata.phase === "string" ? metadata.phase as AuditLogEntry["phase"] : "running"),
       provider: typeof metadata.provider === "string" ? metadata.provider : row.provider_id,

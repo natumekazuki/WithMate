@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -106,6 +106,16 @@ function seedAuxiliarySession(dbPath: string): void {
 }
 
 describe("AuditLogStorageV6", () => {
+  it("TN-AUDIT-09: summary queryはprovider metadata全体をhydrateせずexecution IDだけ抽出する", async () => {
+    const source = await readFile(new URL("../../src-electron/audit-log-storage-v6.ts", import.meta.url), "utf8");
+
+    assert.match(
+      source,
+      /CASE WHEN kind IN \('operation', 'raw_items', 'logical_prompt', 'transport_payload', 'provider_metadata'\) THEN ''/,
+    );
+    assert.match(source, /json_extract\(payload_json, '\$\.value\.payload\.executionId'\)/);
+  });
+
   it("atomic terminal markerをstaleなrunning audit更新で巻き戻さない", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-audit-terminal-marker-"));
     try {

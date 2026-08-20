@@ -95,6 +95,78 @@ async function createFixture() {
 }
 
 describe("Session terminal failure notification", () => {
+  it("TN-BOUND-08: startup候補は通知設定あり・delivery未作成だけを指定batchへ制限する", async () => {
+    const fixture = await createFixture();
+    try {
+      const configuredRequest = fixture.executionStorage.get("source-execution")?.request;
+      assert.ok(configuredRequest);
+      fixture.executionStorage.startImmediate({
+        id: "configured-second",
+        sessionId: "source-session",
+        request: configuredRequest,
+        idempotencyKey: "configured-second-key",
+        requestFingerprint: "configured-second-fingerprint",
+        createdAt: "2026-08-18T00:01:02.000Z",
+        expiresAt: "2026-08-19T00:01:02.000Z",
+      });
+      fixture.executionStorage.completeRunning({
+        executionId: "configured-second",
+        state: "interrupted",
+        result: null,
+        errorCode: "RUNTIME_INTERRUPTED",
+        reason: "runtime_restarted",
+        completedAt: "2026-08-18T00:02:00.000Z",
+        expiresAt: "2026-08-19T00:02:00.000Z",
+      });
+      fixture.executionStorage.startImmediate({
+        id: "legacy-failed",
+        sessionId: "source-session",
+        request: { turn: { userMessage: "legacy" } },
+        idempotencyKey: "legacy-key",
+        requestFingerprint: "legacy-fingerprint",
+        createdAt: "2026-08-18T00:02:01.000Z",
+        expiresAt: "2026-08-19T00:02:01.000Z",
+      });
+      fixture.executionStorage.completeRunning({
+        executionId: "legacy-failed",
+        state: "failed",
+        result: null,
+        errorCode: "PROVIDER_FAILURE",
+        reason: "session_runtime_failed",
+        completedAt: "2026-08-18T00:03:00.000Z",
+        expiresAt: "2026-08-19T00:03:00.000Z",
+      });
+
+      assert.deepEqual(
+        fixture.executionStorage.listTerminalFailureNotificationCandidates(1).map((execution) => execution.id),
+        ["source-execution"],
+      );
+      const identity = deriveDeliveryIdentity({
+        sourceExecutionId: "source-execution",
+        terminalState: "failed",
+        targetSessionId: "target-session",
+      });
+      fixture.notificationStorage.createPending({
+        ...identity,
+        sourceExecutionId: "source-execution",
+        sourceSessionId: "source-session",
+        terminalState: "failed",
+        targetSessionId: "target-session",
+        contractVersion: TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
+        createdAt: SOURCE_FAILED_AT,
+        deadlineAt: "2026-08-19T00:01:00.000Z",
+      });
+      assert.deepEqual(
+        fixture.executionStorage.listTerminalFailureNotificationCandidates(10).map((execution) => execution.id),
+        ["configured-second"],
+      );
+    } finally {
+      fixture.notificationStorage.close();
+      fixture.executionStorage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("TN-TERM-03/TN-PROMPT-05: terminal commit後だけsafe promptを既存enqueue境界へ渡す", async () => {
     const fixture = await createFixture();
     const prompts: string[] = [];
@@ -512,6 +584,7 @@ describe("Session terminal failure notification", () => {
     let failCreateOnce = true;
     let now = new Date("2026-08-18T00:01:01.000Z");
     let timerCallback: (() => void) | null = null;
+    const backgroundErrors: unknown[] = [];
     let enqueueResolved: (() => void) | null = null;
     const enqueued = new Promise<void>((resolve) => { enqueueResolved = resolve; });
     try {
@@ -535,6 +608,9 @@ describe("Session terminal failure notification", () => {
           return {};
         },
         clearTimer() {},
+        onBackgroundError(error) {
+          backgroundErrors.push(error);
+        },
       });
 
       await service.start();
@@ -542,9 +618,100 @@ describe("Session terminal failure notification", () => {
       assert.ok(timerCallback);
       now = new Date("2026-08-18T00:01:06.000Z");
       timerCallback?.();
-      await enqueued;
+      await Promise.race([
+        enqueued,
+        new Promise<void>((_resolve, reject) => setTimeout(
+          () => reject(new AggregateError(backgroundErrors, "notification retry did not enqueue")),
+          1_000,
+        )),
+      ]);
       await service.shutdown();
       assert.equal(fixture.notificationStorage.getBySourceExecutionId("source-execution")?.state, "enqueued");
+    } finally {
+      fixture.notificationStorage.close();
+      fixture.executionStorage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("TN-DELIVERY-04: terminal wakeの一時失敗はexecution IDを保持して再試行する", async () => {
+    const fixture = await createFixture();
+    const originalCreate = fixture.notificationStorage.createPending.bind(fixture.notificationStorage);
+    let timerCallback: (() => void) | null = null;
+    let timerArmedResolved: (() => void) | null = null;
+    const timerArmed = new Promise<void>((resolve) => { timerArmedResolved = resolve; });
+    let backgroundErrorResolved: (() => void) | null = null;
+    const backgroundError = new Promise<void>((resolve) => { backgroundErrorResolved = resolve; });
+    let wokenEnqueueResolved: (() => void) | null = null;
+    const wokenEnqueued = new Promise<void>((resolve) => { wokenEnqueueResolved = resolve; });
+    let enqueueCount = 0;
+    try {
+      const service = new SessionTerminalFailureNotificationService({
+        storage: fixture.notificationStorage,
+        executionStorage: fixture.executionStorage,
+        now: () => new Date("2026-08-18T00:04:00.000Z"),
+        enqueueTurn: async () => {
+          enqueueCount += 1;
+          if (enqueueCount === 2) wokenEnqueueResolved?.();
+          return { ok: true, executionId: `notification-${enqueueCount}` };
+        },
+        setTimer(callback) {
+          timerCallback = callback;
+          timerArmedResolved?.();
+          return {};
+        },
+        clearTimer() {},
+        onBackgroundError() {
+          backgroundErrorResolved?.();
+        },
+      });
+      await service.start();
+
+      const request = fixture.executionStorage.get("source-execution")?.request;
+      assert.ok(request);
+      fixture.executionStorage.startImmediate({
+        id: "woken-source",
+        sessionId: "source-session",
+        request,
+        idempotencyKey: "woken-source-key",
+        requestFingerprint: "woken-source-fingerprint",
+        createdAt: "2026-08-18T00:02:01.000Z",
+        expiresAt: "2026-08-19T00:02:01.000Z",
+      });
+      fixture.executionStorage.completeRunning({
+        executionId: "woken-source",
+        state: "failed",
+        result: null,
+        errorCode: "PROVIDER_FAILURE",
+        reason: "session_runtime_failed",
+        completedAt: "2026-08-18T00:03:00.000Z",
+        expiresAt: "2026-08-19T00:03:00.000Z",
+      });
+
+      let failCreateOnce = true;
+      fixture.notificationStorage.createPending = ((input) => {
+        if (input.sourceExecutionId === "woken-source" && failCreateOnce) {
+          failCreateOnce = false;
+          throw new Error("storage temporarily unavailable");
+        }
+        return originalCreate(input);
+      }) as typeof fixture.notificationStorage.createPending;
+
+      service.wake("woken-source");
+      await backgroundError;
+      await timerArmed;
+      assert.equal(fixture.notificationStorage.getBySourceExecutionId("woken-source"), null);
+      assert.ok(timerCallback);
+      timerCallback?.();
+      await Promise.race([
+        wokenEnqueued,
+        new Promise<void>((_resolve, reject) => setTimeout(
+          () => reject(new Error("terminal wake retry did not enqueue")),
+          1_000,
+        )),
+      ]);
+      await service.shutdown();
+      assert.equal(fixture.notificationStorage.getBySourceExecutionId("woken-source")?.state, "enqueued");
     } finally {
       fixture.notificationStorage.close();
       fixture.executionStorage.close();
