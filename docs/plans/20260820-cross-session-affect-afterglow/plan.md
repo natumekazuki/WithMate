@@ -167,6 +167,6 @@ indexは`CREATE INDEX IF NOT EXISTS`によるadditive ensureで追加する。ta
 
 初回baselineでは依存関係未導入のため62件成功、1件失敗した。失敗は`character-affect-concurrency-worker.ts`が一時`npx`環境から`tsx`を解決できない環境要因で、source assertionの失敗ではなかった。
 
-実装後のtargeted testは72件中72件成功し、`npm run typecheck`と`npm run build`も成功した。全体の`npm test`は2554件中2552件成功、1件skip、1件失敗で、失敗は変更対象外の`withmate-memory-mcp-integration.test.ts`にある配布artifact smokeの`memory.append`応答（`append.isError === true`）だった。同テスト単独でも同じ失敗を再現し、afterglow変更のsource/testとは無関係な既存の配布artifact/runtime環境差分として残す。buildのwarningは既存の`::highlight`未認識とchunk size超過のみだった。
+実装後のtargeted testは72件中72件成功し、`npm run typecheck`と`npm run build`も成功した。全体の`npm test`は2554件中2552件成功、1件skip、1件失敗で、失敗は変更対象外の`withmate-memory-mcp-integration.test.ts`にある配布artifact smokeの`memory.append`応答（`append.isError === true`）だった。同テスト単独でもreview commit上で同じ失敗を再現したが、base commitとの比較は未実施のため、afterglow変更との因果関係は未確定として残す。buildのwarningは既存の`::highlight`未認識とchunk size超過のみだった。
 
 統括回答で確認は完了している。以降はsource、test、schema、ADRを同じ契約で更新し、planだけを正本にしない。
