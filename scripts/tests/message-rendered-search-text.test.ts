@@ -60,6 +60,30 @@ test("message search projection は Markdown source ではなく表示文字列�
   }
 });
 
+test("message search projection は YAML frontmatter table と DOM index を一致させる", () => {
+  const markdown = [
+    "---",
+    "name: withmate-memory",
+    "description: Use injected context",
+    "---",
+    "",
+    "# Body",
+  ].join("\n");
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const dom = new JSDOM(`<!doctype html>${html}`);
+  try {
+    const richText = dom.window.document.querySelector<HTMLElement>(".rich-text");
+    assert.ok(richText);
+    const projected = projectMessageRenderedSearchText(markdown);
+    const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
+
+    assert.equal(projected, "namewithmate-memorydescriptionUse injected contextBody");
+    assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
+  } finally {
+    dom.window.close();
+  }
+});
+
 test("message search projection は renderer 生成ラベルをDOM検索と同じく対象外にする", () => {
   const markdown = [
     "alpha note[^1]",

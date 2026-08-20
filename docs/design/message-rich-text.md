@@ -40,6 +40,7 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - assistant response の選択 action は Session chat root が overlay と stacking context を所有し、message surface や ActionDock の局所 stacking context から分離する。位置と lifecycle の executable contract は `src/chat/selection-action-overlay.ts` と `scripts/tests/session-message-column.test.ts` を正本とする
 - message の表示 mode は window mount 中だけ保持し、永続化しない。切替時は既存の selection を解除する
 - Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える
+- YAML frontmatter at the start of a document is rendered in Preview as a two-column metadata table when it is a non-empty top-level scalar mapping. The left column is the YAML key and the right column is its scalar value; complex values, multiline scalars, parse failures, and empty frontmatter fall back to a YAML code-like block that preserves its `---` delimiters and line breaks. Long values wrap within the preview surface. Unclosed frontmatter and thematic breaks outside the document-start frontmatter remain ordinary Markdown; Source always keeps the original Markdown.
 
 ## Safety
 

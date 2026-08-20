@@ -194,6 +194,145 @@ test("MessageRichText の Source は元 Markdown を変換せず plain text で�
   assert.equal(sourceElement?.querySelector("a, code, blockquote, ul"), null);
 });
 
+test("MessageRichText は先頭 YAML frontmatter の scalar mapping を key/value table として render する", () => {
+  const frontmatter = [
+    "---",
+    "name: withmate-memory",
+    "description: Use injected context",
+    "---",
+  ].join("\n");
+  const markdown = `${frontmatter}\n\n# Body`;
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const dom = new JSDOM(html);
+  const frontmatterTable = dom.window.document.querySelector("table.message-frontmatter-table");
+
+  assert.ok(frontmatterTable);
+  assert.equal(frontmatterTable.getAttribute("aria-label"), "YAML frontmatter");
+  assert.deepEqual(
+    Array.from(frontmatterTable.querySelectorAll("tr")).map((row) => [
+      row.querySelector("th")?.textContent,
+      row.querySelector("td")?.textContent,
+    ]),
+    [
+      ["name", "withmate-memory"],
+      ["description", "Use injected context"],
+    ],
+  );
+  assert.equal(frontmatterTable.querySelector("th")?.getAttribute("scope"), "row");
+  assert.equal(dom.window.document.querySelector("pre.message-frontmatter-block"), null);
+  assert.equal(dom.window.document.querySelector("h1.message-heading")?.textContent, "Body");
+  assert.equal(dom.window.document.querySelector("h2.message-heading"), null);
+});
+
+test("MessageRichText の Source は YAML frontmatter を含む元 Markdown をそのまま描画する", () => {
+  const source = ["---", "name: raw", "description: keep line breaks", "---", "", "# Body"].join("\n");
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: source,
+    displayMode: "source",
+  }));
+  const dom = new JSDOM(html);
+  const sourceElement = dom.window.document.querySelector("pre.message-source-text");
+
+  assert.equal(sourceElement?.textContent, source);
+  assert.equal(sourceElement?.querySelector("code, h1, hr"), null);
+});
+
+test("MessageRichText は空・複雑な frontmatter を code blockへ戻し、未閉鎖や本文中の thematic break は変えない", () => {
+  const emptyFrontmatterHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: ["---", "---", "", "# Body"].join("\n"),
+  }));
+  const emptyFrontmatterDom = new JSDOM(emptyFrontmatterHtml);
+  assert.equal(
+    emptyFrontmatterDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    "---\n---",
+  );
+
+  const nestedFrontmatter = [
+    "---",
+    "name: withmate-memory",
+    "tags:",
+    "  - memory",
+    "  - context",
+    "---",
+  ].join("\n");
+  const nestedHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: `${nestedFrontmatter}\n\n# Body`,
+  }));
+  const nestedDom = new JSDOM(nestedHtml);
+  assert.equal(nestedDom.window.document.querySelector("table.message-frontmatter-table"), null);
+  assert.equal(
+    nestedDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    nestedFrontmatter,
+  );
+
+  const multilineFrontmatter = [
+    "---",
+    "description: |",
+    "  first line",
+    "  second line",
+    "---",
+  ].join("\n");
+  const multilineHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: `${multilineFrontmatter}\n\n# Body`,
+  }));
+  const multilineDom = new JSDOM(multilineHtml);
+  assert.equal(multilineDom.window.document.querySelector("table.message-frontmatter-table"), null);
+  assert.equal(
+    multilineDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    multilineFrontmatter,
+  );
+
+  const invalidFrontmatter = [
+    "---",
+    "name: [unclosed",
+    "---",
+  ].join("\n");
+  const invalidHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: `${invalidFrontmatter}\n\n# Body`,
+  }));
+  const invalidDom = new JSDOM(invalidHtml);
+  assert.equal(invalidDom.window.document.querySelector("table.message-frontmatter-table"), null);
+  assert.equal(
+    invalidDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    invalidFrontmatter,
+  );
+
+  const unclosedHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: ["---", "name: stays ordinary Markdown", "", "# Body"].join("\n"),
+  }));
+  const unclosedDom = new JSDOM(unclosedHtml);
+  assert.equal(unclosedDom.window.document.querySelector("pre.message-frontmatter-block"), null);
+  assert.ok(unclosedDom.window.document.querySelector("hr.message-divider"));
+
+  const bodyBreakHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: ["# Body", "", "---", "", "tail"].join("\n"),
+  }));
+  const bodyBreakDom = new JSDOM(bodyBreakHtml);
+  assert.equal(bodyBreakDom.window.document.querySelector("pre.message-frontmatter-block"), null);
+  assert.ok(bodyBreakDom.window.document.querySelector("hr.message-divider"));
+});
+
+test("MessageRichText の YAML frontmatter Preview は表とfallbackの値を折り返す CSS 契約を持つ", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+
+  assert.match(
+    styles,
+    /\.message-code-block\.message-frontmatter-block\s*{[\s\S]*?white-space:\s*pre-wrap;[\s\S]*?overflow-wrap:\s*anywhere;/,
+  );
+  assert.match(
+    styles,
+    /\.message-frontmatter-block\s*>\s*\.message-frontmatter-code\s*{[\s\S]*?display:\s*block;[\s\S]*?overflow-wrap:\s*anywhere;/,
+  );
+  assert.match(
+    styles,
+    /\.message-frontmatter-table\s+\.message-table-heading\s*{[\s\S]*?width:\s*1%;[\s\S]*?white-space:\s*nowrap;/,
+  );
+  assert.match(
+    styles,
+    /\.message-frontmatter-table\s+\.message-table-cell\s*{[\s\S]*?min-width:\s*0;[\s\S]*?overflow-wrap:\s*anywhere;/,
+  );
+});
+
 test("MessageRichText は inline code と link を優先しつつ bold を併用できる", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -723,6 +862,54 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
 
     assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
     assert.notEqual(container.querySelector("table.message-table"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("MessageRichText は browser の light render でも先頭 YAML frontmatter を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  const markdown = ["---", "name: withmate-memory", "description: light render", "---", "", "# Body"].join("\n");
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, { text: markdown }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.deepEqual(
+      Array.from(container.querySelectorAll("table.message-frontmatter-table tr")).map((row) => [
+        row.querySelector("th")?.textContent,
+        row.querySelector("td")?.textContent,
+      ]),
+      [
+        ["name", "withmate-memory"],
+        ["description", "light render"],
+      ],
+    );
+    assert.equal(container.querySelector("pre.message-frontmatter-block"), null);
+    assert.equal(container.querySelector("h1.message-heading")?.textContent, "Body");
+
+    await act(async () => {
+      await waitForAnimationFrame(dom.window);
+      await waitForAnimationFrame(dom.window);
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.equal(container.querySelector("table.message-frontmatter-table")?.getAttribute("aria-label"), "YAML frontmatter");
+    assert.equal(container.querySelector("pre.message-frontmatter-block"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

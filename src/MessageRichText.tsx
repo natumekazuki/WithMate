@@ -13,6 +13,7 @@ import {
 } from "react";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
+import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import type { Root } from "mdast";
@@ -21,6 +22,10 @@ import type { Plugin, PluggableList } from "unified";
 
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { toLocalFileUrl } from "./local-file-url.js";
+import {
+  formatMarkdownFrontmatterSource,
+  resolveMarkdownFrontmatterDisplay,
+} from "./markdown-frontmatter.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -538,6 +543,57 @@ const markdownComponents: Components = {
   ),
 };
 
+function renderMarkdownFrontmatter(_state: unknown, node: Node) {
+  const value = "value" in node && typeof node.value === "string" ? node.value : "";
+  const display = resolveMarkdownFrontmatterDisplay(value);
+  if (display.kind === "table") {
+    return {
+      type: "element" as const,
+      tagName: "table",
+      properties: {
+        className: ["message-frontmatter-table"],
+        "aria-label": "YAML frontmatter",
+      },
+      children: [{
+        type: "element" as const,
+        tagName: "tbody",
+        properties: {},
+        children: display.rows.map((row) => ({
+          type: "element" as const,
+          tagName: "tr",
+          properties: {},
+          children: [
+            {
+              type: "element" as const,
+              tagName: "th",
+              properties: { scope: "row" },
+              children: [{ type: "text" as const, value: row.key }],
+            },
+            {
+              type: "element" as const,
+              tagName: "td",
+              properties: {},
+              children: [{ type: "text" as const, value: row.value }],
+            },
+          ],
+        })),
+      }],
+    };
+  }
+
+  return {
+    type: "element" as const,
+    tagName: "pre",
+    properties: { className: ["message-frontmatter-block"] },
+    children: [{
+      type: "element" as const,
+      tagName: "code",
+      properties: { className: ["message-frontmatter-code", "language-yaml"] },
+      children: [{ type: "text" as const, value: formatMarkdownFrontmatterSource(value) }],
+    }],
+  };
+}
+
 type MarkdownImageProps = {
   source: string;
   alt?: string;
@@ -783,8 +839,8 @@ function MessageMarkdownPreview({
   const remarkPlugins = useMemo<PluggableList>(
     () => (
       isFullRender
-        ? [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
-        : [remarkHtmlLineBreaks]
+        ? [remarkFrontmatter, remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
+        : [remarkFrontmatter, remarkHtmlLineBreaks]
     ),
     [isFullRender],
   );
@@ -820,7 +876,10 @@ function MessageMarkdownPreview({
         rehypePlugins={rehypePlugins}
         urlTransform={markdownUrlTransform}
         remarkPlugins={remarkPlugins}
-        remarkRehypeOptions={{ clobberPrefix: footnotePrefix }}
+        remarkRehypeOptions={{
+          clobberPrefix: footnotePrefix,
+          handlers: { yaml: renderMarkdownFrontmatter },
+        }}
       >
         {text}
       </ReactMarkdown>

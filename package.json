@@ -41,9 +41,11 @@
     "@tanstack/react-virtual": "^3.14.6",
     "ignore": "^7.0.5",
     "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-frontmatter": "^2.0.1",
     "mdast-util-gfm": "^3.1.0",
     "mdast-util-math": "^3.0.0",
     "mermaid": "^11.16.0",
+    "micromark-extension-frontmatter": "^2.0.0",
     "micromark-extension-gfm": "^3.0.0",
     "micromark-extension-math": "^3.1.0",
     "prettier": "^3.9.6",
@@ -51,8 +53,10 @@
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
+    "remark-frontmatter": "^5.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
