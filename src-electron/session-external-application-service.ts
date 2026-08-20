@@ -40,6 +40,12 @@ import {
   type SessionRuntimeTranscriptExportInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
+import {
+  SESSION_ROLE_CHILDREN,
+  SESSION_ROLE_CONTRACT_REVISION,
+  SESSION_ROLE_MAX_DELEGATION_DEPTH,
+  SESSION_ROLE_VALUES,
+} from "../src/session-role-binding.js";
 import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
 import {
   SessionInteractionContinuationUnavailableError,
@@ -161,10 +167,18 @@ export class SessionExternalApplicationService {
       );
     }
     if (operation === "session.self") {
-      return { sessionId: agentRuntimeBinding.actorSessionId };
+      const session = await this.deps.crudService.get(agentRuntimeBinding.actorSessionId);
+      return {
+        sessionId: session.sessionId,
+        sessionRole: session.sessionRole,
+        roleContractRevision: session.roleContractRevision,
+        rootSessionId: session.rootSessionId,
+        parentSessionId: session.parentSessionId,
+        delegationDepth: session.delegationDepth,
+      };
     }
     if (operation === "session.create") {
-      return this.deps.crudService.create(input as SessionRuntimeCreateInput);
+      return this.deps.crudService.create(input as SessionRuntimeCreateInput, agentRuntimeBinding.actorSessionId);
     }
     if (operation === "session.list") {
       return this.deps.crudService.list(input as SessionRuntimeSessionListInput);
@@ -566,6 +580,15 @@ function projectRuntimeCatalog(
 ): SessionRuntimeCatalogResult {
   return {
     revision: snapshot.revision,
+    sessionRoleContractRevision: SESSION_ROLE_CONTRACT_REVISION,
+    supportedSessionRoles: [...SESSION_ROLE_VALUES],
+    allowedChildSessionRoles: {
+      standalone: [...SESSION_ROLE_CHILDREN.standalone],
+      "overall-coordinator": [...SESSION_ROLE_CHILDREN["overall-coordinator"]],
+      "task-coordinator": [...SESSION_ROLE_CHILDREN["task-coordinator"]],
+      executor: [...SESSION_ROLE_CHILDREN.executor],
+    },
+    maxDelegationDepth: SESSION_ROLE_MAX_DELEGATION_DEPTH,
     providers: snapshot.providers
       .filter((provider) => isProviderSupported(provider.id) && isProviderEnabled(provider.id))
       .map((provider) => ({

@@ -13,6 +13,7 @@ import {
   SessionExecutionQueueFullError,
   SessionExecutionStorageV6,
 } from "../../src-electron/session-execution-storage-v6.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 const CREATED_AT = "2026-08-10T00:00:00.000Z";
 const EXPIRES_AT = "2026-08-11T00:00:00.000Z";
@@ -43,6 +44,7 @@ async function createFixture(): Promise<{
     `);
     insertSession.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
     insertSession.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
   }
@@ -381,6 +383,7 @@ describe("SessionExecutionStorageV6", () => {
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-1");
         db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-1");
         const executionCount = db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6").get() as { count: number };
         const idempotencyCount = db.prepare("SELECT COUNT(*) AS count FROM session_execution_idempotency_v6").get() as { count: number };

@@ -16,19 +16,23 @@ import { CharacterAffectTurnOwnershipCoordinator } from "../../src-electron/char
 import { SessionPersistenceService } from "../../src-electron/session-persistence-service.js";
 
 function createSession(overrides?: Partial<Session>): Session {
+  const session = buildNewSession({
+    id: overrides?.id,
+    sessionKind: overrides?.sessionKind,
+    taskTitle: "Persistence Test",
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    characterId: "char-a",
+    character: "A",
+    characterIconPath: "",
+    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+    approvalMode: DEFAULT_APPROVAL_MODE,
+  });
   return {
-    ...buildNewSession({
-      taskTitle: "Persistence Test",
-      workspaceLabel: "workspace",
-      workspacePath: "C:/workspace",
-      branch: "main",
-      characterId: "char-a",
-      character: "A",
-      characterIconPath: "",
-      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-      approvalMode: DEFAULT_APPROVAL_MODE,
-    }),
+    ...session,
     ...overrides,
+    roleBinding: overrides?.roleBinding ?? session.roleBinding,
   };
 }
 
@@ -305,6 +309,65 @@ describe("SessionPersistenceService", () => {
       assert.equal(result.runState, "idle");
       assert.equal(result.messages.at(-1)?.text, "done");
       assert.equal(persistedSession.runState, "idle");
+      assert.deepEqual(attemptedProjections, ["dependency", "cache", "broadcast"]);
+    }
+  });
+
+  it("create commit後のprojection failureを保存済み結果へ波及させない", async () => {
+    for (const failingProjection of ["dependency", "cache", "broadcast"] as const) {
+      const storedSessions: Session[] = [];
+      const attemptedProjections: string[] = [];
+      const service = new SessionPersistenceService({
+        getSessions: () => [],
+        setSessions() {
+          attemptedProjections.push("cache");
+          if (failingProjection === "cache") {
+            throw new Error("cache projection failed");
+          }
+        },
+        getSession: () => null,
+        isSessionRunInFlight: () => false,
+        upsertStoredSession(next) {
+          storedSessions.push(next);
+          return next;
+        },
+        replaceStoredSessions: () => undefined,
+        setStoredSessionPinned: () => null,
+        listStoredSessions: () => storedSessions,
+        getAppSettings: () => normalizeAppSettings({}),
+        getModelCatalogSnapshot: createSnapshot,
+        syncSessionDependencies() {
+          attemptedProjections.push("dependency");
+          if (failingProjection === "dependency") {
+            throw new Error("dependency projection failed");
+          }
+        },
+        clearSessionContextTelemetry: () => undefined,
+        clearSessionBackgroundActivities: () => undefined,
+        invalidateProviderSessionThread: () => undefined,
+        closeSessionWindow: () => undefined,
+        broadcastSessions() {
+          attemptedProjections.push("broadcast");
+          if (failingProjection === "broadcast") {
+            throw new Error("broadcast projection failed");
+          }
+        },
+      });
+
+      const result = await service.createSession({
+        taskTitle: "Committed create",
+        workspaceLabel: "workspace",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      });
+
+      assert.equal(storedSessions.length, 1);
+      assert.equal(result.id, storedSessions[0]?.id);
       assert.deepEqual(attemptedProjections, ["dependency", "cache", "broadcast"]);
     }
   });
@@ -1143,6 +1206,29 @@ describe("SessionPersistenceService", () => {
     assert.equal(storedSessions.length, 0);
   });
 
+  it("deleteSession はchildを持つ親をstorageとcleanupの副作用前に拒否する", async () => {
+    const parentSession = createSession({ id: "parent" });
+    let storageDeleteCount = 0;
+    let cleanupCount = 0;
+    const service = new SessionPersistenceService({
+      getSessions: () => [parentSession],
+      isSessionRunInFlight: () => false,
+      listSessionIdsWithChildren: () => new Set([parentSession.id]),
+      listStoredSessions: () => [parentSession],
+      deleteStoredSession() { storageDeleteCount += 1; },
+      clearSessionBackgroundActivities() { cleanupCount += 1; },
+      closeSessionWindow() { cleanupCount += 1; },
+      broadcastSessions() { cleanupCount += 1; },
+    } as never);
+
+    await assert.rejects(
+      () => service.deleteSession(parentSession.id),
+      /子セッションが残っている親セッションは削除できない/,
+    );
+    assert.equal(storageDeleteCount, 0);
+    assert.equal(cleanupCount, 0);
+  });
+
   it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {
     const parentSession = createSession({ id: "parent" });
     const storedSessions: Session[] = [parentSession];
@@ -1206,6 +1292,7 @@ describe("SessionPersistenceService", () => {
   });
 
   it("deleteSessionsLastActiveBefore は対象だけ bulk 削除し running は skip する", async () => {
+    const parentSession = createSession({ id: "parent", updatedAt: "2026-05-31T00:00:00.000Z" });
     const oldSession = createSession({ id: "old", updatedAt: "2026-06-01T00:00:00.000Z" });
     const runningSession = createSession({
       id: "running",
@@ -1214,7 +1301,7 @@ describe("SessionPersistenceService", () => {
       updatedAt: "2026-06-01T01:00:00.000Z",
     });
     const recentSession = createSession({ id: "recent", updatedAt: "2026-07-02T00:00:00.000Z" });
-    const storedSessions: Session[] = [oldSession, runningSession, recentSession];
+    const storedSessions: Session[] = [parentSession, oldSession, runningSession, recentSession];
     const deletedBatches: string[][] = [];
     const clearedTelemetry: string[] = [];
     const clearedBackground: string[] = [];
@@ -1234,6 +1321,10 @@ describe("SessionPersistenceService", () => {
       isSessionRunInFlight(sessionId) {
         return sessionId === runningSession.id;
       },
+      listSessionIdsWithChildren(sessionIds) {
+        assert.deepEqual(sessionIds, [parentSession.id, oldSession.id, runningSession.id]);
+        return new Set([parentSession.id]);
+      },
       upsertStoredSession(next) {
         storedSessions.splice(0, storedSessions.length, next);
         return next;
@@ -1245,7 +1336,7 @@ describe("SessionPersistenceService", () => {
         return [...storedSessions];
       },
       listStoredSessionIdsLastActiveBefore() {
-        return [oldSession.id, runningSession.id];
+        return [parentSession.id, oldSession.id, runningSession.id];
       },
       deleteStoredSessions(sessionIds) {
         deletedBatches.push([...sessionIds]);
@@ -1290,7 +1381,10 @@ describe("SessionPersistenceService", () => {
     assert.deepEqual(clearedBackground, [oldSession.id]);
     assert.deepEqual(closedWindows, [oldSession.id]);
     assert.deepEqual(broadcastedSessionIds, [[oldSession.id]]);
-    assert.deepEqual(storedSessions.map((session) => session.id), [runningSession.id, recentSession.id]);
+    assert.deepEqual(
+      storedSessions.map((session) => session.id),
+      [parentSession.id, runningSession.id, recentSession.id],
+    );
   });
 
   it("deleteSessionsLastActiveBefore は active Auxiliary が実行中の親 Session を skip する", async () => {

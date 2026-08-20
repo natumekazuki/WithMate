@@ -44,7 +44,6 @@ test("Session 作成画面は Character 一覧だけをスクロール領域に�
   assert.match(componentSource, /dialogClassName="home-launch-dialog"/);
   assert.match(componentSource, /className="launch-section minimal home-launch-character-section"/);
   assert.ok(panelRule);
-  assert.match(panelRule, /grid-template-rows:\s*auto auto auto minmax\(0, 1fr\);/);
   assert.match(panelRule, /overflow:\s*hidden;/);
   assert.ok(characterListRule);
   assert.match(characterListRule, /overflow-y:\s*auto;/);

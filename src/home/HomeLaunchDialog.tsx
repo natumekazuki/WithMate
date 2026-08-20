@@ -8,10 +8,12 @@ import { CharacterAvatar } from "../ui-utils.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import { DEFAULT_CHARACTER_THEME_COLORS } from "../character-state.js";
 import type { HomeLaunchWorkspaceValidationState } from "./home-launch-state.js";
+import type { HomeLaunchSessionPurpose } from "./home-launch-state.js";
 
 export type HomeLaunchDialogProps = {
   open: boolean;
   title: string;
+  sessionPurpose: HomeLaunchSessionPurpose;
   sessionFolderSelected: boolean;
   launchWorkspacePathLabel: string;
   workspacePathInput: string;
@@ -28,6 +30,7 @@ export type HomeLaunchDialogProps = {
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
+  onSelectSessionPurpose: (purpose: HomeLaunchSessionPurpose) => void;
   onChangeWorkspacePath: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
@@ -40,6 +43,7 @@ export type HomeLaunchDialogProps = {
 export function HomeLaunchDialog({
   open,
   title,
+  sessionPurpose,
   sessionFolderSelected,
   launchWorkspacePathLabel,
   workspacePathInput,
@@ -56,6 +60,7 @@ export function HomeLaunchDialog({
   launchStarting,
   onClose,
   onChangeTitle,
+  onSelectSessionPurpose,
   onChangeWorkspacePath,
   onBrowseWorkspace,
   onSelectSessionFolder,
@@ -98,7 +103,7 @@ export function HomeLaunchDialog({
       <section className="launch-section minimal">
         <div className="launch-field">
           <label className="launch-field-label" htmlFor="launch-session-title">
-            セッションタイトル
+            Session Title
           </label>
           <input
             id="launch-session-title"
@@ -145,7 +150,7 @@ export function HomeLaunchDialog({
           </div>
           {workspaceValidationActive ? (
             <span className="visually-hidden" role="status" aria-live="polite">
-              Workspace パスを確認しています
+              Validating workspace path
             </span>
           ) : null}
         </div>
@@ -167,6 +172,41 @@ export function HomeLaunchDialog({
         ) : null}
       </section>
 
+      <section className="launch-section minimal">
+        <fieldset className="launch-purpose-field">
+          <legend className="launch-field-label">Purpose</legend>
+          <div
+            className="choice-list launch-choice-list"
+            role="radiogroup"
+            aria-label="Purpose"
+            onKeyDown={(event) => {
+              focusRovingItemByKey(event, { orientation: "horizontal", activateOnFocus: true });
+            }}
+          >
+            <button
+              className={`choice-chip${sessionPurpose === "standalone" ? " active" : ""}`}
+              type="button"
+              role="radio"
+              aria-checked={sessionPurpose === "standalone"}
+              tabIndex={sessionPurpose === "standalone" ? 0 : -1}
+              onClick={() => onSelectSessionPurpose("standalone")}
+            >
+              standalone
+            </button>
+            <button
+              className={`choice-chip${sessionPurpose === "overall-coordinator" ? " active" : ""}`}
+              type="button"
+              role="radio"
+              aria-checked={sessionPurpose === "overall-coordinator"}
+              tabIndex={sessionPurpose === "overall-coordinator" ? 0 : -1}
+              onClick={() => onSelectSessionPurpose("overall-coordinator")}
+            >
+              overall-coordinator
+            </button>
+          </div>
+        </fieldset>
+      </section>
+
       <ProviderLaunchField
         fieldId="launch-provider-picker"
         providers={enabledLaunchProviders}
@@ -181,8 +221,8 @@ export function HomeLaunchDialog({
             <div className="launch-character-neutral">
               <span className="character-avatar tiny" aria-hidden="true">W</span>
               <div className="launch-character-copy">
-                <strong>読み込み中</strong>
-                <span>Character を読み込んでるよ...</span>
+                <strong>Loading</strong>
+                <span>Loading Characters...</span>
               </div>
             </div>
           ) : characterOptions.length === 0 ? (
@@ -213,8 +253,7 @@ export function HomeLaunchDialog({
               >
                 <span className="character-avatar tiny" aria-hidden="true">R</span>
                 <span className="launch-character-copy">
-                  <strong>ランダム</strong>
-                  <span>最近使っていないCharacterを優先</span>
+                  <strong>Random</strong>
                 </span>
               </button>
               {characterOptions.map((character) => (

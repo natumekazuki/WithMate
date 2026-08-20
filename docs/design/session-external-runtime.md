@@ -8,7 +8,7 @@
 
 この文書は、Session CLI、Session MCP、Electron Main Process、操作対象Sessionの関係を示す。特に、MCPを呼び出すagentのSessionと操作対象のWithMate Sessionを区別する。
 
-後戻り困難な選択理由はADR 021を正本とする。exact request、response、error、状態遷移、limitは、実装時に追加するtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。
+runtime bindingのauthority境界はADR 021、通常SessionのRole bindingはADR 026を正本とする。exact request、response、error、状態遷移、limitは、実装時に追加するtype、JSON schema、shared validation、executable contractを正本とする。この文書はそれらのfieldを網羅しない。
 
 ADR 021で確定した非局所的な境界を本文に置き、未確定事項は末尾へ分離する。
 
@@ -86,7 +86,7 @@ MemoryとCharacter Affectのruntimeはこの図に含めない。Session runtime
 | MCP adapter | tool schema、annotation、MCP result mapping | CLI process、persistence、provider実行 |
 | Execution registry | execution ID、即時実行のadmission、Sessionごとの永続FIFO queue、wait、cancel、terminal projection | globalな固定並列数、Session metadataの任意更新 |
 | Interaction service | interactionの列挙、対象検証、response、解決済み状態 | provider未対応interactionの代替 |
-| 対象Session | Provider、Character、Workspace、Session kind、Turn履歴 | 呼び出し元agentのworkspace |
+| 対象Session | Provider、Character、Workspace、Session kind、immutable Role binding、Turn履歴 | 呼び出し元agentのworkspace |
 | SessionFolder | 対象Sessionの一時資料、添付、成果物 | global file catalog、orphan directoryの公開 |
 
 GUI、CLI、MCPは兄弟入口である。GUIの既存IPCをCLIまたはMCPが呼ぶ構造にはせず、共通application serviceの上でそれぞれinputとoutputを変換する。
@@ -95,7 +95,11 @@ GUI、CLI、MCPは兄弟入口である。GUIの既存IPCをCLIまたはMCPが�
 
 ## Session作成と選択
 
-CLIとMCPは通常Sessionを作成できる。titleは必須とし、自動生成または省略時のfallbackを設けない。Provider、Character、Workspace、Session kindは作成時に確定し、作成後は不変とする。外部surfaceでのmetadata変更はtitleのrenameだけを提供する。
+CLIとMCPの`session.create`は、binding actorのchildとなる通常Sessionを作成する。titleと`sessionRole`は必須で、Roleは`task-coordinator`または`executor`だけを受理する。parent、root、depth、actor、Character identityはrequestへ含めず、保存済みactor bindingと既存のCharacter選択ownerから導出する。Role規則またはdepthに違反するrequestはSession ID発行とSessionFolder作成より前に拒否する。
+
+GUIは通常Sessionのrootだけを作成する。用途は左から`standalone`、`overall-coordinator`の順で表示し、既定を`standalone`とする。GUI、CLI、MCPはRoleごとに別の作成経路を持たず、同じSession作成ownerでRole bindingをSession rowと同じtransactionへ保存する。
+
+Provider、Character、Workspace、Session kind、Role bindingは作成時に確定し、作成後は不変とする。外部surfaceでのmetadata変更はtitleのrenameだけを提供する。既存の通常Sessionはmigrationで`standalone` rootへ変換し、現行schemaの欠落、未知Role、unsupported revision、壊れたtupleは明示的に拒否する。
 
 Character selectorはCLIとMCPへ公開しない。CharacterはGUIのランダム起動と同じpolicyで解決し、作成resultへ解決済みidentityを返す。同じidempotency keyの再送では再抽選しない。
 
@@ -184,6 +188,8 @@ admissionを永続化する前にcrashしたexecutionは`queued`のままなの�
 ## Idempotency
 
 副作用を持つoperationは、operationとidempotency keyの組でrecordを解決する。同じeffect-bearing inputはcanonical resultへ収束し、同じkeyへ異なるfingerprintを指定した場合はconflictを返す。
+
+`session.create`はbinding actorをmutation principalとしてscopeへ加える。fingerprintはactor、requested child Role、導出したbinding tuple、既存create入力を含む。同じactor、key、入力は既存Sessionを返し、Roleまたは導出tupleが異なればconflictとする。別actorの同じkeyは独立scopeとして扱う。canonical replayはcurrent parent、current catalog、current Character状態の再検証より先に判定する。
 
 response mode、wait timeout、request IDはdelivery設定なのでfingerprintへ含めない。Session、execution、message、runtime option、target fileなど、副作用の内容を変える値はfingerprintへ含める。`turn.run`と`turn.enqueue`はoperationが異なるため、同じidempotency keyでも別scopeとして扱う。
 

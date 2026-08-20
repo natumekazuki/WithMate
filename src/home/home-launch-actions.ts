@@ -61,8 +61,8 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.sessionSummariesLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.sessionSummariesLoadStatus === "loading"
-        ? "Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"
-        : "Session 履歴を読み込めていないため、ランダム選択を開始できないよ。",
+        ? "Loading Session history. Try again when loading is complete."
+        : "Random selection is unavailable because Session history could not be loaded.",
     );
     return;
   }
@@ -70,13 +70,13 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
   if (input.draft.characterSelectionMode === "random" && input.openSessionWindowIdsLoadStatus !== "loaded") {
     input.setLaunchFeedback(
       input.openSessionWindowIdsLoadStatus === "loading"
-        ? "開いている Session Window を確認してるよ。完了してからもう一度開始してね。"
-        : "開いている Session Window を確認できないため、ランダム選択を開始できないよ。",
+        ? "Checking open Session windows. Try again when loading is complete."
+        : "Random selection is unavailable because open Session windows could not be checked.",
     );
     return;
   }
 
-  input.setLaunchFeedback(requestedMode === "companion" ? "Companion を開始してるよ..." : "Session を開始してるよ...");
+  input.setLaunchFeedback(requestedMode === "companion" ? "Starting Companion..." : "Starting Session...");
   input.setLaunchStarting(true);
 
   try {
@@ -96,13 +96,13 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
         random: input.random,
       });
       if (!companionInput) {
-        input.setLaunchFeedback("Companion の開始条件が揃ってないよ。");
+        input.setLaunchFeedback("Companion requirements are not satisfied.");
         return;
       }
 
       const createdSession = await input.createCompanionSession(companionInput);
       if (!createdSession) {
-        input.setLaunchFeedback("Companion を開始できなかったよ。");
+        input.setLaunchFeedback("Failed to start Companion.");
         return;
       }
 
@@ -122,13 +122,13 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       random: input.random,
     });
     if (!sessionInput) {
-      input.setLaunchFeedback("Session の開始条件が揃ってないよ。");
+      input.setLaunchFeedback("Session requirements are not satisfied.");
       return;
     }
 
     const createdSession = await input.createSession(sessionInput);
     if (!createdSession) {
-      input.setLaunchFeedback("Session を開始できなかったよ。");
+      input.setLaunchFeedback("Failed to start Session.");
       return;
     }
 
@@ -136,7 +136,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     input.closeLaunchDialog();
     await input.openSessionWindow(createdSession.id);
   } catch (error) {
-    input.setLaunchFeedback(error instanceof Error ? error.message : "開始に失敗したよ。");
+    input.setLaunchFeedback(error instanceof Error ? error.message : "Failed to start.");
   } finally {
     input.setLaunchStarting(false);
   }

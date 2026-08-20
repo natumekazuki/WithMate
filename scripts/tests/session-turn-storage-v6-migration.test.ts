@@ -33,6 +33,17 @@ function insertSession(db: DatabaseSync): void {
   );
 
   db.prepare(`
+    INSERT INTO session_role_bindings_v6 (
+      session_id,
+      session_role,
+      role_contract_revision,
+      root_session_id,
+      parent_session_id,
+      delegation_depth
+    ) VALUES (?, 'standalone', 1, ?, NULL, 0)
+  `).run("session-1", "session-1");
+
+  db.prepare(`
     INSERT INTO session_messages_v6 (
       session_id,
       seq,

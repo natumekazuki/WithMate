@@ -68,6 +68,17 @@ function createV6Schema(dbPath = ":memory:"): DatabaseSync {
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     db.exec(statement);
   }
+  db.exec(`
+    CREATE TRIGGER test_default_session_role_binding
+    AFTER INSERT ON sessions_v6
+    WHEN NEW.session_kind = 'default'
+    BEGIN
+      INSERT INTO session_role_bindings_v6 (
+        session_id, session_role, role_contract_revision,
+        root_session_id, parent_session_id, delegation_depth
+      ) VALUES (NEW.id, 'standalone', 1, NEW.id, NULL, 0);
+    END;
+  `);
   return db;
 }
 
@@ -112,6 +123,26 @@ function createV6DatabaseWithEmptyRequiredTables(dbPath: string): void {
   } finally {
     db.close();
   }
+}
+
+function insertStandaloneRoleBinding(db: DatabaseSync, sessionId: string): void {
+  db.prepare(`
+    INSERT INTO session_role_bindings_v6 (
+      session_id, session_role, role_contract_revision,
+      root_session_id, parent_session_id, delegation_depth
+    ) VALUES (?, 'standalone', 1, ?, NULL, 0)
+  `).run(sessionId, sessionId);
+}
+
+function createLegacySessionSchema(db: DatabaseSync, withoutPinned = false): void {
+  db.exec(CREATE_V6_CHARACTERS_TABLE_SQL);
+  db.exec(CREATE_V6_PROJECT_SCOPES_TABLE_SQL);
+  db.exec(withoutPinned
+    ? CREATE_V6_SESSIONS_TABLE_SQL.replace(
+      "    is_pinned INTEGER NOT NULL DEFAULT 0 CHECK (is_pinned IN (0, 1)),\n",
+      "",
+    )
+    : CREATE_V6_SESSIONS_TABLE_SQL);
 }
 
 describe("database-schema-v6", () => {
@@ -1210,6 +1241,7 @@ describe("database-schema-v6", () => {
           character_id, character_snapshot_json, created_at, updated_at, last_active_at
         ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
       `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+      insertStandaloneRoleBinding(db, "session-a");
       db.prepare(`
         INSERT INTO character_affect_events_v6 (
           id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
@@ -1498,6 +1530,7 @@ describe("database-schema-v6", () => {
         "2026-07-04T01:02:00.000Z",
       );
 
+      insertStandaloneRoleBinding(db, "session-1");
       ensureV6Schema(db);
       ensureV6Schema(db);
 
@@ -1650,6 +1683,21 @@ describe("database-schema-v6", () => {
           '2026-07-04T00:00:00.000Z',
           '2026-07-04T00:00:00.000Z'
         );
+        INSERT INTO session_role_bindings_v6 (
+          session_id,
+          session_role,
+          role_contract_revision,
+          root_session_id,
+          parent_session_id,
+          delegation_depth
+        ) VALUES (
+          'session-1',
+          'standalone',
+          1,
+          'session-1',
+          NULL,
+          0
+        );
         INSERT INTO auxiliary_sessions (
           id,
           parent_session_id,
@@ -1704,6 +1752,114 @@ describe("database-schema-v6", () => {
       assert.equal(auditRow?.metadata_json, '{"prompt":"kept"}');
     } finally {
       db.close();
+    }
+  });
+
+  it("通常Session Role migrationはempty/populated DBへ一度だけstandalone rootをbackfillする", () => {
+    for (const populated of [false, true]) {
+      const db = new DatabaseSync(":memory:");
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        createLegacySessionSchema(db);
+        if (populated) {
+          db.exec(`
+            INSERT INTO sessions_v6 (
+              id, title, state, session_kind, provider_id, catalog_revision,
+              model_id, approval_mode, runtime_policy_json, created_at, updated_at, last_active_at
+            ) VALUES
+              ('normal-session', 'Normal', 'active', 'default', 'codex', 1,
+                'gpt-5', 'on-request', '{"sourceSchemaVersion":5}', 'now', 'now', 'now'),
+              ('authoring-session', 'Authoring', 'active', 'character-authoring', 'codex', 1,
+                'gpt-5', 'on-request', '{"sourceSchemaVersion":5}', 'now', 'now', 'now'),
+              ('legacy-session', 'Legacy', 'active', 'default', 'codex', 1,
+                'gpt-5', 'on-request', '{"sourceSchemaVersion":4}', 'now', 'now', 'now');
+          `);
+        }
+
+        ensureV6Schema(db);
+        ensureV6Schema(db);
+
+        const rows = db.prepare(`
+          SELECT session_id, session_role, role_contract_revision,
+                 root_session_id, parent_session_id, delegation_depth
+          FROM session_role_bindings_v6
+          ORDER BY session_id
+        `).all();
+        assert.deepEqual(rows.map((row) => ({ ...row })), populated ? [
+          {
+            session_id: "legacy-session",
+            session_role: "standalone",
+            role_contract_revision: 1,
+            root_session_id: "legacy-session",
+            parent_session_id: null,
+            delegation_depth: 0,
+          },
+          {
+            session_id: "normal-session",
+            session_role: "standalone",
+            role_contract_revision: 1,
+            root_session_id: "normal-session",
+            parent_session_id: null,
+            delegation_depth: 0,
+          },
+        ] : []);
+        if (populated) {
+          const revisions = db.prepare(`
+            SELECT id, json_extract(runtime_policy_json, '$.sourceSchemaVersion') AS revision
+            FROM sessions_v6
+            ORDER BY id
+          `).all();
+          assert.deepEqual(revisions.map((row) => ({ ...row })), [
+            { id: "authoring-session", revision: 6 },
+            { id: "legacy-session", revision: 4 },
+            { id: "normal-session", revision: 6 },
+          ]);
+        }
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it("通常Session Role migrationはunknown Role、unsupported revision、壊れたtupleを拒否し途中変更をrollbackする", () => {
+    const invalidBindings = [
+      ["unknown", 1, "session-a", null, 0],
+      ["standalone", 2, "session-a", null, 0],
+      ["standalone", 1, "other-root", null, 0],
+    ] as const;
+    for (const invalidBinding of invalidBindings) {
+      const db = new DatabaseSync(":memory:");
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        createLegacySessionSchema(db, true);
+        db.exec(`
+          CREATE TABLE session_role_bindings_v6 (
+            session_id TEXT PRIMARY KEY,
+            session_role TEXT NOT NULL,
+            role_contract_revision INTEGER NOT NULL,
+            root_session_id TEXT NOT NULL,
+            parent_session_id TEXT,
+            delegation_depth INTEGER NOT NULL
+          );
+          INSERT INTO sessions_v6 (
+            id, title, state, session_kind, provider_id, catalog_revision,
+            model_id, approval_mode, created_at, updated_at, last_active_at
+          ) VALUES ('session-a', 'A', 'active', 'default', 'codex', 1,
+            'gpt-5', 'on-request', 'now', 'now', 'now');
+        `);
+        db.prepare(`
+          INSERT INTO session_role_bindings_v6 (
+            session_id, session_role, role_contract_revision,
+            root_session_id, parent_session_id, delegation_depth
+          ) VALUES ('session-a', ?, ?, ?, ?, ?)
+        `).run(...invalidBinding);
+
+        assert.throws(() => ensureV6Schema(db), /Session Role binding data is invalid/);
+        assert.equal(columnNames(db, "sessions_v6").includes("is_pinned"), false);
+        assert.equal(tableNames(db).includes("character_affect_events_v6"), false);
+      } finally {
+        db.close();
+      }
     }
   });
 });

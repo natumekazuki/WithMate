@@ -56,6 +56,11 @@ const publicExecution = {
 };
 const publicSession = {
   sessionId: "s1",
+  sessionRole: "executor" as const,
+  roleContractRevision: 1 as const,
+  rootSessionId: "root-1",
+  parentSessionId: "parent-1",
+  delegationDepth: 2,
   title: "Demo",
   sessionKind: "default" as const,
   provider: { id: "codex", catalogRevision: 1 },
@@ -218,10 +223,12 @@ describe("WithMate Session MCP contract", () => {
       },
     }), async (client) => {
       const created = await client.callTool({ name: "session.create", arguments: {
-        title: "Demo", provider: "codex", catalogRevision: 1, workspace: { kind: "session_folder" },
+        sessionRole: "executor", title: "Demo", provider: "codex", catalogRevision: 1,
+        workspace: { kind: "session_folder" },
       } });
       assert.equal(created.isError, true);
       const createdWithKey = await client.callTool({ name: "session.create", arguments: {
+        sessionRole: "executor",
         title: "Demo",
         provider: "codex",
         catalogRevision: 1,
@@ -248,7 +255,19 @@ describe("WithMate Session MCP contract", () => {
         return {
           ok: true,
           status: 200,
-          value: createSessionRuntimeResult("runtime.catalog", { revision: 7, providers: [] }),
+          value: createSessionRuntimeResult("runtime.catalog", {
+            revision: 7,
+            sessionRoleContractRevision: 1,
+            supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
+            allowedChildSessionRoles: {
+              standalone: [],
+              "overall-coordinator": ["task-coordinator", "executor"],
+              "task-coordinator": ["executor"],
+              executor: [],
+            },
+            maxDelegationDepth: 2,
+            providers: [],
+          }),
         };
       },
     }), async (client) => {
@@ -259,7 +278,19 @@ describe("WithMate Session MCP contract", () => {
         operation: "runtime.catalog",
         input: {},
       }]);
-      assert.deepEqual((result.structuredContent as any).result, { revision: 7, providers: [] });
+      assert.deepEqual((result.structuredContent as any).result, {
+        revision: 7,
+        sessionRoleContractRevision: 1,
+        supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
+        allowedChildSessionRoles: {
+          standalone: [],
+          "overall-coordinator": ["task-coordinator", "executor"],
+          "task-coordinator": ["executor"],
+          executor: [],
+        },
+        maxDelegationDepth: 2,
+        providers: [],
+      });
     });
   });
 
@@ -272,7 +303,14 @@ describe("WithMate Session MCP contract", () => {
         return {
           ok: true,
           status: 200,
-          value: createSessionRuntimeResult("session.self", { sessionId: "session-actor" }),
+          value: createSessionRuntimeResult("session.self", {
+            sessionId: "session-actor",
+            sessionRole: "overall-coordinator",
+            roleContractRevision: 1,
+            rootSessionId: "session-actor",
+            parentSessionId: null,
+            delegationDepth: 0,
+          }),
         };
       },
     }), async (client) => {
@@ -283,7 +321,14 @@ describe("WithMate Session MCP contract", () => {
         operation: "session.self",
         input: {},
       }]);
-      assert.deepEqual((result.structuredContent as any).result, { sessionId: "session-actor" });
+      assert.deepEqual((result.structuredContent as any).result, {
+        sessionId: "session-actor",
+        sessionRole: "overall-coordinator",
+        roleContractRevision: 1,
+        rootSessionId: "session-actor",
+        parentSessionId: null,
+        delegationDepth: 0,
+      });
     });
   });
 

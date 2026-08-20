@@ -775,6 +775,7 @@ describe("SessionRuntimeService", () => {
   it("character-authoring session は turn 開始時の最新 Character snapshot を使う", async () => {
     const staleSession = createSession({
       sessionKind: "character-authoring",
+      roleBinding: null,
       characterRuntimeSnapshot: {
         characterId: "char-a",
         name: "Old",
@@ -808,11 +809,13 @@ describe("SessionRuntimeService", () => {
     let runSessionFolderPath = "";
     let notifiedSession: Session | null = null;
     let notifiedLastNonEmptyAssistantMessageText = "";
+    let composedSessionRoleBinding: unknown = undefined;
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
         composeSessionName = input.session.characterRuntimeSnapshot?.name ?? "";
         composedSessionFolderPath = input.sessionFolderPath ?? "";
+        composedSessionRoleBinding = input.sessionRoleBinding;
         return {
           systemBodyText: "system",
           inputBodyText: "input",
@@ -838,6 +841,7 @@ describe("SessionRuntimeService", () => {
     };
 
     const service = new SessionRuntimeService({
+      includeNormalSessionRoleContext: true,
       getSession(sessionId) {
         return sessionId === staleSession.id ? staleSession : null;
       },
@@ -903,6 +907,7 @@ describe("SessionRuntimeService", () => {
     assert.equal(runSessionName, "Fresh");
     assert.equal(composedSessionFolderPath, `F:/user-data/session-files/${freshSession.id}`);
     assert.equal(runSessionFolderPath, composedSessionFolderPath);
+    assert.equal(composedSessionRoleBinding, null);
     assert.equal(result.characterRuntimeSnapshot?.name, "Fresh");
     assert.equal(notifiedSession, result);
     assert.equal(notifiedLastNonEmptyAssistantMessageText, "完了したよ。");

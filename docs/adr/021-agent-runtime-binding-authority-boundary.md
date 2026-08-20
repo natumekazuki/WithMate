@@ -16,6 +16,7 @@ Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれもclient作成時にc
 
 - Electron main processのagent runtime binding registryをopaque referenceの発行、解決、operation grant検証、generation、失効のcanonical ownerとする。active generationのreuseに必要なreferenceはprocess memory内だけに保持し、lookupと永続的なidentityにはhashを使う。provider processへは推測不能なopaque referenceだけを渡す。`expiresAt`は発行前に正規化・検証し、正規化後の期限もreuse identityへ含める。
 - binding authorityはgeneric snapshotとする。actor Session ID、provider execution generation、任意のRole/hierarchy snapshot、operation grant、発行・期限・失効情報を保持できるが、registry自身はRoleの意味やdefault permissionを発明しない。
+- ADR 026で通常SessionのRole binding contractを導入する。通常Sessionのbinding issuerはcurrent canonical tupleをauthority snapshotへ含めるが、registryは引き続きtupleの意味やchild作成規則を所有しない。
 - Session CLI・MCPのapplication operationはbinding-requiredとし、`session.runtime.invoke` grantを共有のallowlistとして使う。bindingはactor Session identityを証明するが、対象Sessionを変更または暗黙選択するauthorityには使わない。現行operationの既存target validationを維持し、Role/hierarchy authorizationは追加しない。Coordination Event endpointは引き続き有効化しない。
 - WithMate-owned endpointはroute tableで`required`、`optional`、`none`を必ず宣言する。aliasとruntime exchangeも同じpolicyへ収束させる。
 - Session scopeのCharacter context / affectは`required`とし、解決済みactor Sessionをapplication requestへserver側で設定する。callerのSession IDはactorを上書きしない。
@@ -73,5 +74,6 @@ GitHub Copilot SDKのstdio connectionはclientごとの`env`をchild runtimeへ�
 
 ## References
 
+- ADR 026: 通常SessionのRoleと親子関係をimmutable bindingとして所有する
 - GitHub Copilot SDK Node.js README: <https://github.com/github/copilot-sdk/blob/main/nodejs/README.md>
 - GitHub Copilot SDK MCP configuration: <https://docs.github.com/en/copilot/how-tos/copilot-sdk/features/mcp>

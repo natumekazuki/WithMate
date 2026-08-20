@@ -22,6 +22,7 @@ export function companionSessionToAuxiliaryParentSession(session: CompanionSessi
     sessionKind: "default",
     accessMode: "active",
     sourceSchemaVersion: 4,
+    roleBinding: null,
     characterId: session.characterId,
     character: session.character,
     characterIconPath: session.characterIconPath,

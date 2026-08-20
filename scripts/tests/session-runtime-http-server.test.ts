@@ -56,7 +56,7 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   "runtime.catalog": {},
   "session.self": {},
   "session.create": {
-    title: "Session", provider: "codex", catalogRevision: 4,
+    sessionRole: "executor", title: "Session", provider: "codex", catalogRevision: 4,
     workspace: { kind: "session_folder" }, idempotencyKey: "create-key",
   },
   "session.list": {},
@@ -425,6 +425,7 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
       {
         operation: "session.create",
         input: {
+          sessionRole: "executor",
           title: "New Session",
           provider: "codex",
           catalogRevision: 4,

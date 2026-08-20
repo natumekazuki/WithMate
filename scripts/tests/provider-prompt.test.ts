@@ -110,7 +110,7 @@ describe("composeProviderPrompt", () => {
     assert.deepEqual(prompt.imagePaths, []);
   });
 
-  it("normal Session の provider prompt に対象自身の Session ID を含める", () => {
+  it("normal Session の provider prompt にcanonical Role bindingだけを含める", () => {
     const session = buildNewSession({
       id: "session-self-1",
       taskTitle: "task",
@@ -136,6 +136,12 @@ describe("composeProviderPrompt", () => {
 
     assert.match(prompt.systemBodyText, /# WithMate Session Context/);
     assert.match(prompt.systemBodyText, /Current Session ID: `session-self-1`/);
+    assert.match(prompt.systemBodyText, /Session Role: `standalone`/);
+    assert.match(prompt.systemBodyText, /Role Contract Revision: `1`/);
+    assert.match(prompt.systemBodyText, /Root Session ID: `session-self-1`/);
+    assert.match(prompt.systemBodyText, /Parent Session ID: `null`/);
+    assert.match(prompt.systemBodyText, /Delegation Depth: `0`/);
+    assert.doesNotMatch(prompt.systemBodyText, /bindingReference|binding hash|operation grant/i);
     assert.equal(prompt.systemBodyText.match(/Current Session ID:/g)?.length, 1);
   });
 

@@ -12,6 +12,7 @@ import {
   SessionTranscriptService,
   SessionTranscriptServiceError,
 } from "../../src-electron/session-transcript-service.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 import { SessionTranscriptStorageV6 } from "../../src-electron/session-transcript-storage-v6.js";
 import {
   PUBLIC_TRANSCRIPT_SCHEMA_VERSION,
@@ -42,6 +43,7 @@ async function createFixture(options: {
         reasoning_effort, approval_mode, workspace_path, created_at, updated_at, last_active_at
       ) VALUES (?, ?, 'active', 'default', 'codex', 7, 'gpt-public', 'high', 'on-request', ?, ?, ?, ?)
     `).run("session-1", "Public session", sessionFolder, CREATED_AT, CREATED_AT, CREATED_AT);
+    insertStandaloneRoleBindingsForSessions(db);
     db.prepare(`
       INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
       VALUES (?, 0, 'user', ?, ?), (?, 1, 'assistant', ?, ?)

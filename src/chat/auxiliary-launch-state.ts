@@ -10,7 +10,7 @@ export type AuxiliaryLaunchProviderItem = {
 
 export const AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK = LAUNCH_EMPTY_PROVIDER_MESSAGE;
 export const AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK = LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
-export const AUXILIARY_LAUNCH_START_FAILED_FEEDBACK = "Auxiliary Session の開始に失敗したよ。";
+export const AUXILIARY_LAUNCH_START_FAILED_FEEDBACK = "Failed to start Auxiliary Session.";
 
 export function buildAuxiliaryLaunchProviderItems(
   providers: readonly ModelCatalogProvider[],

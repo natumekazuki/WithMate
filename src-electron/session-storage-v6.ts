@@ -13,6 +13,11 @@ import {
   type Session,
   type SessionSummary,
 } from "../src/session-state.js";
+import {
+  requireSessionRoleBinding,
+  sameSessionRoleBinding,
+  type SessionRoleBinding,
+} from "../src/session-role-binding.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
@@ -59,6 +64,11 @@ type SessionV6Row = {
   is_pinned: number;
   updated_at: string;
   last_active_at: string;
+  role_session_role: string | null;
+  role_contract_revision: number | null;
+  role_root_session_id: string | null;
+  role_parent_session_id: string | null;
+  role_delegation_depth: number | null;
 };
 
 type MessageV6Row = {
@@ -116,13 +126,26 @@ const SESSION_SUMMARY_SELECT_COLUMNS = `
   CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.iconFilePath') END AS snapshot_icon_file_path,
   CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.theme.main') END AS snapshot_theme_main,
   CASE WHEN json_valid(character_snapshot_json) THEN json_extract(character_snapshot_json, '$.theme.sub') END AS snapshot_theme_sub,
-  CASE WHEN json_valid(character_snapshot_json) THEN json_type(character_snapshot_json, '$.definitionMarkdown') END AS snapshot_definition_markdown_type
+  CASE WHEN json_valid(character_snapshot_json) THEN json_type(character_snapshot_json, '$.definitionMarkdown') END AS snapshot_definition_markdown_type,
+  (SELECT session_role FROM session_role_bindings_v6 WHERE session_id = sessions_v6.id) AS role_session_role,
+  (SELECT role_contract_revision FROM session_role_bindings_v6 WHERE session_id = sessions_v6.id) AS role_contract_revision,
+  (SELECT root_session_id FROM session_role_bindings_v6 WHERE session_id = sessions_v6.id) AS role_root_session_id,
+  (SELECT parent_session_id FROM session_role_bindings_v6 WHERE session_id = sessions_v6.id) AS role_parent_session_id,
+  (SELECT delegation_depth FROM session_role_bindings_v6 WHERE session_id = sessions_v6.id) AS role_delegation_depth
 `;
 
 type SessionCrudIdempotencyRow = {
   request_fingerprint: string;
   session_id: string;
   result_json: string;
+};
+
+type SessionRoleBindingRow = {
+  session_role: string;
+  role_contract_revision: number;
+  root_session_id: string;
+  parent_session_id: string | null;
+  delegation_depth: number;
 };
 
 type SessionFileWriteIdempotencyRow = {
@@ -242,6 +265,23 @@ function parseJsonArray(value: string): unknown[] {
   }
 }
 
+function requireStoredRoleField<T>(value: T | null, sessionId: string): T {
+  if (value === null) {
+    throw new Error(`Stored normal Session Role binding is incomplete: ${sessionId}`);
+  }
+  return value;
+}
+
+function decodeSessionRoleBinding(sessionId: string, row: SessionRoleBindingRow): SessionRoleBinding {
+  return requireSessionRoleBinding(sessionId, {
+    sessionRole: row.session_role,
+    roleContractRevision: row.role_contract_revision,
+    rootSessionId: row.root_session_id,
+    parentSessionId: row.parent_session_id,
+    delegationDepth: row.delegation_depth,
+  });
+}
+
 function decodeSessionV6RuntimeState(row: SessionV6Row): DecodedSessionV6RuntimeState {
   const runtimePolicy = parseJsonObject(row.runtime_policy_json);
   const runtimeCharacterId = normalizeCharacterOwnerId(runtimePolicy.characterId);
@@ -349,8 +389,14 @@ export class SessionStorageV6 {
 
   listSessions(): Session[] {
     const rows = this.db.prepare(`
-      SELECT *
+      SELECT sessions_v6.*,
+        b.session_role AS role_session_role,
+        b.role_contract_revision,
+        b.root_session_id AS role_root_session_id,
+        b.parent_session_id AS role_parent_session_id,
+        b.delegation_depth AS role_delegation_depth
       FROM sessions_v6
+      LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6Row[];
     return cloneSessions(rows.map((row) => this.rowToSession(row)));
@@ -381,7 +427,17 @@ export class SessionStorageV6 {
   }
 
   getSession(sessionId: string): Session | null {
-    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+    const row = this.db.prepare(`
+      SELECT sessions_v6.*,
+        b.session_role AS role_session_role,
+        b.role_contract_revision,
+        b.root_session_id AS role_root_session_id,
+        b.parent_session_id AS role_parent_session_id,
+        b.delegation_depth AS role_delegation_depth
+      FROM sessions_v6
+      LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = sessions_v6.id
+      WHERE sessions_v6.id = ?
+    `).get(sessionId) as SessionV6Row | undefined;
     return row ? this.rowToSession(row) : null;
   }
 
@@ -422,23 +478,48 @@ export class SessionStorageV6 {
 
   resolveSessionCrudIdempotency(
     operation: SessionCrudOperation,
+    principalSessionId: string,
     idempotencyKey: string,
-    requestFingerprint: string,
+    resolveExpectedFingerprint: string | ((result: unknown) => string),
     nowIso: string,
   ): SessionCrudReplayResult {
     this.cleanupSessionCrudIdempotency(nowIso);
-    return this.resolveSessionCrudIdempotencyWithoutCleanup(operation, idempotencyKey, requestFingerprint);
+    return this.resolveSessionCrudIdempotencyWithoutCleanup(
+      operation,
+      principalSessionId,
+      idempotencyKey,
+      resolveExpectedFingerprint,
+    );
+  }
+
+  getSessionRoleBinding(sessionId: string): SessionRoleBinding | null {
+    const row = this.findSessionRoleBindingRow(sessionId);
+    return row ? decodeSessionRoleBinding(sessionId, row) : null;
+  }
+
+  listSessionIdsWithChildren(sessionIds: readonly string[]): Set<string> {
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    if (uniqueSessionIds.length === 0) return new Set();
+    const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+    const rows = this.db.prepare(`
+      SELECT DISTINCT parent_session_id AS id
+      FROM session_role_bindings_v6
+      WHERE parent_session_id IN (${placeholders})
+    `).all(...uniqueSessionIds) as SessionIdRow[];
+    return new Set(rows.map((row) => row.id));
   }
 
   insertSessionIdempotently(
     session: Session,
     input: {
       operation: "session.create";
+      principalSessionId: string;
       idempotencyKey: string;
       requestFingerprint: string;
       createdAt: string;
       expiresAt: string;
       projectResult(session: Session): unknown;
+      resolveReplayFingerprint(result: unknown): string;
     },
   ): { session: Session; result: unknown; replayed: boolean } {
     const normalized = normalizeSessionForStorage(session);
@@ -446,8 +527,9 @@ export class SessionStorageV6 {
     try {
       const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
         input.operation,
+        input.principalSessionId,
         input.idempotencyKey,
-        input.requestFingerprint,
+        input.resolveReplayFingerprint,
       );
       if (replay.kind === "replay") {
         const stored = this.getSession(replay.sessionId);
@@ -471,7 +553,8 @@ export class SessionStorageV6 {
   }
 
   renameSessionIdempotently(input: {
-    operation: "session.rename";
+      operation: "session.rename";
+    principalSessionId?: string;
     sessionId: string;
     title: string;
     idempotencyKey: string;
@@ -484,6 +567,7 @@ export class SessionStorageV6 {
     try {
       const replay = this.resolveSessionCrudIdempotencyWithoutCleanup(
         input.operation,
+        input.principalSessionId ?? "",
         input.idempotencyKey,
         input.requestFingerprint,
       );
@@ -695,11 +779,11 @@ export class SessionStorageV6 {
 
   setSessionPinned(sessionId: string, isPinned: boolean): SessionSummary {
     this.db.prepare("UPDATE sessions_v6 SET is_pinned = ? WHERE id = ?").run(isPinned ? 1 : 0, sessionId);
-    const row = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
-    if (!row) {
+    const summary = this.getSessionSummary(sessionId);
+    if (!summary) {
       throw new Error("対象セッションが見つからないよ。");
     }
-    return this.rowToSessionSummary(row);
+    return summary;
   }
 
   getSessionMessageArtifact(sessionId: string, messageIndex: number): MessageArtifact | null {
@@ -826,6 +910,12 @@ export class SessionStorageV6 {
         sessionIds: uniqueSessionIds,
         auxiliarySessionIds,
       });
+      for (const delegationDepth of [2, 1, 0]) {
+        this.db.prepare(`
+          DELETE FROM session_role_bindings_v6
+          WHERE session_id IN (${placeholders}) AND delegation_depth = ?
+        `).run(...uniqueSessionIds, delegationDepth);
+      }
       this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
       this.deleteAuxiliarySessionsForParentsIfTableExists(uniqueSessionIds);
       this.db.exec("COMMIT");
@@ -840,6 +930,9 @@ export class SessionStorageV6 {
     try {
       deleteAuditEventsForSessionTargets(this.db, { allSessionTargets: true });
       this.db.exec("DELETE FROM session_messages_v6;");
+      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 2;");
+      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 1;");
+      this.db.exec("DELETE FROM session_role_bindings_v6 WHERE delegation_depth = 0;");
       this.db.exec("DELETE FROM sessions_v6;");
       this.deleteAllAuxiliarySessionsIfTableExists();
       this.db.exec("COMMIT");
@@ -855,30 +948,36 @@ export class SessionStorageV6 {
 
   private resolveSessionCrudIdempotencyWithoutCleanup(
     operation: SessionCrudOperation,
+    principalSessionId: string,
     idempotencyKey: string,
-    requestFingerprint: string,
+    resolveExpectedFingerprint: string | ((result: unknown) => string),
   ): SessionCrudReplayResult {
     const row = this.db.prepare(`
       SELECT request_fingerprint, session_id, result_json
       FROM session_crud_idempotency_v6
-      WHERE operation = ? AND idempotency_key = ?
-    `).get(operation, idempotencyKey) as SessionCrudIdempotencyRow | undefined;
+      WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?
+    `).get(operation, principalSessionId, idempotencyKey) as SessionCrudIdempotencyRow | undefined;
     if (!row) {
       return { kind: "absent" };
     }
-    if (row.request_fingerprint !== requestFingerprint) {
+    const result = JSON.parse(row.result_json) as unknown;
+    const expectedFingerprint = typeof resolveExpectedFingerprint === "function"
+      ? resolveExpectedFingerprint(result)
+      : resolveExpectedFingerprint;
+    if (row.request_fingerprint !== expectedFingerprint) {
       throw new SessionCrudIdempotencyConflictError();
     }
     return {
       kind: "replay",
       sessionId: row.session_id,
-      result: JSON.parse(row.result_json) as unknown,
+      result,
     };
   }
 
   private insertSessionCrudIdempotency(
     input: {
       operation: SessionCrudOperation;
+      principalSessionId?: string;
       idempotencyKey: string;
       requestFingerprint: string;
       createdAt: string;
@@ -890,15 +989,17 @@ export class SessionStorageV6 {
     this.db.prepare(`
       INSERT INTO session_crud_idempotency_v6 (
         operation,
+        principal_session_id,
         idempotency_key,
         request_fingerprint,
         session_id,
         result_json,
         created_at,
         expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.operation,
+      input.principalSessionId ?? "",
       input.idempotencyKey,
       input.requestFingerprint,
       sessionId,
@@ -917,8 +1018,35 @@ export class SessionStorageV6 {
     `).get(idempotencyKey) as SessionFileWriteIdempotencyRow | undefined;
   }
 
+  private findSessionRoleBindingRow(sessionId: string): SessionRoleBindingRow | undefined {
+    return this.db.prepare(`
+      SELECT session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth
+      FROM session_role_bindings_v6
+      WHERE session_id = ?
+    `).get(sessionId) as SessionRoleBindingRow | undefined;
+  }
+
   private writeSession(session: Session, operation: "create" | "upsert" = "upsert"): void {
     const startedAt = Date.now();
+    const existingRoleBindingRow = this.findSessionRoleBindingRow(session.id);
+    const existingSessionRow = this.db.prepare("SELECT session_kind FROM sessions_v6 WHERE id = ?").get(session.id) as
+      | { session_kind: string }
+      | undefined;
+    if (session.sessionKind === "default") {
+      if (!session.roleBinding) {
+        throw new Error(`Normal Session Role binding is missing: ${session.id}`);
+      }
+      if (existingRoleBindingRow) {
+        const existingBinding = decodeSessionRoleBinding(session.id, existingRoleBindingRow);
+        if (!sameSessionRoleBinding(existingBinding, session.roleBinding)) {
+          throw new Error(`Session Role binding is immutable: ${session.id}`);
+        }
+      } else if (existingSessionRow) {
+        throw new Error(`Stored normal Session Role binding is missing: ${session.id}`);
+      }
+    } else if (session.roleBinding !== null || existingRoleBindingRow) {
+      throw new Error(`Non-normal Session cannot use a normal Session Role binding: ${session.id}`);
+    }
     const snapshot = session.characterRuntimeSnapshot;
     const runtimePolicy = {
       appStatus: session.status,
@@ -1006,6 +1134,22 @@ export class SessionStorageV6 {
     );
     if (operation === "create" && Number(result.changes) === 0) {
       throw new SessionIdCollisionError(session.id);
+    }
+
+    if (session.sessionKind === "default" && !existingRoleBindingRow) {
+      const binding = requireSessionRoleBinding(session.id, session.roleBinding);
+      this.db.prepare(`
+        INSERT INTO session_role_bindings_v6 (
+          session_id, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth
+        ) VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        session.id,
+        binding.sessionRole,
+        binding.roleContractRevision,
+        binding.rootSessionId,
+        binding.parentSessionId,
+        binding.delegationDepth,
+      );
     }
 
     const existingArtifactBodies = new Map(
@@ -1100,6 +1244,19 @@ export class SessionStorageV6 {
   ): SessionSummary {
     const resolvedDecoded = decoded ?? decodeSessionV6RuntimeState(row as SessionV6Row);
     const { runtimePolicy, snapshot, characterId, threadId } = resolvedDecoded;
+    const sessionKind = row.session_kind === "character-authoring" ? "character-authoring" : "default";
+    const roleBinding = sessionKind === "default"
+      ? decodeSessionRoleBinding(row.id, {
+          session_role: requireStoredRoleField(row.role_session_role, row.id),
+          role_contract_revision: requireStoredRoleField(row.role_contract_revision, row.id),
+          root_session_id: requireStoredRoleField(row.role_root_session_id, row.id),
+          parent_session_id: row.role_parent_session_id,
+          delegation_depth: requireStoredRoleField(row.role_delegation_depth, row.id),
+        })
+      : null;
+    if (sessionKind === "character-authoring" && row.role_session_role !== null) {
+      throw new Error(`Non-normal Session has a Role binding: ${row.id}`);
+    }
     const summary = normalizeSessionSummary({
       id: row.id,
       taskTitle: row.title,
@@ -1111,9 +1268,10 @@ export class SessionStorageV6 {
       workspaceLabel: runtimePolicy.workspaceLabel,
       workspacePath: row.workspace_path,
       branch: runtimePolicy.branch,
-      sessionKind: row.session_kind,
+      sessionKind,
       accessMode: runtimePolicy.accessMode,
       sourceSchemaVersion: runtimePolicy.sourceSchemaVersion ?? CURRENT_SESSION_SCHEMA_VERSION,
+      roleBinding,
       characterId,
       character: snapshot?.name ?? runtimePolicy.characterName,
       characterIconPath: snapshot?.iconFilePath ?? runtimePolicy.characterIconPath,
@@ -1176,6 +1334,12 @@ export class SessionStorageV6 {
     }
 
     const placeholders = uniqueSessionIds.map(() => "?").join(", ");
+    for (const delegationDepth of [2, 1, 0]) {
+      this.db.prepare(`
+        DELETE FROM session_role_bindings_v6
+        WHERE session_id IN (${placeholders}) AND delegation_depth = ?
+      `).run(...uniqueSessionIds, delegationDepth);
+    }
     this.db.prepare(`DELETE FROM sessions_v6 WHERE id IN (${placeholders})`).run(...uniqueSessionIds);
   }
 

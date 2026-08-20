@@ -8,6 +8,7 @@ import type {
   CreateSessionWorkspaceRequest,
   SessionKind,
 } from "../src/session-state.js";
+import { type RootSessionRole } from "../src/session-role-binding.js";
 
 type CreateSessionMetadataInput = Omit<
   CreateSessionInput,
@@ -127,6 +128,11 @@ export function parseCreateSessionRequest(input: unknown): {
       provider: optionalString(request.provider, "provider"),
       catalogRevision: optionalNumber(request.catalogRevision, "catalogRevision"),
       taskTitle: requireString(request.taskTitle, "taskTitle"),
+      rootSessionRole: requireEnum<RootSessionRole>(
+        request.rootSessionRole,
+        "rootSessionRole",
+        ["standalone", "overall-coordinator"],
+      ),
       sessionKind: optionalEnum<SessionKind>(
         request.sessionKind,
         "sessionKind",

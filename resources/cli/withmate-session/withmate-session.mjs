@@ -151,6 +151,7 @@ function parseSessionRuntimeOperationInput(operation, value) {
 function parseSessionCreateInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, [
+		"sessionRole",
 		"title",
 		"provider",
 		"catalogRevision",
@@ -158,6 +159,7 @@ function parseSessionCreateInput(value) {
 		"idempotencyKey"
 	], "input");
 	return {
+		sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"], "sessionRole"),
 		title: requireNonEmptyString(record.title, "title"),
 		provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
 		catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
@@ -20974,6 +20976,7 @@ var interactionRespondInputSchema = object({
 	});
 });
 var sessionCreateInputSchema = object({
+	sessionRole: _enum(["task-coordinator", "executor"]),
 	title: nonEmptyStringSchema,
 	provider: _enum(["codex", "copilot"]),
 	catalogRevision: number().int().min(1),
@@ -21069,7 +21072,21 @@ var workspaceSchema = object({
 	label: string(),
 	path: string()
 }).strict();
+var sessionRoleSchema = _enum([
+	"standalone",
+	"overall-coordinator",
+	"task-coordinator",
+	"executor"
+]);
+var sessionRoleBindingShape = {
+	sessionRole: sessionRoleSchema,
+	roleContractRevision: literal(1),
+	rootSessionId: string(),
+	parentSessionId: string().nullable(),
+	delegationDepth: number().int().min(0).max(2)
+};
 var sessionSummarySchema = object({
+	...sessionRoleBindingShape,
 	sessionId: string(),
 	title: string(),
 	sessionKind: literal("default"),
@@ -21331,6 +21348,15 @@ var turnOptionsSchema = union([object({
 var resultSchemas = {
 	"runtime.catalog": object({
 		revision: number().int(),
+		sessionRoleContractRevision: literal(1),
+		supportedSessionRoles: array(sessionRoleSchema),
+		allowedChildSessionRoles: object({
+			standalone: array(_enum(["task-coordinator", "executor"])),
+			"overall-coordinator": array(_enum(["task-coordinator", "executor"])),
+			"task-coordinator": array(_enum(["task-coordinator", "executor"])),
+			executor: array(_enum(["task-coordinator", "executor"]))
+		}).strict(),
+		maxDelegationDepth: literal(2),
 		providers: array(object({
 			id: string(),
 			label: string(),
@@ -21339,7 +21365,10 @@ var resultSchemas = {
 			models: array(modelSchema)
 		}).strict())
 	}).strict(),
-	"session.self": object({ sessionId: string() }).strict(),
+	"session.self": object({
+		sessionId: string(),
+		...sessionRoleBindingShape
+	}).strict(),
 	"session.create": sessionDetailSchema,
 	"session.list": object({
 		items: array(sessionSummarySchema),
@@ -21422,8 +21451,8 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "session.create",
-		title: "Create Session",
-		description: "Create a normal Session with an explicit workspace.",
+		title: "Create child Session",
+		description: "Create an authorized child Session for the bound actor with an explicit workspace.",
 		readOnly: false,
 		destructive: false
 	},

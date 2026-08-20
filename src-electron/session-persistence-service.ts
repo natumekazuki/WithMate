@@ -27,6 +27,7 @@ import type {
 import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import { sameSessionRoleBinding } from "../src/session-role-binding.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -53,6 +54,7 @@ export type SessionPersistenceServiceDeps = {
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
   listStoredSessionIdsLastActiveBefore?(cutoff: DeleteSessionsLastActiveBeforeCutoff): Awaitable<string[]>;
+  listSessionIdsWithChildren?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
   deleteStoredSession?(sessionId: string): Awaitable<void>;
   deleteStoredSessions?(sessionIds: readonly string[]): Awaitable<void>;
   getAppSettings: () => AppSettings;
@@ -191,6 +193,16 @@ export class SessionPersistenceService {
     if (!hasSameCharacterRuntimeIdentity(storedCurrentSession, nextSession)) {
       throw new Error("Session の Character owner / runtime snapshot は更新できないよ。");
     }
+    if (
+      storedCurrentSession.sessionKind === "default"
+      && (
+        !storedCurrentSession.roleBinding
+        || !nextSession.roleBinding
+        || !sameSessionRoleBinding(storedCurrentSession.roleBinding, nextSession.roleBinding)
+      )
+    ) {
+      throw new Error("Session Role binding は更新できないよ。");
+    }
 
     if (this.deps.isSessionRunInFlight(nextSession.id) || isRunningSession(currentSession)) {
       throw new Error("実行中のセッションは更新できないよ。");
@@ -202,6 +214,7 @@ export class SessionPersistenceService {
 
     const updatedSession = await this.upsertSession({
       ...nextSession,
+      roleBinding: storedCurrentSession.roleBinding,
       threadId: shouldResetThreadId ? "" : nextSession.threadId,
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(
         nextSession.workspacePath,
@@ -269,6 +282,10 @@ export class SessionPersistenceService {
     },
   ): Promise<DeleteSessionsResult> {
     const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const sessionIdsWithChildren = await this.deps.listSessionIdsWithChildren?.(uniqueSessionIds) ?? new Set<string>();
+    if (options.runningPolicy === "throw" && uniqueSessionIds.some((sessionId) => sessionIdsWithChildren.has(sessionId))) {
+      throw new Error("子セッションが残っている親セッションは削除できないよ。");
+    }
     const skippedRunningSessionIds: string[] = [];
     const deletableSessionIds: string[] = [];
     const currentSessionsById = new Map(this.deps.getSessions().map((session) => [session.id, session] as const));
@@ -278,6 +295,9 @@ export class SessionPersistenceService {
       await this.deps.listAuxiliarySessionRuntimeIdentities?.(uniqueSessionIds) ?? [];
 
     for (const sessionId of uniqueSessionIds) {
+      if (sessionIdsWithChildren.has(sessionId)) {
+        continue;
+      }
       const session = currentSessionsById.get(sessionId);
       if (
         this.deps.isSessionRunInFlight(sessionId) ||
@@ -406,22 +426,13 @@ export class SessionPersistenceService {
     }
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
-    if (terminalCommit) {
-      this.runTerminalProjectionBestEffort("dependency sync", () => this.syncStoredSession(stored));
-      this.runTerminalProjectionBestEffort("cache update", () => {
-        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
-      });
-    } else {
-      this.syncStoredSession(stored);
+    this.runCommittedProjectionBestEffort("dependency sync", () => this.syncStoredSession(stored));
+    this.runCommittedProjectionBestEffort("cache update", () => {
       this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
-    }
+    });
     const cacheDurationMs = Date.now() - cacheStartedAt;
     const broadcastStartedAt = Date.now();
-    if (terminalCommit) {
-      this.runTerminalProjectionBestEffort("broadcast", () => this.deps.broadcastSessions([stored.id]));
-    } else {
-      this.deps.broadcastSessions([stored.id]);
-    }
+    this.runCommittedProjectionBestEffort("broadcast", () => this.deps.broadcastSessions([stored.id]));
     logSessionRunStuckInvestigation("persistence.upsert-session.done", {
       sessionId: stored.id,
       durationMs: Date.now() - startedAt,
@@ -575,11 +586,11 @@ export class SessionPersistenceService {
     this.deps.syncSessionDependencies(stored);
   }
 
-  private runTerminalProjectionBestEffort(label: string, operation: () => void): void {
+  private runCommittedProjectionBestEffort(label: string, operation: () => void): void {
     try {
       operation();
     } catch (error) {
-      console.warn(`Committed terminal Session ${label} failed`, error);
+      console.warn(`Committed Session ${label} failed`, error);
     }
   }
 }

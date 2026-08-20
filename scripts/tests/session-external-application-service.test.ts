@@ -79,6 +79,21 @@ function executeBound(
 test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだけを公開する", async () => {
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
+    crudService: {
+      async create() { throw new Error("unused"); },
+      async list() { throw new Error("unused"); },
+      async get(sessionId) {
+        return {
+          sessionId,
+          sessionRole: "overall-coordinator",
+          roleContractRevision: 1,
+          rootSessionId: sessionId,
+          parentSessionId: null,
+          delegationDepth: 0,
+        } as never;
+      },
+      async rename() { throw new Error("unused"); },
+    },
     executionService: {
       beginShutdown() {},
       async run() { return execution; },
@@ -101,7 +116,14 @@ test("SESSION-SELF-01: application serviceはruntime bindingのactor Sessionだ�
   if (!resolved.ok) throw new Error("Expected a resolved binding.");
 
   assert.deepEqual(await executeBound(service, "session.self", {}, resolved.binding),
-    createSessionRuntimeResult("session.self", { sessionId: "session-actor" }));
+    createSessionRuntimeResult("session.self", {
+      sessionId: "session-actor",
+      sessionRole: "overall-coordinator",
+      roleContractRevision: 1,
+      rootSessionId: "session-actor",
+      parentSessionId: null,
+      delegationDepth: 0,
+    }));
   const missing = await executeBound(service, "session.self", {}, null);
   assert.equal("error" in missing && missing.error.code, "SESSION_BINDING_REQUIRED");
 });
@@ -331,6 +353,7 @@ test("SESSION-PROJECTION-PAGE-04: applied session mutationのprojection超過を
 
   const createResponse = await executeBound(service, "session.create", {
     title: "New Session",
+    sessionRole: "executor",
     provider: "codex",
     catalogRevision: 4,
     workspace: { kind: "session_folder" },
@@ -400,6 +423,7 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
 
   const createResponse = await executeBound(service, "session.create", {
     title: "New Session",
+    sessionRole: "executor",
     provider: "codex",
     catalogRevision: 4,
     workspace: { kind: "session_folder" },
@@ -527,6 +551,15 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
     operation: "runtime.catalog",
     result: {
       revision: 7,
+      sessionRoleContractRevision: 1,
+      supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
+      allowedChildSessionRoles: {
+        standalone: [],
+        "overall-coordinator": ["task-coordinator", "executor"],
+        "task-coordinator": ["executor"],
+        executor: [],
+      },
+      maxDelegationDepth: 2,
       providers: [{
         id: "codex",
         label: "Codex",

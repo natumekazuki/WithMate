@@ -149,6 +149,7 @@ async function seedV3Fixture(fixture: Fixture): Promise<void> {
   const companionStorage = new CompanionStorageV3(fixture.dbPath, fixture.blobRootPath);
   const companionAuditLogStorage = new CompanionAuditLogStorageV3(fixture.dbPath, fixture.blobRootPath);
   const session = buildNewSession({
+    id: "session-v3-to-v4",
     taskTitle: "V3 import fixture",
     workspaceLabel: "workspace",
     workspacePath: "/workspace",
@@ -164,7 +165,6 @@ async function seedV3Fixture(fixture: Fixture): Promise<void> {
   try {
     await sessionStorage.upsertSession({
       ...session,
-      id: "session-v3-to-v4",
       threadId: "thread-v3-to-v4",
       messages: [
         { role: "user", text: `${"u".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:user` },

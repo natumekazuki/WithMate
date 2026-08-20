@@ -46,11 +46,23 @@ function createFixture(options: {
       ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
     db.prepare(`
+      INSERT INTO session_role_bindings_v6 (
+        session_id, session_role, role_contract_revision,
+        root_session_id, parent_session_id, delegation_depth
+      ) VALUES ('session-a', 'standalone', 1, 'session-a', NULL, 0)
+    `).run();
+    db.prepare(`
       INSERT INTO sessions_v6 (
         id, title, state, provider_id, catalog_revision, model_id, approval_mode,
         character_id, character_snapshot_json, created_at, updated_at, last_active_at
       ) VALUES ('session-b', 'B', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+    db.prepare(`
+      INSERT INTO session_role_bindings_v6 (
+        session_id, session_role, role_contract_revision,
+        root_session_id, parent_session_id, delegation_depth
+      ) VALUES ('session-b', 'standalone', 1, 'session-b', NULL, 0)
+    `).run();
   } finally {
     db.close();
   }

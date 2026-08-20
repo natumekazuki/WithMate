@@ -7,6 +7,7 @@ import { describe, it } from "node:test";
 
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { SessionExecutionPublicProgressStorageV6, SESSION_EXECUTION_PUBLIC_PROGRESS_MAX_BYTES } from "../../src-electron/session-execution-public-progress-storage-v6.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 async function fixture() {
   const directory = await mkdtemp(path.join(tmpdir(), "withmate-public-progress-"));
@@ -17,6 +18,7 @@ async function fixture() {
       INSERT INTO sessions_v6 (id, title, state, provider_id, catalog_revision, model_id, approval_mode, created_at, updated_at, last_active_at)
       VALUES ('session-1', 'Session', 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
     `).run("2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z", "2026-08-13T00:00:00.000Z");
+    insertStandaloneRoleBindingsForSessions(db);
     db.prepare(`
       INSERT INTO session_executions_v6 (id, session_id, operation, state, request_json, created_at, updated_at)
       VALUES ('execution-1', 'session-1', 'turn.run', 'running', '{}', ?, ?)

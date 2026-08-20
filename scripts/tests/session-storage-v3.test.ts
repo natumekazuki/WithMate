@@ -39,6 +39,7 @@ async function withTempV3Database<T>(fn: (input: { dbPath: string; blobRootPath:
 
 function createSession(input: { id: string; taskTitle: string; workspaceLabel: string }): Session {
   const session = buildNewSession({
+    id: input.id,
     taskTitle: input.taskTitle,
     workspaceLabel: input.workspaceLabel,
     workspacePath: `/${input.workspaceLabel}`,
@@ -52,7 +53,6 @@ function createSession(input: { id: string; taskTitle: string; workspaceLabel: s
 
   return {
     ...session,
-    id: input.id,
     threadId: `thread-${input.id}`,
   };
 }

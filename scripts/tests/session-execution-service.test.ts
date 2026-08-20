@@ -11,6 +11,7 @@ import {
   SessionExecutionService,
   type SessionExecutionDispatchResult,
 } from "../../src-electron/session-execution-service.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 import {
   SessionExecutionBusyError,
   SessionExecutionIdempotencyConflictError,
@@ -59,6 +60,7 @@ async function createFixture(options: {
     `);
     insert.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
     insert.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
   }

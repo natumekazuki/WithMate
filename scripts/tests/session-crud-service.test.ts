@@ -7,7 +7,7 @@ import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
-import { buildNewSession } from "../../src/session-state.js";
+import { buildNewSession, projectSessionSummary } from "../../src/session-state.js";
 import { SessionCrudError, SessionCrudService } from "../../src-electron/session-crud-service.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
@@ -39,6 +39,22 @@ async function removeDirectory(targetPath: string): Promise<void> {
   await rm(targetPath, { recursive: true, force: true });
 }
 
+function createRootSession(id: string, rootSessionRole: "standalone" | "overall-coordinator" = "overall-coordinator") {
+  return buildNewSession({
+    id,
+    rootSessionRole,
+    taskTitle: id,
+    workspaceLabel: "workspace",
+    workspacePath: "C:/workspace",
+    branch: "main",
+    characterId: character.id,
+    character: character.name,
+    characterIconPath: "",
+    characterThemeColors: character.theme,
+    approvalMode: DEFAULT_APPROVAL_MODE,
+  });
+}
+
 describe("SessionCrudService", () => {
   it("create replayはCharacterを再抽選せず、public projectionとGUI同期を一度だけ確定する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-crud-"));
@@ -59,6 +75,12 @@ describe("SessionCrudService", () => {
         VALUES (?, ?, ?, ?)
       `).run(character.id, character.name, character.createdAt, character.updatedAt);
       db.close();
+      const actorSessionId = "actor-session";
+      storage.insertSession(createRootSession(actorSessionId));
+      const secondActorSessionId = "actor-session-2";
+      storage.insertSession(createRootSession(secondActorSessionId));
+      const standaloneActorSessionId = "standalone-session";
+      storage.insertSession(createRootSession(standaloneActorSessionId, "standalone"));
       const service = new SessionCrudService({
         storage,
         resolveLaunchSelection: async (providerId) => {
@@ -73,6 +95,7 @@ describe("SessionCrudService", () => {
             customAgentName: "",
           };
         },
+        isProviderSupported: () => true,
         listCharacters: () => [character],
         listSessionSummaries: () => storage.listSessionSummaries(),
         listOpenSessionWindowIds: () => [],
@@ -101,12 +124,13 @@ describe("SessionCrudService", () => {
 
       const input = {
         title: "Created externally",
+        sessionRole: "task-coordinator" as const,
         provider: "codex" as const,
         catalogRevision: 4,
         workspace: { kind: "session_folder" as const },
         idempotencyKey: "create-key-1",
       };
-      const created = await service.create(input);
+      const created = await service.create(input, actorSessionId);
       const replayDb = new DatabaseSync(dbPath);
       const replayRow = replayDb.prepare(`
         SELECT result_json
@@ -125,10 +149,23 @@ describe("SessionCrudService", () => {
       `).run(JSON.stringify(legacyReplayResult), "session.create", input.idempotencyKey);
       replayDb.close();
       catalogRevision = 5;
-      const replay = await service.create(input);
+      const replay = await service.create(input, actorSessionId);
 
       assert.deepEqual(replay, created);
       assert.equal(created.sessionId, "session-1");
+      assert.deepEqual({
+        sessionRole: created.sessionRole,
+        roleContractRevision: created.roleContractRevision,
+        rootSessionId: created.rootSessionId,
+        parentSessionId: created.parentSessionId,
+        delegationDepth: created.delegationDepth,
+      }, {
+        sessionRole: "task-coordinator",
+        roleContractRevision: 1,
+        rootSessionId: actorSessionId,
+        parentSessionId: actorSessionId,
+        delegationDepth: 1,
+      });
       assert.deepEqual(created.character, { id: character.id, name: character.name });
       assert.deepEqual(created.workspace, {
         kind: "session_folder",
@@ -145,10 +182,46 @@ describe("SessionCrudService", () => {
       assert.deepEqual(publishedSessionIds, ["session-1"]);
       assert.deepEqual(publicationErrors, ["session.create"]);
 
+      await assert.rejects(
+        () => service.create({ ...input, sessionRole: "executor" }, actorSessionId),
+        (error) => error instanceof SessionCrudError && error.code === "IDEMPOTENCY_CONFLICT",
+      );
+      catalogRevision = 4;
+      const otherActorCreate = await service.create({ ...input, sessionRole: "executor" }, secondActorSessionId);
+      assert.equal(otherActorCreate.parentSessionId, secondActorSessionId);
+      assert.equal(otherActorCreate.sessionRole, "executor");
+      assert.notEqual(otherActorCreate.sessionId, created.sessionId);
+
+      const depthTwoExecutor = await service.create({
+        ...input,
+        sessionRole: "executor",
+        idempotencyKey: "depth-two",
+      }, created.sessionId);
+      assert.deepEqual({
+        rootSessionId: depthTwoExecutor.rootSessionId,
+        parentSessionId: depthTwoExecutor.parentSessionId,
+        delegationDepth: depthTwoExecutor.delegationDepth,
+      }, {
+        rootSessionId: actorSessionId,
+        parentSessionId: created.sessionId,
+        delegationDepth: 2,
+      });
+      const countBeforeForbiddenCreate = sessionIdCount;
+      const launchCountBeforeForbiddenCreate = launchSelectionCount;
+      for (const forbiddenActorSessionId of [standaloneActorSessionId, depthTwoExecutor.sessionId]) {
+        await assert.rejects(
+          () => service.create({ ...input, sessionRole: "executor", idempotencyKey: `forbidden-${forbiddenActorSessionId}` }, forbiddenActorSessionId),
+          (error) => error instanceof SessionCrudError && error.code === "SESSION_ROLE_FORBIDDEN",
+        );
+      }
+      assert.equal(sessionIdCount, countBeforeForbiddenCreate);
+      assert.equal(launchSelectionCount, launchCountBeforeForbiddenCreate);
+
       const listed = await service.list({ limit: 50 });
-      assert.equal(listed.items.length, 1);
-      assert.equal(listed.items[0]!.workspace.path, path.join(sessionFilesRoot, "session-1"));
-      assert.equal("branch" in listed.items[0]!.workspace, false);
+      assert.equal(listed.items.length, 6);
+      const listedCreated = listed.items.find((session) => session.sessionId === created.sessionId)!;
+      assert.equal(listedCreated.workspace.path, path.join(sessionFilesRoot, "session-1"));
+      assert.equal("branch" in listedCreated.workspace, false);
       assert.equal((await service.get(created.sessionId)).workspace.branch, null);
 
       const ordinarySessionFolderName = path.join(tempDirectory, "external", "SessionFolder");
@@ -158,7 +231,7 @@ describe("SessionCrudService", () => {
         ...input,
         workspace: { kind: "directory", path: ordinarySessionFolderName },
         idempotencyKey: "create-key-2",
-      });
+      }, actorSessionId);
       assert.equal(ordinaryDirectory.workspace.kind, "directory");
       const listedOrdinaryDirectory = (await service.list({ limit: 50 })).items.find(
         (session) => session.sessionId === ordinaryDirectory.sessionId,
@@ -173,7 +246,7 @@ describe("SessionCrudService", () => {
         provider: "copilot",
         workspace: { kind: "session_folder" },
         idempotencyKey: "create-key-copilot",
-      });
+      }, actorSessionId);
       assert.equal(copilot.provider.id, "copilot");
       assert.equal(storage.getSession(copilot.sessionId)?.provider, "copilot");
     } finally {
@@ -256,17 +329,18 @@ describe("SessionCrudService", () => {
     }
   });
 
-  it("ADR-005: 永続化呼出し後の失敗では作成済みSessionFolderを削除しない", async () => {
+  it("DB commit失敗時は作成済みSessionFolderをcleanupして孤立directoryを残さない", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-crud-"));
     const sessionFolder = path.join(tempDirectory, "session-files", "session-failed");
+    const actor = createRootSession("actor-session");
     try {
       const service = new SessionCrudService({
         storage: {
-          resolveSessionCrudIdempotency: () => ({ kind: "miss" }),
+          resolveSessionCrudIdempotency: () => ({ kind: "absent" }),
           insertSessionIdempotently: () => { throw new Error("database failed"); },
           renameSessionIdempotently: () => { throw new Error("unused"); },
           listSessionSummaryPage: () => [],
-          getSessionSummary: () => null,
+          getSessionSummary: (sessionId) => sessionId === actor.id ? projectSessionSummary(actor) : null,
         },
         resolveLaunchSelection: async () => ({
           provider: "codex",
@@ -277,6 +351,7 @@ describe("SessionCrudService", () => {
           codexSandboxMode: "workspace-write",
           customAgentName: "",
         }),
+        isProviderSupported: () => true,
         listCharacters: () => [character],
         listSessionSummaries: () => [],
         listOpenSessionWindowIds: () => [],
@@ -286,6 +361,7 @@ describe("SessionCrudService", () => {
           await mkdir(sessionFolder, { recursive: true });
           return sessionFolder;
         },
+        cleanupSessionFilesDirectory: async () => removeDirectory(sessionFolder),
         resolveSessionFilesDirectory: () => sessionFolder,
         publishCreatedSession: () => undefined,
         publishRenamedSession: () => undefined,
@@ -296,16 +372,66 @@ describe("SessionCrudService", () => {
       await assert.rejects(
         () => service.create({
           title: "Failed create",
+          sessionRole: "executor",
           provider: "codex",
           catalogRevision: 4,
           workspace: { kind: "session_folder" },
           idempotencyKey: "failed-key",
-        }),
+        }, actor.id),
         (error) => error instanceof SessionCrudError && error.code === "RUNTIME_UNAVAILABLE",
       );
-      assert.equal((await stat(sessionFolder)).isDirectory(), true);
+      await assert.rejects(() => stat(sessionFolder), { code: "ENOENT" });
     } finally {
       await removeDirectory(tempDirectory);
     }
+  });
+
+  it("DB commit失敗後のSessionFolder cleanup失敗をrecoverable errorとして返す", async () => {
+    const actor = createRootSession("actor-session");
+    const service = new SessionCrudService({
+      storage: {
+        resolveSessionCrudIdempotency: () => ({ kind: "absent" }),
+        insertSessionIdempotently: () => { throw new Error("database failed"); },
+        renameSessionIdempotently: () => { throw new Error("unused"); },
+        listSessionSummaryPage: () => [],
+        getSessionSummary: (sessionId) => sessionId === actor.id ? projectSessionSummary(actor) : null,
+      },
+      resolveLaunchSelection: async () => ({
+        provider: "codex",
+        catalogRevision: 4,
+        model: "gpt-test",
+        reasoningEffort: "high",
+        approvalMode: DEFAULT_APPROVAL_MODE,
+        codexSandboxMode: "workspace-write",
+        customAgentName: "",
+      }),
+      isProviderSupported: () => true,
+      listCharacters: () => [character],
+      listSessionSummaries: () => [],
+      listOpenSessionWindowIds: () => [],
+      createCharacterRuntimeSnapshot: () => characterSnapshot,
+      createSessionId: () => "session-cleanup-failed",
+      createSessionFilesDirectory: async () => "C:/session-files/session-cleanup-failed",
+      cleanupSessionFilesDirectory: async () => { throw new Error("cleanup failed"); },
+      resolveSessionFilesDirectory: () => "C:/session-files/session-cleanup-failed",
+      publishCreatedSession: () => undefined,
+      publishRenamedSession: () => undefined,
+      now: () => new Date("2026-08-20T00:00:00.000Z"),
+      random: () => 0,
+    });
+
+    await assert.rejects(
+      () => service.create({
+        title: "Failed create",
+        sessionRole: "executor",
+        provider: "codex",
+        catalogRevision: 4,
+        workspace: { kind: "session_folder" },
+        idempotencyKey: "cleanup-failed-key",
+      }, actor.id),
+      (error) => error instanceof SessionCrudError
+        && error.code === "SESSION_FOLDER_CLEANUP_REQUIRED"
+        && error.details?.sessionId === "session-cleanup-failed",
+    );
   });
 });

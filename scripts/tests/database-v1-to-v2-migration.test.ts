@@ -19,6 +19,7 @@ import { AuditLogStorageV2 } from "../../src-electron/audit-log-storage-v2.js";
 import { PersistentStoreLifecycleService, type PersistentStoreBundle } from "../../src-electron/persistent-store-lifecycle-service.js";
 import { SessionStorageV2 } from "../../src-electron/session-storage-v2.js";
 import { hydrateSessionsFromSummaries } from "../../src-electron/session-summary-adapter.js";
+import { buildRootSessionRoleBinding } from "../../src/session-role-binding.js";
 import { createMigrationDryRunReport, createMigrationWriteReport } from "../migrate-database-v1-to-v2.js";
 
 function createV1FixtureDatabase(): { dbPath: string; dirPath: string; cleanup: () => void } {
@@ -849,6 +850,7 @@ describe("V1 to V2 database migration write mode", () => {
           recreatedSessionStorage.upsertSession({
             ...updatedSession,
             id: "session-after-recreate",
+            roleBinding: buildRootSessionRoleBinding("session-after-recreate", "standalone"),
             messages: [{ role: "user", text: "after recreate" }],
           });
           assert.deepEqual(

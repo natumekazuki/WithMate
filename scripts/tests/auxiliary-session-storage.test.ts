@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 
 import { buildNewSession } from "../../src/app-state.js";
+import { buildRootSessionRoleBinding } from "../../src/session-role-binding.js";
 import { DEFAULT_APPROVAL_MODE, type ApprovalMode } from "../../src/approval-mode.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../../src/auxiliary-session-state.js";
 import {
@@ -166,6 +167,7 @@ async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promi
 test("resolveAuxiliaryParentSession は cached summary より stored full session を優先する", async () => {
   const storedSession = {
     ...buildNewSession({
+      id: "session-main",
       taskTitle: "main task",
       workspaceLabel: "workspace",
       workspacePath: "C:/workspace",
@@ -187,7 +189,6 @@ test("resolveAuxiliaryParentSession は cached summary より stored full sessio
       },
       approvalMode: DEFAULT_APPROVAL_MODE,
     }),
-    id: "session-main",
   };
   const cachedSession = {
     ...storedSession,
@@ -263,6 +264,7 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     companionStorage = new CompanionStorage(dbPath);
     const parent = {
       ...buildNewSession({
+        id: "session-main",
         taskTitle: "main task",
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
@@ -274,7 +276,6 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
         approvalMode: DEFAULT_APPROVAL_MODE,
         allowedAdditionalDirectories: ["C:/shared"],
       }),
-      id: "session-main",
       provider: "codex",
       model: "gpt-5.4",
       reasoningEffort: "high" as const,
@@ -471,7 +472,12 @@ test("AuxiliarySessionService は親の作業 context と未指定 runtime optio
     sessionStorage.replaceSessions([{ ...parent, taskTitle: "renamed main task" }]);
     assert.equal(service.listAuxiliarySessions(parent.id).length, 1);
 
-    const orphanedParent = { ...parent, id: "session-orphaned", taskTitle: "orphaned main task" };
+    const orphanedParent = {
+      ...parent,
+      id: "session-orphaned",
+      taskTitle: "orphaned main task",
+      roleBinding: buildRootSessionRoleBinding("session-orphaned", parent.roleBinding!.sessionRole),
+    };
     sessionStorage.upsertSession(orphanedParent);
     const orphanedAuxiliary = await service.createAuxiliarySession({
       parentSessionId: orphanedParent.id,
@@ -634,6 +640,7 @@ test("AuxiliarySessionService は通常起動と同じ選択済み runtime optio
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
     const parent = {
       ...buildNewSession({
+        id: "session-main",
         taskTitle: "main task",
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
@@ -644,7 +651,6 @@ test("AuxiliarySessionService は通常起動と同じ選択済み runtime optio
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      id: "session-main",
       provider: "codex",
       model: "gpt-5.4",
       reasoningEffort: "high" as const,
@@ -693,6 +699,7 @@ test("AuxiliarySessionService は latest-session 選択を Main の resolver か
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
     const parent = {
       ...buildNewSession({
+        id: "session-main",
         taskTitle: "main task",
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
@@ -703,7 +710,6 @@ test("AuxiliarySessionService は latest-session 選択を Main の resolver か
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      id: "session-main",
       provider: "codex",
     };
     sessionStorage.upsertSession(parent);
@@ -771,6 +777,7 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
     const parent = {
       ...buildNewSession({
+        id: "session-main",
         taskTitle: "main task",
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
@@ -781,7 +788,6 @@ test("AuxiliarySessionService は latest-session の取得失敗と runtime opti
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      id: "session-main",
       provider: "codex",
     };
     sessionStorage.upsertSession(parent);
@@ -890,6 +896,10 @@ test("AuxiliarySessionService は現行 enum 外の runtime option を拒否し�
       const parent = {
         ...parentTemplate,
         id: `session-main-${index}`,
+        roleBinding: buildRootSessionRoleBinding(
+          `session-main-${index}`,
+          parentTemplate.roleBinding!.sessionRole,
+        ),
       };
       sessionStorage.upsertSession(parent);
 
@@ -921,6 +931,7 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
     const parent = {
       ...buildNewSession({
+        id: "session-main",
         taskTitle: "main task",
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
@@ -931,7 +942,6 @@ test("AuxiliarySessionService は選択値なしなら指定 Provider と同じ�
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: "never",
       }),
-      id: "session-main",
       provider: "codex",
       model: "gpt-5.4",
       reasoningEffort: "high" as const,
@@ -1028,6 +1038,7 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
     auxiliaryStorage = new AuxiliarySessionStorage(dbPath);
     const parent = {
       ...buildNewSession({
+        id: "session-main",
         taskTitle: "main task",
         workspaceLabel: "workspace",
         workspacePath: "C:/workspace",
@@ -1038,7 +1049,6 @@ test("AuxiliarySessionService は起動時に running active session を復旧�
         characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
         approvalMode: DEFAULT_APPROVAL_MODE,
       }),
-      id: "session-main",
     };
     sessionStorage.upsertSession(parent);
 

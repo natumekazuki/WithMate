@@ -14,6 +14,7 @@ import {
   SessionTranscriptIdempotencyConflictError,
   SessionTranscriptStorageV6,
 } from "../../src-electron/session-transcript-storage-v6.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 const NOW = "2026-08-13T00:00:00.000Z";
 const EXPIRES = "2026-08-14T00:00:00.000Z";
@@ -30,6 +31,7 @@ async function fixture() {
       ) VALUES ('session-1', 'Session 1', 'active', 'default', 'codex', 1, 'gpt-5',
         'on-request', ?, ?, ?)
     `).run(NOW, NOW, NOW);
+    insertStandaloneRoleBindingsForSessions(db);
     db.prepare(`
       INSERT INTO session_turns_v6 (
         session_id, phase, started_at, completed_at, updated_at
@@ -263,6 +265,7 @@ describe("SessionTranscriptStorageV6", () => {
             relative_path, temp_name, state, created_at, expires_at
           ) VALUES ('transcript.export', 'pending', 'fp', 'session-1', 'a.json', '.a.tmp', 'pending', ?, ?)
         `).run(NOW, EXPIRES);
+        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = 'session-1'").run();
         db.prepare("DELETE FROM sessions_v6 WHERE id = 'session-1'").run();
         const count = db.prepare(`
           SELECT COUNT(*) AS count FROM session_transcript_export_idempotency_v6

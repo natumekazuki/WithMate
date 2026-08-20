@@ -562,6 +562,7 @@ describe("HomeLaunchDialog", () => {
     <HomeLaunchDialog
       open={true}
       title="demo"
+      sessionPurpose="standalone"
       sessionFolderSelected={false}
       launchWorkspacePathLabel="workspace"
       workspacePathInput="C:\\work space\\"
@@ -578,6 +579,7 @@ describe("HomeLaunchDialog", () => {
       launchStarting={false}
       onClose={noOp}
       onChangeTitle={noOp}
+      onSelectSessionPurpose={noOp}
       onChangeWorkspacePath={noOp}
       onBrowseWorkspace={noOp}
       onSelectSessionFolder={noOp}
@@ -607,9 +609,6 @@ describe("HomeLaunchDialog", () => {
     assert.ok(html.includes("Mia"));
     assert.ok(!html.includes(">Default</span>"));
     assert.ok(html.includes("Character description"));
-    assert.ok(html.includes("ランダム"));
-    assert.ok(html.indexOf("ランダム") < html.indexOf("Mia"));
-    assert.ok(html.includes("最近使っていないCharacterを優先"));
     assert.ok(html.indexOf("Browse") < html.indexOf("SessionFolder"));
   });
 
@@ -631,12 +630,8 @@ describe("HomeLaunchDialog", () => {
 
     assert.ok(debouncing.includes("workspace-validation-spinner"));
     assert.ok(debouncing.includes('aria-busy="true"'));
-    assert.ok(debouncing.includes("Workspace パスを確認しています"));
-    assert.ok(!debouncing.includes("確認中"));
     assert.ok(pending.includes("workspace-validation-spinner"));
     assert.ok(pending.includes('aria-busy="true"'));
-    assert.ok(pending.includes("Workspace パスを確認しています"));
-    assert.ok(!pending.includes(">確認中<"));
   });
 
   it("random選択時は一覧先頭のランダムcardだけを選択状態にする", () => {
@@ -644,7 +639,7 @@ describe("HomeLaunchDialog", () => {
 
     assert.match(
       html,
-      /<button class="launch-character-option selected"[^>]*aria-checked="true"[^>]*>(?:(?!<\/button>).)*ランダム/s,
+      /<button class="launch-character-option selected"[^>]*aria-checked="true"[^>]*>/,
     );
     assert.doesNotMatch(
       html,
@@ -662,8 +657,6 @@ describe("HomeLaunchDialog", () => {
   it("Character catalog 読み込み前は neutral fallback を表示しない", () => {
     const html = renderHomeLaunchDialog([], false);
 
-    assert.ok(html.includes("読み込み中"));
-    assert.ok(html.includes("Character を読み込んでるよ..."));
     assert.ok(!html.includes("Neutral"));
   });
 

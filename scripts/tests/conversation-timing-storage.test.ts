@@ -11,6 +11,21 @@ import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import { buildNewSession } from "../../src/session-state.js";
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 
+async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      await rm(targetPath, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      const isBusyError = typeof error === "object" && error !== null && "code" in error && error.code === "EBUSY";
+      if (!isBusyError || index === attempts - 1) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 50 * (index + 1)));
+    }
+  }
+}
+
 function insertCharacter(db: DatabaseSync, id: string): void {
   db.prepare(`
     INSERT INTO characters (id, name, created_at, updated_at)
@@ -35,6 +50,18 @@ function insertSession(db: DatabaseSync, id: string, characterId: string | null,
     "2026-08-01T00:00:00.000Z",
     "2026-08-01T00:00:00.000Z",
   );
+  if (sessionKind === "default") {
+    db.prepare(`
+      INSERT INTO session_role_bindings_v6 (
+        session_id,
+        session_role,
+        role_contract_revision,
+        root_session_id,
+        parent_session_id,
+        delegation_depth
+      ) VALUES (?, 'standalone', 1, ?, NULL, 0)
+    `).run(id, id);
+  }
 }
 
 function insertTurn(
@@ -189,7 +216,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
         restartedAuditStorage.close();
       }
     } finally {
-      await rm(userDataPath, { recursive: true, force: true });
+      await removeDirectoryWithRetry(userDataPath);
     }
   });
 
@@ -254,7 +281,7 @@ describe("AuditLogStorageV6 conversation timing", () => {
         storage.close();
       }
     } finally {
-      await rm(userDataPath, { recursive: true, force: true });
+      await removeDirectoryWithRetry(userDataPath);
     }
   });
 });

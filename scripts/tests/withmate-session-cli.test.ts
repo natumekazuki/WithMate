@@ -520,6 +520,7 @@ describe("withmate-session CLI", () => {
 
     assert.equal(await runWithMateSessionCli([
       "session", "create", "--json", JSON.stringify({
+        sessionRole: "executor",
         title: "Copilot",
         provider: "copilot",
         catalogRevision: 5,
@@ -664,6 +665,7 @@ describe("withmate-session CLI", () => {
     const stdout = capture();
     const exitCode = await runWithMateSessionCli([
       "session", "create", "--format", "text", "--json", JSON.stringify({
+        sessionRole: "executor",
         title: "Large projection",
         provider: "codex",
         catalogRevision: 1,

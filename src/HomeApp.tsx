@@ -730,6 +730,7 @@ export default function HomeApp() {
       launchStarting,
       onClose: homeLaunchHandlers.onCloseLaunchDialog,
       onChangeTitle: homeLaunchHandlers.onChangeTitle,
+      onSelectSessionPurpose: homeLaunchHandlers.onSelectSessionPurpose,
       onChangeWorkspacePath: homeLaunchHandlers.onChangeWorkspacePath,
       onBrowseWorkspace: () => void homeLaunchHandlers.onBrowseWorkspace(),
       onSelectSessionFolder: homeLaunchHandlers.onSelectSessionFolder,

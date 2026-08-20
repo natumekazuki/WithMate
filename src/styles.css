@@ -1807,12 +1807,6 @@ button:disabled {
   }
 }
 
-.home-page .launch-provider-list .choice-chip.active {
-  border-color: rgba(143, 169, 255, 0.48);
-  background: rgba(111, 140, 255, 0.24);
-  color: #eef4ff;
-}
-
 .home-page .launch-path {
   color: #c0cadb;
 }
@@ -2093,7 +2087,7 @@ button:disabled {
 }
 
 .home-launch-dialog .launch-panel {
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
 }
@@ -2112,6 +2106,17 @@ button:disabled {
 .launch-field {
   display: grid;
   gap: 10px;
+}
+
+.launch-purpose-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.launch-purpose-field .launch-choice-list {
+  margin-top: 10px;
 }
 
 .launch-field-label {
@@ -2213,7 +2218,7 @@ button:disabled {
   padding: 10px 14px;
 }
 
-.launch-provider-list .choice-chip {
+.launch-choice-list .choice-chip {
   min-width: 160px;
   border-color: rgba(203, 213, 225, 0.14);
   background: rgba(255, 255, 255, 0.05);
@@ -2228,12 +2233,12 @@ button:disabled {
     box-shadow 140ms ease;
 }
 
-.launch-provider-list .choice-chip:hover:not(.active) {
+.launch-choice-list .choice-chip:hover:not(.active) {
   border-color: rgba(111, 140, 255, 0.28);
   background: rgba(111, 140, 255, 0.12);
 }
 
-.launch-provider-list .choice-chip.active {
+.launch-choice-list .choice-chip.active {
   border-color: rgba(143, 169, 255, 0.5);
   background: rgba(111, 140, 255, 0.24);
   color: #eef4ff;

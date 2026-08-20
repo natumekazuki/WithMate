@@ -63,6 +63,7 @@ type MainSessionCommandFacadeDeps = {
   isSessionFilesWorkspace(session: Pick<Session, "id" | "workspacePath">): boolean;
   dismissSessionTurnNotification(sessionId: string): void;
   cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
+  cleanupCreatedSessionFilesDirectory?(sessionId: string): Promise<void>;
   resumeSessionExecutionQueue?(sessionId: string): Promise<void> | void;
   validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   getCurrentModelCatalogRevision?(): number;
@@ -73,6 +74,15 @@ type MainSessionCommandFacadeDeps = {
 };
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
+
+export class MainSessionFolderCleanupRequiredError extends Error {
+  readonly code = "SESSION_FOLDER_CLEANUP_REQUIRED";
+
+  constructor(readonly sessionId: string) {
+    super("The uncommitted SessionFolder could not be cleaned up.");
+    this.name = "MainSessionFolderCleanupRequiredError";
+  }
+}
 
 export class MainSessionCommandFacade {
   constructor(private readonly deps: MainSessionCommandFacadeDeps) {}
@@ -119,13 +129,27 @@ export class MainSessionCommandFacade {
       throw new Error("SessionFolder を作成できなかったよ。");
     }
 
-    return this.persistCreatedSession({
-      ...sessionInput,
-      id: sessionId,
-      workspaceLabel: "SessionFolder",
-      workspacePath,
-      branch: "",
-    });
+    try {
+      return await this.persistCreatedSession({
+        ...sessionInput,
+        id: sessionId,
+        workspaceLabel: "SessionFolder",
+        workspacePath,
+        branch: "",
+      });
+    } catch (error) {
+      const cleanupCreatedSessionFilesDirectory = this.deps.cleanupCreatedSessionFilesDirectory
+        ?? this.deps.cleanupSessionFilesDirectory;
+      try {
+        if (!cleanupCreatedSessionFilesDirectory) {
+          throw new Error("SessionFolder cleanup dependency is unavailable.");
+        }
+        await cleanupCreatedSessionFilesDirectory(sessionId);
+      } catch {
+        throw new MainSessionFolderCleanupRequiredError(sessionId);
+      }
+      throw error;
+    }
   }
 
   private async persistCreatedSession(input: CreateSessionInput & { id: string }): Promise<Session> {

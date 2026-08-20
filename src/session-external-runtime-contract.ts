@@ -8,6 +8,13 @@ import {
 } from "./session-interaction.js";
 import type { ComposerAttachmentKind } from "./runtime-state.js";
 import {
+  SESSION_ROLE_CONTRACT_REVISION,
+  SESSION_ROLE_MAX_DELEGATION_DEPTH,
+  type ChildSessionRole,
+  type SessionRole,
+  type SessionRoleBinding,
+} from "./session-role-binding.js";
+import {
   SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
   SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
   SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES,
@@ -59,6 +66,10 @@ export type SessionRuntimeProviderId = (typeof SESSION_RUNTIME_PROVIDER_IDS)[num
 
 export type SessionRuntimeCatalogResult = {
   revision: number;
+  sessionRoleContractRevision: typeof SESSION_ROLE_CONTRACT_REVISION;
+  supportedSessionRoles: SessionRole[];
+  allowedChildSessionRoles: Record<SessionRole, ChildSessionRole[]>;
+  maxDelegationDepth: typeof SESSION_ROLE_MAX_DELEGATION_DEPTH;
   providers: Array<{
     id: string;
     label: string;
@@ -72,7 +83,9 @@ export type SessionRuntimeCatalogResult = {
   }>;
 };
 
-export type SessionRuntimeSelfResult = {
+export type SessionRuntimePublicRoleBinding = SessionRoleBinding;
+
+export type SessionRuntimeSelfResult = SessionRuntimePublicRoleBinding & {
   sessionId: string;
 };
 
@@ -81,6 +94,7 @@ export type SessionRuntimeCreateWorkspace =
   | { kind: "session_folder" };
 
 export type SessionRuntimeCreateInput = {
+  sessionRole: ChildSessionRole;
   title: string;
   provider: SessionRuntimeProviderId;
   catalogRevision: number;
@@ -102,7 +116,7 @@ export type SessionRuntimePublicWorkspace = {
   path: string;
 };
 export type SessionRuntimePublicSessionFolder = { path: string; isWorkspace: boolean };
-export type SessionRuntimeSessionSummary = {
+export type SessionRuntimeSessionSummary = SessionRuntimePublicRoleBinding & {
   sessionId: string;
   title: string;
   sessionKind: "default";
@@ -483,8 +497,9 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
 
 function parseSessionCreateInput(value: unknown): SessionRuntimeCreateInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
+  assertKeys(record, ["sessionRole", "title", "provider", "catalogRevision", "workspace", "idempotencyKey"], "input");
   return {
+    sessionRole: requireEnum(record.sessionRole, ["task-coordinator", "executor"] as const, "sessionRole"),
     title: requireNonEmptyString(record.title, "title"),
     provider: requireEnum(record.provider, SESSION_RUNTIME_PROVIDER_IDS, "provider"),
     catalogRevision: requireInteger(record.catalogRevision, "catalogRevision", 1, Number.MAX_SAFE_INTEGER),
