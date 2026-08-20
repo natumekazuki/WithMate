@@ -8028,6 +8028,10 @@ button:disabled {
   gap: 14px;
 }
 
+.artifact-grid-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .artifact-section {
   display: grid;
   gap: 12px;
@@ -8169,11 +8173,6 @@ button:disabled {
   background: rgba(255, 255, 255, 0.78);
 }
 
-.artifact-operation-list {
-  display: grid;
-  gap: 10px;
-}
-
 .artifact-operation-item {
   display: block;
   border-radius: 16px;
@@ -8205,6 +8204,17 @@ button:disabled {
   padding: 12px 14px;
 }
 
+.artifact-operations-summary {
+  padding: 12px 14px;
+}
+
+.artifact-toggle:focus-visible,
+.artifact-fold-summary:focus-visible,
+.artifact-operation-summary:focus-visible {
+  outline: 2px solid rgba(96, 165, 250, 0.88);
+  outline-offset: 2px;
+}
+
 .artifact-operation-summary-text {
   min-width: 0;
   overflow: hidden;
@@ -8219,6 +8229,17 @@ button:disabled {
   display: grid;
   gap: 10px;
   padding: 0 14px 12px;
+}
+
+.artifact-operations-body {
+  max-height: min(28vh, 240px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.artifact-detail-loading {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .artifact-operation-item p,

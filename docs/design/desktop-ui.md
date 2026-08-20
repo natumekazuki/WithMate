@@ -249,7 +249,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Auxiliary 起動 dialog と Audit Log overlay も backdrop click と `Escape` で dismiss できるため、重複する常設 Close control を置かない
   - 破棄確認は単一の dialog surface に確認対象と操作を直接配置し、見出しと重複する補足文や装飾目的の card を置かない。破壊的操作は neutral なキャンセルと色・文言の両方で区別する
   - 同じ root-scoped resource は既存 Window を前面化し、異なる resource は複数 Window を開ける。navigation、認可、lifecycle の決定は ADR 020 を正本とする
-- live Git Diff と chat artifact Diff は別機能とする。既存 chat artifact の `Open Diff` は snapshot を inline modal / Diff Window に開く従来経路を維持し、File Explorer の Changes や中央 live Git Diff へ接続しない
+- live Git Diff と chat artifact Diff は別機能とする。artifact の永続化・Diff modelは維持するが、Details UIには `Changed Files` と `Open Diff` を表示しない。File Explorer の Changes や中央 live Git Diff へ接続する判断は別consumerの契約で扱う
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
@@ -297,10 +297,11 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 実行中は `Send` の代わりに `Cancel` を表示
 - assistant message ごとの `Turn Summary`
   - 展開導線は chat row の独立 1 行 button ではなく、assistant bubble 右上の小さい icon button とする
-  - `Changed Files` は 1 ブロックでまとめて default closed とし、file list は開いた時だけ見せる
+  - `Changed Files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
-  - turn 内の `agent_message / command_execution / file_change / reasoning` を arrival 順に並べる operation timeline は item ごとに default closed とし、summary 1 行だけを先に見せる
+  - turn 内の operation timeline は arrival 順を保ち、全 operation を1つの `Operations` groupにまとめる。groupはdefault closedとし、summaryでは件数を示し、展開時は元のoperation単位・元順序で表示する
+  - `Operations` groupの展開内容は高さを制約し、長い内容はgroup内部でscrollできるようにする。Details本体、Operations group、各operationはkeyboardで開閉でき、native detailsのaccessible name / focus / expanded stateを維持する
 - composer 上の添付 toolbar
   - `Attach` button から単一の attachment popover を開く
   - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる

@@ -23,7 +23,6 @@ import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
-  fileKindLabel,
   liveRunStepDetailsLabel,
   liveRunStepStatusLabel,
   operationTypeLabel,
@@ -504,7 +503,7 @@ export function shouldAdjustSessionMessageScrollPosition(input: {
   return input.itemStart < input.scrollOffset;
 }
 
-type MessageArtifactFoldSection = "files" | "operation";
+type MessageArtifactFoldSection = "operation" | "operations";
 
 function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
@@ -2526,11 +2525,9 @@ export function SessionMessageColumn({
   onMessageListScroll,
   onToggleArtifact,
   onLoadArtifactDetail,
-  onOpenDiff,
   onResolveLiveApproval,
   onResolveLiveElicitation,
   onOpenPath,
-  getChangedFilesEmptyText,
   onCopyMessageText,
   onQuoteMessageText,
   isContentActive = true,
@@ -3043,8 +3040,6 @@ export function SessionMessageColumn({
             const isAssistant = message.role === "assistant";
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
-            const artifactHasSnapshotRisk =
-              artifact?.runChecks.some((check) => check.label.startsWith("snapshot ")) ?? false;
             const artifactOperations =
               artifact?.operationTimeline ??
               artifact?.activitySummary.map((item) => ({
@@ -3053,6 +3048,7 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
+            const artifactOperationsOpen = isArtifactFoldOpen(artifactKey, "operations");
             const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
 
             return (
@@ -3138,70 +3134,12 @@ export function SessionMessageColumn({
                     <section className="artifact-shell">
                       {artifactExpanded ? (
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
-                          <div className="artifact-grid">
-                            <section className="artifact-section">
-                              {artifactLoading ? (
-                                  <div className="artifact-file-item empty-state-card">
-                                    <p>Details を読み込んでいます...</p>
-                                  </div>
-                                ) : artifact.changedFiles.length > 0 ? (
-                                  <details
-                                    className="artifact-fold artifact-files-fold"
-                                    open={isArtifactFoldOpen(artifactKey, "files")}
-                                    onToggle={(event) => {
-                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
-                                    }}
-                                  >
-                                    <summary className="artifact-fold-summary">
-                                      <span className="artifact-fold-summary-copy">
-                                        <strong>Changed Files</strong>
-                                        <span>{artifact.changedFiles.length} files</span>
-                                      </span>
-                                    </summary>
-                                    <div className="artifact-fold-body artifact-file-list">
-                                      {artifact.changedFiles.map((file) => (
-                                        <article key={`${file.kind}-${file.path}`} className="artifact-file-item">
-                                          <div className="artifact-file-meta">
-                                            <span className={`file-kind ${file.kind}`}>{fileKindLabel(file.kind)}</span>
-                                            <code>{file.path}</code>
-                                          </div>
-                                          <p>{file.summary}</p>
-                                          {file.diffRows.length > 0 ? (
-                                            <button
-                                              className="diff-button"
-                                              type="button"
-                                              onClick={() => onOpenDiff(artifact.title, file)}
-                                            >
-                                              Open Diff
-                                            </button>
-                                          ) : null}
-                                        </article>
-                                      ))}
-                                    </div>
-                                  </details>
-                                ) : (
-                                  <details
-                                    className="artifact-fold artifact-files-fold"
-                                    open={isArtifactFoldOpen(artifactKey, "files")}
-                                    onToggle={(event) => {
-                                      handleArtifactFoldToggle(artifactKey, "files", event.currentTarget.open);
-                                    }}
-                                  >
-                                    <summary className="artifact-fold-summary">
-                                      <span className="artifact-fold-summary-copy">
-                                        <strong>Changed Files</strong>
-                                        <span>0 files</span>
-                                      </span>
-                                    </summary>
-                                    <div className="artifact-fold-body artifact-file-list">
-                                      <article className="artifact-file-item empty-state-card">
-                                        <p>{getChangedFilesEmptyText(artifactKey, artifactHasSnapshotRisk)}</p>
-                                      </article>
-                                    </div>
-                                  </details>
-                                )}
-                            </section>
-
+                          {artifactLoading ? (
+                            <div className="artifact-detail-loading" role="status">
+                              Details を読み込んでいます...
+                            </div>
+                          ) : null}
+                          <div className="artifact-grid artifact-grid-single">
                             <section className="artifact-section compact">
                               <div className="artifact-section-header">
                                 <strong>Run Checks</strong>
@@ -3219,42 +3157,64 @@ export function SessionMessageColumn({
 
                           {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">
-                              <div className="artifact-section-header">
-                                <strong>Operations</strong>
-                              </div>
-                              <ul className="artifact-operation-list">
-                                {artifactOperations.map((operation, operationIndex) => {
-                                  const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
-                                  return (
-                                    <li key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
-                                      <details
-                                        className="artifact-operation-fold"
-                                        open={isArtifactFoldOpen(artifactKey, "operation", operationIndex)}
-                                        onToggle={(event) => {
-                                          handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
-                                        }}
-                                      >
-                                        <summary className="artifact-operation-summary" title={operationSummary}>
-                                          <div className="artifact-operation-head">
-                                            <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
-                                            <span className="artifact-operation-summary-text">{operationSummary}</span>
-                                          </div>
-                                        </summary>
-                                        <div className="artifact-operation-body">
-                                          {operation.type === "agent_message" ? (
-                                            <div className="artifact-operation-message">
-                                              <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
+                              <details
+                                className="artifact-fold artifact-operations-fold"
+                                open={artifactOperationsOpen}
+                                onToggle={(event) => {
+                                  handleArtifactFoldToggle(artifactKey, "operations", event.currentTarget.open);
+                                }}
+                              >
+                                <summary
+                                  className="artifact-fold-summary artifact-operations-summary"
+                                  aria-controls={`artifact-operations-panel-${artifactKey}`}
+                                  aria-expanded={artifactOperationsOpen}
+                                >
+                                  <span className="artifact-fold-summary-copy">
+                                    <strong>Operations</strong>
+                                    <span>{artifactOperations.length} {artifactOperations.length === 1 ? "operation" : "operations"}</span>
+                                  </span>
+                                </summary>
+                                <div id={`artifact-operations-panel-${artifactKey}`} className="artifact-fold-body artifact-operations-body">
+                                  {artifactOperations.map((operation, operationIndex) => {
+                                    const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
+                                    const operationOpen = isArtifactFoldOpen(artifactKey, "operation", operationIndex);
+                                    const operationPanelId = `artifact-operation-panel-${artifactKey}-${operationIndex}`;
+                                    return (
+                                      <article key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
+                                        <details
+                                          className="artifact-operation-fold"
+                                          open={operationOpen}
+                                          onToggle={(event) => {
+                                            handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
+                                          }}
+                                        >
+                                          <summary
+                                            className="artifact-operation-summary"
+                                            title={operationSummary}
+                                            aria-controls={operationPanelId}
+                                            aria-expanded={operationOpen}
+                                          >
+                                            <div className="artifact-operation-head">
+                                              <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
+                                              <span className="artifact-operation-summary-text">{operationSummary}</span>
                                             </div>
-                                          ) : (
-                                            <p>{operation.summary}</p>
-                                          )}
-                                          {operation.details ? <pre>{operation.details}</pre> : null}
-                                        </div>
-                                      </details>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
+                                          </summary>
+                                          <div id={operationPanelId} className="artifact-operation-body">
+                                            {operation.type === "agent_message" ? (
+                                              <div className="artifact-operation-message">
+                                                <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
+                                              </div>
+                                            ) : (
+                                              <p>{operation.summary}</p>
+                                            )}
+                                            {operation.details ? <pre>{operation.details}</pre> : null}
+                                          </div>
+                                        </details>
+                                      </article>
+                                    );
+                                  })}
+                                </div>
+                              </details>
                             </section>
                           ) : null}
                         </div>
