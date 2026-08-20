@@ -101,3 +101,10 @@
 - pre-commitのtargeted check / typecheck / build / benchmarkを完了後、対象pathだけをstageしてtask branchへ通常commitする。
 - commit後はcommit OIDに固定したclean detached worktreeをSessionFolder配下へ作り、`HOME_SESSION_SUMMARY_PAGE_V1` のcomplete-diff holistic reviewを1回実施する。findingがあれば同じInvariant familyだけを修正し、current commit上のdirect checkで閉じる。
 - review targetのcleanlinessまたはreviewer availabilityを満たせない場合は、full-review gateをvalidation gapとして完了報告へ残す。
+
+## Post-commit review status (2026-08-20)
+
+- 実装commitは `328753559838753b2fc7c6fc0bc7dee4771de75a`（`perf(home): Home Session一覧をbounded queryへ移行`）。commit後の同OIDで targeted 129 tests、`npm run typecheck`、`npm run build`、1,000 Session benchmarkを再実行し、いずれも成功した。
+- commit-bound review targetは `HEAD`、base ancestry、tracked / untracked cleanlinessを確認できる状態まで準備した。Windowsの既存archive長過ぎpathは変更差分外のため、レビューtargetではskip-worktreeとして除外し、変更48ファイルと関連設計文書はmaterializeした。
+- Full-review gateは reviewer availability のため実質レビュー未完了となった。blocking findingの有無は未判定であり、complete-diff holistic review未実施をvalidation gapとして残す。レビュー未実施を理由にsourceの追加変更やfinding修正は行っていない。
+- 残る主なリスクは、bounded responseを返しても `%query%` のSQL部分一致検索自体はSession件数に比例し得ること、およびholistic review未実施であること。前者は今回のsynthetic benchmarkでfirst page / search latencyを計測済みだが、FTS導入の要否は別変更として扱う。
