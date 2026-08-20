@@ -12,6 +12,9 @@ import {
   type AuditLogSummary,
   type AuditLogSummaryPageRequest,
   type AuditLogSummaryPageResult,
+  type SessionCharacterUsage,
+  type SessionSummaryPageRequest,
+  type SessionSummaryPageResult,
   type SessionSummary,
   cloneSessionSummaries,
   cloneSessions,
@@ -22,6 +25,8 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainQueryServiceDeps = {
   getSessionSummaries(): Awaitable<SessionSummary[]>;
+  getSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  getSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
@@ -63,6 +68,19 @@ export class MainQueryService {
 
   async listSessionSummaries(): Promise<SessionSummary[]> {
     return cloneSessionSummaries(await this.deps.getSessionSummaries());
+  }
+
+  async listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<SessionSummaryPageResult> {
+    const page = await this.deps.getSessionSummaryPage(request);
+    return {
+      entries: cloneSessionSummaries(page.entries),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+    };
+  }
+
+  async listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
+    return (await this.deps.getSessionCharacterUsage()).map((usage) => ({ ...usage }));
   }
 
   async listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]> {

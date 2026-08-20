@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { SessionSummary } from "../../src/app-state.js";
+import type { SessionSummaryInvalidation } from "../../src/app-state.js";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { AppSettings } from "../../src/provider-settings-state.js";
 import { MainBroadcastFacade } from "../../src-electron/main-broadcast-facade.js";
@@ -11,11 +11,8 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
   const facade = new MainBroadcastFacade({
     getWindowBroadcastService: () =>
       ({
-        broadcastSessionSummaries(payload: SessionSummary[]) {
-          calls.push(`summaries:${payload.length}`);
-        },
-        broadcastSessionInvalidation(payload: string[]) {
-          calls.push(`invalidated:${payload.join(",")}`);
+        broadcastSessionInvalidation(payload: SessionSummaryInvalidation) {
+          calls.push(`invalidated:${payload.scope}:${payload.scope === "ids" ? payload.sessionIds.join(",") : "all"}`);
         },
         broadcastModelCatalog(payload: ModelCatalogSnapshot) {
           calls.push(`catalog:${payload.revision}`);
@@ -33,7 +30,6 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
           calls.push(`reviews:${payload.length}`);
         },
       }) as never,
-    listSessionSummaries: () => [{ id: "s-1" }] as never,
     getModelCatalog: () => ({ revision: 3, providers: [] }),
     getAppSettings: () =>
       ({
@@ -54,5 +50,24 @@ test("MainBroadcastFacade は payload を組み立てて WindowBroadcastService 
   facade.broadcastOpenSessionWindowIds();
   facade.broadcastOpenCompanionReviewWindowIds();
 
-  assert.deepEqual(calls, ["summaries:1", "invalidated:s-1", "catalog:3", "settings", "templates:1", "windows:2", "reviews:1"]);
+  assert.deepEqual(calls, ["invalidated:ids:s-1", "catalog:3", "settings", "templates:1", "windows:2", "reviews:1"]);
+});
+
+test("MainBroadcastFacade は invalidation ID の上限超過を all に収束させる", () => {
+  const payloads: SessionSummaryInvalidation[] = [];
+  const facade = new MainBroadcastFacade({
+    getWindowBroadcastService: () => ({
+      broadcastSessionInvalidation: (payload: SessionSummaryInvalidation) => payloads.push(payload),
+    }) as never,
+    getModelCatalog: () => null,
+    getAppSettings: () => ({}) as never,
+    listPromptTemplates: () => [],
+    listOpenSessionWindowIds: () => [],
+    listOpenCompanionReviewWindowIds: () => [],
+  });
+
+  facade.broadcastSessions(Array.from({ length: 257 }, (_, index) => `session-${index}`));
+  facade.broadcastSessions([]);
+
+  assert.deepEqual(payloads, [{ scope: "all" }, { scope: "all" }]);
 });

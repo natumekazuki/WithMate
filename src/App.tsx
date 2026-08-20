@@ -689,8 +689,8 @@ export default function AgentSessionWindowApp() {
 
     hydrateSelectedSession();
 
-    const unsubscribe = withmateApi.subscribeSessionInvalidation((sessionIds) => {
-      if (!active || !sessionIds.includes(selectedId)) {
+    const unsubscribe = withmateApi.subscribeSessionInvalidation((payload) => {
+      if (!active || (payload.scope === "ids" && !payload.sessionIds.includes(selectedId))) {
         return;
       }
 

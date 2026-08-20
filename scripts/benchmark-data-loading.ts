@@ -39,6 +39,9 @@ export type DataLoadingBenchmarkResult = {
   timingsMs: {
     generateDatabase: number;
     listSessionSummaries: number;
+    listSessionSummaryPage: number;
+    searchSessionSummaryPage: number;
+    listSessionCharacterUsage: number;
     hydrateFirstSession: number;
     hydrateMiddleSession: number;
     auditSummaryFirstPage: number;
@@ -46,6 +49,9 @@ export type DataLoadingBenchmarkResult = {
   };
   sample: {
     sessionSummaryCount: number;
+    sessionSummaryPageCount: number;
+    searchSessionSummaryPageCount: number;
+    sessionCharacterUsageCount: number;
     firstSessionMessageCount: number;
     middleSessionMessageCount: number;
     firstAuditPageCount: number;
@@ -296,6 +302,13 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
 
   try {
     const summaries = timed(() => sessionStorage.listSessionSummaries());
+    const summaryPage = timed(() => sessionStorage.listSessionSummaryPage({ scope: "recent", limit: 50 }));
+    const searchSummaryPage = timed(() => sessionStorage.listSessionSummaryPage({
+      scope: "recent",
+      limit: 50,
+      searchText: "benchmark",
+    }));
+    const characterUsage = timed(() => sessionStorage.listSessionCharacterUsage());
     const firstSessionId = summaries.value[0]?.id ?? "benchmark-session-0";
     const middleSessionId = summaries.value[Math.floor(summaries.value.length / 2)]?.id ?? firstSessionId;
     const firstSession = timed(() => sessionStorage.getSession(firstSessionId));
@@ -319,6 +332,9 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
       timingsMs: {
         generateDatabase: roundDuration(generation.durationMs),
         listSessionSummaries: roundDuration(summaries.durationMs),
+        listSessionSummaryPage: roundDuration(summaryPage.durationMs),
+        searchSessionSummaryPage: roundDuration(searchSummaryPage.durationMs),
+        listSessionCharacterUsage: roundDuration(characterUsage.durationMs),
         hydrateFirstSession: roundDuration(firstSession.durationMs),
         hydrateMiddleSession: roundDuration(middleSession.durationMs),
         auditSummaryFirstPage: roundDuration(auditPage.durationMs),
@@ -326,6 +342,9 @@ export async function runDataLoadingBenchmark(options: DataLoadingBenchmarkOptio
       },
       sample: {
         sessionSummaryCount: summaries.value.length,
+        sessionSummaryPageCount: summaryPage.value.entries.length,
+        searchSessionSummaryPageCount: searchSummaryPage.value.entries.length,
+        sessionCharacterUsageCount: characterUsage.value.length,
         firstSessionMessageCount: firstSession.value?.messages.length ?? 0,
         middleSessionMessageCount: middleSession.value?.messages.length ?? 0,
         firstAuditPageCount: auditPage.value.entries.length,

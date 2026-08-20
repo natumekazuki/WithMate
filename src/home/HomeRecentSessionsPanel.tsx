@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { isReadOnlySession, type SessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
@@ -16,6 +16,9 @@ export type HomeRecentSessionsPanelProps = {
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
   canUsePrimaryFeatures?: boolean;
 };
@@ -45,9 +48,33 @@ export function HomeRecentSessionsPanel({
   onOpenSession,
   onSetSessionPinned,
   onOpenCompanionReview,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
   pendingSessionPinIds = [],
   canUsePrimaryFeatures = true,
 }: HomeRecentSessionsPanelProps) {
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const scrollRoot = sentinel?.parentElement;
+    if (!sentinel || !scrollRoot || !hasMore || !onLoadMore || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        onLoadMore();
+      }
+    }, {
+      root: scrollRoot,
+      rootMargin: "0px 0px 96px",
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore]);
+
   const openLaunchDialog = () => {
     if (!canUsePrimaryFeatures) {
       return;
@@ -217,6 +244,13 @@ export function HomeRecentSessionsPanel({
             </div>
           );
         })}
+        {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
+        {loadingMore ? (
+          <div className="home-session-list-load-status" role="status" aria-live="polite">
+            <span className="home-session-list-load-spinner" aria-hidden="true" />
+            <span className="sr-only">Sessionを読み込み中...</span>
+          </div>
+        ) : null}
       </div>
     </section>
   );
