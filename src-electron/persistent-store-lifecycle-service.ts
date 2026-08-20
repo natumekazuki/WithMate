@@ -2,7 +2,13 @@ import { basename, dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { Session, SessionSummary } from "../src/session-state.js";
+import type {
+  Session,
+  SessionCharacterUsage,
+  SessionSummary,
+  SessionSummaryPageRequest,
+  SessionSummaryPageResult,
+} from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
   CharacterCatalogEntry,
@@ -61,7 +67,10 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "getSession"
   | "getSessionMessageArtifact"
   | "listSessionIdsLastActiveBefore"
-> & Pick<SessionStorage, "close">;
+> & Pick<SessionStorage, "close"> & {
+  listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
+};
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"

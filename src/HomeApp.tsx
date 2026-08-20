@@ -5,9 +5,9 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
-import { type SessionSummary } from "./session-state.js";
+import { type SessionCharacterUsage, type SessionSummary } from "./session-state.js";
 import {
-  startSessionSummariesSubscription,
+  startSessionSummaryInvalidationSubscription,
   type SessionSummariesLoadStatus,
 } from "./session-summary-subscription.js";
 import {
@@ -52,6 +52,11 @@ import { HomeAppRouter } from "./home/HomeAppRouter.js";
 import { buildHomeDashboardSlots } from "./home/HomeDashboardSlots.js";
 import { buildHomeRecentSessionsPanelProps } from "./home/home-recent-sessions-panel-props.js";
 import { mergePinnedSessionSummary } from "./home/session-pinning.js";
+import {
+  fetchHomeSessionSummaryPage,
+  fetchHomeSessionSummarySnapshot,
+  mergeSessionSummaryEntries,
+} from "./home/home-session-summary-query.js";
 import { buildHomeRightPaneProps } from "./home/home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
@@ -89,6 +94,14 @@ type HomeRightPaneView = "monitor" | "characters";
 type HomeSessionSummariesState = {
   status: SessionSummariesLoadStatus;
   summaries: SessionSummary[];
+  recentCursor: string | null;
+  hasMoreRecent: boolean;
+  pinnedCursor: string | null;
+  hasMorePinned: boolean;
+  loadingRecentPage: boolean;
+  loadingPinnedPage: boolean;
+  characterUsageStatus: SessionSummariesLoadStatus;
+  characterUsage: SessionCharacterUsage[];
 };
 
 export default function HomeApp() {
@@ -100,6 +113,14 @@ export default function HomeApp() {
   const [sessionSummariesState, setSessionSummariesState] = useState<HomeSessionSummariesState>({
     status: "loading",
     summaries: [],
+    recentCursor: null,
+    hasMoreRecent: false,
+    pinnedCursor: null,
+    hasMorePinned: false,
+    loadingRecentPage: false,
+    loadingPinnedPage: false,
+    characterUsageStatus: "loading",
+    characterUsage: [],
   });
   const sessions = sessionSummariesState.summaries;
   const [companionSessions, setCompanionSessions] = useState<CompanionSessionSummary[]>([]);
@@ -138,6 +159,8 @@ export default function HomeApp() {
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
+  const sessionQueryGenerationRef = useRef(0);
+  const refreshSessionSummariesRef = useRef<() => Promise<void>>(() => Promise.resolve());
   if (workspaceValidationControllerRef.current === null) {
     workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
       validate: async (targetPath) => (
@@ -186,8 +209,98 @@ export default function HomeApp() {
     }));
   };
 
-  const applyLoadedSessionSummaries = (summaries: SessionSummary[]) => {
-    setSessionSummariesState({ status: "loaded", summaries });
+  const refreshBoundedSessionSummaries = async (): Promise<void> => {
+    const api = getWithMateApi();
+    if (!api) {
+      return;
+    }
+
+    const generation = ++sessionQueryGenerationRef.current;
+    const searchText = sessionSearchText;
+    const currentOpenSessionIds = openSessionWindowIds;
+    setSessionSummariesState((current) => ({
+      ...current,
+      status: "loading",
+      summaries: [],
+      recentCursor: null,
+      hasMoreRecent: false,
+      pinnedCursor: null,
+      hasMorePinned: false,
+      loadingRecentPage: false,
+      loadingPinnedPage: false,
+      characterUsageStatus: "loading",
+      characterUsage: [],
+    }));
+
+    try {
+      const snapshot = await fetchHomeSessionSummarySnapshot(api, searchText, currentOpenSessionIds);
+      if (generation !== sessionQueryGenerationRef.current) {
+        return;
+      }
+      setSessionSummariesState({
+        status: "loaded",
+        summaries: mergeSessionSummaryEntries(snapshot.pinned.entries, snapshot.recent.entries, snapshot.open),
+        recentCursor: snapshot.recent.nextCursor,
+        hasMoreRecent: snapshot.recent.hasMore,
+        pinnedCursor: snapshot.pinned.nextCursor,
+        hasMorePinned: snapshot.pinned.hasMore,
+        loadingRecentPage: false,
+        loadingPinnedPage: false,
+        characterUsageStatus: "loaded",
+        characterUsage: snapshot.characterUsage,
+      });
+    } catch (error) {
+      if (generation !== sessionQueryGenerationRef.current) {
+        return;
+      }
+      setSessionSummariesState((current) => ({
+        ...current,
+        status: "error",
+        characterUsageStatus: "error",
+      }));
+      setLaunchFeedback(error instanceof Error ? error.message : "Home のSession一覧読み込みに失敗したよ。");
+    }
+  };
+  refreshSessionSummariesRef.current = refreshBoundedSessionSummaries;
+
+  const loadMoreSessionSummaryPage = async (scope: "recent" | "pinned"): Promise<void> => {
+    const api = getWithMateApi();
+    const cursor = scope === "recent" ? sessionSummariesState.recentCursor : sessionSummariesState.pinnedCursor;
+    const hasMore = scope === "recent" ? sessionSummariesState.hasMoreRecent : sessionSummariesState.hasMorePinned;
+    const loading = scope === "recent"
+      ? sessionSummariesState.loadingRecentPage
+      : sessionSummariesState.loadingPinnedPage;
+    if (!api || !cursor || !hasMore || loading) {
+      return;
+    }
+
+    const generation = sessionQueryGenerationRef.current;
+    setSessionSummariesState((current) => ({
+      ...current,
+      ...(scope === "recent" ? { loadingRecentPage: true } : { loadingPinnedPage: true }),
+    }));
+    try {
+      const page = await fetchHomeSessionSummaryPage(api, scope, cursor, sessionSearchText);
+      if (generation !== sessionQueryGenerationRef.current) {
+        return;
+      }
+      setSessionSummariesState((current) => ({
+        ...current,
+        summaries: mergeSessionSummaryEntries(current.summaries, page.entries),
+        ...(scope === "recent"
+          ? { recentCursor: page.nextCursor, hasMoreRecent: page.hasMore, loadingRecentPage: false }
+          : { pinnedCursor: page.nextCursor, hasMorePinned: page.hasMore, loadingPinnedPage: false }),
+      }));
+    } catch (error) {
+      if (generation !== sessionQueryGenerationRef.current) {
+        return;
+      }
+      setSessionSummariesState((current) => ({
+        ...current,
+        ...(scope === "recent" ? { loadingRecentPage: false } : { loadingPinnedPage: false }),
+      }));
+      setLaunchFeedback(error instanceof Error ? error.message : "Session一覧の追加読み込みに失敗したよ。");
+    }
   };
 
   const setSessionPinned = async (sessionId: string, isPinned: boolean) => {
@@ -203,6 +316,7 @@ export default function HomeApp() {
         ...current,
         summaries: mergePinnedSessionSummary(current.summaries, saved),
       }));
+      void refreshSessionSummariesRef.current();
     } catch (error) {
       window.alert(error instanceof Error ? error.message : "ピン止めの変更に失敗したよ。");
     } finally {
@@ -240,32 +354,12 @@ export default function HomeApp() {
       setLaunchFeedback(error instanceof Error ? error.message : "Home の読み込みに失敗したよ。");
     };
 
-    const handleInitialSessionSummaryLoadError = (error: unknown) => {
-      setSessionSummariesState((current) => ({ ...current, status: "error" }));
-      handleInitialSummaryLoadError(error);
-    };
-
-    let unsubscribeSessions: (() => void) | null = null;
     let unsubscribeCompanionSessions: (() => void) | null = null;
-
-    const startOperationalHomeSummarySubscriptions = () => {
-      if (unsubscribeSessions || unsubscribeCompanionSessions) {
-        return;
-      }
-
-      unsubscribeSessions = startSessionSummariesSubscription({
-        api: withmateApi,
-        applySummaries: applyLoadedSessionSummaries,
-        onInitialLoadError: handleInitialSessionSummaryLoadError,
-      });
-      unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
-        api: withmateApi,
-        applySummaries: setCompanionSessions,
-        onInitialLoadError: handleInitialSummaryLoadError,
-      });
-    };
-
-    startOperationalHomeSummarySubscriptions();
+    unsubscribeCompanionSessions = startCompanionSessionSummariesSubscription({
+      api: withmateApi,
+      applySummaries: setCompanionSessions,
+      onInitialLoadError: handleInitialSummaryLoadError,
+    });
 
     void refreshMateStatus(withmateApi, { isActive: () => active }).then(() => {
       if (!active) {
@@ -323,12 +417,54 @@ export default function HomeApp() {
 
     return () => {
       active = false;
-      unsubscribeSessions?.();
       unsubscribeCompanionSessions?.();
       unsubscribeModelCatalog();
       unsubscribeAppSettings();
     };
   }, []);
+
+  useEffect(() => {
+    if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      void refreshSessionSummariesRef.current();
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [isMemoryReviewWindowMode, isSettingsWindowMode, openSessionWindowIds, sessionSearchText]);
+
+  useEffect(() => {
+    if (isSettingsWindowMode || isMemoryReviewWindowMode) {
+      return;
+    }
+
+    return startSessionSummaryInvalidationSubscription({
+      api: getWithMateApi(),
+      onInvalidation: () => {
+        void refreshSessionSummariesRef.current();
+      },
+    });
+  }, [isMemoryReviewWindowMode, isSettingsWindowMode]);
+
+  useEffect(() => {
+    if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
+      return;
+    }
+
+    let refreshInFlight = false;
+    const refreshOnFocus = () => {
+      if (refreshInFlight) {
+        return;
+      }
+      refreshInFlight = true;
+      void refreshSessionSummariesRef.current().finally(() => {
+        refreshInFlight = false;
+      });
+    };
+    window.addEventListener("focus", refreshOnFocus);
+    return () => window.removeEventListener("focus", refreshOnFocus);
+  }, [isMemoryReviewWindowMode, isSettingsWindowMode]);
 
   useEffect(() => {
     const withmateApi = getWithMateApi();
@@ -460,9 +596,10 @@ export default function HomeApp() {
     characterEntries,
     selectedLaunchProviderId: selectedLaunchProvider?.id ?? null,
     sessions,
+    sessionCharacterUsage: sessionSummariesState.characterUsage,
     openSessionWindowIds,
     openSessionWindowIdsLoadStatus: openSessionWindowIdsState.status,
-    sessionSummariesLoadStatus: sessionSummariesState.status,
+    sessionCharacterUsageLoadStatus: sessionSummariesState.characterUsageStatus,
     refreshCharacterEntries: async () => {
       const api = getWithMateApi();
       if (!api) {
@@ -489,6 +626,7 @@ export default function HomeApp() {
           ...current.summaries.filter((session) => session.id !== summary.id),
         ],
       }));
+      void refreshSessionSummariesRef.current();
     },
     upsertCompanionSessionSummary: (summary) => {
       setCompanionSessions((current) => [
@@ -511,7 +649,9 @@ export default function HomeApp() {
     setMateCreating,
     setMateAvatarUpdating,
     setLaunchFeedback,
-    setSessions: applyLoadedSessionSummaries,
+    refreshSessionSummaries: async () => {
+      await refreshSessionSummariesRef.current();
+    },
     setCompanionSessions,
   });
 
@@ -550,11 +690,7 @@ export default function HomeApp() {
     getSessionCleanupCutoffDate: () => sessionCleanupCutoffDate,
     setDeletingOldSessions,
     refreshSessionSummaries: async () => {
-      const api = getWithMateApi();
-      if (!api) {
-        return;
-      }
-      applyLoadedSessionSummaries(await api.listSessionSummaries());
+      await refreshSessionSummariesRef.current();
     },
     onSettingsSaved: () => {
       const api = getWithMateApi();
@@ -638,6 +774,12 @@ export default function HomeApp() {
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
       canUsePrimaryFeatures,
+      hasMoreRecent: sessionSummariesState.hasMoreRecent,
+      hasMorePinned: sessionSummariesState.hasMorePinned,
+      loadingRecentPage: sessionSummariesState.loadingRecentPage,
+      loadingPinnedPage: sessionSummariesState.loadingPinnedPage,
+      onLoadMoreRecent: () => void loadMoreSessionSummaryPage("recent"),
+      onLoadMorePinned: () => void loadMoreSessionSummaryPage("pinned"),
       pendingSessionPinIds,
     }),
     rightPane: buildHomeRightPaneProps({

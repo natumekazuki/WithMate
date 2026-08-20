@@ -16,6 +16,12 @@ export type HomeRecentSessionsPanelProps = {
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  hasMoreRecent?: boolean;
+  hasMorePinned?: boolean;
+  loadingRecentPage?: boolean;
+  loadingPinnedPage?: boolean;
+  onLoadMoreRecent?: () => void;
+  onLoadMorePinned?: () => void;
   pendingSessionPinIds?: readonly string[];
   canUsePrimaryFeatures?: boolean;
 };
@@ -45,6 +51,12 @@ export function HomeRecentSessionsPanel({
   onOpenSession,
   onSetSessionPinned,
   onOpenCompanionReview,
+  hasMoreRecent = false,
+  hasMorePinned = false,
+  loadingRecentPage = false,
+  loadingPinnedPage = false,
+  onLoadMoreRecent,
+  onLoadMorePinned,
   pendingSessionPinIds = [],
   canUsePrimaryFeatures = true,
 }: HomeRecentSessionsPanelProps) {
@@ -218,6 +230,30 @@ export function HomeRecentSessionsPanel({
           );
         })}
       </div>
+      {(hasMorePinned || hasMoreRecent) ? (
+        <div className="home-session-list-pagination">
+          {hasMorePinned ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onLoadMorePinned}
+              disabled={loadingPinnedPage}
+            >
+              {loadingPinnedPage ? "ピン留めを読み込み中..." : "ピン留めをさらに読み込む"}
+            </button>
+          ) : null}
+          {hasMoreRecent ? (
+            <button
+              className="secondary-button"
+              type="button"
+              onClick={onLoadMoreRecent}
+              disabled={loadingRecentPage}
+            >
+              {loadingRecentPage ? "Sessionを読み込み中..." : "Sessionをさらに読み込む"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </section>
   );
 }

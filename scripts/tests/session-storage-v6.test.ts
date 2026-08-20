@@ -237,6 +237,75 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  it("summary page は keyset境界、検索、pinned/open projection、Character usageをboundedに扱う", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
+    const dbPath = path.join(tempDirectory, "withmate-v6.db");
+    let storage: SessionStorageV6 | null = null;
+
+    try {
+      storage = new SessionStorageV6(dbPath);
+      const baseInput = {
+        workspaceLabel: "Workspace Label",
+        workspacePath: "C:/workspace",
+        branch: "main",
+        characterId: "char-a",
+        character: "A",
+        characterIconPath: "",
+        characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+        approvalMode: DEFAULT_APPROVAL_MODE,
+      };
+      const insert = (
+        id: string,
+        taskTitle: string,
+        updatedAt: string,
+        characterId = "char-a",
+        sessionKind: "default" | "character-authoring" = "default",
+      ) => storage?.insertSession({
+        ...buildNewSession({ ...baseInput, id, taskTitle, characterId, sessionKind }),
+        updatedAt,
+      });
+
+      insert("same-a", "100% literal", "2026-08-10T00:00:00.000Z");
+      insert("same-b", "underscore_value", "2026-08-10T00:00:00.000Z");
+      insert("older", "Older", "2026-08-09T00:00:00.000Z", "char-b");
+      insert("new-character", "Character history", "2026-08-11T00:00:00.000Z", "char-b");
+      insert("old-character", "Old character history", "2026-08-08T00:00:00.000Z", "char-a");
+      insert("authoring", "Authoring history", "2026-08-12T00:00:00.000Z", "char-a", "character-authoring");
+      storage?.setSessionPinned("older", true);
+
+      const firstPage = storage?.listSessionSummaryPage({ scope: "recent", limit: 2 });
+      assert.deepEqual(firstPage?.entries.map((entry) => entry.id), ["authoring", "new-character"]);
+      assert.equal(firstPage?.hasMore, true);
+      assert.ok(firstPage?.nextCursor);
+      const secondPage = storage?.listSessionSummaryPage({ scope: "recent", limit: 2, cursor: firstPage?.nextCursor });
+      assert.deepEqual(secondPage?.entries.map((entry) => entry.id), ["same-b", "same-a"]);
+      assert.deepEqual(
+        new Set([...(firstPage?.entries ?? []), ...(secondPage?.entries ?? [])].map((entry) => entry.id)).size,
+        4,
+      );
+
+      const literalPercent = storage?.listSessionSummaryPage({ scope: "recent", searchText: "%", limit: 10 });
+      assert.deepEqual(literalPercent?.entries.map((entry) => entry.id), ["same-a"]);
+      const literalUnderscore = storage?.listSessionSummaryPage({ scope: "recent", searchText: "_", limit: 10 });
+      assert.deepEqual(literalUnderscore?.entries.map((entry) => entry.id), ["same-b"]);
+      assert.throws(
+        () => storage?.listSessionSummaryPage({ scope: "recent", cursor: firstPage?.nextCursor, searchText: "changed" }),
+        /一致しません/,
+      );
+
+      const pinnedPage = storage?.listSessionSummaryPage({ scope: "pinned" });
+      assert.deepEqual(pinnedPage?.entries.map((entry) => entry.id), ["older"]);
+      const openPage = storage?.listSessionSummaryPage({ scope: "open", sessionIds: ["older", "same-a"], searchText: "literal" });
+      assert.deepEqual(openPage?.entries.map((entry) => entry.id), ["same-a"]);
+      assert.equal("messages" in (openPage?.entries[0] ?? {}), false);
+
+      assert.deepEqual(storage?.listSessionCharacterUsage().map((entry) => entry.characterId), ["char-b", "char-a"]);
+    } finally {
+      storage?.close();
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("snapshot を作れない Character authoring Session も修復対象 ID を round-trip する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");

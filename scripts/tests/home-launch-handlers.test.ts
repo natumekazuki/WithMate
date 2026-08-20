@@ -52,9 +52,10 @@ describe("home-launch-handlers", () => {
       characterEntries: [createCharacterEntry({ id: "old", name: "Old" })],
       selectedLaunchProviderId: "codex",
       sessions: [],
+      sessionCharacterUsage: [],
       openSessionWindowIds: [],
       openSessionWindowIdsLoadStatus: "loaded",
-      sessionSummariesLoadStatus: "loaded",
+      sessionCharacterUsageLoadStatus: "loaded",
       refreshCharacterEntries: async () => {
         refreshCount += 1;
         return latestEntries;
@@ -125,9 +126,10 @@ describe("home-launch-handlers", () => {
       characterEntries: [createCharacterEntry({ id: "stale", name: "Stale" })],
       selectedLaunchProviderId: "codex",
       sessions: [],
+      sessionCharacterUsage: [],
       openSessionWindowIds: [],
       openSessionWindowIdsLoadStatus: "loaded",
-      sessionSummariesLoadStatus: "loaded",
+      sessionCharacterUsageLoadStatus: "loaded",
       refreshCharacterEntries: async () => {
         throw new Error("Character catalog refresh failed");
       },

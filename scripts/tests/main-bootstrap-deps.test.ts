@@ -114,7 +114,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         async listSessionCustomAgents() { return []; },
         async listWorkspaceSkills() { return []; },
         async listWorkspaceCustomAgents() { return []; },
-        listOpenSessionWindowIds: () => [],
+        listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextOffset: null, hasMore: false }),
         listOpenCompanionReviewWindowIds: () => [],
         getSession: () => null,
         getSessionMessageArtifact: () => null,

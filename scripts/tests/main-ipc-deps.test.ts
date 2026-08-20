@@ -118,7 +118,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       deletePromptTemplate: () => [],
     },
     sessionQuery: {
-      listSessionSummaries: () => [],
+      listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+      listSessionCharacterUsage: () => [],
       listCompanionSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
       listSessionAuditLogSummaries: () => [],
@@ -136,7 +137,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },
       async listWorkspaceCustomAgents() { return []; },
-      listOpenSessionWindowIds: () => [],
+      listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextOffset: null, hasMore: false }),
       listOpenCompanionReviewWindowIds: () => [],
       getSession: () => null,
       getSessionMessageArtifact: () => null,

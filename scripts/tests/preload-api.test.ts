@@ -169,8 +169,12 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
   });
-  assert.deepEqual(await api.listSessionSummaries(), {
-    channel: "withmate:list-session-summaries",
+  assert.deepEqual(await api.listSessionSummaryPage({ scope: "recent", limit: 25 }), {
+    channel: "withmate:list-session-summary-page",
+    args: [{ scope: "recent", limit: 25 }],
+  });
+  assert.deepEqual(await api.listSessionCharacterUsage(), {
+    channel: "withmate:list-session-character-usage",
     args: [],
   });
   assert.deepEqual(await api.listSessionAuditLogSummaryPage("session-1", { cursor: 50, limit: 25 }), {
@@ -412,7 +416,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionAuditLogs",
     "listSessionCustomAgents",
     "listSessionSkills",
-    "listSessionSummaries",
+    "listSessionCharacterUsage",
+    "listSessionSummaryPage",
     "listFileRootChanges",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
@@ -480,7 +485,6 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionFilePreviewNavigation",
     "subscribeSessionInvalidation",
-    "subscribeSessionSummaries",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
     "syncCompanionTarget",
@@ -532,7 +536,8 @@ test("preload type surface は destructive storage maintenance API を Settings 
   const sessionKeys = [
     "createSession",
     "deleteSession",
-    "listSessionSummaries",
+    "listSessionCharacterUsage",
+    "listSessionSummaryPage",
   ] satisfies Array<keyof WithMateWindowSessionApi>;
 
   assert.equal(settingsKeys.includes("deleteSessionsLastActiveBefore"), true);
@@ -544,14 +549,11 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const api = createWithMateWindowApi(ipcRenderer as never);
   const received: unknown[] = [];
 
-  const disposeSummaries = api.subscribeSessionSummaries((summaries) => {
-    received.push({ kind: "summaries", summaries });
-  });
   const disposeBoot = api.subscribeAppBootStatus((status) => {
     received.push({ kind: "boot", status });
   });
-  const disposeInvalidation = api.subscribeSessionInvalidation((sessionIds) => {
-    received.push({ kind: "invalidation", sessionIds });
+  const disposeInvalidation = api.subscribeSessionInvalidation((payload) => {
+    received.push({ kind: "invalidation", payload });
   });
   const disposePreviewNavigation = api.subscribeSessionFilePreviewNavigation((payload) => {
     received.push({ kind: "previewNavigation", payload });
@@ -563,9 +565,8 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
     received.push({ kind: "templates", templates });
   });
 
-  listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
   listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
-  listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
+  listeners.get("withmate:sessions-invalidated")?.({}, { scope: "ids", sessionIds: ["session-1"] });
   listeners.get("withmate:session-file-preview-navigation")?.({}, {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" },
     ownerSessionId: "session-1",
@@ -574,7 +575,6 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   });
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   listeners.get("withmate:prompt-templates-changed")?.({}, [{ id: "template-1", name: "Review" }]);
-  disposeSummaries();
   disposeBoot();
   disposeInvalidation();
   disposePreviewNavigation();
@@ -582,9 +582,8 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   disposeTemplates();
 
   assert.deepEqual(received, [
-    { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
     { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
-    { kind: "invalidation", sessionIds: ["session-1"] },
+    { kind: "invalidation", payload: { scope: "ids", sessionIds: ["session-1"] } },
     {
       kind: "previewNavigation",
       payload: {

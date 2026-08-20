@@ -6,7 +6,7 @@
 
 ## 結論サマリ（優先度順）
 
-1. **`sessions` の全量取得で `messages_json` / `stream_json` を同時読込している箇所を、summary 参照に置換する。**
+1. **`sessions` の全量取得で `messages_json` / `stream_json` を同時読込している箇所を、summary 参照または bounded page query に置換する。**
 2. **監査ログ（`audit_logs`）の「全件 + 重い列」読込を、ページング + 詳細遅延取得に分割する。**
 3. **Memory Management はスナップショット全件返却をやめ、ドメイン別・ページ別 API に分割する。**
 4. **メッセージ UI の virtualization は導入済み。監査ログ UI と renderer への履歴全量転送は引き続き監視する。**
@@ -29,15 +29,18 @@
 
 **回収ポイント**
 
-- `listSessions()` の利用箇所で、本当に履歴本体が必要かを分類し、**summary だけで足りる経路を `listSessionSummaries()` に統一**する。
+- `listSessions()` の利用箇所で、本当に履歴本体が必要かを分類する。summaryだけで足りる内部経路は `listSessionSummaries()` を使い、Homeのpublic一覧は `listSessionSummaryPage()` へ分ける。
 - `sessions` への一覧用途では `messages_json`, `stream_json` を取得しないようにする（既存 `listSessionSummaries()` を優先利用）。
 
 **実装状況**
 
-- 起動時の session 初期 state は `listSessionSummaries()` から復元し、V1 fallback でも `messages_json` / `stream_json` を初期一覧ロードで読まない。
+- 起動時の main process 内部 state は `listSessionSummaries()` から復元し、V1 fallback でも `messages_json` / `stream_json` を初期一覧ロードで読まない。Homeのpublic初期表示は `listSessionSummaryPage()` のbounded pageを使う。
 - running session 復旧時だけ対象 session を `getSession(id)` で詳細 hydrate し、既存 messages に interrupted message を追加して保存する。
 - settings / model catalog の一括保存経路は、summary-derived empty messages を保存しないように `listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を使う。
 - session 保存後の main process 常駐 `sessions` cache は summary-only session に戻し、表示や実行で履歴本体が必要な時だけ `getSession(id)` で詳細 hydrate する。
+- Homeのrecent / pinned / open queryは `last_active_at DESC, id DESC` のopaque keyset cursorで取得し、recent / pinnedは最大50件、openは100 ID単位とする。検索はstorage query ownerで実行し、rendererのloaded pageだけを検索対象にしない。
+- Home Dashboard / MonitorはSession summary invalidationを受けて現在のquery generationを破棄し、boundedなpageとspecial entryを再取得する。変更対象が256件を超える通知はIDを切り捨てず `scope: "all"` へ切り替える。
+- random Characterは全summaryを再利用せず、通常SessionのCharacterごとの最新利用順位を返す専用projectionを使う。runtime初期化やcache再構築の全summary取得は内部経路として残す。
 
 ---
 

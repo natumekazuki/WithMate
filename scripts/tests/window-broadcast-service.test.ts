@@ -28,13 +28,12 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
     getSessionWindows: () => [session.window, closed.window],
   });
 
-  service.broadcastSessionSummaries([]);
-  service.broadcastSessionInvalidation(["session-1"]);
+  service.broadcastSessionInvalidation({ scope: "ids", sessionIds: ["session-1"] });
   service.broadcastOpenSessionWindowIds(["session-1"]);
   service.broadcastPromptTemplates([]);
 
   assert.deepEqual(home.sent.map((entry) => entry.channel), [
-    "withmate:sessions-changed",
+    "withmate:sessions-invalidated",
     "withmate:open-session-windows-changed",
     "withmate:prompt-templates-changed",
   ]);
@@ -44,4 +43,18 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
     "withmate:prompt-templates-changed",
   ]);
   assert.equal(closed.sent.length, 0);
+  assert.deepEqual(home.sent[1]?.payload, { scope: "ids", sessionIds: ["session-1"] });
+});
+
+test("WindowBroadcastService は open Session ID の上限超過を all にする", () => {
+  const home = createWindow(false);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [home.window],
+    getHomeWindows: () => [home.window],
+    getSessionWindows: () => [],
+  });
+
+  service.broadcastOpenSessionWindowIds(Array.from({ length: 101 }, (_, index) => `session-${index}`));
+
+  assert.deepEqual(home.sent[0]?.payload, { scope: "all" });
 });
