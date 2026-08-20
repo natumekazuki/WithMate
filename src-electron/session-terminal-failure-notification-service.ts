@@ -207,7 +207,13 @@ export class SessionTerminalFailureNotificationService {
         claimToken: `terminal-notification-claim-${randomUUID()}`,
       });
       if (!delivery) return;
-      await this.processClaim(delivery);
+      try {
+        await this.processClaim(delivery);
+      } catch (error) {
+        this.reportBackgroundError(error);
+        if (this.claimReleaseRecoveries.has(delivery.id)) throw error;
+        this.releaseRetry(delivery, requireNonEmpty(delivery.claimToken, "claimToken"));
+      }
     }
   }
 

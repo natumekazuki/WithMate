@@ -488,6 +488,56 @@ describe("Session terminal failure notification", () => {
     }
   });
 
+  it("TN-CLAIM-14: claim後のsource読込一時失敗を同一processで再試行する", async () => {
+    const fixture = await createFixture();
+    const originalGet = fixture.executionStorage.get.bind(fixture.executionStorage);
+    let now = new Date("2026-08-18T00:01:02.000Z");
+    let timerCallback: (() => void) | null = null;
+    let failGetOnce = true;
+    let enqueueCount = 0;
+    try {
+      fixture.executionStorage.get = ((executionId) => {
+        if (failGetOnce) {
+          failGetOnce = false;
+          throw new Error("source storage temporarily unavailable");
+        }
+        return originalGet(executionId);
+      }) as typeof fixture.executionStorage.get;
+
+      const service = new SessionTerminalFailureNotificationService({
+        storage: fixture.notificationStorage,
+        executionStorage: fixture.executionStorage,
+        now: () => now,
+        enqueueTurn: async () => {
+          enqueueCount += 1;
+          return { ok: true, executionId: "notification-execution" };
+        },
+        setTimer(callback) {
+          timerCallback = callback;
+          return {};
+        },
+        clearTimer() {},
+      });
+
+      await service.start();
+      assert.equal(enqueueCount, 0);
+      assert.equal(fixture.notificationStorage.getBySourceExecutionId("source-execution")?.claimToken, null);
+      assert.ok(timerCallback);
+
+      now = new Date("2026-08-18T00:01:07.000Z");
+      timerCallback?.();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await service.shutdown();
+
+      assert.equal(enqueueCount, 1);
+      assert.equal(fixture.notificationStorage.getBySourceExecutionId("source-execution")?.state, "enqueued");
+    } finally {
+      fixture.notificationStorage.close();
+      fixture.executionStorage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("TN-DELIVERY-04: terminal確定から24時間で期限切れとなりenqueueしない", async () => {
     const fixture = await createFixture();
     let enqueueCount = 0;
