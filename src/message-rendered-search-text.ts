@@ -1,8 +1,12 @@
 import { gfmFromMarkdown } from "mdast-util-gfm";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { mathFromMarkdown } from "mdast-util-math";
+import { frontmatter } from "micromark-extension-frontmatter";
 import { gfm } from "micromark-extension-gfm";
 import { math } from "micromark-extension-math";
+import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
+
+import { formatMarkdownFrontmatterSource } from "./markdown-frontmatter.js";
 
 type MarkdownSearchNode = {
   type: string;
@@ -50,11 +54,14 @@ function projectNodeText(node: MarkdownSearchNode): string {
     node.type === "text"
     || node.type === "inlineCode"
     || node.type === "code"
+    || node.type === "yaml"
   ) {
     if (node.type === "code" && node.lang?.toLocaleLowerCase() === "mermaid") {
       return "";
     }
-    const value = node.value ?? "";
+    const value = node.type === "yaml"
+      ? formatMarkdownFrontmatterSource(node.value ?? "")
+      : node.value ?? "";
     return node.type === "text" || value.trim() ? value : "";
   }
   if (node.type === "break") {
@@ -116,8 +123,8 @@ function hasSearchableFootnoteBackreferenceGap(definition: MarkdownSearchNode): 
 
 export function projectMessageRenderedSearchText(markdown: string): string {
   const tree = fromMarkdown(markdown, {
-    extensions: [gfm(), math()],
-    mdastExtensions: [gfmFromMarkdown(), mathFromMarkdown()],
+    extensions: [frontmatter(), gfm(), math()],
+    mdastExtensions: [frontmatterFromMarkdown(), gfmFromMarkdown(), mathFromMarkdown()],
   });
   const root = tree as MarkdownSearchNode;
   const definitions = new Map<string, MarkdownSearchNode>();

@@ -6713,6 +6713,23 @@ button:disabled {
   white-space: pre;
 }
 
+.message-code-block.message-frontmatter-block {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-frontmatter-block > .message-frontmatter-code {
+  display: block;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: inherit;
+  overflow-wrap: anywhere;
+}
+
 .message-code-block-shell {
   position: relative;
   min-width: 0;

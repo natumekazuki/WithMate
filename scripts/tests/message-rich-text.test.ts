@@ -194,6 +194,75 @@ test("MessageRichText の Source は元 Markdown を変換せず plain text で�
   assert.equal(sourceElement?.querySelector("a, code, blockquote, ul"), null);
 });
 
+test("MessageRichText は先頭 YAML frontmatter を境界と改行を保った code block として render する", () => {
+  const frontmatter = [
+    "---",
+    "name: withmate-memory",
+    "description: Use injected context",
+    "---",
+  ].join("\n");
+  const markdown = `${frontmatter}\n\n# Body`;
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
+  const dom = new JSDOM(html);
+  const frontmatterBlock = dom.window.document.querySelector("pre.message-frontmatter-block");
+
+  assert.ok(frontmatterBlock);
+  assert.equal(frontmatterBlock.querySelector("code")?.textContent, frontmatter);
+  assert.equal(dom.window.document.querySelector("h1.message-heading")?.textContent, "Body");
+  assert.equal(dom.window.document.querySelector("h2.message-heading"), null);
+});
+
+test("MessageRichText の Source は YAML frontmatter を含む元 Markdown をそのまま描画する", () => {
+  const source = ["---", "name: raw", "description: keep line breaks", "---", "", "# Body"].join("\n");
+  const html = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: source,
+    displayMode: "source",
+  }));
+  const dom = new JSDOM(html);
+  const sourceElement = dom.window.document.querySelector("pre.message-source-text");
+
+  assert.equal(sourceElement?.textContent, source);
+  assert.equal(sourceElement?.querySelector("code, h1, hr"), null);
+});
+
+test("MessageRichText は空の先頭 frontmatter だけを拡張し、未閉鎖や本文中の thematic break は変えない", () => {
+  const emptyFrontmatterHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: ["---", "---", "", "# Body"].join("\n"),
+  }));
+  const emptyFrontmatterDom = new JSDOM(emptyFrontmatterHtml);
+  assert.equal(
+    emptyFrontmatterDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    "---\n---",
+  );
+
+  const unclosedHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: ["---", "name: stays ordinary Markdown", "", "# Body"].join("\n"),
+  }));
+  const unclosedDom = new JSDOM(unclosedHtml);
+  assert.equal(unclosedDom.window.document.querySelector("pre.message-frontmatter-block"), null);
+  assert.ok(unclosedDom.window.document.querySelector("hr.message-divider"));
+
+  const bodyBreakHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: ["# Body", "", "---", "", "tail"].join("\n"),
+  }));
+  const bodyBreakDom = new JSDOM(bodyBreakHtml);
+  assert.equal(bodyBreakDom.window.document.querySelector("pre.message-frontmatter-block"), null);
+  assert.ok(bodyBreakDom.window.document.querySelector("hr.message-divider"));
+});
+
+test("MessageRichText の YAML frontmatter Preview は長い値を折り返す CSS 契約を持つ", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+
+  assert.match(
+    styles,
+    /\.message-code-block\.message-frontmatter-block\s*{[\s\S]*?white-space:\s*pre-wrap;[\s\S]*?overflow-wrap:\s*anywhere;/,
+  );
+  assert.match(
+    styles,
+    /\.message-frontmatter-block\s*>\s*\.message-frontmatter-code\s*{[\s\S]*?display:\s*block;[\s\S]*?overflow-wrap:\s*anywhere;/,
+  );
+});
+
 test("MessageRichText は inline code と link を優先しつつ bold を併用できる", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
@@ -723,6 +792,43 @@ test("MessageRichText は browser 初回 render を light markdown にして後�
 
     assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
     assert.notEqual(container.querySelector("table.message-table"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("MessageRichText は browser の light render でも先頭 YAML frontmatter を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  const markdown = ["---", "name: withmate-memory", "description: light render", "---", "", "# Body"].join("\n");
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, { text: markdown }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.equal(container.querySelector("pre.message-frontmatter-block code")?.textContent, markdown.split("\n\n")[0]);
+    assert.equal(container.querySelector("h1.message-heading")?.textContent, "Body");
+
+    await act(async () => {
+      await waitForAnimationFrame(dom.window);
+      await waitForAnimationFrame(dom.window);
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.equal(container.querySelector("pre.message-frontmatter-block code")?.textContent, markdown.split("\n\n")[0]);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
