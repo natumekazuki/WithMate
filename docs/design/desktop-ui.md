@@ -300,8 +300,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - `Changed Files` は Details UIには表示しない。artifactの永続化、audit、Diff model、Changes paneのデータはこの表示変更だけでは削除しない
   - `Run Checks`
     - approval は `自動実行 / 安全寄り / プロバイダー判断` の provider-neutral wording で表示する
-  - turn 内の operation timeline は arrival 順を保ち、連続する同じ `operation.type` の区間だけを1 groupにまとめる。各groupはdefault closedとし、summaryではtypeと件数を示し、展開時にgroup内のoperationを元順序で表示する
-  - operation groupの展開内容は高さを制約し、長い内容はgroup内部でscrollできるようにする。Details本体と各groupはkeyboardで開閉でき、native detailsのaccessible name / focus / expanded stateを維持する
+  - turn 内の operation timeline は arrival 順を保ち、全 operation を1つの `Operations` groupにまとめる。groupはdefault closedとし、summaryでは件数を示し、展開時は元のoperation単位・元順序で表示する
+  - `Operations` groupの展開内容は高さを制約し、長い内容はgroup内部でscrollできるようにする。Details本体、Operations group、各operationはkeyboardで開閉でき、native detailsのaccessible name / focus / expanded stateを維持する
 - composer 上の添付 toolbar
   - `Attach` button から単一の attachment popover を開く
   - popover の `Attach` section は元 path を参照する `File / Folder / Image` を1行にまとめる

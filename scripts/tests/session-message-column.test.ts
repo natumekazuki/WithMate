@@ -140,7 +140,7 @@ function createArtifactMessage(): Message {
   };
 }
 
-function createGroupedArtifactMessage(): Message {
+function createOperationsArtifactMessage(): Message {
   const message = createArtifactMessage();
   message.artifact!.operationTimeline = [
     {
@@ -1215,35 +1215,40 @@ test("SessionMessageColumn は未追従時に message list 内の jump UI を描
   assert.doesNotMatch(html, /末尾へ移動/);
 });
 
-test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、operation groupを初期closedにする", () => {
+test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、Operationsを1groupで初期closedにする", () => {
   const html = renderSessionMessageColumn({
-    messages: [createGroupedArtifactMessage()],
+    messages: [createOperationsArtifactMessage()],
     expandedArtifacts: { "session-1-0": true },
   });
   const dom = new JSDOM(html);
-  const operationGroups = Array.from(dom.window.document.querySelectorAll<HTMLDetailsElement>(".artifact-operation-fold"));
+  const operationsGroup = dom.window.document.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+  const operationFolds = Array.from(operationsGroup?.querySelectorAll<HTMLDetailsElement>(".artifact-operation-fold") ?? []);
 
   assert.match(html, /artifact-panel-session-1-0/);
   assert.doesNotMatch(html, /Changed Files/);
   assert.doesNotMatch(html, /src\/App\.tsx/);
   assert.doesNotMatch(html, /Open Diff/);
   assert.match(html, /snapshot files/);
-  assert.equal(operationGroups.length, 3);
+  assert.ok(operationsGroup);
+  assert.equal(operationsGroup.querySelector(".artifact-fold-summary-copy span")?.textContent, "4 operations");
+  assert.equal(operationsGroup.open, false);
+  assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  assert.equal(operationFolds.length, 4);
   assert.deepEqual(
-    operationGroups.map((group) => group.querySelector(".artifact-operation-type")?.textContent),
-    ["Command", "MCP", "Command"],
+    operationFolds.map((operation) => operation.querySelector(".artifact-operation-type")?.textContent),
+    ["Command", "Command", "MCP", "Command"],
   );
   assert.deepEqual(
-    operationGroups.map((group) => group.querySelector(".artifact-operation-summary-text")?.textContent),
-    ["2 operations", "1 operation", "1 operation"],
+    operationFolds.map((operation) => operation.querySelector(".artifact-operation-summary-text")?.textContent),
+    ["npm test", "npm run typecheck", "filesystem/read", "npm run build"],
   );
-  for (const group of operationGroups) {
-    assert.equal(group.open, false);
-    assert.equal(group.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  for (const operation of operationFolds) {
+    assert.equal(operation.open, false);
+    assert.equal(operation.querySelector("summary")?.getAttribute("aria-expanded"), "false");
   }
 });
 
-test("SessionMessageColumn はoperation groupを開閉でき、長文operationをgroup内部へ保持する", async () => {
+test("SessionMessageColumn はOperationsと個別operationを開閉でき、長文operationをgroup内部へ保持する", async () => {
   const message = createArtifactMessage();
   message.artifact!.operationTimeline = [{
     type: "command_execution",
@@ -1256,37 +1261,58 @@ test("SessionMessageColumn はoperation groupを開閉でき、長文operation�
   });
 
   try {
-    const group = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
-    assert.ok(group);
-    const summary = group.querySelector("summary");
-    assert.ok(summary);
-    assert.equal(group.open, false);
-    assert.equal(summary.textContent?.includes("1 operation"), true);
-    assert.equal(summary.getAttribute("aria-controls"), group.querySelector(".artifact-operation-body")?.id);
+    const operationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    const operationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(operationsGroup);
+    assert.ok(operationGroup);
+    const operationsSummary = operationsGroup.querySelector("summary");
+    const operationSummary = operationGroup.querySelector("summary");
+    assert.ok(operationsSummary);
+    assert.ok(operationSummary);
+    assert.equal(operationsGroup.open, false);
+    assert.equal(operationGroup.open, false);
+    assert.equal(operationsSummary.textContent?.includes("1 operation"), true);
+    assert.equal(operationsSummary.getAttribute("aria-controls"), operationsGroup.querySelector(".artifact-operations-body")?.id);
+    assert.equal(operationSummary.getAttribute("aria-controls"), operationGroup.querySelector(".artifact-operation-body")?.id);
 
     await act(async () => {
-      group.open = true;
-      group.dispatchEvent(new mounted.dom.window.Event("toggle"));
+      operationsGroup.open = true;
+      operationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
-    assert.equal(group.open, true);
-    assert.equal(group.querySelector("summary")?.getAttribute("aria-expanded"), "true");
-    assert.match(group.querySelector(".artifact-operation-body")?.textContent ?? "", /output line 120/);
+    assert.equal(operationsGroup.open, true);
+    assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(operationGroup.open, false);
+    assert.match(operationsGroup.querySelector(".artifact-operations-body")?.textContent ?? "", /output line 120/);
 
     await act(async () => {
-      group.open = false;
-      group.dispatchEvent(new mounted.dom.window.Event("toggle"));
+      operationGroup.open = true;
+      operationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
-    assert.equal(group.open, false);
-    assert.equal(group.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+    assert.equal(operationGroup.open, true);
+    assert.equal(operationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+
+    await act(async () => {
+      operationGroup.open = false;
+      operationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(operationGroup.open, false);
+    assert.equal(operationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+
+    await act(async () => {
+      operationsGroup.open = false;
+      operationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(operationsGroup.open, false);
+    assert.equal(operationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "false");
   } finally {
     await mounted.cleanup();
   }
 });
 
-test("SessionMessageColumn はvirtualizationでrowが再mountしてもoperation groupの開閉状態を維持する", async () => {
+test("SessionMessageColumn はvirtualizationでrowが再mountしてもOperationsとoperationの開閉状態を維持する", async () => {
   const messages = Array.from({ length: 30 }, (_, index) => (
     index === 0
-      ? createGroupedArtifactMessage()
+      ? createOperationsArtifactMessage()
       : { role: "user" as const, text: `message ${index + 1}` }
   ));
   const mounted = await mountSessionMessageColumn({
@@ -1302,28 +1328,39 @@ test("SessionMessageColumn はvirtualizationでrowが再mountしてもoperation 
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
 
-    const initialGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
-    assert.ok(initialGroup);
+    const initialOperationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    assert.ok(initialOperationsGroup);
     await act(async () => {
-      initialGroup.open = true;
-      initialGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+      initialOperationsGroup.open = true;
+      initialOperationsGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
     });
-    assert.equal(initialGroup.open, true);
+    const initialOperationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(initialOperationGroup);
+    await act(async () => {
+      initialOperationGroup.open = true;
+      initialOperationGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(initialOperationsGroup.open, true);
+    assert.equal(initialOperationGroup.open, true);
 
     await act(async () => {
       messageList.scrollTop = messageList.scrollHeight;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
-    assert.equal(mounted.container.querySelector(".artifact-operation-fold"), null);
+    assert.equal(mounted.container.querySelector(".artifact-operations-fold"), null);
 
     await act(async () => {
       messageList.scrollTop = 0;
       messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
     });
-    const remountedGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
-    assert.ok(remountedGroup);
-    assert.equal(remountedGroup.open, true);
-    assert.equal(remountedGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    const remountedOperationsGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operations-fold");
+    const remountedOperationGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(remountedOperationsGroup);
+    assert.ok(remountedOperationGroup);
+    assert.equal(remountedOperationsGroup.open, true);
+    assert.equal(remountedOperationsGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.equal(remountedOperationGroup.open, true);
+    assert.equal(remountedOperationGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
   } finally {
     await mounted.cleanup();
   }

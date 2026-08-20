@@ -20,7 +20,6 @@ import type {
 } from "./app-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
-import { groupArtifactOperations } from "./artifact-operation-grouping.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
@@ -504,7 +503,7 @@ export function shouldAdjustSessionMessageScrollPosition(input: {
   return input.itemStart < input.scrollOffset;
 }
 
-type MessageArtifactFoldSection = "operations";
+type MessageArtifactFoldSection = "operation" | "operations";
 
 function messageArtifactFoldKey(artifactKey: string, section: MessageArtifactFoldSection, index?: number): string {
   return `${artifactKey}:${section}${index === undefined ? "" : `:${index}`}`;
@@ -3049,7 +3048,7 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
-            const artifactOperationGroups = groupArtifactOperations(artifactOperations);
+            const artifactOperationsOpen = isArtifactFoldOpen(artifactKey, "operations");
             const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
 
             return (
@@ -3156,66 +3155,66 @@ export function SessionMessageColumn({
                             </section>
                           </div>
 
-                          {artifactOperationGroups.length > 0 ? (
+                          {artifactOperations.length > 0 ? (
                             <section className="artifact-section compact">
-                              <div className="artifact-section-header">
-                                <strong>Operations</strong>
-                              </div>
-                              <ul className="artifact-operation-list">
-                                {artifactOperationGroups.map((group, groupIndex) => {
-                                  const groupLabel = operationTypeLabel(group.type);
-                                  const groupCount = group.operations.length;
-                                  const groupCountLabel = `${groupCount} ${groupCount === 1 ? "operation" : "operations"}`;
-                                  const groupOpen = isArtifactFoldOpen(artifactKey, "operations", groupIndex);
-                                  const groupPanelId = `artifact-operation-group-${artifactKey}-${groupIndex}`;
-                                  return (
-                                    <li key={`${group.type}-${groupIndex}`} className={`artifact-operation-item ${group.type}`}>
-                                      <details
-                                        className="artifact-operation-fold"
-                                        open={groupOpen}
-                                        onToggle={(event) => {
-                                          handleArtifactFoldToggle(artifactKey, "operations", event.currentTarget.open, groupIndex);
-                                        }}
-                                      >
-                                        <summary
-                                          className="artifact-operation-summary"
-                                          aria-controls={groupPanelId}
-                                          aria-expanded={groupOpen}
+                              <details
+                                className="artifact-fold artifact-operations-fold"
+                                open={artifactOperationsOpen}
+                                onToggle={(event) => {
+                                  handleArtifactFoldToggle(artifactKey, "operations", event.currentTarget.open);
+                                }}
+                              >
+                                <summary
+                                  className="artifact-fold-summary artifact-operations-summary"
+                                  aria-controls={`artifact-operations-panel-${artifactKey}`}
+                                  aria-expanded={artifactOperationsOpen}
+                                >
+                                  <span className="artifact-fold-summary-copy">
+                                    <strong>Operations</strong>
+                                    <span>{artifactOperations.length} {artifactOperations.length === 1 ? "operation" : "operations"}</span>
+                                  </span>
+                                </summary>
+                                <div id={`artifact-operations-panel-${artifactKey}`} className="artifact-fold-body artifact-operations-body">
+                                  {artifactOperations.map((operation, operationIndex) => {
+                                    const operationSummary = collapseSummaryText(operation.summary) || operationTypeLabel(operation.type);
+                                    const operationOpen = isArtifactFoldOpen(artifactKey, "operation", operationIndex);
+                                    const operationPanelId = `artifact-operation-panel-${artifactKey}-${operationIndex}`;
+                                    return (
+                                      <article key={`${operation.type}-${operationIndex}`} className={`artifact-operation-item ${operation.type}`}>
+                                        <details
+                                          className="artifact-operation-fold"
+                                          open={operationOpen}
+                                          onToggle={(event) => {
+                                            handleArtifactFoldToggle(artifactKey, "operation", event.currentTarget.open, operationIndex);
+                                          }}
                                         >
-                                          <div className="artifact-operation-head">
-                                            <span className={`artifact-operation-type ${group.type}`}>{groupLabel}</span>
-                                            <span className="artifact-operation-summary-text">{groupCountLabel}</span>
+                                          <summary
+                                            className="artifact-operation-summary"
+                                            title={operationSummary}
+                                            aria-controls={operationPanelId}
+                                            aria-expanded={operationOpen}
+                                          >
+                                            <div className="artifact-operation-head">
+                                              <span className={`artifact-operation-type ${operation.type}`}>{operationTypeLabel(operation.type)}</span>
+                                              <span className="artifact-operation-summary-text">{operationSummary}</span>
+                                            </div>
+                                          </summary>
+                                          <div id={operationPanelId} className="artifact-operation-body">
+                                            {operation.type === "agent_message" ? (
+                                              <div className="artifact-operation-message">
+                                                <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
+                                              </div>
+                                            ) : (
+                                              <p>{operation.summary}</p>
+                                            )}
+                                            {operation.details ? <pre>{operation.details}</pre> : null}
                                           </div>
-                                        </summary>
-                                        <div id={groupPanelId} className="artifact-operation-body">
-                                          {group.operations.map((operation, operationIndex) => {
-                                            const operationSummary = collapseSummaryText(operation.summary) || groupLabel;
-                                            return (
-                                              <article
-                                                key={`${operation.type}-${operationIndex}`}
-                                                className="artifact-operation-entry"
-                                              >
-                                                <div className="artifact-operation-entry-content">
-                                                  {operation.type === "agent_message" ? (
-                                                    <div className="artifact-operation-message">
-                                                      <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
-                                                    </div>
-                                                  ) : (
-                                                    <div className="artifact-operation-entry-summary" title={operationSummary}>
-                                                      {operationSummary}
-                                                    </div>
-                                                  )}
-                                                  {operation.details ? <pre>{operation.details}</pre> : null}
-                                                </div>
-                                              </article>
-                                            );
-                                          })}
-                                        </div>
-                                      </details>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
+                                        </details>
+                                      </article>
+                                    );
+                                  })}
+                                </div>
+                              </details>
                             </section>
                           ) : null}
                         </div>
