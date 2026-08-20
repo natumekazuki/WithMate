@@ -515,6 +515,13 @@ describe("composeProviderPrompt", () => {
             label: "focused",
             valence: 0.4,
             intensity: 0.5,
+            ...(index === 0
+              ? {
+                  sourceSessionId: "session-b",
+                  reason: "PRIVATE_AFTERGLOW_REASON",
+                  evidence: "PRIVATE_AFTERGLOW_EVIDENCE",
+                }
+              : {}),
           })),
           evaluatedAt,
           version: "affect-v1-provider-prompt",
@@ -544,6 +551,7 @@ describe("composeProviderPrompt", () => {
     assert.equal(context.characterAffect.effective.length, 13);
     assert.equal(context.characterAffect.evaluatedAt, evaluatedAt);
     assert.equal(context.characterAffect.version, "affect-v1-provider-prompt");
+    assert.doesNotMatch(contextJson, /sourceSessionId|PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE/);
     assert.deepEqual(context.baselineRef, {
       definitionSha256: "sha256-character-definition",
       snapshotAt: "2026-06-14T00:00:00.000Z",

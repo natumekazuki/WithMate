@@ -396,6 +396,57 @@ describe("CharacterContextApplicationService", () => {
     }
   });
 
+  it("afterglowをpublic context・MCP・CLIへ同じschemaで投影し、source情報をmetricsへ出さない", async () => {
+    const fixture = createFixture();
+    try {
+      const sourceStorage = new CharacterAffectStorage(fixture.dbPath, {
+        now: () => new Date("2026-08-09T01:00:00.000Z"),
+      });
+      try {
+        sourceStorage.recordEvent(affectCandidate({
+          sessionId: "session-b",
+          targetType: "user",
+          targetId: "private-target",
+          family: "gratitude",
+          value: { label: "public-afterglow", valence: 0.7 },
+          intensity: 0.5,
+          reason: "PRIVATE_AFTERGLOW_REASON",
+          evidence: "PRIVATE_AFTERGLOW_EVIDENCE",
+          occurredAt: "2026-08-09T00:59:00.000Z",
+          idempotencyKey: "public-afterglow",
+        }));
+      } finally {
+        sourceStorage.close();
+      }
+
+      const request = {
+        schemaVersion: CHARACTER_CONTEXT_SCHEMA_VERSION,
+        characterId: "character-a",
+        sessionId: "session-a",
+        query: "continue",
+        memoryLimit: 0,
+      };
+      const internal = await fixture.service.getContext(request);
+      const mcp = await fixture.service.getContext(request, "mcp");
+      const cli = await fixture.service.getContext(request, "cli");
+      assert.equal(isCharacterContextError(internal), false);
+      assert.equal(isCharacterContextError(mcp), false);
+      assert.equal(isCharacterContextError(cli), false);
+      if (isCharacterContextError(internal) || isCharacterContextError(mcp) || isCharacterContextError(cli)) return;
+      assert.deepEqual(mcp.affect.effective, internal.affect.effective);
+      assert.deepEqual(cli.affect.effective, internal.affect.effective);
+      assert.equal(internal.affect.effective.some((component) => component.label === "public-afterglow"), true);
+      const publicJson = JSON.stringify(internal);
+      assert.doesNotMatch(publicJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|sourceSessionId|session-b/);
+      const metricsJson = JSON.stringify(fixture.service.getMetrics());
+      assert.doesNotMatch(metricsJson, /PRIVATE_AFTERGLOW_REASON|PRIVATE_AFTERGLOW_EVIDENCE|private-target|session-b|sourceSessionId/);
+      assert.equal("eventIds" in internal.affect.effective[0]!, false);
+      assert.equal("reasons" in internal.affect.effective[0]!, false);
+    } finally {
+      fixture.close();
+    }
+  });
+
   it("stale version、relationship scopeの不正target、別scopeを拒否する", async () => {
     const fixture = createFixture();
     try {

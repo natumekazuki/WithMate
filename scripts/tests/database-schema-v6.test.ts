@@ -45,6 +45,10 @@ type ForeignKeyRow = {
   on_delete: string;
 };
 
+type SchemaObjectRow = {
+  name: string;
+};
+
 const LEGACY_MEMORY_TABLES = [
   "session_memories",
   "project_scopes",
@@ -66,6 +70,11 @@ function tableNames(db: DatabaseSync): string[] {
   return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' ORDER BY name").all() as TableInfoRow[])
     .map((row) => row.name)
     .filter((name) => !name.startsWith("sqlite_"));
+}
+
+function indexNames(db: DatabaseSync): string[] {
+  return (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index' ORDER BY name").all() as SchemaObjectRow[])
+    .map((row) => row.name);
 }
 
 function columnInfo(db: DatabaseSync, tableName: string): TableInfoRow[] {
@@ -138,6 +147,7 @@ describe("database-schema-v6", () => {
       assert.equal(row.id, "existing-session");
       assert.equal(row.is_pinned, 0);
       assert.equal(tableNames(db).includes("character_affect_events_v6"), true);
+      assert.equal(indexNames(db).includes("idx_v6_character_affect_events_afterglow"), true);
       assert.equal(hasForeignKey(db, "character_affect_events_v6", "memory_entry_id", "memory_entries_v6"), true);
       assert.equal(
         hasForeignKey(db, "character_affect_events_v6", "supersedes_memory_entry_id", "memory_entries_v6"),
@@ -849,10 +859,44 @@ describe("database-schema-v6", () => {
           'bug', 'bug-1', '{"label":"legacy","valence":-0.2}', 0.5, 'reason', 'evidence',
           '2026-08-09T01:00:00.000Z', 'legacy-key', 'legacy-fingerprint', 'active', '2026-08-09T01:00:00.000Z')
       `).run();
+      db.prepare(`
+        INSERT INTO character_affect_resets_v6 (
+          id, character_id, user_id, session_id, layer, reason, reset_at,
+          idempotency_key, request_fingerprint, created_at
+        ) VALUES ('legacy-reset', 'character-a', 'local-user', 'session-a', 'session',
+          'legacy reset', '2026-08-09T02:00:00.000Z', 'legacy-reset-key', 'legacy-reset-fingerprint',
+          '2026-08-09T02:00:00.000Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO memory_entries_v6 (
+          id, owner_type, owner_id, scope_type, scope_id, kind, title, body, body_sha256,
+          preview, state, source_type, source_session_id, source_app_message_id,
+          source_provider_message_id, source_provider_id, superseded_by_id, created_at,
+          updated_at, forgotten_at
+        ) VALUES ('legacy-memory', 'user', 'local-user', 'global', 'global', 'note',
+          'Legacy memory', 'Legacy body', 'legacy-hash', 'Legacy preview', 'active', 'manual',
+          NULL, NULL, NULL, NULL, NULL, '2026-08-09T00:00:00.000Z',
+          '2026-08-09T00:00:00.000Z', NULL)
+      `).run();
+      db.exec("DROP INDEX idx_v6_character_affect_events_afterglow;");
+      const beforeCounts = db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM character_affect_events_v6) AS events,
+          (SELECT COUNT(*) FROM character_affect_resets_v6) AS resets,
+          (SELECT COUNT(*) FROM memory_entries_v6) AS memories
+      `).get() as { events: number; resets: number; memories: number };
 
       ensureV6Schema(db);
       ensureV6Schema(db);
 
+      assert.equal(indexNames(db).includes("idx_v6_character_affect_events_afterglow"), true);
+      const afterCounts = db.prepare(`
+        SELECT
+          (SELECT COUNT(*) FROM character_affect_events_v6) AS events,
+          (SELECT COUNT(*) FROM character_affect_resets_v6) AS resets,
+          (SELECT COUNT(*) FROM memory_entries_v6) AS memories
+      `).get() as { events: number; resets: number; memories: number };
+      assert.deepEqual(afterCounts, beforeCounts);
       assert.equal(columnNames(db, "character_affect_events_v6").includes("family"), true);
       assert.equal(
         (db.prepare("SELECT family FROM character_affect_events_v6 WHERE id = 'legacy-event'").get() as { family: string | null }).family,
