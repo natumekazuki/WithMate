@@ -201,7 +201,7 @@ import {
   applySessionWorkspaceAvailabilityResult,
   beginSessionWorkspaceAvailabilityCheck,
   isSessionWorkspaceAvailable,
-  resolveSessionWorkspaceBlockedReason,
+  resolveSessionWorkspaceExecutionGate,
   resolveSessionWorkspaceUnavailableMessage,
 } from "./session-workspace-availability.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
@@ -1188,34 +1188,16 @@ export default function AgentSessionWindowApp() {
     ),
     [appSettings, modelCatalog],
   );
-  const sessionExecutionBlockedReason = useMemo(() => {
-    if (!selectedSession) {
-      return "";
-    }
-
-    if (isSelectedSessionReadOnly) {
-      return "This session is read-only. Create a new session to send messages.";
-    }
-
-    if (!isSelectedProviderEnabled) {
-      return "Provider is disabled. Enable it in Settings.";
-    }
-
-    const workspaceBlockedReason = resolveSessionWorkspaceBlockedReason(
-      workspaceAvailability,
-      selectedSession.id,
-      selectedSession.workspacePath,
-    );
-    if (workspaceBlockedReason) {
-      return workspaceBlockedReason;
-    }
-
-    return "";
-  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceAvailability]);
-  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
-    ? "Message submission is in progress."
-    : "";
-  const composerBlockedReason = composerBusyReason || sessionExecutionBlockedReason;
+  const workspaceExecutionGate = useMemo(
+    () => selectedSession
+      ? resolveSessionWorkspaceExecutionGate(
+          workspaceAvailability,
+          selectedSession.id,
+          selectedSession.workspacePath,
+        )
+      : { isPending: false, blockedReason: "" },
+    [selectedSession, workspaceAvailability],
+  );
   const isSelectedWorkspaceAvailable = selectedSession
     ? isSessionWorkspaceAvailable(
         workspaceAvailability,
@@ -1232,6 +1214,31 @@ export default function AgentSessionWindowApp() {
     : "";
   const isWorkspaceAvailabilityCheckPending = workspaceAvailability.status === "checking"
     && workspaceAvailability.sessionId === selectedSession?.id;
+  const sessionExecutionBlockedReason = useMemo(() => {
+    if (!selectedSession) {
+      return "";
+    }
+
+    if (isSelectedSessionReadOnly) {
+      return "This session is read-only. Create a new session to send messages.";
+    }
+
+    if (!isSelectedProviderEnabled) {
+      return "Provider is disabled. Enable it in Settings.";
+    }
+
+    if (workspaceExecutionGate.blockedReason) {
+      return workspaceExecutionGate.blockedReason;
+    }
+
+    return "";
+  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate]);
+  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
+    ? "Message submission is in progress."
+    : workspaceExecutionGate.isPending
+      ? "Workspace availability is being checked."
+      : "";
+  const composerBlockedReason = composerBusyReason || sessionExecutionBlockedReason;
 
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {

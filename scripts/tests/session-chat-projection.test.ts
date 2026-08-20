@@ -377,6 +377,24 @@ test("buildAgentSessionChatWindowProps は submit pending の helper feedback �
   assert.equal(props.composerProps.composerSendability.isBusy, true);
 });
 
+test("buildAgentSessionChatWindowProps は workspace 再検証中の busy status を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Workspace availability is being checked.",
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+    isAuxiliaryMode: true,
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+  assert.equal(props.composerProps.composerSendability.isBusy, true);
+  assert.equal(props.composerProps.composerSendability.feedbackTone, null);
+});
+
 test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     composerSendability: {
