@@ -429,6 +429,65 @@ describe("Session terminal failure notification", () => {
     }
   });
 
+  it("TN-CLAIM-10: settleとclaim releaseの二重一時失敗を同一processで再試行する", async () => {
+    const fixture = await createFixture();
+    const originalSettle = fixture.notificationStorage.settleEnqueued.bind(fixture.notificationStorage);
+    const originalRelease = fixture.notificationStorage.releaseForRetry.bind(fixture.notificationStorage);
+    let now = new Date("2026-08-18T00:01:02.000Z");
+    let timerCallback: (() => void) | null = null;
+    let failSettleOnce = true;
+    let failReleaseOnce = true;
+    const keys: string[] = [];
+    try {
+      fixture.notificationStorage.settleEnqueued = ((input) => {
+        if (failSettleOnce) {
+          failSettleOnce = false;
+          throw new Error("settle storage unavailable");
+        }
+        return originalSettle(input);
+      }) as typeof fixture.notificationStorage.settleEnqueued;
+      fixture.notificationStorage.releaseForRetry = ((input) => {
+        if (failReleaseOnce) {
+          failReleaseOnce = false;
+          throw new Error("retry storage unavailable");
+        }
+        return originalRelease(input);
+      }) as typeof fixture.notificationStorage.releaseForRetry;
+
+      const service = new SessionTerminalFailureNotificationService({
+        storage: fixture.notificationStorage,
+        executionStorage: fixture.executionStorage,
+        now: () => now,
+        enqueueTurn: async ({ idempotencyKey }) => {
+          keys.push(idempotencyKey);
+          return { ok: true, executionId: "notification-execution" };
+        },
+        setTimer(callback) {
+          timerCallback = callback;
+          return {};
+        },
+        clearTimer() {},
+      });
+
+      await service.start();
+      assert.equal(fixture.notificationStorage.getBySourceExecutionId("source-execution")?.claimToken !== null, true);
+      assert.ok(timerCallback);
+
+      now = new Date("2026-08-18T00:01:07.000Z");
+      timerCallback?.();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await service.shutdown();
+
+      assert.equal(fixture.notificationStorage.getBySourceExecutionId("source-execution")?.state, "enqueued");
+      assert.equal(keys.length, 2);
+      assert.equal(keys[0], keys[1]);
+    } finally {
+      fixture.notificationStorage.close();
+      fixture.executionStorage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("TN-DELIVERY-04: terminal確定から24時間で期限切れとなりenqueueしない", async () => {
     const fixture = await createFixture();
     let enqueueCount = 0;

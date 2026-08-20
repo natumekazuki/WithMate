@@ -1318,6 +1318,65 @@ test("TN-PROMPT-05: trusted notification enqueueは既存FIFO ownerへsource ide
   assert.equal(enqueues[0].request.turn.userMessage, "safe prompt");
 });
 
+test("TN-RETRY-12: trusted notification enqueueはproviderとcatalogの回復可能状態だけをretryableにする", async () => {
+  const cases = [
+    { code: "PROVIDER_DISABLED", retryable: true },
+    { code: "PROVIDER_UNAVAILABLE", retryable: true },
+    { code: "CATALOG_REVISION_STALE", retryable: true },
+    { code: "INVALID_INPUT", retryable: false },
+    { code: "SESSION_READ_ONLY", retryable: false },
+  ] as const;
+
+  for (const item of cases) {
+    const facade = createMainSessionCommandFacade({
+      getSession: () => ({
+        id: "target-session",
+        sessionKind: "default",
+        provider: "codex",
+        model: "gpt-5.6",
+        reasoningEffort: "high",
+        approvalMode: "never",
+        codexSandboxMode: "workspace-write",
+        customAgentName: "",
+      }) as never,
+      getSessions: () => [],
+      getStoredSessionSummaries: () => [],
+      runProviderRuntimeOperationExclusive,
+      resolveSessionLaunchSelection: async () => createLaunchSelection(),
+      getSessionPersistenceService: () => ({} as never),
+      getSessionRuntimeService: () => ({
+        async validateSessionTurn() {
+          throw new SessionTurnValidationError(item.code, "validation failed");
+        },
+      }) as never,
+      getSessionExecutionService: () => ({
+        resolveReplay() { return null; },
+        async enqueue() { throw new Error("must not enqueue"); },
+      }) as never,
+      getCurrentModelCatalogRevision: () => 8,
+      getProviderQuotaTelemetry: () => null,
+      isProviderQuotaTelemetryStale: () => false,
+      refreshProviderQuotaTelemetry: async () => null,
+      createSessionId: () => "launch-test",
+      createSessionFilesDirectory: () => "C:/session-files/launch-test",
+      isSessionFilesWorkspace: () => false,
+    });
+
+    const result = await facade.enqueueTerminalFailureNotificationTurn({
+      targetSessionId: "target-session",
+      initiator: {
+        kind: "session",
+        sessionId: "source-session",
+        character: { characterId: "source-character", name: "Source", iconFilePath: "" },
+      },
+      prompt: "safe prompt",
+      idempotencyKey: `stable-${item.code}`,
+    });
+
+    assert.deepEqual(result, { ok: false, errorCode: item.code, retryable: item.retryable });
+  }
+});
+
 test("TN-DELIVERY-04: trusted notification replayはcurrent target設定の再検証より先に返る", async () => {
   let targetResolutionCount = 0;
   const facade = createMainSessionCommandFacade({

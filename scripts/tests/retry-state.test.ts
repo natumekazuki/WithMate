@@ -256,6 +256,7 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     kind: "canceled",
     lastRequestText: "古い依頼",
     terminalAuditLog: canceled,
+    sessionId: "session-1",
   });
 
   assert.equal(resolveRetryBannerSource({
@@ -302,6 +303,7 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     kind: "failed",
     lastRequestText: "新しい依頼",
     terminalAuditLog: null,
+    sessionId: "session-1",
   });
 });
 
@@ -373,6 +375,42 @@ test("resolveRetryBannerTerminalFailureNotification は retry source と同じ e
   }), olderNotification);
   assert.equal(resolveRetryBannerTerminalFailureNotification({
     source: { ...source, terminalAuditLog: null },
+    executions,
+  }), null);
+});
+
+test("TN-PROJ-13: audit相関がなくても最新terminal executionから通知状態を解決する", () => {
+  const notification = {
+    state: "pending" as const,
+    targetSessionId: "target-session",
+    updatedAt: "2026-08-18T10:01:00.000Z",
+  };
+  const source = {
+    kind: "failed" as const,
+    lastRequestText: "audit作成前に失敗した依頼",
+    terminalAuditLog: null,
+    sessionId: "session-1",
+  };
+  const executions = [{
+    executionId: "execution-2",
+    sessionId: "session-1",
+    clientRequestId: "request-2",
+    userMessage: source.lastRequestText,
+    initiator: { kind: "session" as const, sessionId: "source-session" },
+    createdAt: "2026-08-18T10:01:00.000Z",
+    updatedAt: "2026-08-18T10:01:00.000Z",
+    state: "failed" as const,
+    queuePosition: null,
+    canCancel: false as const,
+    terminalFailureNotification: notification,
+  }];
+
+  assert.equal(
+    resolveRetryBannerTerminalFailureNotification({ source, executions }),
+    notification,
+  );
+  assert.equal(resolveRetryBannerTerminalFailureNotification({
+    source: { ...source, lastRequestText: "別の依頼" },
     executions,
   }), null);
 });

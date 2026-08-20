@@ -55,6 +55,14 @@ const RETRY_INITIAL_DELAY_MS = 5_000;
 const RETRY_MAX_DELAY_MS = 5 * 60 * 1000;
 const RECONCILIATION_BATCH_SIZE = 100;
 
+type ClaimReleaseRecovery = {
+  sourceExecutionId: string;
+  deliveryId: string;
+  claimToken: string;
+  nextAttemptAt: string;
+  releasedAt: string;
+};
+
 export class SessionTerminalFailureNotificationService {
   private started = false;
   private stopped = false;
@@ -65,6 +73,7 @@ export class SessionTerminalFailureNotificationService {
   private startupClaimsReleased = false;
   private startupReconciliationPending = true;
   private readonly wakeExecutionIds = new Set<string>();
+  private readonly claimReleaseRecoveries = new Map<string, ClaimReleaseRecovery>();
 
   constructor(private readonly deps: SessionTerminalFailureNotificationServiceDeps) {}
 
@@ -116,6 +125,7 @@ export class SessionTerminalFailureNotificationService {
     }
     do {
       this.workRequested = false;
+      this.recoverClaimReleases();
       this.reconcileWokenExecutions();
       this.reconcileStartupBatch();
       this.failExpired();
@@ -267,17 +277,39 @@ export class SessionTerminalFailureNotificationService {
       releasedAt.getTime() + delayMs,
       parseTimestamp(delivery.deadlineAt),
     )).toISOString();
+    const recovery: ClaimReleaseRecovery = {
+      sourceExecutionId: delivery.sourceExecutionId,
+      deliveryId: delivery.id,
+      claimToken,
+      nextAttemptAt,
+      releasedAt: releasedAt.toISOString(),
+    };
+    this.claimReleaseRecoveries.set(delivery.id, recovery);
     try {
-      this.deps.storage.releaseForRetry({
-        deliveryId: delivery.id,
-        claimToken,
-        nextAttemptAt,
-        releasedAt: releasedAt.toISOString(),
-      });
+      this.deps.storage.releaseForRetry(recovery);
+      this.claimReleaseRecoveries.delete(delivery.id);
       this.notifyChanged(delivery.sourceExecutionId);
     } catch (error) {
       this.reportBackgroundError(error);
       throw error;
+    }
+  }
+
+  private recoverClaimReleases(): void {
+    for (const [deliveryId, recovery] of this.claimReleaseRecoveries) {
+      const current = this.deps.storage.getBySourceExecutionId(recovery.sourceExecutionId);
+      if (
+        !current
+        || current.state !== "pending"
+        || current.claimToken !== recovery.claimToken
+      ) {
+        this.claimReleaseRecoveries.delete(deliveryId);
+        if (current) this.notifyChanged(current.sourceExecutionId);
+        continue;
+      }
+      this.deps.storage.releaseForRetry(recovery);
+      this.claimReleaseRecoveries.delete(deliveryId);
+      this.notifyChanged(recovery.sourceExecutionId);
     }
   }
 

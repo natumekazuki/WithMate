@@ -302,6 +302,43 @@ describe("database-schema-v6", () => {
     }
   });
 
+  it("TN-SCHEMA-11: delivery schemaはidentity uniquenessとclaim/state tuple制約を必須にする", () => {
+    const variants = [
+      CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL.replace(
+        "source_execution_id TEXT NOT NULL UNIQUE",
+        "source_execution_id TEXT NOT NULL",
+      ),
+      CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL.replace(
+        "enqueue_idempotency_key TEXT NOT NULL UNIQUE",
+        "enqueue_idempotency_key TEXT NOT NULL",
+      ),
+      CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL.replace(
+        "    CHECK ((claim_token IS NULL) = (claimed_at IS NULL)),\n",
+        "",
+      ),
+      CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL.replace(
+        `    CHECK ((claim_token IS NULL) = (claimed_at IS NULL)),
+    CHECK (
+      (state = 'pending' AND notification_execution_id IS NULL AND error_code IS NULL)
+      OR (state = 'enqueued' AND notification_execution_id IS NOT NULL AND error_code IS NULL AND claim_token IS NULL)
+      OR (state = 'failed' AND notification_execution_id IS NULL AND error_code IS NOT NULL AND claim_token IS NULL)
+    )\n`,
+        "    CHECK ((claim_token IS NULL) = (claimed_at IS NULL))\n",
+      ),
+    ];
+
+    for (const malformedSql of variants) {
+      const db = createV6Schema();
+      try {
+        db.exec("DROP TABLE session_terminal_failure_notification_deliveries_v6;");
+        db.exec(malformedSql);
+        assert.throws(() => ensureV6Schema(db), /delivery schema is invalid/);
+      } finally {
+        db.close();
+      }
+    }
+  });
+
   it("ensureV6Schemaは既存Session file write tableをrejected対応へ更新する", () => {
     const db = createV6Schema();
     try {

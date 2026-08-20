@@ -769,11 +769,34 @@ function hasValidTerminalFailureNotificationSchemaIfPresent(db: DatabaseSync): b
       .filter((name): name is string => typeof name === "string"),
   );
   const sql = tableSql(db, tableName);
+  const normalizedSql = sql.replace(/\s+/g, " ").toLowerCase();
   return indexes.has("idx_v6_terminal_failure_notification_due")
     && indexes.has("idx_v6_terminal_failure_notification_source")
+    && hasUniqueIndexForColumns(db, tableName, ["source_execution_id"])
+    && hasUniqueIndexForColumns(db, tableName, ["enqueue_idempotency_key"])
     && hasForeignKey(db, tableName, "source_execution_id", "session_executions_v6", "id", "CASCADE")
     && sql.includes("terminal_state IN ('failed', 'interrupted')")
-    && sql.includes("state IN ('pending', 'enqueued', 'failed')");
+    && sql.includes("state IN ('pending', 'enqueued', 'failed')")
+    && normalizedSql.includes("check ((claim_token is null) = (claimed_at is null))")
+    && normalizedSql.includes("state = 'pending' and notification_execution_id is null and error_code is null")
+    && normalizedSql.includes("state = 'enqueued' and notification_execution_id is not null and error_code is null and claim_token is null")
+    && normalizedSql.includes("state = 'failed' and notification_execution_id is null and error_code is not null and claim_token is null");
+}
+
+function hasUniqueIndexForColumns(
+  db: DatabaseSync,
+  tableName: string,
+  expectedColumns: readonly string[],
+): boolean {
+  const indexes = db.prepare(`SELECT name, "unique" AS is_unique FROM pragma_index_list(?)`)
+    .all(tableName) as Array<{ name?: unknown; is_unique?: unknown }>;
+  return indexes.some((index) => {
+    if (index.is_unique !== 1 || typeof index.name !== "string") return false;
+    const columns = db.prepare("SELECT name FROM pragma_index_info(?) ORDER BY seqno ASC")
+      .all(index.name) as Array<{ name?: unknown }>;
+    return columns.length === expectedColumns.length
+      && columns.every((column, position) => column.name === expectedColumns[position]);
+  });
 }
 
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {

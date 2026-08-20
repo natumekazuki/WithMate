@@ -491,7 +491,11 @@ function mapGuiExecutionError(error: unknown): SessionTurnAdmissionError | null 
     };
   }
   if (error instanceof SessionTurnValidationError) {
-    return { code: error.code, message: error.message, retryable: false };
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: isRetryableSessionTurnValidationCode(error.code),
+    };
   }
   if (error instanceof SessionExecutionIdempotencyConflictError) {
     return { code: "IDEMPOTENCY_CONFLICT", message: error.message, retryable: false };
@@ -509,4 +513,12 @@ function mapGuiExecutionError(error: unknown): SessionTurnAdmissionError | null 
     return { code: "RUNTIME_SHUTTING_DOWN", message: error.message, retryable: true };
   }
   return null;
+}
+
+function isRetryableSessionTurnValidationCode(code: string): boolean {
+  return [
+    "PROVIDER_DISABLED",
+    "PROVIDER_UNAVAILABLE",
+    "CATALOG_REVISION_STALE",
+  ].includes(code);
 }
