@@ -422,6 +422,9 @@ export function isValidV6Database(dbPath: string): boolean {
     if (!hasValidScheduleSchemaIfPresent(db)) {
       return false;
     }
+    if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
+      return false;
+    }
     return hasNoForeignKeyViolations(db);
   } catch {
     return false;
@@ -747,6 +750,53 @@ function hasValidScheduleSchemaIfPresent(db: DatabaseSync): boolean {
     && fireSql.includes("kind IN ('scheduled', 'run_now')")
     && fireSql.includes("state IN ('pending', 'claimed', 'enqueued', 'failed')")
     && fireSql.includes("json_valid(turn_json)");
+}
+
+function hasValidTerminalFailureNotificationSchemaIfPresent(db: DatabaseSync): boolean {
+  const tableName = "session_terminal_failure_notification_deliveries_v6";
+  if (!tableExists(db, tableName)) return true;
+  const columns = tableColumnNames(db, tableName);
+  if (![
+    "id", "source_execution_id", "source_session_id", "terminal_state",
+    "target_session_id", "contract_version", "state", "enqueue_idempotency_key",
+    "notification_execution_id", "error_code", "error_message", "attempt_count",
+    "last_attempt_at", "next_attempt_at", "deadline_at", "claim_token", "claimed_at",
+    "created_at", "updated_at",
+  ].every((column) => columns.has(column))) return false;
+  const indexes = new Set(
+    (db.prepare("SELECT name FROM sqlite_schema WHERE type = 'index'").all() as Array<{ name?: unknown }>)
+      .map((index) => index.name)
+      .filter((name): name is string => typeof name === "string"),
+  );
+  const sql = tableSql(db, tableName);
+  const normalizedSql = sql.replace(/\s+/g, " ").toLowerCase();
+  return indexes.has("idx_v6_terminal_failure_notification_due")
+    && indexes.has("idx_v6_terminal_failure_notification_source")
+    && hasUniqueIndexForColumns(db, tableName, ["source_execution_id"])
+    && hasUniqueIndexForColumns(db, tableName, ["enqueue_idempotency_key"])
+    && hasForeignKey(db, tableName, "source_execution_id", "session_executions_v6", "id", "CASCADE")
+    && sql.includes("terminal_state IN ('failed', 'interrupted')")
+    && sql.includes("state IN ('pending', 'enqueued', 'failed')")
+    && normalizedSql.includes("check ((claim_token is null) = (claimed_at is null))")
+    && normalizedSql.includes("state = 'pending' and notification_execution_id is null and error_code is null")
+    && normalizedSql.includes("state = 'enqueued' and notification_execution_id is not null and error_code is null and claim_token is null")
+    && normalizedSql.includes("state = 'failed' and notification_execution_id is null and error_code is not null and claim_token is null");
+}
+
+function hasUniqueIndexForColumns(
+  db: DatabaseSync,
+  tableName: string,
+  expectedColumns: readonly string[],
+): boolean {
+  const indexes = db.prepare(`SELECT name, "unique" AS is_unique FROM pragma_index_list(?)`)
+    .all(tableName) as Array<{ name?: unknown; is_unique?: unknown }>;
+  return indexes.some((index) => {
+    if (index.is_unique !== 1 || typeof index.name !== "string") return false;
+    const columns = db.prepare("SELECT name FROM pragma_index_info(?) ORDER BY seqno ASC")
+      .all(index.name) as Array<{ name?: unknown }>;
+    return columns.length === expectedColumns.length
+      && columns.every((column, position) => column.name === expectedColumns[position]);
+  });
 }
 
 function hasNoForeignKeyViolations(db: DatabaseSync): boolean {
@@ -1099,6 +1149,11 @@ export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_session_executions_session_state_sequence
     ON session_executions_v6(session_id, state, sequence ASC);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_executions_terminal_notification_sequence
+    ON session_executions_v6(sequence ASC)
+    WHERE state IN ('failed', 'interrupted')
+      AND json_type(request_json, '$.terminalFailureNotification.targetSessionId') = 'text';
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_executions_one_running
     ON session_executions_v6(session_id)
@@ -1846,6 +1901,41 @@ export const CREATE_V6_SESSION_SCHEDULE_FIRES_TABLE_SQL = `
   CREATE INDEX IF NOT EXISTS idx_v6_session_schedule_fires_schedule ON session_schedule_fires_v6(schedule_id, created_at DESC);
 `;
 
+export const CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_terminal_failure_notification_deliveries_v6 (
+    id TEXT PRIMARY KEY,
+    source_execution_id TEXT NOT NULL UNIQUE,
+    source_session_id TEXT NOT NULL,
+    terminal_state TEXT NOT NULL CHECK (terminal_state IN ('failed', 'interrupted')),
+    target_session_id TEXT NOT NULL,
+    contract_version INTEGER NOT NULL CHECK (contract_version = 1),
+    state TEXT NOT NULL CHECK (state IN ('pending', 'enqueued', 'failed')),
+    enqueue_idempotency_key TEXT NOT NULL UNIQUE,
+    notification_execution_id TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+    last_attempt_at TEXT,
+    next_attempt_at TEXT NOT NULL,
+    deadline_at TEXT NOT NULL,
+    claim_token TEXT,
+    claimed_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (source_execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE,
+    CHECK ((claim_token IS NULL) = (claimed_at IS NULL)),
+    CHECK (
+      (state = 'pending' AND notification_execution_id IS NULL AND error_code IS NULL)
+      OR (state = 'enqueued' AND notification_execution_id IS NOT NULL AND error_code IS NULL AND claim_token IS NULL)
+      OR (state = 'failed' AND notification_execution_id IS NULL AND error_code IS NOT NULL AND claim_token IS NULL)
+    )
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_terminal_failure_notification_due
+    ON session_terminal_failure_notification_deliveries_v6(state, next_attempt_at, deadline_at);
+  CREATE INDEX IF NOT EXISTS idx_v6_terminal_failure_notification_source
+    ON session_terminal_failure_notification_deliveries_v6(source_session_id, updated_at DESC);
+`;
+
 export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_APP_SETTINGS_TABLE_SQL,
   CREATE_V6_PROMPT_TEMPLATES_TABLE_SQL,
@@ -1864,6 +1954,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_SCHEDULES_TABLE_SQL,
   CREATE_V6_SESSION_SCHEDULE_FIRES_TABLE_SQL,
+  CREATE_V6_SESSION_TERMINAL_FAILURE_NOTIFICATION_DELIVERIES_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_PUBLIC_PROGRESS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
@@ -2182,6 +2273,9 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
+  if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
+    throw new Error("Session terminal failure notification delivery schema is invalid.");
+  }
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -2193,6 +2287,10 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       continue;
     }
     db.exec(statement);
+  }
+
+  if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
+    throw new Error("Session terminal failure notification delivery schema is invalid.");
   }
 
   const sessionColumns = tableColumnNames(db, "sessions_v6");

@@ -6,6 +6,7 @@ type SessionTurnExecutionProjectionBase = {
   initiator: import("./session-execution.js").TurnInitiator | null;
   createdAt: string;
   updatedAt: string;
+  terminalFailureNotification?: import("./session-external-runtime-contract.js").SessionRuntimeTerminalFailureNotificationProjection | null;
 };
 
 export type SessionRunningTurn = SessionTurnExecutionProjectionBase & {
@@ -20,7 +21,13 @@ export type SessionQueuedTurn = SessionTurnExecutionProjectionBase & {
   canCancel: boolean;
 };
 
-export type SessionTurnExecutionProjection = SessionRunningTurn | SessionQueuedTurn;
+export type SessionTerminalTurn = SessionTurnExecutionProjectionBase & {
+  state: "completed" | "failed" | "canceled" | "interrupted";
+  queuePosition: null;
+  canCancel: false;
+};
+
+export type SessionTurnExecutionProjection = SessionRunningTurn | SessionQueuedTurn | SessionTerminalTurn;
 
 export type SessionExecutionChangedEvent =
   | {

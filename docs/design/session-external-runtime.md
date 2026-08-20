@@ -144,6 +144,22 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 `turn.run`と`turn.enqueue`は別operationとしてidempotency scopeを分ける。同じkeyを使って一方を他方へ変更しても、既存executionへ合流させない。
 
+### Terminal failure notification
+
+`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。sourceとtargetが同一、targetが不存在または非対応kind、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
+
+新規source executionには、通知先とsource SessionのCharacter ID、表示名、icon参照のcanonical snapshotを保存する。GUI由来Turn、設定のないexecution、legacy executionへ通知設定を推測しない。sourceが`failed`または`interrupted`へterminal commitした後だけdeliveryを起動し、`completed`と`canceled`は`not_triggered`として投影する。notification executionは保存済みsource snapshotをSession initiatorとして使い、通知設定を持たない。
+
+deliveryはsource execution ID、terminal state、target Session ID、契約versionからstable identityとenqueue idempotency keyを導出する。`pending`をdurableにclaimしてtransaction外で既存`turn.enqueue` ownerを呼ぶため、専用provider経路や専用queueは持たない。enqueue成功後のresponse loss、settle前crash、再起動retryは同じkeyを使い、canonical notification executionへ収束する。claim取得後からsettlementまでの未処理例外はclaim解放へ収束させる。claim解放にも失敗した場合は、同一process内にclaim解放intentを保持し、timerから保存済みclaim tokenを再確認して解放する。settlementが実際にはcommit済みなら、deliveryのcurrent stateを読み直して解放intentを破棄する。
+
+delivery tableはsource execution IDとenqueue idempotency keyの一意性、claim tokenとclaimed timestampの同時null制約、`pending`、`enqueued`、`failed`ごとのnotification execution ID、error code、claimの組合せをschema validationで確認する。不完全な同名tableやindexは有効なV6 schemaとして受理しない。
+
+通常のterminal callbackは確定したexecution IDだけをwake-upし、起動時は通知設定を持つ`failed`または`interrupted`かつdelivery未作成のexecutionをSQLで絞り、100件ごとにevent loopへ制御を返してreconcileする。未settle deliveryとstartupで`interrupted(runtime_restarted)`へ収束したexecutionも回収する。DB全再作成後はexecution recovery、notification dispatcher、schedule workerを同じruntime activation boundaryから再起動する。`QUEUE_FULL`、runtime shutdown、transient storage failure、effect不明のresponse lossに加え、`PROVIDER_DISABLED`、`PROVIDER_UNAVAILABLE`、`CATALOG_REVISION_STALE`はterminal確定から24時間、5秒開始の指数backoff、最大5分で再試行する。target不存在、非対応kind、owner mismatch、sender snapshot不正、期限切れはpermanent failureとする。delivery failureはsource state、result、error、interaction expiryを巻き戻さない。
+
+public executionの`terminalFailureNotification`は、未設定を`null`、設定済み非terminalを`armed`、対象外terminalを`not_triggered`、配送を`pending`、`enqueued`、`failed`で表す。全状態にtarget Session IDとupdatedAtを含め、`enqueued`はnotification execution ID、`failed`はsafe error codeを含む。`turn.run`、`turn.enqueue`、`turn.get`、`turn.list`は同じprojectorを使う。履歴取得の`turn.list`はcursor paginationを維持し、GUIの常駐projectionはqueued/running executionと最新terminal executionに限定する。source GUIはauditのexecution IDを第一相関に使い、audit作成前に失敗した場合は、同じSession、terminal state、user messageを持つ最新terminal executionへ限定して通知状態を解決する。target GUIは既存message listで保存済みsource Character名とavatarを示す。Session initiatorなのでGUI cancelは許可しない。
+
+通知promptはsource Session ID、source execution ID、terminal state、terminal timestamp、safe error code、公開済みreason、`turn.get`参照をpublic execution projectionから組み立てる。raw result、stack、provider payload、credential、system prompt、workspace path、private audit dataを含めず、caller自由入力fieldも設けない。
+
 ### Process restart recovery
 
 executionのpublic identityと状態は、process内のprovider handleとは分けて永続化する。queue先頭を実行するときは、`queued`から`running`へのadmissionを永続化してからproviderへdispatchする。`running`はprovider dispatchの完了を意味せず、provider effectが生じた可能性があるため自動再dispatchできない状態とする。
@@ -342,7 +358,7 @@ AはBの作業内容、依存関係、CのSession IDをBへのpromptへ含める
 
 引き継ぎ先は呼び出し元に固定しない。Bは明示された任意の対象Sessionへenqueueできる。B自身のSession IDや親Session IDを自動でpromptへ注入する`runtime.context`は初期surfaceに設けない。
 
-Bが`turn.enqueue`を呼ぶ前に`failed`または`interrupted`へ到達した場合、Cのexecutionは作成されない。Aは保持したBのSession IDとexecution IDを`turn.get`へ渡して状態を確認する。terminal failureを別Sessionへ自動enqueueする仕組みは後続の契約として扱う。
+Bが`turn.enqueue`を呼ぶ前に`failed`または`interrupted`へ到達した場合、通常の成功時引き継ぎは作成されない。Bのsource execution作成時にCを`terminalFailureNotification.targetSessionId`として明示していれば、terminal commit後にsafeな失敗通知TurnだけをCのFIFOへ登録できる。設定していなければAは保持したBのSession IDとexecution IDを`turn.get`へ渡して状態を確認する。
 
 ### wait中のinteractionへ回答する
 
@@ -559,7 +575,6 @@ provider実行がterminalの`failed`へ到達した場合、operationの受付�
 次は未確定であり、現時点のaccepted contractとして扱わない。
 
 - SessionFolderへのbinary uploadを将来追加する条件
-- terminal failureを明示した対象Sessionへ自動enqueueする機能のdelivery保証と再試行契約
 
 ## Related documents
 

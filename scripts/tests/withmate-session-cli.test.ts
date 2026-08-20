@@ -543,6 +543,7 @@ describe("withmate-session CLI", () => {
         catalogRevision: 5,
         idempotencyKey: "run-copilot",
         responseMode: "deferred",
+        terminalFailureNotification: { targetSessionId: "target-session" },
         turn,
       }),
     ], { stdout: stdout.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.ok);
@@ -551,6 +552,7 @@ describe("withmate-session CLI", () => {
       ["session.create", "copilot"],
       ["turn.run", "copilot"],
     ]);
+    assert.deepEqual(requests[1].input.terminalFailureNotification, { targetSessionId: "target-session" });
 
     const invalid = capture();
     assert.equal(await runWithMateSessionCli([
@@ -562,6 +564,23 @@ describe("withmate-session CLI", () => {
       }),
     ], { stdout: invalid.stream, discover: async () => connection, call: call as any }), WITHMATE_SESSION_CLI_EXIT_CODES.usage);
     assert.equal(invalid.json().error.code, "INVALID_INPUT");
+    assert.equal(requests.length, 2);
+
+    const invalidNotification = capture();
+    assert.equal(await runWithMateSessionCli([
+      "turn", "enqueue", "--json", JSON.stringify({
+        sessionId: "copilot-session",
+        catalogRevision: 5,
+        idempotencyKey: "invalid-notification",
+        terminalFailureNotification: { targetSessionId: "target-session", characterId: "spoof" },
+        turn,
+      }),
+    ], {
+      stdout: invalidNotification.stream,
+      discover: async () => connection,
+      call: call as any,
+    }), WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.equal(invalidNotification.json().error.code, "INVALID_INPUT");
     assert.equal(requests.length, 2);
   });
 

@@ -54,6 +54,16 @@ withmate-session turn run --json '{"sessionId":"SESSION_ID","catalogRevision":1,
 withmate-session turn enqueue --json '{"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-copilot-001","turn":{"provider":"copilot","userMessage":"確認して","model":"claude-sonnet","reasoningEffort":"high","approvalMode":"on-request","customAgentName":""}}'
 ```
 
+source Turnが`failed`または`interrupted`になった場合だけ、別の通常Sessionへ通知TurnをFIFO登録するには、`turn run`または`turn enqueue`へ通知先を明示する。
+
+```powershell
+withmate-session turn run --json '{"sessionId":"SOURCE_SESSION_ID","catalogRevision":1,"idempotencyKey":"run-with-terminal-notify-001","responseMode":"deferred","terminalFailureNotification":{"targetSessionId":"TARGET_SESSION_ID"},"turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
+```
+
+通知先は自動補完されない。sourceと同じSession、存在しないSession、通常Session以外はsource execution作成前に拒否される。同じidempotency keyを再送するときは同じ通知先を指定する。通知先だけを変更するとconflictになる。
+
+execution resultの`terminalFailureNotification`は、未設定なら`null`、待機中は`armed`、`completed`または`canceled`では`not_triggered`、配送中は`pending`、登録後は`enqueued`、配送不能または期限切れでは`failed`になる。`enqueued`の`notificationExecutionId`は通知先Sessionの`turn get`で追跡できる。通知配送の失敗はsource executionのterminal stateを変更しない。
+
 ## Session操作
 
 通常Sessionの作成、一覧、取得、名前変更を公開する。

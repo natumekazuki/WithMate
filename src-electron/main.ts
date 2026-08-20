@@ -136,6 +136,9 @@ import { SessionExecutionAdmissionGate } from "./session-execution-admission-gat
 import { SessionExecutionStorageV6 } from "./session-execution-storage-v6.js";
 import { SessionScheduleStorageV6 } from "./session-schedule-storage-v6.js";
 import { SessionScheduleService } from "./session-schedule-service.js";
+import { SessionTerminalFailureNotificationStorageV6 } from "./session-terminal-failure-notification-storage-v6.js";
+import { SessionTerminalFailureNotificationService } from "./session-terminal-failure-notification-service.js";
+import { projectTerminalFailureNotification } from "../src/session-terminal-failure-notification.js";
 import { buildScheduledTurnRequest } from "./session-schedule-turn-request.js";
 import {
   collapseMissedSessionScheduleFire,
@@ -431,6 +434,8 @@ let sessionExecutionStorage: SessionExecutionStorageV6 | null = null;
 let sessionExecutionService: SessionExecutionService | null = null;
 let sessionScheduleStorage: SessionScheduleStorageV6 | null = null;
 let sessionScheduleService: SessionScheduleService | null = null;
+let sessionTerminalFailureNotificationStorage: SessionTerminalFailureNotificationStorageV6 | null = null;
+let sessionTerminalFailureNotificationService: SessionTerminalFailureNotificationService | null = null;
 let sessionInteractionStorage: SessionInteractionStorageV6 | null = null;
 let sessionInteractionService: SessionInteractionService | null = null;
 let sessionExecutionPublicProgressStorage: SessionExecutionPublicProgressStorageV6 | null = null;
@@ -1484,6 +1489,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             shutdownSessionRuntime: async () => {
               sessionExternalRuntimeShuttingDown = true;
+              await shutdownSessionTerminalFailureNotificationRuntimeBestEffort();
               await shutdownSessionScheduleRuntimeBestEffort();
               closeSessionRuntimeAdmission({
                 executionService: sessionExecutionService,
@@ -2017,6 +2023,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
         if (!snapshot) throw new Error("Current model catalog is unavailable.");
         return snapshot.revision;
       },
+      projectTerminalFailureNotification: projectExecutionTerminalFailureNotification,
     });
   }
 
@@ -3062,6 +3069,84 @@ async function shutdownSessionScheduleRuntimeBestEffort(): Promise<void> {
   }
 }
 
+function requireSessionTerminalFailureNotificationService(): SessionTerminalFailureNotificationService {
+  if (!sessionTerminalFailureNotificationService) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    sessionTerminalFailureNotificationStorage = new SessionTerminalFailureNotificationStorageV6(dbPath);
+    sessionTerminalFailureNotificationService = new SessionTerminalFailureNotificationService({
+      storage: sessionTerminalFailureNotificationStorage,
+      executionStorage: sessionExecutionStorage ?? requireSessionExecutionStorage(),
+      enqueueTurn: (input) => requireMainSessionCommandFacade().enqueueTerminalFailureNotificationTurn(input),
+      onDeliveryChanged: (executionId) => broadcastSessionExecutionChanged(executionId),
+      onBackgroundError: (error) => {
+        writeAppLog({
+          level: "error",
+          kind: "session.terminal-failure-notification.background-failed",
+          process: "main",
+          message: "Session terminal failure notification background processing failed",
+          error: appLogService.errorToLogError(error),
+        });
+      },
+    });
+  }
+  return sessionTerminalFailureNotificationService;
+}
+
+async function shutdownSessionTerminalFailureNotificationRuntimeBestEffort(): Promise<void> {
+  const service = sessionTerminalFailureNotificationService;
+  if (!service) return;
+  try {
+    await service.shutdown();
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "session.terminal-failure-notification.cleanup-failed",
+      process: "main",
+      message: "Session terminal failure notification cleanup failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+}
+
+function requireSessionExecutionStorage(): SessionExecutionStorageV6 {
+  requireSessionExecutionService();
+  if (!sessionExecutionStorage) throw new Error("Session execution storage is unavailable.");
+  return sessionExecutionStorage;
+}
+
+function broadcastSessionExecutionChanged(executionId: string): void {
+  const execution = sessionExecutionStorage?.get(executionId);
+  if (!execution) return;
+  requireWindowBroadcastService().broadcastSessionExecutionsChanged({
+    kind: "state-changed",
+    sessionId: execution.sessionId,
+    executionId: execution.id,
+    state: execution.state,
+  });
+}
+
+function projectExecutionTerminalFailureNotification(execution: import("../src/session-execution.js").SessionExecution, request: unknown) {
+  const delivery = sessionTerminalFailureNotificationStorage?.getBySourceExecutionId(execution.id) ?? null;
+  let targetSessionId = delivery?.targetSessionId ?? null;
+  if (!targetSessionId) {
+    try {
+      targetSessionId = parseSessionExecutionTurnRequest(request).terminalFailureNotification?.targetSessionId ?? null;
+    } catch {
+      targetSessionId = null;
+    }
+  }
+  return projectTerminalFailureNotification({
+    execution,
+    targetSessionId,
+    delivery: delivery ? {
+      state: delivery.state,
+      notificationExecutionId: delivery.notificationExecutionId,
+      errorCode: delivery.errorCode,
+      updatedAt: delivery.updatedAt,
+    } : null,
+  });
+}
+
 function requireSessionExecutionService(): SessionExecutionService {
   if (!sessionExecutionService) {
     if (sessionExternalRuntimeShuttingDown) {
@@ -3096,18 +3181,22 @@ function requireSessionExecutionService(): SessionExecutionService {
         new Date(new Date(createdAt).getTime() + 24 * 60 * 60 * 1000).toISOString(),
       onExecutionChanged: (executionId) => {
         sessionInteractionService?.notifyExecutionChanged(executionId);
-        const execution = sessionExecutionStorage?.get(executionId);
-        if (execution) {
-          requireWindowBroadcastService().broadcastSessionExecutionsChanged({
-            kind: "state-changed",
-            sessionId: execution.sessionId,
-            executionId: execution.id,
-            state: execution.state,
-          });
-        }
+        broadcastSessionExecutionChanged(executionId);
       },
       onExecutionTerminal: (executionId, reason, occurredAt) => {
-        requireSessionInteractionService().expirePendingForExecution(executionId, reason, occurredAt);
+        try {
+          requireSessionInteractionService().expirePendingForExecution(executionId, reason, occurredAt);
+        } catch (error) {
+          writeAppLog({
+            level: "warn",
+            kind: "session.execution.interaction-expiry-failed",
+            process: "main",
+            message: "Session execution interaction expiry failed after terminal commit",
+            error: appLogService.errorToLogError(error),
+          });
+        } finally {
+          sessionTerminalFailureNotificationService?.wake(executionId);
+        }
       },
     });
   }
@@ -3153,6 +3242,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
           },
         } : null;
       },
+      projectTerminalFailureNotification: projectExecutionTerminalFailureNotification,
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();
@@ -3900,7 +3990,11 @@ function closePersistentStores(): void {
 
 function closeSessionExecutionRuntime(): void {
   stopSessionExecutionMaintenance();
+  void sessionTerminalFailureNotificationService?.shutdown();
   void sessionScheduleService?.shutdown();
+  sessionTerminalFailureNotificationStorage?.close();
+  sessionTerminalFailureNotificationStorage = null;
+  sessionTerminalFailureNotificationService = null;
   sessionScheduleStorage?.close();
   sessionScheduleStorage = null;
   sessionScheduleService = null;
@@ -3965,6 +4059,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
   }
 
   stopWalMaintenance();
+  await shutdownSessionTerminalFailureNotificationRuntimeBestEffort();
   await shutdownSessionScheduleRuntimeBestEffort();
   closeSessionExecutionRuntime();
   characterAffectTurnSettlementStorage?.close();
@@ -4017,7 +4112,7 @@ async function recreateDatabaseFile(): Promise<ModelCatalogSnapshot> {
 
   const activeModelCatalog = applyPersistentStoreBundle(bundle);
   characterAffectTurnSettlementStorage = new CharacterAffectTurnSettlementStorage(dbPath);
-  requireSessionExecutionService();
+  await startSessionExecutionRuntime();
   appDatabaseDiagnostics = inspectAppDatabase(app.getPath("userData"), dbPath, Boolean(userDataPathOverride));
   startWalMaintenance();
   startSessionExecutionMaintenance();
@@ -4615,7 +4710,12 @@ async function recoverInterruptedSessions(): Promise<void> {
   await requireMainSessionPersistenceFacade().recoverInterruptedSessions();
   await requireCompanionRuntimeService().recoverInterruptedSessions();
   requireAuxiliarySessionService().recoverInterruptedSessions();
+  await startSessionExecutionRuntime();
+}
+
+async function startSessionExecutionRuntime(): Promise<void> {
   await requireSessionExecutionService().reconcileAfterRestart();
+  await requireSessionTerminalFailureNotificationService().start();
   await requireSessionScheduleService().start();
 }
 

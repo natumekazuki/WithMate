@@ -13,6 +13,7 @@ import {
   SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
   SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES,
 } from "../../src/session-transcript.js";
+import { projectTerminalFailureNotification } from "../../src/session-terminal-failure-notification.js";
 
 const turn = {
   provider: "codex",
@@ -360,6 +361,65 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
     }),
     SessionRuntimeValidationError,
   );
+});
+
+test("TN-AUTH-01/TN-PROJ-06: run/enqueueは同じstrict通知inputとpublic state projectionを使う", () => {
+  for (const operation of ["turn.run", "turn.enqueue"] as const) {
+    const input = {
+      sessionId: "source-session",
+      catalogRevision: 4,
+      idempotencyKey: `${operation}-key`,
+      ...(operation === "turn.run" ? { responseMode: "deferred" as const } : {}),
+      terminalFailureNotification: { targetSessionId: "target-session" },
+      turn,
+    };
+    const parsed = parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation,
+      input,
+    });
+    assert.deepEqual((parsed.input as any).terminalFailureNotification, { targetSessionId: "target-session" });
+    assert.throws(() => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation,
+      input: { ...input, terminalFailureNotification: { targetSessionId: "target-session", characterId: "spoof" } },
+    }), SessionRuntimeValidationError);
+  }
+
+  const execution = {
+    id: "execution-1",
+    sessionId: "source-session",
+    operation: "turn.run" as const,
+    state: "failed" as const,
+    result: null,
+    errorCode: "PROVIDER_FAILURE",
+    reason: "session_runtime_failed",
+    createdAt: "2026-08-18T00:00:00.000Z",
+    admittedAt: "2026-08-18T00:00:00.000Z",
+    completedAt: "2026-08-18T00:01:00.000Z",
+    updatedAt: "2026-08-18T00:01:00.000Z",
+  };
+  assert.equal(projectTerminalFailureNotification({
+    execution,
+    targetSessionId: "target-session",
+    delivery: null,
+  })?.state, "pending");
+  assert.deepEqual(projectTerminalFailureNotification({
+    execution,
+    targetSessionId: "target-session",
+    delivery: {
+      state: "enqueued",
+      notificationExecutionId: "notification-execution",
+      errorCode: null,
+      updatedAt: "2026-08-18T00:01:02.000Z",
+    },
+  }), {
+    targetSessionId: "target-session",
+    state: "enqueued",
+    notificationExecutionId: "notification-execution",
+    errorCode: null,
+    updatedAt: "2026-08-18T00:01:02.000Z",
+  });
 });
 
 test("Session runtime list limit is rejected instead of clamped", () => {

@@ -69,6 +69,9 @@ const mutationBaseShape = {
   catalogRevision: z.number().int().min(1),
   idempotencyKey: nonEmptyStringSchema,
   turn: turnSchema,
+  terminalFailureNotification: z.object({
+    targetSessionId: nonEmptyStringSchema,
+  }).strict().optional(),
 };
 const runInputSchema = z.object({
   ...mutationBaseShape,
@@ -269,6 +272,13 @@ function createExecutionSchema(operation: z.ZodType<"turn.run" | "turn.enqueue">
     pendingInteraction: z.lazy(() => interactionSchema).nullable(),
     partialOutput: z.object({
       assistantText: z.string(), truncated: z.boolean(), updatedAt: z.string(),
+    }).strict().nullable(),
+    terminalFailureNotification: z.object({
+      targetSessionId: z.string(),
+      state: z.enum(["armed", "pending", "enqueued", "failed", "not_triggered"]),
+      notificationExecutionId: z.string().nullable(),
+      errorCode: z.string().nullable(),
+      updatedAt: z.string(),
     }).strict().nullable(),
   }).strict();
 }

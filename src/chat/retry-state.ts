@@ -1,5 +1,6 @@
 import type { AuditLogSummary } from "../runtime-state.js";
 import type { Message } from "../session-state.js";
+import type { SessionTurnExecutionProjection } from "../session-turn-execution.js";
 import { isTerminalAuditLogPhase } from "../audit-log-phase.js";
 import { applyComposerDraftChangeCommand } from "./composer-draft-handlers.js";
 
@@ -10,13 +11,32 @@ export type RetryBannerState = {
   badge: string;
   title: string;
   lastRequestText: string;
+  terminalFailureNotification?: import("../session-external-runtime-contract.js").SessionRuntimeTerminalFailureNotificationProjection | null;
 };
 
 export type RetryBannerSource = {
   kind: RetryBannerKind;
   lastRequestText: string;
   terminalAuditLog: AuditLogSummary | null;
+  sessionId?: string;
 };
+
+export function resolveRetryBannerTerminalFailureNotification(input: {
+  source: RetryBannerSource;
+  executions: readonly SessionTurnExecutionProjection[];
+}): import("../session-external-runtime-contract.js").SessionRuntimeTerminalFailureNotificationProjection | null {
+  const executionId = input.source.terminalAuditLog?.executionId;
+  if (executionId) {
+    return input.executions.find((execution) => execution.executionId === executionId)
+      ?.terminalFailureNotification ?? null;
+  }
+  if (!input.source.sessionId) return null;
+  return input.executions.find((execution) =>
+    execution.sessionId === input.source.sessionId
+    && execution.state === input.source.kind
+    && execution.userMessage === input.source.lastRequestText
+  )?.terminalFailureNotification ?? null;
+}
 
 export type RetryDraftRestoreState = {
   draft: string;
@@ -185,6 +205,7 @@ export function resolveRetryBannerSource(input: {
         kind,
         lastRequestText: input.messages[lastUserMessageSeq]?.text ?? "",
         terminalAuditLog,
+        sessionId: input.sessionId,
       }
     : null;
 }

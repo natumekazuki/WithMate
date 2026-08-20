@@ -71,10 +71,11 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   "turn.options": { sessionId: "session-1" },
   "turn.run": {
     sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",
-    responseMode: "deferred", turn: turnInput,
+    responseMode: "deferred", terminalFailureNotification: { targetSessionId: "target-session" }, turn: turnInput,
   },
   "turn.enqueue": {
-    sessionId: "session-1", catalogRevision: 4, idempotencyKey: "enqueue-key", turn: turnInput,
+    sessionId: "session-1", catalogRevision: 4, idempotencyKey: "enqueue-key",
+    terminalFailureNotification: { targetSessionId: "target-session" }, turn: turnInput,
   },
   "turn.list": { sessionId: "session-1" },
   "turn.get": { sessionId: "session-1", executionId: "execution-1" },

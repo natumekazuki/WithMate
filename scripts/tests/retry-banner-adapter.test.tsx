@@ -45,3 +45,31 @@ test("buildLiveSessionRetryBanner は banner がない場合 null を描画す�
 
   assert.equal(html, "");
 });
+
+test("TN-PROJ-06: source failure bannerはterminal通知の配送状態を既存surfaceへ表示する", () => {
+  const html = renderToStaticMarkup(buildLiveSessionRetryBanner({
+    retryBanner: {
+      kind: "failed",
+      badge: "失敗",
+      title: "前回の依頼は完了できませんでした",
+      lastRequestText: "直して",
+      terminalFailureNotification: {
+        state: "enqueued",
+        targetSessionId: "target-session",
+        notificationExecutionId: "notification-execution",
+        errorCode: null,
+        updatedAt: "2026-08-18T00:00:00.000Z",
+      },
+    },
+    isRetryActionDisabled: false,
+    isRetryEditDisabled: false,
+    isRetryDraftReplacePending: false,
+    onResendLastMessage: noop,
+    onEditLastMessage: noop,
+    onConfirmRetryDraftReplace: noop,
+    onCancelRetryDraftReplace: noop,
+  }));
+
+  assert.match(html, /通知先 target-session · 通知を登録済み/);
+  assert.doesNotMatch(html, /transport|notification-badge/);
+});

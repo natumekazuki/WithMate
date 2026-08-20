@@ -1258,6 +1258,164 @@ test("MainSessionCommandFacade はQUEUE_FULLを副作用なしのGUI admission e
   });
 });
 
+test("TN-PROMPT-05: trusted notification enqueueは既存FIFO ownerへsource identityを渡し再帰設定を付けない", async () => {
+  const enqueues: any[] = [];
+  let validationCount = 0;
+  const executionService = {
+    resolveReplay() { return null; },
+    async enqueue(input: unknown) {
+      enqueues.push(input);
+      return { id: "notification-execution" };
+    },
+  };
+  const facade = createMainSessionCommandFacade({
+    getSession: () => ({
+      id: "target-session",
+      sessionKind: "default",
+      provider: "codex",
+      model: "gpt-5.6",
+      reasoningEffort: "high",
+      approvalMode: "never",
+      codexSandboxMode: "workspace-write",
+      customAgentName: "",
+    }) as never,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({
+      async validateSessionTurn() { validationCount += 1; },
+      async validateExternalSessionTurn() { validationCount += 1; },
+    }) as never,
+    getSessionExecutionService: () => executionService as never,
+    getCurrentModelCatalogRevision: () => 8,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+  const initiator = {
+    kind: "session" as const,
+    sessionId: "source-session",
+    character: { characterId: "source-character", name: "Source", iconFilePath: "C:/icon.png" },
+  };
+
+  const result = await facade.enqueueTerminalFailureNotificationTurn({
+    targetSessionId: "target-session",
+    initiator,
+    prompt: "safe prompt",
+    idempotencyKey: "stable-key",
+  });
+
+  assert.deepEqual(result, { ok: true, executionId: "notification-execution" });
+  assert.equal(validationCount, 2);
+  assert.equal(enqueues.length, 1);
+  assert.equal(enqueues[0].request.initiator, initiator);
+  assert.equal(enqueues[0].request.terminalFailureNotification, undefined);
+  assert.equal(enqueues[0].request.turn.userMessage, "safe prompt");
+});
+
+test("TN-RETRY-12: trusted notification enqueueはproviderとcatalogの回復可能状態だけをretryableにする", async () => {
+  const cases = [
+    { code: "PROVIDER_DISABLED", retryable: true },
+    { code: "PROVIDER_UNAVAILABLE", retryable: true },
+    { code: "CATALOG_REVISION_STALE", retryable: true },
+    { code: "INVALID_INPUT", retryable: false },
+    { code: "SESSION_READ_ONLY", retryable: false },
+  ] as const;
+
+  for (const item of cases) {
+    const facade = createMainSessionCommandFacade({
+      getSession: () => ({
+        id: "target-session",
+        sessionKind: "default",
+        provider: "codex",
+        model: "gpt-5.6",
+        reasoningEffort: "high",
+        approvalMode: "never",
+        codexSandboxMode: "workspace-write",
+        customAgentName: "",
+      }) as never,
+      getSessions: () => [],
+      getStoredSessionSummaries: () => [],
+      runProviderRuntimeOperationExclusive,
+      resolveSessionLaunchSelection: async () => createLaunchSelection(),
+      getSessionPersistenceService: () => ({} as never),
+      getSessionRuntimeService: () => ({
+        async validateSessionTurn() {
+          throw new SessionTurnValidationError(item.code, "validation failed");
+        },
+      }) as never,
+      getSessionExecutionService: () => ({
+        resolveReplay() { return null; },
+        async enqueue() { throw new Error("must not enqueue"); },
+      }) as never,
+      getCurrentModelCatalogRevision: () => 8,
+      getProviderQuotaTelemetry: () => null,
+      isProviderQuotaTelemetryStale: () => false,
+      refreshProviderQuotaTelemetry: async () => null,
+      createSessionId: () => "launch-test",
+      createSessionFilesDirectory: () => "C:/session-files/launch-test",
+      isSessionFilesWorkspace: () => false,
+    });
+
+    const result = await facade.enqueueTerminalFailureNotificationTurn({
+      targetSessionId: "target-session",
+      initiator: {
+        kind: "session",
+        sessionId: "source-session",
+        character: { characterId: "source-character", name: "Source", iconFilePath: "" },
+      },
+      prompt: "safe prompt",
+      idempotencyKey: `stable-${item.code}`,
+    });
+
+    assert.deepEqual(result, { ok: false, errorCode: item.code, retryable: item.retryable });
+  }
+});
+
+test("TN-DELIVERY-04: trusted notification replayはcurrent target設定の再検証より先に返る", async () => {
+  let targetResolutionCount = 0;
+  const facade = createMainSessionCommandFacade({
+    getSession: () => {
+      targetResolutionCount += 1;
+      return null;
+    },
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () => ({} as never),
+    getSessionRuntimeService: () => ({} as never),
+    getSessionExecutionService: () => ({
+      resolveReplay() { return { id: "canonical-notification-execution" }; },
+    }) as never,
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-test",
+    createSessionFilesDirectory: () => "C:/session-files/launch-test",
+    isSessionFilesWorkspace: () => false,
+  });
+
+  const result = await facade.enqueueTerminalFailureNotificationTurn({
+    targetSessionId: "deleted-target",
+    initiator: {
+      kind: "session",
+      sessionId: "source-session",
+      character: { characterId: "source-character", name: "Source", iconFilePath: "" },
+    },
+    prompt: "safe prompt",
+    idempotencyKey: "stable-key",
+  });
+
+  assert.deepEqual(result, { ok: true, executionId: "canonical-notification-execution" });
+  assert.equal(targetResolutionCount, 0);
+});
+
 test("MainSessionCommandFacade はuser/session/legacyのactive executionをFIFO順で公開する", () => {
   const records = [
     {

@@ -264,6 +264,7 @@ import {
   createRetryEditHandler,
   isRetryActionDisabled as resolveRetryActionDisabled,
   resolveRetryBannerSource,
+  resolveRetryBannerTerminalFailureNotification,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
   shouldShowRetryBanner,
@@ -2218,6 +2219,10 @@ export default function AgentSessionWindowApp() {
     }
 
     const { kind, lastRequestText, terminalAuditLog } = source;
+    const terminalFailureNotification = resolveRetryBannerTerminalFailureNotification({
+      source,
+      executions: sessionTurnExecutions,
+    });
 
     switch (kind) {
       case "interrupted":
@@ -2231,6 +2236,7 @@ export default function AgentSessionWindowApp() {
             lastRequestText,
           ]),
           lastRequestText,
+          terminalFailureNotification,
         };
       case "failed":
         return {
@@ -2243,6 +2249,7 @@ export default function AgentSessionWindowApp() {
             lastRequestText,
           ]),
           lastRequestText,
+          terminalFailureNotification,
         };
       case "canceled":
         return {
@@ -2256,6 +2263,7 @@ export default function AgentSessionWindowApp() {
             terminalAuditLog?.id,
           ]),
           lastRequestText,
+          terminalFailureNotification,
         };
       default:
         return null;
@@ -2267,6 +2275,7 @@ export default function AgentSessionWindowApp() {
     selectedSessionAuditLogs,
     selectedSessionCharacter?.name,
     selectedSessionRunState,
+    sessionTurnExecutions,
     isSelectedSessionReadOnly,
     activeAuxiliarySession,
   ]);

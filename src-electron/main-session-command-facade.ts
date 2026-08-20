@@ -41,6 +41,9 @@ import {
 } from "./session-execution-storage-v6.js";
 import { parseSessionExecutionTurnRequest } from "./session-execution-turn-request.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
+import type { SessionTerminalFailureNotificationEnqueueResult } from "./session-terminal-failure-notification-service.js";
+import type { TurnInitiator } from "../src/session-execution.js";
+import type { SessionRuntimeTerminalFailureNotificationProjection } from "../src/session-external-runtime-contract.js";
 
 type MainSessionCommandFacadeDeps = {
   getSession(sessionId: string): Session | null;
@@ -63,6 +66,10 @@ type MainSessionCommandFacadeDeps = {
   resumeSessionExecutionQueue?(sessionId: string): Promise<void> | void;
   validateWorkspaceDirectory(targetPath: unknown): Promise<WorkspaceDirectoryValidationResult>;
   getCurrentModelCatalogRevision?(): number;
+  projectTerminalFailureNotification?(
+    execution: import("../src/session-execution.js").SessionExecution,
+    request: unknown,
+  ): SessionRuntimeTerminalFailureNotificationProjection | null;
 };
 
 type MainOwnedCreateSessionInput = Omit<CreateSessionInput, "id">;
@@ -224,6 +231,7 @@ export class MainSessionCommandFacade {
         ok: true,
         execution: projectSessionTurnExecutions(
           this.deps.getSessionExecutionService().listRecords(sessionId),
+          this.deps.projectTerminalFailureNotification,
         ).find((candidate) => candidate.executionId === execution.id) ?? null,
       };
     } catch (error) {
@@ -283,8 +291,86 @@ export class MainSessionCommandFacade {
     return this.enqueueSessionTurn(sessionId, request);
   }
 
+  async enqueueTerminalFailureNotificationTurn(input: {
+    targetSessionId: string;
+    initiator: Extract<TurnInitiator, { kind: "session" }>;
+    prompt: string;
+    idempotencyKey: string;
+  }): Promise<SessionTerminalFailureNotificationEnqueueResult> {
+    const requestFingerprint = fingerprint({
+      kind: "terminal-failure-notification-v1",
+      targetSessionId: input.targetSessionId,
+      initiator: input.initiator,
+      prompt: input.prompt,
+    });
+    const executionService = this.deps.getSessionExecutionService();
+    let replay: ReturnType<SessionExecutionService["resolveReplay"]>;
+    try {
+      replay = executionService.resolveReplay("turn.enqueue", {
+        sessionId: input.targetSessionId,
+        request: {},
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint,
+      });
+    } catch (error) {
+      const mapped = mapGuiExecutionError(error);
+      if (mapped) return { ok: false, errorCode: mapped.code, retryable: mapped.retryable };
+      throw error;
+    }
+    if (replay) return { ok: true, executionId: replay.id };
+
+    const session = this.deps.getSession(input.targetSessionId);
+    if (!session) return { ok: false, errorCode: "SESSION_NOT_FOUND", retryable: false };
+    if (session.sessionKind !== "default") {
+      return { ok: false, errorCode: "SESSION_KIND_UNSUPPORTED", retryable: false };
+    }
+    const catalogRevision = this.deps.getCurrentModelCatalogRevision?.();
+    if (typeof catalogRevision !== "number" || !Number.isSafeInteger(catalogRevision)) {
+      return { ok: false, errorCode: "RUNTIME_UNAVAILABLE", retryable: true };
+    }
+    const turn: RunSessionTurnRequest = {
+      userMessage: input.prompt,
+      clientRequestId: input.idempotencyKey,
+      model: session.model,
+      reasoningEffort: session.reasoningEffort,
+      approvalMode: session.approvalMode,
+      ...(session.provider === "codex"
+        ? { codexSandboxMode: session.codexSandboxMode }
+        : { customAgentName: session.customAgentName }),
+      attachments: [],
+    };
+    try {
+      const runtimeService = this.deps.getSessionRuntimeService();
+      await runtimeService.validateSessionTurn(input.targetSessionId, turn);
+      await runtimeService.validateExternalSessionTurn(
+        input.targetSessionId,
+        catalogRevision,
+        turn,
+        session.provider,
+      );
+      const execution = await executionService.enqueue({
+        sessionId: input.targetSessionId,
+        request: {
+          initiator: input.initiator,
+          catalogRevision,
+          turn: { provider: session.provider, ...turn },
+        },
+        idempotencyKey: input.idempotencyKey,
+        requestFingerprint,
+      });
+      return { ok: true, executionId: execution.id };
+    } catch (error) {
+      const mapped = mapGuiExecutionError(error);
+      if (mapped) return { ok: false, errorCode: mapped.code, retryable: mapped.retryable };
+      throw error;
+    }
+  }
+
   listSessionTurnExecutions(sessionId: string): SessionTurnExecutionProjection[] {
-    return projectSessionTurnExecutions(this.deps.getSessionExecutionService().listRecords(sessionId));
+    return projectSessionTurnExecutions(
+      this.deps.getSessionExecutionService().listRecords(sessionId),
+      this.deps.projectTerminalFailureNotification,
+    );
   }
 
   async cancelSessionExecution(
@@ -335,11 +421,13 @@ export class MainSessionCommandFacade {
 
 function projectSessionTurnExecutions(
   executions: ReturnType<SessionExecutionService["listRecords"]>,
+  projectNotification?: MainSessionCommandFacadeDeps["projectTerminalFailureNotification"],
 ): SessionTurnExecutionProjection[] {
   let queuePosition = 0;
   const projected: SessionTurnExecutionProjection[] = [];
   for (const execution of executions) {
-    if (execution.state !== "running" && execution.state !== "queued") continue;
+    const notification = projectNotification?.(execution, execution.request) ?? null;
+    if (execution.state !== "running" && execution.state !== "queued" && !notification) continue;
     const position = execution.state === "queued" ? ++queuePosition : null;
     const request = parseSessionExecutionTurnRequest(execution.request);
     const base = {
@@ -350,6 +438,7 @@ function projectSessionTurnExecutions(
       initiator: request.initiator,
       createdAt: execution.createdAt,
       updatedAt: execution.updatedAt,
+      ...(notification ? { terminalFailureNotification: notification } : {}),
     };
     projected.push(execution.state === "queued"
       ? {
@@ -358,7 +447,9 @@ function projectSessionTurnExecutions(
         queuePosition: position!,
         canCancel: request.initiator?.kind === "user",
       }
-      : { ...base, state: "running", queuePosition: null, canCancel: false });
+      : execution.state === "running"
+        ? { ...base, state: "running", queuePosition: null, canCancel: false }
+        : { ...base, state: execution.state, queuePosition: null, canCancel: false });
   }
   return projected;
 }
@@ -400,7 +491,11 @@ function mapGuiExecutionError(error: unknown): SessionTurnAdmissionError | null 
     };
   }
   if (error instanceof SessionTurnValidationError) {
-    return { code: error.code, message: error.message, retryable: false };
+    return {
+      code: error.code,
+      message: error.message,
+      retryable: isRetryableSessionTurnValidationCode(error.code),
+    };
   }
   if (error instanceof SessionExecutionIdempotencyConflictError) {
     return { code: "IDEMPOTENCY_CONFLICT", message: error.message, retryable: false };
@@ -418,4 +513,12 @@ function mapGuiExecutionError(error: unknown): SessionTurnAdmissionError | null 
     return { code: "RUNTIME_SHUTTING_DOWN", message: error.message, retryable: true };
   }
   return null;
+}
+
+function isRetryableSessionTurnValidationCode(code: string): boolean {
+  return [
+    "PROVIDER_DISABLED",
+    "PROVIDER_UNAVAILABLE",
+    "CATALOG_REVISION_STALE",
+  ].includes(code);
 }

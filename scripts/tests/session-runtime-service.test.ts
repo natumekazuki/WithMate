@@ -229,6 +229,7 @@ describe("SessionRuntimeService", () => {
     let completionNotificationCount = 0;
     const appraisalCorrelations: string[] = [];
     const requestCorrelations: string[] = [];
+    const requestExecutionIds: string[] = [];
     const callOrder: string[] = [];
     const catalogRevisions: Array<number | null | undefined> = [];
     const composerScopes: Array<"workspace" | "session-folder" | undefined> = [];
@@ -351,6 +352,12 @@ describe("SessionRuntimeService", () => {
         if (typeof clientRequestId === "string") {
           requestCorrelations.push(clientRequestId);
         }
+        const executionId = requestMetadata?.payload && "executionId" in requestMetadata.payload
+          ? requestMetadata.payload.executionId
+          : null;
+        if (typeof executionId === "string") {
+          requestExecutionIds.push(executionId);
+        }
         auditId += 1;
         return { ...createAuditLogBase(input), id: auditId };
       },
@@ -456,6 +463,7 @@ describe("SessionRuntimeService", () => {
       "7c26d875-9117-4ad5-97b5-e9af775b94b1",
       "7c26d875-9117-4ad5-97b5-e9af775b94b2",
     ]);
+    assert.deepEqual(requestExecutionIds, ["execution-1"]);
     assert.deepEqual(appraisalCorrelations, [
       `turn:${storedSession.id}:audit:1`,
       `turn:${storedSession.id}:audit:2`,

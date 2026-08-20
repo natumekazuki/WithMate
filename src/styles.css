@@ -8789,6 +8789,13 @@ button:disabled {
   flex-wrap: wrap;
 }
 
+.resume-banner-notification-status {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
 .resume-banner-actions .drawer-toggle.secondary,
 .resume-banner-conflict-actions .drawer-toggle.secondary {
   background: rgba(255, 255, 255, 0.16);

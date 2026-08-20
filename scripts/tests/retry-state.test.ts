@@ -12,6 +12,7 @@ import {
   createRetryEditHandler,
   isRetryActionDisabled,
   resolveRetryBannerSource,
+  resolveRetryBannerTerminalFailureNotification,
   resolveRetryBannerKind,
   runRetryResendCommand,
   shouldProtectRetryEditDraft,
@@ -255,6 +256,7 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     kind: "canceled",
     lastRequestText: "古い依頼",
     terminalAuditLog: canceled,
+    sessionId: "session-1",
   });
 
   assert.equal(resolveRetryBannerSource({
@@ -301,7 +303,116 @@ test("resolveRetryBannerSource は最後の未完了依頼と同じ session / me
     kind: "failed",
     lastRequestText: "新しい依頼",
     terminalAuditLog: null,
+    sessionId: "session-1",
   });
+});
+
+test("resolveRetryBannerTerminalFailureNotification は retry source と同じ execution の通知だけを返す", () => {
+  const olderNotification = {
+    state: "enqueued" as const,
+    targetSessionId: "target-session",
+    notificationExecutionId: "notification-execution",
+    updatedAt: "2026-08-18T10:00:00.000Z",
+  };
+  const source = {
+    kind: "failed" as const,
+    lastRequestText: "新しい依頼",
+    terminalAuditLog: {
+      id: 12,
+      sessionId: "session-1",
+      executionId: "execution-2",
+      createdAt: "2026-08-18T10:01:00.000Z",
+      phase: "failed" as const,
+      provider: "codex",
+      model: "gpt-5.6",
+      reasoningEffort: "medium" as const,
+      approvalMode: "never" as const,
+      userMessageSeq: 2,
+      assistantMessageSeq: null,
+      threadId: "thread-1",
+      assistantTextPreview: "",
+      operations: [],
+      usage: null,
+      errorMessage: "failed",
+      detailAvailable: true,
+    },
+  };
+  const executions = [
+    {
+      executionId: "execution-1",
+      sessionId: "session-1",
+      clientRequestId: "request-1",
+      userMessage: "古い依頼",
+      initiator: { kind: "user" as const },
+      createdAt: "2026-08-18T10:00:00.000Z",
+      updatedAt: "2026-08-18T10:00:00.000Z",
+      state: "failed" as const,
+      queuePosition: null,
+      canCancel: false as const,
+      terminalFailureNotification: olderNotification,
+    },
+    {
+      executionId: "execution-2",
+      sessionId: "session-1",
+      clientRequestId: "request-2",
+      userMessage: "新しい依頼",
+      initiator: { kind: "user" as const },
+      createdAt: "2026-08-18T10:01:00.000Z",
+      updatedAt: "2026-08-18T10:01:00.000Z",
+      state: "failed" as const,
+      queuePosition: null,
+      canCancel: false as const,
+    },
+  ];
+
+  assert.equal(resolveRetryBannerTerminalFailureNotification({ source, executions }), null);
+  assert.equal(resolveRetryBannerTerminalFailureNotification({
+    source: {
+      ...source,
+      terminalAuditLog: { ...source.terminalAuditLog, executionId: "execution-1" },
+    },
+    executions,
+  }), olderNotification);
+  assert.equal(resolveRetryBannerTerminalFailureNotification({
+    source: { ...source, terminalAuditLog: null },
+    executions,
+  }), null);
+});
+
+test("TN-PROJ-13: audit相関がなくても最新terminal executionから通知状態を解決する", () => {
+  const notification = {
+    state: "pending" as const,
+    targetSessionId: "target-session",
+    updatedAt: "2026-08-18T10:01:00.000Z",
+  };
+  const source = {
+    kind: "failed" as const,
+    lastRequestText: "audit作成前に失敗した依頼",
+    terminalAuditLog: null,
+    sessionId: "session-1",
+  };
+  const executions = [{
+    executionId: "execution-2",
+    sessionId: "session-1",
+    clientRequestId: "request-2",
+    userMessage: source.lastRequestText,
+    initiator: { kind: "session" as const, sessionId: "source-session" },
+    createdAt: "2026-08-18T10:01:00.000Z",
+    updatedAt: "2026-08-18T10:01:00.000Z",
+    state: "failed" as const,
+    queuePosition: null,
+    canCancel: false as const,
+    terminalFailureNotification: notification,
+  }];
+
+  assert.equal(
+    resolveRetryBannerTerminalFailureNotification({ source, executions }),
+    notification,
+  );
+  assert.equal(resolveRetryBannerTerminalFailureNotification({
+    source: { ...source, lastRequestText: "別の依頼" },
+    executions,
+  }), null);
 });
 
 test("shouldProtectRetryEditDraft は既存 draft の暗黙上書きを避ける", () => {

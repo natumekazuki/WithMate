@@ -24,3 +24,13 @@ test("shutdown cleanup は interaction expiry failure 後も execution drain を
   );
   assert.match(mainSource, /new AggregateError\(errors, "Session shutdown cleanup failed\."\)/);
 });
+
+test("TN-LIFE-07: startupとDB再作成は同じexecution runtime worker群を再開する", async () => {
+  const mainSource = await readFile(new URL("../../src-electron/main.ts", import.meta.url), "utf8");
+
+  assert.match(
+    mainSource,
+    /async function startSessionExecutionRuntime\(\)[\s\S]*?reconcileAfterRestart\(\)[\s\S]*?requireSessionTerminalFailureNotificationService\(\)\.start\(\)[\s\S]*?requireSessionScheduleService\(\)\.start\(\)/,
+  );
+  assert.equal(mainSource.match(/await startSessionExecutionRuntime\(\);/g)?.length, 2);
+});

@@ -44,9 +44,11 @@ export type SessionExecutionServiceDeps = {
     | "interruptRunningForRestart"
     | "interruptRunningForShutdown"
     | "listSessionExecutions"
+    | "listSessionExecutionProjectionRecords"
     | "listSessionExecutionsPage"
     | "iterateSessionExecutionsPage"
     | "listQueuedSessionIds"
+    | "listTerminalFailureNotificationCandidates"
     | "resolveIdempotency"
     | "recordIdempotency"
     | "startImmediate"
@@ -225,7 +227,7 @@ export class SessionExecutionService {
 
   listRecords(sessionId: string): SessionExecutionStorageRecord[] {
     this.requirePersistenceAvailable();
-    return this.deps.storage.listSessionExecutions(sessionId);
+    return this.deps.storage.listSessionExecutionProjectionRecords(sessionId);
   }
 
   listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {
@@ -289,7 +291,7 @@ export class SessionExecutionService {
             canceledAt: createdAt,
             expiresAt,
           });
-        this.deps.onExecutionTerminal?.(canceled.id, "execution_canceled", createdAt);
+        this.notifyTerminal(canceled.id, "execution_canceled", createdAt);
         this.notifyChanged(canceled.id);
         return toPublicExecution(canceled);
       }
@@ -317,7 +319,10 @@ export class SessionExecutionService {
       interruptedAt,
       this.deps.resolveIdempotencyExpiresAt(interruptedAt),
     );
-    for (const execution of interrupted) this.notifyChanged(execution.id);
+    for (const execution of interrupted) {
+      this.notifyTerminal(execution.id, "execution_terminal", interruptedAt);
+      this.notifyChanged(execution.id);
+    }
     for (const sessionId of this.deps.storage.listQueuedSessionIds()) {
       await this.requestDrain(sessionId);
     }
@@ -397,7 +402,7 @@ export class SessionExecutionService {
         expiresAt: this.deps.resolveIdempotencyExpiresAt(completedAt),
       });
     });
-    this.deps.onExecutionTerminal?.(
+    this.notifyTerminal(
       completed.id,
       completed.state === "canceled" ? "execution_canceled" : "execution_terminal",
       completed.completedAt ?? completed.updatedAt,
@@ -489,7 +494,7 @@ export class SessionExecutionService {
       );
       this.drainFailureCounts.delete(sessionId);
       if (failed) {
-        this.deps.onExecutionTerminal?.(failed.id, "execution_terminal", failedAt);
+        this.notifyTerminal(failed.id, "execution_terminal", failedAt);
         this.notifyChanged(failed.id);
         return "failed";
       }
@@ -552,7 +557,7 @@ export class SessionExecutionService {
       );
       for (const execution of interrupted) {
         this.shutdownTerminalExecutions.set(execution.id, execution);
-        this.deps.onExecutionTerminal?.(execution.id, "execution_terminal", interruptedAt);
+        this.notifyTerminal(execution.id, "execution_terminal", interruptedAt);
         this.notifyChanged(execution.id);
       }
     } finally {
@@ -570,6 +575,19 @@ export class SessionExecutionService {
 
   private notifyChanged(executionId: string): void {
     this.deps.onExecutionChanged?.(executionId);
+  }
+
+  private notifyTerminal(
+    executionId: string,
+    reason: "execution_canceled" | "execution_terminal",
+    occurredAt: string,
+  ): void {
+    try {
+      this.deps.onExecutionTerminal?.(executionId, reason, occurredAt);
+    } catch {
+      // Terminal state is already committed. Observers are wake-up/cleanup signals
+      // and must not change the source execution outcome or block queue progress.
+    }
   }
 
   private withIdempotencyLock<T>(key: string, run: () => Promise<T> | T): Promise<T> {

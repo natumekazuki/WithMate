@@ -84,6 +84,7 @@ export type AuditTransportPayload = {
 export type AuditLogEntry = {
   id: number;
   sessionId: string;
+  executionId?: string;
   createdAt: string;
   phase: AuditLogPhase;
   provider: string;
