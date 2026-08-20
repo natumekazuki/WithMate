@@ -7,15 +7,25 @@ import {
   beginSessionWorkspaceAvailabilityCheck,
   isSessionWorkspaceAvailable,
   resolveSessionWorkspaceBlockedReason,
+  resolveSessionWorkspaceExecutionGate,
   resolveSessionWorkspaceUnavailableMessage,
 } from "../../src/session-workspace-availability.js";
 
 test("Session Workspace は確認完了まで送信不可で missing の原因と復旧方法を投影する", () => {
+  assert.deepEqual(
+    resolveSessionWorkspaceExecutionGate(INITIAL_SESSION_WORKSPACE_AVAILABILITY, "s-1", "C:/missing"),
+    { isPending: true, blockedReason: "" },
+  );
+
   const checking = beginSessionWorkspaceAvailabilityCheck("s-1", "C:/missing", 1);
 
   assert.equal(
     resolveSessionWorkspaceBlockedReason(checking, "s-1", "C:/missing"),
-    "Workspace availability is being checked.",
+    "",
+  );
+  assert.deepEqual(
+    resolveSessionWorkspaceExecutionGate(checking, "s-1", "C:/missing"),
+    { isPending: true, blockedReason: "" },
   );
 
   const unavailable = applySessionWorkspaceAvailabilityResult(
@@ -26,6 +36,13 @@ test("Session Workspace は確認完了まで送信不可で missing の原因�
     { valid: false, reason: "missing" },
   );
   assert.equal(isSessionWorkspaceAvailable(unavailable, "s-1", "C:/missing"), false);
+  assert.deepEqual(
+    resolveSessionWorkspaceExecutionGate(unavailable, "s-1", "C:/missing"),
+    {
+      isPending: false,
+      blockedReason: "Workspace not found: C:/missing. Restore it, then recheck.",
+    },
+  );
   assert.match(
     resolveSessionWorkspaceUnavailableMessage(unavailable, "s-1", "C:/missing"),
     /Workspace not found.*Restore it, then recheck\./,
@@ -54,6 +71,10 @@ test("Session Workspace は同じ Session の古い確認結果を無視し、�
   );
   assert.equal(isSessionWorkspaceAvailable(available, "s-1", "C:/workspace"), true);
   assert.equal(resolveSessionWorkspaceBlockedReason(available, "s-1", "C:/workspace"), "");
+  assert.deepEqual(
+    resolveSessionWorkspaceExecutionGate(available, "s-1", "C:/workspace"),
+    { isPending: false, blockedReason: "" },
+  );
   assert.equal(resolveSessionWorkspaceUnavailableMessage(available, "s-1", "C:/workspace"), "");
 });
 
