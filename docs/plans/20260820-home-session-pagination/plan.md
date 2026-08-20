@@ -108,3 +108,11 @@
 - commit-bound review targetは `HEAD`、base ancestry、tracked / untracked cleanlinessを確認できる状態まで準備した。Windowsの既存archive長過ぎpathは変更差分外のため、レビューtargetではskip-worktreeとして除外し、変更48ファイルと関連設計文書はmaterializeした。
 - Full-review gateは reviewer availability のため実質レビュー未完了となった。blocking findingの有無は未判定であり、complete-diff holistic review未実施をvalidation gapとして残す。レビュー未実施を理由にsourceの追加変更やfinding修正は行っていない。
 - 残る主なリスクは、bounded responseを返しても `%query%` のSQL部分一致検索自体はSession件数に比例し得ること、およびholistic review未実施であること。前者は今回のsynthetic benchmarkでfirst page / search latencyを計測済みだが、FTS導入の要否は別変更として扱う。
+
+## Review finding closure (2026-08-21)
+
+- commit-bound complete-diff reviewで、表示検索がopen Session summaryにも適用されてrandom Character除外を弱める問題と、検索・open ID変更後のdebounce中に旧responseが反映され得る問題をblocking findingとして確認した。
+- open Session summaryは表示検索から分離して全件を100 IDずつ取得し、表示時のrenderer projectionだけへ検索を適用する。これによりMonitorとrandom Character除外は検索状態に依存しない。
+- query textとopen Session ID集合からquery keyを作り、query key変更時に旧request tokenを即時失効させる。cursor/page stateはlayout effectで破棄し、debounced refreshの旧responseを適用しない。
+- reviewで挙がった100件超のopen Window ID取得中の集合変化は、offset paginationをSession ID keyset cursorへ変更して閉じた。前pageのIDが閉じても後続IDを欠落させないtestを追加した。
+- finding familyのtargeted 143 tests、`npm run typecheck`、`npm run build`は成功した。既存のLightningCSS warningとlarge chunk warningは継続している。

@@ -137,7 +137,7 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },
       async listWorkspaceCustomAgents() { return []; },
-      listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextOffset: null, hasMore: false }),
+      listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
       listOpenCompanionReviewWindowIds: () => [],
       getSession: () => null,
       getSessionMessageArtifact: () => null,

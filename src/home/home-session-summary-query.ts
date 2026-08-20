@@ -45,7 +45,6 @@ export function mergeSessionSummaryEntries(...sources: readonly SessionSummary[]
 export async function listOpenSessionSummaryEntries(
   api: HomeSessionSummaryQueryApi,
   openSessionIds: readonly string[],
-  searchText: string,
 ): Promise<SessionSummary[]> {
   const chunks = chunkSessionIds(Array.from(new Set(openSessionIds)));
   if (chunks.length === 0) {
@@ -55,7 +54,7 @@ export async function listOpenSessionSummaryEntries(
   const pages = await Promise.all(chunks.map((sessionIds) => api.listSessionSummaryPage({
     scope: "open",
     sessionIds,
-    searchText,
+    searchText: "",
   })));
   return mergeSessionSummaryEntries(...pages.map((page) => page.entries));
 }
@@ -69,7 +68,7 @@ export async function fetchHomeSessionSummarySnapshot(
   const [recent, pinned, open, characterUsage] = await Promise.all([
     api.listSessionSummaryPage({ scope: "recent", searchText }),
     api.listSessionSummaryPage({ scope: "pinned", searchText }),
-    listOpenSessionSummaryEntries(api, openSessionIds, searchText),
+    listOpenSessionSummaryEntries(api, openSessionIds),
     options.includeCharacterUsage === false ? Promise.resolve([]) : api.listSessionCharacterUsage(),
   ]);
   return { recent, pinned, open, characterUsage };

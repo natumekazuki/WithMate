@@ -6,48 +6,54 @@ export const OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX = 100;
 export const OPEN_SESSION_WINDOW_IDS_PAGE_MAX = 100;
 
 export type OpenSessionWindowIdsPageRequest = {
-  offset?: number | null;
+  cursor?: string | null;
   limit?: number | null;
 };
 
 export type OpenSessionWindowIdsPageResult = {
   sessionIds: string[];
-  nextOffset: number | null;
+  nextCursor: string | null;
   hasMore: boolean;
 };
 
-export function parseOpenSessionWindowIdsPageRequest(value: unknown): { offset: number; limit: number } {
+export function parseOpenSessionWindowIdsPageRequest(value: unknown): { cursor: string | null; limit: number } {
   if (value !== undefined && value !== null && (typeof value !== "object" || Array.isArray(value))) {
     throw new TypeError("open Session Window ID page request が不正です。");
   }
   const candidate = value && typeof value === "object" && !Array.isArray(value)
-    ? value as { offset?: unknown; limit?: unknown }
+    ? value as { cursor?: unknown; limit?: unknown }
     : {};
-  const offset = candidate.offset === undefined || candidate.offset === null ? 0 : candidate.offset;
+  const rawCursor = candidate.cursor === undefined || candidate.cursor === null || candidate.cursor === ""
+    ? null
+    : candidate.cursor;
+  const cursor = typeof rawCursor === "string" ? rawCursor.trim() : rawCursor;
   const limit = candidate.limit === undefined || candidate.limit === null
     ? OPEN_SESSION_WINDOW_IDS_PAGE_MAX
     : candidate.limit;
   if (
-    typeof offset !== "number" || !Number.isSafeInteger(offset) || offset < 0
+    (cursor !== null && (typeof cursor !== "string" || !cursor || cursor.length > 256))
     || typeof limit !== "number" || !Number.isSafeInteger(limit) || limit < 1
     || limit > OPEN_SESSION_WINDOW_IDS_PAGE_MAX
   ) {
     throw new RangeError("open Session Window ID page request が不正です。");
   }
-  return { offset, limit };
+  return { cursor: typeof cursor === "string" ? cursor : null, limit };
 }
 
 export function buildOpenSessionWindowIdsPage(
   sessionIds: readonly string[],
   request?: OpenSessionWindowIdsPageRequest | null,
 ): OpenSessionWindowIdsPageResult {
-  const { offset, limit } = parseOpenSessionWindowIdsPageRequest(request);
-  const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
-  const entries = uniqueSessionIds.slice(offset, offset + limit);
-  const hasMore = offset + entries.length < uniqueSessionIds.length;
+  const { cursor, limit } = parseOpenSessionWindowIdsPageRequest(request);
+  const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean))).sort();
+  const candidates = cursor === null
+    ? uniqueSessionIds
+    : uniqueSessionIds.filter((sessionId) => sessionId > cursor);
+  const entries = candidates.slice(0, limit);
+  const hasMore = entries.length < candidates.length;
   return {
     sessionIds: entries,
-    nextOffset: hasMore ? offset + entries.length : null,
+    nextCursor: hasMore ? entries.at(-1) ?? null : null,
     hasMore,
   };
 }
@@ -56,7 +62,7 @@ export function normalizeOpenSessionWindowIdsPageResult(value: unknown): OpenSes
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return null;
   }
-  const candidate = value as { sessionIds?: unknown; nextOffset?: unknown; hasMore?: unknown };
+  const candidate = value as { sessionIds?: unknown; nextCursor?: unknown; hasMore?: unknown };
   if (!Array.isArray(candidate.sessionIds) || candidate.sessionIds.length > OPEN_SESSION_WINDOW_IDS_PAGE_MAX) {
     return null;
   }
@@ -66,14 +72,14 @@ export function normalizeOpenSessionWindowIdsPageResult(value: unknown): OpenSes
   if (sessionIds.length !== candidate.sessionIds.length || typeof candidate.hasMore !== "boolean") {
     return null;
   }
-  if (candidate.nextOffset !== null && (
-    typeof candidate.nextOffset !== "number" || !Number.isSafeInteger(candidate.nextOffset) || candidate.nextOffset < 0
+  if (candidate.nextCursor !== null && (
+    typeof candidate.nextCursor !== "string" || !candidate.nextCursor || candidate.nextCursor.length > 256
   )) {
     return null;
   }
   return {
     sessionIds: Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()))),
-    nextOffset: candidate.hasMore ? candidate.nextOffset as number | null : null,
+    nextCursor: candidate.hasMore ? candidate.nextCursor as string | null : null,
     hasMore: candidate.hasMore,
   };
 }

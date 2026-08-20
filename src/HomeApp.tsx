@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   createDefaultAppSettings,
@@ -57,6 +57,10 @@ import {
   fetchHomeSessionSummarySnapshot,
   mergeSessionSummaryEntries,
 } from "./home/home-session-summary-query.js";
+import {
+  buildHomeSessionQueryKey,
+  HomeSessionQueryGeneration,
+} from "./home/home-session-query-generation.js";
 import { buildHomeRightPaneProps } from "./home/home-right-pane-props.js";
 import { buildHomeWindowContentSlots } from "./home/HomeWindowContentSlots.js";
 import { getHomeWindowMode } from "./home/home-window-mode.js";
@@ -159,7 +163,11 @@ export default function HomeApp() {
   const settingsDirtyRef = useRef(false);
   const settingsHydratedRef = useRef(!isSettingsWindowMode);
   const workspaceValidationControllerRef = useRef<HomeLaunchWorkspaceValidationController | null>(null);
-  const sessionQueryGenerationRef = useRef(0);
+  const sessionQueryKey = buildHomeSessionQueryKey(sessionSearchText, openSessionWindowIds);
+  const sessionQueryGenerationRef = useRef<HomeSessionQueryGeneration | null>(null);
+  if (sessionQueryGenerationRef.current === null) {
+    sessionQueryGenerationRef.current = new HomeSessionQueryGeneration(sessionQueryKey);
+  }
   const refreshSessionSummariesRef = useRef<() => Promise<void>>(() => Promise.resolve());
   if (workspaceValidationControllerRef.current === null) {
     workspaceValidationControllerRef.current = createHomeLaunchWorkspaceValidationController({
@@ -180,6 +188,26 @@ export default function HomeApp() {
   }
 
   useEffect(() => () => workspaceValidationControllerRef.current?.cancel(), []);
+
+  useLayoutEffect(() => {
+    sessionQueryGenerationRef.current!.syncQueryKey(sessionQueryKey);
+    if (isSettingsWindowMode || isMemoryReviewWindowMode || !getWithMateApi()) {
+      return;
+    }
+    setSessionSummariesState((current) => ({
+      ...current,
+      status: "loading",
+      summaries: [],
+      recentCursor: null,
+      hasMoreRecent: false,
+      pinnedCursor: null,
+      hasMorePinned: false,
+      loadingRecentPage: false,
+      loadingPinnedPage: false,
+      characterUsageStatus: "loading",
+      characterUsage: [],
+    }));
+  }, [isMemoryReviewWindowMode, isSettingsWindowMode, sessionQueryKey]);
 
   const applyIncomingAppSettings = (settings: AppSettings, options?: { force?: boolean }) => {
     setAppSettings(settings);
@@ -215,7 +243,7 @@ export default function HomeApp() {
       return;
     }
 
-    const generation = ++sessionQueryGenerationRef.current;
+    const requestToken = sessionQueryGenerationRef.current!.beginRequest();
     const searchText = sessionSearchText;
     const currentOpenSessionIds = openSessionWindowIds;
     setSessionSummariesState((current) => ({
@@ -234,7 +262,7 @@ export default function HomeApp() {
 
     try {
       const snapshot = await fetchHomeSessionSummarySnapshot(api, searchText, currentOpenSessionIds);
-      if (generation !== sessionQueryGenerationRef.current) {
+      if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) {
         return;
       }
       setSessionSummariesState({
@@ -250,7 +278,7 @@ export default function HomeApp() {
         characterUsage: snapshot.characterUsage,
       });
     } catch (error) {
-      if (generation !== sessionQueryGenerationRef.current) {
+      if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) {
         return;
       }
       setSessionSummariesState((current) => ({
@@ -274,14 +302,14 @@ export default function HomeApp() {
       return;
     }
 
-    const generation = sessionQueryGenerationRef.current;
+    const requestToken = sessionQueryGenerationRef.current!.capture();
     setSessionSummariesState((current) => ({
       ...current,
       ...(scope === "recent" ? { loadingRecentPage: true } : { loadingPinnedPage: true }),
     }));
     try {
       const page = await fetchHomeSessionSummaryPage(api, scope, cursor, sessionSearchText);
-      if (generation !== sessionQueryGenerationRef.current) {
+      if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) {
         return;
       }
       setSessionSummariesState((current) => ({
@@ -292,7 +320,7 @@ export default function HomeApp() {
           : { pinnedCursor: page.nextCursor, hasMorePinned: page.hasMore, loadingPinnedPage: false }),
       }));
     } catch (error) {
-      if (generation !== sessionQueryGenerationRef.current) {
+      if (!sessionQueryGenerationRef.current!.isCurrent(requestToken)) {
         return;
       }
       setSessionSummariesState((current) => ({

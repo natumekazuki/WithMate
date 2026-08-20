@@ -803,10 +803,10 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
 
 async function listAllOpenSessionWindowIds(ipcRenderer: IpcRendererLike): Promise<string[]> {
   const sessionIds: string[] = [];
-  let offset = 0;
+  let cursor: string | null = null;
   while (true) {
     const rawPage = await ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, {
-      offset,
+      cursor,
       limit: OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
     });
     const page = normalizeOpenSessionWindowIdsPageResult(rawPage);
@@ -817,10 +817,10 @@ async function listAllOpenSessionWindowIds(ipcRenderer: IpcRendererLike): Promis
     if (!page.hasMore) {
       return Array.from(new Set(sessionIds));
     }
-    if (page.nextOffset === null || page.nextOffset <= offset) {
+    if (page.nextCursor === null || page.nextCursor === cursor) {
       throw new Error("open Session Window ID page cursor が進まないよ。");
     }
-    offset = page.nextOffset;
+    cursor = page.nextCursor;
   }
 }
 

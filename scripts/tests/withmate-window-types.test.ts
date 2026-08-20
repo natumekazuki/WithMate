@@ -8,17 +8,27 @@ import {
 } from "../../src/withmate-window-types.js";
 
 test("open Session Window ID page は100件単位で全体を返せる", () => {
-  const sessionIds = Array.from({ length: 101 }, (_, index) => `session-${index}`);
+  const sessionIds = Array.from({ length: 101 }, (_, index) => `session-${String(index).padStart(3, "0")}`);
   const first = buildOpenSessionWindowIdsPage(sessionIds, { limit: 100 });
-  const second = buildOpenSessionWindowIdsPage(sessionIds, { offset: first.nextOffset, limit: 100 });
+  const second = buildOpenSessionWindowIdsPage(sessionIds, { cursor: first.nextCursor, limit: 100 });
 
   assert.equal(first.sessionIds.length, 100);
-  assert.deepEqual(first.nextOffset, 100);
+  assert.deepEqual(first.nextCursor, "session-099");
   assert.equal(first.hasMore, true);
   assert.deepEqual(second.sessionIds, ["session-100"]);
-  assert.equal(second.nextOffset, null);
+  assert.equal(second.nextCursor, null);
   assert.equal(second.hasMore, false);
   assert.equal(normalizeOpenSessionWindowIdsPageResult(first)?.sessionIds.length, 100);
+});
+
+test("open Session Window ID page は前pageのSessionが閉じても後続IDを欠落させない", () => {
+  const sessionIds = Array.from({ length: 101 }, (_, index) => `session-${String(index).padStart(3, "0")}`);
+  const first = buildOpenSessionWindowIdsPage(sessionIds, { limit: 100 });
+  const changedSessionIds = sessionIds.slice(1);
+
+  const second = buildOpenSessionWindowIdsPage(changedSessionIds, { cursor: first.nextCursor, limit: 100 });
+
+  assert.deepEqual(second.sessionIds, ["session-100"]);
 });
 
 test("open Session Window ID broadcast は上限超過を all にしてsilent truncationしない", () => {

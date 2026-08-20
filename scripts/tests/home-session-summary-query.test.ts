@@ -13,11 +13,17 @@ function summary(id: string): SessionSummary {
 
 test("Home summary query は open Session ID を100件ずつ取得し、重複を除く", async () => {
   const openRequests: string[][] = [];
+  const openSearchTexts: Array<string | undefined> = [];
   const api = {
-    listSessionSummaryPage: async (request?: { scope?: string; sessionIds?: readonly string[] | null }) => {
+    listSessionSummaryPage: async (request?: {
+      scope?: string;
+      sessionIds?: readonly string[] | null;
+      searchText?: string;
+    }) => {
       if (request?.scope === "open") {
         const sessionIds = [...(request.sessionIds ?? [])];
         openRequests.push(sessionIds);
+        openSearchTexts.push(request.searchText);
         return {
           entries: sessionIds.map((id) => summary(id)),
           nextCursor: null,
@@ -37,6 +43,7 @@ test("Home summary query は open Session ID を100件ずつ取得し、重複�
   const snapshot = await fetchHomeSessionSummarySnapshot(api, "Task", openSessionIds);
 
   assert.deepEqual(openRequests.map((request) => request.length), [100, 1]);
+  assert.deepEqual(openSearchTexts, ["", ""]);
   assert.equal(snapshot.open.length, 101);
   assert.deepEqual(snapshot.characterUsage, [{ characterId: "char-1", sessionKind: "default" }]);
 });
