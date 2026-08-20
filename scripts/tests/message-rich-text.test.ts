@@ -668,6 +668,23 @@ test("MessageRichText は2文字ずつのindentをnested unordered listとして
   assert.equal(rootItem?.querySelectorAll(":scope > .message-paragraph")[1]?.textContent, "child paragraph");
 });
 
+test("MessageRichText は単独のMarkdown list itemを本文wrapperなしのliとしてrenderする", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(MessageRichText, {
+      text: "- Review target:\n\n![alt text](image.png)",
+    }),
+  );
+  const dom = new JSDOM(html);
+  const list = dom.window.document.querySelector("ul.message-list");
+  const item = list?.querySelector(":scope > li");
+
+  assert.ok(list);
+  assert.ok(item);
+  assert.equal(item.children.length, 0);
+  assert.equal(item.textContent, "Review target:");
+  assert.equal(list?.nextElementSibling?.tagName, "P");
+});
+
 test("Markdown ordered list は2桁marker用の論理方向余白を持ち、独立scroll領域にしない", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const orderedListRule = styles.match(/\.message-list\.ordered\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";

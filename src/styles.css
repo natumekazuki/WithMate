@@ -6609,8 +6609,7 @@ button:disabled {
   margin: 0;
   padding-inline-start: 1.5em;
   list-style-position: outside;
-  display: grid;
-  gap: 6px;
+  display: block;
 }
 
 .message-list:not(.ordered) {
@@ -6627,6 +6626,10 @@ button:disabled {
 
 .message-list > li::marker {
   color: currentColor;
+}
+
+.message-list > li + li {
+  margin-block-start: 6px;
 }
 
 .message-list .message-list {
