@@ -68,6 +68,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_memory_protected_objects_state",
   "idx_v6_memory_protected_objects_entry",
   "idx_v6_character_affect_events_effective",
+  "idx_v6_character_affect_events_afterglow",
   "idx_v6_character_affect_events_target",
   "idx_v6_character_affect_resets_scope",
   "idx_v6_character_affect_mutations_scope",
@@ -1201,6 +1202,9 @@ export const CREATE_V6_CHARACTER_AFFECT_TABLES_SQL = `
 
   CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_effective
     ON character_affect_events_v6(character_id, user_id, layer, session_id, state, occurred_at, id);
+
+  CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_afterglow
+    ON character_affect_events_v6(character_id, user_id, layer, state, occurred_at DESC, id ASC, session_id);
 
   CREATE INDEX IF NOT EXISTS idx_v6_character_affect_events_target
     ON character_affect_events_v6(character_id, user_id, target_type, target_id, occurred_at, id);

@@ -80,6 +80,28 @@ function event(overrides: Partial<AffectEventInput> = {}): AffectEventInput {
   };
 }
 
+function addSession(dbPath: string, sessionId: string, characterId = "character-a"): void {
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec("PRAGMA foreign_keys = ON;");
+    db.prepare(`
+      INSERT INTO sessions_v6 (
+        id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+        character_id, character_snapshot_json, created_at, updated_at, last_active_at
+      ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, '{}', ?, ?, ?)
+    `).run(
+      sessionId,
+      sessionId,
+      characterId,
+      "2026-08-09T00:00:00.000Z",
+      "2026-08-09T00:00:00.000Z",
+      "2026-08-09T00:00:00.000Z",
+    );
+  } finally {
+    db.close();
+  }
+}
+
 function affectStorage(dbPath: string): CharacterAffectStorage {
   return new CharacterAffectStorage(dbPath, {
     now: () => new Date("2026-08-09T01:00:00.000Z"),
@@ -921,6 +943,427 @@ describe("CharacterAffectStorage", () => {
       assert.equal(storage.getMetrics().projection.decayExcluded, 1);
       assert.equal(storage.getMetrics().projection.cacheHits, 0);
       assert.equal(storage.getMetrics().projection.cacheMisses, 4);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("直近Sessionのafterglowだけをcurrent優先・task continuity・legacy identity付きでread-time合成する", () => {
+    const fixture = createFixture();
+    let storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date("2026-08-09T02:00:00.000Z"),
+      sessionHalfLifeMs: 60 * 60 * 1_000,
+    });
+    try {
+      const current = storage.recordEvent(event({
+        targetType: "task",
+        targetId: "task-shared",
+        family: "determination",
+        value: { label: "current", valence: 0.4 },
+        intensity: 0.4,
+        occurredAt: "2026-08-09T01:58:00.000Z",
+        idempotencyKey: "afterglow-current",
+      })).event;
+      const sourceUser = storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "user",
+        targetId: "local-user",
+        family: "gratitude",
+        value: { label: "afterglow-user", valence: 0.8, arousal: 0.6, dimensions: { focus: 0.4 } },
+        intensity: 0.6,
+        reason: "PRIVATE_AFTERGLOW_REASON",
+        evidence: "PRIVATE_AFTERGLOW_EVIDENCE",
+        occurredAt: "2026-08-09T01:59:00.000Z",
+        idempotencyKey: "afterglow-user",
+      })).event;
+      storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "task",
+        targetId: "task-shared",
+        family: "determination",
+        value: { label: "stale-current", valence: 0.9 },
+        intensity: 0.9,
+        occurredAt: "2026-08-09T01:59:30.000Z",
+        idempotencyKey: "afterglow-same-target",
+      }));
+      storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "task",
+        targetId: "task-foreign",
+        family: "frustration",
+        value: { label: "foreign-task", valence: -0.8 },
+        intensity: 0.9,
+        occurredAt: "2026-08-09T01:59:40.000Z",
+        idempotencyKey: "afterglow-foreign-task",
+      }));
+      const continuity = storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "task",
+        targetId: "task-shared",
+        family: "concern",
+        value: { label: "continuity", valence: -0.2 },
+        intensity: 0.3,
+        occurredAt: "2026-08-09T01:59:50.000Z",
+        idempotencyKey: "afterglow-continuity",
+      })).event;
+      const legacyCurrent = storage.recordEvent(event({
+        targetType: "user",
+        targetId: "legacy-target",
+        family: "determination",
+        value: { label: "legacy-current", valence: 0.2 },
+        occurredAt: "2026-08-09T01:58:30.000Z",
+        idempotencyKey: "afterglow-legacy-current",
+      })).event;
+      const legacySource = storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "user",
+        targetId: "legacy-target",
+        family: "determination",
+        value: { label: "legacy-current", valence: 0.7 },
+        intensity: 0.8,
+        occurredAt: "2026-08-09T01:59:45.000Z",
+        idempotencyKey: "afterglow-legacy-source",
+      })).event;
+
+      const rawDb = new DatabaseSync(fixture.dbPath);
+      try {
+        rawDb.exec("PRAGMA foreign_keys = ON;");
+        rawDb.prepare(`
+          INSERT INTO character_affect_events_v6 (
+            id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
+            family, value_json, intensity, reason, evidence, occurred_at, idempotency_key,
+            request_fingerprint, state, created_at
+          ) VALUES ('other-user-event', 'character-a', 'other-user', 'session-b', 'session-b', 'session',
+            'user', 'other-user', 'joy', '{"label":"other-user","valence":0.9}', 0.9,
+            'OTHER_USER_REASON', 'OTHER_USER_EVIDENCE', '2026-08-09T01:59:55.000Z',
+            'other-user-key', 'other-user-fingerprint', 'active', '2026-08-09T01:59:55.000Z')
+        `).run();
+        rawDb.prepare(`
+          INSERT INTO character_affect_events_v6 (
+            id, character_id, user_id, session_id, source_session_id, layer, target_type, target_id,
+            family, value_json, intensity, reason, evidence, occurred_at, idempotency_key,
+            request_fingerprint, state, created_at
+          ) VALUES ('other-character-event', 'character-b', 'local-user', 'session-other', 'session-other', 'session',
+            'user', 'other-character', 'joy', '{"label":"other-character","valence":0.9}', 0.9,
+            'OTHER_CHARACTER_REASON', 'OTHER_CHARACTER_EVIDENCE', '2026-08-09T01:59:56.000Z',
+            'other-character-key', 'other-character-fingerprint', 'active', '2026-08-09T01:59:56.000Z')
+        `).run();
+        rawDb.prepare("UPDATE character_affect_events_v6 SET family = NULL WHERE id IN (?, ?)")
+          .run(legacyCurrent.id, legacySource.id);
+      } finally {
+        rawDb.close();
+      }
+
+      const versionBefore = storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      const inspectionBefore = storage.inspect({ characterId: "character-a", userId: "local-user" });
+      const first = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      const second = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      const versionAfter = storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      const inspectionAfter = storage.inspect({ characterId: "character-a", userId: "local-user" });
+      const afterglowUser = first.components.find((component) => component.label === "afterglow-user");
+      const afterglowContinuity = first.components.find((component) => component.label === "continuity");
+      const currentComponent = first.components.find((component) => component.label === "current");
+      const legacyComponents = first.components.filter((component) => component.targetId === "legacy-target");
+      const expectedUserWeight = 0.5 * Math.pow(0.5, 60_000 / (60 * 60 * 1_000));
+      assert.ok(afterglowUser);
+      assert.ok(afterglowContinuity);
+      assert.equal(afterglowUser?.eventIds.includes(sourceUser.id), true);
+      assert.ok(Math.abs((afterglowUser?.intensity ?? 0) - 0.6 * expectedUserWeight) < Number.EPSILON);
+      assert.ok(Math.abs((afterglowUser?.valence ?? 0) - 0.8 * 0.6 * expectedUserWeight) < Number.EPSILON);
+      assert.ok(Math.abs((afterglowUser?.arousal ?? 0) - 0.6 * 0.6 * expectedUserWeight) < Number.EPSILON);
+      assert.ok(Math.abs((afterglowUser?.dimensions.focus ?? 0) - 0.4 * 0.6 * expectedUserWeight) < Number.EPSILON);
+      assert.deepEqual(afterglowUser?.reasons, []);
+      assert.equal(first.components.some((component) => component.label === "stale-current"), false);
+      assert.equal(first.components.some((component) => component.label === "foreign-task"), false);
+      assert.deepEqual(currentComponent?.eventIds, [current.id]);
+      assert.equal(legacyComponents.length, 1);
+      assert.deepEqual(legacyComponents[0]?.eventIds, [legacyCurrent.id]);
+      assert.equal(first.components.some((component) => component.label === "other-user"), false);
+      assert.equal(first.components.some((component) => component.label === "other-character"), false);
+      assert.deepEqual(second, first);
+      assert.deepEqual(versionAfter, versionBefore);
+      assert.deepEqual(inspectionAfter, inspectionBefore);
+      assert.equal(storage.getMetrics().projection.afterglowCandidateRows, 10);
+      assert.equal(storage.getMetrics().projection.afterglowSelectedComponents, 4);
+      assert.equal(storage.getMetrics().projection.afterglowSameTargetExcluded, 4);
+      assert.equal(storage.getMetrics().projection.afterglowContinuityExcluded, 2);
+      assert.equal(storage.getMetrics().projection.afterglowComponentCapExcluded, 0);
+
+      storage.close();
+      storage = new CharacterAffectStorage(fixture.dbPath, {
+        now: () => new Date("2026-08-09T02:00:00.000Z"),
+        sessionHalfLifeMs: 60 * 60 * 1_000,
+      });
+      const reopened = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      assert.deepEqual(reopened, first);
+      assert.deepEqual(storage.inspect({ characterId: "character-a", userId: "local-user" }), inspectionBefore);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("最新source Sessionがfilter後に空でも古いSessionへfallbackせず、TTL境界を除外する", () => {
+    const fixture = createFixture();
+    addSession(fixture.dbPath, "session-c");
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date("2026-08-09T02:00:00.000Z"),
+      sessionHalfLifeMs: 60 * 60 * 1_000,
+    });
+    try {
+      storage.recordEvent(event({
+        sessionId: "session-c",
+        targetType: "user",
+        targetId: "local-user",
+        value: { label: "old-source", valence: 0.8 },
+        occurredAt: "2026-08-09T01:30:00.000Z",
+        idempotencyKey: "old-source-event",
+      }));
+      storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "task",
+        targetId: "foreign-latest",
+        value: { label: "latest-foreign-task", valence: -0.8 },
+        occurredAt: "2026-08-09T01:59:00.000Z",
+        idempotencyKey: "latest-source-filtered",
+      }));
+      const state = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      assert.equal(state.components.some((component) => component.label === "old-source"), false);
+      assert.equal(state.components.some((component) => component.label === "latest-foreign-task"), false);
+      assert.equal(storage.getMetrics().projection.afterglowCandidateRows, 1);
+      assert.equal(storage.getMetrics().projection.afterglowContinuityExcluded, 1);
+      assert.equal(storage.getMetrics().projection.afterglowSelectedComponents, 0);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("Character Definition baselineの代表labelをafterglowが上書きしない", () => {
+    const fixture = createFixture();
+    const storage = affectStorage(fixture.dbPath);
+    try {
+      storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "user",
+        targetId: "local-user",
+        family: "determination",
+        value: { label: "afterglow-label", valence: 0.8 },
+        intensity: 1,
+        occurredAt: "2026-08-09T00:59:00.000Z",
+        idempotencyKey: "baseline-priority-afterglow",
+      }));
+      const state = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+        baseline: [{
+          targetType: "user",
+          targetId: "local-user",
+          family: "determination",
+          value: { label: "definition-label", valence: 0.6 },
+          intensity: 1,
+          reason: "Character Definition baseline.",
+        }],
+      });
+      const component = state.components.find((item) => item.targetId === "local-user");
+      assert.equal(component?.label, "definition-label");
+      assert.deepEqual(component?.contributingLayers, ["baseline", "session"]);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("別Sessionのevent writeとread clock進行でcurrent Sessionのversionを変えない", () => {
+    const fixture = createFixture();
+    let nowMs = Date.parse("2026-08-09T01:00:00.000Z");
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date(nowMs),
+    });
+    try {
+      const versionBefore = storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "user",
+        targetId: "local-user",
+        value: { label: "source-write", valence: 0.6 },
+        occurredAt: "2026-08-09T00:59:00.000Z",
+        idempotencyKey: "version-source-write",
+      }));
+      const afterSourceWrite = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      nowMs += 60_000;
+      const afterClockAdvance = storage.getEffectiveState({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      });
+      assert.equal(afterSourceWrite.components.some((component) => component.label === "source-write"), true);
+      assert.notEqual(afterSourceWrite.evaluatedAt, afterClockAdvance.evaluatedAt);
+      assert.deepEqual(storage.getStateVersion({
+        characterId: "character-a",
+        userId: "local-user",
+        sessionId: "session-a",
+      }), versionBefore);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("ageMsがsessionHalfLifeMsと等しいafterglowを候補へ入れない", () => {
+    const fixture = createFixture();
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date("2026-08-09T02:00:00.000Z"),
+      sessionHalfLifeMs: 60 * 60 * 1_000,
+    });
+    try {
+      storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "user",
+        targetId: "local-user",
+        value: { label: "expired-afterglow", valence: 0.8 },
+        occurredAt: "2026-08-09T01:00:00.000Z",
+        idempotencyKey: "expired-afterglow",
+      }));
+      const state = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      assert.equal(state.components.some((component) => component.label === "expired-afterglow"), false);
+      assert.equal(storage.getMetrics().projection.afterglowCandidateRows, 0);
+      assert.equal(storage.getMetrics().projection.afterglowSelectedComponents, 0);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("source reset・correctionとcurrent resetを別Sessionのactive setとして扱う", () => {
+    const fixture = createFixture();
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date("2026-08-09T02:00:00.000Z"),
+      sessionHalfLifeMs: 60 * 60 * 1_000,
+    });
+    try {
+      const original = storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "task",
+        targetId: "reset-task",
+        value: { label: "before-source-reset", valence: -0.8 },
+        occurredAt: "2026-08-09T01:10:00.000Z",
+        idempotencyKey: "source-reset-original",
+      })).event;
+      storage.reset({
+        characterId: "character-a",
+        userId: "local-user",
+        layer: "session",
+        sessionId: "session-b",
+        reason: "Reset source session.",
+        resetAt: "2026-08-09T01:20:00.000Z",
+        idempotencyKey: "source-reset",
+      });
+      const replacement = storage.correctEvent({
+        eventId: original.id,
+        replacement: event({
+          sessionId: "session-b",
+          targetType: "task",
+          targetId: "reset-task",
+          family: "determination",
+          value: { label: "after-source-correction", valence: 0.5 },
+          occurredAt: "2026-08-09T01:35:00.000Z",
+          idempotencyKey: "source-reset-replacement",
+        }),
+        reason: "Replace the reset source event.",
+      }).event;
+      const sourceUser = storage.recordEvent(event({
+        sessionId: "session-b",
+        targetType: "user",
+        targetId: "local-user",
+        value: { label: "source-survives-current-reset", valence: 0.6 },
+        occurredAt: "2026-08-09T01:36:00.000Z",
+        idempotencyKey: "source-survives-current-reset",
+      })).event;
+      const current = storage.recordEvent(event({
+        targetType: "task",
+        targetId: "current-reset-task",
+        value: { label: "current-before-reset", valence: 0.6 },
+        occurredAt: "2026-08-09T01:40:00.000Z",
+        idempotencyKey: "current-reset-event",
+      })).event;
+      storage.reset({
+        characterId: "character-a",
+        userId: "local-user",
+        layer: "session",
+        sessionId: "session-a",
+        reason: "Reset current session.",
+        resetAt: "2026-08-09T01:50:00.000Z",
+        idempotencyKey: "current-reset",
+      });
+
+      const state = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      assert.equal(state.components.some((component) => component.eventIds.includes(original.id)), false);
+      assert.equal(state.components.some((component) => component.eventIds.includes(replacement.id)), false);
+      assert.equal(state.components.some((component) => component.eventIds.includes(current.id)), false);
+      assert.equal(state.components.some((component) => component.eventIds.includes(sourceUser.id)), true);
+      assert.equal(storage.getMetrics().projection.afterglowCandidateRows, 2);
+      assert.equal(storage.getMetrics().projection.afterglowContinuityExcluded, 1);
+      assert.equal(storage.getMetrics().projection.afterglowSelectedComponents, 1);
+      const inspection = storage.inspect({ characterId: "character-a", userId: "local-user" });
+      assert.equal(inspection.events.find((item) => item.id === original.id)?.state, "corrected");
+      assert.equal(inspection.events.find((item) => item.id === replacement.id)?.state, "active");
+      assert.equal(inspection.resets.length, 2);
+    } finally {
+      storage.close();
+      rmSync(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("afterglowのsource queryを64 rows、projection componentを3件へboundedにする", () => {
+    const fixture = createFixture();
+    const storage = new CharacterAffectStorage(fixture.dbPath, {
+      now: () => new Date("2026-08-09T02:00:00.000Z"),
+      sessionHalfLifeMs: 60 * 60 * 1_000,
+    });
+    try {
+      const startMs = Date.parse("2026-08-09T01:30:00.000Z");
+      for (let index = 0; index < 65; index += 1) {
+        storage.recordEvent(event({
+          sessionId: "session-b",
+          targetType: "user",
+          targetId: `bounded-${index}`,
+          family: "interest",
+          value: { label: `bounded-${index}`, valence: 0.4 },
+          intensity: 0.5,
+          occurredAt: new Date(startMs + index * 1_000).toISOString(),
+          idempotencyKey: `bounded-${index}`,
+        }));
+      }
+      const state = storage.getEffectiveState({ characterId: "character-a", userId: "local-user", sessionId: "session-a" });
+      const metrics = storage.getMetrics();
+      assert.equal(state.components.length, 3);
+      assert.deepEqual(
+        state.components.map((component) => component.label),
+        ["bounded-64", "bounded-63", "bounded-62"],
+      );
+      assert.equal(metrics.events, 65);
+      assert.equal(metrics.projection.afterglowCandidateRows, 64);
+      assert.equal(metrics.projection.afterglowSelectedComponents, 3);
+      assert.equal(metrics.projection.afterglowComponentCapExcluded, 61);
     } finally {
       storage.close();
       rmSync(fixture.directory, { recursive: true, force: true });
