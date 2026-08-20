@@ -140,6 +140,33 @@ function createArtifactMessage(): Message {
   };
 }
 
+function createGroupedArtifactMessage(): Message {
+  const message = createArtifactMessage();
+  message.artifact!.operationTimeline = [
+    {
+      type: "command_execution",
+      summary: "npm test",
+      details: "test output",
+    },
+    {
+      type: "command_execution",
+      summary: "npm run typecheck",
+      details: "typecheck output",
+    },
+    {
+      type: "mcp_tool_call",
+      summary: "filesystem/read",
+      details: "mcp output",
+    },
+    {
+      type: "command_execution",
+      summary: "npm run build",
+      details: "build output",
+    },
+  ];
+  return message;
+}
+
 function createLiveApprovalRequest(): LiveApprovalRequest {
   return {
     requestId: "approval-1",
@@ -1178,30 +1205,6 @@ test("Companion draft 更新では既存 message column を再描画しない", 
   }
 });
 
-test("StableSessionMessageColumn は描画用 callback の更新を空表示文言へ反映する", async () => {
-  const message = createArtifactMessage();
-  message.artifact!.changedFiles = [];
-  const mounted = await mountSessionMessageColumn({
-    messages: [message],
-    expandedArtifacts: { "session-1-0": true },
-    component: StableSessionMessageColumn,
-    getChangedFilesEmptyText: () => "変更前の空表示",
-  });
-
-  try {
-    assert.match(mounted.container.textContent ?? "", /変更前の空表示/);
-
-    await mounted.rerender({
-      getChangedFilesEmptyText: () => "変更後の空表示",
-    });
-
-    assert.doesNotMatch(mounted.container.textContent ?? "", /変更前の空表示/);
-    assert.match(mounted.container.textContent ?? "", /変更後の空表示/);
-  } finally {
-    await mounted.cleanup();
-  }
-});
-
 test("SessionMessageColumn は未追従時に message list 内の jump UI を描画しない", () => {
   const html = renderSessionMessageColumn({
     messages: createMessages(2),
@@ -1212,16 +1215,118 @@ test("SessionMessageColumn は未追従時に message list 内の jump UI を描
   assert.doesNotMatch(html, /末尾へ移動/);
 });
 
-test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示断片を維持する", () => {
+test("SessionMessageColumn はChanged Filesを描画せずRun Checksを維持し、operation groupを初期closedにする", () => {
   const html = renderSessionMessageColumn({
-    messages: [createArtifactMessage()],
+    messages: [createGroupedArtifactMessage()],
+    expandedArtifacts: { "session-1-0": true },
+  });
+  const dom = new JSDOM(html);
+  const operationGroups = Array.from(dom.window.document.querySelectorAll<HTMLDetailsElement>(".artifact-operation-fold"));
+
+  assert.match(html, /artifact-panel-session-1-0/);
+  assert.doesNotMatch(html, /Changed Files/);
+  assert.doesNotMatch(html, /src\/App\.tsx/);
+  assert.doesNotMatch(html, /Open Diff/);
+  assert.match(html, /snapshot files/);
+  assert.equal(operationGroups.length, 3);
+  assert.deepEqual(
+    operationGroups.map((group) => group.querySelector(".artifact-operation-type")?.textContent),
+    ["Command", "MCP", "Command"],
+  );
+  assert.deepEqual(
+    operationGroups.map((group) => group.querySelector(".artifact-operation-summary-text")?.textContent),
+    ["2 operations", "1 operation", "1 operation"],
+  );
+  for (const group of operationGroups) {
+    assert.equal(group.open, false);
+    assert.equal(group.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  }
+});
+
+test("SessionMessageColumn はoperation groupを開閉でき、長文operationをgroup内部へ保持する", async () => {
+  const message = createArtifactMessage();
+  message.artifact!.operationTimeline = [{
+    type: "command_execution",
+    summary: "npm test",
+    details: Array.from({ length: 120 }, (_, index) => `output line ${index + 1}`).join("\n"),
+  }];
+  const mounted = await mountSessionMessageColumn({
+    messages: [message],
     expandedArtifacts: { "session-1-0": true },
   });
 
-  assert.match(html, /artifact-panel-session-1-0/);
-  assert.match(html, /src\/App\.tsx/);
-  assert.match(html, /Open Diff/);
-  assert.match(html, /snapshot files/);
+  try {
+    const group = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(group);
+    const summary = group.querySelector("summary");
+    assert.ok(summary);
+    assert.equal(group.open, false);
+    assert.equal(summary.textContent?.includes("1 operation"), true);
+    assert.equal(summary.getAttribute("aria-controls"), group.querySelector(".artifact-operation-body")?.id);
+
+    await act(async () => {
+      group.open = true;
+      group.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(group.open, true);
+    assert.equal(group.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+    assert.match(group.querySelector(".artifact-operation-body")?.textContent ?? "", /output line 120/);
+
+    await act(async () => {
+      group.open = false;
+      group.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(group.open, false);
+    assert.equal(group.querySelector("summary")?.getAttribute("aria-expanded"), "false");
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn はvirtualizationでrowが再mountしてもoperation groupの開閉状態を維持する", async () => {
+  const messages = Array.from({ length: 30 }, (_, index) => (
+    index === 0
+      ? createGroupedArtifactMessage()
+      : { role: "user" as const, text: `message ${index + 1}` }
+  ));
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    expandedArtifacts: { "session-1-0": true },
+  });
+
+  try {
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    await act(async () => {
+      messageList.scrollTop = 0;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+
+    const initialGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(initialGroup);
+    await act(async () => {
+      initialGroup.open = true;
+      initialGroup.dispatchEvent(new mounted.dom.window.Event("toggle"));
+    });
+    assert.equal(initialGroup.open, true);
+
+    await act(async () => {
+      messageList.scrollTop = messageList.scrollHeight;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    assert.equal(mounted.container.querySelector(".artifact-operation-fold"), null);
+
+    await act(async () => {
+      messageList.scrollTop = 0;
+      messageList.dispatchEvent(new mounted.dom.window.Event("scroll"));
+    });
+    const remountedGroup = mounted.container.querySelector<HTMLDetailsElement>(".artifact-operation-fold");
+    assert.ok(remountedGroup);
+    assert.equal(remountedGroup.open, true);
+    assert.equal(remountedGroup.querySelector("summary")?.getAttribute("aria-expanded"), "true");
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("selection action geometry は viewport と ActionDock 境界内で flip と左右 clamp を行う", () => {
