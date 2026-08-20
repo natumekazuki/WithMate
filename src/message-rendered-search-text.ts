@@ -6,7 +6,7 @@ import { gfm } from "micromark-extension-gfm";
 import { math } from "micromark-extension-math";
 import { frontmatterFromMarkdown } from "mdast-util-frontmatter";
 
-import { formatMarkdownFrontmatterSource } from "./markdown-frontmatter.js";
+import { projectMarkdownFrontmatterText } from "./markdown-frontmatter.js";
 
 type MarkdownSearchNode = {
   type: string;
@@ -60,7 +60,7 @@ function projectNodeText(node: MarkdownSearchNode): string {
       return "";
     }
     const value = node.type === "yaml"
-      ? formatMarkdownFrontmatterSource(node.value ?? "")
+      ? projectMarkdownFrontmatterText(node.value ?? "")
       : node.value ?? "";
     return node.type === "text" || value.trim() ? value : "";
   }

@@ -60,7 +60,7 @@ test("message search projection は Markdown source ではなく表示文字列�
   }
 });
 
-test("message search projection は YAML frontmatter の表示 block と DOM index を一致させる", () => {
+test("message search projection は YAML frontmatter table と DOM index を一致させる", () => {
   const markdown = [
     "---",
     "name: withmate-memory",
@@ -77,7 +77,7 @@ test("message search projection は YAML frontmatter の表示 block と DOM ind
     const projected = projectMessageRenderedSearchText(markdown);
     const indexed = createRenderedTextSearchIndex(richText, isMessageRenderedSearchTextNode);
 
-    assert.equal(projected, "---\nname: withmate-memory\ndescription: Use injected context\n---Body");
+    assert.equal(projected, "namewithmate-memorydescriptionUse injected contextBody");
     assert.equal(indexed.normalizedText, projected.toLocaleLowerCase());
   } finally {
     dom.window.close();

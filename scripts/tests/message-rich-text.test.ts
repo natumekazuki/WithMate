@@ -194,7 +194,7 @@ test("MessageRichText の Source は元 Markdown を変換せず plain text で�
   assert.equal(sourceElement?.querySelector("a, code, blockquote, ul"), null);
 });
 
-test("MessageRichText は先頭 YAML frontmatter を境界と改行を保った code block として render する", () => {
+test("MessageRichText は先頭 YAML frontmatter の scalar mapping を key/value table として render する", () => {
   const frontmatter = [
     "---",
     "name: withmate-memory",
@@ -204,10 +204,22 @@ test("MessageRichText は先頭 YAML frontmatter を境界と改行を保った 
   const markdown = `${frontmatter}\n\n# Body`;
   const html = renderToStaticMarkup(React.createElement(MessageRichText, { text: markdown }));
   const dom = new JSDOM(html);
-  const frontmatterBlock = dom.window.document.querySelector("pre.message-frontmatter-block");
+  const frontmatterTable = dom.window.document.querySelector("table.message-frontmatter-table");
 
-  assert.ok(frontmatterBlock);
-  assert.equal(frontmatterBlock.querySelector("code")?.textContent, frontmatter);
+  assert.ok(frontmatterTable);
+  assert.equal(frontmatterTable.getAttribute("aria-label"), "YAML frontmatter");
+  assert.deepEqual(
+    Array.from(frontmatterTable.querySelectorAll("tr")).map((row) => [
+      row.querySelector("th")?.textContent,
+      row.querySelector("td")?.textContent,
+    ]),
+    [
+      ["name", "withmate-memory"],
+      ["description", "Use injected context"],
+    ],
+  );
+  assert.equal(frontmatterTable.querySelector("th")?.getAttribute("scope"), "row");
+  assert.equal(dom.window.document.querySelector("pre.message-frontmatter-block"), null);
   assert.equal(dom.window.document.querySelector("h1.message-heading")?.textContent, "Body");
   assert.equal(dom.window.document.querySelector("h2.message-heading"), null);
 });
@@ -225,7 +237,7 @@ test("MessageRichText の Source は YAML frontmatter を含む元 Markdown を�
   assert.equal(sourceElement?.querySelector("code, h1, hr"), null);
 });
 
-test("MessageRichText は空の先頭 frontmatter だけを拡張し、未閉鎖や本文中の thematic break は変えない", () => {
+test("MessageRichText は空・複雑な frontmatter を code blockへ戻し、未閉鎖や本文中の thematic break は変えない", () => {
   const emptyFrontmatterHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
     text: ["---", "---", "", "# Body"].join("\n"),
   }));
@@ -233,6 +245,56 @@ test("MessageRichText は空の先頭 frontmatter だけを拡張し、未閉鎖
   assert.equal(
     emptyFrontmatterDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
     "---\n---",
+  );
+
+  const nestedFrontmatter = [
+    "---",
+    "name: withmate-memory",
+    "tags:",
+    "  - memory",
+    "  - context",
+    "---",
+  ].join("\n");
+  const nestedHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: `${nestedFrontmatter}\n\n# Body`,
+  }));
+  const nestedDom = new JSDOM(nestedHtml);
+  assert.equal(nestedDom.window.document.querySelector("table.message-frontmatter-table"), null);
+  assert.equal(
+    nestedDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    nestedFrontmatter,
+  );
+
+  const multilineFrontmatter = [
+    "---",
+    "description: |",
+    "  first line",
+    "  second line",
+    "---",
+  ].join("\n");
+  const multilineHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: `${multilineFrontmatter}\n\n# Body`,
+  }));
+  const multilineDom = new JSDOM(multilineHtml);
+  assert.equal(multilineDom.window.document.querySelector("table.message-frontmatter-table"), null);
+  assert.equal(
+    multilineDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    multilineFrontmatter,
+  );
+
+  const invalidFrontmatter = [
+    "---",
+    "name: [unclosed",
+    "---",
+  ].join("\n");
+  const invalidHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
+    text: `${invalidFrontmatter}\n\n# Body`,
+  }));
+  const invalidDom = new JSDOM(invalidHtml);
+  assert.equal(invalidDom.window.document.querySelector("table.message-frontmatter-table"), null);
+  assert.equal(
+    invalidDom.window.document.querySelector("pre.message-frontmatter-block code")?.textContent,
+    invalidFrontmatter,
   );
 
   const unclosedHtml = renderToStaticMarkup(React.createElement(MessageRichText, {
@@ -250,7 +312,7 @@ test("MessageRichText は空の先頭 frontmatter だけを拡張し、未閉鎖
   assert.ok(bodyBreakDom.window.document.querySelector("hr.message-divider"));
 });
 
-test("MessageRichText の YAML frontmatter Preview は長い値を折り返す CSS 契約を持つ", async () => {
+test("MessageRichText の YAML frontmatter Preview は表とfallbackの値を折り返す CSS 契約を持つ", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
 
   assert.match(
@@ -260,6 +322,14 @@ test("MessageRichText の YAML frontmatter Preview は長い値を折り返す C
   assert.match(
     styles,
     /\.message-frontmatter-block\s*>\s*\.message-frontmatter-code\s*{[\s\S]*?display:\s*block;[\s\S]*?overflow-wrap:\s*anywhere;/,
+  );
+  assert.match(
+    styles,
+    /\.message-frontmatter-table\s+\.message-table-heading\s*{[\s\S]*?width:\s*1%;[\s\S]*?white-space:\s*nowrap;/,
+  );
+  assert.match(
+    styles,
+    /\.message-frontmatter-table\s+\.message-table-cell\s*{[\s\S]*?min-width:\s*0;[\s\S]*?overflow-wrap:\s*anywhere;/,
   );
 });
 
@@ -819,7 +889,17 @@ test("MessageRichText は browser の light render でも先頭 YAML frontmatter
     });
 
     assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
-    assert.equal(container.querySelector("pre.message-frontmatter-block code")?.textContent, markdown.split("\n\n")[0]);
+    assert.deepEqual(
+      Array.from(container.querySelectorAll("table.message-frontmatter-table tr")).map((row) => [
+        row.querySelector("th")?.textContent,
+        row.querySelector("td")?.textContent,
+      ]),
+      [
+        ["name", "withmate-memory"],
+        ["description", "light render"],
+      ],
+    );
+    assert.equal(container.querySelector("pre.message-frontmatter-block"), null);
     assert.equal(container.querySelector("h1.message-heading")?.textContent, "Body");
 
     await act(async () => {
@@ -828,7 +908,8 @@ test("MessageRichText は browser の light render でも先頭 YAML frontmatter
     });
 
     assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
-    assert.equal(container.querySelector("pre.message-frontmatter-block code")?.textContent, markdown.split("\n\n")[0]);
+    assert.equal(container.querySelector("table.message-frontmatter-table")?.getAttribute("aria-label"), "YAML frontmatter");
+    assert.equal(container.querySelector("pre.message-frontmatter-block"), null);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

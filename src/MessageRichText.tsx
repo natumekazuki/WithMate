@@ -22,7 +22,10 @@ import type { Plugin, PluggableList } from "unified";
 
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { toLocalFileUrl } from "./local-file-url.js";
-import { formatMarkdownFrontmatterSource } from "./markdown-frontmatter.js";
+import {
+  formatMarkdownFrontmatterSource,
+  resolveMarkdownFrontmatterDisplay,
+} from "./markdown-frontmatter.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -542,6 +545,42 @@ const markdownComponents: Components = {
 
 function renderMarkdownFrontmatter(_state: unknown, node: Node) {
   const value = "value" in node && typeof node.value === "string" ? node.value : "";
+  const display = resolveMarkdownFrontmatterDisplay(value);
+  if (display.kind === "table") {
+    return {
+      type: "element" as const,
+      tagName: "table",
+      properties: {
+        className: ["message-frontmatter-table"],
+        "aria-label": "YAML frontmatter",
+      },
+      children: [{
+        type: "element" as const,
+        tagName: "tbody",
+        properties: {},
+        children: display.rows.map((row) => ({
+          type: "element" as const,
+          tagName: "tr",
+          properties: {},
+          children: [
+            {
+              type: "element" as const,
+              tagName: "th",
+              properties: { scope: "row" },
+              children: [{ type: "text" as const, value: row.key }],
+            },
+            {
+              type: "element" as const,
+              tagName: "td",
+              properties: {},
+              children: [{ type: "text" as const, value: row.value }],
+            },
+          ],
+        })),
+      }],
+    };
+  }
+
   return {
     type: "element" as const,
     tagName: "pre",

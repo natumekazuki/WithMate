@@ -6686,6 +6686,16 @@ button:disabled {
   color: var(--ink);
 }
 
+.message-frontmatter-table .message-table-heading {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.message-frontmatter-table .message-table-cell {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .session-page .message-table,
 .session-page .message-table-heading,
 .session-page .message-table-cell {
