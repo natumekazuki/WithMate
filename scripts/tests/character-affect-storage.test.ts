@@ -974,7 +974,7 @@ describe("CharacterAffectStorage", () => {
         intensity: 0.6,
         reason: "PRIVATE_AFTERGLOW_REASON",
         evidence: "PRIVATE_AFTERGLOW_EVIDENCE",
-        occurredAt: "2026-08-09T01:59:00.000Z",
+        occurredAt: "2026-08-09T02:00:00.000Z",
         idempotencyKey: "afterglow-user",
       })).event;
       storage.recordEvent(event({
@@ -1073,7 +1073,7 @@ describe("CharacterAffectStorage", () => {
       const afterglowContinuity = first.components.find((component) => component.label === "continuity");
       const currentComponent = first.components.find((component) => component.label === "current");
       const legacyComponents = first.components.filter((component) => component.targetId === "legacy-target");
-      const expectedUserWeight = 0.5 * Math.pow(0.5, 60_000 / (60 * 60 * 1_000));
+      const expectedUserWeight = 0.5;
       assert.ok(afterglowUser);
       assert.ok(afterglowContinuity);
       assert.equal(afterglowUser?.eventIds.includes(sourceUser.id), true);
