@@ -21,12 +21,9 @@ export type HomeRecentSessionsPanelPropsInput = {
   searchIcon: ReactNode;
   handlers: HomeRecentSessionsPanelHandlers;
   canUsePrimaryFeatures?: boolean;
-  hasMoreRecent?: boolean;
-  hasMorePinned?: boolean;
-  loadingRecentPage?: boolean;
-  loadingPinnedPage?: boolean;
-  onLoadMoreRecent?: () => void;
-  onLoadMorePinned?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
 };
 
@@ -38,12 +35,9 @@ export function buildHomeRecentSessionsPanelProps({
   searchIcon,
   handlers,
   canUsePrimaryFeatures,
-  hasMoreRecent,
-  hasMorePinned,
-  loadingRecentPage,
-  loadingPinnedPage,
-  onLoadMoreRecent,
-  onLoadMorePinned,
+  hasMore,
+  loadingMore,
+  onLoadMore,
   pendingSessionPinIds,
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
@@ -58,12 +52,9 @@ export function buildHomeRecentSessionsPanelProps({
     onSetSessionPinned: handlers.onSetSessionPinned,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
     canUsePrimaryFeatures,
-    hasMoreRecent,
-    hasMorePinned,
-    loadingRecentPage,
-    loadingPinnedPage,
-    onLoadMoreRecent,
-    onLoadMorePinned,
+    hasMore,
+    loadingMore,
+    onLoadMore,
     pendingSessionPinIds,
   };
 }

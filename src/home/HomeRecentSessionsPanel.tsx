@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 
 import { isReadOnlySession, type SessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
@@ -16,12 +16,9 @@ export type HomeRecentSessionsPanelProps = {
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
-  hasMoreRecent?: boolean;
-  hasMorePinned?: boolean;
-  loadingRecentPage?: boolean;
-  loadingPinnedPage?: boolean;
-  onLoadMoreRecent?: () => void;
-  onLoadMorePinned?: () => void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
   canUsePrimaryFeatures?: boolean;
 };
@@ -51,15 +48,33 @@ export function HomeRecentSessionsPanel({
   onOpenSession,
   onSetSessionPinned,
   onOpenCompanionReview,
-  hasMoreRecent = false,
-  hasMorePinned = false,
-  loadingRecentPage = false,
-  loadingPinnedPage = false,
-  onLoadMoreRecent,
-  onLoadMorePinned,
+  hasMore = false,
+  loadingMore = false,
+  onLoadMore,
   pendingSessionPinIds = [],
   canUsePrimaryFeatures = true,
 }: HomeRecentSessionsPanelProps) {
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current;
+    const scrollRoot = sentinel?.parentElement;
+    if (!sentinel || !scrollRoot || !hasMore || !onLoadMore || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        onLoadMore();
+      }
+    }, {
+      root: scrollRoot,
+      rootMargin: "0px 0px 96px",
+    });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore]);
+
   const openLaunchDialog = () => {
     if (!canUsePrimaryFeatures) {
       return;
@@ -229,31 +244,14 @@ export function HomeRecentSessionsPanel({
             </div>
           );
         })}
+        {hasMore ? <div ref={loadMoreSentinelRef} className="home-session-list-load-sentinel" aria-hidden="true" /> : null}
+        {loadingMore ? (
+          <div className="home-session-list-load-status" role="status" aria-live="polite">
+            <span className="home-session-list-load-spinner" aria-hidden="true" />
+            <span className="sr-only">Sessionを読み込み中...</span>
+          </div>
+        ) : null}
       </div>
-      {(hasMorePinned || hasMoreRecent) ? (
-        <div className="home-session-list-pagination">
-          {hasMorePinned ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={onLoadMorePinned}
-              disabled={loadingPinnedPage}
-            >
-              {loadingPinnedPage ? "ピン留めを読み込み中..." : "ピン留めをさらに読み込む"}
-            </button>
-          ) : null}
-          {hasMoreRecent ? (
-            <button
-              className="secondary-button"
-              type="button"
-              onClick={onLoadMoreRecent}
-              disabled={loadingRecentPage}
-            >
-              {loadingRecentPage ? "Sessionを読み込み中..." : "Sessionをさらに読み込む"}
-            </button>
-          ) : null}
-        </div>
-      ) : null}
     </section>
   );
 }

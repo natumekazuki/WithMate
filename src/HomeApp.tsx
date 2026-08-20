@@ -303,6 +303,19 @@ export default function HomeApp() {
     }
   };
 
+  const loadNextSessionSummaryPage = () => {
+    if (sessionSummariesState.loadingPinnedPage || sessionSummariesState.loadingRecentPage) {
+      return;
+    }
+    if (sessionSummariesState.hasMorePinned) {
+      void loadMoreSessionSummaryPage("pinned");
+      return;
+    }
+    if (sessionSummariesState.hasMoreRecent) {
+      void loadMoreSessionSummaryPage("recent");
+    }
+  };
+
   const setSessionPinned = async (sessionId: string, isPinned: boolean) => {
     const api = getWithMateApi();
     if (!api) {
@@ -774,12 +787,9 @@ export default function HomeApp() {
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
       canUsePrimaryFeatures,
-      hasMoreRecent: sessionSummariesState.hasMoreRecent,
-      hasMorePinned: sessionSummariesState.hasMorePinned,
-      loadingRecentPage: sessionSummariesState.loadingRecentPage,
-      loadingPinnedPage: sessionSummariesState.loadingPinnedPage,
-      onLoadMoreRecent: () => void loadMoreSessionSummaryPage("recent"),
-      onLoadMorePinned: () => void loadMoreSessionSummaryPage("pinned"),
+      hasMore: sessionSummariesState.hasMoreRecent || sessionSummariesState.hasMorePinned,
+      loadingMore: sessionSummariesState.loadingRecentPage || sessionSummariesState.loadingPinnedPage,
+      onLoadMore: loadNextSessionSummaryPage,
       pendingSessionPinIds,
     }),
     rightPane: buildHomeRightPaneProps({

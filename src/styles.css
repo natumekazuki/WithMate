@@ -1510,6 +1510,32 @@ button:disabled {
   padding-right: 6px;
 }
 
+.home-page .home-session-list-load-sentinel {
+  min-height: 1px;
+}
+
+.home-page .home-session-list-load-status {
+  display: grid;
+  place-items: center;
+  min-height: 34px;
+  color: var(--muted);
+}
+
+.home-page .home-session-list-load-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: home-session-list-load-spin 760ms linear infinite;
+}
+
+@keyframes home-session-list-load-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .home-page .home-characters-panel .character-list {
   flex: 1 1 auto;
 }
@@ -1799,7 +1825,8 @@ button:disabled {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .workspace-validation-spinner {
+  .workspace-validation-spinner,
+  .home-page .home-session-list-load-spinner {
     animation: none;
   }
 }
