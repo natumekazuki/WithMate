@@ -523,8 +523,18 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `session.files.list` | `session files list` |
 | `session.files.read_text` | `session files read-text` |
 | `session.files.write_text` | `session files write-text` |
+| `coordination.event.create` | `coordination event create` |
+| `coordination.event.list` | `coordination event list` |
+| `coordination.event.get` | `coordination event get` |
+| `coordination.event.resolve` | `coordination event resolve` |
+| `coordination.event.cancel` | `coordination event cancel` |
+| `coordination.event.correct` | `coordination event correct` |
 
 `/v1/status`、challenge、認証exchangeを除くSession runtime application operationは、provider実行へ発行されたvalidなruntime bindingを必須とする。bindingの欠落、空白、不正、失効、または`session.runtime.invoke` grant不足ではapplication handlerを呼ぶ前に拒否する。`session.self`はbindingからactor Session IDだけを返す。他のoperationは対象Session IDの明示入力を維持し、actorまたは`session.self`の結果を暗黙のtargetとして再利用しない。
+
+Coordination Eventは通常responseと分離したdedicated historyである。本文とactionをv6 databaseの専用tableへ保存し、stateを初期kindとaction履歴から投影する。actorとRole tupleはruntime bindingから解決し、authorityはcurrent `session_role_bindings_v6`を参照する。CLI、MCP、raw HTTPは六つのshared operationとstrict validatorを共有する。mutationはprincipal Session単位のidempotency keyを必須とし、commit後のpublication failureは`effect: applied`とevent IDを返す。
+
+右ペインのCoordination feedは、eventがあるSessionだけに表示する。coordinatorはsubtree、それ以外はselfを取得する。openのuser decision、blocker、escalationを優先し、detailは展開時に取得する。user decisionのresolveだけはtarget Session Windowのtrusted GUI IPCでstable option IDを選ぶ。storage commit後signalは再読込の契機であり、rendererはSession IDとrequest revisionを照合してinitial load、通知の追い越し、Session切替後の古いresponseを捨てる。external streaming endpointは持たない。
 
 `turn.run`と`turn.enqueue`は、bindingのactor Session IDとcanonical Character stateから次のinitiatorをexecution作成時に確定し、`request_json`へ保存する。GUI送信は`{ kind: "user" }`を保存する。
 

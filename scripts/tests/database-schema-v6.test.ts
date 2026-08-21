@@ -11,6 +11,7 @@ import {
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
+  CREATE_V6_COORDINATION_EVENT_TABLES_SQL,
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
@@ -217,6 +218,7 @@ describe("database-schema-v6", () => {
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_COORDINATION_EVENT_TABLES_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(
@@ -313,6 +315,48 @@ describe("database-schema-v6", () => {
         (db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6").get() as { count: number }).count,
         1,
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("COORD-MIGRATE-01: Coordination storageはempty/populated DBへadditiveかつ再実行可能に適用する", () => {
+    for (const populated of [false, true]) {
+      const db = createV6Schema();
+      try {
+        db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6; DROP TABLE coordination_events_v6;");
+        if (populated) {
+          db.prepare(`
+            INSERT INTO sessions_v6 (
+              id, title, state, provider_id, catalog_revision, model_id,
+              approval_mode, created_at, updated_at, last_active_at
+            ) VALUES ('coordination-existing', 'Existing', 'active', 'codex', 1, 'gpt-5',
+              'on-request', ?, ?, ?)
+          `).run("2026-08-21T00:00:00.000Z", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:00.000Z");
+        }
+        ensureV6Schema(db);
+        ensureV6Schema(db);
+        assert.equal(tableNames(db).filter((name) => name === "coordination_events_v6").length, 1);
+        assert.equal(tableSql(db, "coordination_events_v6").includes("json_array_length(options_json) BETWEEN 2 AND 8"), true);
+        assert.equal(
+          (db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count,
+          populated ? 1 : 0,
+        );
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it("COORD-MIGRATE-01: malformed Coordination tableは途中適用せずmigrationを拒否する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6; DROP TABLE coordination_events_v6;");
+      db.exec("CREATE TABLE coordination_events_v6 (id TEXT PRIMARY KEY);");
+      const beforeTables = tableNames(db);
+      assert.throws(() => ensureV6Schema(db), /Coordination event schema is invalid/);
+      assert.deepEqual(tableNames(db), beforeTables);
+      assert.deepEqual(columnNames(db, "coordination_events_v6"), ["id"]);
     } finally {
       db.close();
     }

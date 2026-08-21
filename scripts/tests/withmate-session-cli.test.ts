@@ -371,6 +371,32 @@ describe("withmate-session CLI", () => {
     assert.deepEqual(stdout.json().result.result, { sessionId: "session-actor" });
   });
 
+  test("COORD-ADAPTER-01: coordination event createは共通operationへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
+    const exitCode = await runWithMateSessionCli([
+      "coordination", "event", "create", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("coordination.event.create", { eventId: "event-1" } as never),
+        };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.create",
+      input,
+    }]);
+  });
+
   test("session CRUD commandはcaller-owned idempotency keyを必須にする", async () => {
     const requests: any[] = [];
     const stdout = capture();

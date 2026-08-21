@@ -76,6 +76,26 @@ const publicFile = {
   byteLength: 5,
   modifiedAt: "2026-08-11T00:00:00.000Z",
 };
+const publicCoordinationEvent = {
+  sequence: 1,
+  eventId: "event-1",
+  actorSessionId: "session-1",
+  sessionRole: "executor" as const,
+  roleContractRevision: 1 as const,
+  rootSessionId: "root-1",
+  parentSessionId: "task-1",
+  delegationDepth: 2,
+  kind: "progress" as const,
+  state: "recorded" as const,
+  summary: "started",
+  payload: { summary: "started" },
+  executionId: null,
+  targetSessionId: null,
+  correctedEventId: null,
+  options: [],
+  actions: [],
+  createdAt: "2026-08-21T00:00:00.000Z",
+};
 
 async function withClient<T>(
   server: ReturnType<typeof createWithMateSessionMcpServer>,
@@ -98,7 +118,7 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("18 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("24 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -193,6 +213,32 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  it("COORD-ADAPTER-01: Coordination toolを同じstrict operationへdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult(envelope.operation, publicCoordinationEvent as never),
+        };
+      },
+    }), async (client) => {
+      const result = await client.callTool({
+        name: "coordination.event.create",
+        arguments: { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" },
+      });
+      assert.equal(result.isError, undefined);
+    });
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.create",
+      input: { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" },
+    }]);
+  });
+
   it("EXT-TRANSCRIPT-13: inline transcript exportの8 MiB超過はpre-dispatchで拒否する", async () => {
     let calls = 0;
     await withClient(createWithMateSessionMcpServer({
@@ -266,6 +312,13 @@ describe("WithMate Session MCP contract", () => {
               executor: [],
             },
             maxDelegationDepth: 2,
+            coordinationEvents: {
+              kinds: ["progress", "decision", "escalation", "user_decision_required", "blocker", "result", "correction"],
+              states: ["recorded", "open", "resolved", "superseded", "cancelled"],
+              scopes: ["self", "subtree"],
+              defaultListLimit: 50,
+              maxListLimit: 100,
+            },
             providers: [],
           }),
         };
@@ -289,6 +342,13 @@ describe("WithMate Session MCP contract", () => {
           executor: [],
         },
         maxDelegationDepth: 2,
+        coordinationEvents: {
+          kinds: ["progress", "decision", "escalation", "user_decision_required", "blocker", "result", "correction"],
+          states: ["recorded", "open", "resolved", "superseded", "cancelled"],
+          scopes: ["self", "subtree"],
+          defaultListLimit: 50,
+          maxListLimit: 100,
+        },
         providers: [],
       });
     });

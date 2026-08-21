@@ -25,6 +25,9 @@ export const REQUIRED_V6_TABLES = [
   "session_turn_public_context_v6",
   "session_interactions_v6",
   "session_interaction_idempotency_v6",
+  "coordination_events_v6",
+  "coordination_event_actions_v6",
+  "coordination_event_idempotency_v6",
   "session_transcript_export_idempotency_v6",
   "memory_entries_v6",
   "memory_entry_tags_v6",
@@ -72,6 +75,11 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_interactions_one_pending",
   "idx_v6_session_interaction_idempotency_interaction",
   "idx_v6_session_interaction_idempotency_expires",
+  "idx_v6_coordination_events_actor_sequence",
+  "idx_v6_coordination_events_root_sequence",
+  "idx_v6_coordination_events_target",
+  "idx_v6_coordination_event_actions_event_sequence",
+  "idx_v6_coordination_event_idempotency_event",
   "idx_v6_session_transcript_export_idempotency_expires",
   "idx_v6_memory_entries_target_state_updated",
   "idx_v6_memory_entry_tags_lookup",
@@ -198,6 +206,20 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "interaction_id",
     "created_at",
     "expires_at",
+  ],
+  coordination_events_v6: [
+    "sequence", "id", "actor_session_id", "session_role", "role_contract_revision",
+    "root_session_id", "parent_session_id", "delegation_depth", "kind", "summary",
+    "payload_json", "execution_id", "target_session_id", "corrected_event_id", "options_json",
+    "created_at",
+  ],
+  coordination_event_actions_v6: [
+    "sequence", "id", "event_id", "action_type", "actor_type", "actor_session_id",
+    "option_id", "note", "related_event_id", "created_at",
+  ],
+  coordination_event_idempotency_v6: [
+    "operation", "principal_session_id", "idempotency_key", "request_fingerprint",
+    "result_event_id", "target_event_id", "created_at",
   ],
   session_transcript_export_idempotency_v6: [
     "operation",
@@ -438,6 +460,9 @@ export function isValidV6Database(dbPath: string): boolean {
     if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
       return false;
     }
+    if (!hasValidCoordinationEventSchemaIfPresent(db)) {
+      return false;
+    }
     return hasNoForeignKeyViolations(db);
   } catch {
     return false;
@@ -497,6 +522,27 @@ function hasRequiredIndexes(db: DatabaseSync): boolean {
   return REQUIRED_V6_INDEXES.every((indexName) => indexes.has(indexName));
 }
 
+function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
+  const tables = [
+    "coordination_events_v6",
+    "coordination_event_actions_v6",
+    "coordination_event_idempotency_v6",
+  ] as const;
+  const present = tables.filter((tableName) => tableExists(db, tableName));
+  if (present.length === 0) return true;
+  if (present.length !== tables.length) return false;
+  for (const tableName of tables) {
+    const expected = REQUIRED_V6_TABLE_COLUMNS[tableName];
+    const actual = tableColumnNames(db, tableName);
+    if (!expected.every((column) => actual.has(column))) return false;
+  }
+  const eventSql = tableSql(db, "coordination_events_v6");
+  return eventSql.includes("json_array_length(options_json) BETWEEN 2 AND 8")
+    && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_event_actions_v6", "event_id", "coordination_events_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_event_idempotency_v6", "result_event_id", "coordination_events_v6", "id", "CASCADE");
+}
+
 function hasForeignKey(
   db: DatabaseSync,
   tableName: string,
@@ -536,6 +582,17 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
       "id",
       "CASCADE",
     )
+    && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_events_v6", "root_session_id", "sessions_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_events_v6", "parent_session_id", "sessions_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_events_v6", "execution_id", "session_executions_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_events_v6", "target_session_id", "sessions_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_events_v6", "corrected_event_id", "coordination_events_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_event_actions_v6", "event_id", "coordination_events_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_event_actions_v6", "actor_session_id", "sessions_v6", "id", "SET NULL")
+    && hasForeignKey(db, "coordination_event_actions_v6", "related_event_id", "coordination_events_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_event_idempotency_v6", "result_event_id", "coordination_events_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_event_idempotency_v6", "target_event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_turn_public_context_v6", "turn_id", "session_turns_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_turn_public_context_v6", "session_id", "session_turns_v6", "session_id", "CASCADE")
     && hasForeignKey(db, "session_turn_public_context_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
@@ -1442,6 +1499,83 @@ export const CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL = `
     ON session_interaction_idempotency_v6(expires_at);
 `;
 
+export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS coordination_events_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    actor_session_id TEXT NOT NULL,
+    session_role TEXT NOT NULL CHECK (session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')),
+    role_contract_revision INTEGER NOT NULL CHECK (role_contract_revision = 1),
+    root_session_id TEXT NOT NULL,
+    parent_session_id TEXT,
+    delegation_depth INTEGER NOT NULL CHECK (delegation_depth BETWEEN 0 AND 2),
+    kind TEXT NOT NULL CHECK (kind IN ('progress', 'decision', 'escalation', 'user_decision_required', 'blocker', 'result', 'correction')),
+    summary TEXT NOT NULL CHECK (length(summary) BETWEEN 1 AND 240),
+    payload_json TEXT NOT NULL CHECK (json_valid(payload_json)) CHECK (length(CAST(payload_json AS BLOB)) <= 16384),
+    execution_id TEXT,
+    target_session_id TEXT,
+    corrected_event_id TEXT,
+    options_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(options_json)) CHECK (json_type(options_json) = 'array'),
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (root_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
+    FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
+    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE RESTRICT,
+    FOREIGN KEY (target_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
+    FOREIGN KEY (corrected_event_id) REFERENCES coordination_events_v6(id) ON DELETE RESTRICT,
+    CHECK ((kind = 'escalation') = (target_session_id IS NOT NULL)),
+    CHECK ((kind = 'correction') = (corrected_event_id IS NOT NULL)),
+    CHECK (
+      (kind = 'user_decision_required' AND json_array_length(options_json) BETWEEN 2 AND 8)
+      OR (kind <> 'user_decision_required' AND options_json = '[]')
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_coordination_events_actor_sequence
+    ON coordination_events_v6(actor_session_id, sequence DESC);
+  CREATE INDEX IF NOT EXISTS idx_v6_coordination_events_root_sequence
+    ON coordination_events_v6(root_session_id, sequence DESC);
+  CREATE INDEX IF NOT EXISTS idx_v6_coordination_events_target
+    ON coordination_events_v6(target_session_id, sequence DESC);
+
+  CREATE TABLE IF NOT EXISTS coordination_event_actions_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    event_id TEXT NOT NULL,
+    action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded')),
+    actor_type TEXT NOT NULL CHECK (actor_type IN ('session', 'trusted_gui')),
+    actor_session_id TEXT,
+    option_id TEXT,
+    note TEXT CHECK (note IS NULL OR length(note) <= 1000),
+    related_event_id TEXT,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
+    FOREIGN KEY (related_event_id) REFERENCES coordination_events_v6(id) ON DELETE RESTRICT,
+    CHECK ((actor_type = 'session') = (actor_session_id IS NOT NULL)),
+    CHECK ((action_type = 'superseded') = (related_event_id IS NOT NULL))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_coordination_event_actions_event_sequence
+    ON coordination_event_actions_v6(event_id, sequence ASC);
+
+  CREATE TABLE IF NOT EXISTS coordination_event_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')),
+    principal_session_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    result_event_id TEXT NOT NULL,
+    target_event_id TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (principal_session_id, idempotency_key),
+    FOREIGN KEY (result_event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_coordination_event_idempotency_event
+    ON coordination_event_idempotency_v6(result_event_id, target_event_id);
+`;
+
 export const CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_transcript_export_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation = 'transcript.export'),
@@ -2102,6 +2236,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTIONS_TABLE_SQL,
   CREATE_V6_SESSION_INTERACTION_IDEMPOTENCY_TABLE_SQL,
+  CREATE_V6_COORDINATION_EVENT_TABLES_SQL,
   CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRIES_TABLE_SQL,
   CREATE_V6_MEMORY_ENTRY_TAGS_TABLE_SQL,
@@ -2448,6 +2583,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");
   }
+  if (!hasValidCoordinationEventSchemaIfPresent(db)) {
+    throw new Error("Coordination event schema is invalid.");
+  }
 
   ensureSessionCrudIdempotencyPrincipalScope(db);
   for (const statement of CREATE_V6_SCHEMA_SQL) {
@@ -2482,6 +2620,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");
+  }
+  if (!hasValidCoordinationEventSchemaIfPresent(db)) {
+    throw new Error("Coordination event schema is invalid.");
   }
 
   const sessionColumns = tableColumnNames(db, "sessions_v6");

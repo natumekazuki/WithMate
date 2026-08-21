@@ -123,6 +123,12 @@ import type {
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
 } from "./file-explorer/file-explorer-contract.js";
+import type {
+  CoordinationEvent,
+  CoordinationEventCancelInput,
+  CoordinationEventResolveInput,
+  CoordinationEventSummary,
+} from "./coordination-event.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -192,6 +198,10 @@ export type WithMateWindowSessionApi = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
+  listSessionCoordinationEvents(sessionId: string): Promise<CoordinationEventSummary[]>;
+  getSessionCoordinationEvent(sessionId: string, eventId: string): Promise<CoordinationEvent>;
+  resolveSessionCoordinationEvent(sessionId: string, input: CoordinationEventResolveInput): Promise<CoordinationEvent>;
+  cancelSessionCoordinationEvent(sessionId: string, input: CoordinationEventCancelInput): Promise<CoordinationEvent>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
   listSessionAuditLogSummaryPage(
@@ -330,6 +340,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
   subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
   subscribeSessionExecutionsChanged(listener: (event: SessionExecutionChangedEvent) => void): () => void;
+  subscribeCoordinationEventsChanged(listener: () => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;

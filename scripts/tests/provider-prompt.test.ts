@@ -141,6 +141,10 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /Root Session ID: `session-self-1`/);
     assert.match(prompt.systemBodyText, /Parent Session ID: `null`/);
     assert.match(prompt.systemBodyText, /Delegation Depth: `0`/);
+    assert.match(prompt.systemBodyText, /# Coordination Events/);
+    assert.match(prompt.systemBodyText, /coordination\.event\.\*/);
+    assert.match(prompt.systemBodyText, /user_decision_required/);
+    assert.match(prompt.systemBodyText, /通常responseを止めない/);
     assert.doesNotMatch(prompt.systemBodyText, /bindingReference|binding hash|operation grant/i);
     assert.equal(prompt.systemBodyText.match(/Current Session ID:/g)?.length, 1);
   });

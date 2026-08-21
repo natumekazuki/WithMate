@@ -113,6 +113,10 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -166,6 +170,7 @@ import {
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT,
+  WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -404,6 +409,18 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     cancelSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, sessionId);
+    },
+    listSessionCoordinationEvents(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL, sessionId);
+    },
+    getSessionCoordinationEvent(sessionId, eventId) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL, sessionId, eventId);
+    },
+    resolveSessionCoordinationEvent(sessionId, input) {
+      return ipcRenderer.invoke(WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL, sessionId, input);
+    },
+    cancelSessionCoordinationEvent(sessionId, input) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL, sessionId, input);
     },
     listSessionAuditLogs(sessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, sessionId);
@@ -790,6 +807,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     },
     subscribeSessionExecutionsChanged(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, listener);
+    },
+    subscribeCoordinationEventsChanged(listener) {
+      return subscribe(ipcRenderer, WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT, listener);
     },
     subscribeModelCatalog(listener) {
       return subscribe(ipcRenderer, WITHMATE_MODEL_CATALOG_CHANGED_EVENT, (catalog: ModelCatalogChangedPayload) => {

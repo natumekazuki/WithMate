@@ -21,6 +21,12 @@ import type {
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
 import type {
+  CoordinationEvent,
+  CoordinationEventCancelInput,
+  CoordinationEventResolveInput,
+  CoordinationEventSummary,
+} from "../src/coordination-event.js";
+import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
 } from "../src/markdown-link-context-menu.js";
@@ -333,6 +339,16 @@ export type MainIpcSessionRuntimeDepsArgs = {
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
   listSessionTurnExecutions(sessionId: string): Awaitable<SessionTurnExecutionProjection[]>;
+  listSessionCoordinationEvents(sessionId: string): Awaitable<CoordinationEventSummary[]>;
+  getSessionCoordinationEvent(sessionId: string, eventId: string): Awaitable<CoordinationEvent>;
+  resolveSessionCoordinationEvent(
+    sessionId: string,
+    input: CoordinationEventResolveInput,
+  ): Awaitable<CoordinationEvent>;
+  cancelSessionCoordinationEvent(
+    sessionId: string,
+    input: CoordinationEventCancelInput,
+  ): Awaitable<CoordinationEvent>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,

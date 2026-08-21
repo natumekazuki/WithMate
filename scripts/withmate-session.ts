@@ -12,6 +12,7 @@ import {
   type SessionRuntimeOperation,
   type SessionRuntimeRequestEnvelope,
 } from "../src/session-external-runtime-contract.js";
+import { CoordinationEventValidationError } from "../src/coordination-event.js";
 import {
   SessionRuntimeClientError,
   callSessionRuntime,
@@ -80,6 +81,12 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["turn cancel", "turn.cancel"],
   ["interaction list", "interaction.list"],
   ["interaction respond", "interaction.respond"],
+  ["coordination event create", "coordination.event.create"],
+  ["coordination event list", "coordination.event.list"],
+  ["coordination event get", "coordination.event.get"],
+  ["coordination event resolve", "coordination.event.resolve"],
+  ["coordination event cancel", "coordination.event.cancel"],
+  ["coordination event correct", "coordination.event.correct"],
   ["transcript export", "transcript.export"],
   ["transcript export", "transcript.export"],
 ]);
@@ -180,7 +187,7 @@ export async function runWithMateSessionCli(args: readonly string[], deps: CliDe
         ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate
         : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
     }
-    if (error instanceof SessionRuntimeValidationError) {
+    if (error instanceof SessionRuntimeValidationError || error instanceof CoordinationEventValidationError) {
       writeOutput(stdout, format, localError(command, error.code, error.message));
       return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
     }
@@ -199,6 +206,8 @@ function isMutationCommand(command: string, input?: unknown): boolean {
     || command === "session files write-text"
     || command === "turn run" || command === "turn enqueue" || command === "turn cancel"
     || command === "interaction respond"
+    || command === "coordination event create" || command === "coordination event resolve"
+    || command === "coordination event cancel" || command === "coordination event correct"
     || (command === "transcript export"
       && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
 }
@@ -212,15 +221,17 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   timeoutMs: number;
 }> {
   const fileCommand = args[0] === "session" && args[1] === "files";
+  const coordinationCommand = args[0] === "coordination" && args[1] === "event";
   const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session"
     || args[0] === "interaction" || args[0] === "transcript";
   const command = fileCommand
     ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
+    : coordinationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
     : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|cancel|correct|transcript export|status|schema|mcp-server> [options]");
   }
-  const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
+  const optionStart = fileCommand || coordinationCommand ? 3 : namespacedCommand ? 2 : 1;
   let json: string | undefined;
   let file: string | undefined;
   let useStdin = false;

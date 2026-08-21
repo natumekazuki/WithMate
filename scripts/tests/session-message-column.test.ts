@@ -2159,3 +2159,74 @@ test("SessionContextPane は latest command がないとき empty text を表示
   assert.match(html, /直近 run の command 記録はありません/);
   assert.match(html, /command-monitor-empty-shell/);
 });
+
+test("SessionContextPane はCoordination detailとtrusted GUI用optionを表示する", () => {
+  const selected: string[] = [];
+  const html = renderToStaticMarkup(
+    React.createElement(SessionContextPane, {
+      activeContextPaneTab: "coordination",
+      availableContextPaneTabs: ["latest-command", "coordination"],
+      contextPaneProjection: buildContextPaneProjection({
+        activeContextPaneTab: "coordination",
+        latestCommandView: null,
+        backgroundTasks: [],
+      }),
+      latestCommandView: null,
+      runningDetailsEntries: [],
+      liveRunReasoningText: "",
+      backgroundTasks: [],
+      companionGroupMonitorEntries: [],
+      selectedSessionLiveRunErrorMessage: "",
+      isSelectedSessionRunning: false,
+      isCopilotSession: false,
+      selectedCopilotRemainingPercentLabel: "",
+      selectedCopilotRemainingRequestsLabel: "",
+      selectedCopilotQuotaResetLabel: "",
+      selectedSessionContextTelemetry: null,
+      selectedSessionContextTelemetryProjection: {
+        summaryLabel: "", currentTokensLabel: "", tokenLimitLabel: "",
+        messagesLengthLabel: "", systemTokensLabel: "", conversationTokensLabel: "",
+      },
+      contextEmptyText: "",
+      coordinationEvents: [{
+        sequence: 1,
+        eventId: "event-1",
+        actorSessionId: "executor-1",
+        sessionRole: "executor",
+        kind: "user_decision_required",
+        state: "open",
+        summary: "方式を選択してください",
+        createdAt: "2026-08-21T00:00:00.000Z",
+      }],
+      coordinationEventDetails: {
+        "event-1": {
+          sequence: 1,
+          eventId: "event-1",
+          actorSessionId: "executor-1",
+          sessionRole: "executor",
+          roleContractRevision: 1,
+          rootSessionId: "root-1",
+          parentSessionId: "task-1",
+          delegationDepth: 2,
+          kind: "user_decision_required",
+          state: "open",
+          summary: "方式を選択してください",
+          payload: { summary: "方式を選択してください", recommendation: "安全側を選ぶ" },
+          executionId: null,
+          targetSessionId: null,
+          correctedEventId: null,
+          options: [{ id: "safe", label: "安全側" }, { id: "fast", label: "高速側" }],
+          actions: [],
+          createdAt: "2026-08-21T00:00:00.000Z",
+        },
+      },
+      onResolveCoordinationOption: (eventId, optionId) => selected.push(`${eventId}:${optionId}`),
+      onCycleContextPaneTab() {},
+      onOpenCompanionReview() {},
+    }),
+  );
+  assert.match(html, /方式を選択してください/);
+  assert.match(html, /安全側を選ぶ/);
+  assert.match(html, />安全側<\/button>/);
+  assert.deepEqual(selected, []);
+});

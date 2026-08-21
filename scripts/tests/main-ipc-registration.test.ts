@@ -38,6 +38,10 @@ import {
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -344,6 +348,44 @@ test("GUI queue IPC は対象 Session window だけにenqueue/list/cancelを許�
     ["list", "session-1"],
     ["cancel", "session-1", cancelRequest],
   ]);
+});
+
+test("Coordination GUI IPCは対象Session windowとshared strict validatorへ限定する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-2");
+  let eventWindow = sessionWindow;
+  const calls: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sessionWindow : otherWindow,
+    listSessionCoordinationEvents: (sessionId: string) => { calls.push(["list", sessionId]); return []; },
+    getSessionCoordinationEvent: (sessionId: string, eventId: string) => { calls.push(["get", sessionId, eventId]); return null; },
+    resolveSessionCoordinationEvent: (sessionId: string, input: unknown) => { calls.push(["resolve", sessionId, input]); return null; },
+    cancelSessionCoordinationEvent: (sessionId: string, input: unknown) => { calls.push(["cancel", sessionId, input]); return null; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  await handlers.get(WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL)?.({}, "session-1");
+  await handlers.get(WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL)?.({}, "session-1", "event-1");
+  await handlers.get(WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL)?.({}, "session-1", {
+    eventId: "event-1", optionId: "safe", idempotencyKey: "resolve-1",
+  });
+  await handlers.get(WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL)?.({}, "session-1", {
+    eventId: "event-2", idempotencyKey: "cancel-1",
+  });
+  assert.deepEqual(calls.map((call) => (call as unknown[])[0]), ["list", "get", "resolve", "cancel"]);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL)?.({}, "session-1", {
+      eventId: "event-1", optionId: "safe", idempotencyKey: "resolve-2", unknown: true,
+    }) as Promise<unknown>,
+    /Unknown field/,
+  );
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL)?.({}, "session-1") as Promise<unknown>,
+    /only available from the target Session window/,
+  );
 });
 
 test("Session作成はworkspaceを検証し、退役済みCompanion作成はside effect前に拒否する", async () => {

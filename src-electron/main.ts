@@ -202,6 +202,8 @@ import {
   tryRespondToExternalElicitationInteraction,
 } from "./session-interaction-gui-bridge.js";
 import { SessionInteractionStorageV6 } from "./session-interaction-storage-v6.js";
+import { CoordinationEventStorageV6 } from "./coordination-event-storage-v6.js";
+import { CoordinationEventService } from "./coordination-event-service.js";
 import { SessionExecutionPublicProgressStorageV6 } from "./session-execution-public-progress-storage-v6.js";
 import { SessionTranscriptStorageV6 } from "./session-transcript-storage-v6.js";
 import { SessionTranscriptService } from "./session-transcript-service.js";
@@ -313,6 +315,7 @@ import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
+  WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
@@ -438,6 +441,8 @@ let sessionTerminalFailureNotificationStorage: SessionTerminalFailureNotificatio
 let sessionTerminalFailureNotificationService: SessionTerminalFailureNotificationService | null = null;
 let sessionInteractionStorage: SessionInteractionStorageV6 | null = null;
 let sessionInteractionService: SessionInteractionService | null = null;
+let coordinationEventStorage: CoordinationEventStorageV6 | null = null;
+let coordinationEventService: CoordinationEventService | null = null;
 let sessionExecutionPublicProgressStorage: SessionExecutionPublicProgressStorageV6 | null = null;
 let sessionTranscriptStorage: SessionTranscriptStorageV6 | null = null;
 let sessionTranscriptService: SessionTranscriptService | null = null;
@@ -1793,6 +1798,42 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainSessionCommandFacade().enqueueSessionTurn(sessionId, request),
                 listSessionTurnExecutions: (sessionId) =>
                   requireMainSessionCommandFacade().listSessionTurnExecutions(sessionId),
+                listSessionCoordinationEvents: (sessionId) => {
+                  const session = getSession(sessionId);
+                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
+                  const scope = session.roleBinding.sessionRole === "overall-coordinator"
+                    || session.roleBinding.sessionRole === "task-coordinator"
+                    ? "subtree"
+                    : "self";
+                  return requireCoordinationEventService().listFromTrustedGui(
+                    sessionId,
+                    session.roleBinding,
+                    { scope, limit: 100 },
+                  ).items;
+                },
+                getSessionCoordinationEvent: (sessionId, eventId) => {
+                  const session = getSession(sessionId);
+                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
+                  return requireCoordinationEventService().getFromTrustedGui(sessionId, session.roleBinding, eventId);
+                },
+                resolveSessionCoordinationEvent: (sessionId, input) => {
+                  const session = getSession(sessionId);
+                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
+                  return requireCoordinationEventService().resolveFromTrustedGui(
+                    sessionId,
+                    session.roleBinding,
+                    input,
+                  );
+                },
+                cancelSessionCoordinationEvent: (sessionId, input) => {
+                  const session = getSession(sessionId);
+                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
+                  return requireCoordinationEventService().cancelFromTrustedGui(
+                    sessionId,
+                    session.roleBinding,
+                    input,
+                  );
+                },
                 cancelSessionExecution: (sessionId, request) =>
                   requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
@@ -3213,6 +3254,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       crudService: requireSessionCrudService(),
       fileService: requireSessionFileService(),
       interactionService: requireSessionInteractionService(),
+      coordinationService: requireCoordinationEventService(),
       progressStorage: requireSessionExecutionPublicProgressStorage(),
       transcriptService: requireSessionTranscriptService(),
       currentModelCatalog: () => getModelCatalog(),
@@ -4011,12 +4053,15 @@ function closeSessionExecutionRuntime(): void {
   sessionScheduleService = null;
   sessionExecutionStorage?.close();
   sessionInteractionStorage?.close();
+  coordinationEventStorage?.close();
   sessionExecutionPublicProgressStorage?.close();
   sessionTranscriptStorage?.close();
   sessionExecutionStorage = null;
   sessionExecutionService = null;
   sessionInteractionStorage = null;
   sessionInteractionService = null;
+  coordinationEventStorage = null;
+  coordinationEventService = null;
   sessionExecutionPublicProgressStorage = null;
   sessionTranscriptStorage = null;
   sessionTranscriptService = null;
@@ -4035,6 +4080,22 @@ function requireSessionInteractionService(): SessionInteractionService {
     sessionInteractionService.expirePendingForRestart(new Date().toISOString());
   }
   return sessionInteractionService;
+}
+
+function requireCoordinationEventService(): CoordinationEventService {
+  if (!coordinationEventService) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    coordinationEventStorage = new CoordinationEventStorageV6(dbPath);
+    coordinationEventService = new CoordinationEventService({
+      storage: coordinationEventStorage,
+      publishCommitted: () => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          if (!window.isDestroyed()) window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT);
+        }
+      },
+    });
+  }
+  return coordinationEventService;
 }
 
 function requireSessionExecutionPublicProgressStorage(): SessionExecutionPublicProgressStorageV6 {

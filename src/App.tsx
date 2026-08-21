@@ -36,6 +36,8 @@ import {
 } from "./runtime-option-state.js";
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
+import type { CoordinationEvent, CoordinationEventSummary } from "./coordination-event.js";
+import { CoordinationFeedRequestGate } from "./coordination-feed-request-gate.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
@@ -83,6 +85,7 @@ import {
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   type ContextPaneTabKey,
+  orderCoordinationEventSummaries,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
@@ -566,6 +569,10 @@ export default function AgentSessionWindowApp() {
     telemetry: null,
   });
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
+  const [coordinationEvents, setCoordinationEvents] = useState<CoordinationEventSummary[]>([]);
+  const [coordinationEventDetails, setCoordinationEventDetails] = useState<Record<string, CoordinationEvent>>({});
+  const [coordinationResolutionPendingEventId, setCoordinationResolutionPendingEventId] = useState<string | null>(null);
+  const coordinationFeedGateRef = useRef(new CoordinationFeedRequestGate());
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
@@ -937,6 +944,73 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
+  const refreshCoordinationEvents = useCallback(async (sessionId: string): Promise<void> => {
+    if (!withmateApi) return;
+    const token = coordinationFeedGateRef.current.begin(sessionId);
+    if (!token) return;
+    try {
+      const items = await withmateApi.listSessionCoordinationEvents(sessionId);
+      if (!coordinationFeedGateRef.current.isCurrent(token)) return;
+      setCoordinationEvents(orderCoordinationEventSummaries(items));
+    } catch (error) {
+      if (coordinationFeedGateRef.current.isCurrent(token)) {
+        setCoordinationEvents([]);
+        console.error(error);
+      }
+    }
+  }, [withmateApi]);
+
+  useEffect(() => {
+    const sessionId = selectedSession?.id ?? null;
+    coordinationFeedGateRef.current.selectSession(sessionId);
+    setCoordinationEvents([]);
+    setCoordinationEventDetails({});
+    setCoordinationResolutionPendingEventId(null);
+    if (!sessionId) return;
+    void refreshCoordinationEvents(sessionId);
+  }, [refreshCoordinationEvents, selectedSession?.id]);
+
+  useEffect(() => {
+    if (!withmateApi) return;
+    return withmateApi.subscribeCoordinationEventsChanged(() => {
+      const sessionId = coordinationFeedGateRef.current.selectedSessionId();
+      if (sessionId) void refreshCoordinationEvents(sessionId);
+    });
+  }, [refreshCoordinationEvents, withmateApi]);
+
+  const handleLoadCoordinationEvent = useCallback(async (eventId: string): Promise<void> => {
+    const sessionId = coordinationFeedGateRef.current.selectedSessionId();
+    if (!withmateApi || !sessionId || coordinationEventDetails[eventId]) return;
+    try {
+      const event = await withmateApi.getSessionCoordinationEvent(sessionId, eventId);
+      if (!coordinationFeedGateRef.current.isSelected(sessionId)) return;
+      setCoordinationEventDetails((current) => ({ ...current, [event.eventId]: event }));
+    } catch (error) {
+      console.error(error);
+    }
+  }, [coordinationEventDetails, withmateApi]);
+
+  const handleResolveCoordinationOption = useCallback(async (eventId: string, optionId: string): Promise<void> => {
+    const sessionId = coordinationFeedGateRef.current.selectedSessionId();
+    if (!withmateApi || !sessionId || coordinationResolutionPendingEventId) return;
+    setCoordinationResolutionPendingEventId(eventId);
+    try {
+      const event = await withmateApi.resolveSessionCoordinationEvent(sessionId, {
+        eventId,
+        optionId,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      if (coordinationFeedGateRef.current.selectedSessionId() !== sessionId) return;
+      setCoordinationEventDetails((current) => ({ ...current, [event.eventId]: event }));
+      await refreshCoordinationEvents(sessionId);
+    } catch (error) {
+      console.error(error);
+    } finally {
+      if (coordinationFeedGateRef.current.selectedSessionId() === sessionId) {
+        setCoordinationResolutionPendingEventId(null);
+      }
+    }
+  }, [coordinationResolutionPendingEventId, refreshCoordinationEvents, withmateApi]);
   useEffect(() => {
     const sessionId = selectedSession?.id;
     if (!withmateApi || !sessionId) {
@@ -2157,8 +2231,9 @@ export default function AgentSessionWindowApp() {
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
+      hasCoordinationEvents: coordinationEvents.length > 0,
     }),
-    [hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [coordinationEvents.length, hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -4330,6 +4405,11 @@ export default function AgentSessionWindowApp() {
         selectedCopilotQuotaResetLabel,
         selectedSessionContextTelemetry,
         selectedSessionContextTelemetryProjection,
+        coordinationEvents,
+        coordinationEventDetails,
+        coordinationResolutionPendingEventId,
+        onLoadCoordinationEvent: (eventId) => void handleLoadCoordinationEvent(eventId),
+        onResolveCoordinationOption: (eventId, optionId) => void handleResolveCoordinationOption(eventId, optionId),
         selectedContextEmptyText,
         latestCommandEmptyText,
         selectedDiff,

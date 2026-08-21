@@ -146,6 +146,28 @@ function buildSessionContextSection(input: RunSessionTurnInput): string {
   ].join("\n");
 }
 
+function buildCoordinationEventSection(input: RunSessionTurnInput): string {
+  const binding = input.sessionRoleBinding === undefined
+    ? input.session.roleBinding
+    : input.sessionRoleBinding;
+  if (!binding || input.session.sessionKind !== "default") return "";
+  return [
+    "# Coordination Events",
+    "",
+    "通常responseとは別に、`coordination.event.*` APIでユーザー向けの短い進行・判断記録を残せます。responseの文体や形式は変えないでください。",
+    "",
+    "次の場合に登録してください:",
+    "- scopeや方針を変える判断をしたとき",
+    "- ancestor Sessionまたはユーザーの判断が必要なとき",
+    "- blockerが発生または解消したとき",
+    "- 長い作業が主要な区切りへ到達したとき",
+    "- 過去の判断を訂正したとき",
+    "",
+    "secret、raw log、stack trace、大きなdiff、provider response、内部推論、個人環境pathは登録しないでください。",
+    "`progress`や`decision`の登録失敗だけで通常responseを止めないでください。`user_decision_required`を登録できなかった場合は、判断待ちになったふりをせず、通常responseで失敗と安全な次の行動を明示してください。",
+  ].join("\n");
+}
+
 function buildFolderContextSection(
   input: RunSessionTurnInput,
   workspacePath: string,
@@ -188,12 +210,14 @@ export function composeProviderPrompt(input: RunSessionTurnInput): ProviderPromp
   );
   const characterAffectContextBody = buildCharacterAffectContextSection(input.characterContext);
   const sessionContextBody = buildSessionContextSection(input);
+  const coordinationEventBody = buildCoordinationEventSection(input);
   const systemPromptBody = [
     characterPromptBody,
     outputBoundaryBody,
     toolCallPresenceBody,
     folderContextBody,
     sessionContextBody,
+    coordinationEventBody,
     characterAffectContextBody,
   ]
     .filter((section) => section.trim().length > 0)

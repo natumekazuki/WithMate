@@ -6415,6 +6415,88 @@ button:disabled {
   min-width: 0;
 }
 
+.coordination-feed {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.coordination-feed-item {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-left: 2px solid rgba(203, 213, 225, 0.2);
+}
+
+.coordination-feed-item.open {
+  border-left-color: color-mix(in srgb, var(--character-main) 70%, #ffffff 30%);
+}
+
+.coordination-feed-item p,
+.coordination-feed-item details,
+.coordination-feed-detail p {
+  margin: 0;
+}
+
+.coordination-feed-meta,
+.coordination-option-list {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.coordination-feed-meta {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.coordination-feed-actor {
+  color: var(--muted);
+  font-size: 0.76rem;
+  overflow-wrap: anywhere;
+}
+
+.coordination-feed-detail {
+  display: grid;
+  gap: 8px;
+  padding-top: 8px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.coordination-feed-relation,
+.coordination-action-history {
+  color: var(--muted);
+}
+
+.coordination-action-history {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.coordination-action-history li {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.coordination-option-list button {
+  min-height: 32px;
+}
+
+.coordination-feed-detail-loading {
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin-top: 8px;
+  background: color-mix(in srgb, var(--character-main) 45%, transparent);
+}
+
 .background-activity-summary {
   display: grid;
   gap: 6px;

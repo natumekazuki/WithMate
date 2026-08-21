@@ -35,7 +35,7 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 18 operations:
+The CLI and MCP expose the same 24 operations:
 
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
@@ -43,8 +43,18 @@ The CLI and MCP expose the same 18 operations:
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`
+- Coordination: `coordination.event.create`, `coordination.event.list`, `coordination.event.get`, `coordination.event.resolve`, `coordination.event.cancel`, `coordination.event.correct`
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
+Coordination commands use `coordination event <verb>`.
+
+## Coordination events
+
+Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery.
+
+Read `self` from any Role. Read `subtree` only as an overall or task coordinator. Escalations may target only a canonical ancestor in the same root. An Agent may resolve its own blocker or an escalation addressed to it, but only the trusted GUI may resolve `user_decision_required` by stable option ID.
+
+Store only summary, facts, assumptions, impact, and recommendation within the published limits. Never store secrets, raw logs, stack traces, large diffs, provider responses, chain-of-thought, personal paths, or runtime binding material.
 
 Every application operation requires the valid runtime binding issued by WithMate for the current provider execution. `session.self` returns only that binding's actor Session ID and does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff; the actor is never used as an implicit target.
 
@@ -81,6 +91,8 @@ An MCP application error uses `isError: true` and a versioned error envelope. A 
 ## Pagination and limits
 
 List operations use opaque cursors, a default limit of 50, and a maximum of 500. Never parse or synthesize a cursor. Send `nextCursor` back unchanged with the same operation, filter, and sort context.
+
+Coordination event lists are the exception: default 50, maximum 100. Their cursors are also bound to the principal Session, scope, kind, and state.
 
 - Request body, public response, and inline text hard limit: 8 MiB
 - Turn attachments: at most 32

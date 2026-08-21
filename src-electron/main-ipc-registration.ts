@@ -1,6 +1,13 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import type {
+  CoordinationEvent,
+  CoordinationEventCancelInput,
+  CoordinationEventResolveInput,
+  CoordinationEventSummary,
+} from "../src/coordination-event.js";
+import { parseSessionRuntimeOperationInput } from "../src/session-external-runtime-contract.js";
 import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -231,6 +238,10 @@ import {
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL,
   WITHMATE_GET_SESSION_SCHEDULE_CHANNEL,
   WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL,
@@ -480,6 +491,16 @@ export type MainIpcRegistrationDeps = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
+  listSessionCoordinationEvents?(sessionId: string): Awaitable<CoordinationEventSummary[]>;
+  getSessionCoordinationEvent?(sessionId: string, eventId: string): Awaitable<CoordinationEvent>;
+  resolveSessionCoordinationEvent?(
+    sessionId: string,
+    input: CoordinationEventResolveInput,
+  ): Awaitable<CoordinationEvent>;
+  cancelSessionCoordinationEvent?(
+    sessionId: string,
+    input: CoordinationEventCancelInput,
+  ): Awaitable<CoordinationEvent>;
   listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
   getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
   createSessionSchedule(sessionId: string, input: CreateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
@@ -719,6 +740,10 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "listSessionTurnExecutions"
   | "cancelSessionExecution"
   | "cancelSessionRun"
+  | "listSessionCoordinationEvents"
+  | "getSessionCoordinationEvent"
+  | "resolveSessionCoordinationEvent"
+  | "cancelSessionCoordinationEvent"
 >;
 
 async function assertUsableWorkspaceDirectory(
@@ -1721,6 +1746,32 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL, (event, sessionId: string) => {
     assertTargetSessionWindowSender(event, sessionId, deps);
     return deps.listSessionTurnExecutions(sessionId);
+  });
+  ipcMain.handle(WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL, (event, sessionId: string) => {
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    if (!deps.listSessionCoordinationEvents) throw new Error("Coordination event service is unavailable.");
+    return deps.listSessionCoordinationEvents(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL, (event, sessionId: string, eventId: string) => {
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    if (!deps.getSessionCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.getSessionCoordinationEvent(sessionId, eventId);
+  });
+  ipcMain.handle(WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL, (event, sessionId: string, input: unknown) => {
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    if (!deps.resolveSessionCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.resolveSessionCoordinationEvent(
+      sessionId,
+      parseSessionRuntimeOperationInput("coordination.event.resolve", input) as CoordinationEventResolveInput,
+    );
+  });
+  ipcMain.handle(WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL, (event, sessionId: string, input: unknown) => {
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    if (!deps.cancelSessionCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.cancelSessionCoordinationEvent(
+      sessionId,
+      parseSessionRuntimeOperationInput("coordination.event.cancel", input) as CoordinationEventCancelInput,
+    );
   });
   ipcMain.handle(
     WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
