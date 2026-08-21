@@ -21,7 +21,9 @@ async function replacePath(targetPath: string, replacementPath: string, content:
 
 function snapshotDeps(rootPath: string) {
   return {
+    platform: "win32" as const,
     snapshotNamespacePath: resolveSessionAttachmentSnapshotNamespace(path.join(rootPath, "user-data"), rootPath),
+    secureWindowsPath: async () => undefined,
   };
 }
 
