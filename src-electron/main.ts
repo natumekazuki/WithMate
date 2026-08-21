@@ -309,6 +309,7 @@ import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import { CoordinationEventInvalidationPublisher } from "./coordination-event-invalidation-publisher.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
@@ -443,6 +444,7 @@ let sessionInteractionStorage: SessionInteractionStorageV6 | null = null;
 let sessionInteractionService: SessionInteractionService | null = null;
 let coordinationEventStorage: CoordinationEventStorageV6 | null = null;
 let coordinationEventService: CoordinationEventService | null = null;
+let coordinationEventInvalidationPublisher: CoordinationEventInvalidationPublisher | null = null;
 let sessionExecutionPublicProgressStorage: SessionExecutionPublicProgressStorageV6 | null = null;
 let sessionTranscriptStorage: SessionTranscriptStorageV6 | null = null;
 let sessionTranscriptService: SessionTranscriptService | null = null;
@@ -4054,6 +4056,7 @@ function closeSessionExecutionRuntime(): void {
   sessionScheduleService = null;
   sessionExecutionStorage?.close();
   sessionInteractionStorage?.close();
+  coordinationEventInvalidationPublisher?.dispose();
   coordinationEventStorage?.close();
   sessionExecutionPublicProgressStorage?.close();
   sessionTranscriptStorage?.close();
@@ -4061,6 +4064,7 @@ function closeSessionExecutionRuntime(): void {
   sessionExecutionService = null;
   sessionInteractionStorage = null;
   sessionInteractionService = null;
+  coordinationEventInvalidationPublisher = null;
   coordinationEventStorage = null;
   coordinationEventService = null;
   sessionExecutionPublicProgressStorage = null;
@@ -4096,9 +4100,15 @@ function requireCoordinationEventService(): CoordinationEventService {
 }
 
 function broadcastCoordinationEventsChanged(): void {
-  for (const window of BrowserWindow.getAllWindows()) {
-    if (!window.isDestroyed()) window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT);
+  if (!coordinationEventInvalidationPublisher) {
+    coordinationEventInvalidationPublisher = new CoordinationEventInvalidationPublisher({
+      getTargets: () => BrowserWindow.getAllWindows().map((window) => ({
+        isAvailable: () => !window.isDestroyed() && !window.webContents.isDestroyed(),
+        publish: () => window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT),
+      })),
+    });
   }
+  coordinationEventInvalidationPublisher.publish();
 }
 
 function requireSessionExecutionPublicProgressStorage(): SessionExecutionPublicProgressStorageV6 {

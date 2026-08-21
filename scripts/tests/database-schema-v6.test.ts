@@ -362,6 +362,66 @@ describe("database-schema-v6", () => {
     }
   });
 
+  it("COORD-MIGRATE-01: 必要列が揃っていてもCoordination CHECKが一つ欠けたschemaを拒否する", () => {
+    const cases = [
+      {
+        tableName: "coordination_events_v6",
+        fragment: "kind TEXT NOT NULL CHECK (kind IN ('progress', 'decision', 'escalation', 'user_decision_required', 'blocker', 'result', 'correction'))",
+        replacement: "kind TEXT NOT NULL",
+      },
+      {
+        tableName: "coordination_events_v6",
+        fragment: "CHECK ((kind = 'escalation') = (target_session_id IS NOT NULL))",
+        replacement: "CHECK (1)",
+      },
+      {
+        tableName: "coordination_event_actions_v6",
+        fragment: "action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded'))",
+        replacement: "action_type TEXT NOT NULL",
+      },
+    ] as const;
+
+    for (const [index, testCase] of cases.entries()) {
+      const directory = mkdtempSync(join(tmpdir(), `withmate-coordination-near-miss-${index}-`));
+      const dbPath = join(directory, APP_DATABASE_V6_FILENAME);
+      const db = createV6Schema(dbPath);
+      try {
+        const originalSql = tableSql(db, testCase.tableName);
+        assert.equal(originalSql.includes(testCase.fragment), true);
+        db.exec("PRAGMA foreign_keys = OFF;");
+        db.exec(originalSql
+          .replace(`CREATE TABLE ${testCase.tableName}`, `CREATE TABLE ${testCase.tableName}_rebuilt`)
+          .replace(testCase.fragment, testCase.replacement));
+        db.exec(`DROP TABLE ${testCase.tableName};`);
+        db.exec(`ALTER TABLE ${testCase.tableName}_rebuilt RENAME TO ${testCase.tableName};`);
+        if (testCase.tableName === "coordination_events_v6") {
+          db.exec(`
+            CREATE INDEX idx_v6_coordination_events_actor_sequence
+              ON coordination_events_v6(actor_session_id, sequence DESC);
+            CREATE INDEX idx_v6_coordination_events_root_sequence
+              ON coordination_events_v6(root_session_id, sequence DESC);
+            CREATE INDEX idx_v6_coordination_events_target
+              ON coordination_events_v6(target_session_id, sequence DESC);
+          `);
+        } else {
+          db.exec(`
+            CREATE INDEX idx_v6_coordination_event_actions_event_sequence
+              ON coordination_event_actions_v6(event_id, sequence ASC);
+          `);
+        }
+
+        assert.throws(() => ensureV6Schema(db), /Coordination event schema is invalid/);
+      } finally {
+        db.close();
+      }
+      try {
+        assert.equal(isValidV6Database(dbPath), false);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
+    }
+  });
+
   it("TN-MIGRATE-07: malformed delivery tableは途中適用せずmigrationを拒否する", () => {
     const db = createV6Schema();
     try {

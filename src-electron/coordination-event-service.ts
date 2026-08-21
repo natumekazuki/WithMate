@@ -51,7 +51,7 @@ export class CoordinationEventService {
       requestFingerprint: fingerprint("coordination.event.create", principal, withoutKey(input)),
       createdAt: this.now(),
     });
-    if (!result.replayed) this.publish(result.event);
+    this.publish(result.event);
     return result.event;
   }
 
@@ -154,7 +154,7 @@ export class CoordinationEventService {
       requestFingerprint: fingerprint("coordination.event.correct", principal, withoutKey(input)),
       createdAt: this.now(),
     });
-    if (!outcome.replayed) this.publish(outcome.result.correction);
+    this.publish(outcome.result.correction);
     return outcome.result;
   }
 
@@ -168,7 +168,7 @@ export class CoordinationEventService {
       requestFingerprint: fingerprint("coordination.event.resolve", principal, withoutKey(input)),
       createdAt: this.now(),
     });
-    if (!outcome.replayed) this.publish(outcome.event);
+    this.publish(outcome.event);
     return outcome.event;
   }
 
@@ -182,7 +182,7 @@ export class CoordinationEventService {
       requestFingerprint: fingerprint("coordination.event.cancel", principal, withoutKey(input)),
       createdAt: this.now(),
     });
-    if (!outcome.replayed) this.publish(outcome.event);
+    this.publish(outcome.event);
     return outcome.event;
   }
 

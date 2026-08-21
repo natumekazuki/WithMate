@@ -537,7 +537,28 @@ function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
     if (!expected.every((column) => actual.has(column))) return false;
   }
   const eventSql = tableSql(db, "coordination_events_v6");
-  return eventSql.includes("json_array_length(options_json) BETWEEN 2 AND 8")
+  const actionSql = tableSql(db, "coordination_event_actions_v6");
+  const idempotencySql = tableSql(db, "coordination_event_idempotency_v6");
+  return eventSql.includes("session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')")
+    && eventSql.includes("role_contract_revision = 1")
+    && eventSql.includes("delegation_depth BETWEEN 0 AND 2")
+    && eventSql.includes("kind IN ('progress', 'decision', 'escalation', 'user_decision_required', 'blocker', 'result', 'correction')")
+    && eventSql.includes("length(summary) BETWEEN 1 AND 240")
+    && eventSql.includes("json_valid(payload_json)")
+    && eventSql.includes("length(CAST(payload_json AS BLOB)) <= 16384")
+    && eventSql.includes("json_valid(options_json)")
+    && eventSql.includes("json_type(options_json) = 'array'")
+    && eventSql.includes("(kind = 'escalation') = (target_session_id IS NOT NULL)")
+    && eventSql.includes("(kind = 'correction') = (corrected_event_id IS NOT NULL)")
+    && eventSql.includes("json_array_length(options_json) BETWEEN 2 AND 8")
+    && eventSql.includes("kind <> 'user_decision_required' AND options_json = '[]'")
+    && actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded')")
+    && actionSql.includes("actor_type IN ('session', 'trusted_gui')")
+    && actionSql.includes("note IS NULL OR length(note) <= 1000")
+    && actionSql.includes("actor_type = 'session' OR actor_session_id IS NULL")
+    && actionSql.includes("(action_type = 'superseded') = (related_event_id IS NOT NULL)")
+    && idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')")
+    && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)")
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_actions_v6", "event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_idempotency_v6", "result_event_id", "coordination_events_v6", "id", "CASCADE");

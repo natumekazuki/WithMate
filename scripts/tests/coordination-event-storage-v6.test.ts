@@ -333,7 +333,7 @@ describe("CoordinationEventStorageV6", () => {
       assert.throws(() => service.create(input, binding("executor-a")), CoordinationEventPublicationError);
       const replay = service.create(input, binding("executor-a"));
       assert.equal(replay.summary, "committed");
-      assert.equal(publishCalls, 1);
+      assert.equal(publishCalls, 2);
       service.create({ kind: "result", payload: { summary: "done" }, idempotencyKey: "publish-2" }, binding("executor-a"));
       const page = service.list({ scope: "self", limit: 1 }, binding("executor-a"));
       assert.ok(page.nextCursor);

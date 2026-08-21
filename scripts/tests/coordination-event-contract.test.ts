@@ -96,6 +96,10 @@ describe("Coordination event contract", () => {
       "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789",
       "AKIAIOSFODNN7EXAMPLE",
       "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
+      "password=correct-horse-battery-staple",
+      "client_secret: confidential-value",
+      "F:\\Company\\Client-X\\secret.txt",
+      "\\\\server\\private-share\\file.txt",
     ]) {
       assert.throws(
         () => validateCoordinationEventPayload({ summary: secret }),
