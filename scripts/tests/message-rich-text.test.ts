@@ -408,19 +408,27 @@ test("code block copy操作はhover・focus・disabledの視認状態を持つ",
 
 test("code block copy actionは縦scroll中だけshell上端へstickyし、本文の横scroll ownerから分離される", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const richTextRule = styles.match(
+    /\.message-body\.rich-text,\s*\.session-file-markdown\.rich-text\s*{(?<body>[^}]*)}/,
+  )?.groups?.body ?? "";
   const shellRule = styles.match(/\.message-code-block-shell\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const actionsRule = styles.match(/\.message-code-block-actions\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const codeBlockRule = styles.match(/\.message-code-block\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const mermaidRule = styles.match(/\.message-mermaid\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
+  assert.match(richTextRule, /min-width:\s*0;/);
   assert.match(shellRule, /width:\s*100%;/);
   assert.match(shellRule, /max-width:\s*100%;/);
+  assert.match(shellRule, /overflow:\s*clip;/);
   assert.match(actionsRule, /position:\s*sticky;/);
   assert.match(actionsRule, /top:\s*0;/);
   assert.match(actionsRule, /z-index:\s*1;/);
   assert.match(actionsRule, /width:\s*100%;/);
   assert.doesNotMatch(actionsRule, /position:\s*(?:absolute|fixed);/);
   assert.match(codeBlockRule, /overflow:\s*auto;/);
+  assert.match(mermaidRule, /width:\s*100%;/);
+  assert.match(mermaidRule, /max-width:\s*100%;/);
+  assert.match(mermaidRule, /min-width:\s*0;/);
   assert.match(mermaidRule, /overflow-x:\s*auto;/);
   assert.doesNotMatch(actionsRule, /overflow(?:-x|-y)?\s*:/);
 });

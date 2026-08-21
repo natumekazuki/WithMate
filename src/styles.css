@@ -6646,6 +6646,7 @@ button:disabled {
 .session-file-markdown.rich-text {
   display: grid;
   gap: 8px;
+  min-width: 0;
   line-height: 1.6;
 }
 
@@ -6844,6 +6845,7 @@ button:disabled {
   width: 100%;
   max-width: 100%;
   min-width: 0;
+  overflow: clip;
 }
 
 .message-code-block-actions {
@@ -6936,6 +6938,9 @@ button:disabled {
 }
 
 .message-mermaid {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   overflow-x: auto;
   padding: 12px;
   border: 1px solid rgba(18, 24, 39, 0.12);
