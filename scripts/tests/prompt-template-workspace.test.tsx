@@ -107,12 +107,12 @@ test("PromptTemplateWorkspace は初期表示を選択専用modeにする", asyn
     );
 
     assert.match(harness.container.textContent ?? "", /Templates/);
-    assert.ok(harness.container.querySelector("button[aria-label=\"Templateを編集\"]"));
+    assert.ok(harness.container.querySelector("button[aria-label=\"Edit template\"]"));
     assert.ok(harness.container.querySelector("[role=\"listbox\"]"));
     assert.equal(harness.container.querySelector("input"), null);
     assert.equal(harness.container.querySelector("textarea"), null);
     assert.equal(
-      Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "挿入"),
+      Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Insert"),
       false,
     );
   } finally {
@@ -173,14 +173,14 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
     );
 
     await act(async () => {
-      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Templateを編集\"]")?.click();
+      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Edit template\"]")?.click();
     });
     assert.ok(harness.container.querySelector("input"));
-    assert.ok(harness.container.querySelector("textarea[aria-label=\"プロンプト\"]"));
-    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "保存"));
-    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "削除"));
+    assert.ok(harness.container.querySelector("textarea[aria-label=\"Prompt\"]"));
+    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Save"));
+    assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Delete"));
     assert.equal(
-      Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "挿入"),
+      Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Insert"),
       false,
     );
 
@@ -221,9 +221,9 @@ test("canInsert=false の選択項目は挿入せず、編集modeへの導線を
     assert.deepEqual(inserted, []);
 
     await act(async () => {
-      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Templateを編集\"]")?.click();
+      harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Edit template\"]")?.click();
     });
-    assert.ok(harness.container.querySelector("textarea[aria-label=\"プロンプト\"]"));
+    assert.ok(harness.container.querySelector("textarea[aria-label=\"Prompt\"]"));
   } finally {
     await act(async () => harness.root.unmount());
     harness.dom.window.close();
@@ -243,15 +243,15 @@ test("Templateが0件でも選択modeから新規作成へ進める", async () =
       />,
     );
 
-    assert.match(harness.container.textContent ?? "", /Templateがありません。/);
+    assert.match(harness.container.textContent ?? "", /No templates yet\./);
     const createButton = Array.from(harness.container.querySelectorAll<HTMLButtonElement>("button"))
-      .find((button) => button.textContent?.trim() === "＋ 新規作成");
+      .find((button) => button.textContent?.trim() === "+ New template");
     assert.ok(createButton);
     assert.equal(harness.container.querySelector("input"), null);
 
     await act(async () => createButton.click());
     assert.ok(harness.container.querySelector("input"));
-    assert.ok(harness.container.querySelector("textarea[aria-label=\"プロンプト\"]"));
+    assert.ok(harness.container.querySelector("textarea[aria-label=\"Prompt\"]"));
   } finally {
     await act(async () => harness.root.unmount());
     harness.dom.window.close();

@@ -27,7 +27,7 @@ function toEditorState(template: PromptTemplate): EditorState {
 }
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "テンプレートを更新できませんでした。";
+  return error instanceof Error ? error.message : "Could not update the template.";
 }
 
 export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInsert }: PromptTemplateWorkspaceProps) {
@@ -106,7 +106,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     }
   }, [mode]);
 
-  const confirmDiscard = () => !isDirty || window.confirm("未保存の変更を破棄しますか？");
+  const confirmDiscard = () => !isDirty || window.confirm("Discard unsaved changes?");
 
   const defaultEditor = templates[0] ? toEditorState(templates[0]) : EMPTY_EDITOR;
 
@@ -171,7 +171,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
   };
 
   const remove = async () => {
-    if (!editor.id || !window.confirm(`「${editor.name}」を削除しますか？`)) {
+    if (!editor.id || !window.confirm(`Delete "${editor.name}"?`)) {
       return;
     }
     setIsSaving(true);
@@ -216,9 +216,9 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
             className="drawer-toggle compact secondary"
             onClick={() => openEditor()}
             disabled={isLoading}
-            aria-label="Templateを編集"
+            aria-label="Edit template"
           >
-            編集
+            Edit
           </button>
         </header>
 
@@ -227,7 +227,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
             ref={pickerListRef}
             className="prompt-template-picker-content"
             role={pickerRole}
-            aria-label={hasTemplates ? "Template候補" : "Template状態"}
+            aria-label={hasTemplates ? "Template options" : "Template status"}
             aria-orientation={hasTemplates ? "vertical" : undefined}
             aria-busy={isLoading || undefined}
             tabIndex={-1}
@@ -252,7 +252,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
             {isLoading ? (
               <div className="prompt-template-picker-state">
                 <span className="chat-skill-picker-spinner" aria-hidden="true" />
-                <span className="visually-hidden">Templateを読み込んでいます。</span>
+                <span className="visually-hidden">Loading templates.</span>
               </div>
             ) : error ? (
               <p className="prompt-template-picker-state error" role="alert">{error}</p>
@@ -266,23 +266,23 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
                   tabIndex={canInsert && index === 0 ? 0 : -1}
                   className="prompt-template-picker-item"
                   disabled={!canInsert}
-                  title={canInsert ? undefined : "現在のセッションではプロンプトを挿入できません。"}
+                  title={canInsert ? undefined : "Prompts cannot be inserted in the current session."}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => handleSelectTemplate(template)}
                 >
                   <span className="prompt-template-picker-item-primary">{template.name}</span>
-                  <span className="prompt-template-picker-item-secondary">選択してcomposerへ挿入</span>
+                  <span className="prompt-template-picker-item-secondary">Select to insert into composer</span>
                 </button>
               ))
             ) : (
               <div className="prompt-template-picker-state">
-                <p>Templateがありません。</p>
+                <p>No templates yet.</p>
                 <button
                   type="button"
                   className="drawer-toggle compact secondary"
                   onClick={() => openEditor(EMPTY_EDITOR)}
                 >
-                  ＋ 新規作成
+                  + New template
                 </button>
               </div>
             )}
@@ -296,13 +296,13 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     <>
       <header className="prompt-template-workspace-header">
         <BackNavigationButton label="Back to Template selection" onBack={returnToPicker} />
-        <strong>Template編集</strong>
+        <strong>Edit templates</strong>
       </header>
 
       <div className="prompt-template-workspace-body">
         <aside className="prompt-template-list" aria-label="Template list">
           <button className="drawer-toggle compact secondary" type="button" onClick={createNew}>
-            ＋ 新規
+            + New
           </button>
           {templates.map((template) => (
             <button
@@ -319,7 +319,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
 
         <div className="prompt-template-editor">
           <label>
-            <span>名前</span>
+            <span>Name</span>
             <input
               ref={editorNameInputRef}
               value={editor.name}
@@ -330,7 +330,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
           </label>
           <textarea
             className="prompt-template-prompt-field"
-            aria-label="プロンプト"
+            aria-label="Prompt"
             value={editor.prompt}
             disabled={isSaving}
             onChange={(event) => setEditor((current) => ({ ...current, prompt: event.target.value }))}
@@ -343,7 +343,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
               disabled={isSaving || !isDirty}
               onClick={() => void save()}
             >
-              保存
+              Save
             </button>
             <button
               type="button"
@@ -351,7 +351,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
               disabled={isSaving || !editor.id}
               onClick={() => void remove()}
             >
-              削除
+              Delete
             </button>
           </div>
         </div>
