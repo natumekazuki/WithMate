@@ -49,6 +49,7 @@ export function PromptTemplateWorkspace({
   const pickerListRef = useRef<HTMLDivElement | null>(null);
   const pickerEditButtonRef = useRef<HTMLButtonElement | null>(null);
   const editorNameInputRef = useRef<HTMLInputElement | null>(null);
+  const shouldFocusPickerRef = useRef(true);
 
   const selectedTemplate = templates.find((template) => template.id === editor.id) ?? null;
   const isDirty = selectedTemplate
@@ -108,16 +109,22 @@ export function PromptTemplateWorkspace({
   }, [api]);
 
   useEffect(() => {
-    if (mode !== "select" || isLoading || typeof document === "undefined") {
+    if (mode !== "select") {
+      shouldFocusPickerRef.current = true;
+      return;
+    }
+    if (isLoading || !shouldFocusPickerRef.current || typeof document === "undefined") {
       return;
     }
     const pickerList = pickerListRef.current;
     if (pickerList?.contains(document.activeElement)) {
+      shouldFocusPickerRef.current = false;
       return;
     }
     const firstSelectableTemplate = pickerList?.querySelector<HTMLElement>("[role=\"option\"]:not([disabled])");
     (firstSelectableTemplate ?? pickerEditButtonRef.current)?.focus();
-  }, [canInsert, isLoading, mode, templates]);
+    shouldFocusPickerRef.current = false;
+  }, [isLoading, mode]);
 
   useEffect(() => {
     if (mode === "edit") {

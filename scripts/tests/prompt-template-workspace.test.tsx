@@ -29,6 +29,25 @@ function createApi(templates: PromptTemplate[]): WithMateWindowPromptTemplateApi
   };
 }
 
+function createSubscribedApi(templates: PromptTemplate[]) {
+  let listener: ((nextTemplates: PromptTemplate[]) => void) | null = null;
+  const api: WithMateWindowPromptTemplateApi = {
+    ...createApi(templates),
+    subscribePromptTemplates: (nextListener) => {
+      listener = nextListener;
+      return () => {
+        if (listener === nextListener) {
+          listener = null;
+        }
+      };
+    },
+  };
+  return {
+    api,
+    emit: (nextTemplates: PromptTemplate[]) => listener?.(nextTemplates),
+  };
+}
+
 function createDomHarness() {
   const previousGlobals = {
     window: globalThis.window,
@@ -156,6 +175,44 @@ test("Templateは外部close guardを登録し、clean stateでは閉じられ�
   }
 });
 
+test("Template更新はworkspace内のEditとCloseの既存フォーカスを奪わない", async () => {
+  const harness = createDomHarness();
+  const subscribedApi = createSubscribedApi([FIRST_TEMPLATE]);
+  try {
+    await renderAndFlush(
+      harness.root,
+      <PromptTemplateWorkspace
+        api={subscribedApi.api}
+        onBack={() => {}}
+        onInsert={() => {}}
+      />,
+    );
+
+    const editButton = harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Edit template\"]");
+    const closeButton = harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Close templates\"]");
+    assert.ok(editButton);
+    assert.ok(closeButton);
+
+    editButton.focus();
+    await act(async () => {
+      subscribedApi.emit([{ ...FIRST_TEMPLATE, name: "更新されたテンプレート" }]);
+      await Promise.resolve();
+    });
+    assert.equal(harness.dom.window.document.activeElement, editButton);
+
+    closeButton.focus();
+    await act(async () => {
+      subscribedApi.emit([{ ...FIRST_TEMPLATE, prompt: "更新されたprompt" }]);
+      await Promise.resolve();
+    });
+    assert.equal(harness.dom.window.document.activeElement, closeButton);
+  } finally {
+    await act(async () => harness.root.unmount());
+    harness.dom.window.close();
+    harness.restore();
+  }
+});
+
 test("Template選択は保存済みpromptを即時挿入し、呼び出し側のChat表示へ戻れる", async () => {
   const harness = createDomHarness();
   const inserted: string[] = [];
@@ -228,7 +285,9 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
     await act(async () => {
       harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Back to Template selection\"]")?.click();
     });
-    assert.ok(harness.container.querySelector("[role=\"option\"]"));
+    const option = harness.container.querySelector<HTMLButtonElement>("[role=\"option\"]");
+    assert.ok(option);
+    assert.equal(harness.dom.window.document.activeElement, option);
     assert.equal(harness.container.querySelector("textarea"), null);
   } finally {
     await act(async () => harness.root.unmount());
