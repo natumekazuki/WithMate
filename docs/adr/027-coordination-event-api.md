@@ -25,7 +25,7 @@ Agentの判断、進行、利用者判断待ちを通常responseだけで伝え�
 ## Consequences
 
 - provider response loss後もcoordination historyとstateを再取得できる。
-- Session削除と自動retentionは本sliceで追加しない。Coordination historyを持つSessionの削除方針は、retentionと監査要件を決める後続変更で扱う。
+- Sessionを削除すると、そのSessionが参照するCoordination historyもforeign key cascadeで同じ削除へ含め、削除済み情報をfeedへ残さない。期間ベースの自動retentionは、監査要件を決める後続変更で扱う。
 - 実provider accountとの接続確認は不要だが、shared contract、raw HTTP、CLI、MCP、trusted GUI IPC、projectionはaccount不要のcontract testで検証できる。
 
 ## Alternatives

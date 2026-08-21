@@ -583,14 +583,14 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
       "CASCADE",
     )
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
-    && hasForeignKey(db, "coordination_events_v6", "root_session_id", "sessions_v6", "id", "RESTRICT")
-    && hasForeignKey(db, "coordination_events_v6", "parent_session_id", "sessions_v6", "id", "RESTRICT")
-    && hasForeignKey(db, "coordination_events_v6", "execution_id", "session_executions_v6", "id", "RESTRICT")
-    && hasForeignKey(db, "coordination_events_v6", "target_session_id", "sessions_v6", "id", "RESTRICT")
-    && hasForeignKey(db, "coordination_events_v6", "corrected_event_id", "coordination_events_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_events_v6", "root_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_events_v6", "parent_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_events_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_events_v6", "target_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "coordination_events_v6", "corrected_event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_actions_v6", "event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_actions_v6", "actor_session_id", "sessions_v6", "id", "SET NULL")
-    && hasForeignKey(db, "coordination_event_actions_v6", "related_event_id", "coordination_events_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "coordination_event_actions_v6", "related_event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_idempotency_v6", "result_event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_idempotency_v6", "target_event_id", "coordination_events_v6", "id", "CASCADE")
     && hasForeignKey(db, "session_turn_public_context_v6", "turn_id", "session_turns_v6", "id", "CASCADE")
@@ -1518,11 +1518,11 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
     options_json TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(options_json)) CHECK (json_type(options_json) = 'array'),
     created_at TEXT NOT NULL,
     FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
-    FOREIGN KEY (root_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
-    FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
-    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE RESTRICT,
-    FOREIGN KEY (target_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
-    FOREIGN KEY (corrected_event_id) REFERENCES coordination_events_v6(id) ON DELETE RESTRICT,
+    FOREIGN KEY (root_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (target_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (corrected_event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE,
     CHECK ((kind = 'escalation') = (target_session_id IS NOT NULL)),
     CHECK ((kind = 'correction') = (corrected_event_id IS NOT NULL)),
     CHECK (
@@ -1551,8 +1551,8 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
     created_at TEXT NOT NULL,
     FOREIGN KEY (event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE,
     FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
-    FOREIGN KEY (related_event_id) REFERENCES coordination_events_v6(id) ON DELETE RESTRICT,
-    CHECK ((actor_type = 'session') = (actor_session_id IS NOT NULL)),
+    FOREIGN KEY (related_event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE,
+    CHECK (actor_type = 'session' OR actor_session_id IS NULL),
     CHECK ((action_type = 'superseded') = (related_event_id IS NOT NULL))
   );
 

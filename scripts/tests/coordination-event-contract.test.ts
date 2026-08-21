@@ -92,5 +92,22 @@ describe("Coordination event contract", () => {
       { id: "same", label: "A" },
       { id: "same", label: "B" },
     ]), /unique/);
+    for (const secret of [
+      "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789",
+      "AKIAIOSFODNN7EXAMPLE",
+      "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
+    ]) {
+      assert.throws(
+        () => validateCoordinationEventPayload({ summary: secret }),
+        (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
+      );
+    }
+    assert.throws(
+      () => validateCoordinationEventOptions([
+        { id: "safe", label: "C:\\Users\\someone\\private.txt" },
+        { id: "other", label: "安全側" },
+      ]),
+      (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
+    );
   });
 });

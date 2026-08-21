@@ -2019,7 +2019,7 @@ export function SessionContextPane({
                 {coordinationEvents.map((event) => {
                   const detail = coordinationEventDetails[event.eventId];
                   return (
-                    <article key={event.eventId} className={`coordination-feed-item ${event.state}`}>
+                    <article key={`${event.eventId}:${event.state}`} className={`coordination-feed-item ${event.state}`}>
                       <div className="coordination-feed-meta">
                         <span>{event.kind}</span>
                         <span>{event.state}</span>

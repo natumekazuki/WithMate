@@ -17,6 +17,7 @@ import {
   CoordinationEventStorageV6,
   type CoordinationMutationPrincipal,
 } from "../../src-electron/coordination-event-storage-v6.js";
+import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 
 const NOW = "2026-08-21T12:00:00.000Z";
 
@@ -95,6 +96,49 @@ function create(storage: CoordinationEventStorageV6, input: Partial<Parameters<C
 }
 
 describe("CoordinationEventStorageV6", () => {
+  it("COORD-EVENT-01: standaloneとtree leafのbulk削除はCoordination historyも同じtransactionで削除する", async () => {
+    const fixture = await createFixture();
+    let storageClosed = false;
+    try {
+      const rootEvent = create(fixture.storage, {
+        principal: principal("root-b"),
+        executionId: null,
+        idempotencyKey: "root-b-event",
+        requestFingerprint: "root-b-event",
+      }).event;
+      fixture.storage.correct({
+        principal: principal("root-b"),
+        eventId: rootEvent.eventId,
+        payload: { summary: "root-b訂正" },
+        executionId: null,
+        idempotencyKey: "root-b-correction",
+        requestFingerprint: "root-b-correction",
+        createdAt: NOW,
+      });
+      create(fixture.storage, {
+        idempotencyKey: "executor-event",
+        requestFingerprint: "executor-event",
+      });
+      fixture.storage.close();
+      storageClosed = true;
+      const sessionStorage = new SessionStorageV6(fixture.dbPath);
+      try {
+        sessionStorage.deleteSessions(["root-b", "executor-a"]);
+      } finally {
+        sessionStorage.close();
+      }
+      const db = new DatabaseSync(fixture.dbPath, { readOnly: true });
+      try {
+        assert.equal((db.prepare("SELECT COUNT(*) AS count FROM coordination_events_v6 WHERE actor_session_id IN (?, ?)").get("root-b", "executor-a") as { count: number }).count, 0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      if (!storageClosed) fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("COORD-IDEM-01: principal scopeのreplay、conflict、execution ownerをeffect-noneで閉じる", async () => {
     const fixture = await createFixture();
     try {

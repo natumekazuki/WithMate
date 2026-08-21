@@ -37,7 +37,10 @@ import {
 import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./character-state.js";
 import type { CompanionSessionSummary } from "./companion-state.js";
 import type { CoordinationEvent, CoordinationEventSummary } from "./coordination-event.js";
-import { CoordinationFeedRequestGate } from "./coordination-feed-request-gate.js";
+import {
+  CoordinationFeedRequestGate,
+  reconcileCoordinationEventDetails,
+} from "./coordination-feed-request-gate.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
@@ -571,6 +574,7 @@ export default function AgentSessionWindowApp() {
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [coordinationEvents, setCoordinationEvents] = useState<CoordinationEventSummary[]>([]);
   const [coordinationEventDetails, setCoordinationEventDetails] = useState<Record<string, CoordinationEvent>>({});
+  const coordinationEventsRef = useRef<CoordinationEventSummary[]>([]);
   const [coordinationResolutionPendingEventId, setCoordinationResolutionPendingEventId] = useState<string | null>(null);
   const coordinationFeedGateRef = useRef(new CoordinationFeedRequestGate());
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
@@ -951,7 +955,10 @@ export default function AgentSessionWindowApp() {
     try {
       const items = await withmateApi.listSessionCoordinationEvents(sessionId);
       if (!coordinationFeedGateRef.current.isCurrent(token)) return;
-      setCoordinationEvents(orderCoordinationEventSummaries(items));
+      const orderedItems = orderCoordinationEventSummaries(items);
+      coordinationEventsRef.current = orderedItems;
+      setCoordinationEvents(orderedItems);
+      setCoordinationEventDetails((current) => reconcileCoordinationEventDetails(orderedItems, current));
     } catch (error) {
       if (coordinationFeedGateRef.current.isCurrent(token)) {
         setCoordinationEvents([]);
@@ -963,6 +970,7 @@ export default function AgentSessionWindowApp() {
   useEffect(() => {
     const sessionId = selectedSession?.id ?? null;
     coordinationFeedGateRef.current.selectSession(sessionId);
+    coordinationEventsRef.current = [];
     setCoordinationEvents([]);
     setCoordinationEventDetails({});
     setCoordinationResolutionPendingEventId(null);
@@ -983,7 +991,10 @@ export default function AgentSessionWindowApp() {
     if (!withmateApi || !sessionId || coordinationEventDetails[eventId]) return;
     try {
       const event = await withmateApi.getSessionCoordinationEvent(sessionId, eventId);
-      if (!coordinationFeedGateRef.current.isSelected(sessionId)) return;
+      if (!coordinationFeedGateRef.current.isSelected(sessionId)
+        || !coordinationEventsRef.current.some((summary) => (
+          summary.eventId === event.eventId && summary.state === event.state
+        ))) return;
       setCoordinationEventDetails((current) => ({ ...current, [event.eventId]: event }));
     } catch (error) {
       console.error(error);

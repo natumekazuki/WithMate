@@ -181,7 +181,7 @@ export function validateCoordinationEventOptions(value: unknown, field = "option
     throw invalid(field, "Coordination event options must contain 2 to 8 items.");
   }
   const ids = new Set<string>();
-  return value.map((entry, index) => {
+  const options = value.map((entry, index) => {
     const itemField = `${field}[${index}]`;
     const record = requireObject(entry, itemField);
     assertKeys(record, ["id", "label", "description"], itemField);
@@ -196,6 +196,11 @@ export function validateCoordinationEventOptions(value: unknown, field = "option
         : { description: requireText(record.description, `${itemField}.description`, 500) }),
     };
   });
+  rejectSensitiveValues(
+    options.flatMap((option) => [option.id, option.label, option.description ?? ""]),
+    field,
+  );
+  return options;
 }
 
 export function validateCoordinationEventNote(value: unknown, field = "note"): string {
@@ -241,6 +246,9 @@ function rejectSensitiveValues(values: readonly string[], field: string): void {
   const forbidden = [
     /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
     /\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
+    /\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
+    /\bAKIA[0-9A-Z]{16}\b/,
+    /\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
     /(?:^|\s)(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s]+/i,
     /\b(?:stack trace|traceback \(most recent call last\))\b/i,
     /\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
