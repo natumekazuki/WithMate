@@ -374,6 +374,7 @@ test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を�
   assert.ok(actions);
   assert.equal(actions?.parentElement, shell);
   assert.equal(actions?.nextElementSibling, codeBlock);
+  assert.equal(actions?.querySelector(".message-code-copy-button"), copyButtons[0]);
   assert.equal(codeBlock?.querySelector(".message-code-copy-button"), null);
   assert.equal(copyButtons[0]?.getAttribute("aria-label"), "コードをコピー");
   assert.equal(copyButtons[0]?.getAttribute("title"), "コードをコピー");
@@ -403,6 +404,25 @@ test("code block copy操作はhover・focus・disabledの視認状態を持つ",
   assert.match(hoverRule, /transform:\s*translateY\(-1px\);/);
   assert.match(focusRule, /outline:\s*2px solid var\(--teal\);/);
   assert.match(disabledRule, /opacity:\s*0\.64;/);
+});
+
+test("code block copy actionは縦scroll中だけshell上端へstickyし、本文の横scroll ownerから分離される", async () => {
+  const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
+  const shellRule = styles.match(/\.message-code-block-shell\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const actionsRule = styles.match(/\.message-code-block-actions\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const codeBlockRule = styles.match(/\.message-code-block\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const mermaidRule = styles.match(/\.message-mermaid\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+
+  assert.match(shellRule, /width:\s*100%;/);
+  assert.match(shellRule, /max-width:\s*100%;/);
+  assert.match(actionsRule, /position:\s*sticky;/);
+  assert.match(actionsRule, /top:\s*0;/);
+  assert.match(actionsRule, /z-index:\s*1;/);
+  assert.match(actionsRule, /width:\s*100%;/);
+  assert.doesNotMatch(actionsRule, /position:\s*(?:absolute|fixed);/);
+  assert.match(codeBlockRule, /overflow:\s*auto;/);
+  assert.match(mermaidRule, /overflow-x:\s*auto;/);
+  assert.doesNotMatch(actionsRule, /overflow(?:-x|-y)?\s*:/);
 });
 
 test("MessageRichText のcode block copyは本文だけをclipboardへ渡してfeedbackを表示する", async () => {
@@ -1088,6 +1108,10 @@ test("MessageRichText は Mermaid code block を diagram 用 container として
   assert.ok(actions);
   assert.equal(actions?.parentElement, shell);
   assert.equal(actions?.nextElementSibling, mermaid);
+  assert.equal(
+    actions?.querySelector(".message-code-copy-button"),
+    shell?.querySelector(".message-code-copy-button"),
+  );
   assert.equal(mermaid?.querySelector(".message-code-copy-button"), null);
 });
 
