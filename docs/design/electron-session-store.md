@@ -35,7 +35,7 @@ SQLite-backed store により window 間整合と再起動後の復元を両立�
 - Renderer は `window.withmate` 経由でのみ session / audit / settings に触る
 - Homeのsession一覧は `listSessionSummaryPage()` をstorage query ownerへ送り、recent / pinned / openをboundedに取得する。検索もstorage側で行い、Homeへ全summary配列を返さない
 - session summary の変更通知は `scope: "ids"` または `scope: "all"` のinvalidationを `WindowBroadcastService` からHome / Session windowへ配信する。IDは最大256件で、超過時に切り捨てず `all` へ切り替える
-- Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateし、Homeは現在のquery generationを破棄してbounded pageを再取得する
+- Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateする。Homeはquery generationで古いresponseを失効させ、検索条件変更時だけcursor chainを初期化する。focus、open Session ID変更、invalidationでは読み込み済みrecent / pinned pageとopen special entryを保持したままboundedに再同期する
 - session CRUD と bulk write path は `SessionPersistenceService` に集約する
 - turn 実行は `SessionRuntimeService`、window lifecycle hook は `SessionWindowBridge` が担う
 - Session / Project / Character Memory の session 起点補助は `SessionMemorySupportService` が担う
@@ -162,7 +162,7 @@ table 詳細と JSON カラム一覧は `docs/design/database-schema.md` を参�
 ### Home Renderer
 
 - boundedなsession summary pageの取得、cursor chain、検索generationの管理
-- session invalidation受信時のrecent / pinned / open refresh
+- session invalidation受信時のloaded recent / pinned page、open special entryのbounded refresh
 - random Character用のCharacter usage projectionとopen Session ID chunkの利用
 - Settings / Model Catalog 操作
 - `createSession()` 後の Session Window 起動

@@ -39,7 +39,7 @@
 - settings / model catalog の一括保存経路は、summary-derived empty messages を保存しないように `listSessionSummaries()` + `getSession(id)` で full detail hydrate した session を使う。
 - session 保存後の main process 常駐 `sessions` cache は summary-only session に戻し、表示や実行で履歴本体が必要な時だけ `getSession(id)` で詳細 hydrate する。
 - Homeのrecent / pinned / open queryは `last_active_at DESC, id DESC` のopaque keyset cursorで取得し、recent / pinnedは最大50件、openは100 ID単位とする。検索はstorage query ownerで実行し、rendererのloaded pageだけを検索対象にしない。
-- Home Dashboard / MonitorはSession summary invalidationを受けて現在のquery generationを破棄し、boundedなpageとspecial entryを再取得する。変更対象が256件を超える通知はIDを切り捨てず `scope: "all"` へ切り替える。
+- Home Dashboard / MonitorはSession summary invalidationを受けて現在のquery generationで古いresponseを失効させ、読み込み済みrecent / pinned pageとspecial entryを保持したままboundedに再同期する。検索条件変更時だけcursor chainを破棄して初回pageへ戻す。変更対象が256件を超える通知はIDを切り捨てず `scope: "all"` へ切り替える。
 - random Characterは全summaryを再利用せず、通常SessionのCharacterごとの最新利用順位を返す専用projectionを使う。runtime初期化やcache再構築の全summary取得は内部経路として残す。
 
 ---

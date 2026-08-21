@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  buildHomeSessionSummaryEntries,
+  fetchHomeSessionSummaryPages,
   fetchHomeSessionSummarySnapshot,
   mergeSessionSummaryEntries,
 } from "../../src/home/home-session-summary-query.js";
@@ -53,4 +55,59 @@ test("Home summary merge は pinned を先に置き、Session IDでdedupeする"
     mergeSessionSummaryEntries([summary("pinned"), summary("shared")], [summary("recent"), summary("shared")]),
     [summary("pinned"), summary("shared"), summary("recent")],
   );
+});
+
+test("Home summary background refresh はloaded page数ぶんcursor chainを再取得する", async () => {
+  const requests: Array<string | undefined> = [];
+  const api = {
+    listSessionSummaryPage: async (request?: {
+      scope?: string;
+      cursor?: string | null;
+      searchText?: string;
+    }) => {
+      if (request?.scope !== "recent") {
+        return { entries: [], nextCursor: null, hasMore: false };
+      }
+
+      requests.push(request.cursor ?? undefined);
+      const pageIndex = request.cursor === undefined ? 0 : Number(request.cursor.split("-")[1]);
+      return {
+        entries: [summary(`recent-${pageIndex}`)],
+        nextCursor: pageIndex < 2 ? `cursor-${pageIndex + 1}` : null,
+        hasMore: pageIndex < 2,
+      };
+    },
+    listSessionCharacterUsage: async () => [],
+  };
+
+  const pages = await fetchHomeSessionSummaryPages(api, "recent", "", 3);
+
+  assert.deepEqual(requests, [undefined, "cursor-1", "cursor-2"]);
+  assert.deepEqual(pages.map(({ requestCursor, page }) => [requestCursor, page.entries[0]?.id]), [
+    [null, "recent-0"],
+    ["cursor-1", "recent-1"],
+    ["cursor-2", "recent-2"],
+  ]);
+});
+
+test("Home summary page collection はloaded recent/pinned pageとopen special entryを保持して表示順へ合成する", () => {
+  const pages = {
+    pinned: [
+      { requestCursor: null, page: { entries: [summary("pinned-1")], nextCursor: "pinned-2", hasMore: true } },
+      { requestCursor: "pinned-2", page: { entries: [summary("pinned-2")], nextCursor: null, hasMore: false } },
+    ],
+    recent: [
+      { requestCursor: null, page: { entries: [summary("recent-1")], nextCursor: "recent-2", hasMore: true } },
+      { requestCursor: "recent-2", page: { entries: [summary("recent-2")], nextCursor: null, hasMore: false } },
+    ],
+    open: [summary("open-not-in-page")],
+  };
+
+  assert.deepEqual(buildHomeSessionSummaryEntries(pages).map(({ id }) => id), [
+    "pinned-1",
+    "pinned-2",
+    "recent-1",
+    "recent-2",
+    "open-not-in-page",
+  ]);
 });
