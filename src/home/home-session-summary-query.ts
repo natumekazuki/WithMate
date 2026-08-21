@@ -14,6 +14,17 @@ export type HomeSessionSummarySnapshot = {
   characterUsage: SessionCharacterUsage[];
 };
 
+export type HomeLoadedSessionSummaryPage = {
+  requestCursor: string | null;
+  page: SessionSummaryPageResult;
+};
+
+export type HomeSessionSummaryPageCollection = {
+  recent: HomeLoadedSessionSummaryPage[];
+  pinned: HomeLoadedSessionSummaryPage[];
+  open: SessionSummary[];
+};
+
 export type HomeSessionSummaryQueryApi = Pick<
   WithMateWindowApi,
   "listSessionSummaryPage" | "listSessionCharacterUsage"
@@ -40,6 +51,16 @@ export function mergeSessionSummaryEntries(...sources: readonly SessionSummary[]
     }
   }
   return merged;
+}
+
+export function buildHomeSessionSummaryEntries(
+  pages: HomeSessionSummaryPageCollection,
+): SessionSummary[] {
+  return mergeSessionSummaryEntries(
+    ...pages.pinned.map(({ page }) => page.entries),
+    ...pages.recent.map(({ page }) => page.entries),
+    pages.open,
+  );
 }
 
 export async function listOpenSessionSummaryEntries(
@@ -77,8 +98,34 @@ export async function fetchHomeSessionSummarySnapshot(
 export async function fetchHomeSessionSummaryPage(
   api: HomeSessionSummaryQueryApi,
   scope: "recent" | "pinned",
-  cursor: string,
+  cursor: string | null,
   searchText: string,
 ): Promise<SessionSummaryPageResult> {
-  return api.listSessionSummaryPage({ scope, cursor, searchText });
+  return api.listSessionSummaryPage({
+    scope,
+    ...(cursor ? { cursor } : {}),
+    searchText,
+  });
+}
+
+export async function fetchHomeSessionSummaryPages(
+  api: HomeSessionSummaryQueryApi,
+  scope: "recent" | "pinned",
+  searchText: string,
+  loadedPageCount: number,
+): Promise<HomeLoadedSessionSummaryPage[]> {
+  const pageCount = Math.max(1, Math.floor(Number.isFinite(loadedPageCount) ? loadedPageCount : 1));
+  const pages: HomeLoadedSessionSummaryPage[] = [];
+  let requestCursor: string | null = null;
+
+  for (let index = 0; index < pageCount; index += 1) {
+    const page = await fetchHomeSessionSummaryPage(api, scope, requestCursor, searchText);
+    pages.push({ requestCursor, page });
+    if (!page.hasMore || !page.nextCursor) {
+      break;
+    }
+    requestCursor = page.nextCursor;
+  }
+
+  return pages;
 }
