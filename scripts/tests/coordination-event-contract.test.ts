@@ -103,6 +103,7 @@ describe("Coordination event contract", () => {
       "F:\\Company\\Client-X\\secret.txt",
       "\\\\server\\private-share\\file.txt",
       "//server/private-share/file.txt",
+      "path=//server/private-share/file.txt",
       "\\\\?\\UNC\\server\\private-share\\file.txt",
     ]) {
       assert.throws(
@@ -111,8 +112,12 @@ describe("Coordination event contract", () => {
       );
     }
     assert.deepEqual(
-      validateCoordinationEventPayload({ summary: "https://server.example/share/file.txt と tokenization=enabled を確認" }),
-      { summary: "https://server.example/share/file.txt と tokenization=enabled を確認" },
+      validateCoordinationEventPayload({
+        summary: "https://server.example/share/file.txt と tokenization=enabled、TOKEN_POLICY=enabled、PASSWORD_POLICY=strict を確認",
+      }),
+      {
+        summary: "https://server.example/share/file.txt と tokenization=enabled、TOKEN_POLICY=enabled、PASSWORD_POLICY=strict を確認",
+      },
     );
     assert.throws(
       () => validateCoordinationEventOptions([
