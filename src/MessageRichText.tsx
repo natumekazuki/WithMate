@@ -199,6 +199,35 @@ function CodeBlockCopyButton({ code, onCopyResult }: CodeBlockCopyButtonProps) {
   );
 }
 
+function CodeBlockShell({
+  children,
+  className,
+  code,
+  onCopyResult,
+}: {
+  children: ReactNode;
+  className?: string;
+  code?: string;
+  onCopyResult?: (feedback: MessageCopyFeedback) => void;
+}) {
+  const shellClassName = [
+    "message-code-block-shell",
+    className,
+    onCopyResult ? "copyable" : "",
+  ].filter(Boolean).join(" ");
+
+  return (
+    <div className={shellClassName}>
+      {onCopyResult ? (
+        <div className="message-code-block-actions">
+          <CodeBlockCopyButton code={code ?? ""} onCopyResult={onCopyResult} />
+        </div>
+      ) : null}
+      {children}
+    </div>
+  );
+}
+
 function resolveCodeLanguage(className?: string) {
   return /(?:^|\s)language-([^\s]+)/.exec(className ?? "")?.[1]?.toLowerCase();
 }
@@ -436,29 +465,23 @@ function MermaidDiagram({
     };
   }, [diagramId, diagramSource]);
 
-  if (renderState.status === "ready") {
-    return (
-      <div className="message-code-block-shell mermaid">
-        <div className="message-mermaid" dangerouslySetInnerHTML={{ __html: renderState.svg }} />
-        {onCopyResult ? (
-          <CodeBlockCopyButton code={resolveCodeBlockText(source)} onCopyResult={onCopyResult} />
-        ) : null}
-      </div>
-    );
-  }
-
   return (
-    <div className="message-code-block-shell mermaid">
-      <div className="message-mermaid fallback">
-        {renderState.status === "error" ? <p className="message-mermaid-error">{renderState.message}</p> : null}
-        <pre className="message-code-block">
-          <code className="message-inline-code language-mermaid">{source}</code>
-        </pre>
-      </div>
-      {onCopyResult ? (
-        <CodeBlockCopyButton code={resolveCodeBlockText(source)} onCopyResult={onCopyResult} />
-      ) : null}
-    </div>
+    <CodeBlockShell
+      className={`mermaid ${renderState.status === "ready" ? "ready" : "fallback"}`}
+      code={resolveCodeBlockText(source)}
+      onCopyResult={onCopyResult}
+    >
+      {renderState.status === "ready" ? (
+        <div className="message-mermaid" dangerouslySetInnerHTML={{ __html: renderState.svg }} />
+      ) : (
+        <div className="message-mermaid fallback">
+          {renderState.status === "error" ? <p className="message-mermaid-error">{renderState.message}</p> : null}
+          <pre className="message-code-block">
+            <code className="message-inline-code language-mermaid">{source}</code>
+          </pre>
+        </div>
+      )}
+    </CodeBlockShell>
   );
 }
 
@@ -751,13 +774,12 @@ function createMarkdownComponents(
         </pre>
       );
       return isFenced && options?.onCodeBlockCopyResult ? (
-        <div className="message-code-block-shell">
+        <CodeBlockShell
+          code={resolveCodeBlockText(children)}
+          onCopyResult={options.onCodeBlockCopyResult}
+        >
           {content}
-          <CodeBlockCopyButton
-            code={resolveCodeBlockText(children)}
-            onCopyResult={options.onCodeBlockCopyResult}
-          />
-        </div>
+        </CodeBlockShell>
       ) : content;
     },
     a: ({ children, href, node, ...props }) => {

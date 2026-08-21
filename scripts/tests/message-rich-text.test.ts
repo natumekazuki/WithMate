@@ -365,8 +365,16 @@ test("MessageRichText は fenced code blockだけにaccessibleなcopy操作を�
   );
   const dom = new JSDOM(html);
   const copyButtons = dom.window.document.querySelectorAll<HTMLButtonElement>(".message-code-copy-button");
+  const shell = dom.window.document.querySelector(".message-code-block-shell");
+  const actions = shell?.querySelector(".message-code-block-actions");
+  const codeBlock = shell?.querySelector("pre.message-code-block");
 
   assert.equal(copyButtons.length, 1);
+  assert.ok(shell);
+  assert.ok(actions);
+  assert.equal(actions?.parentElement, shell);
+  assert.equal(actions?.nextElementSibling, codeBlock);
+  assert.equal(codeBlock?.querySelector(".message-code-copy-button"), null);
   assert.equal(copyButtons[0]?.getAttribute("aria-label"), "コードをコピー");
   assert.equal(copyButtons[0]?.getAttribute("title"), "コードをコピー");
   assert.match(
@@ -1070,9 +1078,17 @@ test("MessageRichText は Mermaid code block を diagram 用 container として
       text: ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n"),
     }),
   );
+  const dom = new JSDOM(html);
+  const shell = dom.window.document.querySelector(".message-code-block-shell.mermaid");
+  const actions = shell?.querySelector(".message-code-block-actions");
+  const mermaid = shell?.querySelector(".message-mermaid.fallback");
 
   assert.match(html, /<div class="message-mermaid fallback">/);
   assert.match(html, /<code class="message-inline-code language-mermaid">flowchart TD\n  A --&gt; B\n<\/code>/);
+  assert.ok(actions);
+  assert.equal(actions?.parentElement, shell);
+  assert.equal(actions?.nextElementSibling, mermaid);
+  assert.equal(mermaid?.querySelector(".message-code-copy-button"), null);
 });
 
 test("MessageRichText は code literal 内の local path link 風テキストを改変しない", () => {
