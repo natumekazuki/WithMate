@@ -337,9 +337,13 @@ export class SessionPersistenceService {
     } else {
       throw new Error("session delete storage dependency is not configured.");
     }
-    this.deps.broadcastCoordinationEventsChanged?.();
     const deletableSessionIdSet = new Set(deletableSessionIds);
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
+    try {
+      this.deps.broadcastCoordinationEventsChanged?.();
+    } catch (error) {
+      console.error("Coordination event refresh publication failed after Session deletion", error);
+    }
 
     for (const sessionId of deletableSessionIds) {
       const deletedSession = currentSessionsById.get(sessionId);

@@ -217,7 +217,7 @@ export class CoordinationEventStorageV6 {
     createdAt: string;
   }): { event: CoordinationEvent; replayed: boolean } {
     return this.transition("coordination.event.resolve", "resolved", input, (event) => {
-      if (event.state !== "open") throw new CoordinationEventStateConflictError();
+      if (!canView(input.principal, event)) throw new CoordinationEventNotFoundError();
       if (event.kind === "escalation") {
         if (input.principal.actorType !== "session" || event.targetSessionId !== input.principal.sessionId || input.optionId) {
           throw new CoordinationEventNotFoundError();
@@ -236,6 +236,7 @@ export class CoordinationEventStorageV6 {
       } else {
         throw new CoordinationEventStateConflictError();
       }
+      if (event.state !== "open") throw new CoordinationEventStateConflictError();
     });
   }
 
@@ -249,13 +250,14 @@ export class CoordinationEventStorageV6 {
     createdAt: string;
   }): { event: CoordinationEvent; replayed: boolean } {
     return this.transition("coordination.event.cancel", "cancelled", input, (event) => {
-      if (event.state !== "open") throw new CoordinationEventStateConflictError();
+      if (!canView(input.principal, event)) throw new CoordinationEventNotFoundError();
       if (input.principal.actorType === "session" && event.actorSessionId !== input.principal.sessionId) {
         throw new CoordinationEventNotFoundError();
       }
       if (input.principal.actorType === "trusted_gui" && !canView(input.principal, event)) {
         throw new CoordinationEventNotFoundError();
       }
+      if (event.state !== "open") throw new CoordinationEventStateConflictError();
     });
   }
 

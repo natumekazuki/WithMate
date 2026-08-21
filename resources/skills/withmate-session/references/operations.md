@@ -74,7 +74,7 @@ Effect-bearing operations are Session create and rename, Session file write, Tur
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.
-- Different operation with the same key: separate scope; never use this to convert run and enqueue.
+- Different operation with the same key: separate scope, except Coordination mutations, whose keys share one principal Session scope and conflict across operations; never use key reuse to convert run and enqueue or one Coordination mutation into another.
 - `CATALOG_REVISION_STALE`: refresh catalog or Turn options. If only the stale revision changes and the intended Turn tuple remains supported, resend according to the current schema's reconciliation contract; do not manufacture a second execution.
 - `effect: not_applied`: no effect was started by that response.
 - `effect: applied`: adopt the canonical public identifier in `details` or result.

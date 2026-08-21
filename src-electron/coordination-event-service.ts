@@ -81,6 +81,30 @@ export class CoordinationEventService {
     };
   }
 
+  listFeedFromTrustedGui(
+    viewerSessionId: string,
+    roleBinding: SessionRoleBinding,
+    scope: CoordinationEventListInput["scope"],
+  ): CoordinationEventListResult["items"] {
+    const openItems: CoordinationEventListResult["items"] = [];
+    let cursor: string | undefined;
+    do {
+      const page = this.listFromTrustedGui(viewerSessionId, roleBinding, {
+        scope,
+        state: "open",
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+      });
+      openItems.push(...page.items);
+      cursor = page.nextCursor;
+    } while (cursor);
+
+    const recentItems = this.listFromTrustedGui(viewerSessionId, roleBinding, { scope, limit: 100 }).items;
+    const merged = new Map(openItems.map((event) => [event.eventId, event]));
+    for (const event of recentItems) merged.set(event.eventId, event);
+    return [...merged.values()];
+  }
+
   get(input: CoordinationEventGetInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
     const principal = sessionPrincipal(binding);
     return "eventId" in input && input.eventId

@@ -199,6 +199,13 @@ describe("CoordinationEventStorageV6", () => {
       });
       assert.equal(resolved.event.state, "resolved");
       assert.equal(resolved.event.actions[0]?.note, "確認済み");
+      assert.throws(
+        () => fixture.storage.resolve({
+          principal: principal("root-b"), eventId: escalation.eventId, optionId: null, note: null,
+          idempotencyKey: "cross-root-resolved", requestFingerprint: "cross-root-resolved", createdAt: NOW,
+        }),
+        (error) => error instanceof CoordinationEventNotFoundError,
+      );
 
       const blocker = create(fixture.storage, {
         kind: "blocker", executionId: null, idempotencyKey: "blocker-1", requestFingerprint: "blocker-1",
@@ -211,6 +218,13 @@ describe("CoordinationEventStorageV6", () => {
         principal: principal("root-a", "trusted_gui"), eventId: blocker.eventId, optionId: null, note: null,
         idempotencyKey: "cancel-gui", requestFingerprint: "cancel-gui", createdAt: NOW,
       }).event.state, "cancelled");
+      assert.throws(
+        () => fixture.storage.cancel({
+          principal: principal("root-b", "trusted_gui"), eventId: blocker.eventId, optionId: null, note: null,
+          idempotencyKey: "cross-root-cancelled", requestFingerprint: "cross-root-cancelled", createdAt: NOW,
+        }),
+        (error) => error instanceof CoordinationEventNotFoundError,
+      );
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
@@ -337,6 +351,36 @@ describe("CoordinationEventStorageV6", () => {
         () => service.resolve(resolution, binding("root-a")),
         CoordinationEventIdempotencyConflictError,
       );
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("COORD-FEED-01: GUI feedは100件より古いopen eventも全pageから保持する", async () => {
+    const fixture = await createFixture();
+    try {
+      const blocker = create(fixture.storage, {
+        kind: "blocker",
+        executionId: null,
+        idempotencyKey: "old-blocker",
+        requestFingerprint: "old-blocker",
+      }).event;
+      for (let index = 0; index < 101; index += 1) {
+        create(fixture.storage, {
+          kind: "progress",
+          executionId: null,
+          idempotencyKey: `progress-${index}`,
+          requestFingerprint: `progress-${index}`,
+        });
+      }
+      const service = new CoordinationEventService({
+        storage: fixture.storage,
+        publishCommitted() {},
+      });
+      const items = service.listFeedFromTrustedGui("root-a", principal("root-a").roleBinding, "subtree");
+      assert.equal(items.some((event) => event.eventId === blocker.eventId && event.state === "open"), true);
+      assert.equal(items.length, 101);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

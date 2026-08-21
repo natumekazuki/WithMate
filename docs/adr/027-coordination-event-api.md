@@ -19,7 +19,7 @@ Agentの判断、進行、利用者判断待ちを通常responseだけで伝え�
 - mutationはprincipal Session単位のidempotency keyを必須とする。fingerprintはoperation、principal種別、principal Session、Role snapshot、target、payload、execution、target Sessionを含む。canonical replayはcurrent authorityとtarget state検証より先に返す。
 - storage commitをGUI publicationとresponseより先に置く。publication failureは`effect: applied`とevent IDを返し、同じkeyのreplayまたはevent ID/keyのgetで再照合する。external streaming endpointは追加しない。
 - CLI、MCP、raw HTTPはshared runtime contractの六操作、strict validator、result/error envelopeを共有する。listはdefault 50、maximum 100とし、cursorをprincipal、scope、filterへ結び付け、summary columnだけを読む。
-- Session右ペインはeventが一件以上ある時だけ`Coordination` tabを出す。coordinatorはsubtree、それ以外はselfを取得し、openのuser decision、blocker、escalationを優先する。detailは要求時に取得し、commit後signalで再読込する。request revisionと選択Sessionを照合して古いresponseを捨てる。
+- Session右ペインはeventが一件以上ある時だけ`Coordination` tabを出す。coordinatorはsubtree、それ以外はselfを取得し、openのuser decision、blocker、escalationは公開listの100件上限とは別に全pageを取得して優先する。detailは要求時に取得し、commit後signalで再読込する。request revisionと選択Sessionを照合して古いresponseを捨て、一時的な取得失敗では最後に成功した一覧をstale表示として保持して再試行を示す。
 - System Promptは登録対象、保存禁止情報、登録失敗時の扱いを説明するが、通常responseの文体や形式を強制しない。prompt complianceはauthority、validation、idempotencyの代替にしない。
 
 ## Consequences

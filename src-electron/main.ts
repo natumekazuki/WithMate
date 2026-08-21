@@ -1805,11 +1805,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     || session.roleBinding.sessionRole === "task-coordinator"
                     ? "subtree"
                     : "self";
-                  return requireCoordinationEventService().listFromTrustedGui(
+                  return requireCoordinationEventService().listFeedFromTrustedGui(
                     sessionId,
                     session.roleBinding,
-                    { scope, limit: 100 },
-                  ).items;
+                    scope,
+                  );
                 },
                 getSessionCoordinationEvent: (sessionId, eventId) => {
                   const session = getSession(sessionId);

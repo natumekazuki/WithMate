@@ -1234,33 +1234,44 @@ describe("SessionPersistenceService", () => {
     assert.equal(cleanupCount, 0);
   });
 
-  it("deleteSession はstorage commit後のcleanup失敗より先にCoordination変更を通知する", async () => {
-    const session = createSession({ id: "deleted-before-cleanup-failure" });
+  it("deleteSession はCoordination通知失敗後もcacheとruntime cleanupを完遂する", async () => {
+    const session = createSession({ id: "deleted-despite-publication-failure" });
     let storedDeleteCount = 0;
     let coordinationBroadcastCount = 0;
+    const cleaned: string[] = [];
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
     const service = new SessionPersistenceService({
       getSessions: () => [session],
-      setSessions() {},
+      setSessions(nextSessions) {
+        assert.deepEqual(nextSessions, []);
+        cleaned.push("cache");
+      },
       getSession: () => session,
       isSessionRunInFlight: () => false,
       deleteStoredSession() {
         storedDeleteCount += 1;
       },
-      clearSessionContextTelemetry() {},
-      clearSessionBackgroundActivities() {},
-      invalidateProviderSessionThread() {
-        throw new Error("cleanup failed");
-      },
-      closeSessionWindow() {},
-      broadcastSessions() {},
+      clearSessionContextTelemetry() { cleaned.push("telemetry"); },
+      clearSessionBackgroundActivities() { cleaned.push("background"); },
+      invalidateProviderSessionThread() { cleaned.push("provider"); },
+      revokeSessionAgentRuntimeBindings() { cleaned.push("binding"); },
+      closeSessionWindow() { cleaned.push("window"); },
+      broadcastSessions() { cleaned.push("sessions"); },
       broadcastCoordinationEventsChanged() {
         coordinationBroadcastCount += 1;
+        throw new Error("publication failed");
       },
     } as never);
 
-    await assert.rejects(() => service.deleteSession(session.id), /cleanup failed/);
-    assert.equal(storedDeleteCount, 1);
-    assert.equal(coordinationBroadcastCount, 1);
+    try {
+      await service.deleteSession(session.id);
+      assert.equal(storedDeleteCount, 1);
+      assert.equal(coordinationBroadcastCount, 1);
+      assert.deepEqual(cleaned, ["cache", "binding", "provider", "telemetry", "background", "window", "sessions"]);
+    } finally {
+      console.error = originalConsoleError;
+    }
   });
 
   it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {

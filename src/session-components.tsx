@@ -1636,9 +1636,27 @@ export type SessionContextPaneProps = {
   coordinationEvents?: CoordinationEventSummary[];
   coordinationEventDetails?: Record<string, CoordinationEvent>;
   coordinationResolutionPendingEventId?: string | null;
+  coordinationFeedErrorMessage?: string | null;
   onLoadCoordinationEvent?: (eventId: string) => void;
   onResolveCoordinationOption?: (eventId: string, optionId: string) => void;
+  onRetryCoordinationEvents?: () => void;
 };
+
+export function CoordinationFeedErrorNotice({
+  message,
+  onRetry,
+}: {
+  message: string | null;
+  onRetry?: () => void;
+}) {
+  if (!message) return null;
+  return (
+    <div className="coordination-feed-error" role="alert">
+      <span>{message}</span>
+      <button type="button" onClick={onRetry}>再試行</button>
+    </div>
+  );
+}
 
 type SessionPaneErrorBoundaryProps = {
   children: ReactNode;
@@ -1758,8 +1776,10 @@ export function SessionContextPane({
   coordinationEvents = [],
   coordinationEventDetails = {},
   coordinationResolutionPendingEventId = null,
+  coordinationFeedErrorMessage = null,
   onLoadCoordinationEvent,
   onResolveCoordinationOption,
+  onRetryCoordinationEvents,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taskEntries = backgroundTasks ?? [];
@@ -2016,6 +2036,10 @@ export function SessionContextPane({
 
             {activeContextPaneTab === "coordination" ? (
               <div className="coordination-feed" aria-label="Coordination events">
+                <CoordinationFeedErrorNotice
+                  message={coordinationFeedErrorMessage}
+                  onRetry={onRetryCoordinationEvents}
+                />
                 {coordinationEvents.map((event) => {
                   const detail = coordinationEventDetails[event.eventId];
                   return (

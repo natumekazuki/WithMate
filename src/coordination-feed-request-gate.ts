@@ -30,6 +30,30 @@ export class CoordinationFeedRequestGate {
   }
 }
 
+export class CoordinationResolutionAttemptRegistry {
+  private readonly attempts = new Map<string, Map<string, string>>();
+
+  constructor(private readonly createKey: () => string = () => crypto.randomUUID()) {}
+
+  getOrCreate(eventId: string, optionId: string): string {
+    const eventAttempts = this.attempts.get(eventId) ?? new Map<string, string>();
+    const existing = eventAttempts.get(optionId);
+    if (existing) return existing;
+    const key = this.createKey();
+    eventAttempts.set(optionId, key);
+    this.attempts.set(eventId, eventAttempts);
+    return key;
+  }
+
+  settle(eventId: string): void {
+    this.attempts.delete(eventId);
+  }
+
+  clear(): void {
+    this.attempts.clear();
+  }
+}
+
 export function reconcileCoordinationEventDetails<
   TSummary extends { eventId: string; state: string },
   TDetail extends { eventId: string; state: string },

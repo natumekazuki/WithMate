@@ -39,6 +39,7 @@ import type { CompanionSessionSummary } from "./companion-state.js";
 import type { CoordinationEvent, CoordinationEventSummary } from "./coordination-event.js";
 import {
   CoordinationFeedRequestGate,
+  CoordinationResolutionAttemptRegistry,
   reconcileCoordinationEventDetails,
 } from "./coordination-feed-request-gate.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
@@ -577,6 +578,8 @@ export default function AgentSessionWindowApp() {
   const coordinationEventsRef = useRef<CoordinationEventSummary[]>([]);
   const [coordinationResolutionPendingEventId, setCoordinationResolutionPendingEventId] = useState<string | null>(null);
   const coordinationFeedGateRef = useRef(new CoordinationFeedRequestGate());
+  const coordinationResolutionAttemptsRef = useRef(new CoordinationResolutionAttemptRegistry());
+  const [coordinationFeedErrorMessage, setCoordinationFeedErrorMessage] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
@@ -948,22 +951,28 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
-  const refreshCoordinationEvents = useCallback(async (sessionId: string): Promise<void> => {
-    if (!withmateApi) return;
+  const refreshCoordinationEvents = useCallback(async (sessionId: string): Promise<CoordinationEventSummary[] | null> => {
+    if (!withmateApi) return null;
     const token = coordinationFeedGateRef.current.begin(sessionId);
-    if (!token) return;
+    if (!token) return null;
     try {
       const items = await withmateApi.listSessionCoordinationEvents(sessionId);
-      if (!coordinationFeedGateRef.current.isCurrent(token)) return;
+      if (!coordinationFeedGateRef.current.isCurrent(token)) return null;
       const orderedItems = orderCoordinationEventSummaries(items);
+      for (const event of orderedItems) {
+        if (event.state !== "open") coordinationResolutionAttemptsRef.current.settle(event.eventId);
+      }
       coordinationEventsRef.current = orderedItems;
       setCoordinationEvents(orderedItems);
       setCoordinationEventDetails((current) => reconcileCoordinationEventDetails(orderedItems, current));
+      setCoordinationFeedErrorMessage(null);
+      return orderedItems;
     } catch (error) {
       if (coordinationFeedGateRef.current.isCurrent(token)) {
-        setCoordinationEvents([]);
+        setCoordinationFeedErrorMessage("Coordinationの更新に失敗しました。表示中の情報は前回取得時点のものです。");
         console.error(error);
       }
+      return null;
     }
   }, [withmateApi]);
 
@@ -974,6 +983,8 @@ export default function AgentSessionWindowApp() {
     setCoordinationEvents([]);
     setCoordinationEventDetails({});
     setCoordinationResolutionPendingEventId(null);
+    setCoordinationFeedErrorMessage(null);
+    coordinationResolutionAttemptsRef.current.clear();
     if (!sessionId) return;
     void refreshCoordinationEvents(sessionId);
   }, [refreshCoordinationEvents, selectedSession?.id]);
@@ -1005,17 +1016,23 @@ export default function AgentSessionWindowApp() {
     const sessionId = coordinationFeedGateRef.current.selectedSessionId();
     if (!withmateApi || !sessionId || coordinationResolutionPendingEventId) return;
     setCoordinationResolutionPendingEventId(eventId);
+    const idempotencyKey = coordinationResolutionAttemptsRef.current.getOrCreate(eventId, optionId);
     try {
       const event = await withmateApi.resolveSessionCoordinationEvent(sessionId, {
         eventId,
         optionId,
-        idempotencyKey: crypto.randomUUID(),
+        idempotencyKey,
       });
       if (coordinationFeedGateRef.current.selectedSessionId() !== sessionId) return;
+      coordinationResolutionAttemptsRef.current.settle(eventId);
       setCoordinationEventDetails((current) => ({ ...current, [event.eventId]: event }));
       await refreshCoordinationEvents(sessionId);
     } catch (error) {
       console.error(error);
+      const items = await refreshCoordinationEvents(sessionId);
+      if (items?.some((event) => event.eventId === eventId && event.state !== "open")) {
+        coordinationResolutionAttemptsRef.current.settle(eventId);
+      }
     } finally {
       if (coordinationFeedGateRef.current.selectedSessionId() === sessionId) {
         setCoordinationResolutionPendingEventId(null);
@@ -4419,8 +4436,13 @@ export default function AgentSessionWindowApp() {
         coordinationEvents,
         coordinationEventDetails,
         coordinationResolutionPendingEventId,
+        coordinationFeedErrorMessage,
         onLoadCoordinationEvent: (eventId) => void handleLoadCoordinationEvent(eventId),
         onResolveCoordinationOption: (eventId, optionId) => void handleResolveCoordinationOption(eventId, optionId),
+        onRetryCoordinationEvents: () => {
+          const sessionId = coordinationFeedGateRef.current.selectedSessionId();
+          if (sessionId) void refreshCoordinationEvents(sessionId);
+        },
         selectedContextEmptyText,
         latestCommandEmptyText,
         selectedDiff,

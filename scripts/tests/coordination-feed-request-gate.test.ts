@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   CoordinationFeedRequestGate,
+  CoordinationResolutionAttemptRegistry,
   reconcileCoordinationEventDetails,
 } from "../../src/coordination-feed-request-gate.js";
 
@@ -35,4 +36,14 @@ test("Coordination feedはpublication後にstateが変わったdetailだけを�
   ], details), {
     "event-recorded": details["event-recorded"],
   });
+});
+
+test("Coordination user decisionは失敗後の再試行で同じidempotency keyを使う", () => {
+  let sequence = 0;
+  const attempts = new CoordinationResolutionAttemptRegistry(() => `key-${++sequence}`);
+  assert.equal(attempts.getOrCreate("event-a", "option-a"), "key-1");
+  assert.equal(attempts.getOrCreate("event-a", "option-a"), "key-1");
+  assert.equal(attempts.getOrCreate("event-a", "option-b"), "key-2");
+  attempts.settle("event-a");
+  assert.equal(attempts.getOrCreate("event-a", "option-a"), "key-3");
 });

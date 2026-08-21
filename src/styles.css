@@ -6421,6 +6421,22 @@ button:disabled {
   min-width: 0;
 }
 
+.coordination-feed-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink);
+  font-size: 0.78rem;
+}
+
+.coordination-feed-error button {
+  flex: 0 0 auto;
+  min-height: 30px;
+}
+
 .coordination-feed-item {
   display: grid;
   gap: 7px;
