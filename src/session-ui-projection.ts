@@ -370,12 +370,14 @@ export function resolveAvailableContextPaneTabs({
   hasReasoningCapability = false,
   hasReasoningText = false,
   hasCoordinationEvents = false,
+  hasCoordinationFeedError = false,
 }: {
   isCopilotSession: boolean;
   hasCompanionGroupMonitor?: boolean;
   hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
   hasCoordinationEvents?: boolean;
+  hasCoordinationFeedError?: boolean;
 }): ContextPaneTabKey[] {
   return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
     if (tab === "reasoning") {
@@ -390,7 +392,7 @@ export function resolveAvailableContextPaneTabs({
       return hasCompanionGroupMonitor;
     }
 
-    if (tab === "coordination") return hasCoordinationEvents;
+    if (tab === "coordination") return hasCoordinationEvents || hasCoordinationFeedError;
 
     return true;
   });

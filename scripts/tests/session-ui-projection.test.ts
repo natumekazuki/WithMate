@@ -497,6 +497,10 @@ describe("session-ui-projection", () => {
       "latest-command",
       "coordination",
     ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCoordinationFeedError: true }), [
+      "latest-command",
+      "coordination",
+    ]);
   });
 
   it("Coordination feedはopenのuser decision、blocker、escalationを優先してから新しい順に並べる", () => {

@@ -2260,8 +2260,9 @@ export default function AgentSessionWindowApp() {
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
       hasCoordinationEvents: coordinationEvents.length > 0,
+      hasCoordinationFeedError: coordinationFeedErrorMessage !== null,
     }),
-    [coordinationEvents.length, hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [coordinationEvents.length, coordinationFeedErrorMessage, hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
   );
 
   const hasInProgressLiveRunStep = useMemo(
