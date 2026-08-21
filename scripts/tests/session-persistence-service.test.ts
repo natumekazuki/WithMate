@@ -1234,6 +1234,35 @@ describe("SessionPersistenceService", () => {
     assert.equal(cleanupCount, 0);
   });
 
+  it("deleteSession はstorage commit後のcleanup失敗より先にCoordination変更を通知する", async () => {
+    const session = createSession({ id: "deleted-before-cleanup-failure" });
+    let storedDeleteCount = 0;
+    let coordinationBroadcastCount = 0;
+    const service = new SessionPersistenceService({
+      getSessions: () => [session],
+      setSessions() {},
+      getSession: () => session,
+      isSessionRunInFlight: () => false,
+      deleteStoredSession() {
+        storedDeleteCount += 1;
+      },
+      clearSessionContextTelemetry() {},
+      clearSessionBackgroundActivities() {},
+      invalidateProviderSessionThread() {
+        throw new Error("cleanup failed");
+      },
+      closeSessionWindow() {},
+      broadcastSessions() {},
+      broadcastCoordinationEventsChanged() {
+        coordinationBroadcastCount += 1;
+      },
+    } as never);
+
+    await assert.rejects(() => service.deleteSession(session.id), /cleanup failed/);
+    assert.equal(storedDeleteCount, 1);
+    assert.equal(coordinationBroadcastCount, 1);
+  });
+
   it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {
     const parentSession = createSession({ id: "parent" });
     const storedSessions: Session[] = [parentSession];

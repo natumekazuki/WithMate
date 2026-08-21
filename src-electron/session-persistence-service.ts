@@ -337,6 +337,7 @@ export class SessionPersistenceService {
     } else {
       throw new Error("session delete storage dependency is not configured.");
     }
+    this.deps.broadcastCoordinationEventsChanged?.();
     const deletableSessionIdSet = new Set(deletableSessionIds);
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
 
@@ -361,7 +362,6 @@ export class SessionPersistenceService {
     }
 
     this.deps.broadcastSessions(deletableSessionIds);
-    this.deps.broadcastCoordinationEventsChanged?.();
 
     return {
       cutoffDate: options.cutoff?.cutoffDate,
