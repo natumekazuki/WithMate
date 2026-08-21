@@ -201,28 +201,18 @@ function CodeBlockCopyButton({ code, onCopyResult }: CodeBlockCopyButtonProps) {
 
 function CodeBlockShell({
   children,
-  className,
   code,
   onCopyResult,
 }: {
   children: ReactNode;
-  className?: string;
-  code?: string;
-  onCopyResult?: (feedback: MessageCopyFeedback) => void;
+  code: string;
+  onCopyResult: (feedback: MessageCopyFeedback) => void;
 }) {
-  const shellClassName = [
-    "message-code-block-shell",
-    className,
-    onCopyResult ? "copyable" : "",
-  ].filter(Boolean).join(" ");
-
   return (
-    <div className={shellClassName}>
-      {onCopyResult ? (
-        <div className="message-code-block-actions">
-          <CodeBlockCopyButton code={code ?? ""} onCopyResult={onCopyResult} />
-        </div>
-      ) : null}
+    <div className="message-code-block-shell copyable">
+      <div className="message-code-block-actions">
+        <CodeBlockCopyButton code={code} onCopyResult={onCopyResult} />
+      </div>
       {children}
     </div>
   );
@@ -421,13 +411,7 @@ function createFootnoteLabelIdPlugin(footnoteLabelId: string) {
   };
 }
 
-function MermaidDiagram({
-  source,
-  onCopyResult,
-}: {
-  source: string;
-  onCopyResult?: (feedback: MessageCopyFeedback) => void;
-}) {
+function MermaidDiagram({ source }: { source: string }) {
   const reactId = useId();
   const diagramId = useMemo(() => `message-mermaid-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}`, [reactId]);
   const diagramSource = source.trim();
@@ -465,23 +449,23 @@ function MermaidDiagram({
     };
   }, [diagramId, diagramSource]);
 
-  return (
-    <CodeBlockShell
-      className={`mermaid ${renderState.status === "ready" ? "ready" : "fallback"}`}
-      code={resolveCodeBlockText(source)}
-      onCopyResult={onCopyResult}
-    >
-      {renderState.status === "ready" ? (
+  if (renderState.status === "ready") {
+    return (
+      <div className="message-code-block-shell mermaid">
         <div className="message-mermaid" dangerouslySetInnerHTML={{ __html: renderState.svg }} />
-      ) : (
-        <div className="message-mermaid fallback">
-          {renderState.status === "error" ? <p className="message-mermaid-error">{renderState.message}</p> : null}
-          <pre className="message-code-block">
-            <code className="message-inline-code language-mermaid">{source}</code>
-          </pre>
-        </div>
-      )}
-    </CodeBlockShell>
+      </div>
+    );
+  }
+
+  return (
+    <div className="message-code-block-shell mermaid">
+      <div className="message-mermaid fallback">
+        {renderState.status === "error" ? <p className="message-mermaid-error">{renderState.message}</p> : null}
+        <pre className="message-code-block">
+          <code className="message-inline-code language-mermaid">{source}</code>
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -762,7 +746,6 @@ function createMarkdownComponents(
           return (
             <MermaidDiagram
               source={extractTextContent(child.props.children)}
-              onCopyResult={isFenced ? options?.onCodeBlockCopyResult : undefined}
             />
           );
         }

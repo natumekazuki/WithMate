@@ -6646,7 +6646,6 @@ button:disabled {
 .session-file-markdown.rich-text {
   display: grid;
   gap: 8px;
-  min-width: 0;
   line-height: 1.6;
 }
 
@@ -6842,10 +6841,13 @@ button:disabled {
 }
 
 .message-code-block-shell {
+  position: relative;
+  min-width: 0;
+}
+
+.message-code-block-shell.copyable {
   width: 100%;
   max-width: 100%;
-  min-width: 0;
-  overflow: clip;
 }
 
 .message-code-block-actions {
@@ -6938,9 +6940,6 @@ button:disabled {
 }
 
 .message-mermaid {
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
   overflow-x: auto;
   padding: 12px;
   border: 1px solid rgba(18, 24, 39, 0.12);
@@ -6956,31 +6955,8 @@ button:disabled {
   background: transparent;
 }
 
-.message-code-block-shell.mermaid:not(.copyable) > .message-mermaid {
+.message-code-block-shell.mermaid > .message-mermaid {
   padding-top: 42px;
-}
-
-.message-code-block-shell.mermaid > .message-code-block-actions {
-  border-color: rgba(18, 24, 39, 0.12);
-  border-radius: 8px 8px 0 0;
-  background: rgba(255, 255, 255, 0.82);
-}
-
-.message-code-block-shell.mermaid.copyable.ready > .message-mermaid {
-  padding-top: 12px;
-  border-top: 0;
-  border-radius: 0 0 8px 8px;
-}
-
-.message-code-block-shell.mermaid.fallback > .message-code-block-actions {
-  border-color: rgba(18, 24, 39, 0.08);
-  border-radius: 14px 14px 0 0;
-  background: rgba(18, 24, 39, 0.92);
-}
-
-.message-code-block-shell.mermaid.copyable.fallback .message-code-block {
-  border-top: 0;
-  border-radius: 0 0 14px 14px;
 }
 
 .message-mermaid svg {
@@ -7004,16 +6980,6 @@ button:disabled {
 
 .session-page .message-mermaid.fallback {
   background: transparent;
-}
-
-.session-page .message-code-block-shell.mermaid > .message-code-block-actions {
-  border-color: rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.92);
-}
-
-.session-page .message-code-block-shell.mermaid.fallback > .message-code-block-actions {
-  border-color: rgba(255, 255, 255, 0.08);
-  background: rgba(18, 24, 39, 0.92);
 }
 
 .settings-help {

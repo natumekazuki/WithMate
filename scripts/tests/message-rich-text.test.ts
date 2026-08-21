@@ -408,28 +408,20 @@ test("code block copy操作はhover・focus・disabledの視認状態を持つ",
 
 test("code block copy actionは縦scroll中だけshell上端へstickyし、本文の横scroll ownerから分離される", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
-  const richTextRule = styles.match(
-    /\.message-body\.rich-text,\s*\.session-file-markdown\.rich-text\s*{(?<body>[^}]*)}/,
-  )?.groups?.body ?? "";
   const shellRule = styles.match(/\.message-code-block-shell\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const copyableShellRule = styles.match(/\.message-code-block-shell\.copyable\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const actionsRule = styles.match(/\.message-code-block-actions\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const codeBlockRule = styles.match(/\.message-code-block\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
-  const mermaidRule = styles.match(/\.message-mermaid\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
-  assert.match(richTextRule, /min-width:\s*0;/);
-  assert.match(shellRule, /width:\s*100%;/);
-  assert.match(shellRule, /max-width:\s*100%;/);
-  assert.match(shellRule, /overflow:\s*clip;/);
+  assert.match(shellRule, /position:\s*relative;/);
+  assert.match(copyableShellRule, /width:\s*100%;/);
+  assert.match(copyableShellRule, /max-width:\s*100%;/);
   assert.match(actionsRule, /position:\s*sticky;/);
   assert.match(actionsRule, /top:\s*0;/);
   assert.match(actionsRule, /z-index:\s*1;/);
   assert.match(actionsRule, /width:\s*100%;/);
   assert.doesNotMatch(actionsRule, /position:\s*(?:absolute|fixed);/);
   assert.match(codeBlockRule, /overflow:\s*auto;/);
-  assert.match(mermaidRule, /width:\s*100%;/);
-  assert.match(mermaidRule, /max-width:\s*100%;/);
-  assert.match(mermaidRule, /min-width:\s*0;/);
-  assert.match(mermaidRule, /overflow-x:\s*auto;/);
   assert.doesNotMatch(actionsRule, /overflow(?:-x|-y)?\s*:/);
 });
 
@@ -1100,27 +1092,17 @@ test("MessageRichText は double-dollar math を render し、金額表現の si
   assert.match(html, /\$5 and \$10/);
 });
 
-test("MessageRichText は Mermaid code block を diagram 用 container として render する", () => {
+test("MessageRichText は Mermaid code block をdiagram用containerとしてrenderし、copy操作を表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, {
       text: ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n"),
     }),
   );
   const dom = new JSDOM(html);
-  const shell = dom.window.document.querySelector(".message-code-block-shell.mermaid");
-  const actions = shell?.querySelector(".message-code-block-actions");
-  const mermaid = shell?.querySelector(".message-mermaid.fallback");
 
   assert.match(html, /<div class="message-mermaid fallback">/);
   assert.match(html, /<code class="message-inline-code language-mermaid">flowchart TD\n  A --&gt; B\n<\/code>/);
-  assert.ok(actions);
-  assert.equal(actions?.parentElement, shell);
-  assert.equal(actions?.nextElementSibling, mermaid);
-  assert.equal(
-    actions?.querySelector(".message-code-copy-button"),
-    shell?.querySelector(".message-code-copy-button"),
-  );
-  assert.equal(mermaid?.querySelector(".message-code-copy-button"), null);
+  assert.equal(dom.window.document.querySelector(".message-code-copy-button"), null);
 });
 
 test("MessageRichText は code literal 内の local path link 風テキストを改変しない", () => {
