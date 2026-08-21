@@ -13,6 +13,7 @@ import {
 
 import type { MessageViewMode } from "../MessageRichText.js";
 import type { AdditionalDirectoryItem } from "../session-composer-paths.js";
+import { CloseButton } from "../close-button.js";
 
 import {
   SESSION_ACTION_DOCK_ID,
@@ -205,7 +206,7 @@ export function ChatSkillPickerPanel({
             placeholder="Skillを検索"
             autoComplete="off"
           />
-          <button type="button" onClick={onDismiss} aria-label="Skill候補を閉じる">×</button>
+          <CloseButton ariaLabel="Close skill picker" onClose={onDismiss} />
         </div>
         <div
           className="chat-skill-picker-content"

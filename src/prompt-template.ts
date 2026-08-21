@@ -24,42 +24,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function normalizePromptTemplateName(value: unknown): string {
   if (typeof value !== "string") {
-    throw new TypeError("テンプレート名は文字列で指定してください。");
+    throw new TypeError("Template name must be a string.");
   }
 
   const normalized = value.trim().replace(/\s+/g, " ");
   if (!normalized) {
-    throw new Error("テンプレート名を入力してください。");
+    throw new Error("Enter a template name.");
   }
   if (normalized.length > PROMPT_TEMPLATE_NAME_MAX_LENGTH) {
-    throw new Error(`テンプレート名は${PROMPT_TEMPLATE_NAME_MAX_LENGTH}文字以内で入力してください。`);
+    throw new Error(`Template name must be ${PROMPT_TEMPLATE_NAME_MAX_LENGTH} characters or fewer.`);
   }
   return normalized;
 }
 
 export function normalizePromptTemplatePrompt(value: unknown): string {
   if (typeof value !== "string") {
-    throw new TypeError("プロンプト本文は文字列で指定してください。");
+    throw new TypeError("Prompt must be a string.");
   }
   if (!value.trim()) {
-    throw new Error("プロンプト本文を入力してください。");
+    throw new Error("Enter a prompt.");
   }
   if (new TextEncoder().encode(value).byteLength > PROMPT_TEMPLATE_PROMPT_MAX_BYTES) {
-    throw new Error("プロンプト本文は256 KiB以内で入力してください。");
+    throw new Error("Prompt must be 256 KiB or less.");
   }
   return value;
 }
 
 export function normalizePromptTemplateId(value: unknown): string {
   if (typeof value !== "string" || !value.trim() || value.length > 128) {
-    throw new TypeError("テンプレートIDが不正です。");
+    throw new TypeError("Invalid template ID.");
   }
   return value;
 }
 
 export function parseCreatePromptTemplateInput(value: unknown): CreatePromptTemplateInput {
   if (!isRecord(value)) {
-    throw new TypeError("テンプレートの作成内容が不正です。");
+    throw new TypeError("Invalid template creation input.");
   }
   return {
     name: normalizePromptTemplateName(value.name),
@@ -69,7 +69,7 @@ export function parseCreatePromptTemplateInput(value: unknown): CreatePromptTemp
 
 export function parseUpdatePromptTemplateInput(value: unknown): UpdatePromptTemplateInput {
   if (!isRecord(value)) {
-    throw new TypeError("テンプレートの更新内容が不正です。");
+    throw new TypeError("Invalid template update input.");
   }
   return {
     id: normalizePromptTemplateId(value.id),

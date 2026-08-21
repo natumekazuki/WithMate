@@ -65,7 +65,7 @@ export class PromptTemplateStorage {
       `).run(id, normalized.name, normalized.prompt, createdAt, createdAt);
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        throw new Error("同じ名前のテンプレートがすでにあります。");
+        throw new Error("A template with the same name already exists.");
       }
       throw error;
     }
@@ -82,11 +82,11 @@ export class PromptTemplateStorage {
         WHERE id = ?
       `).run(normalized.name, normalized.prompt, updatedAt, normalized.id);
       if (result.changes !== 1) {
-        throw new Error("更新するテンプレートが見つかりません。");
+        throw new Error("The template to update was not found.");
       }
     } catch (error) {
       if (isUniqueConstraintError(error)) {
-        throw new Error("同じ名前のテンプレートがすでにあります。");
+        throw new Error("A template with the same name already exists.");
       }
       throw error;
     }
@@ -97,7 +97,7 @@ export class PromptTemplateStorage {
     const normalizedId = normalizePromptTemplateId(id);
     const result = this.db.prepare("DELETE FROM prompt_templates WHERE id = ?").run(normalizedId);
     if (result.changes !== 1) {
-      throw new Error("削除するテンプレートが見つかりません。");
+      throw new Error("The template to delete was not found.");
     }
   }
 
@@ -112,7 +112,7 @@ export class PromptTemplateStorage {
       WHERE id = ?
     `).get(id) as PromptTemplateRow | undefined;
     if (!row) {
-      throw new Error("テンプレートを読み込めませんでした。");
+      throw new Error("Could not load the template.");
     }
     return toPromptTemplate(row);
   }
