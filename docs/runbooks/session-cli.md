@@ -69,14 +69,18 @@ execution resultの`terminalFailureNotification`は、未設定なら`null`、�
 通常Sessionの作成、一覧、取得、名前変更を公開する。
 
 ```powershell
-withmate-session session create --json '{"title":"作業","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"},"idempotencyKey":"create-20260812-001"}'
-withmate-session session create --json '{"title":"Copilot作業","provider":"copilot","catalogRevision":1,"workspace":{"kind":"session_folder"},"idempotencyKey":"create-copilot-20260812-001"}'
+withmate-session session create --json '{"title":"計画を分解する","sessionRole":"task-coordinator","provider":"codex","catalogRevision":1,"workspace":{"kind":"directory","path":"C:\\work"},"idempotencyKey":"create-20260812-001"}'
+withmate-session session create --json '{"title":"実装する","sessionRole":"executor","provider":"copilot","catalogRevision":1,"workspace":{"kind":"session_folder"},"idempotencyKey":"create-copilot-20260812-001"}'
 withmate-session session list --json '{}'
 withmate-session session get --json '{"sessionId":"SESSION_ID"}'
 withmate-session session rename --json '{"sessionId":"SESSION_ID","title":"新しい名前","idempotencyKey":"rename-20260812-001"}'
 ```
 
-`session.create`と`session.rename`の`idempotencyKey`は必須で、callerが生成して保持する。response loss後の再送では同じkeyを使う。
+`session.create`は現在のbinding actorのchildだけを作成する。`overall-coordinator`は`task-coordinator`または`executor`、`task-coordinator`は`executor`を作成できる。`standalone`と`executor`はchildを作成できない。actor、parent、root、depth、Character identityは入力せず、WithMateがcurrent bindingから導出する。
+
+`session.self`、`session.create`、`session.list`、`session.get`は`sessionRole`、`roleContractRevision`、`rootSessionId`、`parentSessionId`、`delegationDepth`を同じ形で返す。`runtime catalog`はRole contract revision、対応Role、child規則、最大depthを返す。
+
+`session.create`と`session.rename`の`idempotencyKey`は必須で、callerが生成して保持する。response loss後の再送では同じkeyを使う。create keyはactorごとのscopeであり、同じactorでRoleまたは他のcreate入力を変えて再利用すると`IDEMPOTENCY_CONFLICT`になる。
 
 `runtime catalog`に出るproviderは、外部Session runtimeが対応し、かつSettingsで有効なproviderだけである。現在はCodexとCopilotを利用できる。Session作成後は対象Sessionと同じproviderをTurnへ指定する。
 

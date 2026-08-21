@@ -130,6 +130,7 @@ const interactionRespondInputSchema = z.object({
   }
 });
 const sessionCreateInputSchema = z.object({
+  sessionRole: z.enum(["task-coordinator", "executor"]),
   title: nonEmptyStringSchema,
   provider: z.enum(["codex", "copilot"]),
   catalogRevision: z.number().int().min(1),
@@ -213,7 +214,16 @@ const workspaceSchema = z.object({
   label: z.string(),
   path: z.string(),
 }).strict();
+const sessionRoleSchema = z.enum(["standalone", "overall-coordinator", "task-coordinator", "executor"]);
+const sessionRoleBindingShape = {
+  sessionRole: sessionRoleSchema,
+  roleContractRevision: z.literal(1),
+  rootSessionId: z.string(),
+  parentSessionId: z.string().nullable(),
+  delegationDepth: z.number().int().min(0).max(2),
+};
 const sessionSummarySchema = z.object({
+  ...sessionRoleBindingShape,
   sessionId: z.string(),
   title: z.string(),
   sessionKind: z.literal("default"),
@@ -387,6 +397,15 @@ const turnOptionsSchema = z.union([
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
+    sessionRoleContractRevision: z.literal(1),
+    supportedSessionRoles: z.array(sessionRoleSchema),
+    allowedChildSessionRoles: z.object({
+      standalone: z.array(z.enum(["task-coordinator", "executor"])),
+      "overall-coordinator": z.array(z.enum(["task-coordinator", "executor"])),
+      "task-coordinator": z.array(z.enum(["task-coordinator", "executor"])),
+      executor: z.array(z.enum(["task-coordinator", "executor"])),
+    }).strict(),
+    maxDelegationDepth: z.literal(2),
     providers: z.array(z.object({
       id: z.string(),
       label: z.string(),
@@ -395,7 +414,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       models: z.array(modelSchema),
     }).strict()),
   }).strict(),
-  "session.self": z.object({ sessionId: z.string() }).strict(),
+  "session.self": z.object({ sessionId: z.string(), ...sessionRoleBindingShape }).strict(),
   "session.create": sessionDetailSchema,
   "session.list": z.object({ items: z.array(sessionSummarySchema), nextCursor: z.string().optional() }).strict(),
   "session.get": sessionGetSchema,
@@ -445,7 +464,7 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
 export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "runtime.catalog", title: "Get runtime catalog", description: "Read the current public Provider and model catalog.", readOnly: true, destructive: false },
   { name: "session.self", title: "Resolve actor Session", description: "Resolve the current provider actor Session from its runtime binding.", readOnly: true, destructive: false },
-  { name: "session.create", title: "Create Session", description: "Create a normal Session with an explicit workspace.", readOnly: false, destructive: false },
+  { name: "session.create", title: "Create child Session", description: "Create an authorized child Session for the bound actor with an explicit workspace.", readOnly: false, destructive: false },
   { name: "session.list", title: "List Sessions", description: "List normal Sessions with keyset pagination.", readOnly: true, destructive: false },
   { name: "session.get", title: "Get Session", description: "Read one normal Session.", readOnly: true, destructive: false },
   { name: "session.rename", title: "Rename Session", description: "Rename one normal Session.", readOnly: false, destructive: false },

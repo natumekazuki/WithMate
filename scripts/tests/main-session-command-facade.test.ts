@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
-import { MainSessionCommandFacade } from "../../src-electron/main-session-command-facade.js";
+import {
+  MainSessionCommandFacade,
+  MainSessionFolderCleanupRequiredError,
+} from "../../src-electron/main-session-command-facade.js";
 import { resolveComposerPreview } from "../../src-electron/composer-attachments.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 import { SessionExecutionQueueFullError } from "../../src-electron/session-execution-storage-v6.js";
@@ -47,6 +50,7 @@ function createLaunchSelection(
 
 function createSessionRequest(workspace: Record<string, unknown>): Record<string, unknown> {
   return {
+    rootSessionRole: "overall-coordinator",
     provider: "codex",
     taskTitle: "test task",
     workspace,
@@ -726,7 +730,7 @@ test("MainSessionCommandFacade は SessionFolder 作成失敗時に session を�
   assert.equal(persistCount, 0);
 });
 
-test("MainSessionCommandFacade は session 永続化失敗後に作成済み SessionFolder を削除しない", async () => {
+test("MainSessionCommandFacade は DB commit前の失敗後に作成済み SessionFolder をcleanupする", async () => {
   const calls: string[] = [];
   const facade = createMainSessionCommandFacade({
     getSession: () => null,
@@ -738,7 +742,7 @@ test("MainSessionCommandFacade は session 永続化失敗後に作成済み Ses
       ({
         createSession() {
           calls.push("persist");
-          throw new Error("persist failed after commit");
+          throw new Error("persist failed before commit");
         },
       }) as never,
     getSessionRuntimeService: () => ({} as never),
@@ -755,15 +759,52 @@ test("MainSessionCommandFacade は session 永続化失敗後に作成済み Ses
     },
     isSessionFilesWorkspace: () => false,
     async cleanupSessionFilesDirectory() {
-      calls.push("cleanup");
+      calls.push("best-effort-cleanup");
+    },
+    async cleanupCreatedSessionFilesDirectory() {
+      calls.push("strict-create-cleanup");
     },
   });
 
   await assert.rejects(
     facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
-    /persist failed after commit/,
+    /persist failed before commit/,
   );
-  assert.deepEqual(calls, ["issue-id", "mkdir", "persist"]);
+  assert.deepEqual(calls, ["issue-id", "mkdir", "persist", "strict-create-cleanup"]);
+});
+
+test("MainSessionCommandFacade は未commit SessionFolderのcleanup失敗をrecoverable owner付きで返す", async () => {
+  const facade = createMainSessionCommandFacade({
+    getSession: () => null,
+    getSessions: () => [],
+    getStoredSessionSummaries: () => [],
+    runProviderRuntimeOperationExclusive,
+    resolveSessionLaunchSelection: async () => createLaunchSelection(),
+    getSessionPersistenceService: () =>
+      ({
+        createSession() {
+          throw new Error("persist failed before commit");
+        },
+      }) as never,
+    getSessionRuntimeService: () => ({} as never),
+    getProviderQuotaTelemetry: () => null,
+    isProviderQuotaTelemetryStale: () => false,
+    refreshProviderQuotaTelemetry: async () => null,
+    createSessionId: () => "launch-managed",
+    createSessionFilesDirectory: () => "C:/WithMate/session-files/launch-managed",
+    isSessionFilesWorkspace: () => false,
+    async cleanupCreatedSessionFilesDirectory() {
+      throw new Error("cleanup failed");
+    },
+  });
+
+  await assert.rejects(
+    facade.createSessionFromRequest(createSessionRequest({ kind: "session-folder" }) as never),
+    (error) =>
+      error instanceof MainSessionFolderCleanupRequiredError
+      && error.code === "SESSION_FOLDER_CLEANUP_REQUIRED"
+      && error.sessionId === "launch-managed",
+  );
 });
 
 test("MainSessionCommandFacade は cutoff delete の削除済み session だけ cleanup する", async () => {

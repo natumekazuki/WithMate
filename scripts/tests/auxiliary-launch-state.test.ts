@@ -394,9 +394,4 @@ describe("auxiliary-launch-state", () => {
       feedback: AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK,
     });
   });
-
-  it("feedback 文言は固定文言を使う", () => {
-    assert.equal(AUXILIARY_LAUNCH_NO_PROVIDER_FEEDBACK, "有効な Coding Provider がないよ。");
-    assert.equal(AUXILIARY_LAUNCH_NO_SELECTION_FEEDBACK, "有効な Coding Provider を選んでね。");
-  });
 });

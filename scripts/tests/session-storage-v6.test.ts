@@ -224,11 +224,13 @@ describe("SessionStorageV6", () => {
         makeSession("session-a", "A", "2026-08-11T00:00:00.000Z"),
         {
           operation: "session.create",
+          principalSessionId: "actor-a",
           idempotencyKey: "create-key",
           requestFingerprint: "fingerprint-a",
           createdAt: "2026-08-11T00:00:00.000Z",
           expiresAt: "2026-08-12T00:00:00.000Z",
           projectResult: (session) => ({ sessionId: session.id, title: session.taskTitle }),
+          resolveReplayFingerprint: () => "fingerprint-a",
         },
       );
       assert.equal(first.replayed, false);
@@ -239,11 +241,13 @@ describe("SessionStorageV6", () => {
         makeSession("must-not-be-created", "Different object", "2026-08-11T00:01:00.000Z"),
         {
           operation: "session.create",
+          principalSessionId: "actor-a",
           idempotencyKey: "create-key",
           requestFingerprint: "fingerprint-a",
           createdAt: "2026-08-11T00:01:00.000Z",
           expiresAt: "2026-08-12T00:01:00.000Z",
           projectResult: () => ({ unexpected: true }),
+          resolveReplayFingerprint: () => "fingerprint-a",
         },
       );
       assert.equal(replay.replayed, true);
@@ -252,6 +256,7 @@ describe("SessionStorageV6", () => {
       assert.throws(
         () => storage?.resolveSessionCrudIdempotency(
           "session.create",
+          "actor-a",
           "create-key",
           "different-fingerprint",
           "2026-08-11T00:02:00.000Z",
@@ -297,6 +302,7 @@ describe("SessionStorageV6", () => {
       assert.deepEqual(
         storage.resolveSessionCrudIdempotency(
           "session.create",
+          "actor-a",
           "create-key",
           "different-fingerprint",
           "2026-08-13T00:00:00.000Z",
@@ -934,18 +940,15 @@ describe("SessionStorageV6", () => {
         approvalMode: DEFAULT_APPROVAL_MODE,
       };
       const oldSession = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "old" }),
-        id: "old",
+        ...buildNewSession({ ...baseInput, id: "old", taskTitle: "old" }),
         updatedAt: "2026-06-01T00:00:00.000Z",
       });
       const cutoffSession = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "cutoff" }),
-        id: "cutoff",
+        ...buildNewSession({ ...baseInput, id: "cutoff", taskTitle: "cutoff" }),
         updatedAt: "2026-07-01T00:00:00.000Z",
       });
       const recentSession = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "recent" }),
-        id: "recent",
+        ...buildNewSession({ ...baseInput, id: "recent", taskTitle: "recent" }),
         updatedAt: "2026-07-02T00:00:00.000Z",
       });
 
@@ -985,16 +988,13 @@ describe("SessionStorageV6", () => {
         approvalMode: DEFAULT_APPROVAL_MODE,
       };
       const deletedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "deleted parent" }),
-        id: "deleted-parent",
+        ...buildNewSession({ ...baseInput, id: "deleted-parent", taskTitle: "deleted parent" }),
       });
       const retainedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "retained parent" }),
-        id: "retained-parent",
+        ...buildNewSession({ ...baseInput, id: "retained-parent", taskTitle: "retained parent" }),
       });
       const replacedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "replaced parent" }),
-        id: "replaced-parent",
+        ...buildNewSession({ ...baseInput, id: "replaced-parent", taskTitle: "replaced parent" }),
       });
 
       insertAuxiliarySessionRows(dbPath, [
@@ -1052,16 +1052,13 @@ describe("SessionStorageV6", () => {
         approvalMode: DEFAULT_APPROVAL_MODE,
       };
       const deletedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "deleted parent audit" }),
-        id: "deleted-audit-parent",
+        ...buildNewSession({ ...baseInput, id: "deleted-audit-parent", taskTitle: "deleted parent audit" }),
       });
       const retainedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "retained parent audit" }),
-        id: "retained-audit-parent",
+        ...buildNewSession({ ...baseInput, id: "retained-audit-parent", taskTitle: "retained parent audit" }),
       });
       const replacedParent = storage.upsertSession({
-        ...buildNewSession({ ...baseInput, taskTitle: "replaced parent audit" }),
-        id: "replaced-audit-parent",
+        ...buildNewSession({ ...baseInput, id: "replaced-audit-parent", taskTitle: "replaced parent audit" }),
       });
       insertAuxiliarySessionRows(dbPath, [
         { id: "aux-audit-deleted", parentSessionId: deletedParent.id },

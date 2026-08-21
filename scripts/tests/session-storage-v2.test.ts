@@ -222,7 +222,8 @@ function insertAuditLogForSession(db: DatabaseSync, sessionId: string, summary: 
 }
 
 function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
-  const session = buildNewSession({
+  return buildNewSession({
+    id: `session-${workspaceLabel}-${taskTitle}`,
     taskTitle,
     workspaceLabel,
     workspacePath: `/${workspaceLabel}`,
@@ -233,11 +234,6 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
     approvalMode: DEFAULT_APPROVAL_MODE,
   });
-
-  return {
-    ...session,
-    id: `${session.id}-${workspaceLabel}`,
-  };
 }
 
 describe("SessionStorageV2", () => {

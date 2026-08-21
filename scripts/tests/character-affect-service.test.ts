@@ -43,6 +43,12 @@ function createFixture(): { directory: string; dbPath: string } {
         character_id, character_snapshot_json, created_at, updated_at, last_active_at
       ) VALUES ('session-a', 'A', 'active', 'codex', 1, 'gpt-5', 'on-request', 'character-a', '{}', ?, ?, ?)
     `).run("2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z", "2026-08-09T00:00:00.000Z");
+    db.prepare(`
+      INSERT INTO session_role_bindings_v6 (
+        session_id, session_role, role_contract_revision,
+        root_session_id, parent_session_id, delegation_depth
+      ) VALUES ('session-a', 'standalone', 1, 'session-a', NULL, 0)
+    `).run();
   } finally {
     db.close();
   }
@@ -497,6 +503,7 @@ describe("CharacterAffectService Memory episode lifecycle", () => {
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = 'session-a'").run();
         db.prepare("DELETE FROM sessions_v6 WHERE id = 'session-a'").run();
       } finally {
         db.close();

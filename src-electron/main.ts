@@ -2015,6 +2015,7 @@ function requireMainSessionCommandFacade(): MainSessionCommandFacade {
       dismissSessionTurnNotification: (sessionId) =>
         requireSessionTurnNotificationService().dismissSessionNotification(sessionId),
       cleanupSessionFilesDirectory,
+      cleanupCreatedSessionFilesDirectory,
       resumeSessionExecutionQueue: (sessionId) => sessionExecutionService?.resumeQueue(sessionId),
       validateWorkspaceDirectory: (targetPath) =>
         workspaceDirectoryValidationService.validate(targetPath),
@@ -2670,6 +2671,7 @@ async function drainPendingCharacterAffectTurns(): Promise<boolean> {
 function requireSessionRuntimeService(): SessionRuntimeService {
   if (!sessionRuntimeService) {
     sessionRuntimeService = new SessionRuntimeService({
+      includeNormalSessionRoleContext: true,
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
       upsertTerminalSession: (session, terminalCommit) =>
@@ -2729,6 +2731,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
           authoritySnapshot: {
             characterId: session.characterId,
             sessionKind: session.sessionKind,
+            sessionRoleBinding: session.roleBinding,
           },
           operationGrants: getProviderAgentRuntimeOperations(),
         }),
@@ -3300,6 +3303,7 @@ function requireSessionCrudService(): SessionCrudService {
       createSessionId: () => `launch-${crypto.randomUUID()}`,
       createSessionFilesDirectory: (sessionId) =>
         createSessionFilesDirectory(app.getPath("userData"), sessionId),
+      cleanupSessionFilesDirectory: cleanupCreatedSessionFilesDirectory,
       resolveSessionFilesDirectory: (sessionId) =>
         resolveSessionFilesDirectory(app.getPath("userData"), sessionId),
       publishCreatedSession: (session) => {
@@ -3614,6 +3618,13 @@ function requireSessionPersistenceService(): SessionPersistenceService {
       listStoredSessions: () => requireSessionStorage().listSessions(),
       listStoredSessionIdsLastActiveBefore: (cutoff) =>
         requireSessionStorage().listSessionIdsLastActiveBefore(cutoff),
+      listSessionIdsWithChildren: (sessionIds) => {
+        const storage = requireSessionStorage();
+        if (!storage.listSessionIdsWithChildren) {
+          throw new Error("Session hierarchy storage is unavailable.");
+        }
+        return storage.listSessionIdsWithChildren(sessionIds);
+      },
       deleteStoredSessions: (sessionIds) => requireSessionStorageForWrite().deleteSessions(sessionIds),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getModelCatalogSnapshot: () => getModelCatalog(null) ?? requireModelCatalogStorage().ensureSeeded(),
@@ -4792,6 +4803,10 @@ async function cleanupSessionFilesDirectory(sessionId: string): Promise<void> {
   } catch (error) {
     console.warn("Session files directory の cleanup に失敗しました:", sessionId, error);
   }
+}
+
+async function cleanupCreatedSessionFilesDirectory(sessionId: string): Promise<void> {
+  await deleteSessionFilesDirectory(app.getPath("userData"), sessionId);
 }
 
 async function openSessionFilesDirectory(sessionId: string): Promise<void> {

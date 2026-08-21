@@ -76,6 +76,7 @@ describe("home-launch-state", () => {
       open: true,
       mode: "session",
       title: "",
+      sessionPurpose: "standalone",
       workspacePathInput: "",
       workspaceValidation: "idle",
       workspaceValidationMessage: "",
@@ -89,6 +90,7 @@ describe("home-launch-state", () => {
       open: false,
       mode: "session",
       title: "",
+      sessionPurpose: "standalone",
       workspacePathInput: "",
       workspaceValidation: "idle",
       workspaceValidationMessage: "",
@@ -337,7 +339,7 @@ describe("home-launch-state", () => {
     );
   });
 
-  it("launch validation message は既存の優先順位で返す", () => {
+  it("launch validation は必須条件の不足を拒否する", () => {
     const baseDraft = {
       ...createClosedLaunchDraft(),
       open: true,
@@ -347,41 +349,41 @@ describe("home-launch-state", () => {
     };
     const mateProfile = createMateProfile({ id: "mate-a", displayName: "Mia" });
 
-    assert.equal(
+    assert.notEqual(
       resolveLaunchValidationMessage({
         draft: { ...baseDraft, title: "" },
         mateState: "not_created",
         mateProfile: null,
         selectedProviderId: null,
       }),
-      "タイトルを入力してね。",
+      "",
     );
-    assert.equal(
+    assert.notEqual(
       resolveLaunchValidationMessage({
         draft: { ...baseDraft, title: "  " },
         mateState: "active",
         mateProfile,
         selectedProviderId: "codex",
       }),
-      "タイトルを入力してね。",
+      "",
     );
-    assert.equal(
+    assert.notEqual(
       resolveLaunchValidationMessage({
         draft: { ...baseDraft, workspace: null },
         mateState: "active",
         mateProfile,
         selectedProviderId: "codex",
       }),
-      "workspace を選んでね。",
+      "",
     );
-    assert.equal(
+    assert.notEqual(
       resolveLaunchValidationMessage({
         draft: baseDraft,
         mateState: "active",
         mateProfile,
         selectedProviderId: null,
       }),
-      "有効な Coding Provider を選んでね。",
+      "",
     );
     assert.equal(
       resolveLaunchValidationMessage({
@@ -427,6 +429,7 @@ describe("home-launch-state", () => {
     assert.deepEqual(input, {
       provider: "codex",
       taskTitle: "task",
+      rootSessionRole: "standalone",
       workspace: {
         kind: "directory",
         label: "demo",

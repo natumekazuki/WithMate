@@ -10,6 +10,7 @@ import { CREATE_V2_SCHEMA_SQL } from "../src-electron/database-schema-v2.js";
 import { AuditLogStorageV2 } from "../src-electron/audit-log-storage-v2.js";
 import { SessionStorageV2 } from "../src-electron/session-storage-v2.js";
 import type { Session } from "../src/session-state.js";
+import { buildRootSessionRoleBinding } from "../src/session-role-binding.js";
 
 export type BenchmarkProfileName = "small" | "medium" | "large";
 
@@ -177,8 +178,9 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     };
   });
 
+  const sessionId = `benchmark-session-${sessionIndex}`;
   return {
-    id: `benchmark-session-${sessionIndex}`,
+    id: sessionId,
     taskTitle: `benchmark session ${sessionIndex}`,
     status: "saved",
     updatedAt: nowIso(sessionIndex),
@@ -191,6 +193,7 @@ function createSession(sessionIndex: number, options: ResolvedBenchmarkOptions):
     sessionKind: "default",
     accessMode: "active",
     sourceSchemaVersion: 4,
+    roleBinding: buildRootSessionRoleBinding(sessionId, "standalone"),
     characterId: "benchmark-character",
     character: "Benchmark Character",
     characterIconPath: "",

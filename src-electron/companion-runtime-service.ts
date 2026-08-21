@@ -95,6 +95,7 @@ function buildProviderSession(session: CompanionSession): Session {
     sessionKind: "default",
     accessMode: "active",
     sourceSchemaVersion: 4,
+    roleBinding: null,
     characterId: session.characterId,
     character: session.character,
     characterIconPath: session.characterIconPath,

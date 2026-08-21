@@ -13,6 +13,7 @@ import {
 } from "./database-schema-v4.js";
 import {
   APP_DATABASE_V6_FILENAME,
+  ExistingSessionRoleBindingSchemaError,
   FORBIDDEN_V6_TABLES,
   cleanupForbiddenV6Tables,
   ensureV6Schema,
@@ -33,7 +34,10 @@ function tryEnsureExistingV6DatabaseSchema(dbPath: string): void {
   const db = openAppDatabase(dbPath);
   try {
     ensureV6Schema(db);
-  } catch {
+  } catch (error) {
+    if (error instanceof ExistingSessionRoleBindingSchemaError) {
+      throw error;
+    }
     // Repair failure must not block fallback to a valid legacy database generation.
   } finally {
     db.close();

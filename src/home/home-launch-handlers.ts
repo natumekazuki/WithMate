@@ -14,6 +14,8 @@ import {
   updateLaunchDraftForCharacterSelection,
   updateLaunchDraftForProviderSelection,
   updateLaunchDraftForRandomCharacterSelection,
+  updateLaunchDraftForSessionPurpose,
+  type HomeLaunchSessionPurpose,
 } from "./home-launch-state.js";
 import { isSessionFolderLaunchWorkspace } from "./home-launch-workspace.js";
 import { startHomeLaunch } from "./home-launch-actions.js";
@@ -54,6 +56,7 @@ export type HomeLaunchHandlers = {
   onSelectLaunchProvider: (providerId: string) => void;
   onSelectLaunchCharacter: (characterId: string) => void;
   onSelectRandomLaunchCharacter: () => void;
+  onSelectSessionPurpose: (purpose: HomeLaunchSessionPurpose) => void;
   onChangeMode: (mode: HomeLaunchDraft["mode"]) => void;
   onChangeTitle: (value: string) => void;
   onChangeWorkspacePath: (value: string) => void;
@@ -102,7 +105,7 @@ export function buildHomeLaunchHandlers({
     setLaunchFeedback("");
     await refreshCharacterEntries().catch((error) => {
       setCharactersLoaded(false);
-      setLaunchFeedback(error instanceof Error ? error.message : "Character 一覧の再読み込みに失敗したよ。");
+      setLaunchFeedback(error instanceof Error ? error.message : "Failed to reload Characters.");
     });
     setLaunchDraft((current) =>
       openLaunchDraft(
@@ -167,6 +170,10 @@ export function buildHomeLaunchHandlers({
     onSelectRandomLaunchCharacter: () => {
       setLaunchFeedback("");
       setLaunchDraft((current) => updateLaunchDraftForRandomCharacterSelection(current));
+    },
+    onSelectSessionPurpose: (purpose) => {
+      setLaunchFeedback("");
+      setLaunchDraft((current) => updateLaunchDraftForSessionPurpose(current, purpose));
     },
     onChangeMode: (mode) => {
       setLaunchFeedback("");

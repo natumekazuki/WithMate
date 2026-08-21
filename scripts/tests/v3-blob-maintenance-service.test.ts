@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { buildRootSessionRoleBinding } from "../../src/session-role-binding.js";
 import { buildNewSession, type MessageArtifact, type Session } from "../../src/session-state.js";
 import { CREATE_V3_SCHEMA_SQL } from "../../src-electron/database-schema-v3.js";
 import { SessionStorageV3 } from "../../src-electron/session-storage-v3.js";
@@ -49,6 +50,7 @@ function createSession(id: string): Session {
   return {
     ...session,
     id,
+    roleBinding: buildRootSessionRoleBinding(id, "standalone"),
     threadId: `thread-${id}`,
     messages: [
       {

@@ -25,22 +25,26 @@ async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promi
   }
 }
 
-function createSession(taskTitle: string, workspaceLabel: string, characterId: string, character: string) {
-  const session = buildNewSession({
+function createSession(
+  taskTitle: string,
+  workspaceLabel: string,
+  characterId: string,
+  character: string,
+  sessionKind: "default" | "character-authoring" = "default",
+) {
+  return buildNewSession({
+    id: `session-${workspaceLabel}-${taskTitle}`,
     taskTitle,
     workspaceLabel,
     workspacePath: `C:/${workspaceLabel}`,
     branch: "main",
+    sessionKind,
     characterId,
     character,
     characterIconPath: "",
     characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
     approvalMode: DEFAULT_APPROVAL_MODE,
   });
-  return {
-    ...session,
-    id: `${session.id}-${workspaceLabel}`,
-  };
 }
 
 describe("SessionStorage", () => {
@@ -255,8 +259,7 @@ describe("SessionStorage", () => {
     try {
       const storage = new SessionStorage(dbPath);
       const session = storage.upsertSession({
-        ...createSession("character authoring", "workspace-character", "char-a", "A"),
-        sessionKind: "character-authoring",
+        ...createSession("character authoring", "workspace-character", "char-a", "A", "character-authoring"),
       });
 
       const loaded = storage.getSession(session.id);
@@ -309,6 +312,7 @@ describe("SessionStorage", () => {
           sessionKind: session.sessionKind,
           accessMode: session.accessMode,
           sourceSchemaVersion: session.sourceSchemaVersion,
+          roleBinding: session.roleBinding,
           characterId: session.characterId,
           character: session.character,
           characterIconPath: session.characterIconPath,

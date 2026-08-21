@@ -12,8 +12,8 @@ import {
   resolveLaunchDirectoryWorkspace,
   type LaunchWorkspaceSelection,
 } from "./home-launch-workspace.js";
-import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
+import { LAUNCH_NO_PROVIDER_SELECTED_MESSAGE } from "../launch/launch-feedback.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
   type WorkspaceDirectoryValidationResult,
@@ -31,12 +31,14 @@ type LaunchCharacterSnapshot = {
 };
 
 export type LaunchCharacterSelectionMode = "specific" | "random";
+export type HomeLaunchSessionPurpose = "standalone" | "overall-coordinator";
 export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";
 
 export type HomeLaunchDraft = {
   open: boolean;
   mode: "session" | "companion";
   title: string;
+  sessionPurpose: HomeLaunchSessionPurpose;
   workspacePathInput: string;
   workspaceValidation: HomeLaunchWorkspaceValidationState;
   workspaceValidationMessage: string;
@@ -51,6 +53,7 @@ export function createClosedLaunchDraft(): HomeLaunchDraft {
     open: false,
     mode: "session",
     title: "",
+    sessionPurpose: "standalone",
     workspacePathInput: "",
     workspaceValidation: "idle",
     workspaceValidationMessage: "",
@@ -71,6 +74,7 @@ export function openLaunchDraft(
     open: true,
     mode,
     title: "",
+    sessionPurpose: "standalone",
     workspacePathInput: "",
     workspaceValidation: "idle",
     workspaceValidationMessage: "",
@@ -131,6 +135,7 @@ export function closeLaunchDraft(draft: HomeLaunchDraft): HomeLaunchDraft {
     ...draft,
     open: false,
     title: "",
+    sessionPurpose: "standalone",
     workspacePathInput: "",
     workspaceValidation: "idle",
     workspaceValidationMessage: "",
@@ -216,6 +221,13 @@ export function updateLaunchDraftForProviderSelection(
   };
 }
 
+export function updateLaunchDraftForSessionPurpose(
+  draft: HomeLaunchDraft,
+  sessionPurpose: HomeLaunchSessionPurpose,
+): HomeLaunchDraft {
+  return { ...draft, sessionPurpose };
+}
+
 export function updateLaunchDraftForCharacterSelection(
   draft: HomeLaunchDraft,
   characterId: string,
@@ -248,10 +260,10 @@ export function resolveLaunchValidationMessage({
   selectedProviderId: string | null;
 }): string {
   if (!draft.title.trim()) {
-    return "タイトルを入力してね。";
+    return "Enter a session title.";
   }
   if (!draft.workspace) {
-    return "workspace を選んでね。";
+    return "Select a workspace.";
   }
   if (!selectedProviderId) {
     return LAUNCH_NO_PROVIDER_SELECTED_MESSAGE;
@@ -302,6 +314,7 @@ export function buildCreateSessionRequestFromLaunchDraft({
   return {
     provider: selectedProviderId,
     taskTitle: normalizedTitle,
+    rootSessionRole: draft.sessionPurpose,
     workspace,
     characterId: characterSnapshot.characterId,
     character: characterSnapshot.character,

@@ -61,7 +61,9 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "getSession"
   | "getSessionMessageArtifact"
   | "listSessionIdsLastActiveBefore"
-> & Pick<SessionStorage, "close">;
+> & Pick<SessionStorage, "close"> & {
+  listSessionIdsWithChildren?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
+};
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"

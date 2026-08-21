@@ -112,6 +112,7 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
     operation: "session.create",
     input: {
       title: "Review session",
+      sessionRole: "task-coordinator",
       provider: "codex",
       catalogRevision: 4,
       workspace: { kind: "session_folder" },
@@ -120,6 +121,7 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
   });
   assert.deepEqual(create.input, {
     title: "Review session",
+    sessionRole: "task-coordinator",
     provider: "codex",
     catalogRevision: 4,
     workspace: { kind: "session_folder" },
@@ -139,6 +141,7 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
       operation: "session.create",
       input: {
         title: "Review session",
+        sessionRole: "task-coordinator",
         provider: "codex",
         catalogRevision: 4,
         workspace: { kind: "session_folder", path: "must-not-pass" },
@@ -147,6 +150,31 @@ test("SESSION-CRUD-SCHEMA-01: session CRUD uses strict normalized inputs", () =>
     }),
     (error) => error instanceof SessionRuntimeValidationError && error.details.field === "workspace.path",
   );
+  for (const forbiddenField of [
+    "actorSessionId",
+    "parentSessionId",
+    "rootSessionId",
+    "delegationDepth",
+    "characterId",
+  ]) {
+    assert.throws(
+      () => parseSessionRuntimeRequestEnvelope({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation: "session.create",
+        input: {
+          title: "Review session",
+          sessionRole: "executor",
+          provider: "codex",
+          catalogRevision: 4,
+          workspace: { kind: "session_folder" },
+          idempotencyKey: "create-key-1",
+          [forbiddenField]: "forged",
+        },
+      }),
+      (error) => error instanceof SessionRuntimeValidationError
+        && error.details.field === `input.${forbiddenField}`,
+    );
+  }
   assert.throws(
     () => parseSessionRuntimeRequestEnvelope({
       schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,

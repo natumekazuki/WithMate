@@ -84,6 +84,7 @@ function logSessionRunStuckInvestigation(
 }
 
 export type SessionRuntimeServiceDeps = {
+  includeNormalSessionRoleContext?: boolean;
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
@@ -1258,6 +1259,14 @@ export class SessionRuntimeService {
       }
     }
     const providerAdapter = this.deps.getProviderCodingAdapter(provider.id);
+    const includeSessionRoleContext = this.deps.includeNormalSessionRoleContext
+      && session.sessionKind === "default";
+    if (includeSessionRoleContext && !session.roleBinding) {
+      throw new SessionTurnValidationError(
+        "SESSION_ROLE_BINDING_INVALID",
+        "The Session Role binding is unavailable.",
+      );
+    }
     let agentRuntimeBinding = await Promise.resolve(
       this.deps.getProviderAgentRuntimeBinding?.({ session, provider }) ?? null,
     );
@@ -1294,6 +1303,7 @@ export class SessionRuntimeService {
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
         agentRuntimeBinding,
+        sessionRoleBinding: includeSessionRoleContext ? session.roleBinding : null,
       });
 
       runningSession = {

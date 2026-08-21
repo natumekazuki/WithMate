@@ -149,6 +149,7 @@ function createAuxiliarySessionStub(overrides: Record<string, unknown> = {}) {
 
 function createSessionRequest(workspace: Record<string, unknown>) {
   return {
+    rootSessionRole: "overall-coordinator",
     taskTitle: "Task",
     characterId: "character-1",
     character: "Character",

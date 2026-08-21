@@ -15,6 +15,7 @@ export const REQUIRED_V6_TABLES = [
   "characters",
   "project_scopes_v6",
   "sessions_v6",
+  "session_role_bindings_v6",
   "session_messages_v6",
   "auxiliary_sessions",
   "session_turns_v6",
@@ -55,6 +56,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_characters_state_updated",
   "idx_v6_project_scopes_key",
   "idx_v6_sessions_last_active",
+  "idx_v6_session_role_bindings_parent",
   "idx_v6_session_messages_session_seq",
   "idx_auxiliary_sessions_parent_updated",
   "idx_auxiliary_sessions_parent_created",
@@ -117,6 +119,14 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "created_at",
     "updated_at",
     "last_active_at",
+  ],
+  session_role_bindings_v6: [
+    "session_id",
+    "session_role",
+    "role_contract_revision",
+    "root_session_id",
+    "parent_session_id",
+    "delegation_depth",
   ],
   session_messages_v6: ["id", "session_id", "seq", "role", "body", "created_at"],
   auxiliary_sessions: ["id", "parent_session_id", "status", "created_at", "updated_at", "payload_json"],
@@ -419,6 +429,9 @@ export function isValidV6Database(dbPath: string): boolean {
     if (!hasRequiredCheckConstraints(db)) {
       return false;
     }
+    if (!hasValidSessionRoleBindingData(db)) {
+      return false;
+    }
     if (!hasValidScheduleSchemaIfPresent(db)) {
       return false;
     }
@@ -507,6 +520,9 @@ function hasForeignKey(
 function hasRequiredForeignKeys(db: DatabaseSync): boolean {
   return hasForeignKey(db, "sessions_v6", "character_id", "characters")
     && hasForeignKey(db, "sessions_v6", "project_scope_id", "project_scopes_v6")
+    && hasForeignKey(db, "session_role_bindings_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_role_bindings_v6", "root_session_id", "sessions_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "session_role_bindings_v6", "parent_session_id", "sessions_v6", "id", "RESTRICT")
     && hasForeignKey(db, "session_messages_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "session_id", "sessions_v6")
     && hasForeignKey(db, "session_turns_v6", "auxiliary_session_id", "auxiliary_sessions")
@@ -632,6 +648,7 @@ function tableSql(db: DatabaseSync, tableName: string): string {
 
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
+  const sessionRoleBindingsSql = tableSql(db, "session_role_bindings_v6");
   const auxiliarySessionsSql = tableSql(db, "auxiliary_sessions");
   const sessionTurnsSql = tableSql(db, "session_turns_v6");
   const sessionTurnInterimsSql = tableSql(db, "session_turn_interims_v6");
@@ -652,6 +669,9 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const affectObservationsSql = tableSql(db, "character_affect_observations_v6");
 
   return sessionsSql.includes("json_valid(character_snapshot_json)")
+    && sessionRoleBindingsSql.includes("session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')")
+    && sessionRoleBindingsSql.includes("role_contract_revision = 1")
+    && sessionRoleBindingsSql.includes("delegation_depth BETWEEN 0 AND 2")
     && memoryEntriesSql.includes("state IN ('active', 'superseded', 'forgotten')")
     && auxiliarySessionsSql.includes("status IN ('active', 'closed')")
     && sessionTurnsSql.includes("phase IN ('running', 'completed', 'failed', 'canceled')")
@@ -702,6 +722,88 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && affectMutationsSql.includes("operation IN ('record', 'reject', 'correct', 'reset', 'episode_candidate', 'link_episode')")
     && affectObservationsSql.includes("kind IN ('idempotency', 'concurrency')")
     && affectObservationsSql.includes("outcome IN ('replayed', 'rejected', 'resolved')");
+}
+
+export class ExistingSessionRoleBindingSchemaError extends Error {
+  constructor(cause: unknown) {
+    super("Session Role binding data is invalid in the existing V6 database.", { cause });
+    this.name = "ExistingSessionRoleBindingSchemaError";
+  }
+}
+
+function hasValidSessionRoleBindingData(db: DatabaseSync): boolean {
+  if (!tableExists(db, "session_role_bindings_v6")) return false;
+  const missingOrUnexpected = db.prepare(`
+    SELECT 1
+    FROM sessions_v6 AS s
+    LEFT JOIN session_role_bindings_v6 AS b ON b.session_id = s.id
+    WHERE ((s.session_kind <> 'character-authoring' OR s.session_kind IS NULL) AND b.session_id IS NULL)
+       OR (s.session_kind = 'character-authoring' AND b.session_id IS NOT NULL)
+    LIMIT 1
+  `).get();
+  if (missingOrUnexpected) return false;
+  const orphanBinding = db.prepare(`
+    SELECT 1
+    FROM session_role_bindings_v6 AS b
+    LEFT JOIN sessions_v6 AS s ON s.id = b.session_id
+    WHERE s.id IS NULL
+    LIMIT 1
+  `).get();
+  if (orphanBinding) return false;
+
+  const invalidHierarchy = db.prepare(`
+    SELECT 1
+    FROM session_role_bindings_v6 AS b
+    INNER JOIN sessions_v6 AS s ON s.id = b.session_id
+    LEFT JOIN sessions_v6 AS root ON root.id = b.root_session_id
+    LEFT JOIN sessions_v6 AS parent ON parent.id = b.parent_session_id
+    LEFT JOIN session_role_bindings_v6 AS pb ON pb.session_id = b.parent_session_id
+    WHERE b.session_role NOT IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')
+       OR b.role_contract_revision <> 1
+       OR b.delegation_depth NOT BETWEEN 0 AND 2
+       OR root.id IS NULL
+       OR s.session_kind = 'character-authoring'
+       OR root.session_kind = 'character-authoring'
+       OR (
+         b.parent_session_id IS NULL
+         AND NOT (
+           b.session_role IN ('standalone', 'overall-coordinator')
+           AND b.root_session_id = b.session_id
+           AND b.delegation_depth = 0
+         )
+       )
+       OR (
+         b.parent_session_id IS NOT NULL
+         AND (
+           parent.id IS NULL
+           OR parent.session_kind = 'character-authoring'
+           OR pb.session_id IS NULL
+           OR b.root_session_id <> pb.root_session_id
+           OR b.delegation_depth <> pb.delegation_depth + 1
+           OR (pb.session_role = 'overall-coordinator' AND b.session_role NOT IN ('task-coordinator', 'executor'))
+           OR (pb.session_role = 'task-coordinator' AND b.session_role <> 'executor')
+           OR pb.session_role IN ('standalone', 'executor')
+         )
+       )
+    LIMIT 1
+  `).get();
+  return !invalidHierarchy;
+}
+
+function hasValidSessionRoleBindingSchemaAndData(db: DatabaseSync): boolean {
+  const expectedColumns = REQUIRED_V6_TABLE_COLUMNS.session_role_bindings_v6;
+  const columns = tableColumnNames(db, "session_role_bindings_v6");
+  const sessionRoleBindingsSql = tableSql(db, "session_role_bindings_v6");
+  return expectedColumns.every((column) => columns.has(column))
+    && hasForeignKey(db, "session_role_bindings_v6", "session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "session_role_bindings_v6", "root_session_id", "sessions_v6", "id", "RESTRICT")
+    && hasForeignKey(db, "session_role_bindings_v6", "parent_session_id", "sessions_v6", "id", "RESTRICT")
+    && sessionRoleBindingsSql.includes(
+      "session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')",
+    )
+    && sessionRoleBindingsSql.includes("role_contract_revision = 1")
+    && sessionRoleBindingsSql.includes("delegation_depth BETWEEN 0 AND 2")
+    && hasValidSessionRoleBindingData(db);
 }
 
 function hasValidScheduleSchemaIfPresent(db: DatabaseSync): boolean {
@@ -947,6 +1049,45 @@ export const CREATE_V6_SESSIONS_TABLE_SQL = `
     ON sessions_v6(character_id, last_active_at DESC);
 `;
 
+export const CREATE_V6_SESSION_ROLE_BINDINGS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS session_role_bindings_v6 (
+    session_id TEXT PRIMARY KEY,
+    session_role TEXT NOT NULL CHECK (session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')),
+    role_contract_revision INTEGER NOT NULL CHECK (role_contract_revision = 1),
+    root_session_id TEXT NOT NULL,
+    parent_session_id TEXT,
+    delegation_depth INTEGER NOT NULL CHECK (delegation_depth BETWEEN 0 AND 2),
+    FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (root_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
+    FOREIGN KEY (parent_session_id) REFERENCES sessions_v6(id) ON DELETE RESTRICT,
+    CHECK (
+      (
+        session_role IN ('standalone', 'overall-coordinator')
+        AND parent_session_id IS NULL
+        AND root_session_id = session_id
+        AND delegation_depth = 0
+      )
+      OR (
+        session_role = 'task-coordinator'
+        AND parent_session_id IS NOT NULL
+        AND parent_session_id <> session_id
+        AND root_session_id <> session_id
+        AND delegation_depth = 1
+      )
+      OR (
+        session_role = 'executor'
+        AND parent_session_id IS NOT NULL
+        AND parent_session_id <> session_id
+        AND root_session_id <> session_id
+        AND delegation_depth BETWEEN 1 AND 2
+      )
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_session_role_bindings_parent
+    ON session_role_bindings_v6(parent_session_id, session_id);
+`;
+
 export const CREATE_V6_SESSION_MESSAGES_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_messages_v6 (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1070,13 +1211,14 @@ export const CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL = `
 export const CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS session_crud_idempotency_v6 (
     operation TEXT NOT NULL CHECK (operation IN ('session.create', 'session.rename')),
+    principal_session_id TEXT NOT NULL DEFAULT '',
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     session_id TEXT NOT NULL,
     result_json TEXT NOT NULL CHECK (json_valid(result_json)),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    PRIMARY KEY (operation, idempotency_key),
+    PRIMARY KEY (operation, principal_session_id, idempotency_key),
     FOREIGN KEY (session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE
   );
 
@@ -1943,6 +2085,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
   CREATE_V6_SESSIONS_TABLE_SQL,
+  CREATE_V6_SESSION_ROLE_BINDINGS_TABLE_SQL,
   CREATE_V6_SESSION_MESSAGES_TABLE_SQL,
   CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL,
@@ -2265,6 +2408,34 @@ function runWithSavepoint(db: DatabaseSync, savepointName: string, run: () => vo
   }
 }
 
+function ensureSessionCrudIdempotencyPrincipalScope(db: DatabaseSync): void {
+  if (!tableExists(db, "session_crud_idempotency_v6")) {
+    db.exec(CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL);
+    return;
+  }
+  const columns = tableColumnNames(db, "session_crud_idempotency_v6");
+  const sql = tableSql(db, "session_crud_idempotency_v6");
+  if (
+    columns.has("principal_session_id")
+    && sql.includes("PRIMARY KEY (operation, principal_session_id, idempotency_key)")
+  ) {
+    return;
+  }
+  db.exec(`
+    ALTER TABLE session_crud_idempotency_v6 RENAME TO session_crud_idempotency_v6_legacy;
+    DROP INDEX IF EXISTS idx_v6_session_crud_idempotency_expires;
+    ${CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL}
+    INSERT INTO session_crud_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint,
+      session_id, result_json, created_at, expires_at
+    )
+    SELECT operation, '', idempotency_key, request_fingerprint,
+      session_id, result_json, created_at, expires_at
+    FROM session_crud_idempotency_v6_legacy;
+    DROP TABLE session_crud_idempotency_v6_legacy;
+  `);
+}
+
 export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
   for (const tableName of FORBIDDEN_V6_TABLES) {
     db.exec(`DROP TABLE IF EXISTS ${tableName};`);
@@ -2273,9 +2444,12 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
+  const sessionRoleBindingsExisted = tableExists(db, "session_role_bindings_v6");
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");
   }
+
+  ensureSessionCrudIdempotencyPrincipalScope(db);
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -2287,6 +2461,23 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
       continue;
     }
     db.exec(statement);
+  }
+
+  if (!sessionRoleBindingsExisted) {
+    db.exec(`
+      INSERT INTO session_role_bindings_v6 (
+        session_id, session_role, role_contract_revision, root_session_id, parent_session_id, delegation_depth
+      )
+      SELECT id, 'standalone', 1, id, NULL, 0
+      FROM sessions_v6
+      WHERE session_kind <> 'character-authoring' OR session_kind IS NULL
+    `);
+    db.exec(`
+      UPDATE sessions_v6
+      SET runtime_policy_json = json_set(runtime_policy_json, '$.sourceSchemaVersion', 6)
+      WHERE json_valid(runtime_policy_json)
+        AND json_extract(runtime_policy_json, '$.sourceSchemaVersion') = 5
+    `);
   }
 
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
@@ -2408,8 +2599,18 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     if (!fireColumns.has("turn_json")) db.exec("ALTER TABLE session_schedule_fires_v6 ADD COLUMN turn_json TEXT NOT NULL DEFAULT '{}' CHECK (json_valid(turn_json))");
   }
 
+  if (!hasValidSessionRoleBindingSchemaAndData(db)) {
+    throw new Error("Session Role binding data is invalid.");
+  }
+
 }
 
 export function ensureV6Schema(db: DatabaseSync): void {
+  const sessionRoleBindingsExisted = tableExists(db, "session_role_bindings_v6");
+  if (sessionRoleBindingsExisted && !hasValidSessionRoleBindingSchemaAndData(db)) {
+    throw new ExistingSessionRoleBindingSchemaError(
+      new Error("Session Role binding schema or data failed pre-migration validation."),
+    );
+  }
   runWithSavepoint(db, "ensure_v6_schema", () => ensureV6SchemaUnsafe(db));
 }

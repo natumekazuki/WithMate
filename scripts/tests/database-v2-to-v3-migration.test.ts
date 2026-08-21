@@ -158,6 +158,7 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
   const companionStorage = new CompanionStorage(dbPath);
   const longMessage = `${"m".repeat(V3_TEXT_PREVIEW_MAX_LENGTH + 20)}${sentinel}:message-tail`;
   const session = buildNewSession({
+    id: "session-1",
     taskTitle: "V2 migration fixture",
     workspaceLabel: "workspace",
     workspacePath: "/workspace",
@@ -172,7 +173,6 @@ function seedV2Storage(dbPath: string, sentinel = "SENTINEL_V2_TO_V3_BLOB_ONLY")
   try {
     sessionStorage.upsertSession({
       ...session,
-      id: "session-1",
       threadId: "thread-1",
       messages: [
         { role: "user", text: longMessage },
@@ -510,6 +510,7 @@ describe("V2 to V3 database migration write mode", () => {
         for (const [id, title] of [["session-old", "Old"], ["session-new", "New"]] as const) {
           sessionStorage.upsertSession({
             ...buildNewSession({
+              id,
               taskTitle: title,
               workspaceLabel: "workspace",
               workspacePath: "/workspace",
@@ -520,7 +521,6 @@ describe("V2 to V3 database migration write mode", () => {
               characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
               approvalMode: DEFAULT_APPROVAL_MODE,
             }),
-            id,
           });
         }
       } finally {

@@ -27,6 +27,7 @@ import type { SessionMemoryExtractionPrompt } from "./session-memory-extraction.
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
+import type { SessionRoleBinding } from "../src/session-role-binding.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -50,6 +51,7 @@ export type RunSessionTurnInput = {
   conversationTimingContext?: ConversationTimingContext;
   characterContext?: CharacterContextResponse;
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
+  sessionRoleBinding?: SessionRoleBinding | null;
   signal?: AbortSignal;
   onApprovalRequest?: RunSessionTurnApprovalRequestHandler;
   onElicitationRequest?: RunSessionTurnElicitationRequestHandler;

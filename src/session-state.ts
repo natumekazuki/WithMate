@@ -31,6 +31,12 @@ import {
   type RunCheck,
 } from "./runtime-state.js";
 import { currentTimestampLabel } from "./time-state.js";
+import {
+  buildRootSessionRoleBinding,
+  requireSessionRoleBinding,
+  type RootSessionRole,
+  type SessionRoleBinding,
+} from "./session-role-binding.js";
 
 export type MessageArtifact = {
   title: string;
@@ -54,7 +60,7 @@ export type StreamEntry = {
   text: string;
 };
 
-export const CURRENT_SESSION_SCHEMA_VERSION = 5;
+export const CURRENT_SESSION_SCHEMA_VERSION = 6;
 
 export type SessionKind = "default" | "character-authoring";
 export const SESSION_ACCESS_MODE_VALUES = ["active", "legacy_readonly"] as const;
@@ -74,6 +80,7 @@ export type Session = {
   sessionKind: SessionKind;
   accessMode: SessionAccessMode;
   sourceSchemaVersion: number;
+  readonly roleBinding: SessionRoleBinding | null;
   characterId: string;
   character: string;
   characterIconPath: string;
@@ -111,6 +118,8 @@ export type CreateSessionInput = {
   workspacePath: string;
   branch: string;
   sessionKind?: SessionKind;
+  rootSessionRole?: RootSessionRole;
+  roleBinding?: SessionRoleBinding | null;
   characterId: string;
   character: string;
   characterIconPath: string;
@@ -146,8 +155,11 @@ export type CreateSessionRequest = Omit<
   | "model"
   | "reasoningEffort"
   | "customAgentName"
+  | "rootSessionRole"
+  | "roleBinding"
 > & {
   workspace: CreateSessionWorkspaceRequest;
+  rootSessionRole: RootSessionRole;
 };
 
 export type SetSessionPinnedRequest = {
@@ -327,11 +339,38 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
   }
 
   const candidate = value as Partial<Session>;
+  const sessionId = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`;
+  const sessionKind = candidate.sessionKind === "character-authoring" ? candidate.sessionKind : "default";
+  const sourceSchemaVersion =
+    typeof candidate.sourceSchemaVersion === "number" &&
+    Number.isInteger(candidate.sourceSchemaVersion) &&
+    candidate.sourceSchemaVersion > 0
+      ? candidate.sourceSchemaVersion
+      : CURRENT_SESSION_SCHEMA_VERSION - 1;
+  let roleBinding: SessionRoleBinding | null;
+  try {
+    if (sessionKind === "character-authoring") {
+      if ((candidate as { roleBinding?: unknown }).roleBinding != null) return null;
+      roleBinding = null;
+    } else if ((candidate as { roleBinding?: unknown }).roleBinding === undefined && sourceSchemaVersion < 6) {
+      roleBinding = buildRootSessionRoleBinding(
+        sessionId,
+        "standalone",
+      );
+    } else {
+      roleBinding = requireSessionRoleBinding(
+        sessionId,
+        (candidate as { roleBinding?: unknown }).roleBinding,
+      );
+    }
+  } catch {
+    return null;
+  }
   const characterName = typeof candidate.character === "string" && candidate.character.trim() ? candidate.character : "キャラクター";
   const characterId = recoverStoredCharacterOwnerId(candidate.characterId);
 
   return {
-    id: typeof candidate.id === "string" && candidate.id.trim() ? candidate.id : `legacy-${Date.now()}`,
+    id: sessionId,
     taskTitle:
       typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
         ? candidate.taskTitle
@@ -358,14 +397,10 @@ function normalizeSessionSummaryShape(value: unknown): SessionSummary | null {
         : "workspace",
     workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
     branch: typeof candidate.branch === "string" && candidate.branch.trim() ? candidate.branch : "main",
-    sessionKind: candidate.sessionKind === "character-authoring" ? candidate.sessionKind : "default",
+    sessionKind,
     accessMode: normalizeSessionAccessMode((candidate as { accessMode?: unknown }).accessMode),
-    sourceSchemaVersion:
-      typeof candidate.sourceSchemaVersion === "number" &&
-      Number.isInteger(candidate.sourceSchemaVersion) &&
-      candidate.sourceSchemaVersion > 0
-        ? candidate.sourceSchemaVersion
-        : CURRENT_SESSION_SCHEMA_VERSION - 1,
+    sourceSchemaVersion,
+    roleBinding,
     characterId,
     character: characterName,
     characterIconPath:
@@ -483,8 +518,18 @@ export function buildNewSession(input: CreateSessionInput): Session {
   if (characterRuntimeSnapshot && characterRuntimeSnapshot.characterId !== characterId) {
     throw new Error("characterRuntimeSnapshot.characterId が characterId と一致しないよ。");
   }
+  const sessionId = input.id?.trim() || `launch-${Date.now()}`;
+  const sessionKind = input.sessionKind ?? "default";
+  if (sessionKind === "character-authoring" && (input.roleBinding != null || input.rootSessionRole !== undefined)) {
+    throw new Error("character-authoring Session に通常Session Role bindingは設定できないよ。");
+  }
+  const roleBinding = sessionKind === "character-authoring"
+    ? null
+    : input.roleBinding
+      ? requireSessionRoleBinding(sessionId, input.roleBinding)
+      : buildRootSessionRoleBinding(sessionId, input.rootSessionRole ?? "standalone");
   return {
-    id: input.id?.trim() || `launch-${Date.now()}`,
+    id: sessionId,
     taskTitle: normalizedTaskTitle,
     status: "idle",
     updatedAt: currentTimestampLabel(),
@@ -497,9 +542,10 @@ export function buildNewSession(input: CreateSessionInput): Session {
     workspaceLabel: input.workspaceLabel,
     workspacePath: input.workspacePath,
     branch: input.branch,
-    sessionKind: input.sessionKind ?? "default",
+    sessionKind,
     accessMode: "active",
     sourceSchemaVersion: CURRENT_SESSION_SCHEMA_VERSION,
+    roleBinding,
     characterId,
     character: input.character,
     characterIconPath: input.characterIconPath,

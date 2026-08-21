@@ -12,6 +12,7 @@ import {
   SessionInteractionService,
 } from "../../src-electron/session-interaction-service.js";
 import { SessionInteractionStorageV6 } from "../../src-electron/session-interaction-storage-v6.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 const CREATED_AT = "2026-08-13T00:00:00.000Z";
 const EXPIRES_AT = "2026-08-14T00:00:00.000Z";
@@ -27,6 +28,7 @@ async function createFixture() {
         created_at, updated_at, last_active_at
       ) VALUES ('session-1', 'Session 1', 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
     `).run(CREATED_AT, CREATED_AT, CREATED_AT);
+    insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
   }

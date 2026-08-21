@@ -32,7 +32,7 @@ export function ProviderLaunchPicker({
   return (
     <div
       id={id}
-      className="choice-list launch-provider-list"
+      className="choice-list launch-choice-list"
       role="listbox"
       aria-label={ariaLabel}
       aria-orientation="horizontal"

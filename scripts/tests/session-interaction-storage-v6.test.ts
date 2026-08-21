@@ -18,6 +18,7 @@ import {
   SessionInteractionTargetMismatchError,
 } from "../../src-electron/session-interaction-storage-v6.js";
 import { SESSION_INTERACTION_PUBLIC_MAX_BYTES } from "../../src/session-interaction.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 const CREATED_AT = "2026-08-13T00:00:00.000Z";
 const EXPIRES_AT = "2026-08-14T00:00:00.000Z";
@@ -44,6 +45,7 @@ async function createFixture(): Promise<{
         created_at, updated_at, last_active_at
       ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
     `).run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
   }

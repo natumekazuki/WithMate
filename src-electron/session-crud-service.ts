@@ -6,6 +6,13 @@ import { DEFAULT_CHARACTER_THEME_COLORS } from "../src/character-state.js";
 import type { CharacterCatalogEntry, CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
 import { selectWeightedRandomLaunchCharacterId } from "../src/character/character-launch-selection.js";
 import { buildNewSession, type Session, type SessionSummary } from "../src/session-state.js";
+import {
+  buildChildSessionRoleBinding,
+  requireChildSessionRoleAllowed,
+  requireSessionRoleBinding,
+  SessionRoleBindingError,
+  type SessionRoleBinding,
+} from "../src/session-role-binding.js";
 import type {
   SessionRuntimeCreateInput,
   SessionRuntimePublicSessionFolder,
@@ -72,6 +79,7 @@ export type SessionCrudServiceDeps = {
   createCharacterRuntimeSnapshot(characterId: string): CharacterRuntimeSnapshot | null;
   createSessionId(): string;
   createSessionFilesDirectory(sessionId: string): Promise<string>;
+  cleanupSessionFilesDirectory?(sessionId: string): Promise<void>;
   resolveSessionFilesDirectory(sessionId: string): string;
   publishCreatedSession(session: Session): void;
   publishRenamedSession(session: SessionSummary): void;
@@ -86,8 +94,8 @@ export class SessionCrudService {
 
   constructor(private readonly deps: SessionCrudServiceDeps) {}
 
-  create(input: SessionRuntimeCreateInput): Promise<SessionRuntimeSessionDetail> {
-    return this.enqueueMutation(() => this.createNow(input));
+  create(input: SessionRuntimeCreateInput, actorSessionId: string): Promise<SessionRuntimeSessionDetail> {
+    return this.enqueueMutation(() => this.createNow(input, actorSessionId));
   }
 
   async list(input: SessionRuntimeSessionListInput): Promise<SessionRuntimeSessionListResult> {
@@ -121,19 +129,19 @@ export class SessionCrudService {
     return this.enqueueMutation(() => this.renameNow(input));
   }
 
-  private async createNow(input: SessionRuntimeCreateInput): Promise<SessionRuntimeSessionDetail> {
-    const fingerprint = fingerprintMutation({
-      title: input.title,
-      provider: input.provider,
-      catalogRevision: input.catalogRevision,
-      workspace: input.workspace,
-    });
+  private async createNow(input: SessionRuntimeCreateInput, actorSessionId: string): Promise<SessionRuntimeSessionDetail> {
+    const normalizedActorSessionId = actorSessionId.trim();
     const now = this.now();
     try {
       const replay = this.deps.storage.resolveSessionCrudIdempotency(
         "session.create",
+        normalizedActorSessionId,
         input.idempotencyKey,
-        fingerprint,
+        (storedResult) => fingerprintSessionCreate(
+          normalizedActorSessionId,
+          input,
+          roleBindingFromSessionProjection(storedResult),
+        ),
         now.toISOString(),
       );
       if (replay.kind === "replay") {
@@ -142,6 +150,21 @@ export class SessionCrudService {
       }
     } catch (error) {
       throw mapStorageMutationError(error);
+    }
+
+    const parent = this.requireDefaultSession(normalizedActorSessionId);
+    if (!parent.roleBinding) {
+      throw new SessionCrudError(
+        "SESSION_ROLE_BINDING_INVALID",
+        "The actor Session Role binding is unavailable.",
+        false,
+        { sessionId: normalizedActorSessionId },
+      );
+    }
+    try {
+      requireChildSessionRoleAllowed(parent.roleBinding, input.sessionRole);
+    } catch (error) {
+      throw mapRoleBindingError(error);
     }
 
     if (this.deps.isProviderSupported && !this.deps.isProviderSupported(input.provider)) {
@@ -176,6 +199,19 @@ export class SessionCrudService {
       throw new SessionCrudError("RUNTIME_UNAVAILABLE", "Session ID generation failed.", true);
     }
     const workspace = await this.resolveCreateWorkspace(sessionId, input.workspace);
+    let roleBinding: SessionRoleBinding;
+    try {
+      roleBinding = buildChildSessionRoleBinding(
+        sessionId,
+        normalizedActorSessionId,
+        parent.roleBinding,
+        input.sessionRole,
+      );
+    } catch (error) {
+      await this.cleanupFailedSessionFolder(sessionId, workspace.kind);
+      throw mapRoleBindingError(error);
+    }
+    const fingerprint = fingerprintSessionCreate(normalizedActorSessionId, input, roleBinding);
     const session = buildNewSession({
       id: sessionId,
       provider: launchSelection.provider,
@@ -185,6 +221,7 @@ export class SessionCrudService {
       workspacePath: workspace.path,
       branch: workspace.branch,
       sessionKind: "default",
+      roleBinding,
       characterId: character.id,
       character: character.name,
       characterIconPath: character.iconFilePath,
@@ -198,9 +235,11 @@ export class SessionCrudService {
       allowedAdditionalDirectories: normalizeAllowedAdditionalDirectories(workspace.path, []),
     });
     const createdAt = this.now();
+    let committed = false;
     try {
       const stored = this.deps.storage.insertSessionIdempotently(session, {
         operation: "session.create",
+        principalSessionId: normalizedActorSessionId,
         idempotencyKey: input.idempotencyKey,
         requestFingerprint: fingerprint,
         createdAt: createdAt.toISOString(),
@@ -209,7 +248,18 @@ export class SessionCrudService {
           storedSession,
           this.deps.resolveSessionFilesDirectory(storedSession.id),
         ),
+        resolveReplayFingerprint: (storedResult) => fingerprintSessionCreate(
+          normalizedActorSessionId,
+          input,
+          roleBindingFromSessionProjection(storedResult),
+        ),
       });
+      if (stored.replayed) {
+        committed = true;
+        await this.cleanupFailedSessionFolder(sessionId, workspace.kind);
+      } else {
+        committed = true;
+      }
       if (!stored.replayed) {
         this.publishCommittedMutation("session.create", () => this.deps.publishCreatedSession(stored.session));
       }
@@ -218,6 +268,9 @@ export class SessionCrudService {
         { sessionId: stored.session.id },
       );
     } catch (error) {
+      if (!committed) {
+        await this.cleanupFailedSessionFolder(sessionId, workspace.kind);
+      }
       throw mapStorageMutationError(error);
     }
   }
@@ -228,6 +281,7 @@ export class SessionCrudService {
     try {
       const replay = this.deps.storage.resolveSessionCrudIdempotency(
         "session.rename",
+        "",
         input.idempotencyKey,
         fingerprint,
         now.toISOString(),
@@ -355,6 +409,26 @@ export class SessionCrudService {
     };
   }
 
+  private async cleanupFailedSessionFolder(
+    sessionId: string,
+    workspaceKind: "directory" | "session_folder",
+  ): Promise<void> {
+    if (workspaceKind !== "session_folder") return;
+    try {
+      if (!this.deps.cleanupSessionFilesDirectory) {
+        throw new Error("SessionFolder cleanup dependency is unavailable.");
+      }
+      await this.deps.cleanupSessionFilesDirectory(sessionId);
+    } catch {
+      throw new SessionCrudError(
+        "SESSION_FOLDER_CLEANUP_REQUIRED",
+        "The uncommitted SessionFolder could not be cleaned up.",
+        true,
+        { sessionId },
+      );
+    }
+  }
+
   private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
     const pending = this.mutationQueue.then(operation);
     this.mutationQueue = pending.then(() => undefined, () => undefined);
@@ -390,6 +464,7 @@ function projectSessionSummary(
     sessionId: session.id,
     title: session.taskTitle,
     sessionKind: "default",
+    ...projectRoleBinding(requireProjectedRoleBinding(session)),
     provider: { id: session.provider, catalogRevision: session.catalogRevision },
     character: { id: session.characterId, name: session.character },
     workspace: {
@@ -422,6 +497,7 @@ function normalizeSessionDetailProjection(
     sessionId: detail.sessionId,
     title: detail.title,
     sessionKind: "default",
+    ...projectRoleBinding(requireSessionRoleBinding(detail.sessionId, detail)),
     provider: {
       id: detail.provider.id,
       catalogRevision: detail.provider.catalogRevision,
@@ -466,6 +542,66 @@ function samePath(left: string, right: string): boolean {
 
 function fingerprintMutation(value: unknown): string {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function fingerprintSessionCreate(
+  actorSessionId: string,
+  input: SessionRuntimeCreateInput,
+  roleBinding: SessionRoleBinding,
+): string {
+  return fingerprintMutation({
+    actorSessionId,
+    sessionRole: input.sessionRole,
+    roleBinding,
+    title: input.title,
+    provider: input.provider,
+    catalogRevision: input.catalogRevision,
+    workspace: input.workspace,
+  });
+}
+
+function roleBindingFromSessionProjection(value: unknown): SessionRoleBinding {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new SessionCrudIdempotencyConflictError();
+  }
+  const record = value as Record<string, unknown>;
+  try {
+    return requireSessionRoleBinding(
+      typeof record.sessionId === "string" ? record.sessionId : "",
+      record,
+    );
+  } catch {
+    throw new SessionCrudIdempotencyConflictError();
+  }
+}
+
+function requireProjectedRoleBinding(session: Session | SessionSummary): SessionRoleBinding {
+  if (session.sessionKind !== "default" || !session.roleBinding) {
+    throw new SessionCrudError(
+      "SESSION_ROLE_BINDING_INVALID",
+      "The Session Role binding is unavailable.",
+      false,
+      { sessionId: session.id },
+    );
+  }
+  return requireSessionRoleBinding(session.id, session.roleBinding);
+}
+
+function projectRoleBinding(binding: SessionRoleBinding) {
+  return {
+    sessionRole: binding.sessionRole,
+    roleContractRevision: binding.roleContractRevision,
+    rootSessionId: binding.rootSessionId,
+    parentSessionId: binding.parentSessionId,
+    delegationDepth: binding.delegationDepth,
+  };
+}
+
+function mapRoleBindingError(error: unknown): SessionCrudError {
+  if (error instanceof SessionRoleBindingError) {
+    return new SessionCrudError(error.code, error.message);
+  }
+  return new SessionCrudError("SESSION_ROLE_BINDING_INVALID", "The Session Role binding is invalid.");
 }
 
 function mapIdempotencyError(error: unknown): Error {

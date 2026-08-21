@@ -10,6 +10,7 @@ import {
   type SessionSummary,
 } from "../src/session-state.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
+import { sameSessionRoleBinding } from "../src/session-role-binding.js";
 import {
   parseCharacterRuntimeSnapshotJson,
   stringifyCharacterRuntimeSnapshot,
@@ -39,6 +40,11 @@ type SessionRow = {
   session_kind: string;
   access_mode: string;
   source_schema_version: number;
+  session_role: string | null;
+  role_contract_revision: number | null;
+  root_session_id: string | null;
+  parent_session_id: string | null;
+  delegation_depth: number | null;
   character_id: string;
   character_name: string;
   character_icon_path: string;
@@ -80,6 +86,11 @@ const SESSION_SELECT_COLUMNS = `
   session_kind,
   access_mode,
   source_schema_version,
+  session_role,
+  role_contract_revision,
+  root_session_id,
+  parent_session_id,
+  delegation_depth,
   character_id,
   character_name,
   character_icon_path,
@@ -118,6 +129,11 @@ const SESSION_SUMMARY_SELECT_COLUMNS = `
   session_kind,
   access_mode,
   source_schema_version,
+  session_role,
+  role_contract_revision,
+  root_session_id,
+  parent_session_id,
+  delegation_depth,
   character_id,
   character_name,
   character_icon_path,
@@ -170,6 +186,11 @@ const INSERT_SESSION_SQL = `
     session_kind,
     access_mode,
     source_schema_version,
+    session_role,
+    role_contract_revision,
+    root_session_id,
+    parent_session_id,
+    delegation_depth,
     character_id,
     character_name,
     character_icon_path,
@@ -187,7 +208,7 @@ const INSERT_SESSION_SQL = `
     messages_json,
     stream_json,
     last_active_at
-  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const CREATE_SESSION_SQL = `
@@ -280,6 +301,13 @@ function rowToSession(row: SessionRow, mode: SessionRowParseMode = "skip"): Sess
     sessionKind: row.session_kind,
     accessMode: row.access_mode,
     sourceSchemaVersion: row.source_schema_version,
+    roleBinding: row.session_role === null ? null : {
+      sessionRole: row.session_role,
+      roleContractRevision: row.role_contract_revision,
+      rootSessionId: row.root_session_id,
+      parentSessionId: row.parent_session_id,
+      delegationDepth: row.delegation_depth,
+    },
     characterId: row.character_id,
     character: row.character_name,
     characterIconPath: row.character_icon_path,
@@ -332,6 +360,13 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
     sessionKind: row.session_kind,
     accessMode: row.access_mode,
     sourceSchemaVersion: row.source_schema_version,
+    roleBinding: row.session_role === null ? null : {
+      sessionRole: row.session_role,
+      roleContractRevision: row.role_contract_revision,
+      rootSessionId: row.root_session_id,
+      parentSessionId: row.parent_session_id,
+      delegationDepth: row.delegation_depth,
+    },
     characterId: row.character_id,
     character: row.character_name,
     characterIconPath: row.character_icon_path,
@@ -374,6 +409,17 @@ export class SessionStorage {
     lastActiveAt: number,
     operation: "create" | "upsert",
   ): void {
+    if (operation === "upsert") {
+      const current = this.getSession(normalized.id);
+      const sameRoleBinding = current
+        && ((current.roleBinding === null && normalized.roleBinding === null)
+          || (current.roleBinding !== null
+            && normalized.roleBinding !== null
+            && sameSessionRoleBinding(current.roleBinding, normalized.roleBinding)));
+      if (current && !sameRoleBinding) {
+        throw new Error("Session Role binding is immutable.");
+      }
+    }
     const result = this.db.prepare(operation === "create" ? CREATE_SESSION_SQL : UPSERT_SESSION_SQL).run(
       normalized.id,
       normalized.taskTitle,
@@ -387,6 +433,11 @@ export class SessionStorage {
       normalized.sessionKind,
       normalized.accessMode,
       normalized.sourceSchemaVersion,
+      normalized.roleBinding?.sessionRole ?? null,
+      normalized.roleBinding?.roleContractRevision ?? null,
+      normalized.roleBinding?.rootSessionId ?? null,
+      normalized.roleBinding?.parentSessionId ?? null,
+      normalized.roleBinding?.delegationDepth ?? null,
       normalized.characterId,
       normalized.character,
       normalized.characterIconPath,
@@ -458,6 +509,36 @@ export class SessionStorage {
     if (!columns.has("source_schema_version")) {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN source_schema_version ${LEGACY_SESSION_COLUMN_DEFINITIONS.source_schema_version};`);
     }
+
+    if (!columns.has("session_role")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN session_role TEXT;");
+    }
+    if (!columns.has("role_contract_revision")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN role_contract_revision INTEGER;");
+    }
+    if (!columns.has("root_session_id")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN root_session_id TEXT;");
+    }
+    if (!columns.has("parent_session_id")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN parent_session_id TEXT;");
+    }
+    if (!columns.has("delegation_depth")) {
+      this.db.exec("ALTER TABLE sessions ADD COLUMN delegation_depth INTEGER;");
+    }
+    this.db.exec(`
+      UPDATE sessions
+      SET session_role = 'standalone',
+          role_contract_revision = 1,
+          root_session_id = id,
+          parent_session_id = NULL,
+          delegation_depth = 0
+      WHERE COALESCE(session_kind, 'default') = 'default'
+        AND session_role IS NULL
+        AND role_contract_revision IS NULL
+        AND root_session_id IS NULL
+        AND parent_session_id IS NULL
+        AND delegation_depth IS NULL
+    `);
 
   }
 

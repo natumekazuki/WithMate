@@ -10,6 +10,7 @@ type HomeLaunchDialogPropsInput = {
   launchStarting: boolean;
   onClose: () => void;
   onChangeTitle: (value: string) => void;
+  onSelectSessionPurpose: HomeLaunchDialogProps["onSelectSessionPurpose"];
   onChangeWorkspacePath: (value: string) => void;
   onBrowseWorkspace: () => void;
   onSelectSessionFolder: () => void;
@@ -27,6 +28,7 @@ export function buildHomeLaunchDialogProps({
   launchStarting,
   onClose,
   onChangeTitle,
+  onSelectSessionPurpose,
   onChangeWorkspacePath,
   onBrowseWorkspace,
   onSelectSessionFolder,
@@ -38,6 +40,7 @@ export function buildHomeLaunchDialogProps({
   return {
     open: draft.open,
     title: draft.title,
+    sessionPurpose: draft.sessionPurpose,
     sessionFolderSelected: projection.sessionFolderSelected,
     launchWorkspacePathLabel: projection.launchWorkspacePathLabel,
     workspacePathInput: projection.workspacePathInput,
@@ -54,6 +57,7 @@ export function buildHomeLaunchDialogProps({
     launchStarting,
     onClose,
     onChangeTitle,
+    onSelectSessionPurpose,
     onChangeWorkspacePath,
     onBrowseWorkspace,
     onSelectSessionFolder,

@@ -33,6 +33,7 @@ import {
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
+  ExistingSessionRoleBindingSchemaError,
   isValidV6Database,
 } from "../../src-electron/database-schema-v6.js";
 import { resolveAppDatabasePath, resolveOrMigrateAppDatabasePath } from "../../src-electron/app-database-path.js";
@@ -482,6 +483,71 @@ describe("resolveOrMigrateAppDatabasePath", () => {
     }
   });
 
+  it("既存V6のRole binding破損時はvalid V4へfallbackして上書きしない", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-role-corrupt-"));
+
+    try {
+      const v4Path = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
+      const v6Path = path.join(userDataPath, APP_DATABASE_V6_FILENAME);
+      createV4Database(v4Path);
+      await createOrVerifyV6FreshDatabase(userDataPath);
+      const db = new DatabaseSync(v6Path);
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare(`
+          INSERT INTO sessions_v6 (
+            id, title, state, provider_id, catalog_revision, model_id, approval_mode,
+            created_at, updated_at, last_active_at
+          ) VALUES ('session-corrupt', 'Corrupt', 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+        `).run(
+          "2026-08-20T00:00:00.000Z",
+          "2026-08-20T00:00:00.000Z",
+          "2026-08-20T00:00:00.000Z",
+        );
+        db.prepare(`
+          INSERT INTO session_role_bindings_v6 (
+            session_id, session_role, role_contract_revision,
+            root_session_id, parent_session_id, delegation_depth
+          ) VALUES ('session-corrupt', 'standalone', 1, 'session-corrupt', NULL, 0)
+        `).run();
+        db.exec("PRAGMA foreign_keys = OFF;");
+        db.prepare(`
+          UPDATE session_role_bindings_v6
+          SET session_role = 'task-coordinator',
+              root_session_id = 'missing-root',
+              parent_session_id = 'missing-parent',
+              delegation_depth = 1
+          WHERE session_id = 'session-corrupt'
+        `).run();
+      } finally {
+        db.close();
+      }
+
+      await assert.rejects(
+        () => resolveOrMigrateAppDatabasePath(userDataPath),
+        (error) => error instanceof ExistingSessionRoleBindingSchemaError,
+      );
+
+      const preservedDb = new DatabaseSync(v6Path, { readOnly: true });
+      try {
+        assert.equal(
+          (preservedDb.prepare(`
+            SELECT root_session_id
+            FROM session_role_bindings_v6
+            WHERE session_id = 'session-corrupt'
+          `).get() as { root_session_id: string }).root_session_id,
+          "missing-root",
+        );
+      } finally {
+        preservedDb.close();
+      }
+      assert.equal(isValidV4Database(v4Path), true);
+      assert.equal(isValidV6Database(v6Path), false);
+    } finally {
+      await rm(userDataPath, { recursive: true, force: true });
+    }
+  });
+
   it("既存 V6 DB に audit_events_v6 が残っている場合は起動時に session turn storage へ移行する", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-migrate-"));
 
@@ -512,6 +578,12 @@ describe("resolveOrMigrateAppDatabasePath", () => {
           "2026-07-05T00:00:00.000Z",
           "2026-07-05T00:00:00.000Z",
         );
+        db.prepare(`
+          INSERT INTO session_role_bindings_v6 (
+            session_id, session_role, role_contract_revision,
+            root_session_id, parent_session_id, delegation_depth
+          ) VALUES ('session-1', 'standalone', 1, 'session-1', NULL, 0)
+        `).run();
         db.prepare(`
           INSERT INTO audit_events_v6 (
             session_id,
@@ -614,6 +686,12 @@ describe("resolveOrMigrateAppDatabasePath", () => {
           "2026-07-05T00:00:00.000Z",
           "2026-07-05T00:00:00.000Z",
         );
+        db.prepare(`
+          INSERT INTO session_role_bindings_v6 (
+            session_id, session_role, role_contract_revision,
+            root_session_id, parent_session_id, delegation_depth
+          ) VALUES ('session-1', 'standalone', 1, 'session-1', NULL, 0)
+        `).run();
         db.prepare(`
           INSERT INTO audit_events_v6 (
             session_id,

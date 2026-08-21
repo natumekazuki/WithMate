@@ -32,8 +32,9 @@ async function removeDirectoryWithRetry(targetPath: string, attempts = 15): Prom
   }
 }
 
-function createSession() {
+function createSession(id?: string) {
   return buildNewSession({
+    id,
     taskTitle: "Memory foundation",
     workspaceLabel: "workspace",
     workspacePath: "C:/workspace",
@@ -134,8 +135,7 @@ describe("SessionMemoryStorage", () => {
       sessionStorage = new SessionStorage(dbPath);
       const firstSession = sessionStorage.upsertSession(createSession());
       const secondSession = sessionStorage.upsertSession({
-        ...createSession(),
-        id: `${firstSession.id}-follow-up`,
+        ...createSession(`${firstSession.id}-follow-up`),
         taskTitle: "Memory follow-up",
       });
       memoryStorage = new SessionMemoryStorage(dbPath);
@@ -168,13 +168,11 @@ describe("SessionMemoryStorage", () => {
         taskTitle: "Old task",
       });
       const secondSession = sessionStorage.upsertSession({
-        ...createSession(),
-        id: `${firstSession.id}-next`,
+        ...createSession(`${firstSession.id}-next`),
         taskTitle: "New target task",
       });
       const wildcardSession = sessionStorage.upsertSession({
-        ...createSession(),
-        id: `${firstSession.id}-wildcard`,
+        ...createSession(`${firstSession.id}-wildcard`),
         taskTitle: "Wildcard task",
       });
       memoryStorage = new SessionMemoryStorage(dbPath);

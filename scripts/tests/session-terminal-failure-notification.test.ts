@@ -16,6 +16,7 @@ import {
 } from "../../src-electron/session-terminal-failure-notification-service.js";
 import { SessionTerminalFailureNotificationStorageV6 } from "../../src-electron/session-terminal-failure-notification-storage-v6.js";
 import { projectTerminalFailureNotification } from "../../src/session-terminal-failure-notification.js";
+import { insertStandaloneRoleBindingsForSessions } from "./session-role-binding-fixture.js";
 
 const SOURCE_CREATED_AT = "2026-08-18T00:00:00.000Z";
 const SOURCE_FAILED_AT = "2026-08-18T00:01:00.000Z";
@@ -34,6 +35,7 @@ async function createFixture() {
     `);
     insert.run("source-session", "Source", SOURCE_CREATED_AT, SOURCE_CREATED_AT, SOURCE_CREATED_AT);
     insert.run("target-session", "Target", SOURCE_CREATED_AT, SOURCE_CREATED_AT, SOURCE_CREATED_AT);
+    insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
   }

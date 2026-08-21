@@ -127,7 +127,10 @@ function buildToolCallPresenceSection(enabled: boolean): string {
 }
 
 function buildSessionContextSection(input: RunSessionTurnInput): string {
-  if (input.session.sessionKind !== "default") {
+  const binding = input.sessionRoleBinding === undefined
+    ? input.session.roleBinding
+    : input.sessionRoleBinding;
+  if (!binding) {
     return "";
   }
 
@@ -135,6 +138,11 @@ function buildSessionContextSection(input: RunSessionTurnInput): string {
     "# WithMate Session Context",
     "",
     `- Current Session ID: \`${input.session.id}\``,
+    `- Session Role: \`${binding.sessionRole}\``,
+    `- Role Contract Revision: \`${binding.roleContractRevision}\``,
+    `- Root Session ID: \`${binding.rootSessionId}\``,
+    `- Parent Session ID: ${binding.parentSessionId === null ? "`null`" : `\`${binding.parentSessionId}\``}`,
+    `- Delegation Depth: \`${binding.delegationDepth}\``,
   ].join("\n");
 }
 

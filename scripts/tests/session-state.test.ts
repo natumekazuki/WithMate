@@ -83,16 +83,16 @@ describe("session-state custom agent selection", () => {
     assert.throws(() => parseSetSessionPinnedRequest({ sessionId: "session-1", isPinned: "true" }), /正しくない/);
   });
 
-  it("新規 session は V5 schema version で作成し、V4 以前は閲覧専用として扱う", () => {
+  it("新規 session は V6 schema version で作成し、V5 以前は閲覧専用として扱う", () => {
     const session = createSession("codex", "launch-fixed");
 
     assert.equal(session.id, "launch-fixed");
-    assert.equal(CURRENT_SESSION_SCHEMA_VERSION, 5);
-    assert.equal(session.sourceSchemaVersion, 5);
+    assert.equal(CURRENT_SESSION_SCHEMA_VERSION, 6);
+    assert.equal(session.sourceSchemaVersion, 6);
     assert.equal(session.isPinned, false);
     assert.equal(isReadOnlySession(session), false);
-    assert.equal(isReadOnlySession({ ...session, sourceSchemaVersion: 4 }), true);
-    assert.equal(isReadOnlySession({ ...session, accessMode: "legacy_readonly", sourceSchemaVersion: 5 }), true);
+    assert.equal(isReadOnlySession({ ...session, sourceSchemaVersion: 5 }), true);
+    assert.equal(isReadOnlySession({ ...session, accessMode: "legacy_readonly", sourceSchemaVersion: 6 }), true);
   });
 
   it("Copilot custom agent 切り替え時は threadId を維持する", () => {

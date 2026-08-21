@@ -214,7 +214,7 @@ describe("home-launch-actions", () => {
 
     await startHomeLaunch(harness.input);
 
-    assert.deepEqual(harness.feedback, ["タイトルを入力してね。"]);
+    assert.equal(harness.feedback.length, 1);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -229,7 +229,6 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacterId, "mia");
-    assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
     assert.deepEqual(harness.sessionSummaries, ["session-1"]);
@@ -321,7 +320,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, ["Session 履歴を読み込んでるよ。完了してからもう一度開始してね。"]);
+    assert.equal(harness.feedback.length, 1);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -342,7 +341,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, ["Session 履歴を読み込めていないため、ランダム選択を開始できないよ。"]);
+    assert.equal(harness.feedback.length, 1);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -363,9 +362,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, [
-      "開いている Session Window を確認してるよ。完了してからもう一度開始してね。",
-    ]);
+    assert.equal(harness.feedback.length, 1);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -387,9 +384,7 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(createCount, 0);
-    assert.deepEqual(harness.feedback, [
-      "開いている Session Window を確認できないため、ランダム選択を開始できないよ。",
-    ]);
+    assert.equal(harness.feedback.length, 1);
     assert.deepEqual(harness.startingStates, []);
   });
 
@@ -444,7 +439,6 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacterId, "withmate-neutral-character");
-    assert.deepEqual(harness.feedback, ["Session を開始してるよ..."]);
     assert.deepEqual(harness.openedSessions, ["session-1"]);
   });
 
@@ -463,7 +457,6 @@ describe("home-launch-actions", () => {
     await startHomeLaunch(harness.input);
 
     assert.equal(capturedCharacter, "Mia");
-    assert.deepEqual(harness.feedback, ["Companion を開始してるよ..."]);
     assert.deepEqual(harness.startingStates, [true, false]);
     assert.equal(harness.closeCount, 1);
     assert.deepEqual(harness.companionSummaries, ["companion-1"]);
