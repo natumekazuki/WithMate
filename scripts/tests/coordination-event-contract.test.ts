@@ -98,14 +98,22 @@ describe("Coordination event contract", () => {
       "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature",
       "password=correct-horse-battery-staple",
       "client_secret: confidential-value",
+      "AWS_SECRET_ACCESS_KEY=plain-value",
+      "OPENAI_API_KEY=plain-value",
       "F:\\Company\\Client-X\\secret.txt",
       "\\\\server\\private-share\\file.txt",
+      "//server/private-share/file.txt",
+      "\\\\?\\UNC\\server\\private-share\\file.txt",
     ]) {
       assert.throws(
         () => validateCoordinationEventPayload({ summary: secret }),
         (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
       );
     }
+    assert.deepEqual(
+      validateCoordinationEventPayload({ summary: "https://server.example/share/file.txt と tokenization=enabled を確認" }),
+      { summary: "https://server.example/share/file.txt と tokenization=enabled を確認" },
+    );
     assert.throws(
       () => validateCoordinationEventOptions([
         { id: "safe", label: "C:\\Users\\someone\\private.txt" },
