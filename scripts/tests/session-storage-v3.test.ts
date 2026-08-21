@@ -187,6 +187,31 @@ function readSessionBlobIds(db: DatabaseSync, sessionId: string): string[] {
 }
 
 describe("SessionStorageV3", () => {
+  it("legacy V3 DBでもHome summaryをbounded pageで取得できる", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new SessionStorageV3(dbPath, blobRootPath);
+      try {
+        await storage.upsertSession({
+          ...createSession({ id: "new", taskTitle: "New", workspaceLabel: "new" }),
+          updatedAt: "2026-08-22T02:00:00.000Z",
+        });
+        await storage.upsertSession({
+          ...createSession({ id: "old", taskTitle: "Old", workspaceLabel: "old" }),
+          updatedAt: "2026-08-22T01:00:00.000Z",
+        });
+
+        const first = await storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1 });
+        const second = await storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1, cursor: first.nextCursor });
+        assert.equal(first.entries.length, 1);
+        assert.equal(second.entries.length, 1);
+        assert.notEqual(first.entries[0]?.id, second.entries[0]?.id);
+        assert.deepEqual(await storage.listSessionCharacterUsage(), [{ characterId: "char-v3", sessionKind: "default" }]);
+      } finally {
+        storage.close();
+      }
+    });
+  });
+
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);

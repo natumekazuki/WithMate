@@ -1,6 +1,6 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CreateSessionRequest, SessionSummary } from "../session-state.js";
+import type { CreateSessionRequest, SessionCharacterUsage, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
 import type { ModelCatalogProvider } from "../model-catalog.js";
@@ -29,9 +29,10 @@ type HomeLaunchHandlersContext = {
   characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
   sessions: readonly SessionSummary[];
+  sessionCharacterUsage: readonly SessionCharacterUsage[];
   openSessionWindowIds: readonly string[];
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
-  sessionSummariesLoadStatus: SessionSummariesLoadStatus;
+  sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setCharactersLoaded: (loaded: boolean) => void;
   setLaunchFeedback: (message: string) => void;
@@ -72,9 +73,10 @@ export function buildHomeLaunchHandlers({
   characterEntries,
   selectedLaunchProviderId,
   sessions,
+  sessionCharacterUsage,
   openSessionWindowIds,
   openSessionWindowIdsLoadStatus,
-  sessionSummariesLoadStatus,
+  sessionCharacterUsageLoadStatus,
   refreshCharacterEntries,
   setCharactersLoaded,
   setLaunchFeedback,
@@ -138,9 +140,10 @@ export function buildHomeLaunchHandlers({
       selectedProviderId: selectedLaunchProviderId,
       characterEntries,
       sessions,
+      sessionCharacterUsage,
       openSessionWindowIds,
       openSessionWindowIdsLoadStatus,
-      sessionSummariesLoadStatus,
+      sessionCharacterUsageLoadStatus,
       createSession,
       createCompanionSession,
       openSessionWindow,

@@ -7,6 +7,9 @@ import {
   normalizeSessionSummary,
   type MessageArtifact,
   type Session,
+  type SessionCharacterUsage,
+  type SessionSummaryPageRequest,
+  type SessionSummaryPageResult,
   type SessionSummary,
 } from "../src/session-state.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
@@ -26,6 +29,13 @@ import {
 import { openAppDatabase } from "./sqlite-connection.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 import { SessionIdCollisionError } from "./session-storage-errors.js";
+import {
+  buildSessionSummaryKeysetClause,
+  buildSessionSummarySearchClauseForColumns,
+  decodeSessionSummaryCursor,
+  encodeSessionSummaryCursor,
+  parseSessionSummaryPageRequest,
+} from "./session-summary-query.js";
 
 type SessionRow = {
   id: string;
@@ -61,6 +71,7 @@ type SessionRow = {
   thread_id: string;
   messages_json: string;
   stream_json: string;
+  last_active_at: string | number;
 };
 
 type SessionIdRow = {
@@ -552,6 +563,85 @@ export class SessionStorage {
     return cloneSessionSummaries(
       rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
     );
+  }
+
+  listHomeSessionSummaryPage(request?: SessionSummaryPageRequest | null): SessionSummaryPageResult {
+    const parsed = parseSessionSummaryPageRequest(request);
+    const cursor = parsed.scope === "open"
+      ? null
+      : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
+    if (parsed.scope === "pinned") {
+      return { entries: [], nextCursor: null, hasMore: false };
+    }
+    const search = buildSessionSummarySearchClauseForColumns("s", parsed.searchText, {
+      title: "s.task_title",
+      workspacePath: "s.workspace_path",
+      workspaceLabel: "s.workspace_label",
+      sessionKind: "s.session_kind",
+    });
+    const keyset = buildSessionSummaryKeysetClause("s", cursor);
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    if (parsed.scope === "open") {
+      const sessionIds = parsed.sessionIds ?? [];
+      if (sessionIds.length === 0) {
+        return { entries: [], nextCursor: null, hasMore: false };
+      }
+      where.push(`s.id IN (${sessionIds.map(() => "?").join(", ")})`);
+      params.push(...sessionIds);
+    } else if (keyset.sql) {
+      where.push(keyset.sql);
+      params.push(...keyset.params);
+    }
+    if (search.sql) {
+      where.push(search.sql);
+      params.push(...search.params);
+    }
+    const rows = this.db.prepare(`
+      SELECT ${SESSION_SUMMARY_SELECT_COLUMNS}, last_active_at
+      FROM sessions AS s
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY s.last_active_at DESC, s.id DESC
+      LIMIT ?
+    `).all(...params, parsed.limit + 1) as SessionSummaryRow[];
+    const visibleRows = rows.slice(0, parsed.limit);
+    const entries = cloneSessionSummaries(
+      visibleRows.map((row) => rowToSessionSummary(row)).filter((summary): summary is SessionSummary => summary !== null),
+    );
+    const hasMore = rows.length > parsed.limit;
+    const lastRow = visibleRows.at(-1);
+    return {
+      entries,
+      hasMore,
+      nextCursor: hasMore && lastRow && parsed.scope !== "open"
+        ? encodeSessionSummaryCursor(parsed.scope, String(lastRow.last_active_at), lastRow.id, parsed.searchText)
+        : null,
+    };
+  }
+
+  listSessionCharacterUsage(): SessionCharacterUsage[] {
+    const rows = this.db.prepare(`
+      SELECT s.character_id
+      FROM sessions AS s
+      WHERE s.session_kind = 'default'
+        AND s.character_id IS NOT NULL
+        AND s.character_id <> ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sessions AS newer
+          WHERE newer.session_kind = 'default'
+            AND newer.character_id = s.character_id
+            AND (
+              newer.last_active_at > s.last_active_at
+              OR (newer.last_active_at = s.last_active_at AND newer.id > s.id)
+            )
+        )
+      ORDER BY s.last_active_at DESC, s.id DESC
+    `).all() as Array<{ character_id: string }>;
+    return rows
+      .map((row) => row.character_id.trim())
+      .filter(Boolean)
+      .map((characterId) => ({ characterId, sessionKind: "default" as const }));
   }
 
   getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {

@@ -256,3 +256,32 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
   assert.equal(requestedSessionId, "session-1");
 });
 
+test("MainQueryService は bounded summary page と Character usage を clone して返す", async () => {
+  const entry = createSessionSummary({ id: "page-session" });
+  const usage = { characterId: "char-page", sessionKind: "default" as const };
+  const service = new MainQueryService({
+    getSessionSummaries: () => [],
+    getSessionSummaryPage: () => ({ entries: [entry], nextCursor: "cursor-1", hasMore: true }),
+    getSessionCharacterUsage: () => [usage],
+    getSession: () => null,
+    getSessionMessageArtifact: () => null,
+    getAuditLogs: () => [],
+    getAuditLogSummaries: () => [],
+    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getAuditLogDetail: () => null,
+    getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
+    getAppSettings: () => ({}) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+    launchTerminalAtPath: async () => undefined,
+  });
+  const page = await service.listSessionSummaryPage({ scope: "recent", limit: 1 });
+  const usages = await service.listSessionCharacterUsage();
+  assert.deepEqual(page, { entries: [entry], nextCursor: "cursor-1", hasMore: true });
+  assert.notEqual(page.entries[0], entry);
+  assert.deepEqual(usages, [usage]);
+  assert.notEqual(usages[0], usage);
+});
+

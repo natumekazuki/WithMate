@@ -1,42 +1,23 @@
-import type { SessionSummary } from "./session-state.js";
+import type { SessionSummaryInvalidation } from "./session-state.js";
 
 export type SessionSummariesLoadStatus = "loading" | "loaded" | "error";
 
-export type SessionSummariesSubscriptionApi = {
-  listSessionSummaries: () => Promise<SessionSummary[]>;
-  subscribeSessionSummaries: (
-    listener: (summaries: SessionSummary[]) => void,
-  ) => () => void;
+export type SessionSummaryInvalidationSubscriptionApi = {
+  subscribeSessionInvalidation: (listener: (payload: SessionSummaryInvalidation) => void) => () => void;
 };
 
-export function startSessionSummariesSubscription(input: {
-  api: SessionSummariesSubscriptionApi | null;
-  applySummaries: (summaries: SessionSummary[]) => void;
-  onInitialLoadError?: (error: unknown) => void;
+export function startSessionSummaryInvalidationSubscription(input: {
+  api: SessionSummaryInvalidationSubscriptionApi | null;
+  onInvalidation: (payload: SessionSummaryInvalidation) => void;
 }): () => void {
-  let active = true;
-  let receivedSubscriptionUpdate = false;
-
   if (!input.api) {
-    return () => {
-      active = false;
-    };
+    return () => undefined;
   }
 
-  void input.api.listSessionSummaries().then((summaries) => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.applySummaries(summaries);
-    }
-  }).catch((error: unknown) => {
-    if (active && !receivedSubscriptionUpdate) {
-      input.onInitialLoadError?.(error);
-    }
-  });
-
-  const unsubscribe = input.api.subscribeSessionSummaries((summaries) => {
-    receivedSubscriptionUpdate = true;
+  let active = true;
+  const unsubscribe = input.api.subscribeSessionInvalidation((payload) => {
     if (active) {
-      input.applySummaries(summaries);
+      input.onInvalidation(payload);
     }
   });
 

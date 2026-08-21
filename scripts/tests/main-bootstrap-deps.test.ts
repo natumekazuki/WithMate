@@ -96,7 +96,8 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         deletePromptTemplate: () => [],
       },
       sessionQuery: {
-        listSessionSummaries: () => [],
+        listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+        listSessionCharacterUsage: () => [],
         listCompanionSessionSummaries: () => [],
         listSessionAuditLogs: () => [],
         listSessionAuditLogSummaries: () => [],
@@ -114,7 +115,7 @@ test("createMainBootstrapDeps は grouped IPC deps を組み立てて registerMa
         async listSessionCustomAgents() { return []; },
         async listWorkspaceSkills() { return []; },
         async listWorkspaceCustomAgents() { return []; },
-        listOpenSessionWindowIds: () => [],
+        listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
         listOpenCompanionReviewWindowIds: () => [],
         getSession: () => null,
         getSessionMessageArtifact: () => null,

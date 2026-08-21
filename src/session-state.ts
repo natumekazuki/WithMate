@@ -103,6 +103,32 @@ export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRun
 };
 export type SessionDetail = Session;
 
+export const SESSION_SUMMARY_PAGE_SCOPES = ["recent", "pinned", "open"] as const;
+export type SessionSummaryPageScope = (typeof SESSION_SUMMARY_PAGE_SCOPES)[number];
+
+export type SessionSummaryPageRequest = {
+  scope?: SessionSummaryPageScope;
+  cursor?: string | null;
+  limit?: number | null;
+  searchText?: string | null;
+  sessionIds?: readonly string[] | null;
+};
+
+export type SessionSummaryPageResult = {
+  entries: SessionSummary[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export type SessionCharacterUsage = {
+  characterId: string;
+  sessionKind: "default";
+};
+
+export type SessionSummaryInvalidation =
+  | { scope: "ids"; sessionIds: string[] }
+  | { scope: "all" };
+
 export type DiffPreviewPayload = {
   title: string;
   file: ChangedFile;

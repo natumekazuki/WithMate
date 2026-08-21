@@ -2,7 +2,7 @@ import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
 import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { CreateSessionRequest, SessionSummary } from "../session-state.js";
+import type { CreateSessionRequest, SessionCharacterUsage, SessionSummary } from "../session-state.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
 import { projectSessionSummary } from "../session-state.js";
@@ -26,9 +26,10 @@ export type StartHomeLaunchInput = {
   characterEntries: readonly CharacterCatalogEntry[];
   selectedProviderId: string | null;
   sessions: readonly SessionSummary[];
+  sessionCharacterUsage: readonly SessionCharacterUsage[];
   openSessionWindowIds: readonly string[];
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
-  sessionSummariesLoadStatus: SessionSummariesLoadStatus;
+  sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   createSession: HomeLaunchSessionCreator;
   createCompanionSession: HomeLaunchCompanionSessionCreator;
   openSessionWindow: (sessionId: string) => Promise<void>;
@@ -58,9 +59,9 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  if (input.draft.characterSelectionMode === "random" && input.sessionSummariesLoadStatus !== "loaded") {
+  if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
     input.setLaunchFeedback(
-      input.sessionSummariesLoadStatus === "loading"
+      input.sessionCharacterUsageLoadStatus === "loading"
         ? "Loading Session history. Try again when loading is complete."
         : "Random selection is unavailable because Session history could not be loaded.",
     );
@@ -91,7 +92,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
         mateProfile: input.mateProfile,
         selectedProviderId: input.selectedProviderId,
         characterEntries: input.characterEntries,
-        sessions: input.sessions,
+        sessions: input.sessionCharacterUsage,
         openSessionCharacterIds,
         random: input.random,
       });
@@ -117,7 +118,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       mateProfile: input.mateProfile,
       selectedProviderId: input.selectedProviderId,
       characterEntries: input.characterEntries,
-      sessions: input.sessions,
+      sessions: input.sessionCharacterUsage,
       openSessionCharacterIds,
       random: input.random,
     });

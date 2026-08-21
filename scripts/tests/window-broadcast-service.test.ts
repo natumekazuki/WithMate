@@ -6,14 +6,7 @@ import { WindowBroadcastService } from "../../src-electron/window-broadcast-serv
 function createWindow(destroyed = false) {
   const sent: Array<{ channel: string; payload: unknown }> = [];
   return {
-    window: {
-      isDestroyed: () => destroyed,
-      webContents: {
-        send: (channel: string, payload: unknown) => {
-          sent.push({ channel, payload });
-        },
-      },
-    },
+    window: { isDestroyed: () => destroyed, webContents: { send: (channel: string, payload: unknown) => sent.push({ channel, payload }) } },
     sent,
   };
 }
@@ -26,36 +19,26 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
     getAllWindows: () => [home.window, session.window, closed.window],
     getHomeWindows: () => [home.window, closed.window],
     getSessionWindows: () => [session.window, closed.window],
-    getSessionWindow: (sessionId) => sessionId === "session-1" ? session.window : null,
+    getSessionWindow: () => session.window,
   });
-
-  service.broadcastSessionSummaries([]);
-  service.broadcastSessionInvalidation(["session-1"]);
-  service.broadcastSessionExecutionsChanged({
-    kind: "state-changed",
-    sessionId: "session-1",
-    executionId: "execution-1",
-    state: "running",
-  });
+  service.broadcastSessionInvalidation({ scope: "ids", sessionIds: ["session-1"] });
   service.broadcastOpenSessionWindowIds(["session-1"]);
   service.broadcastPromptTemplates([]);
-
   assert.deepEqual(home.sent.map((entry) => entry.channel), [
-    "withmate:sessions-changed",
-    "withmate:open-session-windows-changed",
-    "withmate:prompt-templates-changed",
+    "withmate:sessions-invalidated", "withmate:open-session-windows-changed", "withmate:prompt-templates-changed",
   ]);
   assert.deepEqual(session.sent.map((entry) => entry.channel), [
-    "withmate:sessions-invalidated",
-    "withmate:session-executions-changed",
-    "withmate:open-session-windows-changed",
-    "withmate:prompt-templates-changed",
+    "withmate:sessions-invalidated", "withmate:open-session-windows-changed", "withmate:prompt-templates-changed",
   ]);
-  assert.deepEqual(session.sent[1]?.payload, {
-    kind: "state-changed",
-    sessionId: "session-1",
-    executionId: "execution-1",
-    state: "running",
-  });
   assert.equal(closed.sent.length, 0);
+  assert.deepEqual(home.sent[1]?.payload, { scope: "ids", sessionIds: ["session-1"] });
+});
+
+test("WindowBroadcastService は open Session ID の上限超過を all にする", () => {
+  const home = createWindow(false);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [home.window], getHomeWindows: () => [home.window], getSessionWindows: () => [], getSessionWindow: () => null,
+  });
+  service.broadcastOpenSessionWindowIds(Array.from({ length: 101 }, (_, index) => `session-${index}`));
+  assert.deepEqual(home.sent[0]?.payload, { scope: "all" });
 });

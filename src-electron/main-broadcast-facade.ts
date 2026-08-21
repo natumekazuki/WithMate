@@ -1,8 +1,9 @@
 import type { AppSettings } from "../src/provider-settings-state.js";
-import type { SessionSummary } from "../src/app-state.js";
+import type { SessionSummaryInvalidation } from "../src/app-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type { PromptTemplate } from "../src/prompt-template.js";
 import type { WindowBroadcastService } from "./window-broadcast-service.js";
+import { SESSION_SUMMARY_ID_MAX_LENGTH, SESSION_SUMMARY_INVALIDATION_ID_MAX } from "./session-summary-query.js";
 
 type BroadcastWindowLike = {
   isDestroyed(): boolean;
@@ -13,7 +14,6 @@ type BroadcastWindowLike = {
 
 type MainBroadcastFacadeDeps<TWindow extends BroadcastWindowLike> = {
   getWindowBroadcastService(): WindowBroadcastService<TWindow>;
-  listSessionSummaries(): SessionSummary[];
   getModelCatalog(): ModelCatalogSnapshot | null;
   getAppSettings(): AppSettings;
   listPromptTemplates(): PromptTemplate[];
@@ -25,11 +25,17 @@ export class MainBroadcastFacade<TWindow extends BroadcastWindowLike> {
   constructor(private readonly deps: MainBroadcastFacadeDeps<TWindow>) {}
 
   broadcastSessions(sessionIds?: Iterable<string>): void {
-    const summaries = this.deps.listSessionSummaries();
-    const invalidatedSessionIds = Array.from(new Set(sessionIds ?? summaries.map((session) => session.id)));
+    const invalidatedSessionIds = sessionIds === undefined
+      ? []
+      : Array.from(new Set(Array.from(sessionIds).map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const invalidation: SessionSummaryInvalidation = sessionIds === undefined
+      || invalidatedSessionIds.length === 0
+      || invalidatedSessionIds.length > SESSION_SUMMARY_INVALIDATION_ID_MAX
+      || invalidatedSessionIds.some((sessionId) => sessionId.length > SESSION_SUMMARY_ID_MAX_LENGTH)
+      ? { scope: "all" }
+      : { scope: "ids", sessionIds: invalidatedSessionIds };
     const windowBroadcastService = this.deps.getWindowBroadcastService();
-    windowBroadcastService.broadcastSessionSummaries(summaries);
-    windowBroadcastService.broadcastSessionInvalidation(invalidatedSessionIds);
+    windowBroadcastService.broadcastSessionInvalidation(invalidation);
   }
 
   broadcastModelCatalog(snapshot?: ModelCatalogSnapshot | null): void {
