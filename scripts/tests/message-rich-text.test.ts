@@ -406,12 +406,13 @@ test("code block copy操作はhover・focus・disabledの視認状態を持つ",
   assert.match(disabledRule, /opacity:\s*0\.64;/);
 });
 
-test("code block copy actionは縦scroll中だけshell上端へstickyし、本文の横scroll ownerから分離される", async () => {
+test("code block copy actionは縦scroll中だけshell上端へstickyし、本文を透過表示せず横scroll ownerから分離される", async () => {
   const styles = await readFile(new URL("../../src/styles.css", import.meta.url), "utf8");
   const shellRule = styles.match(/\.message-code-block-shell\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const copyableShellRule = styles.match(/\.message-code-block-shell\.copyable\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const actionsRule = styles.match(/\.message-code-block-actions\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
   const codeBlockRule = styles.match(/\.message-code-block\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
+  const shellCodeBlockRule = styles.match(/\.message-code-block-shell\s*>\s*\.message-code-block\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
   assert.match(shellRule, /position:\s*relative;/);
   assert.match(copyableShellRule, /width:\s*100%;/);
@@ -420,8 +421,10 @@ test("code block copy actionは縦scroll中だけshell上端へstickyし、本�
   assert.match(actionsRule, /top:\s*0;/);
   assert.match(actionsRule, /z-index:\s*1;/);
   assert.match(actionsRule, /width:\s*100%;/);
+  assert.match(actionsRule, /background:\s*rgb\(18 24 39\);/);
   assert.doesNotMatch(actionsRule, /position:\s*(?:absolute|fixed);/);
   assert.match(codeBlockRule, /overflow:\s*auto;/);
+  assert.match(shellCodeBlockRule, /background:\s*rgb\(18 24 39\);/);
   assert.doesNotMatch(actionsRule, /overflow(?:-x|-y)?\s*:/);
 });
 

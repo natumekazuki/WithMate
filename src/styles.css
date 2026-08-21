@@ -6863,7 +6863,7 @@ button:disabled {
   border: 1px solid rgba(18, 24, 39, 0.08);
   border-bottom: 0;
   border-radius: 14px 14px 0 0;
-  background: rgba(18, 24, 39, 0.92);
+  background: rgb(18 24 39);
 }
 
 .message-code-block-shell > .message-code-block {
@@ -6871,7 +6871,7 @@ button:disabled {
   padding: 0 14px 12px;
   border-top: 0;
   border-radius: 0 0 14px 14px;
-  background: rgba(18, 24, 39, 0.92);
+  background: rgb(18 24 39);
 }
 
 .message-code-copy-button {
