@@ -4675,6 +4675,11 @@ button:disabled {
   padding: 0;
 }
 
+.session-file-explorer-body.has-history {
+  overflow: hidden;
+  padding: 0;
+}
+
 .session-file-tree-virtual {
   position: relative;
   min-width: 100%;
@@ -5655,6 +5660,276 @@ button:disabled {
 
 .workspace-change-kind.deleted {
   color: #fca5a5;
+}
+
+.workspace-change-kind.renamed,
+.workspace-change-kind.copied {
+  color: #c4b5fd;
+}
+
+.file-history-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.file-history-repository-selector {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 8px 9px 7px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  color: var(--muted);
+  font-size: 0.73rem;
+}
+
+.file-history-repository-selector select {
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  background: rgba(15, 23, 42, 0.72);
+  color: var(--ink);
+  font: inherit;
+}
+
+.file-history-commit-list {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(203, 213, 225, 0.3) transparent;
+}
+
+.file-history-commit-list:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--character-sub) 44%, transparent);
+  outline-offset: -1px;
+}
+
+.file-history-commit-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 3px 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.08);
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-history-commit-row:hover,
+.file-history-commit-row.is-selected {
+  background: color-mix(in srgb, var(--character-sub-soft) 23%, rgba(15, 23, 42, 0.5));
+}
+
+.file-history-commit-row:focus-visible,
+.file-history-back:focus-visible,
+.file-history-open-changes:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--character-sub) 56%, transparent);
+  outline-offset: -1px;
+}
+
+.file-history-commit-subject {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.79rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-commit-secondary {
+  display: flex;
+  grid-column: 1 / -1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+.file-history-commit-secondary code {
+  color: var(--ink);
+  font-family: ui-monospace, monospace;
+}
+
+.file-history-commit-secondary span,
+.file-history-commit-secondary time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-history-ref-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.file-history-ref-badge {
+  display: inline-flex;
+  align-items: center;
+  max-width: 150px;
+  padding: 1px 5px;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.62rem;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-ref-badge.head {
+  border-color: color-mix(in srgb, var(--character-sub) 42%, transparent);
+  color: var(--ink);
+}
+
+.file-history-ref-badge.branch {
+  border-color: rgba(134, 239, 172, 0.28);
+  color: #bbf7d0;
+}
+
+.file-history-ref-badge.tag {
+  border-color: rgba(251, 191, 36, 0.28);
+  color: #fde68a;
+}
+
+.file-history-list-sentinel {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+}
+
+.file-history-list-sentinel .workspace-changes-spinner {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+.file-history-empty,
+.file-history-message {
+  margin: 0;
+  padding: 12px 9px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.file-history-message {
+  color: var(--danger, #fca5a5);
+}
+
+.file-history-detail {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(203, 213, 225, 0.3) transparent;
+}
+
+.file-history-back {
+  width: 100%;
+  padding: 8px 9px;
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.73rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-history-back:hover {
+  background: color-mix(in srgb, var(--character-sub-soft) 20%, rgba(15, 23, 42, 0.5));
+  color: var(--ink);
+}
+
+.file-history-detail-header {
+  display: grid;
+  gap: 4px;
+  padding: 10px 9px 8px;
+}
+
+.file-history-detail-header h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-detail-header code {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-history-commit-meta {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
+}
+
+.file-history-commit-meta span:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-history-detail-header .file-history-ref-badges {
+  justify-content: flex-start;
+}
+
+.file-history-open-changes {
+  margin: 0 9px 8px;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--character-sub) 30%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--character-sub-soft) 18%, rgba(15, 23, 42, 0.54));
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-history-open-changes:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--character-sub-soft) 30%, rgba(15, 23, 42, 0.6));
+}
+
+.file-history-open-changes:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.file-history-changed-files {
+  min-height: 220px;
+  display: flex;
+  flex-direction: column;
 }
 
 .workspace-change-path {

@@ -27,6 +27,14 @@ export const WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL =
 export const WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL = "withmate:show-markdown-link-context-menu";
 export const WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL = "withmate:list-file-root-changes";
 export const WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL = "withmate:get-file-root-diff";
+export const WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL =
+  "withmate:list-file-root-git-history-repositories";
+export const WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL =
+  "withmate:list-file-root-git-history-commits";
+export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL =
+  "withmate:get-file-root-git-history-commit-detail";
+export const WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL =
+  "withmate:get-file-root-git-history-diff";
 export const WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL = "withmate:get-session-message-artifact";
 export const WITHMATE_GET_MODEL_CATALOG_CHANNEL = "withmate:get-model-catalog";
 export const WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL = "withmate:import-model-catalog";

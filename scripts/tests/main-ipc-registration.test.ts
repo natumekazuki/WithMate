@@ -49,6 +49,10 @@ import {
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
@@ -172,6 +176,10 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL));
@@ -600,6 +608,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const inspectRequests: unknown[] = [];
   const readRequests: unknown[] = [];
   const openRequests: unknown[] = [];
+  const historyRepositoryRequests: unknown[] = [];
+  const historyCommitRequests: unknown[] = [];
+  const historyDetailRequests: unknown[] = [];
+  const historyDiffRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
   const previewNavigationRequests: unknown[] = [];
@@ -649,6 +661,22 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     },
     getFileRootDiff: async (request: unknown) => {
       diffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+    listFileRootGitHistoryRepositories: async (request: unknown) => {
+      historyRepositoryRequests.push(request);
+      return { status: "ok", repositories: [] };
+    },
+    listFileRootGitHistoryCommits: async (request: unknown) => {
+      historyCommitRequests.push(request);
+      return { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } };
+    },
+    getFileRootGitHistoryCommitDetail: async (request: unknown) => {
+      historyDetailRequests.push(request);
+      return { status: "commit-not-found", message: "none" };
+    },
+    getFileRootGitHistoryDiff: async (request: unknown) => {
+      historyDiffRequests.push(request);
       return { status: "not-changed", message: "none" };
     },
   });
@@ -729,6 +757,55 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     message: "none",
   });
   assert.deepEqual(diffRequests, [diffRequest]);
+  const historyRepositoriesRequest = { sessionId: "aux-1" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL)?.({}, historyRepositoriesRequest),
+    { status: "ok", repositories: [] },
+  );
+  const historyRequest = {
+    sessionId: "aux-1",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    rootId: "workspace",
+  };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyRequest, cursor: null }),
+    { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } },
+  );
+  const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, historyDetailRequest),
+    { status: "commit-not-found", message: "none" },
+  );
+  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest),
+    { status: "not-changed", message: "none" },
+  );
+  assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
+  assert.deepEqual(historyCommitRequests, [{ ...historyRequest, cursor: null }]);
+  assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
+      ...historyRequest,
+      repositoryId: "not-a-repository",
+    }) as Promise<unknown>,
+    /Git history request/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, {
+      ...historyRequest,
+      commitId: "not-a-commit",
+    }) as Promise<unknown>,
+    /commit id is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, {
+      ...historyDiffRequest,
+      relativePath: "../outside.ts",
+    }) as Promise<unknown>,
+    /file path is invalid/,
+  );
   await assert.rejects(
     () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, { sessionId: "aux-1", rootId: "" }) as Promise<unknown>,
     /File root changes request/,

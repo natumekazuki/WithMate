@@ -159,9 +159,11 @@ import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionF
 import { PromptTemplateWorkspace } from "./prompt-templates/PromptTemplateWorkspace.js";
 import { insertComposerTextAtSelection } from "./chat/message-text-actions.js";
 import { FileRootChangesPane } from "./file-explorer/FileRootChangesPane.js";
+import { FileRootGitHistoryPane } from "./file-explorer/FileRootGitHistoryPane.js";
 import type {
   FileRootFileDiffRequest,
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
+  FileRootGitHistoryDiffRequest,
   SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
 import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
@@ -510,22 +512,33 @@ export default function AgentSessionWindowApp() {
   const registerPromptTemplateCloseGuard = useCallback((guard: (() => boolean) | null) => {
     promptTemplateCloseGuardRef.current = guard;
   }, []);
-  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
+  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitDiffScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
-  const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
+  const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes" | "history">("files");
   const [fileRootChangesRefreshRevision, setFileRootChangesRefreshRevision] = useState(0);
+  const [fileRootGitHistoryRefreshRevision, setFileRootGitHistoryRefreshRevision] = useState(0);
   const [fileRootDiffPreview, setFileRootDiffPreview] = useState<{
     sessionId: string;
     rootId: string;
     relativePath: string;
-    scope: FileRootGitChangeScope;
+    scope: FileRootGitDiffScope;
     generation: number;
     patch: string;
   } | null>(null);
   const [fileRootDiffPendingPreview, setFileRootDiffPendingPreview] = useState<
     (FileRootFileDiffRequest & { generation: number }) | null
   >(null);
-  const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
+  const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitDiffScope | null>(null);
+  const [fileRootGitHistoryDiffPreview, setFileRootGitHistoryDiffPreview] = useState<{
+    request: FileRootGitHistoryDiffRequest;
+    generation: number;
+    patch: string;
+  } | null>(null);
+  const [fileRootGitHistoryDiffPendingPreview, setFileRootGitHistoryDiffPendingPreview] = useState<{
+    request: FileRootGitHistoryDiffRequest;
+    generation: number;
+  } | null>(null);
+  const [fileRootGitHistoryDiffLoading, setFileRootGitHistoryDiffLoading] = useState(false);
   const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
   const [inlinePathError, setInlinePathError] = useState<{
     ownerSessionId: string;
@@ -619,6 +632,7 @@ export default function AgentSessionWindowApp() {
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
+  const fileRootGitHistoryDiffRequestRevisionRef = useRef(0);
   const sessionRefetchRevisionRef = useRef(new LatestRequestRevision());
   const sessionSubmitCoordinatorRef = useRef(new SessionSubmitCoordinator());
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
@@ -835,7 +849,15 @@ export default function AgentSessionWindowApp() {
   const isCentralPreviewActive = selectedFilePreview !== null
     || fileRootDiffPreview !== null
     || fileRootDiffPendingPreview !== null
+    || fileRootGitHistoryDiffPreview !== null
+    || fileRootGitHistoryDiffPendingPreview !== null
     || isPromptTemplateWorkspaceOpen;
+  const clearHistoryDiffPreview = useCallback(() => {
+    fileRootGitHistoryDiffRequestRevisionRef.current += 1;
+    setFileRootGitHistoryDiffPendingPreview(null);
+    setFileRootGitHistoryDiffPreview(null);
+    setFileRootGitHistoryDiffLoading(false);
+  }, []);
   const closeCentralPreview = useCallback(() => {
     fileRootDiffRequestRevisionRef.current += 1;
     setFileRootDiffLoadingScope(null);
@@ -843,10 +865,11 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
+    clearHistoryDiffPreview();
     setIsPromptTemplateWorkspaceOpen(false);
     setIsSkillPickerOpen(false);
     setPreviewChatActivity(endPreviewChatActivity());
-  }, []);
+  }, [clearHistoryDiffPreview]);
   const canClosePromptTemplate = useCallback(
     () => promptTemplateCloseGuardRef.current?.() ?? true,
     [],
@@ -905,7 +928,8 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setFileRootDiffLoadingScope(null);
-  }, [activeRunSessionId]);
+    clearHistoryDiffPreview();
+  }, [activeRunSessionId, clearHistoryDiffPreview]);
   useEffect(() => {
     let active = true;
     setSelectedFileDiffScopes([]);
@@ -1014,7 +1038,7 @@ export default function AgentSessionWindowApp() {
       }
     });
   }, [activeRunSessionId, prepareCentralSurfaceOpen, withmateApi]);
-  const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitChangeScope): Promise<string | null> => {
+  const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitDiffScope): Promise<string | null> => {
     if (!withmateApi || !activeRunSessionId || !selectedFilePreview) {
       return "Git Diff is not available for this file.";
     }
@@ -1119,6 +1143,69 @@ export default function AgentSessionWindowApp() {
       }
     }
   }, [activeRunSessionId, withmateApi, fileRootDiffPreview]);
+  const handleShowFileRootGitHistoryDiff = useCallback((
+    request: FileRootGitHistoryDiffRequest,
+    _openInWindow = false,
+  ): Promise<string | null> => {
+    if (!withmateApi || request.sessionId !== activeRunSessionId) {
+      return Promise.resolve("Git history diff is not available for this session.");
+    }
+    if (!prepareCentralSurfaceOpen()) {
+      return Promise.resolve(null);
+    }
+    const revision = fileRootGitHistoryDiffRequestRevisionRef.current + 1;
+    fileRootGitHistoryDiffRequestRevisionRef.current = revision;
+    setFileRootGitHistoryDiffPendingPreview({ request, generation: revision });
+    setFileRootGitHistoryDiffLoading(true);
+    return withmateApi.getFileRootGitHistoryDiff(request).then((result) => {
+      if (fileRootGitHistoryDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      setFileRootGitHistoryDiffPreview({ request, generation: revision, patch: result.patch });
+      setFileRootGitHistoryDiffPendingPreview(null);
+      return null;
+    }).catch((error) => (
+      fileRootGitHistoryDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git history diff failed."
+        : null
+    )).finally(() => {
+      if (fileRootGitHistoryDiffRequestRevisionRef.current === revision) {
+        setFileRootGitHistoryDiffPendingPreview(null);
+        setFileRootGitHistoryDiffLoading(false);
+      }
+    });
+  }, [activeRunSessionId, prepareCentralSurfaceOpen, withmateApi]);
+  const handleReloadFileRootGitHistoryDiff = useCallback(async (): Promise<string | null> => {
+    const preview = fileRootGitHistoryDiffPreview;
+    if (!withmateApi || !preview || preview.request.sessionId !== activeRunSessionId) {
+      return "Git history diff is no longer available for this session.";
+    }
+    const revision = fileRootGitHistoryDiffRequestRevisionRef.current + 1;
+    fileRootGitHistoryDiffRequestRevisionRef.current = revision;
+    setFileRootGitHistoryDiffLoading(true);
+    try {
+      const result = await withmateApi.getFileRootGitHistoryDiff(preview.request);
+      if (fileRootGitHistoryDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      setFileRootGitHistoryDiffPreview({ request: preview.request, generation: revision, patch: result.patch });
+      return null;
+    } catch (error) {
+      return fileRootGitHistoryDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git history diff failed."
+        : null;
+    } finally {
+      if (fileRootGitHistoryDiffRequestRevisionRef.current === revision) {
+        setFileRootGitHistoryDiffLoading(false);
+      }
+    }
+  }, [activeRunSessionId, fileRootGitHistoryDiffPreview, withmateApi]);
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
@@ -3629,6 +3716,7 @@ export default function AgentSessionWindowApp() {
   const renderedMessages = messageListMessages;
   const renderedDraft = activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft;
   const handleOpenPromptTemplates = () => {
+    clearHistoryDiffPreview();
     if (isPromptTemplateWorkspaceOpen) {
       requestCentralSurfaceClose();
       return;
@@ -3714,8 +3802,14 @@ export default function AgentSessionWindowApp() {
       rootsRevision={fileExplorerRootsRevision}
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
-      onActiveTabChange={setFileExplorerTab}
+      onActiveTabChange={(tab) => {
+        if (tab !== "history") {
+          clearHistoryDiffPreview();
+        }
+        setFileExplorerTab(tab);
+      }}
       onRefreshChanges={() => setFileRootChangesRefreshRevision((current) => current + 1)}
+      onRefreshHistory={() => setFileRootGitHistoryRefreshRevision((current) => current + 1)}
       onOpenFile={(request, openInWindow) => {
         void handleOpenFileRootFile(request, openInWindow).then((message) => {
           if (message) {
@@ -3732,6 +3826,17 @@ export default function AgentSessionWindowApp() {
           refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
           onOpenDiff={handleShowFileRootDiff}
+        />
+      )}
+      historyContent={(
+        <FileRootGitHistoryPane
+          api={withmateApi}
+          sessionId={activeRunSessionId}
+          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "history"}
+          rootsRevision={fileExplorerRootsRevision}
+          refreshRevision={fileRootGitHistoryRefreshRevision}
+          onOpenDiff={handleShowFileRootGitHistoryDiff}
+          onRepositoryChange={clearHistoryDiffPreview}
         />
       )}
     />
@@ -3761,6 +3866,33 @@ export default function AgentSessionWindowApp() {
       onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
+    />
+  ) : fileRootGitHistoryDiffPendingPreview ? (
+    <SessionDiffPreview
+      title={fileRootGitHistoryDiffPendingPreview.request.relativePath
+        ?? `Commit ${fileRootGitHistoryDiffPendingPreview.request.commitId.slice(0, 7)}`}
+      previewRevision={fileRootGitHistoryDiffPendingPreview.generation}
+      patch=""
+      loading
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
+      onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
+      onReload={() => handleShowFileRootGitHistoryDiff(fileRootGitHistoryDiffPendingPreview.request)}
+      reloadPending
+      chatNotice={previewChatNotice}
+    />
+  ) : fileRootGitHistoryDiffPreview ? (
+    <SessionDiffPreview
+      title={fileRootGitHistoryDiffPreview.request.relativePath
+        ?? `Commit ${fileRootGitHistoryDiffPreview.request.commitId.slice(0, 7)}`}
+      previewRevision={fileRootGitHistoryDiffPreview.generation}
+      patch={fileRootGitHistoryDiffPreview.patch}
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
+      onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
+      onReload={handleReloadFileRootGitHistoryDiff}
+      reloadPending={fileRootGitHistoryDiffLoading}
+      chatNotice={previewChatNotice}
     />
   ) : fileRootDiffPendingPreview ? (
     <SessionDiffPreview

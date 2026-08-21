@@ -53,6 +53,8 @@ function changeKindLabel(kind: FileRootGitChangeEntry["kinds"][FileRootGitChange
       return "D";
     case "renamed":
       return "R";
+    case "copied":
+      return "C";
     case "untracked":
       return "U";
     default:
@@ -73,6 +75,8 @@ type FileRootChangesGroupProps = {
   groupCount: number;
   collapsedDirectories: Record<string, boolean>;
   loadingKey: string;
+  scopes?: readonly (readonly [FileRootGitChangeScope, string])[];
+  selectedEntryKey?: string | null;
   onToggleDirectory: (rootId: string, scope: FileRootGitChangeScope, relativePath: string) => void;
   onOpenEntry: (
     rootId: string,
@@ -89,6 +93,8 @@ export function FileRootChangesGroup({
   loadingKey,
   onToggleDirectory,
   onOpenEntry,
+  scopes = [["working-tree", "Working Tree"], ["staged", "Staged"]],
+  selectedEntryKey = null,
 }: FileRootChangesGroupProps) {
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const headingId = useId();
@@ -133,7 +139,7 @@ export function FileRootChangesGroup({
       nextRows.push({ key: `error:${rootChange.root.id}`, type: "error", label: rootChange.message });
       return nextRows;
     }
-    for (const [scope, label] of [["working-tree", "Working Tree"], ["staged", "Staged"]] as const) {
+    for (const [scope, label] of scopes) {
       const scopedEntries = rootChange.entries.filter((entry) => entry.scopes.includes(scope));
       nextRows.push({
         key: `header:${rootChange.root.id}:${scope}`,
@@ -148,7 +154,7 @@ export function FileRootChangesGroup({
       }
     }
     return nextRows;
-  }, [collapsedDirectories, rootChange]);
+  }, [collapsedDirectories, rootChange, scopes]);
   const naturalHeight = ROOT_HEADER_ESTIMATED_HEIGHT
     + rows.reduce((total, row) => total + estimatedRowHeight(row), 0);
   const minimumHeight = Math.min(naturalHeight, ROOT_GROUP_MIN_HEIGHT);
@@ -172,6 +178,15 @@ export function FileRootChangesGroup({
     useFlushSync: false,
   });
   const totalSize = virtualizer.getTotalSize();
+  const virtualItems = virtualizer.getVirtualItems();
+  const renderedVirtualItems = virtualItems.length > 0
+    ? virtualItems
+    : rows.map((row, index) => ({
+        index,
+        key: row.key,
+        start: rows.slice(0, index).reduce((total, previousRow) => total + estimatedRowHeight(previousRow), 0),
+        size: estimatedRowHeight(row),
+      }));
 
   useEffect(() => {
     const scrollElement = scrollRef.current;
@@ -210,8 +225,8 @@ export function FileRootChangesGroup({
         aria-label={`${rootChange.root.label} changes`}
         tabIndex={0}
       >
-        <div className="workspace-changes-list-inner" style={{ height: totalSize }}>
-          {virtualizer.getVirtualItems().map((virtualRow) => {
+        <div className="workspace-changes-list-inner" style={{ height: totalSize || naturalHeight }}>
+          {renderedVirtualItems.map((virtualRow) => {
             const row = rows[virtualRow.index];
             if (!row) {
               return null;
@@ -247,7 +262,7 @@ export function FileRootChangesGroup({
                   const kind = row.entry.kinds[row.scope] ?? "modified";
                   return (
                     <button
-                      className="workspace-change-row"
+                      className={`workspace-change-row${selectedEntryKey === key ? " is-selected" : ""}`}
                       type="button"
                       style={{ paddingLeft: `${6 + row.depth * 14}px` }}
                       disabled={!!loadingKey}

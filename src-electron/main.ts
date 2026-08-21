@@ -1520,6 +1520,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainWindowFacade().getFilePreviewPayload(token),
                 listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
                 getFileRootDiff: (request) => createFileRootGitChangesService().getFileDiff(request),
+                listFileRootGitHistoryRepositories: (request) =>
+                  createFileRootGitChangesService().listHistoryRepositories(request),
+                listFileRootGitHistoryCommits: (request) =>
+                  createFileRootGitChangesService().listHistoryCommits(request),
+                getFileRootGitHistoryCommitDetail: (request) =>
+                  createFileRootGitChangesService().getHistoryCommitDetail(request),
+                getFileRootGitHistoryDiff: (request) =>
+                  createFileRootGitChangesService().getHistoryDiff(request),
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -3620,9 +3628,20 @@ function createSessionFileExplorerService(): SessionFileExplorerService {
 }
 
 function createFileRootGitChangesService(): FileRootGitChangesService {
+  const explorer = createSessionFileExplorerService();
   return new FileRootGitChangesService({
     resolveRootContext: async (request) => {
-      const root = await createSessionFileExplorerService().resolveRoot(request.sessionId, request.rootId);
+      const root = await explorer.resolveRoot(request.sessionId, request.rootId);
+      return root ? { rootPath: root.absolutePath } : null;
+    },
+    resolveHistoryRootContexts: async (sessionId) => (await explorer.resolveHistoryRoots(sessionId)).map((root) => ({
+      rootId: root.id,
+      label: root.label,
+      displayPath: root.displayPath,
+      rootPath: root.absolutePath,
+    })),
+    resolveHistoryRootContext: async (request) => {
+      const root = await explorer.resolveHistoryRoot(request.sessionId, request.rootId);
       return root ? { rootPath: root.absolutePath } : null;
     },
   });
