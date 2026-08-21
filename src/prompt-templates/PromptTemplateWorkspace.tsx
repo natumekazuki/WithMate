@@ -271,7 +271,6 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
                   onClick={() => handleSelectTemplate(template)}
                 >
                   <span className="prompt-template-picker-item-primary">{template.name}</span>
-                  <span className="prompt-template-picker-item-secondary">Select to insert into composer</span>
                 </button>
               ))
             ) : (

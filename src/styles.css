@@ -4489,11 +4489,6 @@ button:disabled {
   white-space: nowrap;
 }
 
-.prompt-template-picker-item-secondary {
-  color: var(--muted);
-  font-size: 0.76rem;
-}
-
 .prompt-template-workspace {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
