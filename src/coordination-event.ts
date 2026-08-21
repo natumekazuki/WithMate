@@ -244,12 +244,12 @@ function rejectSensitiveText(payload: CoordinationEventPayload, field: string): 
 
 function rejectSensitiveValues(values: readonly string[], field: string): void {
   const forbidden = [
-    /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
+    /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i,
     /\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
     /\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
     /\bAKIA[0-9A-Z]{16}\b/,
     /\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
-    /(?:^|\s)(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s]+/i,
+    /(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s"'<>)]*/i,
     /\b(?:stack trace|traceback \(most recent call last\))\b/i,
     /\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
     /^diff --git /im,

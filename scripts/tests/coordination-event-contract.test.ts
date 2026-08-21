@@ -109,5 +109,33 @@ describe("Coordination event contract", () => {
       ]),
       (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
     );
+    assert.throws(
+      () => parseSessionRuntimeOperationInput("coordination.event.create", {
+        kind: "progress",
+        payload: { summary: "key=-----BEGIN ENCRYPTED PRIVATE KEY-----" },
+        idempotencyKey: "encrypted-key",
+      }),
+      (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
+    );
+    assert.throws(
+      () => parseSessionRuntimeOperationInput("coordination.event.create", {
+        kind: "user_decision_required",
+        payload: { summary: "選択" },
+        options: [
+          { id: "private", label: "private", description: "path=C:\\Users\\someone\\secret.txt" },
+          { id: "safe", label: "安全側" },
+        ],
+        idempotencyKey: "option-path",
+      }),
+      (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
+    );
+    assert.throws(
+      () => parseSessionRuntimeOperationInput("coordination.event.cancel", {
+        eventId: "event-1",
+        note: "[local](C:\\Users\\someone\\secret.txt)",
+        idempotencyKey: "note-path",
+      }),
+      (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
+    );
   });
 });

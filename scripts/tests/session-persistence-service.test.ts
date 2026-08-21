@@ -1132,6 +1132,7 @@ describe("SessionPersistenceService", () => {
     const revokedBindings: string[] = [];
     const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
+    let coordinationBroadcastCount = 0;
 
     const service = new SessionPersistenceService({
       getSessions() {
@@ -1190,6 +1191,9 @@ describe("SessionPersistenceService", () => {
       broadcastSessions(sessionIds) {
         broadcastedSessionIds.push(Array.from(sessionIds ?? []));
       },
+      broadcastCoordinationEventsChanged() {
+        coordinationBroadcastCount += 1;
+      },
     });
 
     await service.deleteSession(session.id);
@@ -1203,6 +1207,7 @@ describe("SessionPersistenceService", () => {
       { providerId: "copilot", sessionId: "auxiliary-a" },
     ]);
     assert.deepEqual(broadcastedSessionIds, [[session.id]]);
+    assert.equal(coordinationBroadcastCount, 1);
     assert.equal(storedSessions.length, 0);
   });
 

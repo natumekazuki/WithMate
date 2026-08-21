@@ -67,6 +67,7 @@ export type SessionPersistenceServiceDeps = {
   revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
+  broadcastCoordinationEventsChanged?(): void;
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
@@ -360,6 +361,7 @@ export class SessionPersistenceService {
     }
 
     this.deps.broadcastSessions(deletableSessionIds);
+    this.deps.broadcastCoordinationEventsChanged?.();
 
     return {
       cutoffDate: options.cutoff?.cutoffDate,

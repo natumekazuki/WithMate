@@ -131,7 +131,7 @@ function validateCoordinationEventPayload(value, field = "payload") {
 function validateCoordinationEventOptions(value, field = "options") {
 	if (!Array.isArray(value) || value.length < 2 || value.length > 8) throw invalid$1(field, "Coordination event options must contain 2 to 8 items.");
 	const ids = /* @__PURE__ */ new Set();
-	return value.map((entry, index) => {
+	const options = value.map((entry, index) => {
 		const itemField = `${field}[${index}]`;
 		const record = requireObject$1(entry, itemField);
 		assertKeys$1(record, [
@@ -148,6 +148,12 @@ function validateCoordinationEventOptions(value, field = "options") {
 			...record.description === void 0 ? {} : { description: requireText(record.description, `${itemField}.description`, 500) }
 		};
 	});
+	rejectSensitiveValues(options.flatMap((option) => [
+		option.id,
+		option.label,
+		option.description ?? ""
+	]), field);
+	return options;
 }
 function validateCoordinationEventNote(value, field = "note") {
 	const note = requireText(value, field, 1e3);
@@ -178,9 +184,12 @@ function rejectSensitiveText(payload, field) {
 }
 function rejectSensitiveValues(values, field) {
 	const forbidden = [
-		/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
+		/-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i,
 		/\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
-		/(?:^|\s)(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s]+/i,
+		/\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
+		/\bAKIA[0-9A-Z]{16}\b/,
+		/\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
+		/(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s"'<>)]*/i,
 		/\b(?:stack trace|traceback \(most recent call last\))\b/i,
 		/\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
 		/^diff --git /im,

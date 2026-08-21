@@ -3689,6 +3689,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         return storage.upsertTerminalSession(session, terminalCommit);
       },
       broadcastSessions,
+      broadcastCoordinationEventsChanged,
       runCharacterAffectTurnOwnershipExclusive: (operation) =>
         characterAffectTurnOwnershipCoordinator.runExclusive(operation),
     });
@@ -4088,14 +4089,16 @@ function requireCoordinationEventService(): CoordinationEventService {
     coordinationEventStorage = new CoordinationEventStorageV6(dbPath);
     coordinationEventService = new CoordinationEventService({
       storage: coordinationEventStorage,
-      publishCommitted: () => {
-        for (const window of BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed()) window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT);
-        }
-      },
+      publishCommitted: broadcastCoordinationEventsChanged,
     });
   }
   return coordinationEventService;
+}
+
+function broadcastCoordinationEventsChanged(): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT);
+  }
 }
 
 function requireSessionExecutionPublicProgressStorage(): SessionExecutionPublicProgressStorageV6 {
