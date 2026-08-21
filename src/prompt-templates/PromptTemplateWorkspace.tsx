@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { focusRovingItemByKey } from "../a11y.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
 import type { PromptTemplate } from "../prompt-template.js";
 import type { WithMateWindowPromptTemplateApi } from "../withmate-window-api.js";
@@ -10,6 +11,8 @@ type PromptTemplateWorkspaceProps = {
   onBack: () => void;
   onInsert: (prompt: string) => void;
 };
+
+type PromptTemplateWorkspaceMode = "select" | "edit";
 
 type EditorState = {
   id: string | null;
@@ -28,16 +31,18 @@ function errorMessage(error: unknown): string {
 }
 
 export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInsert }: PromptTemplateWorkspaceProps) {
+  const [mode, setMode] = useState<PromptTemplateWorkspaceMode>("select");
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
   const templatesRef = useRef<PromptTemplate[]>([]);
+  const pickerListRef = useRef<HTMLDivElement | null>(null);
+  const pickerEditButtonRef = useRef<HTMLButtonElement | null>(null);
+  const editorNameInputRef = useRef<HTMLInputElement | null>(null);
 
-  const selectedTemplate = useMemo(
-    () => templates.find((template) => template.id === editor.id) ?? null,
-    [editor.id, templates],
-  );
+  const selectedTemplate = templates.find((template) => template.id === editor.id) ?? null;
   const isDirty = selectedTemplate
     ? editor.name !== selectedTemplate.name || editor.prompt !== selectedTemplate.prompt
     : editor.name.length > 0 || editor.prompt.length > 0;
@@ -51,6 +56,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
       const currentTemplates = templatesRef.current;
       templatesRef.current = nextTemplates;
       setTemplates(nextTemplates);
+      setIsLoading(false);
       setEditor((current) => {
         if (current.id) {
           const nextSelected = nextTemplates.find((template) => template.id === current.id);
@@ -72,6 +78,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     const unsubscribe = api.subscribePromptTemplates(applyTemplates);
     void api.listPromptTemplates().then(applyTemplates).catch((loadError) => {
       if (active) {
+        setIsLoading(false);
         setError(errorMessage(loadError));
       }
     });
@@ -81,9 +88,49 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     };
   }, [api]);
 
+  useEffect(() => {
+    if (mode !== "select" || isLoading || typeof document === "undefined") {
+      return;
+    }
+    const pickerList = pickerListRef.current;
+    if (pickerList?.contains(document.activeElement)) {
+      return;
+    }
+    const firstSelectableTemplate = pickerList?.querySelector<HTMLElement>("[role=\"option\"]:not([disabled])");
+    (firstSelectableTemplate ?? pickerEditButtonRef.current)?.focus();
+  }, [canInsert, isLoading, mode, templates]);
+
+  useEffect(() => {
+    if (mode === "edit") {
+      editorNameInputRef.current?.focus();
+    }
+  }, [mode]);
+
   const confirmDiscard = () => !isDirty || window.confirm("未保存の変更を破棄しますか？");
 
-  const selectTemplate = (template: PromptTemplate) => {
+  const defaultEditor = templates[0] ? toEditorState(templates[0]) : EMPTY_EDITOR;
+
+  const openEditor = (nextEditor: EditorState = defaultEditor) => {
+    if (!confirmDiscard()) {
+      return;
+    }
+    setEditor(nextEditor);
+    setMode("edit");
+    setError("");
+  };
+
+  const returnToPicker = () => {
+    if (!confirmDiscard()) {
+      return;
+    }
+    if (isDirty) {
+      setEditor(selectedTemplate ? toEditorState(selectedTemplate) : defaultEditor);
+    }
+    setMode("select");
+    setError("");
+  };
+
+  const selectTemplateForEditor = (template: PromptTemplate) => {
     if (!confirmDiscard()) {
       return;
     }
@@ -141,25 +188,115 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     }
   };
 
-  const insert = async () => {
-    if (isDirty && !(await save())) {
+  const handleSelectTemplate = (template: PromptTemplate) => {
+    if (!canInsert) {
       return;
     }
-    onInsert(editor.prompt);
+    onInsert(template.prompt);
   };
 
-  return (
-    <section className="prompt-template-workspace" aria-label="Prompt templates">
+  const renderPicker = () => {
+    const hasTemplates = !isLoading && !error && templates.length > 0;
+    const pickerRole = hasTemplates ? "listbox" : isLoading || error ? "status" : "region";
+    return (
+      <>
+        <header className="prompt-template-workspace-header">
+          <BackNavigationButton
+            label="Back to Chat"
+            onBack={() => {
+              if (confirmDiscard()) {
+                onBack();
+              }
+            }}
+          />
+          <strong>Templates</strong>
+          <button
+            ref={pickerEditButtonRef}
+            type="button"
+            className="drawer-toggle compact secondary"
+            onClick={() => openEditor()}
+            disabled={isLoading}
+            aria-label="Templateを編集"
+          >
+            編集
+          </button>
+        </header>
+
+        <div className="prompt-template-picker">
+          <div
+            ref={pickerListRef}
+            className="prompt-template-picker-content"
+            role={pickerRole}
+            aria-label={hasTemplates ? "Template候補" : "Template状態"}
+            aria-orientation={hasTemplates ? "vertical" : undefined}
+            aria-busy={isLoading || undefined}
+            tabIndex={-1}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                if (confirmDiscard()) {
+                  onBack();
+                }
+                return;
+              }
+              if (event.key === "Enter" && document.activeElement?.getAttribute("role") === "option") {
+                event.preventDefault();
+                (document.activeElement as HTMLElement).click();
+                return;
+              }
+              if (hasTemplates && document.activeElement?.getAttribute("role") === "option") {
+                focusRovingItemByKey(event, { orientation: "vertical", selector: "[role=\"option\"]" });
+              }
+            }}
+          >
+            {isLoading ? (
+              <div className="prompt-template-picker-state">
+                <span className="chat-skill-picker-spinner" aria-hidden="true" />
+                <span className="visually-hidden">Templateを読み込んでいます。</span>
+              </div>
+            ) : error ? (
+              <p className="prompt-template-picker-state error" role="alert">{error}</p>
+            ) : templates.length > 0 ? (
+              templates.map((template, index) => (
+                <button
+                  key={template.id}
+                  type="button"
+                  role="option"
+                  aria-selected="false"
+                  tabIndex={canInsert && index === 0 ? 0 : -1}
+                  className="prompt-template-picker-item"
+                  disabled={!canInsert}
+                  title={canInsert ? undefined : "現在のセッションではプロンプトを挿入できません。"}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => handleSelectTemplate(template)}
+                >
+                  <span className="prompt-template-picker-item-primary">{template.name}</span>
+                  <span className="prompt-template-picker-item-secondary">選択してcomposerへ挿入</span>
+                </button>
+              ))
+            ) : (
+              <div className="prompt-template-picker-state">
+                <p>Templateがありません。</p>
+                <button
+                  type="button"
+                  className="drawer-toggle compact secondary"
+                  onClick={() => openEditor(EMPTY_EDITOR)}
+                >
+                  ＋ 新規作成
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  };
+
+  const renderEditor = () => (
+    <>
       <header className="prompt-template-workspace-header">
-        <BackNavigationButton
-          label="Back to Chat"
-          onBack={() => {
-            if (confirmDiscard()) {
-              onBack();
-            }
-          }}
-        />
-        <strong>Templates</strong>
+        <BackNavigationButton label="Back to Template selection" onBack={returnToPicker} />
+        <strong>Template編集</strong>
       </header>
 
       <div className="prompt-template-workspace-body">
@@ -173,7 +310,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
               type="button"
               key={template.id}
               aria-pressed={editor.id === template.id}
-              onClick={() => selectTemplate(template)}
+              onClick={() => selectTemplateForEditor(template)}
             >
               {template.name}
             </button>
@@ -184,6 +321,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
           <label>
             <span>名前</span>
             <input
+              ref={editorNameInputRef}
               value={editor.name}
               maxLength={120}
               disabled={isSaving}
@@ -199,24 +337,31 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
           />
           {error ? <p className="prompt-template-error" role="alert">{error}</p> : null}
           <div className="prompt-template-editor-actions">
-            <button type="button" className="drawer-toggle compact secondary" disabled={isSaving || !isDirty} onClick={() => void save()}>
+            <button
+              type="button"
+              className="drawer-toggle compact secondary"
+              disabled={isSaving || !isDirty}
+              onClick={() => void save()}
+            >
               保存
-            </button>
-            <button type="button" className="drawer-toggle compact danger" disabled={isSaving || !editor.id} onClick={() => void remove()}>
-              削除
             </button>
             <button
               type="button"
-              className="drawer-toggle compact"
-              disabled={isSaving || !canInsert || !editor.name.trim() || !editor.prompt.trim()}
-              title={canInsert ? undefined : "現在のセッションではプロンプトを挿入できません。"}
-              onClick={() => void insert()}
+              className="drawer-toggle compact danger"
+              disabled={isSaving || !editor.id}
+              onClick={() => void remove()}
             >
-              挿入
+              削除
             </button>
           </div>
         </div>
       </div>
+    </>
+  );
+
+  return (
+    <section className="prompt-template-workspace" aria-label="Prompt templates">
+      {mode === "select" ? renderPicker() : renderEditor()}
     </section>
   );
 }
