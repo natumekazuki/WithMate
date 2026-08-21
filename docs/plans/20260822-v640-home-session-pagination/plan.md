@@ -129,4 +129,3 @@ main bootstrap、IPC deps、broadcast facade、window broadcast serviceは、同
 - visual checkの実施結果、または未実施理由とvalidation gapを区別している。
 - 未解決blocking findingがなく、残リスクを分類している。
 - 日本語のconventional commits形式で一つの論理変更としてcommitしている。
-
