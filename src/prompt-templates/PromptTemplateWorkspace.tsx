@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { focusRovingItemByKey } from "../a11y.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
+import { CloseButton } from "../close-button.js";
 import type { PromptTemplate } from "../prompt-template.js";
 import type { WithMateWindowPromptTemplateApi } from "../withmate-window-api.js";
 
@@ -201,25 +202,27 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     return (
       <>
         <header className="prompt-template-workspace-header">
-          <BackNavigationButton
-            label="Back to Chat"
-            onBack={() => {
-              if (confirmDiscard()) {
-                onBack();
-              }
-            }}
-          />
           <strong>Templates</strong>
-          <button
-            ref={pickerEditButtonRef}
-            type="button"
-            className="drawer-toggle compact secondary"
-            onClick={() => openEditor()}
-            disabled={isLoading}
-            aria-label="Edit template"
-          >
-            Edit
-          </button>
+          <div className="prompt-template-workspace-header-actions">
+            <button
+              ref={pickerEditButtonRef}
+              type="button"
+              className="drawer-toggle compact secondary"
+              onClick={() => openEditor()}
+              disabled={isLoading}
+              aria-label="Edit template"
+            >
+              Edit
+            </button>
+            <CloseButton
+              ariaLabel="Close templates"
+              onClose={() => {
+                if (confirmDiscard()) {
+                  onBack();
+                }
+              }}
+            />
+          </div>
         </header>
 
         <div className="prompt-template-picker">
@@ -317,16 +320,14 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
         </aside>
 
         <div className="prompt-template-editor">
-          <label>
-            <span>Name</span>
-            <input
-              ref={editorNameInputRef}
-              value={editor.name}
-              maxLength={120}
-              disabled={isSaving}
-              onChange={(event) => setEditor((current) => ({ ...current, name: event.target.value }))}
-            />
-          </label>
+          <input
+            ref={editorNameInputRef}
+            aria-label="Template name"
+            value={editor.name}
+            maxLength={120}
+            disabled={isSaving}
+            onChange={(event) => setEditor((current) => ({ ...current, name: event.target.value }))}
+          />
           <textarea
             className="prompt-template-prompt-field"
             aria-label="Prompt"

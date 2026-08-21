@@ -96,18 +96,22 @@ async function renderAndFlush(root: Root, element: React.ReactElement): Promise<
 
 test("PromptTemplateWorkspace は初期表示を選択専用modeにする", async () => {
   const harness = createDomHarness();
+  let backCount = 0;
   try {
     await renderAndFlush(
       harness.root,
       <PromptTemplateWorkspace
         api={createApi([FIRST_TEMPLATE])}
-        onBack={() => {}}
+        onBack={() => {
+          backCount += 1;
+        }}
         onInsert={() => {}}
       />,
     );
 
     assert.match(harness.container.textContent ?? "", /Templates/);
     assert.ok(harness.container.querySelector("button[aria-label=\"Edit template\"]"));
+    assert.ok(harness.container.querySelector("button.surface-close-button[aria-label=\"Close templates\"]"));
     assert.ok(harness.container.querySelector("[role=\"listbox\"]"));
     assert.equal(harness.container.querySelector("input"), null);
     assert.equal(harness.container.querySelector("textarea"), null);
@@ -115,6 +119,11 @@ test("PromptTemplateWorkspace は初期表示を選択専用modeにする", asyn
       Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Insert"),
       false,
     );
+
+    await act(async () => {
+      harness.container.querySelector<HTMLButtonElement>("button.surface-close-button")?.click();
+    });
+    assert.equal(backCount, 1);
   } finally {
     await act(async () => harness.root.unmount());
     harness.dom.window.close();
@@ -176,6 +185,8 @@ test("編集modeのTemplate選択はeditorだけを切り替え、挿入導線�
       harness.container.querySelector<HTMLButtonElement>("button[aria-label=\"Edit template\"]")?.click();
     });
     assert.ok(harness.container.querySelector("input"));
+    assert.ok(harness.container.querySelector("input[aria-label=\"Template name\"]"));
+    assert.equal(harness.container.textContent?.includes("Name"), false);
     assert.ok(harness.container.querySelector("textarea[aria-label=\"Prompt\"]"));
     assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Save"));
     assert.ok(Array.from(harness.container.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Delete"));
