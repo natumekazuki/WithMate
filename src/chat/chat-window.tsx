@@ -206,7 +206,7 @@ export function ChatSkillPickerPanel({
             placeholder="Skillを検索"
             autoComplete="off"
           />
-          <CloseButton ariaLabel="Skill候補を閉じる" onClose={onDismiss} />
+          <CloseButton ariaLabel="Close skill picker" onClose={onDismiss} />
         </div>
         <div
           className="chat-skill-picker-content"
