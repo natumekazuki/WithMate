@@ -131,6 +131,31 @@ test("PromptTemplateWorkspace は初期表示を選択専用modeにする", asyn
   }
 });
 
+test("Templateは外部close guardを登録し、clean stateでは閉じられる", async () => {
+  const harness = createDomHarness();
+  let closeGuard: (() => boolean) | null = null;
+  try {
+    await renderAndFlush(
+      harness.root,
+      <PromptTemplateWorkspace
+        api={createApi([FIRST_TEMPLATE])}
+        onRegisterCloseGuard={(guard) => {
+          closeGuard = guard;
+        }}
+        onBack={() => {}}
+        onInsert={() => {}}
+      />,
+    );
+
+    assert.ok(closeGuard);
+    assert.equal(closeGuard?.(), true);
+  } finally {
+    await act(async () => harness.root.unmount());
+    harness.dom.window.close();
+    harness.restore();
+  }
+});
+
 test("Template選択は保存済みpromptを即時挿入し、呼び出し側のChat表示へ戻れる", async () => {
   const harness = createDomHarness();
   const inserted: string[] = [];

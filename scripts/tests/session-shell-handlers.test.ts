@@ -6,6 +6,7 @@ import {
   applyAdditionalDirectoryListToggle,
   applyAgentPickerToggleCommand,
   applyCancelTitleEditCommand,
+  applyCentralSurfaceOpenCommand,
   applyComposerSubmitKeyCommand,
   applyComposerReferenceInsertionCommand,
   applyContextPaneTabCycleCommand,
@@ -458,6 +459,41 @@ describe("createActionDockCollapseHandler", () => {
     collapse();
 
     assert.deepEqual(events, [false]);
+  });
+});
+
+describe("applyCentralSurfaceOpenCommand", () => {
+  it("Template編集の未保存変更が破棄拒否された場合は中央surfaceを切り替えない", () => {
+    let closeCount = 0;
+
+    const opened = applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen: true,
+      canClosePromptTemplate: () => false,
+      closeCentralSurface: () => {
+        closeCount += 1;
+      },
+    });
+
+    assert.equal(opened, false);
+    assert.equal(closeCount, 0);
+  });
+
+  it("現在の中央surfaceを閉じてから次のsurfaceへ進める", () => {
+    let centralSurface: "file-preview" | "skill" | null = "file-preview";
+
+    const opened = applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen: false,
+      canClosePromptTemplate: () => true,
+      closeCentralSurface: () => {
+        centralSurface = null;
+      },
+    });
+    if (opened) {
+      centralSurface = "skill";
+    }
+
+    assert.equal(opened, true);
+    assert.equal(centralSurface, "skill");
   });
 });
 

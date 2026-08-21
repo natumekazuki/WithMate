@@ -259,6 +259,19 @@ export function createActionDockCollapseHandler(input: {
   return () => applyActionDockCollapseCommand(input);
 }
 
+export function applyCentralSurfaceOpenCommand(input: {
+  isPromptTemplateWorkspaceOpen: boolean;
+  canClosePromptTemplate: () => boolean;
+  closeCentralSurface: () => void;
+}): boolean {
+  if (input.isPromptTemplateWorkspaceOpen && !input.canClosePromptTemplate()) {
+    return false;
+  }
+
+  input.closeCentralSurface();
+  return true;
+}
+
 export function applyExclusiveComposerPickerToggle(input: {
   target: "agent" | "skill";
   setAgentPickerOpen: (updater: (current: boolean) => boolean) => void;

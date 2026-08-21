@@ -9,6 +9,7 @@ import type { WithMateWindowPromptTemplateApi } from "../withmate-window-api.js"
 type PromptTemplateWorkspaceProps = {
   api: WithMateWindowPromptTemplateApi;
   canInsert?: boolean;
+  onRegisterCloseGuard?: (guard: (() => boolean) | null) => void;
   onBack: () => void;
   onInsert: (prompt: string) => void;
 };
@@ -31,7 +32,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Could not update the template.";
 }
 
-export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInsert }: PromptTemplateWorkspaceProps) {
+export function PromptTemplateWorkspace({
+  api,
+  canInsert = true,
+  onRegisterCloseGuard,
+  onBack,
+  onInsert,
+}: PromptTemplateWorkspaceProps) {
   const [mode, setMode] = useState<PromptTemplateWorkspaceMode>("select");
   const [templates, setTemplates] = useState<PromptTemplate[]>([]);
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
@@ -47,6 +54,17 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
   const isDirty = selectedTemplate
     ? editor.name !== selectedTemplate.name || editor.prompt !== selectedTemplate.prompt
     : editor.name.length > 0 || editor.prompt.length > 0;
+  const closeGuardRef = useRef<() => boolean>(() => true);
+  closeGuardRef.current = () => !isDirty || window.confirm("Discard unsaved changes?");
+
+  useEffect(() => {
+    if (!onRegisterCloseGuard) {
+      return;
+    }
+    const guard = () => closeGuardRef.current();
+    onRegisterCloseGuard(guard);
+    return () => onRegisterCloseGuard(null);
+  }, [onRegisterCloseGuard]);
 
   useEffect(() => {
     let active = true;
@@ -107,7 +125,7 @@ export function PromptTemplateWorkspace({ api, canInsert = true, onBack, onInser
     }
   }, [mode]);
 
-  const confirmDiscard = () => !isDirty || window.confirm("Discard unsaved changes?");
+  const confirmDiscard = () => closeGuardRef.current();
 
   const defaultEditor = templates[0] ? toEditorState(templates[0]) : EMPTY_EDITOR;
 

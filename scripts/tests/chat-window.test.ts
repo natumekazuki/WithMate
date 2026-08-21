@@ -233,9 +233,8 @@ test("ChatAdditionalDirectoryList は削除可否とdisabled状態を投影す�
   assert.match(html, /class="chat-additional-directory-readonly">許可中/);
 });
 
-test("ChatWindow は preview を保持したまま Skill 候補を中央 work surface に重ねる", () => {
+test("ChatWindow は Skill 候補を中央 work surface overlayとして描画する", () => {
   const props = createChatWindowProps();
-  props.mainContent = React.createElement("div", null, "File Preview");
   props.skillPickerProps = {
     isOpen: true,
     isLoading: false,
@@ -252,10 +251,8 @@ test("ChatWindow は preview を保持したまま Skill 候補を中央 work su
 
   const html = renderToStaticMarkup(React.createElement(ChatWindow, props));
 
-  assert.match(html, /class="session-central-surface"><div>File Preview<\/div><\/div>/);
   assert.match(html, /class="chat-skill-picker-layer"/);
   assert.match(html, /role="listbox"/);
-  assert.ok(html.indexOf("File Preview") < html.indexOf("chat-skill-picker-layer"));
   assert.ok(html.indexOf("chat-skill-picker-layer") < html.indexOf("session-action-dock-slot"));
 });
 

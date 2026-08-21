@@ -296,6 +296,7 @@ import {
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyComposerReferenceInsertionCommand,
+  applyCentralSurfaceOpenCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -505,6 +506,10 @@ export default function AgentSessionWindowApp() {
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileRootResourceRequest | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
+  const promptTemplateCloseGuardRef = useRef<(() => boolean) | null>(null);
+  const registerPromptTemplateCloseGuard = useCallback((guard: (() => boolean) | null) => {
+    promptTemplateCloseGuardRef.current = guard;
+  }, []);
   const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
   const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
@@ -831,12 +836,6 @@ export default function AgentSessionWindowApp() {
     || fileRootDiffPreview !== null
     || fileRootDiffPendingPreview !== null
     || isPromptTemplateWorkspaceOpen;
-  const beginCentralPreviewIfNeeded = useCallback(() => {
-    setIsPromptTemplateWorkspaceOpen(false);
-    if (!isCentralPreviewActive && activeRunSessionId) {
-      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
-    }
-  }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
   const closeCentralPreview = useCallback(() => {
     fileRootDiffRequestRevisionRef.current += 1;
     setFileRootDiffLoadingScope(null);
@@ -845,8 +844,45 @@ export default function AgentSessionWindowApp() {
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
     setIsPromptTemplateWorkspaceOpen(false);
+    setIsSkillPickerOpen(false);
     setPreviewChatActivity(endPreviewChatActivity());
   }, []);
+  const canClosePromptTemplate = useCallback(
+    () => promptTemplateCloseGuardRef.current?.() ?? true,
+    [],
+  );
+  const prepareCentralSurfaceOpen = useCallback((): boolean => {
+    const shouldBeginPreviewActivity = !isCentralPreviewActive && activeRunSessionId !== null;
+    const canOpen = applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen,
+      canClosePromptTemplate,
+      closeCentralSurface: () => {
+        setIsPromptTemplateWorkspaceOpen(false);
+        setIsSkillPickerOpen(false);
+      },
+    });
+    if (!canOpen) {
+      return false;
+    }
+    if (shouldBeginPreviewActivity) {
+      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
+    }
+    return true;
+  }, [
+    activeRunMessageCount,
+    activeRunSessionId,
+    canClosePromptTemplate,
+    isCentralPreviewActive,
+    isPromptTemplateWorkspaceOpen,
+  ]);
+  const requestCentralSurfaceClose = useCallback(
+    () => applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen,
+      canClosePromptTemplate,
+      closeCentralSurface: closeCentralPreview,
+    }),
+    [canClosePromptTemplate, closeCentralPreview, isPromptTemplateWorkspaceOpen],
+  );
   useEffect(() => {
     if (!isCentralPreviewActive || !activeRunSessionId) {
       setPreviewChatActivity((current) => (
@@ -918,15 +954,17 @@ export default function AgentSessionWindowApp() {
         return error instanceof Error ? error.message : "The file preview could not be opened.";
       }
     }
+    if (!prepareCentralSurfaceOpen()) {
+      return null;
+    }
     fileRootDiffRequestRevisionRef.current += 1;
-    beginCentralPreviewIfNeeded();
     setFileRootDiffLoadingScope(null);
     setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(request);
     return null;
-  }, [beginCentralPreviewIfNeeded, withmateApi]);
+  }, [prepareCentralSurfaceOpen, withmateApi]);
   const handleShowFileRootDiff = useCallback((
     request: FileRootFileDiffRequest,
     openInWindow = false,
@@ -941,9 +979,11 @@ export default function AgentSessionWindowApp() {
         error instanceof Error ? error.message : "The Git diff preview could not be opened."
       ));
     }
+    if (!prepareCentralSurfaceOpen()) {
+      return Promise.resolve(null);
+    }
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;
-    beginCentralPreviewIfNeeded();
     setFileRootDiffPendingPreview({ ...request, generation: revision });
     setFileRootDiffLoadingScope(request.scope);
     return withmateApi.getFileRootDiff(request).then((result) => {
@@ -973,10 +1013,13 @@ export default function AgentSessionWindowApp() {
         setFileRootDiffLoadingScope(null);
       }
     });
-  }, [activeRunSessionId, beginCentralPreviewIfNeeded, withmateApi]);
+  }, [activeRunSessionId, prepareCentralSurfaceOpen, withmateApi]);
   const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitChangeScope): Promise<string | null> => {
     if (!withmateApi || !activeRunSessionId || !selectedFilePreview) {
       return "Git Diff is not available for this file.";
+    }
+    if (!prepareCentralSurfaceOpen()) {
+      return null;
     }
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;
@@ -1036,7 +1079,7 @@ export default function AgentSessionWindowApp() {
         setFileRootDiffLoadingScope(null);
       }
     }
-  }, [activeRunSessionId, selectedFilePreview, withmateApi]);
+  }, [activeRunSessionId, prepareCentralSurfaceOpen, selectedFilePreview, withmateApi]);
   const handleReloadFileRootDiff = useCallback(async (): Promise<string | null> => {
     if (!withmateApi || !fileRootDiffPreview || fileRootDiffPreview.sessionId !== activeRunSessionId) {
       return "Git diff is no longer available for this session.";
@@ -2867,10 +2910,17 @@ export default function AgentSessionWindowApp() {
     setSkillPickerOpen: setIsSkillPickerOpen,
   });
 
-  const handleToggleSkillPicker = createSkillPickerToggleHandler({
+  const toggleSkillPicker = createSkillPickerToggleHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
     setSkillPickerOpen: setIsSkillPickerOpen,
   });
+
+  const handleToggleSkillPicker = () => {
+    if (!isSkillPickerOpen && !requestCentralSurfaceClose()) {
+      return;
+    }
+    toggleSkillPicker();
+  };
 
   const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
     setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
@@ -3580,7 +3630,10 @@ export default function AgentSessionWindowApp() {
   const renderedDraft = activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft;
   const handleOpenPromptTemplates = () => {
     if (isPromptTemplateWorkspaceOpen) {
-      closeCentralPreview();
+      requestCentralSurfaceClose();
+      return;
+    }
+    if (!prepareCentralSurfaceOpen()) {
       return;
     }
     const textarea = composerTextareaRef.current;
@@ -3595,9 +3648,6 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
-    if (!isCentralPreviewActive && activeRunSessionId) {
-      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
-    }
     setIsPromptTemplateWorkspaceOpen(true);
   };
   const handleInsertPromptTemplate = (prompt: string) => {
@@ -3708,6 +3758,7 @@ export default function AgentSessionWindowApp() {
       canInsert={activeAuxiliarySession
         ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
         : !isComposerDisabled}
+      onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
     />
