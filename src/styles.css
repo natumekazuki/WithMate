@@ -2475,10 +2475,23 @@ button:disabled {
 }
 
 .settings-keyboard-shortcut-row dd {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin: 0;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   white-space: nowrap;
+}
+
+.settings-keyboard-shortcut-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-keyboard-shortcuts-error {
+  margin: 0;
 }
 
 .settings-window-shell,

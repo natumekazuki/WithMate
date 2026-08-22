@@ -205,6 +205,7 @@ import {
   type MessageJumpRequest,
 } from "./session-message-collapse.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { ShortcutSettingsProvider } from "./shortcut-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import {
@@ -335,6 +336,7 @@ import {
   MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
+  useShortcutDispatcherSettings,
   useShortcutScope,
 } from "./shortcut-registry.js";
 
@@ -2709,6 +2711,7 @@ export default function AgentSessionWindowApp() {
     submit: () => void handleSend(),
   });
 
+  useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
   useShortcutScope("composer");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleComposerSubmitShortcut);
 
@@ -3893,6 +3896,7 @@ export default function AgentSessionWindowApp() {
         createMessageCollapseHeaderAction({
           allMessagesCollapsed: messageCollapseTargets.every((target) => collapsedMessageKeys.has(target.key)),
           onToggle: handleToggleAllMessageCollapse,
+          keyboardShortcuts: appSettings.keyboardShortcuts,
         })
       ) : null}
       {auxiliaryHeaderActions}
@@ -4062,7 +4066,8 @@ export default function AgentSessionWindowApp() {
   ) : undefined;
 
   return (
-    <>
+    <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+      <>
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
@@ -4360,6 +4365,7 @@ export default function AgentSessionWindowApp() {
         onSelectProvider={handleSelectAuxiliaryLaunchProvider}
         onStart={() => void handleStartAuxiliarySession()}
       />
-    </>
+      </>
+    </ShortcutSettingsProvider>
   );
 }

@@ -11,6 +11,7 @@ import {
 } from "../provider-settings-state.js";
 import { coerceModelSelection, type ModelCatalogProvider } from "../model-catalog.js";
 import type { MicrocopySlot } from "../microcopy-state.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 
 export function updateMemoryGenerationEnabled(
   draft: AppSettings,
@@ -39,6 +40,16 @@ export function updateScrollToLatestOnSend(
   return {
     ...draft,
     scrollToLatestOnSend: enabled,
+  };
+}
+
+export function updateKeyboardShortcuts(
+  draft: AppSettings,
+  keyboardShortcuts: KeyboardShortcutSettings,
+): AppSettings {
+  return {
+    ...draft,
+    keyboardShortcuts,
   };
 }
 

@@ -44,6 +44,7 @@ import {
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
+import { useShortcutSettings } from "./shortcut-settings-context.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
@@ -3786,6 +3787,7 @@ export function SessionComposerExpanded({
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+  const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
     if (!showAttachmentControls || isRunning || composerBlocked) {
@@ -4206,7 +4208,12 @@ export function SessionComposerExpanded({
             type="button"
             onClick={onSendOrCancel}
             disabled={isSendDisabled}
-            title={appendShortcutLabel(sendButtonTitle, SHORTCUT_COMMAND_IDS.composerSubmit)}
+            title={appendShortcutLabel(
+              sendButtonTitle,
+              SHORTCUT_COMMAND_IDS.composerSubmit,
+              undefined,
+              keyboardShortcuts,
+            )}
           >
             Send
           </button>

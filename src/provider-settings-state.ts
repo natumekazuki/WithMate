@@ -16,6 +16,11 @@ import {
   normalizeChatLayoutPreference,
   type ChatLayoutPreference,
 } from "./chat/chat-layout-preference.js";
+import {
+  createDefaultKeyboardShortcutSettings,
+  normalizeKeyboardShortcutSettings,
+  type KeyboardShortcutSettings,
+} from "./keyboard-shortcut-state.js";
 
 export type AppSettings = {
   memoryGenerationEnabled: boolean;
@@ -25,6 +30,7 @@ export type AppSettings = {
   autoCollapseActionDockOnSend: boolean;
   scrollToLatestOnSend: boolean;
   chatLayoutPreference: ChatLayoutPreference;
+  keyboardShortcuts: KeyboardShortcutSettings;
   memoryFileQuotaBytes: number;
   userMicrocopyCatalog: MicrocopyCatalog;
   mateMemoryGenerationSettings: MateMemoryGenerationSettings;
@@ -106,6 +112,7 @@ export function createDefaultAppSettings(): AppSettings {
     autoCollapseActionDockOnSend: true,
     scrollToLatestOnSend: true,
     chatLayoutPreference: { ...DEFAULT_CHAT_LAYOUT_PREFERENCE },
+    keyboardShortcuts: createDefaultKeyboardShortcutSettings(),
     memoryFileQuotaBytes: MEMORY_FILE_QUOTA_DEFAULT_BYTES,
     userMicrocopyCatalog: createDefaultUserMicrocopyCatalog(),
     mateMemoryGenerationSettings: {
@@ -334,6 +341,7 @@ export function normalizeAppSettings(value: unknown): AppSettings {
     scrollToLatestOnSend:
       typeof candidate.scrollToLatestOnSend === "boolean" ? candidate.scrollToLatestOnSend : true,
     chatLayoutPreference: normalizeChatLayoutPreference(candidate.chatLayoutPreference),
+    keyboardShortcuts: normalizeKeyboardShortcutSettings(candidate.keyboardShortcuts),
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(candidate.memoryFileQuotaBytes),
     userMicrocopyCatalog: normalizeUserMicrocopyCatalog(candidate.userMicrocopyCatalog),
     mateMemoryGenerationSettings: normalizeMateMemoryGenerationSettings(candidate.mateMemoryGenerationSettings),

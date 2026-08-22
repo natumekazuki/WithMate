@@ -202,6 +202,13 @@ describe("AppSettingsStorage", () => {
           sidePane: "context",
           priority: "dock-first",
         },
+        keyboardShortcuts: {
+          overrides: {
+            "session.message.toggle-collapse": {
+              windows: { key: "x", ctrlKey: true, shiftKey: true },
+            },
+          },
+        },
         memoryFileQuotaBytes: 2 * MEMORY_FILE_QUOTA_DEFAULT_BYTES,
         userMicrocopyCatalog: {
           ...createDefaultAppSettings().userMicrocopyCatalog,

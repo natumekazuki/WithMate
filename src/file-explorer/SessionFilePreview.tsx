@@ -42,6 +42,7 @@ import {
 } from "./file-preview-utils.js";
 import { isLikelyBinarySessionFile } from "./file-content-detection.js";
 import { SessionContentFindBar } from "../session-content-find-bar.js";
+import { useShortcutSettings } from "../shortcut-settings-context.js";
 import {
   applyRenderedTextHighlights,
   clearRenderedTextHighlights,
@@ -556,6 +557,7 @@ export function SessionFilePreview({
   diffAvailabilityMessage = "",
   chatNotice = "",
 }: SessionFilePreviewProps) {
+  const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
   const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
   const markdownImageAccumulatorsRef = useRef(new Set<PreviewByteAccumulator>());
@@ -1287,7 +1289,7 @@ export function SessionFilePreview({
             <button
               type="button"
               onClick={() => setFindOpen(true)}
-              title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind)}
+              title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
             >
               Find
             </button>
@@ -1454,6 +1456,7 @@ export function SessionDiffPreview({
   reloadPending = false,
   chatNotice = "",
 }: SessionDiffPreviewProps) {
+  const keyboardShortcuts = useShortcutSettings();
   const [viewMode, setViewMode] = useState<"split" | "inline">("split");
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -1594,7 +1597,7 @@ export function SessionDiffPreview({
             type="button"
             disabled={loading}
             onClick={() => setFindOpen(true)}
-            title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind)}
+            title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind, undefined, keyboardShortcuts)}
           >
             Find
           </button>

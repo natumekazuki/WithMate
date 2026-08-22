@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import React, { act } from "react";
+import React, { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import { KeyboardShortcutsDialog } from "../../src/settings/KeyboardShortcutsDialog.js";
+import { DEFAULT_KEYBOARD_SHORTCUT_SETTINGS } from "../../src/shortcut-registry.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -100,6 +101,63 @@ test("Keyboard shortcuts dialogはregistry projectionを表示し、Escapeで閉
     });
     assert.equal(closeCount, 1);
     assert.equal(escapeEvent.defaultPrevented, true);
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    restore();
+    dom.window.close();
+  }
+});
+
+test("Keyboard shortcuts dialogはChangeで押下した組み合わせを設定へ反映する", async () => {
+  const dom = new JSDOM("<!doctype html><body></body>", { pretendToBeVisual: true });
+  const restore = installDomGlobals(dom);
+  const container = dom.window.document.createElement("div");
+  dom.window.document.body.append(container);
+  const root: Root = createRoot(container);
+
+  function Harness() {
+    const [settings, setSettings] = useState(DEFAULT_KEYBOARD_SHORTCUT_SETTINGS);
+    return (
+      <KeyboardShortcutsDialog
+        open
+        platform="windows"
+        settings={settings}
+        onChange={setSettings}
+        onClose={() => undefined}
+      />
+    );
+  }
+
+  try {
+    await act(async () => {
+      root.render(<Harness />);
+    });
+
+    const row = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
+      .find((candidate) => candidate.textContent?.includes("Toggle message collapse"));
+    assert.ok(row);
+    const changeButton = Array.from(row.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Change");
+    assert.ok(changeButton);
+
+    act(() => {
+      changeButton.click();
+    });
+    assert.match(row.textContent ?? "", /Press keys/);
+
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.KeyboardEvent("keydown", {
+        key: "x",
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+        cancelable: true,
+      }));
+    });
+
+    assert.match(row.textContent ?? "", /Ctrl\+Shift\+X/);
   } finally {
     await act(async () => {
       root.unmount();

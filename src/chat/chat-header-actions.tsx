@@ -1,6 +1,7 @@
 import type { KeyboardEventHandler, ReactNode } from "react";
 
 import type { SessionHeaderProps } from "../session-components.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import { appendShortcutLabel, SHORTCUT_COMMAND_IDS } from "../shortcut-registry.js";
 import { resolveChatHeaderVisibility } from "./chat-header-visibility.js";
 import { createSessionFilesActions } from "./session-files-actions.js";
@@ -81,11 +82,13 @@ export function createWorkspaceExplorerAction({
 export type MessageCollapseHeaderActionOptions = {
   allMessagesCollapsed: boolean;
   onToggle: () => void;
+  keyboardShortcuts?: KeyboardShortcutSettings;
 };
 
 export function createMessageCollapseHeaderAction({
   allMessagesCollapsed,
   onToggle,
+  keyboardShortcuts,
 }: MessageCollapseHeaderActionOptions) {
   const label = allMessagesCollapsed ? "Expand" : "Collapse";
   const accessibleLabel = allMessagesCollapsed
@@ -98,7 +101,12 @@ export function createMessageCollapseHeaderAction({
       type="button"
       onClick={onToggle}
       aria-label={accessibleLabel}
-      title={appendShortcutLabel(accessibleLabel, SHORTCUT_COMMAND_IDS.messageToggleCollapse)}
+      title={appendShortcutLabel(
+        accessibleLabel,
+        SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+        undefined,
+        keyboardShortcuts,
+      )}
     >
       {label}
     </button>

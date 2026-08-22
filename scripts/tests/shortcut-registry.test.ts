@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import { JSDOM } from "jsdom";
 
 import {
+  captureShortcutAccelerator,
+  DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   getShortcutHelpProjection,
   getShortcutEntry,
   getShortcutLabel,
@@ -12,6 +14,7 @@ import {
   ShortcutRegistryError,
   type ShortcutAccelerator,
   type ShortcutEntry,
+  updateShortcutBinding,
   validateShortcutEntries,
 } from "../../src/shortcut-registry.js";
 
@@ -206,6 +209,52 @@ describe("shortcut projection", () => {
       acceleratorLabel: "Ctrl+Shift+M",
     });
   });
+
+  it("ユーザー設定のoverrideを実効labelとHelp projectionへ反映する", () => {
+    const settings = updateShortcutBinding(
+      DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+      SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+      "windows",
+      { key: "x", ctrlKey: true, shiftKey: true },
+    );
+
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "windows", settings), "Ctrl+Shift+X");
+    const helpItem = getShortcutHelpProjection("windows", settings)
+      .flatMap((group) => group.items)
+      .find((item) => item.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+    assert.equal(helpItem?.acceleratorLabel, "Ctrl+Shift+X");
+
+    assert.throws(
+      () => updateShortcutBinding(
+        settings,
+        SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+        "windows",
+        { key: "Enter", ctrlKey: true },
+      ),
+      ShortcutRegistryError,
+    );
+  });
+
+  it("登録入力は修飾キー単独、IME、repeat、AltGraphを拒否する", () => {
+    const baseEvent = {
+      key: "M",
+      ctrlKey: true,
+      metaKey: false,
+      shiftKey: true,
+      altKey: false,
+      isComposing: false,
+      repeat: false,
+      getModifierState: () => false,
+    };
+    assert.deepEqual(captureShortcutAccelerator(baseEvent), {
+      kind: "accepted",
+      accelerator: { key: "m", ctrlKey: true, shiftKey: true },
+    });
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, key: "Shift" }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, isComposing: true }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, repeat: true }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, altKey: true }).kind, "rejected");
+  });
 });
 
 describe("shortcut dispatcher", () => {
@@ -344,6 +393,47 @@ describe("shortcut dispatcher", () => {
       textarea.dispatchEvent(event);
       assert.equal(calls, 1);
       assert.equal(event.defaultPrevented, true);
+
+      releaseScope();
+      dispatcher.dispose();
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  it("dispatcherは保存済みoverrideを使い、既定キーでは発火しない", () => {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+      const settings = updateShortcutBinding(
+        DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+        entry.id,
+        "windows",
+        { key: "x", ctrlKey: true, shiftKey: true },
+      );
+      const dispatcher = new ShortcutDispatcher({
+        eventTarget: dom.window,
+        platform: "windows",
+        settings,
+      });
+      let calls = 0;
+      dispatcher.registerHandler(entry.id, () => {
+        calls += 1;
+        return true;
+      });
+      const releaseScope = dispatcher.registerScope(entry.scope);
+
+      const defaultEvent = createKeyboardEvent(dom, { key: "m", ctrlKey: true, shiftKey: true });
+      dom.window.document.body.dispatchEvent(defaultEvent);
+      assert.equal(calls, 0);
+      assert.equal(defaultEvent.defaultPrevented, false);
+
+      const overrideEvent = createKeyboardEvent(dom, { key: "x", ctrlKey: true, shiftKey: true });
+      dom.window.document.body.dispatchEvent(overrideEvent);
+      assert.equal(calls, 1);
+      assert.equal(overrideEvent.defaultPrevented, true);
 
       releaseScope();
       dispatcher.dispose();

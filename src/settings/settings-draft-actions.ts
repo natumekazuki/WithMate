@@ -1,5 +1,6 @@
 import type { ModelCatalogSnapshot } from "../model-catalog.js";
 import type { MicrocopySlot } from "../microcopy-state.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { AppSettings } from "../provider-settings-state.js";
 import {
   addMateMemoryGenerationPriorityDraft,
@@ -21,6 +22,7 @@ import {
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryFileQuotaMegabytesDraft,
   updateMemoryGenerationEnabled,
+  updateKeyboardShortcuts,
   updateScrollToLatestOnSend,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
@@ -87,6 +89,12 @@ export function handleChangeScrollToLatestOnSend(input: SettingsDraftActionInput
   enabled: boolean;
 }): void {
   input.setSettingsDraft((current) => updateScrollToLatestOnSend(current, input.enabled));
+}
+
+export function handleChangeKeyboardShortcuts(input: SettingsDraftActionInput & {
+  keyboardShortcuts: KeyboardShortcutSettings;
+}): void {
+  input.setSettingsDraft((current) => updateKeyboardShortcuts(current, input.keyboardShortcuts));
 }
 
 export function handleChangeLaunchAtLoginEnabled(input: SettingsDraftActionInput & {
