@@ -21944,28 +21944,28 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "coordination.event.create",
 		title: "Create coordination event",
-		description: "Record a public coordination event for the bound Session.",
+		description: "Record a public coordination event for the bound Session and return its stable eventId.",
 		readOnly: false,
 		destructive: false
 	},
 	{
 		name: "coordination.event.list",
 		title: "List coordination events",
-		description: "List visible coordination event summaries.",
+		description: "List visible coordination event summaries, including each stable eventId.",
 		readOnly: true,
 		destructive: false
 	},
 	{
 		name: "coordination.event.get",
 		title: "Get coordination event",
-		description: "Read one visible coordination event by event or idempotency key.",
+		description: "Read one visible coordination event by eventId, or recover it and its stable eventId by the create idempotencyKey.",
 		readOnly: true,
 		destructive: false
 	},
 	{
 		name: "coordination.event.resolve",
 		title: "Resolve coordination event",
-		description: "Resolve an authorized escalation or blocker event.",
+		description: "Resolve an authorized escalation or blocker using the exact eventId returned by create, list, or get.",
 		readOnly: false,
 		destructive: false
 	},

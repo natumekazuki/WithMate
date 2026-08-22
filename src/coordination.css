@@ -290,6 +290,28 @@
   font-size: 0.72rem;
 }
 
+.coordination-event-id {
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  cursor: copy;
+}
+
+.coordination-event-id:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.coordination-event-id:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
 .coordination-kind,
 .coordination-state {
   display: inline-flex;

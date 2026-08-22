@@ -193,6 +193,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 選択後はevent queryへ`sessionId`を渡し、読込済みeventだけをrendererで絞らない
   - 選択中のSession titleをtoolbarへ表示し、解除して全Sessionへ戻せる
 - Event detailは選択時に表示し、本文、関連情報、回答操作を段階表示する
+- Event detailは短縮したEvent IDを表示し、押すとAgentへ渡せる完全なEvent IDをclipboardへコピーする
 - detailのSession titleは所有Sessionを開く導線にし、同じ遷移先の専用buttonを重ねない
 - Window内の常設操作はSession filterとevent filterだけにし、画面内title、説明文、Home遷移、取得済み件数を置かない
 - filter結果が空の場合は説明文や空状態surfaceを置かず、空の一覧として表示する

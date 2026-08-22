@@ -71,9 +71,10 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
   const eventQueries: unknown[] = [];
   const sessionQueries: unknown[] = [];
   const openedSessions: string[] = [];
+  const copiedTexts: string[] = [];
   const decision: CoordinationEvent = {
     sequence: 2,
-    eventId: "event-1",
+    eventId: "coordination-12345678-abcd-4abc-8abc-1234567890ab",
     actorSessionId: SESSION.id,
     sessionRole: "standalone",
     roleContractRevision: 1,
@@ -162,6 +163,10 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     },
   };
   Object.defineProperty(dom.window, "withmate", { value: api, configurable: true });
+  Object.defineProperty(dom.window.navigator, "clipboard", {
+    value: { writeText: async (value: string) => { copiedTexts.push(value); } },
+    configurable: true,
+  });
   Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
   Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
   Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
@@ -249,6 +254,14 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     assert.doesNotMatch(rootElement.textContent ?? "", /使用済み/);
     assert.equal(rootElement.querySelector<HTMLInputElement>(".coordination-search-field input")?.placeholder, "");
     assert.doesNotMatch(rootElement.textContent ?? "", /別の回答/);
+    const eventIdButton = rootElement.querySelector<HTMLButtonElement>(".coordination-event-id");
+    assert.ok(eventIdButton);
+    assert.equal(eventIdButton.textContent, "ID 12345678");
+    await act(async () => {
+      eventIdButton.click();
+      await Promise.resolve();
+    });
+    assert.deepEqual(copiedTexts, [decision.eventId]);
     await act(async () => {
       rootElement.querySelector<HTMLButtonElement>(".coordination-detail-origin")?.click();
       await Promise.resolve();

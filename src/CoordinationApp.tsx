@@ -57,6 +57,10 @@ function eventTime(value: string): string {
   }).format(date);
 }
 
+function eventIdLabel(eventId: string): string {
+  return `ID ${eventId.replace(/^coordination-/, "").slice(0, 8)}`;
+}
+
 export default function CoordinationApp() {
   const api = getWithMateApi();
   const [filter, setFilter] = useState<FeedFilter>("all");
@@ -70,6 +74,7 @@ export default function CoordinationApp() {
   const [selectedEvent, setSelectedEvent] = useState<CoordinationEvent | null>(null);
   const [detailLoadState, setDetailLoadState] = useState<LoadState>("loaded");
   const [mutationFeedback, setMutationFeedback] = useState("");
+  const [copyStatus, setCopyStatus] = useState("");
   const [mutationPending, setMutationPending] = useState(false);
   const [customAnswer, setCustomAnswer] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -259,6 +264,7 @@ export default function CoordinationApp() {
       setSelectedEvent(null);
       setDetailLoadState("loading");
       setMutationFeedback("");
+      setCopyStatus("");
       setCustomAnswer("");
     }
     try {
@@ -322,6 +328,18 @@ export default function CoordinationApp() {
       await api.openSession(selectedEvent.actorSessionId);
     } catch (error) {
       setMutationFeedback(error instanceof Error ? error.message : "Sessionを開けませんでした。");
+    }
+  };
+
+  const copyEventId = async () => {
+    if (!selectedEvent) return;
+    setCopyStatus("");
+    setMutationFeedback("");
+    try {
+      await window.navigator.clipboard.writeText(selectedEvent.eventId);
+      setCopyStatus("Event IDをコピーしました。");
+    } catch {
+      setMutationFeedback("Event IDをコピーできませんでした。");
     }
   };
 
@@ -554,7 +572,17 @@ export default function CoordinationApp() {
                 <span className={`coordination-kind coordination-kind-${selectedEvent.kind}`}>{KIND_LABELS[selectedEvent.kind]}</span>
                 <span className={`coordination-state coordination-state-${selectedEvent.state}`}>{STATE_LABELS[selectedEvent.state]}</span>
                 {answerIsConsumed ? <span className="coordination-state coordination-state-consumed">使用済み</span> : null}
+                <button
+                  className="coordination-event-id"
+                  type="button"
+                  title={`${selectedEvent.eventId}をコピー`}
+                  aria-label={`Event ID ${selectedEvent.eventId}をコピー`}
+                  onClick={() => void copyEventId()}
+                >
+                  {eventIdLabel(selectedEvent.eventId)}
+                </button>
               </div>
+              {copyStatus ? <span className="sr-only" role="status" aria-live="polite">{copyStatus}</span> : null}
               <h2>{selectedEvent.summary}</h2>
               {selectedEvent.payload.facts?.length ? <DetailList title="事実" values={selectedEvent.payload.facts} /> : null}
               {selectedEvent.payload.assumptions?.length ? <DetailList title="仮定" values={selectedEvent.payload.assumptions} /> : null}

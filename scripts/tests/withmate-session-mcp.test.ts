@@ -151,6 +151,9 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.destructiveHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "interaction.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "interaction.respond")?.annotations?.destructiveHint, true);
+      assert.match(result.tools.find((tool) => tool.name === "coordination.event.create")?.description ?? "", /stable eventId/);
+      assert.match(result.tools.find((tool) => tool.name === "coordination.event.list")?.description ?? "", /stable eventId/);
+      assert.match(result.tools.find((tool) => tool.name === "coordination.event.get")?.description ?? "", /create idempotencyKey/);
       const runOutput = result.tools.find((tool) => tool.name === "turn.run")?.outputSchema as any;
       const enqueueOutput = result.tools.find((tool) => tool.name === "turn.enqueue")?.outputSchema as any;
       assert.equal(runOutput.properties.operation.const, "turn.run");
