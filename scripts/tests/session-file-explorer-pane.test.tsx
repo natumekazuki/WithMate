@@ -248,13 +248,30 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     });
     await waitFor(() => searchRequests.length === 1);
     assert.equal(searchRequests[0]?.query, "new");
+    assert.equal(searchInput.getAttribute("placeholder"), null);
+    assert.equal(dom.window.document.querySelector(".session-file-search-loading"), null);
+    assert.equal(dom.window.document.querySelector(".session-file-tree-status"), null);
+    assert.equal(dom.window.document.querySelector(".session-file-search-input-row")?.getAttribute("aria-busy"), "true");
+    assert.match(
+      dom.window.document.querySelector(".session-file-search-loading-status")?.textContent ?? "",
+      /Searching files…/,
+    );
     await act(async () => {
-      searchRequests[0]?.deferred.resolve(searchResult("search-result.ts", "src/search-result.ts"));
+      searchRequests[0]?.deferred.resolve({
+        ...searchResult("search-result.ts", "src/search-result.ts"),
+        status: "limit-reached",
+        limit: "exploration",
+      });
       await searchRequests[0]?.deferred.promise;
     });
     await waitFor(() => dom.window.document.body.textContent?.includes("search-result.ts") ?? false);
     assert.match(dom.window.document.body.textContent ?? "", /src\/search-result\.ts/);
     assert.equal(dom.window.document.querySelectorAll(".session-file-search-root-row").length, 1);
+    const searchLimit = dom.window.document.querySelector<HTMLElement>(".session-file-search-limit");
+    assert.ok(searchLimit);
+    assert.equal(searchLimit.querySelector(".session-file-search-limit-icon")?.textContent, "⚠");
+    assert.match(searchLimit.getAttribute("title") ?? "", /Search was limited/);
+    assert.match(searchLimit.querySelector(".visually-hidden")?.textContent ?? "", /more may be omitted/);
     const searchRow = dom.window.document.querySelector<HTMLButtonElement>(".session-file-search-row");
     assert.ok(searchRow);
     await act(async () => {

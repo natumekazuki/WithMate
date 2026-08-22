@@ -4658,7 +4658,6 @@ button:disabled {
 }
 
 .session-file-search-input-row {
-  position: relative;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -4673,7 +4672,7 @@ button:disabled {
   color: var(--ink);
   font: inherit;
   font-size: 0.78rem;
-  padding: 6px 30px 6px 9px;
+  padding: 6px 9px;
 }
 
 .session-file-search-input:focus {
@@ -4683,25 +4682,6 @@ button:disabled {
 
 .session-file-search-input::placeholder {
   color: var(--muted);
-}
-
-.session-file-search-loading {
-  position: absolute;
-  right: 9px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--muted);
-}
-
-.session-file-search-spinner {
-  width: 13px;
-  height: 13px;
-  box-sizing: border-box;
-  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
-  border-top-color: currentColor;
-  border-radius: 50%;
-  animation: workspace-changes-spin 720ms linear infinite;
 }
 
 .session-file-search-error {
@@ -4896,8 +4876,15 @@ button:disabled {
 }
 
 .session-file-search-limit {
-  border-top: 1px solid rgba(148, 163, 184, 0.12);
-  padding-top: 7px;
+  display: flex;
+  justify-content: flex-end;
+  padding: 5px 7px 0;
+  color: var(--muted);
+}
+
+.session-file-search-limit-icon {
+  font-size: 0.75rem;
+  line-height: 1;
 }
 
 .session-file-tree-status,

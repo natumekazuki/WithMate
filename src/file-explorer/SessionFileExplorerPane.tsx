@@ -322,6 +322,9 @@ export function SessionFileExplorerPane({
     return rows;
   }, [searchResult]);
   const visibleRows: FileExplorerRow[] = isSearchActive ? searchRows : treeRows;
+  const searchLimitStatusMessage = searchResult?.status === "limit-reached"
+    ? searchLimitMessage(searchResult)
+    : "";
   const fileVirtualizer = useVirtualizer({
     count: visibleRows.length,
     getScrollElement: () => treeScrollRef.current,
@@ -370,7 +373,6 @@ export function SessionFileExplorerPane({
                   className="session-file-search-input"
                   type="search"
                   aria-label="Search files"
-                  placeholder="Search files by name or path"
                   autoComplete="off"
                   value={searchQuery}
                   onInput={(event) => {
@@ -381,13 +383,12 @@ export function SessionFileExplorerPane({
                     setSearchQuery(nextQuery);
                   }}
                 />
-                {searchLoading ? (
-                  <span className="session-file-search-loading" role="status" aria-live="polite">
-                    <span className="session-file-search-spinner" aria-hidden="true" />
-                    <span className="visually-hidden">Searching files…</span>
-                  </span>
-                ) : null}
               </div>
+              {searchLoading ? (
+                <span className="session-file-search-loading-status visually-hidden" role="status" aria-live="polite">
+                  Searching files…
+                </span>
+              ) : null}
               {searchError ? (
                 <div className="session-file-search-error" role="alert">
                   <span>{searchError}</span>
@@ -432,7 +433,6 @@ export function SessionFileExplorerPane({
           <>
             {isSearchActive ? (
               <>
-                {searchLoading && !searchResult ? <p className="session-file-tree-status" role="status">Searching files…</p> : null}
                 {!searchLoading && searchResult?.groups.length === 0 ? (
                   <p className="session-file-tree-empty">No matching files.</p>
                 ) : null}
@@ -486,10 +486,16 @@ export function SessionFileExplorerPane({
                     })}
                   </div>
                 ) : null}
-                {searchResult?.status === "limit-reached" ? (
-                  <p className="session-file-tree-status session-file-search-limit" role="status">
-                    {searchLimitMessage(searchResult)}
-                  </p>
+                {searchLimitStatusMessage ? (
+                  <div
+                    className="session-file-search-limit"
+                    role="status"
+                    aria-label={searchLimitStatusMessage}
+                    title={searchLimitStatusMessage}
+                  >
+                    <span className="session-file-search-limit-icon" aria-hidden="true">⚠</span>
+                    <span className="visually-hidden">{searchLimitStatusMessage}</span>
+                  </div>
                 ) : null}
               </>
             ) : (
