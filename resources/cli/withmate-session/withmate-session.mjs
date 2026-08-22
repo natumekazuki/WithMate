@@ -21979,7 +21979,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "coordination.event.consume",
 		title: "Consume coordination response",
-		description: "Mark the exact user decision answer or blocker resolution response identified by expectedResolutionSequence as applied by its owner Session.",
+		description: "Mark the exact user decision answer or blocker response identified by expectedResolutionSequence as applied by its owner Session. Consuming a blocker response does not resolve the blocker.",
 		readOnly: false,
 		destructive: false
 	},

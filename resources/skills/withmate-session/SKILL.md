@@ -56,6 +56,7 @@ Do not infer provider support, model, reasoning effort, approval mode, sandbox, 
 - Use `coordination.event.*` only for durable, user-visible coordination facts and state. Keep normal conversational responses separate.
 - Preserve the canonical Role hierarchy: read `self` from any Role and `subtree` only as an overall or task coordinator. Do not send actor, Role, root, parent, or depth in an operation input.
 - Resolve an escalation only when addressed to the actor, resolve an actor-owned blocker only as that actor, and leave user decisions to the trusted GUI. Agent resolution may include an optional note and never sends a decision option ID.
+- A trusted GUI response to a blocker does not resolve it. Apply and consume the latest response separately, then resolve the blocker as its actor only when work can resume.
 - Reconcile a lost mutation response by event ID or idempotency key. Do not repeat a changed input with the old key.
 
 ## Use the live schema

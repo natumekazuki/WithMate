@@ -51,6 +51,17 @@ describe("withmate-session managed Skill contract", () => {
     }
   });
 
+  it("blockerへの回答、consume、解決を別の状態遷移として案内する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+
+    assert.match(skill, /trusted GUI response to a blocker does not resolve it/i);
+    assert.match(operations, /recorded as a `responded` action and does not resolve the blocker/);
+    assert.match(operations, /only the actor-owned Agent may resolve it/);
+    assert.match(operations, /remains editable until the owner Session consumes it/);
+    assert.match(operations, /Consumption confirms the exact response revision[\s\S]*it does not change blocker state/);
+  });
+
   it("referenceの公開operation集合をruntime contractと双方向一致させる", async () => {
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
     const publicOperationsSection = operations.match(

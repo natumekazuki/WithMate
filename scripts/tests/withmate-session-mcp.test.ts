@@ -161,6 +161,10 @@ describe("WithMate Session MCP contract", () => {
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.create")?.description ?? "", /stable eventId/);
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.list")?.description ?? "", /stable eventId/);
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.get")?.description ?? "", /create idempotencyKey/);
+      const consumeDescription = result.tools.find((tool) => tool.name === "coordination.event.consume")?.description ?? "";
+      assert.match(consumeDescription, /blocker response/);
+      assert.match(consumeDescription, /does not resolve the blocker/);
+      assert.doesNotMatch(consumeDescription, /blocker resolution response/);
       const runOutput = result.tools.find((tool) => tool.name === "turn.run")?.outputSchema as any;
       const enqueueOutput = result.tools.find((tool) => tool.name === "turn.enqueue")?.outputSchema as any;
       assert.equal(runOutput.properties.operation.const, "turn.run");
