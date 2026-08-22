@@ -130,7 +130,7 @@ import type {
 import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
-  CoordinationEventDecisionResolveInput,
+  CoordinationEventTrustedResolveInput,
   CoordinationEventInvalidation,
   CoordinationEventSummary,
   CoordinationEventTrustedListInput,
@@ -164,7 +164,7 @@ export type WithMateWindowNavigationApi = {
 export type WithMateWindowCoordinationApi = {
   listCoordinationEvents(input: CoordinationEventTrustedListInput): Promise<CoordinationEventListResult>;
   getCoordinationEvent(eventId: string): Promise<CoordinationEvent>;
-  resolveCoordinationEvent(input: CoordinationEventDecisionResolveInput): Promise<CoordinationEvent>;
+  resolveCoordinationEvent(input: CoordinationEventTrustedResolveInput): Promise<CoordinationEvent>;
   cancelCoordinationEvent(input: CoordinationEventCancelInput): Promise<CoordinationEvent>;
 };
 

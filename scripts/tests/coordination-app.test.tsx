@@ -363,12 +363,57 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     ).find((button) => button.textContent === "Sessionを開く");
     assert.equal(openSessionAction, undefined);
     assert.match(rootElement.querySelector(".coordination-detail .coordination-event-meta")?.textContent ?? "", /未解決/);
+    assert.match(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /解決情報/);
+    assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /解決として送信/);
     assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /イベントを取り消す/);
+    assert.ok(rootElement.querySelector<HTMLTextAreaElement>('textarea[aria-label="解決情報"]'));
     await act(async () => {
       rootElement.querySelector<HTMLButtonElement>(".coordination-detail-origin")?.click();
       await Promise.resolve();
     });
     assert.deepEqual(openedSessions, [SESSION.id, SESSION.id]);
+
+    currentDetail = {
+      ...currentDetail,
+      state: "resolved",
+      actions: [{
+        sequence: 5,
+        type: "resolved",
+        actorType: "trusted_gui",
+        actorSessionId: null,
+        optionId: null,
+        note: "タイトルとアイコンが若干重なっている",
+        relatedEventId: null,
+        createdAt: "2026-08-22T12:02:00.000Z",
+      }],
+    };
+    await act(async () => {
+      rootElement.querySelector<HTMLButtonElement>(".coordination-event-row")?.click();
+      await Promise.resolve();
+    });
+    assert.match(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /解決情報を変更/);
+    assert.equal(
+      rootElement.querySelector<HTMLTextAreaElement>('textarea[aria-label="解決情報"]')?.value,
+      "タイトルとアイコンが若干重なっている",
+    );
+
+    currentDetail.actions.push({
+      sequence: 6,
+      type: "consumed",
+      actorType: "session",
+      actorSessionId: SESSION.id,
+      optionId: null,
+      note: null,
+      relatedEventId: null,
+      createdAt: "2026-08-22T12:03:00.000Z",
+    });
+    await act(async () => {
+      rootElement.querySelector<HTMLButtonElement>(".coordination-event-row")?.click();
+      await Promise.resolve();
+    });
+    assert.match(rootElement.textContent ?? "", /確定済み/);
+    assert.match(rootElement.textContent ?? "", /タイトルとアイコンが若干重なっている/);
+    assert.equal(rootElement.querySelector(".coordination-decision-panel"), null);
 
     const historyTab = Array.from(
       rootElement.querySelectorAll<HTMLButtonElement>(".coordination-filter-tabs button"),

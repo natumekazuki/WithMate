@@ -4,12 +4,12 @@ import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
-  CoordinationEventDecisionResolveInput,
+  CoordinationEventTrustedResolveInput,
   CoordinationEventListResult,
   CoordinationEventTrustedListInput,
 } from "../src/coordination-event.js";
 import {
-  parseCoordinationEventDecisionResolveInput,
+  parseCoordinationEventTrustedResolveInput,
   parseCoordinationEventTrustedListInput,
 } from "../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../src/session-external-runtime-contract.js";
@@ -512,7 +512,7 @@ export type MainIpcRegistrationDeps = {
   cancelSessionRun(sessionId: string): void;
   listCoordinationEvents?(input: CoordinationEventTrustedListInput): Awaitable<CoordinationEventListResult>;
   getCoordinationEvent?(eventId: string): Awaitable<CoordinationEvent>;
-  resolveCoordinationEvent?(input: CoordinationEventDecisionResolveInput): Awaitable<CoordinationEvent>;
+  resolveCoordinationEvent?(input: CoordinationEventTrustedResolveInput): Awaitable<CoordinationEvent>;
   cancelCoordinationEvent?(input: CoordinationEventCancelInput): Awaitable<CoordinationEvent>;
   listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
   getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
@@ -1800,7 +1800,7 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
     assertCoordinationWindowSender(event, deps);
     if (!deps.resolveCoordinationEvent) throw new Error("Coordination event service is unavailable.");
-    return deps.resolveCoordinationEvent(parseCoordinationEventDecisionResolveInput(input));
+    return deps.resolveCoordinationEvent(parseCoordinationEventTrustedResolveInput(input));
   });
   ipcMain.handle(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
     assertCoordinationWindowSender(event, deps);

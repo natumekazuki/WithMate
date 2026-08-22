@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
-  COORDINATION_EVENT_PENDING_ANSWER_LIMIT,
+  COORDINATION_EVENT_PENDING_RESPONSE_LIMIT,
   initialCoordinationEventState,
   type CoordinationEvent,
   type CoordinationEventAction,
@@ -16,7 +16,7 @@ import {
   type CoordinationEventRoleSnapshot,
   type CoordinationEventState,
   type CoordinationEventSummary,
-  type PendingCoordinationAnswer,
+  type PendingCoordinationResponse,
 } from "../src/coordination-event.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -260,9 +260,26 @@ export class CoordinationEventStorageV6 {
         if (input.principal.actorType !== "session" || event.targetSessionId !== input.principal.sessionId || input.optionId) {
           throw new CoordinationEventNotFoundError();
         }
+        if (event.state !== "open") throw new CoordinationEventStateConflictError();
       } else if (event.kind === "blocker") {
-        if (input.principal.actorType !== "session" || event.actorSessionId !== input.principal.sessionId || input.optionId) {
-          throw new CoordinationEventNotFoundError();
+        const hasNote = input.note !== null && input.note.trim().length > 0;
+        if (input.principal.actorType === "trusted_gui") {
+          const hasTrustedResolution = event.actions.some(
+            (action) => action.type === "resolved" && action.actorType === "trusted_gui",
+          );
+          const hasBeenConsumed = event.actions.some((action) => action.type === "consumed");
+          if (!canView(input.principal, event) || input.optionId || !hasNote) {
+            throw new CoordinationEventNotFoundError();
+          }
+          if (event.state !== "open"
+            && (event.state !== "resolved" || !hasTrustedResolution || hasBeenConsumed)) {
+            throw new CoordinationEventStateConflictError();
+          }
+        } else {
+          if (event.actorSessionId !== input.principal.sessionId || input.optionId) {
+            throw new CoordinationEventNotFoundError();
+          }
+          if (event.state !== "open") throw new CoordinationEventStateConflictError();
         }
       } else if (event.kind === "user_decision_required") {
         const hasOption = input.optionId !== null;
@@ -281,25 +298,23 @@ export class CoordinationEventStorageV6 {
       } else {
         throw new CoordinationEventStateConflictError();
       }
-      if (event.kind !== "user_decision_required" && event.state !== "open") {
-        throw new CoordinationEventStateConflictError();
-      }
     });
   }
 
-  listPendingAnswers(principal: CoordinationMutationPrincipal): PendingCoordinationAnswer[] {
+  listPendingResponses(principal: CoordinationMutationPrincipal): PendingCoordinationResponse[] {
     this.assertCanonicalBinding(principal);
     const rows = this.db.prepare(`
       SELECT events.id
       FROM coordination_events_v6 AS events
       WHERE events.actor_session_id = ?
-        AND events.kind = 'user_decision_required'
+        AND events.kind IN ('user_decision_required', 'blocker')
         AND ${PROJECTED_STATE_SQL} = 'resolved'
         AND EXISTS (
           SELECT 1
           FROM coordination_event_actions_v6 AS resolved_actions
           WHERE resolved_actions.event_id = events.id
             AND resolved_actions.action_type = 'resolved'
+            AND resolved_actions.actor_type = 'trusted_gui'
         )
         AND NOT EXISTS (
           SELECT 1
@@ -312,10 +327,11 @@ export class CoordinationEventStorageV6 {
         FROM coordination_event_actions_v6 AS resolved_actions
         WHERE resolved_actions.event_id = events.id
           AND resolved_actions.action_type = 'resolved'
+          AND resolved_actions.actor_type = 'trusted_gui'
       ) ASC
       LIMIT ?
-    `).all(principal.sessionId, COORDINATION_EVENT_PENDING_ANSWER_LIMIT) as Array<{ id: string }>;
-    return rows.map(({ id }) => toPendingAnswer(this.getRequired(id)));
+    `).all(principal.sessionId, COORDINATION_EVENT_PENDING_RESPONSE_LIMIT) as Array<{ id: string }>;
+    return rows.map(({ id }) => toPendingResponse(this.getRequired(id)));
   }
 
   consume(input: {
@@ -338,7 +354,7 @@ export class CoordinationEventStorageV6 {
       const event = this.getRequired(input.eventId);
       if (input.principal.actorType !== "session"
         || event.actorSessionId !== input.principal.sessionId
-        || event.kind !== "user_decision_required") {
+        || (event.kind !== "user_decision_required" && event.kind !== "blocker")) {
         throw new CoordinationEventNotFoundError();
       }
       if (event.state !== "resolved"
@@ -643,30 +659,36 @@ const PROJECTED_STATE_SQL = `COALESCE(
   CASE WHEN events.kind IN ('escalation', 'user_decision_required', 'blocker') THEN 'open' ELSE 'recorded' END
 )`;
 
-function toPendingAnswer(event: CoordinationEvent): PendingCoordinationAnswer {
+function toPendingResponse(event: CoordinationEvent): PendingCoordinationResponse {
+  if (event.kind !== "user_decision_required" && event.kind !== "blocker") {
+    throw new CoordinationEventStateConflictError();
+  }
   const resolution = [...event.actions]
     .reverse()
     .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
   if (!resolution) throw new CoordinationEventStateConflictError();
   if (resolution.optionId) {
+    if (event.kind !== "user_decision_required") throw new CoordinationEventStateConflictError();
     const option = event.options.find((candidate) => candidate.id === resolution.optionId);
     if (!option) throw new CoordinationEventStateConflictError();
     return {
       eventId: event.eventId,
+      kind: "user_decision_required",
       resolutionSequence: resolution.sequence,
-      question: event.payload.summary,
-      answer: { kind: "option", optionId: option.id, label: option.label },
-      resolvedAt: resolution.createdAt,
+      request: event.payload.summary,
+      response: { kind: "option", optionId: option.id, label: option.label },
+      respondedAt: resolution.createdAt,
       consumption: "pending",
     };
   }
   if (!resolution.note) throw new CoordinationEventStateConflictError();
   return {
     eventId: event.eventId,
+    kind: event.kind,
     resolutionSequence: resolution.sequence,
-    question: event.payload.summary,
-    answer: { kind: "text", text: resolution.note },
-    resolvedAt: resolution.createdAt,
+    request: event.payload.summary,
+    response: { kind: "text", text: resolution.note },
+    respondedAt: resolution.createdAt,
     consumption: "pending",
   };
 }

@@ -34,7 +34,7 @@ export const COORDINATION_EVENT_TRUSTED_CATEGORIES = [
 export const COORDINATION_EVENT_DEFAULT_LIST_LIMIT = 50;
 export const COORDINATION_EVENT_MAX_LIST_LIMIT = 100;
 export const COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16 * 1024;
-export const COORDINATION_EVENT_PENDING_ANSWER_LIMIT = 20;
+export const COORDINATION_EVENT_PENDING_RESPONSE_LIMIT = 20;
 
 export type CoordinationEventKind = (typeof COORDINATION_EVENT_KINDS)[number];
 export type CoordinationEventState = (typeof COORDINATION_EVENT_STATES)[number];
@@ -134,7 +134,7 @@ export type CoordinationEventConsumeInput = {
   idempotencyKey: string;
 };
 
-export type CoordinationEventDecisionResolveInput =
+export type CoordinationEventTrustedResolveInput =
   | {
       eventId: string;
       optionId: string;
@@ -180,14 +180,15 @@ export type CoordinationEventCorrectionResult = {
   superseded: CoordinationEvent;
 };
 
-export type PendingCoordinationAnswer = {
+export type PendingCoordinationResponse = {
   eventId: string;
+  kind: Extract<CoordinationEventKind, "user_decision_required" | "blocker">;
   resolutionSequence: number;
-  question: string;
-  answer:
+  request: string;
+  response:
     | { kind: "option"; optionId: string; label: string }
     | { kind: "text"; text: string };
-  resolvedAt: string;
+  respondedAt: string;
   consumption: "pending";
 };
 
@@ -286,7 +287,7 @@ export function parseCoordinationEventTrustedListInput(value: unknown): Coordina
   };
 }
 
-export function parseCoordinationEventDecisionResolveInput(value: unknown): CoordinationEventDecisionResolveInput {
+export function parseCoordinationEventTrustedResolveInput(value: unknown): CoordinationEventTrustedResolveInput {
   const record = requireObject(value, "input");
   assertKeys(record, ["eventId", "optionId", "note", "idempotencyKey"], "input");
   const eventId = requireNonEmptyString(record.eventId, "eventId");

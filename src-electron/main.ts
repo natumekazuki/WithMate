@@ -2822,9 +2822,9 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         }
         return result;
       },
-      resolvePendingCoordinationAnswers: (session) => {
+      resolvePendingCoordinationResponses: (session) => {
         if (session.sessionKind !== "default" || !session.roleBinding) return [];
-        return requireCoordinationEventService().listPendingAnswersForSession(
+        return requireCoordinationEventService().listPendingResponsesForSession(
           session.id,
           session.roleBinding,
         );

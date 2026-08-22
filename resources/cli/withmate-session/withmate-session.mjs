@@ -21823,6 +21823,7 @@ var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Coordination events are public records separate from the normal response; do not change the normal response format when recording one.",
 	"Record a coordination event for a scope or policy decision, an ancestor or user decision request, a blocker opening or clearing, a major work milestone, or a correction.",
 	"Use user_decision_required for user confirmation, selection, or free text; use blocker only for an external condition that prevents your work, and resolve your blocker after work can resume.",
+	"A user may provide or revise free-text resolution information for your blocker until you apply and consume its latest resolutionSequence.",
 	"Never record secrets, raw logs, stack traces, large diffs, provider responses, private reasoning, or personal environment paths.",
 	"A progress or decision recording failure must not stop the normal response. If user_decision_required cannot be recorded, state the failure and a safe next action in the normal response."
 ].join(" ");
@@ -21976,8 +21977,8 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	},
 	{
 		name: "coordination.event.consume",
-		title: "Consume coordination answer",
-		description: "Mark the exact resolved revision identified by expectedResolutionSequence as applied by its owner Session.",
+		title: "Consume coordination response",
+		description: "Mark the exact user decision answer or blocker resolution response identified by expectedResolutionSequence as applied by its owner Session.",
 		readOnly: false,
 		destructive: false
 	},

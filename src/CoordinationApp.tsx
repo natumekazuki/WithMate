@@ -398,7 +398,11 @@ export default function CoordinationApp() {
     } catch (error) {
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
-      setMutationFeedback(error instanceof Error ? error.message : "回答を保存できませんでした。");
+      setMutationFeedback(error instanceof Error
+        ? error.message
+        : selectedEvent.kind === "blocker"
+          ? "解決情報を保存できませんでした。"
+          : "回答を保存できませんでした。");
       if (mutation.revision !== null) void refreshInvalidatedEvent(eventId);
     } finally {
       if (pendingMutation.current === mutation) pendingMutation.current = null;
@@ -443,12 +447,15 @@ export default function CoordinationApp() {
   const selectedSessionLabel = selectedSession?.taskTitle ?? "すべてのSession";
   const selectedEventSession = selectedEvent ? eventSessions[selectedEvent.actorSessionId] : undefined;
   const selectedResolution = selectedEvent ? latestTrustedResolution(selectedEvent) : undefined;
-  const selectedAnswerLabel = selectedEvent && selectedResolution
-    ? resolvedAnswerLabel(selectedEvent, selectedResolution)
+  const selectedResponseLabel = selectedEvent && selectedResolution
+    ? resolvedResponseLabel(selectedEvent, selectedResolution)
     : "";
-  const answerIsConsumed = selectedEvent?.actions.some((action) => action.type === "consumed") ?? false;
-  const canAnswer = selectedEvent?.kind === "user_decision_required"
-    && (selectedEvent.state === "open" || (selectedEvent.state === "resolved" && !answerIsConsumed));
+  const responseIsConsumed = selectedEvent?.actions.some((action) => action.type === "consumed") ?? false;
+  const isUserDecision = selectedEvent?.kind === "user_decision_required";
+  const isBlocker = selectedEvent?.kind === "blocker";
+  const canEditResponse = (isUserDecision || isBlocker)
+    && (selectedEvent?.state === "open"
+      || (selectedEvent?.state === "resolved" && Boolean(selectedResolution) && !responseIsConsumed));
   const filterLabel = FILTERS.find((entry) => entry.id === filter)?.label ?? "すべて";
   return (
     <main className="coordination-page" aria-label="Coordination">
@@ -591,9 +598,9 @@ export default function CoordinationApp() {
               </button>
               <div className="coordination-event-meta">
                 <span className={`coordination-kind coordination-kind-${selectedEvent.kind}`}>{KIND_LABELS[selectedEvent.kind]}</span>
-                {eventStateLabel(selectedEvent, answerIsConsumed) ? (
-                  <span className={`coordination-state coordination-state-${answerIsConsumed ? "consumed" : selectedEvent.state}`}>
-                    {eventStateLabel(selectedEvent, answerIsConsumed)}
+                {eventStateLabel(selectedEvent, responseIsConsumed) ? (
+                  <span className={`coordination-state coordination-state-${responseIsConsumed ? "consumed" : selectedEvent.state}`}>
+                    {eventStateLabel(selectedEvent, responseIsConsumed)}
                   </span>
                 ) : null}
                 <button
@@ -613,34 +620,38 @@ export default function CoordinationApp() {
               {selectedEvent.payload.impact ? <DetailText title="影響" value={selectedEvent.payload.impact} /> : null}
               {selectedEvent.payload.recommendation ? <DetailText title="推奨" value={selectedEvent.payload.recommendation} /> : null}
 
-              {selectedEvent.kind === "user_decision_required" && selectedResolution && !canAnswer ? (
-                <DetailText title="回答" value={selectedAnswerLabel} />
+              {(isUserDecision || isBlocker) && selectedResolution && !canEditResponse ? (
+                <DetailText title={isBlocker ? "解決情報" : "回答"} value={selectedResponseLabel} />
               ) : null}
-              {canAnswer ? (
+              {canEditResponse ? (
                 <section className="coordination-decision-panel">
-                  <h3>{selectedEvent.state === "resolved" ? "回答を変更" : "回答"}</h3>
-                  <div className="coordination-options">
-                    {selectedEvent.options.map((option) => (
-                      <button
-                        key={option.id}
-                        type="button"
-                        className={selectedResolution?.optionId === option.id ? "selected" : ""}
-                        aria-pressed={selectedResolution?.optionId === option.id}
-                        disabled={mutationPending}
-                        onClick={() => void resolveEvent(option.id)}
-                      >
-                        <strong>{option.label}</strong>
-                        {option.description ? <span>{option.description}</span> : null}
-                      </button>
-                    ))}
-                  </div>
+                  <h3>{isBlocker
+                    ? selectedEvent.state === "resolved" ? "解決情報を変更" : "解決情報"
+                    : selectedEvent.state === "resolved" ? "回答を変更" : "回答"}</h3>
+                  {isUserDecision ? (
+                    <div className="coordination-options">
+                      {selectedEvent.options.map((option) => (
+                        <button
+                          key={option.id}
+                          type="button"
+                          className={selectedResolution?.optionId === option.id ? "selected" : ""}
+                          aria-pressed={selectedResolution?.optionId === option.id}
+                          disabled={mutationPending}
+                          onClick={() => void resolveEvent(option.id)}
+                        >
+                          <strong>{option.label}</strong>
+                          {option.description ? <span>{option.description}</span> : null}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   <label className="coordination-custom-answer">
-                    <span className="sr-only">自由回答</span>
+                    <span className="sr-only">{isBlocker ? "解決情報" : "自由回答"}</span>
                     <textarea
                       value={customAnswer}
                       disabled={mutationPending}
                       onChange={(event) => setCustomAnswer(event.target.value)}
-                      aria-label="自由回答"
+                      aria-label={isBlocker ? "解決情報" : "自由回答"}
                       rows={4}
                     />
                   </label>
@@ -651,7 +662,9 @@ export default function CoordinationApp() {
                       disabled={mutationPending || !customAnswer.trim() || selectedResolution?.note === customAnswer.trim()}
                       onClick={() => void resolveEvent()}
                     >
-                      {selectedEvent.state === "resolved" ? "回答を変更" : "送信"}
+                      {isBlocker
+                        ? selectedEvent.state === "resolved" ? "解決情報を変更" : "解決として送信"
+                        : selectedEvent.state === "resolved" ? "回答を変更" : "送信"}
                     </button>
                     {selectedEvent.state === "open" ? (
                       <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
@@ -659,7 +672,7 @@ export default function CoordinationApp() {
                   </div>
                 </section>
               ) : null}
-              {selectedEvent.state === "open" && !canAnswer ? (
+              {selectedEvent.state === "open" && !canEditResponse ? (
                 <div className="coordination-detail-actions">
                   <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
                 </div>
@@ -688,7 +701,7 @@ function latestTrustedResolution(event: CoordinationEvent): CoordinationEventAct
     .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
 }
 
-function resolvedAnswerLabel(event: CoordinationEvent, resolution: CoordinationEventAction): string {
+function resolvedResponseLabel(event: CoordinationEvent, resolution: CoordinationEventAction): string {
   if (resolution.optionId) {
     return event.options.find((option) => option.id === resolution.optionId)?.label ?? resolution.optionId;
   }

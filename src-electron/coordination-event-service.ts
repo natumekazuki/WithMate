@@ -8,14 +8,14 @@ import {
   type CoordinationEventCorrectInput,
   type CoordinationEventCorrectionResult,
   type CoordinationEventCreateInput,
-  type CoordinationEventDecisionResolveInput,
+  type CoordinationEventTrustedResolveInput,
   type CoordinationEventGetInput,
   type CoordinationEventListInput,
   type CoordinationEventListResult,
   type CoordinationEventTrustedListInput,
   type CoordinationEventResolveInput,
   type CoordinationEventRoleSnapshot,
-  type PendingCoordinationAnswer,
+  type PendingCoordinationResponse,
 } from "../src/coordination-event.js";
 import { requireSessionRoleBinding, type SessionRoleBinding } from "../src/session-role-binding.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
@@ -86,7 +86,7 @@ export class CoordinationEventService {
     return this.deps.storage.getTrusted(eventId);
   }
 
-  resolveFromCoordinationWindow(input: CoordinationEventDecisionResolveInput): CoordinationEvent {
+  resolveFromCoordinationWindow(input: CoordinationEventTrustedResolveInput): CoordinationEvent {
     return this.resolveAs(input, this.coordinationWindowPrincipalFor(input.eventId));
   }
 
@@ -105,11 +105,11 @@ export class CoordinationEventService {
     return this.resolveAs(input, sessionPrincipal(binding));
   }
 
-  listPendingAnswersForSession(
+  listPendingResponsesForSession(
     sessionId: string,
     roleBinding: CoordinationEventRoleSnapshot,
-  ): PendingCoordinationAnswer[] {
-    return this.deps.storage.listPendingAnswers({ sessionId, actorType: "session", roleBinding });
+  ): PendingCoordinationResponse[] {
+    return this.deps.storage.listPendingResponses({ sessionId, actorType: "session", roleBinding });
   }
 
   consume(input: CoordinationEventConsumeInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
@@ -146,7 +146,7 @@ export class CoordinationEventService {
   }
 
   private resolveAs(
-    input: CoordinationEventResolveInput | CoordinationEventDecisionResolveInput,
+    input: CoordinationEventResolveInput | CoordinationEventTrustedResolveInput,
     principal: CoordinationMutationPrincipal,
   ): CoordinationEvent {
     const outcome = this.deps.storage.resolve({

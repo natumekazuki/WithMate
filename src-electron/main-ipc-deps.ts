@@ -26,7 +26,7 @@ import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-sta
 import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
-  CoordinationEventDecisionResolveInput,
+  CoordinationEventTrustedResolveInput,
   CoordinationEventSummary,
   CoordinationEventListResult,
   CoordinationEventTrustedListInput,
@@ -353,7 +353,7 @@ export type MainIpcSessionRuntimeDepsArgs = {
   listSessionTurnExecutions(sessionId: string): Awaitable<SessionTurnExecutionProjection[]>;
   listCoordinationEvents(input: CoordinationEventTrustedListInput): Awaitable<CoordinationEventListResult>;
   getCoordinationEvent(eventId: string): Awaitable<CoordinationEvent>;
-  resolveCoordinationEvent(input: CoordinationEventDecisionResolveInput): Awaitable<CoordinationEvent>;
+  resolveCoordinationEvent(input: CoordinationEventTrustedResolveInput): Awaitable<CoordinationEvent>;
   cancelCoordinationEvent(input: CoordinationEventCancelInput): Awaitable<CoordinationEvent>;
   cancelSessionExecution(
     sessionId: string,

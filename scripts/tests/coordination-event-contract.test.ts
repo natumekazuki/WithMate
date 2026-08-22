@@ -6,7 +6,7 @@ import {
   validateCoordinationEventOptions,
   validateCoordinationEventPayload,
   initialCoordinationEventState,
-  parseCoordinationEventDecisionResolveInput,
+  parseCoordinationEventTrustedResolveInput,
   parseCoordinationEventTrustedListInput,
 } from "../../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
@@ -212,7 +212,7 @@ describe("Coordination event contract", () => {
       eventId: "blocker-1",
       idempotencyKey: "resolve-blocker-1",
     });
-    assert.deepEqual(parseCoordinationEventDecisionResolveInput({
+    assert.deepEqual(parseCoordinationEventTrustedResolveInput({
       eventId: "decision-1",
       optionId: "continue",
       idempotencyKey: "resolve-decision-1",
@@ -221,7 +221,7 @@ describe("Coordination event contract", () => {
       optionId: "continue",
       idempotencyKey: "resolve-decision-1",
     });
-    assert.throws(() => parseCoordinationEventDecisionResolveInput({
+    assert.throws(() => parseCoordinationEventTrustedResolveInput({
       eventId: "decision-1",
       idempotencyKey: "resolve-decision-2",
     }), /Exactly one/);
