@@ -320,6 +320,54 @@ describe("database-schema-v6", () => {
     }
   });
 
+  it("ORCH-OUTBOUND-MIGRATE-01: 既存cross-Session executionをorigin snapshotへ一度だけ補完する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE session_execution_origins_v6;");
+      const insertSession = db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id,
+          approval_mode, created_at, updated_at, last_active_at
+        ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+      `);
+      insertSession.run("source-session", "Source", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z");
+      insertSession.run("target-session", "Target snapshot", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO session_executions_v6 (
+          id, session_id, operation, state, request_json, created_at, updated_at
+        ) VALUES (?, ?, 'turn.enqueue', 'queued', ?, ?, ?)
+      `).run(
+        "legacy-cross-session",
+        "target-session",
+        JSON.stringify({
+          initiator: { kind: "session", sessionId: "source-session" },
+          turn: { userMessage: "legacy request" },
+        }),
+        "2026-08-23T00:00:01.000Z",
+        "2026-08-23T00:00:01.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      const origins = db.prepare(`
+        SELECT execution_id, source_session_id, target_session_id,
+               target_session_title_snapshot, target_session_role_snapshot, user_message
+        FROM session_execution_origins_v6
+      `).all() as Array<Record<string, unknown>>;
+      assert.deepEqual(origins.map((origin) => ({ ...origin })), [{
+        execution_id: "legacy-cross-session",
+        source_session_id: "source-session",
+        target_session_id: "target-session",
+        target_session_title_snapshot: "Target snapshot",
+        target_session_role_snapshot: "standalone",
+        user_message: "legacy request",
+      }]);
+    } finally {
+      db.close();
+    }
+  });
+
   it("COORD-MIGRATE-01: Coordination storageはempty/populated DBへadditiveかつ再実行可能に適用する", () => {
     for (const populated of [false, true]) {
       const db = createV6Schema();

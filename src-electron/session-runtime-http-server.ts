@@ -438,6 +438,7 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
   switch (value.error.code) {
     case "UNAUTHORIZED": return 401;
     case "FORBIDDEN": return 403;
+    case "SESSION_TURN_FORBIDDEN": return 403;
     case "ROUTE_NOT_FOUND":
     case "EXECUTION_NOT_FOUND": return 404;
     case "SESSION_BUSY":

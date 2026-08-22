@@ -196,6 +196,58 @@ describe("SessionExecutionService", () => {
     }
   });
 
+  it("ORCH-OUTBOUND-01: runとenqueueはacceptanceと同じstorage境界へorigin snapshotを渡す", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.run({
+        ...createInput(1),
+        origin: {
+          sourceSessionId: "session-2",
+          targetSessionTitle: "Session 1 snapshot",
+          targetSessionRole: "executor" as const,
+          userMessage: "message-1",
+        },
+      });
+      assert.deepEqual(fixture.storage.listSessionOutboundExecutions("session-2"), [{
+        sequence: 1,
+        executionId: running.id,
+        targetSessionId: "session-1",
+        operation: "turn.run",
+        targetSessionTitle: "Session 1 snapshot",
+        targetSessionRole: "executor",
+        userMessage: "message-1",
+        createdAt: "2026-08-10T00:00:01.000Z",
+      }]);
+
+      const runningTerminal = fixture.service.waitForTerminal("session-1", running.id);
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      await runningTerminal;
+
+      const queued = await fixture.service.enqueue({
+        ...createInput(2, "session-2"),
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2 snapshot",
+          targetSessionRole: "executor" as const,
+          userMessage: "message-2",
+        },
+      });
+      assert.deepEqual(fixture.storage.listSessionOutboundExecutions("session-1"), [{
+        sequence: 2,
+        executionId: queued.id,
+        targetSessionId: "session-2",
+        operation: "turn.enqueue",
+        targetSessionTitle: "Session 2 snapshot",
+        targetSessionRole: "executor",
+        userMessage: "message-2",
+        createdAt: "2026-08-10T00:00:04.000Z",
+      }]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("I-01: canonical replayは現在のSession validationが失敗しても保存済みexecutionへ収束する", async () => {
     const fixture = await createFixture();
     try {

@@ -2064,6 +2064,75 @@ test("ID-03: initiatorなしのlegacy executionだけを外部として表示す
   assert.doesNotMatch(html, /Turnをキャンセル/);
 });
 
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージはtarget snapshotとpreviewを表示して全文を展開する", () => {
+  const fullMessage = `${"preview ".repeat(40)}FULL-END`;
+  const baseExecution = {
+    executionId: "execution-outbound",
+    sessionId: "target-session",
+    clientRequestId: null,
+    userMessage: fullMessage,
+    initiator: null,
+    state: "accepted" as const,
+    queuePosition: null,
+    canCancel: false as const,
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
+    relatedSession: {
+      direction: "outbound" as const,
+      sessionId: "target-session",
+      titleSnapshot: "Target Snapshot",
+      roleSnapshot: "executor" as const,
+    },
+  };
+  const collapsed = renderSessionMessageColumn({
+    messages: [{ role: "user", text: fullMessage }],
+    turnExecutions: [baseExecution],
+  });
+  assert.match(collapsed, /Target Snapshot/);
+  assert.match(collapsed, /related-session-role">executor/);
+  assert.match(collapsed, /aria-label="Target Snapshotへのメッセージ全文を開く"/);
+  assert.doesNotMatch(collapsed, /FULL-END/);
+
+  const expanded = renderSessionMessageColumn({
+    messages: [{ role: "user", text: fullMessage }],
+    expandedArtifacts: { "session-1-0-related-session": true },
+    turnExecutions: [baseExecution],
+    originSessionDetails: [{ sessionId: "target-session", taskTitle: "Current Target", sessionRole: "executor" }],
+    onOpenOriginSession() {},
+  });
+  assert.match(expanded, /FULL-END/);
+  assert.match(expanded, /aria-label="Current Targetを別Windowで開く"/);
+});
+
+test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけを無効化する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-related-session": true },
+    turnExecutions: [{
+      executionId: "execution-deleted-target",
+      sessionId: "deleted-target",
+      clientRequestId: null,
+      userMessage: "delegated",
+      initiator: null,
+      state: "accepted",
+      queuePosition: null,
+      canCancel: false,
+      createdAt: "2026-08-23T00:00:00.000Z",
+      updatedAt: "2026-08-23T00:00:00.000Z",
+      relatedSession: {
+        direction: "outbound",
+        sessionId: "deleted-target",
+        titleSnapshot: "Deleted Target",
+        roleSnapshot: "task-coordinator",
+      },
+    }],
+    originSessionDetails: [],
+    onOpenOriginSession() {},
+  });
+  assert.match(html, /Deleted Target/);
+  assert.match(html, /disabled="" aria-label="Deleted Targetは削除済みのため開けません"/);
+});
+
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {
   const html = renderToStaticMarkup(
     React.createElement(SessionActionDockCompactRow, {

@@ -2243,6 +2243,13 @@ export type SessionOriginDetails = {
   taskTitle: string;
 };
 
+const RELATED_SESSION_MESSAGE_PREVIEW_LENGTH = 240;
+
+function relatedSessionMessagePreview(message: string): string {
+  if (message.length <= RELATED_SESSION_MESSAGE_PREVIEW_LENGTH) return message;
+  return `${message.slice(0, RELATED_SESSION_MESSAGE_PREVIEW_LENGTH).trimEnd()}…`;
+}
+
 function getNonBlankSelectionText(selection: Selection): string | null {
   const text = selection.toString();
   return text.trim() ? text : null;
@@ -3085,10 +3092,13 @@ export function SessionMessageColumn({
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
             const turnExecution = turnExecutions?.[absoluteIndex] ?? null;
             const queuedTurn = turnExecution?.state === "queued" ? turnExecution : null;
+            const outboundTurn = turnExecution?.state === "accepted" ? turnExecution : null;
             const sessionInitiator = turnExecution?.initiator?.kind === "session"
               ? turnExecution.initiator
               : null;
-            const turnInitiator = sessionInitiator
+            const turnInitiator = outboundTurn
+              ? null
+              : sessionInitiator
               ? {
                 name: sessionInitiator.character.name,
                 iconPath: sessionInitiator.character.iconFilePath,
@@ -3112,13 +3122,17 @@ export function SessionMessageColumn({
             const isAssistant = message.role === "assistant";
             const messageCharacter = turnInitiator ?? (isAssistant ? character : null);
             const isExternalOrigin = turnInitiator !== null;
-            const displayedRole = isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
-            const originDetailsKey = `${artifactKey}-origin-session`;
+            const displayedRole = outboundTurn
+              ? "session-origin session-outbound"
+              : isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
+            const originDetailsKey = `${artifactKey}-${outboundTurn ? "related-session" : "origin-session"}`;
             const originDetailsExpanded = originDetailsKey
               ? expandedArtifacts[originDetailsKey] ?? false
               : false;
             const currentOriginSession = sessionInitiator
               ? originSessionDetails.find((details) => details.sessionId === sessionInitiator.sessionId) ?? null
+              : outboundTurn
+                ? originSessionDetails.find((details) => details.sessionId === outboundTurn.relatedSession.sessionId) ?? null
               : null;
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
@@ -3162,9 +3176,13 @@ export function SessionMessageColumn({
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
                 }`}
               >
-                {messageCharacter ? (
+                {messageCharacter || outboundTurn ? (
                   <div className="message-avatar-stack">
-                    <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
+                    {messageCharacter ? (
+                      <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
+                    ) : (
+                      <span className="related-session-avatar" aria-hidden="true">↗</span>
+                    )}
                     {artifact ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -3183,14 +3201,16 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    {sessionInitiator ? (
+                    {sessionInitiator || outboundTurn ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
                         onClick={() => onToggleArtifact(originDetailsKey)}
                         aria-expanded={originDetailsExpanded}
                         aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
-                        aria-label={originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
+                        aria-label={outboundTurn
+                          ? `${outboundTurn.relatedSession.titleSnapshot}へのメッセージ全文とSession情報を${originDetailsExpanded ? "閉じる" : "開く"}`
+                          : originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
                         title="Session情報"
                       >
                         {originDetailsExpanded ? "−" : "i"}
@@ -3198,8 +3218,15 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                {messageCharacter ? (
-                  <div className="message-character-name">{messageCharacter.name}</div>
+                {messageCharacter || outboundTurn ? (
+                  <div className="message-character-name">
+                    {outboundTurn ? (
+                      <>
+                        <span>{outboundTurn.relatedSession.titleSnapshot}</span>
+                        <span className="related-session-role">{outboundTurn.relatedSession.roleSnapshot}</span>
+                      </>
+                    ) : messageCharacter?.name}
+                  </div>
                 ) : null}
                 <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
                   {artifact && !isAssistant ? (
@@ -3220,28 +3247,41 @@ export function SessionMessageColumn({
                       {artifactExpanded ? "−" : "i"}
                     </button>
                   ) : null}
-                  <div
-                    data-message-body="true"
-                    data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                  >
-                    <MessageRichText
-                      text={message.text}
-                      forceFullRender={findOpen && hasFindQuery}
-                      displayMode={messageViewMode}
-                      onOpenPath={onOpenPath}
-                    />
-                  </div>
+                  {outboundTurn && !originDetailsExpanded ? (
+                    <button
+                      className="related-session-message-preview"
+                      type="button"
+                      onClick={() => onToggleArtifact(originDetailsKey)}
+                      aria-expanded="false"
+                      aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
+                      aria-label={`${outboundTurn.relatedSession.titleSnapshot}へのメッセージ全文を開く`}
+                    >
+                      {relatedSessionMessagePreview(message.text)}
+                    </button>
+                  ) : (
+                    <div
+                      data-message-body="true"
+                      data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                    >
+                      <MessageRichText
+                        text={message.text}
+                        forceFullRender={findOpen && hasFindQuery}
+                        displayMode={messageViewMode}
+                        onOpenPath={onOpenPath}
+                      />
+                    </div>
+                  )}
 
-                  {sessionInitiator && originDetailsExpanded ? (
+                  {(sessionInitiator || outboundTurn) && originDetailsExpanded ? (
                     <section
                       id={`origin-session-panel-${turnExecution?.executionId}`}
                       className="origin-session-details"
-                      aria-label="呼出元Session情報"
+                      aria-label={outboundTurn ? `${outboundTurn.relatedSession.titleSnapshot}のSession情報` : "呼出元Session情報"}
                     >
                       <dl>
                         <div>
                           <dt>Session ID</dt>
-                          <dd><code>{sessionInitiator.sessionId}</code></dd>
+                          <dd><code>{outboundTurn?.relatedSession.sessionId ?? sessionInitiator?.sessionId}</code></dd>
                         </div>
                         {currentOriginSession ? (
                           <div>
@@ -3251,13 +3291,28 @@ export function SessionMessageColumn({
                                 <button
                                   className="origin-session-link"
                                   type="button"
-                                  onClick={() => onOpenOriginSession(sessionInitiator.sessionId)}
+                                  onClick={() => onOpenOriginSession(outboundTurn?.relatedSession.sessionId ?? sessionInitiator!.sessionId)}
                                   aria-label={`${currentOriginSession.taskTitle}を別Windowで開く`}
                                 >
                                   <span>{currentOriginSession.taskTitle}</span>
                                   <span aria-hidden="true">↗</span>
                                 </button>
                               ) : currentOriginSession.taskTitle}
+                            </dd>
+                          </div>
+                        ) : null}
+                        {outboundTurn && !currentOriginSession ? (
+                          <div>
+                            <dt>タイトル</dt>
+                            <dd>
+                              <button
+                                className="origin-session-link"
+                                type="button"
+                                disabled
+                                aria-label={`${outboundTurn.relatedSession.titleSnapshot}は削除済みのため開けません`}
+                              >
+                                <span>{outboundTurn.relatedSession.titleSnapshot}</span>
+                              </button>
                             </dd>
                           </div>
                         ) : null}

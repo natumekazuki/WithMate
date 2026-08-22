@@ -391,10 +391,14 @@ export class MainSessionCommandFacade {
   }
 
   listSessionTurnExecutions(sessionId: string): SessionTurnExecutionProjection[] {
-    return projectSessionTurnExecutions(
-      this.deps.getSessionExecutionService().listRecords(sessionId),
-      this.deps.projectTerminalFailureNotification,
-    );
+    const service = this.deps.getSessionExecutionService();
+    return [
+      ...projectSessionTurnExecutions(
+        service.listRecords(sessionId),
+        this.deps.projectTerminalFailureNotification,
+      ),
+      ...projectSessionOutboundExecutions(service.listOutboundRecords?.(sessionId) ?? []),
+    ];
   }
 
   async cancelSessionExecution(
@@ -441,6 +445,29 @@ export class MainSessionCommandFacade {
       await this.deps.cleanupSessionFilesDirectory?.(sessionId);
     }
   }
+}
+
+function projectSessionOutboundExecutions(
+  executions: ReturnType<SessionExecutionService["listOutboundRecords"]>,
+): SessionTurnExecutionProjection[] {
+  return executions.map((execution) => ({
+    executionId: execution.executionId,
+    sessionId: execution.targetSessionId,
+    clientRequestId: null,
+    userMessage: execution.userMessage,
+    initiator: null,
+    state: "accepted" as const,
+    queuePosition: null,
+    canCancel: false,
+    createdAt: execution.createdAt,
+    updatedAt: execution.createdAt,
+    relatedSession: {
+      direction: "outbound" as const,
+      sessionId: execution.targetSessionId,
+      titleSnapshot: execution.targetSessionTitle,
+      roleSnapshot: execution.targetSessionRole,
+    },
+  }));
 }
 
 function projectSessionTurnExecutions(

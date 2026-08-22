@@ -38,6 +38,7 @@ SQLite-backed store により window 間整合と再起動後の復元を両立�
 - Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateし、Homeは現在のquery generationで古いresponseを失効させて、読み込み済みpage数をboundedに再取得する
 - session CRUD と bulk write path は `SessionPersistenceService` に集約する
 - turn 実行は `SessionRuntimeService`、window lifecycle hook は `SessionWindowBridge` が担う
+- Agent起点のcross-Session Turnはtarget側executionを正本とし、送信元projection用のorigin snapshotだけを同じtransactionへ保存する
 - Session / Project / Character Memory の session 起点補助は `SessionMemorySupportService` が担う
 - Session Memory / Character Reflection の background orchestration は `MemoryOrchestrationService` が担う
 - persistent store の初期化 / close / recreate は `PersistentStoreLifecycleService` が担う
@@ -150,6 +151,10 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
   - `Session Memory v1`
 - `audit_logs`
   - turn 実行と background task の監査ログ
+- `session_execution_origins_v6`
+  - cross-Session executionのsource Session ID、canonical target Session ID、target titleとRoleのacceptance snapshot
+  - source Sessionからは`(source_session_id, execution_sequence)` indexで取得し、`request_json`をquery ownerにしない
+  - target Sessionの外部キーを持たず、target削除後も履歴を維持する。source Session削除時はcascadeする
 - `project_scopes` / `project_memory_entries`
   - project 単位の durable knowledge
 - `character_scopes` / `character_memory_entries`

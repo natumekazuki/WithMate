@@ -3174,6 +3174,15 @@ function broadcastSessionExecutionChanged(executionId: string): void {
     executionId: execution.id,
     state: execution.state,
   });
+  const sourceSessionId = sessionExecutionStorage?.getExecutionOriginSourceSessionId(executionId) ?? null;
+  if (sourceSessionId && sourceSessionId !== execution.sessionId) {
+    requireWindowBroadcastService().broadcastSessionExecutionsChanged({
+      kind: "state-changed",
+      sessionId: sourceSessionId,
+      executionId: execution.id,
+      state: execution.state,
+    });
+  }
 }
 
 function projectExecutionTerminalFailureNotification(execution: import("../src/session-execution.js").SessionExecution, request: unknown) {

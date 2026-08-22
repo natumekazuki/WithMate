@@ -35,6 +35,7 @@ import {
   type SessionRole,
   type SessionRoleBinding,
 } from "./session-role-binding.js";
+import { SESSION_TURN_COMMUNICATION_CONTRACT_REVISION } from "./session-turn-communication-authority.js";
 import {
   SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
   SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
@@ -98,6 +99,7 @@ export type SessionRuntimeCatalogResult = {
   supportedSessionRoles: SessionRole[];
   allowedChildSessionRoles: Record<SessionRole, ChildSessionRole[]>;
   maxDelegationDepth: typeof SESSION_ROLE_MAX_DELEGATION_DEPTH;
+  sessionTurnCommunicationContractRevision: typeof SESSION_TURN_COMMUNICATION_CONTRACT_REVISION;
   coordinationEvents: {
     kinds: typeof COORDINATION_EVENT_KINDS;
     states: typeof COORDINATION_EVENT_STATES;

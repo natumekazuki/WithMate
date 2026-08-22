@@ -20,6 +20,9 @@ export function appendTurnExecutionsToMessageList(
   const sortedQueuedTurns = executions.filter((execution) => execution.state === "queued").sort((left, right) => (
     left.queuePosition - right.queuePosition || left.executionId.localeCompare(right.executionId)
   ));
+  const outboundTurns = executions
+    .filter((execution) => execution.state === "accepted")
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.executionId.localeCompare(right.executionId));
   const runningInsertIndex = projectedRunningExecutions.length > 0
     ? projection.sources.findIndex((source) => (
         source.kind === "live-assistant" && source.sessionId === runningExecution?.sessionId
@@ -50,12 +53,14 @@ export function appendTurnExecutionsToMessageList(
     ...projectedRunningExecutions,
     ...projection.messages.slice(runningPrefixLength).map(() => null),
     ...sortedQueuedTurns,
+    ...outboundTurns,
   ];
   const keys = [
     ...projection.keys.slice(0, runningPrefixLength),
     ...runningKeys,
     ...projection.keys.slice(runningPrefixLength),
     ...queuedKeys,
+    ...outboundTurns.map((execution) => `turn-execution-${execution.executionId}`),
   ];
   if (persistedRunningIndex >= 0 && runningExecution) {
     turnExecutions[persistedRunningIndex] = runningExecution;
@@ -67,12 +72,14 @@ export function appendTurnExecutionsToMessageList(
       ...runningMessages,
       ...projection.messages.slice(runningPrefixLength),
       ...queuedMessages,
+      ...outboundTurns.map((execution) => ({ role: "user" as const, text: execution.userMessage })),
     ],
     sources: [
       ...projection.sources.slice(0, runningPrefixLength),
       ...runningSources,
       ...projection.sources.slice(runningPrefixLength),
       ...queuedSources,
+      ...outboundTurns.map((execution) => ({ kind: "turn-execution" as const, execution })),
     ],
     keys,
     groups: [
@@ -80,6 +87,7 @@ export function appendTurnExecutionsToMessageList(
       ...projectedRunningExecutions.map(() => null),
       ...projection.groups.slice(runningPrefixLength),
       ...sortedQueuedTurns.map(() => null),
+      ...outboundTurns.map(() => null),
     ],
     turnExecutions,
   };

@@ -202,6 +202,85 @@ test("Session runtime authenticates identity and adapter before invoking handler
   }
 });
 
+test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ収束する", async () => {
+  let mutationCount = 0;
+  const application = new SessionExternalApplicationService({
+    resolveTurnInitiator: async (actorSessionId) => ({
+      kind: "session",
+      sessionId: actorSessionId,
+      character: { characterId: "character-actor", name: "Actor", iconFilePath: "" },
+    }),
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    crudService: {
+      async get(sessionId: string) {
+        if (sessionId === "session-actor") {
+          return {
+            sessionId,
+            title: "Actor",
+            sessionRole: "overall-coordinator",
+            roleContractRevision: 1,
+            rootSessionId: sessionId,
+            parentSessionId: null,
+            delegationDepth: 0,
+          } as never;
+        }
+        return {
+          sessionId,
+          title: "Other root",
+          sessionRole: "overall-coordinator",
+          roleContractRevision: 1,
+          rootSessionId: sessionId,
+          parentSessionId: null,
+          delegationDepth: 0,
+        } as never;
+      },
+    },
+    executionService: {
+      beginShutdown() {},
+      async run() { mutationCount += 1; throw new Error("must not run"); },
+      async enqueue() { mutationCount += 1; throw new Error("must not enqueue"); },
+      resolveReplay() { return null; },
+      get() { throw new Error("unused"); },
+      listPage() { return []; },
+      async cancel() { throw new Error("unused"); },
+      async waitForTerminal() { throw new Error("unused"); },
+    },
+  });
+  const server = createSessionRuntimeHttpServer({
+    ...boundServerOptions,
+    handle: (operation, input, _adapter, context) =>
+      application.execute(operation, input, context.agentRuntimeBinding),
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const responses = [];
+    for (const adapter of ["cli", "mcp"] as const) {
+      const body = JSON.stringify({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation: "turn.run",
+        input: {
+          sessionId: "session-other-root",
+          catalogRevision: 4,
+          idempotencyKey: `${adapter}-forbidden`,
+          responseMode: "deferred",
+          turn: turnInput,
+        },
+      });
+      responses.push(await post(address.port, exchangePayload(adapter, body)));
+    }
+    assert.deepEqual(responses.map((response) => response.status), [403, 403]);
+    assert.deepEqual(
+      responses.map((response) => JSON.parse(response.body).error.code),
+      ["SESSION_TURN_FORBIDDEN", "SESSION_TURN_FORBIDDEN"],
+    );
+    assert.equal(mutationCount, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("SESSION-SELF-01: session.selfは有効なruntime bindingからactor Sessionだけを解決する", async () => {
   const registry = new AgentRuntimeBindingRegistry();
   const allowed = registry.issueOrReuse({
@@ -421,7 +500,28 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
     crudService: {
       async create() { return createResult as never; },
       async list() { throw new Error("unused"); },
-      async get() { throw new Error("unused"); },
+      async get(sessionId: string) {
+        if (sessionId === "session-actor") {
+          return {
+            sessionId,
+            title: "Actor",
+            sessionRole: "overall-coordinator",
+            roleContractRevision: 1,
+            rootSessionId: sessionId,
+            parentSessionId: null,
+            delegationDepth: 0,
+          } as never;
+        }
+        return {
+          sessionId,
+          title: "Target",
+          sessionRole: "executor",
+          roleContractRevision: 1,
+          rootSessionId: "session-actor",
+          parentSessionId: "session-actor",
+          delegationDepth: 1,
+        } as never;
+      },
       async rename() { return renameResult as never; },
     },
   });
