@@ -24,6 +24,13 @@ export const COORDINATION_EVENT_OPEN_KINDS = [
   "blocker",
 ] as const;
 
+export const COORDINATION_EVENT_TRUSTED_CATEGORIES = [
+  "needs_answer",
+  "unresolved",
+  "answered",
+  "history",
+] as const;
+
 export const COORDINATION_EVENT_DEFAULT_LIST_LIMIT = 50;
 export const COORDINATION_EVENT_MAX_LIST_LIMIT = 100;
 export const COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16 * 1024;
@@ -31,6 +38,7 @@ export const COORDINATION_EVENT_PENDING_ANSWER_LIMIT = 20;
 
 export type CoordinationEventKind = (typeof COORDINATION_EVENT_KINDS)[number];
 export type CoordinationEventState = (typeof COORDINATION_EVENT_STATES)[number];
+export type CoordinationEventTrustedCategory = (typeof COORDINATION_EVENT_TRUSTED_CATEGORIES)[number];
 export type CoordinationEventScope = "self" | "subtree";
 
 export type CoordinationEventOption = {
@@ -103,6 +111,7 @@ export type CoordinationEventListInput = {
 
 export type CoordinationEventTrustedListInput = {
   sessionId?: string;
+  category?: CoordinationEventTrustedCategory;
   kind?: CoordinationEventKind;
   state?: CoordinationEventState;
   limit: number;
@@ -259,9 +268,15 @@ export function validateCoordinationEventNote(value: unknown, field = "note"): s
 
 export function parseCoordinationEventTrustedListInput(value: unknown): CoordinationEventTrustedListInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["sessionId", "kind", "state", "limit", "cursor"], "input");
+  assertKeys(record, ["sessionId", "category", "kind", "state", "limit", "cursor"], "input");
+  if (record.category !== undefined && (record.kind !== undefined || record.state !== undefined)) {
+    throw invalid("input.category", "category cannot be combined with kind or state.");
+  }
   return {
     ...(record.sessionId === undefined ? {} : { sessionId: requireNonEmptyString(record.sessionId, "sessionId") }),
+    ...(record.category === undefined
+      ? {}
+      : { category: requireEnumValue(record.category, COORDINATION_EVENT_TRUSTED_CATEGORIES, "category") }),
     ...(record.kind === undefined ? {} : { kind: requireEnumValue(record.kind, COORDINATION_EVENT_KINDS, "kind") }),
     ...(record.state === undefined ? {} : { state: requireEnumValue(record.state, COORDINATION_EVENT_STATES, "state") }),
     limit: record.limit === undefined

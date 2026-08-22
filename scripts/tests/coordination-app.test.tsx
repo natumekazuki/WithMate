@@ -110,7 +110,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
   const api = {
     listCoordinationEvents(input: unknown) {
       eventQueries.push(input);
-      if ((input as { state?: string }).state === "recorded") {
+      if ((input as { category?: string }).category === "history") {
         return Promise.resolve({ items: [], nextCursor: undefined });
       }
       if ((input as { cursor?: string }).cursor) return Promise.resolve({ items: [] });
@@ -191,6 +191,11 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     assert.match(rootElement.textContent ?? "", /Coordination Event APIを設計する/);
     assert.doesNotMatch(rootElement.textContent ?? "", /非表示のCharacter名/);
     assert.doesNotMatch(rootElement.textContent ?? "", /判断と進行状況|イベントを選択してください|Home/);
+    assert.deepEqual(
+      Array.from(rootElement.querySelectorAll<HTMLButtonElement>(".coordination-filter-tabs button"))
+        .map((button) => button.textContent),
+      ["すべて", "要回答", "未解決", "回答済み", "履歴"],
+    );
 
     const eventObserver = TestIntersectionObserver.instances.find(
       (observer) => observer.root instanceof dom.window.Element
@@ -340,6 +345,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     assert.ok(decisionActions);
     assert.match(decisionActions.textContent ?? "", /送信/);
     assert.match(decisionActions.textContent ?? "", /イベントを取り消す/);
+    assert.match(rootElement.querySelector(".coordination-detail .coordination-event-meta")?.textContent ?? "", /要回答/);
 
     currentDetail = {
       ...currentDetail,
@@ -356,6 +362,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       rootElement.querySelectorAll<HTMLButtonElement>(".coordination-detail-actions button"),
     ).find((button) => button.textContent === "Sessionを開く");
     assert.equal(openSessionAction, undefined);
+    assert.match(rootElement.querySelector(".coordination-detail .coordination-event-meta")?.textContent ?? "", /未解決/);
     assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /イベントを取り消す/);
     await act(async () => {
       rootElement.querySelector<HTMLButtonElement>(".coordination-detail-origin")?.click();
@@ -372,6 +379,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       await Promise.resolve();
       await Promise.resolve();
     });
+    assert.deepEqual(eventQueries.at(-1), { limit: 50, category: "history" });
     assert.equal(rootElement.querySelector(".coordination-empty"), null);
     assert.doesNotMatch(rootElement.textContent ?? "", /該当なし/);
   } finally {

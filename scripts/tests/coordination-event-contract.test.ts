@@ -194,6 +194,12 @@ describe("Coordination event contract", () => {
       state: "open",
       limit: 25,
     });
+    assert.deepEqual(parseCoordinationEventTrustedListInput({ category: "needs_answer" }), {
+      category: "needs_answer",
+      limit: 50,
+    });
+    assert.throws(() => parseCoordinationEventTrustedListInput({ category: "needs_answer", state: "open" }), /cannot be combined/);
+    assert.throws(() => parseCoordinationEventTrustedListInput({ category: "actionable" }), /category is invalid/);
     assert.throws(() => parseCoordinationEventTrustedListInput({ scope: "subtree" }), /Unknown field/);
     assert.throws(() => parseCoordinationEventTrustedListInput({ limit: 101 }), /limit/i);
   });

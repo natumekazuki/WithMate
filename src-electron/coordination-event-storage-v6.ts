@@ -171,6 +171,17 @@ export class CoordinationEventStorageV6 {
       clauses.push("events.actor_session_id = ?");
       parameters.push(input.sessionId);
     }
+    if (input.category === "needs_answer") {
+      clauses.push(`events.kind = 'user_decision_required' AND ${PROJECTED_STATE_SQL} = 'open'`);
+    } else if (input.category === "unresolved") {
+      clauses.push(`events.kind IN ('blocker', 'escalation') AND ${PROJECTED_STATE_SQL} = 'open'`);
+    } else if (input.category === "answered") {
+      clauses.push(`events.kind = 'user_decision_required' AND ${PROJECTED_STATE_SQL} = 'resolved'`);
+    } else if (input.category === "history") {
+      clauses.push(`(${PROJECTED_STATE_SQL} = 'recorded'
+        OR ${PROJECTED_STATE_SQL} IN ('cancelled', 'superseded')
+        OR (events.kind IN ('blocker', 'escalation') AND ${PROJECTED_STATE_SQL} = 'resolved'))`);
+    }
     return this.queryList(input, beforeSequence, clauses, parameters);
   }
 

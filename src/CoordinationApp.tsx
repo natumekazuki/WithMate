@@ -4,8 +4,8 @@ import type { HomeSessionSummary } from "./app-state.js";
 import type {
   CoordinationEvent,
   CoordinationEventAction,
-  CoordinationEventState,
   CoordinationEventSummary,
+  CoordinationEventTrustedCategory,
 } from "./coordination-event.js";
 import { coordinationEventRevision } from "./coordination-event.js";
 import { renderHomeSearchIcon } from "./home/home-icons.js";
@@ -15,14 +15,15 @@ import { CharacterAvatar } from "./ui-utils.js";
 const EVENT_PAGE_LIMIT = 50;
 const SESSION_PAGE_LIMIT = 50;
 
-type FeedFilter = "all" | "actionable" | "resolved" | "history";
+type FeedFilter = "all" | CoordinationEventTrustedCategory;
 type LoadState = "loading" | "loaded" | "error";
 
-const FILTERS: Array<{ id: FeedFilter; label: string; state?: CoordinationEventState }> = [
+const FILTERS: Array<{ id: FeedFilter; label: string }> = [
   { id: "all", label: "すべて" },
-  { id: "actionable", label: "要対応", state: "open" },
-  { id: "resolved", label: "回答済み", state: "resolved" },
-  { id: "history", label: "履歴", state: "recorded" },
+  { id: "needs_answer", label: "要回答" },
+  { id: "unresolved", label: "未解決" },
+  { id: "answered", label: "回答済み" },
+  { id: "history", label: "履歴" },
 ];
 
 const KIND_LABELS: Record<CoordinationEventSummary["kind"], string> = {
@@ -35,13 +36,28 @@ const KIND_LABELS: Record<CoordinationEventSummary["kind"], string> = {
   correction: "訂正",
 };
 
-const STATE_LABELS: Record<CoordinationEventSummary["state"], string> = {
-  recorded: "記録済み",
-  open: "要対応",
-  resolved: "回答済み",
-  superseded: "更新済み",
-  cancelled: "取消済み",
-};
+function eventStateLabel(
+  event: Pick<CoordinationEventSummary, "kind" | "state">,
+  answerIsConsumed = false,
+): string | null {
+  if (answerIsConsumed) return "確定済み";
+  if (event.state === "recorded") return null;
+  if (event.state === "open") return event.kind === "user_decision_required" ? "要回答" : "未解決";
+  if (event.state === "resolved") return event.kind === "user_decision_required" ? "回答済み" : "解決済み";
+  if (event.state === "superseded") return "更新済み";
+  return "取消済み";
+}
+
+function matchesFeedFilter(event: Pick<CoordinationEventSummary, "kind" | "state">, filter: FeedFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "needs_answer") return event.kind === "user_decision_required" && event.state === "open";
+  if (filter === "unresolved") return (event.kind === "blocker" || event.kind === "escalation") && event.state === "open";
+  if (filter === "answered") return event.kind === "user_decision_required" && event.state === "resolved";
+  return event.state === "recorded"
+    || event.state === "cancelled"
+    || event.state === "superseded"
+    || ((event.kind === "blocker" || event.kind === "escalation") && event.state === "resolved");
+}
 
 function buildIdempotencyKey(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
@@ -95,7 +111,7 @@ export default function CoordinationApp() {
   const sessionLoadSentinelRef = useRef<HTMLDivElement>(null);
   const eventLoadSentinelRef = useRef<HTMLDivElement>(null);
 
-  const activeState = FILTERS.find((entry) => entry.id === filter)?.state;
+  const activeCategory = filter === "all" ? undefined : filter;
 
   useEffect(() => {
     eventsRef.current = events;
@@ -143,7 +159,7 @@ export default function CoordinationApp() {
       const result = await api.listCoordinationEvents({
         limit: EVENT_PAGE_LIMIT,
         ...(selectedSession ? { sessionId: selectedSession.id } : {}),
-        ...(activeState ? { state: activeState } : {}),
+        ...(activeCategory ? { category: activeCategory } : {}),
         ...(mode === "append" && eventCursor ? { cursor: eventCursor } : {}),
       });
       const projectedSessions = await loadEventSessionSummaries(result.items);
@@ -165,7 +181,7 @@ export default function CoordinationApp() {
         setEventLoadMore(false);
       }
     }
-  }, [activeState, api, eventCursor, loadEventSessionSummaries, selectedSession]);
+  }, [activeCategory, api, eventCursor, loadEventSessionSummaries, selectedSession]);
 
   useEffect(() => {
     void loadEvents("replace");
@@ -281,7 +297,7 @@ export default function CoordinationApp() {
   const applyEventUpdate = useCallback((event: CoordinationEvent) => {
     if (selectedEventId === event.eventId) setSelectedEvent(event);
     setEvents((current) => {
-      if (activeState && event.state !== activeState) {
+      if (!matchesFeedFilter(event, filter)) {
         return current.filter((item) => item.eventId !== event.eventId);
       }
       return current.map((item) => item.eventId === event.eventId ? {
@@ -291,7 +307,7 @@ export default function CoordinationApp() {
         summary: event.summary,
       } : item);
     });
-  }, [activeState, selectedEventId]);
+  }, [filter, selectedEventId]);
 
   const refreshInvalidatedEvent = useCallback(async (eventId: string) => {
     if (!api) return;
@@ -527,6 +543,7 @@ export default function CoordinationApp() {
           ) : null}
           {events.map((event) => {
             const session = eventSessions[event.actorSessionId];
+            const stateLabel = eventStateLabel(event);
             return (
               <button
                 key={event.eventId}
@@ -544,7 +561,7 @@ export default function CoordinationApp() {
                   <span className="coordination-session-title">{session?.taskTitle ?? "削除されたSession"}</span>
                   <span className="coordination-event-meta">
                     <span className={`coordination-kind coordination-kind-${event.kind}`}>{KIND_LABELS[event.kind]}</span>
-                    <span className={`coordination-state coordination-state-${event.state}`}>{STATE_LABELS[event.state]}</span>
+                    {stateLabel ? <span className={`coordination-state coordination-state-${event.state}`}>{stateLabel}</span> : null}
                     <time dateTime={event.createdAt}>{eventTime(event.createdAt)}</time>
                   </span>
                 </span>
@@ -574,9 +591,11 @@ export default function CoordinationApp() {
               </button>
               <div className="coordination-event-meta">
                 <span className={`coordination-kind coordination-kind-${selectedEvent.kind}`}>{KIND_LABELS[selectedEvent.kind]}</span>
-                <span className={`coordination-state coordination-state-${answerIsConsumed ? "consumed" : selectedEvent.state}`}>
-                  {answerIsConsumed ? "確定済み" : STATE_LABELS[selectedEvent.state]}
-                </span>
+                {eventStateLabel(selectedEvent, answerIsConsumed) ? (
+                  <span className={`coordination-state coordination-state-${answerIsConsumed ? "consumed" : selectedEvent.state}`}>
+                    {eventStateLabel(selectedEvent, answerIsConsumed)}
+                  </span>
+                ) : null}
                 <button
                   className="coordination-event-id"
                   type="button"

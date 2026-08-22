@@ -278,6 +278,7 @@ function encodeTrustedCursor(input: CoordinationEventTrustedListInput, beforeSeq
     version: 1,
     operation: "coordination.event.list.trusted",
     sessionId: input.sessionId ?? null,
+    category: input.category ?? null,
     kind: input.kind ?? null,
     state: input.state ?? null,
     beforeSequence,
@@ -290,6 +291,7 @@ function decodeTrustedCursor(input: CoordinationEventTrustedListInput, cursor: s
     if (value.version !== 1
       || value.operation !== "coordination.event.list.trusted"
       || value.sessionId !== (input.sessionId ?? null)
+      || value.category !== (input.category ?? null)
       || value.kind !== (input.kind ?? null)
       || value.state !== (input.state ?? null)
       || !Number.isSafeInteger(value.beforeSequence)

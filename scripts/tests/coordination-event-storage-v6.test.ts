@@ -454,6 +454,87 @@ describe("CoordinationEventStorageV6", () => {
     }
   });
 
+  it("COORD-UI-CATEGORY-01: trusted GUI categoryは回答、未解決、履歴をkindとstateで分離する", async () => {
+    const fixture = await createFixture();
+    try {
+      const openDecision = create(fixture.storage, {
+        kind: "user_decision_required",
+        executionId: null,
+        options: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+        idempotencyKey: "category-open-decision",
+        requestFingerprint: "category-open-decision",
+      }).event;
+      const answeredDecision = create(fixture.storage, {
+        kind: "user_decision_required",
+        executionId: null,
+        options: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+        idempotencyKey: "category-answered-decision",
+        requestFingerprint: "category-answered-decision",
+      }).event;
+      fixture.storage.resolve({
+        principal: principal("executor-a", "trusted_gui"),
+        eventId: answeredDecision.eventId,
+        optionId: "a",
+        note: null,
+        idempotencyKey: "category-answer",
+        requestFingerprint: "category-answer",
+        createdAt: NOW,
+      });
+      const openBlocker = create(fixture.storage, {
+        kind: "blocker",
+        executionId: null,
+        idempotencyKey: "category-open-blocker",
+        requestFingerprint: "category-open-blocker",
+      }).event;
+      const resolvedBlocker = create(fixture.storage, {
+        kind: "blocker",
+        executionId: null,
+        idempotencyKey: "category-resolved-blocker",
+        requestFingerprint: "category-resolved-blocker",
+      }).event;
+      fixture.storage.resolve({
+        principal: principal("executor-a"),
+        eventId: resolvedBlocker.eventId,
+        optionId: null,
+        note: null,
+        idempotencyKey: "category-resolve-blocker",
+        requestFingerprint: "category-resolve-blocker",
+        createdAt: NOW,
+      });
+      const recorded = create(fixture.storage, {
+        kind: "result",
+        executionId: null,
+        idempotencyKey: "category-recorded",
+        requestFingerprint: "category-recorded",
+      }).event;
+      const service = new CoordinationEventService({ storage: fixture.storage, publishCommitted() {} });
+
+      assert.deepEqual(
+        service.listAllFromTrustedGui({ category: "needs_answer", limit: 50 }).items.map((event) => event.eventId),
+        [openDecision.eventId],
+      );
+      assert.deepEqual(
+        service.listAllFromTrustedGui({ category: "unresolved", limit: 50 }).items.map((event) => event.eventId),
+        [openBlocker.eventId],
+      );
+      assert.deepEqual(
+        service.listAllFromTrustedGui({ category: "answered", limit: 50 }).items.map((event) => event.eventId),
+        [answeredDecision.eventId],
+      );
+      assert.deepEqual(
+        new Set(service.listAllFromTrustedGui({ category: "history", limit: 50 }).items.map((event) => event.eventId)),
+        new Set([recorded.eventId, resolvedBlocker.eventId]),
+      );
+
+      const page = service.listAllFromTrustedGui({ category: "history", limit: 1 });
+      assert.ok(page.nextCursor);
+      assert.throws(() => service.listAllFromTrustedGui({ category: "answered", limit: 1, cursor: page.nextCursor }));
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("COORD-IDEM-01: correctionのevent作成とsuperseded actionは中間失敗時にrollbackする", async () => {
     const fixture = await createFixture();
     try {
