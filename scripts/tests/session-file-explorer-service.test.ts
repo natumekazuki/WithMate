@@ -1232,3 +1232,56 @@ test("SessionFileExplorerService は search admission の active 2 / pending 16 
     await rm(basePath, { recursive: true, force: true });
   }
 });
+
+test("SessionFileExplorerService は新しい同一 Session の検索で実行中の listing を cancel する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-cancel-"));
+  const workspacePath = path.join(basePath, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  let listingStarted!: () => void;
+  let listingAborted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    listingStarted = resolve;
+  });
+  const aborted = new Promise<void>((resolve) => {
+    listingAborted = resolve;
+  });
+  let listingCalls = 0;
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+    async listDirectory(targetPath, options) {
+      const targetStats = await stat(targetPath);
+      listingCalls += 1;
+      if (listingCalls === 1) {
+        const signal = options?.signal;
+        assert.ok(signal);
+        listingStarted();
+        await new Promise<void>((_resolve, reject) => {
+          const onAbort = () => {
+            listingAborted();
+            reject(new Error("directory listing was cancelled"));
+          };
+          signal.addEventListener("abort", onAbort, { once: true });
+        });
+      }
+      return {
+        device: targetStats.dev,
+        inode: targetStats.ino,
+        entries: [],
+        maxConcurrentStats: 0,
+      };
+    },
+  });
+  try {
+    const oldRequest = service.searchFiles({ sessionId: "session-1", query: "old" });
+    await started;
+    const newRequest = service.searchFiles({ sessionId: "session-1", query: "new" });
+    await aborted;
+    await assert.rejects(oldRequest, /superseded/);
+    const result = await newRequest;
+    assert.equal(result.status, "ok");
+    assert.equal(result.returnedFileCount, 0);
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});

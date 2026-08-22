@@ -242,10 +242,12 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
       }));
     };
     await act(async () => {
+      setSearchInputValue(searchInput, "n");
       setSearchInputValue(searchInput, "new");
       explorerBody.scrollTop = 0;
       await Promise.resolve();
     });
+    assert.equal(searchRequests.length, 0);
     await waitFor(() => searchRequests.length === 1);
     assert.equal(searchRequests[0]?.query, "new");
     assert.equal(searchInput.getAttribute("placeholder"), null);

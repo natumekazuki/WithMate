@@ -54,6 +54,7 @@ type DirectoryListingJob = {
   execute(): Promise<IdentityBoundDirectorySnapshot>;
   resolve(snapshot: IdentityBoundDirectorySnapshot): void;
   reject(error: unknown): void;
+  signal?: AbortSignal;
 };
 
 const pendingDirectoryListings: DirectoryListingJob[] = [];
@@ -65,6 +66,10 @@ function drainDirectoryListingQueue(): void {
     pendingDirectoryListings.length > 0
   ) {
     const job = pendingDirectoryListings.pop()!;
+    if (job.signal?.aborted) {
+      job.reject(new Error("Directory listing was cancelled."));
+      continue;
+    }
     activeDirectoryListings += 1;
     Promise.resolve()
       .then(() => job.execute())
@@ -79,8 +84,37 @@ function drainDirectoryListingQueue(): void {
 function listDirectoryWithAdmission(
   supersessionKey: string,
   execute: () => Promise<IdentityBoundDirectorySnapshot>,
+  signal?: AbortSignal,
 ): Promise<IdentityBoundDirectorySnapshot> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new Error("Directory listing was cancelled."));
+      return;
+    }
+    let job: DirectoryListingJob | null = null;
+    const onAbort = () => {
+      if (!job) {
+        return;
+      }
+      const pendingIndex = pendingDirectoryListings.indexOf(job);
+      if (pendingIndex < 0) {
+        return;
+      }
+      pendingDirectoryListings.splice(pendingIndex, 1);
+      job.reject(new Error("Directory listing was cancelled."));
+      drainDirectoryListingQueue();
+    };
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+    };
+    const resolveJob = (snapshot: IdentityBoundDirectorySnapshot) => {
+      cleanup();
+      resolve(snapshot);
+    };
+    const rejectJob = (error: unknown) => {
+      cleanup();
+      reject(error);
+    };
     if (pendingDirectoryListings.length >= MAX_PENDING_DIRECTORY_LISTINGS) {
       const supersededIndex = pendingDirectoryListings.findIndex(
         (job) => job.supersessionKey === supersessionKey,
@@ -90,28 +124,34 @@ function listDirectoryWithAdmission(
           new Error("Directory listing was superseded by a newer request for the same directory."),
         );
       } else {
+        cleanup();
         reject(new Error("Too many directory listings are already waiting."));
         return;
       }
     }
-    pendingDirectoryListings.push({
+    job = {
       supersessionKey,
       execute,
-      resolve,
-      reject,
-    });
+      resolve: resolveJob,
+      reject: rejectJob,
+      signal,
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    pendingDirectoryListings.push(job);
     drainDirectoryListingQueue();
   });
 }
 
 type SessionFileSearchJob = {
   supersessionKey: string;
-  execute(): Promise<SessionFileSearchResult>;
+  execute(signal: AbortSignal): Promise<SessionFileSearchResult>;
   resolve(result: SessionFileSearchResult): void;
   reject(error: unknown): void;
+  controller: AbortController;
 };
 
 const pendingSessionFileSearches: SessionFileSearchJob[] = [];
+const activeSessionFileSearchJobs = new Map<string, SessionFileSearchJob>();
 let activeSessionFileSearches = 0;
 
 function drainSessionFileSearchQueue(): void {
@@ -120,12 +160,20 @@ function drainSessionFileSearchQueue(): void {
     pendingSessionFileSearches.length > 0
   ) {
     const job = pendingSessionFileSearches.shift()!;
+    if (job.controller.signal.aborted) {
+      job.reject(new Error("File search was superseded by a newer request for the same Session."));
+      continue;
+    }
     activeSessionFileSearches += 1;
+    activeSessionFileSearchJobs.set(job.supersessionKey, job);
     Promise.resolve()
-      .then(() => job.execute())
+      .then(() => job.execute(job.controller.signal))
       .then(job.resolve, job.reject)
       .finally(() => {
         activeSessionFileSearches -= 1;
+        if (activeSessionFileSearchJobs.get(job.supersessionKey) === job) {
+          activeSessionFileSearchJobs.delete(job.supersessionKey);
+        }
         drainSessionFileSearchQueue();
       });
   }
@@ -133,7 +181,7 @@ function drainSessionFileSearchQueue(): void {
 
 function searchSessionFilesWithAdmission(
   supersessionKey: string,
-  execute: () => Promise<SessionFileSearchResult>,
+  execute: (signal: AbortSignal) => Promise<SessionFileSearchResult>,
 ): Promise<SessionFileSearchResult> {
   return new Promise((resolve, reject) => {
     const supersededIndex = pendingSessionFileSearches.findIndex(
@@ -148,7 +196,14 @@ function searchSessionFilesWithAdmission(
       reject(new Error("Too many file searches are already waiting."));
       return;
     }
-    pendingSessionFileSearches.push({ supersessionKey, execute, resolve, reject });
+    activeSessionFileSearchJobs.get(supersessionKey)?.controller.abort();
+    pendingSessionFileSearches.push({
+      supersessionKey,
+      execute,
+      resolve,
+      reject,
+      controller: new AbortController(),
+    });
     drainSessionFileSearchQueue();
   });
 }
@@ -171,7 +226,7 @@ export type SessionFileExplorerServiceDeps = {
   statPath?(targetPath: string): Promise<Stats>;
   lstatPath?(targetPath: string): Promise<Stats>;
   openFile?(targetPath: string, flags: "r"): Promise<ReadableFileHandle>;
-  listDirectory?(targetPath: string, options?: { maxEntries?: number }): Promise<IdentityBoundDirectorySnapshot>;
+  listDirectory?(targetPath: string, options?: { maxEntries?: number; signal?: AbortSignal }): Promise<IdentityBoundDirectorySnapshot>;
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
@@ -233,6 +288,12 @@ function compareSearchCandidates(left: SearchCandidate, right: SearchCandidate):
   return left.matchRank - right.matchRank
     || left.rootIndex - right.rootIndex
     || compareStablePath(left.relativePath, right.relativePath);
+}
+
+function throwIfFileSearchCancelled(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new Error("File search was superseded by a newer request for the same Session.");
+  }
 }
 
 function validateAbsoluteFileResource(
@@ -691,9 +752,13 @@ export class SessionFileExplorerService {
     request: SessionDirectoryRequest,
     createMissingSessionFolder: boolean,
     maxEntries?: number,
+    signal?: AbortSignal,
   ): Promise<DirectoryEntriesResult> {
     const supersessionKey = JSON.stringify([request.sessionId, request.rootId, request.relativePath]);
     const snapshot = await listDirectoryWithAdmission(supersessionKey, async () => {
+      if (signal?.aborted) {
+        throw new Error("Directory listing was cancelled.");
+      }
       const opened = await this.openAuthorizedTarget(
         request,
         true,
@@ -704,11 +769,17 @@ export class SessionFileExplorerService {
         const result = this.deps.listDirectory
           ? await this.deps.listDirectory(
             opened.targetRealPath,
-            maxEntries === undefined ? undefined : { maxEntries },
+            {
+              ...(maxEntries === undefined ? {} : { maxEntries }),
+              ...(signal ? { signal } : {}),
+            },
           )
           : await listIdentityBoundDirectory(
             opened.targetRealPath,
-            maxEntries === undefined ? undefined : { maxEntries },
+            {
+              ...(maxEntries === undefined ? {} : { maxEntries }),
+              ...(signal ? { signal } : {}),
+            },
           );
         if (result.device !== opened.stats.dev || result.inode !== opened.stats.ino) {
           throw new Error("directory path が認可後に変更されたよ。再実行してね。");
@@ -717,7 +788,7 @@ export class SessionFileExplorerService {
       } finally {
         await opened.handle.close();
       }
-    });
+    }, signal);
     const results = snapshot.entries.map((entry): SessionDirectoryEntry => {
       const relativePath = request.relativePath ? `${request.relativePath}/${entry.name}` : entry.name;
       return { ...entry, relativePath };
@@ -736,7 +807,11 @@ export class SessionFileExplorerService {
     return (await this.listDirectoryEntries(request, true)).entries;
   }
 
-  private async searchFilesInternal(request: SessionFileSearchRequest): Promise<SessionFileSearchResult> {
+  private async searchFilesInternal(
+    request: SessionFileSearchRequest,
+    signal: AbortSignal,
+  ): Promise<SessionFileSearchResult> {
+    throwIfFileSearchCancelled(signal);
     const roots = await this.resolveRoots(request.sessionId);
     const candidates: SearchCandidate[] = [];
     let exploredEntryCount = 0;
@@ -747,6 +822,7 @@ export class SessionFileExplorerService {
       const root = roots[rootIndex]!;
       const directories = [""];
       while (directories.length > 0) {
+        throwIfFileSearchCancelled(signal);
         if (exploredEntryCount >= SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES) {
           explorationLimitReached = true;
           break;
@@ -759,14 +835,18 @@ export class SessionFileExplorerService {
             sessionId: request.sessionId,
             rootId: root.id,
             relativePath,
-          }, false, SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount);
+          }, false, SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount, signal);
         } catch (error) {
+          if (signal.aborted) {
+            throwIfFileSearchCancelled(signal);
+          }
           if (root.kind === "session-folder" && relativePath === "" && isMissingSessionFolderRootError(error)) {
             continue;
           }
           throw error;
         }
 
+        throwIfFileSearchCancelled(signal);
         const remainingEntryCount = SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount;
         const entriesToInspect = listing.entries.slice(0, remainingEntryCount);
         exploredEntryCount += entriesToInspect.length;
@@ -775,6 +855,7 @@ export class SessionFileExplorerService {
         }
 
         for (const entry of entriesToInspect) {
+          throwIfFileSearchCancelled(signal);
           if (entry.kind === "directory") {
             directories.push(entry.relativePath);
             continue;
@@ -853,7 +934,7 @@ export class SessionFileExplorerService {
     }
     return searchSessionFilesWithAdmission(
       request.sessionId,
-      () => this.searchFilesInternal({ ...request, query }),
+      (signal) => this.searchFilesInternal({ ...request, query }, signal),
     );
   }
 

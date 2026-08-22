@@ -51,6 +51,8 @@ type DirectoryLoadRequest = {
   promise: Promise<void>;
 };
 
+const SESSION_FILE_SEARCH_DEBOUNCE_MS = 250;
+
 function directoryKey(rootId: string, relativePath: string): string {
   return `${rootId}\u0000${relativePath}`;
 }
@@ -249,21 +251,24 @@ export function SessionFileExplorerPane({
     setSearchLoading(true);
     setSearchError("");
     const isCurrentRequest = () => searchRequestSequenceRef.current === requestId;
-    const promise = Promise.resolve().then(() => api.searchSessionFiles({ sessionId, query: searchQuery }));
-    promise.then((result) => {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setSearchResult(result);
-      setSearchLoading(false);
-    }).catch((error: unknown) => {
-      if (!isCurrentRequest()) {
-        return;
-      }
-      setSearchLoading(false);
-      setSearchError(error instanceof Error ? error.message : "File search failed.");
-    });
+    const debounceTimer = setTimeout(() => {
+      const promise = Promise.resolve().then(() => api.searchSessionFiles({ sessionId, query: searchQuery }));
+      promise.then((result) => {
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setSearchResult(result);
+        setSearchLoading(false);
+      }).catch((error: unknown) => {
+        if (!isCurrentRequest()) {
+          return;
+        }
+        setSearchLoading(false);
+        setSearchError(error instanceof Error ? error.message : "File search failed.");
+      });
+    }, SESSION_FILE_SEARCH_DEBOUNCE_MS);
     return () => {
+      clearTimeout(debounceTimer);
       if (isCurrentRequest()) {
         searchRequestSequenceRef.current += 1;
       }

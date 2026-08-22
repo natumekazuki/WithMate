@@ -112,3 +112,29 @@ test("listIdentityBoundDirectory は応答しない worker を deadline 後に�
     await rm(basePath, { recursive: true, force: true });
   }
 });
+
+test("listIdentityBoundDirectory は signal abort で worker を終了して settle する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-abort-"));
+  const controller = new AbortController();
+  let resolveBound!: () => void;
+  let settled = 0;
+  const identityBound = new Promise<void>((resolve) => {
+    resolveBound = resolve;
+  });
+  try {
+    const listing = listIdentityBoundDirectory(basePath, {
+      hangAfterReady: true,
+      signal: controller.signal,
+      onIdentityBound: resolveBound,
+      onWorkerSettled: () => {
+        settled += 1;
+      },
+    });
+    await identityBound;
+    controller.abort();
+    await assert.rejects(listing, /キャンセル/);
+    assert.equal(settled, 1);
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});

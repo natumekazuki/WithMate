@@ -161,6 +161,7 @@ export type IdentityBoundDirectoryListingOptions = {
   hangAfterReady?: boolean;
   timeoutMs?: number;
   maxEntries?: number;
+  signal?: AbortSignal;
   onIdentityBound?: () => void;
   onWorkerStarted?: () => void;
   onWorkerSettled?: () => void;
@@ -255,6 +256,7 @@ export function listIdentityBoundDirectory(
     let truncated: boolean | undefined;
     let settled = false;
     let terminalError: Error | null = null;
+    let abortHandler: (() => void) | null = null;
     const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       terminate(new Error(`directory worker が ${timeoutMs}ms 以内に完了しなかったよ。`));
@@ -266,6 +268,9 @@ export function listIdentityBoundDirectory(
       }
       settled = true;
       clearTimeout(timeout);
+      if (abortHandler) {
+        options.signal?.removeEventListener("abort", abortHandler);
+      }
       try {
         options.onWorkerSettled?.();
       } catch {
@@ -356,5 +361,14 @@ export function listIdentityBoundDirectory(
       }
       settle(null, { ...identity, entries, maxConcurrentStats, ...(truncated === undefined ? {} : { truncated }) });
     });
+
+    abortHandler = () => {
+      terminate(new Error("directory worker がキャンセルされたよ。"));
+    };
+    if (options.signal?.aborted) {
+      abortHandler();
+    } else {
+      options.signal?.addEventListener("abort", abortHandler, { once: true });
+    }
   });
 }
