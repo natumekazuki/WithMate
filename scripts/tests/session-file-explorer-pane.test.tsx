@@ -131,6 +131,7 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
 
   const directoryRequests: Array<Deferred<SessionDirectoryEntry[]>> = [];
   const searchRequests: Array<{ query: string; deferred: Deferred<SessionFileSearchResult> }> = [];
+  const cancelRequests: Array<{ sessionId: string }> = [];
   let directoryCalls = 0;
   const api = {
     async listSessionFileRoots() {
@@ -146,6 +147,9 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
       const searchRequest = deferred<SessionFileSearchResult>();
       searchRequests.push({ query: request.query, deferred: searchRequest });
       return searchRequest.promise;
+    },
+    async cancelSessionFileSearch(request: { sessionId: string }) {
+      cancelRequests.push(request);
     },
   };
   let changesRefreshCalls = 0;
@@ -378,6 +382,7 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     await waitFor(() => dom.window.document.body.textContent?.includes("new.txt") ?? false);
     assert.equal(explorerBody.scrollTop, 73);
     assert.equal(searchRequests.length, 6);
+    assert.ok(cancelRequests.some((request) => request.sessionId === "session-1"));
 
     const sessionSearchInput = dom.window.document.querySelector<HTMLInputElement>(".session-file-search-input");
     assert.ok(sessionSearchInput);

@@ -1285,3 +1285,112 @@ test("SessionFileExplorerService は新しい同一 Session の検索で実行�
     await rm(basePath, { recursive: true, force: true });
   }
 });
+
+test("SessionFileExplorerService は明示的な cancel で active search と worker を止める", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-explicit-cancel-"));
+  const workspacePath = path.join(basePath, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  let listingStarted!: () => void;
+  const started = new Promise<void>((resolve) => {
+    listingStarted = resolve;
+  });
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+    async listDirectory(targetPath, options) {
+      const targetStats = await stat(targetPath);
+      const signal = options?.signal;
+      assert.ok(signal);
+      listingStarted();
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(new Error("directory listing was cancelled")), { once: true });
+      });
+      return {
+        device: targetStats.dev,
+        inode: targetStats.ino,
+        entries: [],
+        maxConcurrentStats: 0,
+      };
+    },
+  });
+  try {
+    const request = service.searchFiles({ sessionId: "session-1", query: "file" });
+    await started;
+    service.cancelSearch({ sessionId: "session-1" });
+    await assert.rejects(request, /superseded/);
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+test("SessionFileExplorerService は pending 満杯でも active 同一 Session の replacement を受け付ける", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-replacement-"));
+  const workspacePath = path.join(basePath, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  let targetListingStarted!: () => void;
+  let blockerListingStarted!: () => void;
+  let releaseBlockers!: () => void;
+  const targetStarted = new Promise<void>((resolve) => {
+    targetListingStarted = resolve;
+  });
+  const blockerStarted = new Promise<void>((resolve) => {
+    blockerListingStarted = resolve;
+  });
+  const blockersReleased = new Promise<void>((resolve) => {
+    releaseBlockers = resolve;
+  });
+  let targetListingCalls = 0;
+  const createService = (sessionId: string) => new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: sessionId, allowedAdditionalDirectories: [] }),
+    async listDirectory(targetPath, options) {
+      const targetStats = await stat(targetPath);
+      if (sessionId === "replacement-target") {
+        targetListingCalls += 1;
+        if (targetListingCalls === 1) {
+          const signal = options?.signal;
+          assert.ok(signal);
+          targetListingStarted();
+          await new Promise<void>((_resolve, reject) => {
+            signal.addEventListener("abort", () => reject(new Error("directory listing was cancelled")), { once: true });
+          });
+        }
+      } else {
+        if (sessionId === "replacement-blocker") {
+          blockerListingStarted();
+        }
+        await blockersReleased;
+      }
+      return {
+        device: targetStats.dev,
+        inode: targetStats.ino,
+        entries: [],
+        maxConcurrentStats: 0,
+      };
+    },
+  });
+  try {
+    const targetService = createService("replacement-target");
+    const oldRequest = targetService.searchFiles({ sessionId: "replacement-target", query: "old" });
+    await targetStarted;
+    const blockerRequest = createService("replacement-blocker").searchFiles({
+      sessionId: "replacement-blocker",
+      query: "block",
+    });
+    await blockerStarted;
+    const queuedRequests = Array.from({ length: 16 }, (_, index) => {
+      const sessionId = `replacement-queued-${index}`;
+      return createService(sessionId).searchFiles({ sessionId, query: "queued" });
+    });
+    const replacementRequest = targetService.searchFiles({ sessionId: "replacement-target", query: "new" });
+    await assert.rejects(oldRequest, /superseded/);
+    const replacementResult = await replacementRequest;
+    assert.equal(replacementResult.status, "ok");
+    assert.equal(replacementResult.returnedFileCount, 0);
+    releaseBlockers();
+    await Promise.all([blockerRequest, ...queuedRequests]);
+  } finally {
+    releaseBlockers?.();
+    await rm(basePath, { recursive: true, force: true });
+  }
+});

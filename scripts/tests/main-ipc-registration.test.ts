@@ -40,6 +40,7 @@ import {
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_SEARCH_SESSION_FILES_CHANNEL,
+  WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
@@ -174,6 +175,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SEARCH_SESSION_FILES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
@@ -656,6 +658,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
         returnedFileCount: 0,
       };
     },
+    cancelSessionFileSearch: async () => {},
     inspectSessionFile: async (request: unknown) => {
       inspectRequests.push(request);
       return null;
@@ -711,6 +714,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     returnedFileCount: 0,
   });
   assert.deepEqual(searchRequests, [{ sessionId: "aux-1", query: "readme" }]);
+  assert.equal(
+    await handlers.get(WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL)?.({}, { sessionId: "aux-1" }),
+    undefined,
+  );
   await assert.rejects(
     () => handlers.get(WITHMATE_SEARCH_SESSION_FILES_CHANNEL)?.({}, { ...searchRequest, unknown: true }) as Promise<unknown>,
     /未知の field/,
@@ -857,6 +864,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   );
   await assert.rejects(
     () => handlers.get(WITHMATE_SEARCH_SESSION_FILES_CHANNEL)?.({}, searchRequest) as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL)?.({}, { sessionId: "aux-1" }) as Promise<unknown>,
     /owning Session window/,
   );
   await assert.rejects(

@@ -12,7 +12,7 @@ import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 type FileExplorerApi = Pick<
   WithMateWindowApi,
-  "listSessionFileRoots" | "listSessionDirectory" | "searchSessionFiles"
+  "listSessionFileRoots" | "listSessionDirectory" | "searchSessionFiles" | "cancelSessionFileSearch"
 >;
 
 type SessionFileExplorerPaneProps = {
@@ -271,6 +271,11 @@ export function SessionFileExplorerPane({
       clearTimeout(debounceTimer);
       if (isCurrentRequest()) {
         searchRequestSequenceRef.current += 1;
+      }
+      if (api && sessionId && query) {
+        void api.cancelSessionFileSearch({ sessionId }).catch(() => {
+          // Search cancellation is best effort; stale response guards remain authoritative.
+        });
       }
     };
   }, [activeTab, api, enabled, searchQuery, searchTriggerRevision, sessionChanged, sessionId]);

@@ -19,6 +19,7 @@ import type {
   SessionFileRootKind,
   SessionFileSearchGroup,
   SessionFileSearchLimit,
+  SessionFileSearchCancelRequest,
   SessionFileSearchRequest,
   SessionFileSearchResult,
 } from "../src/file-explorer/file-explorer-contract.js";
@@ -152,7 +153,44 @@ type SessionFileSearchJob = {
 
 const pendingSessionFileSearches: SessionFileSearchJob[] = [];
 const activeSessionFileSearchJobs = new Map<string, SessionFileSearchJob>();
+const replacementSessionFileSearchJobs = new Map<string, SessionFileSearchJob>();
 let activeSessionFileSearches = 0;
+
+const sessionFileSearchSupersededError = () => (
+  new Error("File search was superseded by a newer request for the same Session.")
+);
+
+const sessionFileSearchCancelledError = () => new Error("File search was cancelled.");
+
+function startSessionFileSearchJob(job: SessionFileSearchJob): void {
+  if (job.controller.signal.aborted) {
+    job.reject(sessionFileSearchSupersededError());
+    return;
+  }
+  activeSessionFileSearches += 1;
+  activeSessionFileSearchJobs.set(job.supersessionKey, job);
+  Promise.resolve()
+    .then(() => job.execute(job.controller.signal))
+    .then((result) => {
+      if (job.controller.signal.aborted) {
+        job.reject(sessionFileSearchCancelledError());
+        return;
+      }
+      job.resolve(result);
+    }, job.reject)
+    .finally(() => {
+      activeSessionFileSearches -= 1;
+      if (activeSessionFileSearchJobs.get(job.supersessionKey) === job) {
+        activeSessionFileSearchJobs.delete(job.supersessionKey);
+      }
+      const replacement = replacementSessionFileSearchJobs.get(job.supersessionKey);
+      if (replacement) {
+        replacementSessionFileSearchJobs.delete(job.supersessionKey);
+        startSessionFileSearchJob(replacement);
+      }
+      drainSessionFileSearchQueue();
+    });
+}
 
 function drainSessionFileSearchQueue(): void {
   while (
@@ -161,21 +199,10 @@ function drainSessionFileSearchQueue(): void {
   ) {
     const job = pendingSessionFileSearches.shift()!;
     if (job.controller.signal.aborted) {
-      job.reject(new Error("File search was superseded by a newer request for the same Session."));
+      job.reject(sessionFileSearchSupersededError());
       continue;
     }
-    activeSessionFileSearches += 1;
-    activeSessionFileSearchJobs.set(job.supersessionKey, job);
-    Promise.resolve()
-      .then(() => job.execute(job.controller.signal))
-      .then(job.resolve, job.reject)
-      .finally(() => {
-        activeSessionFileSearches -= 1;
-        if (activeSessionFileSearchJobs.get(job.supersessionKey) === job) {
-          activeSessionFileSearchJobs.delete(job.supersessionKey);
-        }
-        drainSessionFileSearchQueue();
-      });
+    startSessionFileSearchJob(job);
   }
 }
 
@@ -189,23 +216,52 @@ function searchSessionFilesWithAdmission(
     );
     if (supersededIndex >= 0) {
       pendingSessionFileSearches.splice(supersededIndex, 1)[0]?.reject(
-        new Error("File search was superseded by a newer request for the same Session."),
+        sessionFileSearchSupersededError(),
       );
     }
-    if (pendingSessionFileSearches.length >= MAX_PENDING_SESSION_FILE_SEARCHES) {
+
+    const previousReplacement = replacementSessionFileSearchJobs.get(supersessionKey);
+    if (previousReplacement) {
+      replacementSessionFileSearchJobs.delete(supersessionKey);
+      previousReplacement.reject(sessionFileSearchSupersededError());
+    }
+
+    const activeJob = activeSessionFileSearchJobs.get(supersessionKey);
+    if (!activeJob && pendingSessionFileSearches.length >= MAX_PENDING_SESSION_FILE_SEARCHES) {
       reject(new Error("Too many file searches are already waiting."));
       return;
     }
-    activeSessionFileSearchJobs.get(supersessionKey)?.controller.abort();
-    pendingSessionFileSearches.push({
+    const job = {
       supersessionKey,
       execute,
       resolve,
       reject,
       controller: new AbortController(),
-    });
+    } satisfies SessionFileSearchJob;
+    activeJob?.controller.abort();
+    if (activeJob && pendingSessionFileSearches.length >= MAX_PENDING_SESSION_FILE_SEARCHES) {
+      replacementSessionFileSearchJobs.set(supersessionKey, job);
+      return;
+    }
+    pendingSessionFileSearches.push(job);
     drainSessionFileSearchQueue();
   });
+}
+
+function cancelSessionFileSearchWithAdmission(supersessionKey: string): void {
+  const pendingIndex = pendingSessionFileSearches.findIndex(
+    (job) => job.supersessionKey === supersessionKey,
+  );
+  if (pendingIndex >= 0) {
+    pendingSessionFileSearches.splice(pendingIndex, 1)[0]?.reject(sessionFileSearchCancelledError());
+  }
+  const replacement = replacementSessionFileSearchJobs.get(supersessionKey);
+  if (replacement) {
+    replacementSessionFileSearchJobs.delete(supersessionKey);
+    replacement.reject(sessionFileSearchCancelledError());
+  }
+  activeSessionFileSearchJobs.get(supersessionKey)?.controller.abort();
+  drainSessionFileSearchQueue();
 }
 
 export type SessionFileExplorerContext = {
@@ -766,6 +822,9 @@ export class SessionFileExplorerService {
         createMissingSessionFolder,
       );
       try {
+        if (signal?.aborted) {
+          throw new Error("Directory listing was cancelled.");
+        }
         const result = this.deps.listDirectory
           ? await this.deps.listDirectory(
             opened.targetRealPath,
@@ -936,6 +995,10 @@ export class SessionFileExplorerService {
       request.sessionId,
       (signal) => this.searchFilesInternal({ ...request, query }, signal),
     );
+  }
+
+  cancelSearch(request: SessionFileSearchCancelRequest): void {
+    cancelSessionFileSearchWithAdmission(request.sessionId);
   }
 
   async openFile(request: SessionFileOpenRequest): Promise<OpenPathResult> {

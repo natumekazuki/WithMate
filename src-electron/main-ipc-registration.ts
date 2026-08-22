@@ -102,6 +102,7 @@ import type {
   SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileSearchCancelRequest,
   SessionFileSearchRequest,
   SessionFileSearchResult,
   FileRootChangesRequest,
@@ -120,6 +121,7 @@ import type {
 import {
   areSessionFileResourcesEqual,
   isSessionFileRootResource,
+  parseSessionFileSearchCancelRequest,
   parseSessionFileSearchRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -185,6 +187,7 @@ import {
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
   WITHMATE_SEARCH_SESSION_FILES_CHANNEL,
+  WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
@@ -410,6 +413,7 @@ export type MainIpcRegistrationDeps = {
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
   searchSessionFiles(request: SessionFileSearchRequest): Awaitable<SessionFileSearchResult>;
+  cancelSessionFileSearch(request: SessionFileSearchCancelRequest): Awaitable<void>;
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
@@ -650,6 +654,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listSessionFileRoots"
   | "listSessionDirectory"
   | "searchSessionFiles"
+  | "cancelSessionFileSearch"
   | "inspectSessionFile"
   | "readSessionFileChunk"
   | "openSessionFile"
@@ -1486,6 +1491,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     const request = parseSessionFileSearchRequest(input);
     await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.searchSessionFiles(request);
+  });
+  ipcMain.handle(WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileSearchCancelRequest(input);
+    await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+    return deps.cancelSessionFileSearch(request);
   });
   ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFileResourceRequest) => {
     assertValidSessionFileResourceRequest(request);

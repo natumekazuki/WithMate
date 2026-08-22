@@ -1513,6 +1513,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
                 searchSessionFiles: (request) => createSessionFileExplorerService().searchFiles(request),
+                cancelSessionFileSearch: (request) => createSessionFileExplorerService().cancelSearch(request),
                 inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
                 readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),

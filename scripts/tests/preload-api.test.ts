@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createWithMateWindowApi } from "../../src-electron/preload-api.js";
-import { WITHMATE_SEARCH_SESSION_FILES_CHANNEL } from "../../src/withmate-ipc-channels.js";
+import {
+  WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL,
+  WITHMATE_SEARCH_SESSION_FILES_CHANNEL,
+} from "../../src/withmate-ipc-channels.js";
 import type {
   WithMateWindowApi,
   WithMateWindowSessionApi,
@@ -256,6 +259,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: WITHMATE_SEARCH_SESSION_FILES_CHANNEL,
     args: [{ sessionId: "session-1", query: "readme" }],
   });
+  assert.deepEqual(await api.cancelSessionFileSearch({ sessionId: "session-1" }), {
+    channel: WITHMATE_CANCEL_SESSION_FILE_SEARCH_CHANNEL,
+    args: [{ sessionId: "session-1" }],
+  });
   assert.deepEqual(await api.inspectSessionFile(fileRequest), {
     channel: "withmate:inspect-session-file",
     args: [fileRequest],
@@ -489,6 +496,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionDirectory",
     "listSessionFileRoots",
     "searchSessionFiles",
+    "cancelSessionFileSearch",
     "readSessionFileChunk",
     "reportRendererLog",
     "resetAppDatabase",

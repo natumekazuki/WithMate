@@ -105,6 +105,7 @@ import type {
   SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileSearchCancelRequest,
   SessionFileSearchRequest,
   SessionFileSearchResult,
   FileRootChangesRequest,
@@ -161,6 +162,7 @@ export type WithMateWindowSessionApi = {
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
   searchSessionFiles(request: SessionFileSearchRequest): Promise<SessionFileSearchResult>;
+  cancelSessionFileSearch(request: SessionFileSearchCancelRequest): Promise<void>;
   inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;

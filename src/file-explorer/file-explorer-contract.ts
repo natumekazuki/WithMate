@@ -27,6 +27,10 @@ export type SessionFileSearchRequest = {
   query: string;
 };
 
+export type SessionFileSearchCancelRequest = {
+  sessionId: string;
+};
+
 export type SessionFileSearchEntry = {
   name: string;
   relativePath: string;
@@ -89,6 +93,20 @@ export function parseSessionFileSearchRequest(value: unknown): SessionFileSearch
     sessionId: value.sessionId,
     query: normalizeSessionFileSearchQuery(value.query),
   };
+}
+
+export function parseSessionFileSearchCancelRequest(value: unknown): SessionFileSearchCancelRequest {
+  if (!isRecord(value)) {
+    throw new TypeError("File search cancel request が不正だよ。");
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 1 || keys[0] !== "sessionId") {
+    throw new TypeError("File search cancel request に未知の field があるよ。");
+  }
+  if (typeof value.sessionId !== "string" || !value.sessionId) {
+    throw new TypeError("File search cancel session ID が不正だよ。");
+  }
+  return { sessionId: value.sessionId };
 }
 
 export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "binary";

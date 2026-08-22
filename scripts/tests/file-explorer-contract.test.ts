@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   normalizeSessionFileSearchQuery,
+  parseSessionFileSearchCancelRequest,
   parseSessionFileSearchRequest,
   SESSION_FILE_SEARCH_QUERY_MAX_LENGTH,
   SESSION_FILE_SEARCH_RAW_QUERY_MAX_LENGTH,
@@ -40,6 +41,20 @@ test("file search request parser は unknown field と不正な型を拒否す�
   );
   assert.throws(
     () => parseSessionFileSearchRequest({ sessionId: "", query: "file" }),
+    /session ID が不正/,
+  );
+});
+
+test("file search cancel request parser は session ID だけを受け付ける", () => {
+  assert.deepEqual(parseSessionFileSearchCancelRequest({ sessionId: "session-1" }), {
+    sessionId: "session-1",
+  });
+  assert.throws(
+    () => parseSessionFileSearchCancelRequest({ sessionId: "session-1", extra: true }),
+    /未知の field/,
+  );
+  assert.throws(
+    () => parseSessionFileSearchCancelRequest({ sessionId: "" }),
     /session ID が不正/,
   );
 });
