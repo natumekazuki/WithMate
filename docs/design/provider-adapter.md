@@ -180,7 +180,7 @@ provider 境界は current 実装で次の 2 plane に分けて扱う。
    - Codex は `turn.completed` / `turn.failed` / fatal `error` の最初の event を terminal outcome の正本とし、transport EOF は bounded cleanup として扱う
 10. turn 完了後に Main Process が `threadId` と assistant message を session store に反映する
 11. Main Process が `running / completed / canceled / failed` の監査ログを 1 turn 1 record で SQLite に保存する。terminal phase の最小更新を先に確定し、詳細は bounded enrichment として後段で更新する
-12. Renderer は `sessions-changed` と live state 購読を使って再描画する
+12. Renderer は Session summary invalidation と live state 購読を使って再描画する
 
 ## Prompt Composition Constraint
 

@@ -726,12 +726,18 @@ describe("HomeRecentSessionsPanel", () => {
     companionSessions = [],
     normalizedSessionSearch = "",
     searchText = "",
+    hasMore = false,
+    loadingMore = false,
+    onLoadMore = noOp,
   }: {
     canUsePrimaryFeatures?: boolean;
     filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
     companionSessions?: CompanionSessionSummary[];
     normalizedSessionSearch?: string;
     searchText?: string;
+    hasMore?: boolean;
+    loadingMore?: boolean;
+    onLoadMore?: () => void;
   } = {}) => renderToStaticMarkup(
     <HomeRecentSessionsPanel
       filteredSessionEntries={filteredSessionEntries}
@@ -745,6 +751,9 @@ describe("HomeRecentSessionsPanel", () => {
       onSetSessionPinned={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
+      hasMore={hasMore}
+      loadingMore={loadingMore}
+      onLoadMore={onLoadMore}
     />,
   );
 
@@ -758,6 +767,180 @@ describe("HomeRecentSessionsPanel", () => {
     const html = renderHomeRecentSessions();
     const newSessionButtons = html.match(/<button class="start-session-button"/g);
     assert.equal(newSessionButtons?.length, 1);
+  });
+
+  it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {
+    const html = renderHomeRecentSessions({ hasMore: true });
+    assert.match(html, /class="home-session-list-load-sentinel"/);
+    assert.doesNotMatch(html, /Sessionをさらに読み込む|ピン留めをさらに読み込む/);
+    assert.doesNotMatch(html, /class="secondary-button"/);
+  });
+
+  it("一覧末尾のsentinelが交差した時だけ追加読み込みcallbackを呼ぶ", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    const previousIntersectionObserver = globalThis.IntersectionObserver;
+    let observerCallback: IntersectionObserverCallback | null = null;
+    let observedTarget: Element | null = null;
+    let loadMoreCount = 0;
+
+    class TestIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback) { observerCallback = callback; }
+      observe(target: Element) { observedTarget = target; }
+      disconnect() {}
+    }
+
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "IntersectionObserver", { value: TestIntersectionObserver, configurable: true });
+
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    let root: Root | null = null;
+
+    try {
+      await act(async () => {
+        root = createRoot(rootElement);
+        root.render(
+          <HomeRecentSessionsPanel
+            filteredSessionEntries={[]}
+            companionSessions={[]}
+            normalizedSessionSearch=""
+            searchText=""
+            searchIcon={<span />}
+            onChangeSearchText={noOp}
+            onOpenLaunchDialog={noOp}
+            onOpenSession={noOp}
+            onSetSessionPinned={noOp}
+            onOpenCompanionReview={noOp}
+            onLoadMore={() => { loadMoreCount += 1; }}
+          />,
+        );
+      });
+      assert.equal(rootElement.querySelector(".home-session-list-load-sentinel"), null);
+      assert.equal(observerCallback, null);
+
+      await act(async () => {
+        root?.render(
+          <HomeRecentSessionsPanel
+            filteredSessionEntries={[]}
+            companionSessions={[]}
+            normalizedSessionSearch=""
+            searchText=""
+            searchIcon={<span />}
+            onChangeSearchText={noOp}
+            onOpenLaunchDialog={noOp}
+            onOpenSession={noOp}
+            onSetSessionPinned={noOp}
+            onOpenCompanionReview={noOp}
+            hasMore
+            loadingMore
+            onLoadMore={() => { loadMoreCount += 1; }}
+          />,
+        );
+      });
+      assert.equal(observerCallback, null);
+
+      await act(async () => {
+        root?.render(
+          <HomeRecentSessionsPanel
+            filteredSessionEntries={[]}
+            companionSessions={[]}
+            normalizedSessionSearch=""
+            searchText=""
+            searchIcon={<span />}
+            onChangeSearchText={noOp}
+            onOpenLaunchDialog={noOp}
+            onOpenSession={noOp}
+            onSetSessionPinned={noOp}
+            onOpenCompanionReview={noOp}
+            hasMore
+            onLoadMore={() => { loadMoreCount += 1; }}
+          />,
+        );
+      });
+      const sentinel = rootElement.querySelector(".home-session-list-load-sentinel");
+      assert.ok(sentinel);
+      assert.equal(observedTarget, sentinel);
+      assert.equal(loadMoreCount, 0);
+      await act(async () => {
+        observerCallback?.([{ isIntersecting: false } as IntersectionObserverEntry], {} as IntersectionObserver);
+      });
+      assert.equal(loadMoreCount, 0);
+      await act(async () => {
+        observerCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      });
+      assert.equal(loadMoreCount, 1);
+    } finally {
+      await act(async () => { root?.unmount(); });
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      Object.defineProperty(globalThis, "IntersectionObserver", {
+        value: previousIntersectionObserver,
+        configurable: true,
+      });
+    }
+  });
+
+  it("一覧の再描画で既存のscroll位置を先頭へ戻さない", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    const firstSession = createSessionSummary({ id: "session-1", taskTitle: "Session 1" });
+    const secondSession = createSessionSummary({ id: "session-2", taskTitle: "Session 2" });
+    let root: Root | null = null;
+    const renderPanel = (sessions: SessionSummary[]) => (
+      <HomeRecentSessionsPanel
+        filteredSessionEntries={sessions.map((session) => ({
+          session,
+          state: { kind: "neutral", label: "待機中" },
+        }))}
+        companionSessions={[]}
+        normalizedSessionSearch=""
+        searchText=""
+        searchIcon={<span />}
+        onChangeSearchText={noOp}
+        onOpenLaunchDialog={noOp}
+        onOpenSession={noOp}
+        onSetSessionPinned={noOp}
+        onOpenCompanionReview={noOp}
+      />
+    );
+
+    try {
+      await act(async () => {
+        root = createRoot(rootElement);
+        root.render(renderPanel([firstSession]));
+      });
+      const list = rootElement.querySelector<HTMLElement>(".home-session-card-list");
+      assert.ok(list);
+      list.scrollTop = 144;
+
+      await act(async () => {
+        root?.render(renderPanel([firstSession, secondSession]));
+      });
+      assert.equal(list.scrollTop, 144);
+    } finally {
+      await act(async () => { root?.unmount(); });
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+    }
   });
 
   it("character authoring session は Character badge で表示する", () => {

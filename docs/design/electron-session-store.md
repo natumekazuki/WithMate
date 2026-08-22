@@ -33,8 +33,9 @@ SQLite-backed store により window 間整合と再起動後の復元を両立�
 
 - Main Process は SQLite を正本にし、必要時だけ `Session[]` をメモリへ投影する
 - Renderer は `window.withmate` 経由でのみ session / audit / settings に触る
-- session summary の変更通知は `WindowBroadcastService` から Home / Session Monitor / Settings / Memory Management window へ配信する
-- Session window には full summary を流さず、`sessionId` 配列ベースの軽量 invalidation 通知を配信し、必要時だけ `getSession()` で再 hydrate する
+- Homeのsession一覧は `listSessionSummaryPage()` をstorage query ownerへ送り、recent / pinned / openをboundedに取得する。検索もstorage側で行い、Homeへ全summary配列を返さない
+- session summary の変更通知は `scope: "ids"` または `scope: "all"` のinvalidationを `WindowBroadcastService` からHome / Session windowへ配信する。IDは最大256件で、超過時に切り捨てず `all` へ切り替える
+- Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateし、Homeは現在のquery generationで古いresponseを失効させて、読み込み済みpage数をboundedに再取得する
 - session CRUD と bulk write path は `SessionPersistenceService` に集約する
 - turn 実行は `SessionRuntimeService`、window lifecycle hook は `SessionWindowBridge` が担う
 - Session / Project / Character Memory の session 起点補助は `SessionMemorySupportService` が担う
@@ -51,8 +52,7 @@ flowchart LR
     MP --> PERSIST[Persistence Services]
     PERSIST --> STORE[(SQLite / file storage)]
     MP --> BROADCAST[WindowBroadcastService]
-    BROADCAST -->|summary broadcast| PL
-    BROADCAST -->|session invalidation| PL
+    BROADCAST -->|bounded query invalidation| PL
     PL --> HR
     PL --> SR
 ```
@@ -161,7 +161,9 @@ table 詳細と JSON カラム一覧は `docs/design/database-schema.md` を参�
 
 ### Home Renderer
 
-- session 一覧の取得と購読
+- boundedなsession summary pageの取得、cursor chain、検索generationの管理
+- session invalidation受信時のrecent / pinned / open refresh
+- random Character用のCharacter usage projectionとopen Session ID chunkの利用
 - Settings / Model Catalog 操作
 - `createSession()` 後の Session Window 起動
 

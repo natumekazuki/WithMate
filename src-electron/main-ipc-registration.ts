@@ -43,6 +43,9 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  SessionCharacterUsage,
+  SessionSummaryPageRequest,
+  HomeSessionSummaryPageResult,
   SessionSummary,
 } from "../src/app-state.js";
 import type {
@@ -150,6 +153,7 @@ import {
   type WorkspaceDirectoryValidationResult,
 } from "../src/workspace-directory-validation.js";
 import { parseCreateSessionRequest } from "./create-session-request.js";
+import { parseSessionSummaryPageRequest } from "./session-summary-query.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
@@ -236,7 +240,8 @@ import {
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL,
   WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL,
@@ -308,9 +313,12 @@ import {
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
+  parseOpenSessionWindowIdsPageRequest,
   type ImageFilePickerPurpose,
   type OpenPathOptions,
   type OpenPathResult,
+  type OpenSessionWindowIdsPageRequest,
+  type OpenSessionWindowIdsPageResult,
   type DeleteSessionsLastActiveBeforeRequest,
   type DeleteSessionsResult,
   type ResetAppDatabaseRequest,
@@ -349,7 +357,8 @@ export type MainIpcRegistrationDeps = {
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
-  listSessionSummaries(): Awaitable<SessionSummary[]>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
@@ -389,7 +398,9 @@ export type MainIpcRegistrationDeps = {
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
-  listOpenSessionWindowIds(): string[];
+  listOpenSessionWindowIdsPage(
+    request?: OpenSessionWindowIdsPageRequest | null,
+  ): OpenSessionWindowIdsPageResult;
   listOpenCompanionReviewWindowIds(): string[];
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
@@ -656,7 +667,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "isFilePreviewWindow"
   | "getFilePreviewWindowResource"
   | "isFilePreviewTokenWindow"
-  | "listSessionSummaries"
+  | "listSessionSummaryPage"
+  | "listSessionCharacterUsage"
   | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
   | "listSessionAuditLogSummaries"
@@ -674,7 +686,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listSessionCustomAgents"
   | "listWorkspaceSkills"
   | "listWorkspaceCustomAgents"
-  | "listOpenSessionWindowIds"
+  | "listOpenSessionWindowIdsPage"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
   | "validateWorkspaceDirectory"
@@ -1373,7 +1385,12 @@ function registerPromptTemplateHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
 }
 
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
-  ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+    (_event, request: SessionSummaryPageRequest | null | undefined) =>
+      deps.listSessionSummaryPage(parseSessionSummaryPageRequest(request)),
+  );
+  ipcMain.handle(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL, () => deps.listSessionCharacterUsage());
   ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
@@ -1431,7 +1448,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     async (_event, providerId: string, workspacePath: string) =>
       deps.listWorkspaceCustomAgents(providerId, workspacePath),
   );
-  ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => deps.listOpenSessionWindowIds());
+  ipcMain.handle(
+    WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+    (_event, request: OpenSessionWindowIdsPageRequest | null | undefined) =>
+      deps.listOpenSessionWindowIdsPage(parseOpenSessionWindowIdsPageRequest(request)),
+  );
   ipcMain.handle(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL, () => deps.listOpenCompanionReviewWindowIds());
   ipcMain.handle(WITHMATE_GET_SESSION_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {

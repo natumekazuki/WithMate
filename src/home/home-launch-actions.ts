@@ -2,10 +2,16 @@ import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "../companion-state.js";
 import { createCompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { CreateSessionRequest, SessionSummary } from "../session-state.js";
+import type {
+  CreateSessionRequest,
+  HomeSessionSummary,
+  Session,
+  SessionCharacterUsage,
+  SessionSummary,
+} from "../session-state.js";
 import type { SessionSummariesLoadStatus } from "../session-summary-subscription.js";
 import type { OpenSessionWindowIdsLoadStatus } from "../open-session-window-subscription.js";
-import { projectSessionSummary } from "../session-state.js";
+import { projectHomeSessionSummary } from "../session-state.js";
 import {
   buildCreateCompanionSessionInputFromLaunchDraft,
   buildCreateSessionRequestFromLaunchDraft,
@@ -13,7 +19,7 @@ import {
   type HomeLaunchDraft,
 } from "./home-launch-state.js";
 
-export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<SessionSummary | null>;
+export type HomeLaunchSessionCreator = (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
 
 export type HomeLaunchCompanionSessionCreator = (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
 
@@ -25,10 +31,11 @@ export type StartHomeLaunchInput = {
   mateProfile: MateProfile | null;
   characterEntries: readonly CharacterCatalogEntry[];
   selectedProviderId: string | null;
-  sessions: readonly SessionSummary[];
+  sessions: readonly HomeSessionSummary[];
+  sessionCharacterUsage: readonly SessionCharacterUsage[];
   openSessionWindowIds: readonly string[];
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
-  sessionSummariesLoadStatus: SessionSummariesLoadStatus;
+  sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   createSession: HomeLaunchSessionCreator;
   createCompanionSession: HomeLaunchCompanionSessionCreator;
   openSessionWindow: (sessionId: string) => Promise<void>;
@@ -36,7 +43,7 @@ export type StartHomeLaunchInput = {
   closeLaunchDialog: () => void;
   setLaunchFeedback: (message: string) => void;
   setLaunchStarting: (launchStarting: boolean) => void;
-  upsertSessionSummary: (summary: SessionSummary) => void;
+  upsertSessionSummary: (summary: HomeSessionSummary) => void;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
   random?: () => number;
 };
@@ -58,9 +65,9 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
     return;
   }
 
-  if (input.draft.characterSelectionMode === "random" && input.sessionSummariesLoadStatus !== "loaded") {
+  if (input.draft.characterSelectionMode === "random" && input.sessionCharacterUsageLoadStatus !== "loaded") {
     input.setLaunchFeedback(
-      input.sessionSummariesLoadStatus === "loading"
+      input.sessionCharacterUsageLoadStatus === "loading"
         ? "Loading Session history. Try again when loading is complete."
         : "Random selection is unavailable because Session history could not be loaded.",
     );
@@ -91,7 +98,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
         mateProfile: input.mateProfile,
         selectedProviderId: input.selectedProviderId,
         characterEntries: input.characterEntries,
-        sessions: input.sessions,
+        sessions: input.sessionCharacterUsage,
         openSessionCharacterIds,
         random: input.random,
       });
@@ -117,7 +124,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       mateProfile: input.mateProfile,
       selectedProviderId: input.selectedProviderId,
       characterEntries: input.characterEntries,
-      sessions: input.sessions,
+      sessions: input.sessionCharacterUsage,
       openSessionCharacterIds,
       random: input.random,
     });
@@ -132,7 +139,7 @@ export async function startHomeLaunch(input: StartHomeLaunchInput): Promise<void
       return;
     }
 
-    input.upsertSessionSummary(projectSessionSummary(createdSession));
+    input.upsertSessionSummary(projectHomeSessionSummary(createdSession));
     input.closeLaunchDialog();
     await input.openSessionWindow(createdSession.id);
   } catch (error) {
