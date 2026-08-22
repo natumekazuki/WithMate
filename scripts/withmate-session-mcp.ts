@@ -237,6 +237,7 @@ const coordinationResolveInputSchema = z.object({
 }).strict();
 const coordinationConsumeInputSchema = z.object({
   eventId: nonEmptyStringSchema,
+  expectedResolutionSequence: z.number().int().positive(),
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const coordinationCancelInputSchema = z.object({
@@ -600,7 +601,7 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "coordination.event.list", title: "List coordination events", description: "List visible coordination event summaries.", readOnly: true, destructive: false },
   { name: "coordination.event.get", title: "Get coordination event", description: "Read one visible coordination event by event or idempotency key.", readOnly: true, destructive: false },
   { name: "coordination.event.resolve", title: "Resolve coordination event", description: "Resolve an authorized escalation or blocker event.", readOnly: false, destructive: false },
-  { name: "coordination.event.consume", title: "Consume coordination answer", description: "Mark a resolved user decision as applied by its owner Session.", readOnly: false, destructive: false },
+  { name: "coordination.event.consume", title: "Consume coordination answer", description: "Mark the exact resolved revision identified by expectedResolutionSequence as applied by its owner Session.", readOnly: false, destructive: false },
   { name: "coordination.event.cancel", title: "Cancel coordination event", description: "Cancel an open coordination event created by the bound Session.", readOnly: false, destructive: true },
   { name: "coordination.event.correct", title: "Correct coordination event", description: "Append a correction and supersede an event created by the bound Session.", readOnly: false, destructive: true },
   { name: "transcript.export", title: "Export Session transcript", description: "Export a Session transcript inline or into its SessionFolder.", readOnly: false, destructive: true },

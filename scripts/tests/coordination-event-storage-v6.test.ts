@@ -265,34 +265,80 @@ describe("CoordinationEventStorageV6", () => {
       assert.equal(resolved.state, "resolved");
       assert.equal(resolved.actions[0]?.optionId, "change");
       assert.deepEqual(resolved.payload, event.payload);
+      const firstResolutionSequence = resolved.actions[0]?.sequence;
+      assert.ok(firstResolutionSequence);
       assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), [{
         eventId: event.eventId,
+        resolutionSequence: firstResolutionSequence,
         question: "作業を開始した",
         answer: { kind: "option", optionId: "change", label: "変更" },
         resolvedAt: NOW,
         consumption: "pending",
       }]);
+      const revised = fixture.storage.resolve({
+        principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: null, note: "段階的に変更する",
+        idempotencyKey: "gui-revise", requestFingerprint: "gui-revise", createdAt: "2026-08-21T12:01:00.000Z",
+      });
+      assert.equal(revised.event.state, "resolved");
+      assert.equal(revised.event.actions.filter((action) => action.type === "resolved").length, 2);
+      const latestResolutionSequence = revised.event.actions.at(-1)?.sequence;
+      assert.ok(latestResolutionSequence);
+      assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), [{
+        eventId: event.eventId,
+        resolutionSequence: latestResolutionSequence,
+        question: "作業を開始した",
+        answer: { kind: "text", text: "段階的に変更する" },
+        resolvedAt: "2026-08-21T12:01:00.000Z",
+        consumption: "pending",
+      }]);
+      assert.equal(fixture.storage.resolve({
+        principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: null, note: "段階的に変更する",
+        idempotencyKey: "gui-revise", requestFingerprint: "gui-revise", createdAt: "2026-08-21T12:01:00.000Z",
+      }).replayed, true);
       assert.throws(
         () => fixture.storage.consume({
           principal: principal("task-a"), eventId: event.eventId,
+          expectedResolutionSequence: latestResolutionSequence,
           idempotencyKey: "consume-wrong", requestFingerprint: "consume-wrong", createdAt: NOW,
         }),
         (error) => error instanceof CoordinationEventNotFoundError,
       );
+      assert.throws(
+        () => fixture.storage.consume({
+          principal: principal("executor-a"), eventId: event.eventId,
+          expectedResolutionSequence: firstResolutionSequence,
+          idempotencyKey: "consume-stale", requestFingerprint: "consume-stale", createdAt: NOW,
+        }),
+        (error) => error instanceof CoordinationEventStateConflictError,
+      );
+      assert.equal(
+        fixture.storage.listPendingAnswers(principal("executor-a"))[0]?.resolutionSequence,
+        latestResolutionSequence,
+      );
       const consumed = fixture.storage.consume({
         principal: principal("executor-a"), eventId: event.eventId,
+        expectedResolutionSequence: latestResolutionSequence,
         idempotencyKey: "consume-decision", requestFingerprint: "consume-decision", createdAt: NOW,
       });
       assert.equal(consumed.event.state, "resolved");
       assert.equal(consumed.event.actions.at(-1)?.type, "consumed");
       assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), []);
+      assert.throws(
+        () => fixture.storage.resolve({
+          principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: "keep", note: null,
+          idempotencyKey: "revise-after-consume", requestFingerprint: "revise-after-consume", createdAt: NOW,
+        }),
+        (error) => error instanceof CoordinationEventStateConflictError,
+      );
       assert.equal(fixture.storage.consume({
         principal: principal("executor-a"), eventId: event.eventId,
+        expectedResolutionSequence: latestResolutionSequence,
         idempotencyKey: "consume-decision", requestFingerprint: "consume-decision", createdAt: NOW,
       }).replayed, true);
       assert.throws(
         () => fixture.storage.consume({
           principal: principal("executor-a"), eventId: event.eventId,
+          expectedResolutionSequence: latestResolutionSequence,
           idempotencyKey: "consume-twice", requestFingerprint: "consume-twice", createdAt: NOW,
         }),
         (error) => error instanceof CoordinationEventStateConflictError,
@@ -311,8 +357,11 @@ describe("CoordinationEventStorageV6", () => {
       }).event;
       assert.equal(customResolved.actions[0]?.optionId, null);
       assert.equal(customResolved.actions[0]?.note, "段階的に変更する");
+      const customResolutionSequence = customResolved.actions[0]?.sequence;
+      assert.ok(customResolutionSequence);
       assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), [{
         eventId: customEvent.eventId,
+        resolutionSequence: customResolutionSequence,
         question: "作業を開始した",
         answer: { kind: "text", text: "段階的に変更する" },
         resolvedAt: NOW,

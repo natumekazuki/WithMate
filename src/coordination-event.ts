@@ -121,6 +121,7 @@ export type CoordinationEventResolveInput = {
 
 export type CoordinationEventConsumeInput = {
   eventId: string;
+  expectedResolutionSequence: number;
   idempotencyKey: string;
 };
 
@@ -163,6 +164,7 @@ export type CoordinationEventCorrectionResult = {
 
 export type PendingCoordinationAnswer = {
   eventId: string;
+  resolutionSequence: number;
   question: string;
   answer:
     | { kind: "option"; optionId: string; label: string }

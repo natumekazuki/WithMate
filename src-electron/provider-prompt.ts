@@ -165,7 +165,7 @@ function buildCoordinationEventSection(input: RunSessionTurnInput): string {
     "",
     "secret、raw log、stack trace、大きなdiff、provider response、内部推論、個人環境pathは登録しないでください。",
     "`progress`や`decision`の登録失敗だけで通常responseを止めないでください。`user_decision_required`を登録できなかった場合は、判断待ちになったふりをせず、通常responseで失敗と安全な次の行動を明示してください。",
-    "`Pending Coordination Answers`がある場合は、回答を現在の判断や作業へ実際に反映した後で、各eventに`coordination.event.consume`を1回呼び出してください。promptへ表示されたことだけを理由にconsumeせず、反映できなかった回答は未使用のまま残してください。",
+    "`Pending Coordination Answers`がある場合は、回答を現在の判断や作業へ実際に反映した後で、各eventに`coordination.event.consume`を1回呼び出してください。`expectedResolutionSequence`には表示された`resolutionSequence`をそのまま渡してください。競合した場合は回答が変更されているため、次のturnで最新回答を確認してください。promptへ表示されたことだけを理由にconsumeせず、反映できなかった回答は未使用のまま残してください。",
   ].join("\n");
 }
 

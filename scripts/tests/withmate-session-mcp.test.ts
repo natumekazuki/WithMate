@@ -264,7 +264,9 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(invalid.isError, true);
       const consumed = await client.callTool({
         name: "coordination.event.consume",
-        arguments: { eventId: "decision-1", idempotencyKey: "consume-decision-1" },
+        arguments: {
+          eventId: "decision-1", expectedResolutionSequence: 3, idempotencyKey: "consume-decision-1",
+        },
       });
       assert.equal(consumed.isError, undefined);
     });
@@ -277,7 +279,7 @@ describe("WithMate Session MCP contract", () => {
       {
         schemaVersion: "withmate-session-request-v2",
         operation: "coordination.event.consume",
-        input: { eventId: "decision-1", idempotencyKey: "consume-decision-1" },
+        input: { eventId: "decision-1", expectedResolutionSequence: 3, idempotencyKey: "consume-decision-1" },
       },
     ]);
   });

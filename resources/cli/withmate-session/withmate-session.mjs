@@ -365,9 +365,14 @@ function parseCoordinationEventResolveInput(value) {
 }
 function parseCoordinationEventConsumeInput(value) {
 	const record = requireObject$1(value, "input");
-	assertKeys$1(record, ["eventId", "idempotencyKey"], "input");
+	assertKeys$1(record, [
+		"eventId",
+		"expectedResolutionSequence",
+		"idempotencyKey"
+	], "input");
 	return {
 		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		expectedResolutionSequence: requireInteger(record.expectedResolutionSequence, "expectedResolutionSequence", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
@@ -21332,6 +21337,7 @@ var coordinationResolveInputSchema = object({
 }).strict();
 var coordinationConsumeInputSchema = object({
 	eventId: nonEmptyStringSchema,
+	expectedResolutionSequence: number().int().positive(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var coordinationCancelInputSchema = object({
@@ -21966,7 +21972,7 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
 		name: "coordination.event.consume",
 		title: "Consume coordination answer",
-		description: "Mark a resolved user decision as applied by its owner Session.",
+		description: "Mark the exact resolved revision identified by expectedResolutionSequence as applied by its owner Session.",
 		readOnly: false,
 		destructive: false
 	},

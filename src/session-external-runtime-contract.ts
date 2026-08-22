@@ -617,9 +617,15 @@ function parseCoordinationEventResolveInput(value: unknown): CoordinationEventRe
 
 function parseCoordinationEventConsumeInput(value: unknown): CoordinationEventConsumeInput {
   const record = requireCoordinationObject(value, "input");
-  assertCoordinationKeys(record, ["eventId", "idempotencyKey"], "input");
+  assertCoordinationKeys(record, ["eventId", "expectedResolutionSequence", "idempotencyKey"], "input");
   return {
     eventId: requireNonEmptyString(record.eventId, "eventId"),
+    expectedResolutionSequence: requireInteger(
+      record.expectedResolutionSequence,
+      "expectedResolutionSequence",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }

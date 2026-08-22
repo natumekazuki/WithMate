@@ -3,9 +3,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { HomeSessionSummary } from "./app-state.js";
 import type {
   CoordinationEvent,
+  CoordinationEventAction,
   CoordinationEventState,
   CoordinationEventSummary,
 } from "./coordination-event.js";
+import { renderHomeSearchIcon } from "./home/home-icons.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { CharacterAvatar } from "./ui-utils.js";
 
@@ -16,9 +18,9 @@ type FeedFilter = "all" | "actionable" | "resolved" | "history";
 type LoadState = "loading" | "loaded" | "error";
 
 const FILTERS: Array<{ id: FeedFilter; label: string; state?: CoordinationEventState }> = [
+  { id: "all", label: "すべて" },
   { id: "actionable", label: "要対応", state: "open" },
   { id: "resolved", label: "回答済み", state: "resolved" },
-  { id: "all", label: "すべて" },
   { id: "history", label: "履歴", state: "recorded" },
 ];
 
@@ -63,9 +65,11 @@ export default function CoordinationApp() {
   const [eventCursor, setEventCursor] = useState<string | undefined>();
   const [eventLoadState, setEventLoadState] = useState<LoadState>("loading");
   const [eventLoadMore, setEventLoadMore] = useState(false);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<CoordinationEvent | null>(null);
   const [detailLoadState, setDetailLoadState] = useState<LoadState>("loaded");
   const [mutationFeedback, setMutationFeedback] = useState("");
+  const [mutationPending, setMutationPending] = useState(false);
   const [customAnswer, setCustomAnswer] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [sessionSearch, setSessionSearch] = useState("");
@@ -78,6 +82,8 @@ export default function CoordinationApp() {
   const sessionGeneration = useRef(0);
   const resolutionAttempts = useRef(new Map<string, string>());
   const pickerRef = useRef<HTMLDivElement>(null);
+  const sessionLoadSentinelRef = useRef<HTMLDivElement>(null);
+  const eventLoadSentinelRef = useRef<HTMLDivElement>(null);
 
   const activeState = FILTERS.find((entry) => entry.id === filter)?.state;
 
@@ -94,7 +100,10 @@ export default function CoordinationApp() {
     return Object.fromEntries(result.entries.map((entry) => [entry.id, entry]));
   }, [api]);
 
-  const loadEvents = useCallback(async (mode: "replace" | "append" = "replace") => {
+  const loadEvents = useCallback(async (
+    mode: "replace" | "append" = "replace",
+    preserveSelection = false,
+  ) => {
     if (!api) {
       setEventLoadState("error");
       return;
@@ -102,7 +111,12 @@ export default function CoordinationApp() {
     const generation = mode === "replace" ? ++eventGeneration.current : eventGeneration.current;
     if (mode === "replace") {
       setEventLoadState("loading");
-      setSelectedEvent(null);
+      if (!preserveSelection) {
+        detailGeneration.current += 1;
+        setSelectedEventId(null);
+        setSelectedEvent(null);
+        setDetailLoadState("loaded");
+      }
       setMutationFeedback("");
     } else {
       setEventLoadMore(true);
@@ -134,10 +148,6 @@ export default function CoordinationApp() {
     void loadEvents("replace");
   }, [filter, selectedSession?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => api?.subscribeCoordinationEventsChanged(() => {
-    void loadEvents("replace");
-  }), [api, loadEvents]);
-
   const loadSessions = useCallback(async (
     mode: "replace" | "append",
     requestedGeneration?: number,
@@ -146,6 +156,7 @@ export default function CoordinationApp() {
     const generation = requestedGeneration
       ?? (mode === "replace" ? ++sessionGeneration.current : sessionGeneration.current);
     setSessionLoadState("loading");
+    if (mode === "replace") setSessionEntries([]);
     try {
       const result = await api.listSessionSummaryPage({
         scope: "recent",
@@ -186,9 +197,46 @@ export default function CoordinationApp() {
     };
   }, [pickerOpen]);
 
+  useEffect(() => {
+    const sentinel = sessionLoadSentinelRef.current;
+    const scrollRoot = sentinel?.parentElement;
+    if (!pickerOpen
+      || !sentinel
+      || !scrollRoot
+      || !sessionHasMore
+      || sessionLoadState === "loading"
+      || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadSessions("append");
+    }, { root: scrollRoot, rootMargin: "0px 0px 72px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [loadSessions, pickerOpen, sessionHasMore, sessionLoadState]);
+
+  useEffect(() => {
+    const sentinel = eventLoadSentinelRef.current;
+    const scrollRoot = sentinel?.closest(".coordination-feed");
+    if (!sentinel
+      || !scrollRoot
+      || !eventCursor
+      || eventLoadMore
+      || typeof IntersectionObserver === "undefined") {
+      return;
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadEvents("append");
+    }, { root: scrollRoot, rootMargin: "0px 0px 120px" });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [eventCursor, eventLoadMore, loadEvents]);
+
   const openDetail = async (eventId: string) => {
     if (!api) return;
     const generation = ++detailGeneration.current;
+    setSelectedEventId(eventId);
+    setSelectedEvent(null);
     setDetailLoadState("loading");
     setMutationFeedback("");
     setCustomAnswer("");
@@ -196,22 +244,34 @@ export default function CoordinationApp() {
       const event = await api.getCoordinationEvent(eventId);
       if (generation !== detailGeneration.current) return;
       setSelectedEvent(event);
+      setCustomAnswer(latestTrustedResolution(event)?.note ?? "");
       setDetailLoadState("loaded");
     } catch {
       if (generation === detailGeneration.current) setDetailLoadState("error");
     }
   };
 
+  useEffect(() => api?.subscribeCoordinationEventsChanged(() => {
+    void loadEvents("replace", true);
+    if (selectedEventId) void openDetail(selectedEventId);
+  }), [api, loadEvents, selectedEventId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const resolveEvent = async (optionId?: string) => {
     if (!api || !selectedEvent) return;
     const note = customAnswer.trim();
+    const currentResolution = latestTrustedResolution(selectedEvent);
+    if ((optionId && currentResolution?.optionId === optionId)
+      || (!optionId && currentResolution?.note === note)) {
+      return;
+    }
     const answerFingerprint = `${selectedEvent.eventId}:${optionId ? `option:${optionId}` : `note:${note}`}`;
     let idempotencyKey = resolutionAttempts.current.get(answerFingerprint);
     if (!idempotencyKey) {
       idempotencyKey = buildIdempotencyKey("coordination-window-resolve");
       resolutionAttempts.current.set(answerFingerprint, idempotencyKey);
     }
-    setMutationFeedback("保存中…");
+    setMutationFeedback("");
+    setMutationPending(true);
     try {
       const event = await api.resolveCoordinationEvent({
         eventId: selectedEvent.eventId,
@@ -220,47 +280,52 @@ export default function CoordinationApp() {
       });
       resolutionAttempts.current.delete(answerFingerprint);
       setSelectedEvent(event);
-      setCustomAnswer("");
-      setMutationFeedback("回答を保存しました。");
-      void loadEvents("replace");
+      setCustomAnswer(latestTrustedResolution(event)?.note ?? "");
+      setMutationFeedback("");
+      void loadEvents("replace", true);
     } catch (error) {
       setMutationFeedback(error instanceof Error ? error.message : "回答を保存できませんでした。");
+    } finally {
+      setMutationPending(false);
     }
   };
 
   const cancelEvent = async () => {
     if (!api || !selectedEvent) return;
-    setMutationFeedback("取消中…");
+    if (!window.confirm(`「${selectedEvent.summary}」を取り消します。取り消すと回答できません。`)) return;
+    setMutationFeedback("");
+    setMutationPending(true);
     try {
       const event = await api.cancelCoordinationEvent({
         eventId: selectedEvent.eventId,
         idempotencyKey: buildIdempotencyKey("coordination-window-cancel"),
       });
       setSelectedEvent(event);
-      setMutationFeedback("イベントを取り消しました。");
-      void loadEvents("replace");
+      setMutationFeedback("");
+      void loadEvents("replace", true);
     } catch (error) {
       setMutationFeedback(error instanceof Error ? error.message : "イベントを取り消せませんでした。");
+    } finally {
+      setMutationPending(false);
     }
   };
 
   const selectedSessionLabel = selectedSession?.taskTitle ?? "すべてのSession";
   const selectedEventSession = selectedEvent ? eventSessions[selectedEvent.actorSessionId] : undefined;
+  const selectedResolution = selectedEvent ? latestTrustedResolution(selectedEvent) : undefined;
+  const selectedAnswerLabel = selectedEvent && selectedResolution
+    ? resolvedAnswerLabel(selectedEvent, selectedResolution)
+    : "";
+  const answerIsConsumed = selectedEvent?.actions.some((action) => action.type === "consumed") ?? false;
+  const canAnswer = selectedEvent?.kind === "user_decision_required"
+    && (selectedEvent.state === "open" || (selectedEvent.state === "resolved" && !answerIsConsumed));
   const filterLabel = FILTERS.find((entry) => entry.id === filter)?.label ?? "すべて";
   const emptyMessage = useMemo(() => selectedSession
-    ? `「${selectedSession.taskTitle}」に該当するイベントはありません。`
-    : "該当するイベントはありません。", [selectedSession]);
+    ? `「${selectedSession.taskTitle}」は該当なし`
+    : "該当なし", [selectedSession]);
 
   return (
-    <main className="coordination-page">
-      <header className="coordination-header">
-        <div>
-          <p className="coordination-eyebrow">Coordination</p>
-          <h1>判断と進行状況</h1>
-        </div>
-        <button className="coordination-home-button" type="button" onClick={() => void api?.openHomeWindow()}>Home</button>
-      </header>
-
+    <main className="coordination-page" aria-label="Coordination">
       <div className="coordination-toolbar">
         <div className="coordination-session-filter" ref={pickerRef}>
           <button
@@ -277,7 +342,7 @@ export default function CoordinationApp() {
           {pickerOpen ? (
             <div className="coordination-session-picker" role="dialog" aria-label="Sessionを選択">
               <label className="coordination-search-field">
-                <span aria-hidden="true">⌕</span>
+                <span className="coordination-search-icon" aria-hidden="true">{renderHomeSearchIcon()}</span>
                 <input
                   type="search"
                   value={sessionSearch}
@@ -310,13 +375,11 @@ export default function CoordinationApp() {
                     <span>{session.taskTitle}</span>
                   </button>
                 ))}
-                {sessionLoadState === "loading" ? <div className="coordination-inline-state">読み込み中…</div> : null}
                 {sessionLoadState === "error" ? (
                   <button className="coordination-retry-link" type="button" onClick={() => void loadSessions("replace")}>再試行</button>
                 ) : null}
-                {sessionHasMore && sessionLoadState !== "loading" ? (
-                  <button className="coordination-more-link" type="button" onClick={() => void loadSessions("append")}>さらに表示</button>
-                ) : null}
+                {sessionHasMore ? <div ref={sessionLoadSentinelRef} className="coordination-load-sentinel" aria-hidden="true" /> : null}
+                {sessionLoadState === "loading" ? <LoadingIndicator label="Sessionを読み込み中" /> : null}
               </div>
             </div>
           ) : null}
@@ -340,10 +403,6 @@ export default function CoordinationApp() {
 
       <section className="coordination-workspace">
         <section className="coordination-feed" aria-label={`${filterLabel}のCoordination Event`}>
-          <div className="coordination-feed-heading">
-            <strong>{filterLabel}</strong>
-            <span>{events.length}件{eventCursor ? "+" : ""}</span>
-          </div>
           {eventLoadState === "loading" ? <EventSkeleton /> : null}
           {eventLoadState === "error" ? (
             <div className="coordination-state-panel"><span>イベントを読み込めませんでした。</span><button type="button" onClick={() => void loadEvents("replace")}>再試行</button></div>
@@ -355,50 +414,50 @@ export default function CoordinationApp() {
               <button
                 key={event.eventId}
                 type="button"
-                className={`coordination-event-row ${selectedEvent?.eventId === event.eventId ? "selected" : ""}`.trim()}
+                className={`coordination-event-row ${selectedEventId === event.eventId ? "selected" : ""}`.trim()}
                 onClick={() => void openDetail(event.eventId)}
               >
                 <CharacterAvatar
                   character={{ name: session?.character ?? "?", iconPath: session?.characterIconPath ?? "" }}
-                  size="small"
+                  size="tiny"
                 />
                 <span className="coordination-event-copy">
+                  <strong>{event.summary}</strong>
+                  <span className="coordination-session-title">{session?.taskTitle ?? "削除されたSession"}</span>
                   <span className="coordination-event-meta">
                     <span className={`coordination-kind coordination-kind-${event.kind}`}>{KIND_LABELS[event.kind]}</span>
                     <span className={`coordination-state coordination-state-${event.state}`}>{STATE_LABELS[event.state]}</span>
                     <time dateTime={event.createdAt}>{eventTime(event.createdAt)}</time>
                   </span>
-                  <strong>{event.summary}</strong>
-                  <span className="coordination-session-title">{session?.taskTitle ?? "削除されたSession"}</span>
                 </span>
               </button>
             );
           })}
-          {eventCursor ? (
-            <button className="coordination-load-more" type="button" disabled={eventLoadMore} onClick={() => void loadEvents("append")}>
-              {eventLoadMore ? "読み込み中…" : "さらに表示"}
-            </button>
-          ) : null}
+          {eventCursor ? <div ref={eventLoadSentinelRef} className="coordination-load-sentinel" aria-hidden="true" /> : null}
+          {eventLoadMore ? <LoadingIndicator label="イベントを読み込み中" /> : null}
         </section>
 
         <aside className="coordination-detail" aria-label="イベント詳細">
           {detailLoadState === "loading" ? <EventSkeleton compact /> : null}
-          {detailLoadState === "error" ? <div className="coordination-empty">詳細を読み込めませんでした。</div> : null}
-          {detailLoadState === "loaded" && !selectedEvent ? <div className="coordination-empty">イベントを選択してください。</div> : null}
+          {detailLoadState === "error" ? (
+            <div className="coordination-state-panel">
+              <span>詳細を読み込めませんでした。</span>
+              {selectedEventId ? <button type="button" onClick={() => void openDetail(selectedEventId)}>再試行</button> : null}
+            </div>
+          ) : null}
           {detailLoadState === "loaded" && selectedEvent ? (
             <div className="coordination-detail-content">
               <div className="coordination-detail-origin">
                 <CharacterAvatar
                   character={{ name: selectedEventSession?.character ?? "?", iconPath: selectedEventSession?.characterIconPath ?? "" }}
-                  size="small"
+                  size="tiny"
                 />
-                <button type="button" onClick={() => {
-                  if (selectedEventSession) setSelectedSession(selectedEventSession);
-                }}>{selectedEventSession?.taskTitle ?? "削除されたSession"}</button>
+                <span>{selectedEventSession?.taskTitle ?? "削除されたSession"}</span>
               </div>
               <div className="coordination-event-meta">
                 <span className={`coordination-kind coordination-kind-${selectedEvent.kind}`}>{KIND_LABELS[selectedEvent.kind]}</span>
                 <span className={`coordination-state coordination-state-${selectedEvent.state}`}>{STATE_LABELS[selectedEvent.state]}</span>
+                {answerIsConsumed ? <span className="coordination-state coordination-state-consumed">使用済み</span> : null}
               </div>
               <h2>{selectedEvent.summary}</h2>
               {selectedEvent.payload.facts?.length ? <DetailList title="事実" values={selectedEvent.payload.facts} /> : null}
@@ -406,12 +465,22 @@ export default function CoordinationApp() {
               {selectedEvent.payload.impact ? <DetailText title="影響" value={selectedEvent.payload.impact} /> : null}
               {selectedEvent.payload.recommendation ? <DetailText title="推奨" value={selectedEvent.payload.recommendation} /> : null}
 
-              {selectedEvent.kind === "user_decision_required" && selectedEvent.state === "open" ? (
+              {selectedEvent.kind === "user_decision_required" && selectedResolution && !canAnswer ? (
+                <DetailText title="回答" value={selectedAnswerLabel} />
+              ) : null}
+              {canAnswer ? (
                 <section className="coordination-decision-panel">
-                  <h3>回答</h3>
+                  <h3>{selectedEvent.state === "resolved" ? "回答を変更" : "回答"}</h3>
                   <div className="coordination-options">
                     {selectedEvent.options.map((option) => (
-                      <button key={option.id} type="button" onClick={() => void resolveEvent(option.id)}>
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={selectedResolution?.optionId === option.id ? "selected" : ""}
+                        aria-pressed={selectedResolution?.optionId === option.id}
+                        disabled={mutationPending}
+                        onClick={() => void resolveEvent(option.id)}
+                      >
                         <strong>{option.label}</strong>
                         {option.description ? <span>{option.description}</span> : null}
                       </button>
@@ -419,16 +488,27 @@ export default function CoordinationApp() {
                   </div>
                   <label className="coordination-custom-answer">
                     <span>別の回答</span>
-                    <textarea value={customAnswer} onChange={(event) => setCustomAnswer(event.target.value)} rows={4} />
+                    <textarea
+                      value={customAnswer}
+                      disabled={mutationPending}
+                      onChange={(event) => setCustomAnswer(event.target.value)}
+                      rows={4}
+                    />
                   </label>
-                  <button className="coordination-primary-action" type="button" disabled={!customAnswer.trim()} onClick={() => void resolveEvent()}>
-                    自由回答を送る
+                  <button
+                    className="coordination-primary-action"
+                    type="button"
+                    disabled={mutationPending || !customAnswer.trim() || selectedResolution?.note === customAnswer.trim()}
+                    onClick={() => void resolveEvent()}
+                  >
+                    {selectedEvent.state === "resolved" ? "回答を変更" : "送信"}
                   </button>
                 </section>
               ) : null}
               {selectedEvent.state === "open" ? (
-                <button className="coordination-cancel-action" type="button" onClick={() => void cancelEvent()}>イベントを取り消す</button>
+                <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
               ) : null}
+              {mutationPending ? <LoadingIndicator label="変更を保存中" /> : null}
               {mutationFeedback ? <p className="coordination-feedback" role="status">{mutationFeedback}</p> : null}
             </div>
           ) : null}
@@ -446,6 +526,28 @@ function DetailText({ title, value }: { title: string; value: string }) {
   return <section className="coordination-detail-section"><h3>{title}</h3><p>{value}</p></section>;
 }
 
+function latestTrustedResolution(event: CoordinationEvent): CoordinationEventAction | undefined {
+  return [...event.actions]
+    .reverse()
+    .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
+}
+
+function resolvedAnswerLabel(event: CoordinationEvent, resolution: CoordinationEventAction): string {
+  if (resolution.optionId) {
+    return event.options.find((option) => option.id === resolution.optionId)?.label ?? resolution.optionId;
+  }
+  return resolution.note ?? "";
+}
+
 function EventSkeleton({ compact = false }: { compact?: boolean }) {
   return <div className={`coordination-skeleton ${compact ? "compact" : ""}`.trim()} aria-label="読み込み中"><span /><span /><span /></div>;
+}
+
+function LoadingIndicator({ label }: { label: string }) {
+  return (
+    <div className="coordination-loading-indicator" role="status" aria-live="polite">
+      <span aria-hidden="true" />
+      <span className="sr-only">{label}</span>
+    </div>
+  );
 }

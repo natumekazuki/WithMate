@@ -181,7 +181,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 全SessionのCoordination Eventを一つの独立windowへ表示する
 - 初期状態はSession filterなし、event filterは「すべて」とする
 - 一覧は新しいeventから並べ、要対応を初期状態で先頭へ固定しない
-- 要対応、回答済み、すべて、履歴は同じ一覧に対するfilterとして提供する
+- すべて、要対応、回答済み、履歴は同じ一覧に対するfilterとして提供する
   - 要対応は`open`、回答済みは`resolved`、履歴は`recorded`を対象にする
   - `superseded`と`cancelled`は「すべて」で確認する
 - Event rowはkind、state、summary、Session title、Character icon、時刻を表示する
@@ -189,14 +189,20 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - Character iconはユーザーがSessionを識別するための補助情報とし、Character nameは常設表示しない
 - Session filterはHomeのSession一覧と同じ探索能力を使う
   - Session titleを検索できる
-  - 一覧を逐次読み込みできる
+  - 一覧末尾への接近時に次pageを自動で読み込む
   - 選択後はevent queryへ`sessionId`を渡し、読込済みeventだけをrendererで絞らない
   - 選択中のSession titleをtoolbarへ表示し、解除して全Sessionへ戻せる
 - Event detailは選択時に表示し、本文、関連情報、回答操作を段階表示する
+- Window内の常設操作はSession filterとevent filterだけにし、画面内title、説明文、Home遷移、取得済み件数を置かない
+- Event一覧とdetailはWindow内で独立してscrollでき、一覧のavatarと本文は重ならない固定gridで配置する
+- Event一覧の次pageも一覧末尾への接近時に自動で読み込み、追加読込buttonを置かない
 - `user_decision_required`は提示optionに加えて「別の回答」を選べる
   - 提示optionではstable option IDを送る
   - 別の回答では空でない自由回答を送る
   - option IDと自由回答を同時に送らない
+  - 回答済みでもAgentが未使用なら現在の回答を選択状態で表示し、変更を許可する
+  - Agentが使用済みなら`使用済み`を表示し、回答操作を読み取り専用にする
+- storage invalidationやpagination後も選択中Eventを維持し、回答mutation中は操作をlockする
 - Session groupingとCoordination Eventを持つSessionだけの列挙はfirst sliceへ含めない
 - loadingは対象領域のskeletonまたはspinner、取得失敗は短い状態と再試行操作で示し、常設説明文を置かない
 - Event pageとorigin Session projectionは同じrequest generationで確定し、古いresponseや片方だけの成功を新しい一覧へ混ぜない

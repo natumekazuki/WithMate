@@ -426,7 +426,7 @@ describe("withmate-session CLI", () => {
   test("COORD-CONSUME-01: agentは反映済みのユーザー回答をCLIからconsumeできる", async () => {
     const stdout = capture();
     const requests: unknown[] = [];
-    const input = { eventId: "decision-1", idempotencyKey: "consume-decision-1" };
+    const input = { eventId: "decision-1", expectedResolutionSequence: 3, idempotencyKey: "consume-decision-1" };
     const exitCode = await runWithMateSessionCli([
       "coordination", "event", "consume", "--json", JSON.stringify(input),
     ], {

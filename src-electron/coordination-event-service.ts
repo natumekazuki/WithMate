@@ -117,6 +117,7 @@ export class CoordinationEventService {
     const outcome = this.deps.storage.consume({
       principal,
       eventId: input.eventId,
+      expectedResolutionSequence: input.expectedResolutionSequence,
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprint("coordination.event.consume", principal, withoutKey(input)),
       createdAt: this.now(),

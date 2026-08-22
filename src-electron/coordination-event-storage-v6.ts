@@ -256,6 +256,7 @@ export class CoordinationEventStorageV6 {
       } else if (event.kind === "user_decision_required") {
         const hasOption = input.optionId !== null;
         const hasNote = input.note !== null && input.note.trim().length > 0;
+        const hasBeenConsumed = event.actions.some((action) => action.type === "consumed");
         if (input.principal.actorType !== "trusted_gui"
           || !canView(input.principal, event)
           || (input.note !== null && !hasNote)
@@ -263,10 +264,15 @@ export class CoordinationEventStorageV6 {
           || (hasOption && !event.options.some((option) => option.id === input.optionId))) {
           throw new CoordinationEventNotFoundError();
         }
+        if (event.state !== "open" && (event.state !== "resolved" || hasBeenConsumed)) {
+          throw new CoordinationEventStateConflictError();
+        }
       } else {
         throw new CoordinationEventStateConflictError();
       }
-      if (event.state !== "open") throw new CoordinationEventStateConflictError();
+      if (event.kind !== "user_decision_required" && event.state !== "open") {
+        throw new CoordinationEventStateConflictError();
+      }
     });
   }
 
@@ -275,19 +281,27 @@ export class CoordinationEventStorageV6 {
     const rows = this.db.prepare(`
       SELECT events.id
       FROM coordination_events_v6 AS events
-      INNER JOIN coordination_event_actions_v6 AS resolved_actions
-        ON resolved_actions.event_id = events.id
-        AND resolved_actions.action_type = 'resolved'
       WHERE events.actor_session_id = ?
         AND events.kind = 'user_decision_required'
         AND ${PROJECTED_STATE_SQL} = 'resolved'
+        AND EXISTS (
+          SELECT 1
+          FROM coordination_event_actions_v6 AS resolved_actions
+          WHERE resolved_actions.event_id = events.id
+            AND resolved_actions.action_type = 'resolved'
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM coordination_event_actions_v6 AS consumed_actions
           WHERE consumed_actions.event_id = events.id
             AND consumed_actions.action_type = 'consumed'
         )
-      ORDER BY resolved_actions.sequence ASC
+      ORDER BY (
+        SELECT MAX(resolved_actions.sequence)
+        FROM coordination_event_actions_v6 AS resolved_actions
+        WHERE resolved_actions.event_id = events.id
+          AND resolved_actions.action_type = 'resolved'
+      ) ASC
       LIMIT ?
     `).all(principal.sessionId, COORDINATION_EVENT_PENDING_ANSWER_LIMIT) as Array<{ id: string }>;
     return rows.map(({ id }) => toPendingAnswer(this.getRequired(id)));
@@ -296,6 +310,7 @@ export class CoordinationEventStorageV6 {
   consume(input: {
     principal: CoordinationMutationPrincipal;
     eventId: string;
+    expectedResolutionSequence: number;
     idempotencyKey: string;
     requestFingerprint: string;
     createdAt: string;
@@ -317,6 +332,12 @@ export class CoordinationEventStorageV6 {
       }
       if (event.state !== "resolved"
         || event.actions.some((action) => action.type === "consumed")) {
+        throw new CoordinationEventStateConflictError();
+      }
+      const latestResolution = [...event.actions]
+        .reverse()
+        .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
+      if (!latestResolution || latestResolution.sequence !== input.expectedResolutionSequence) {
         throw new CoordinationEventStateConflictError();
       }
       this.insertAction(input.eventId, "consumed", input.principal, null, null, null, input.createdAt);
@@ -621,6 +642,7 @@ function toPendingAnswer(event: CoordinationEvent): PendingCoordinationAnswer {
     if (!option) throw new CoordinationEventStateConflictError();
     return {
       eventId: event.eventId,
+      resolutionSequence: resolution.sequence,
       question: event.payload.summary,
       answer: { kind: "option", optionId: option.id, label: option.label },
       resolvedAt: resolution.createdAt,
@@ -630,6 +652,7 @@ function toPendingAnswer(event: CoordinationEvent): PendingCoordinationAnswer {
   if (!resolution.note) throw new CoordinationEventStateConflictError();
   return {
     eventId: event.eventId,
+    resolutionSequence: resolution.sequence,
     question: event.payload.summary,
     answer: { kind: "text", text: resolution.note },
     resolvedAt: resolution.createdAt,
