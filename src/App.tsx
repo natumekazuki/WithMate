@@ -138,7 +138,6 @@ import {
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
-  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
@@ -295,6 +294,7 @@ import {
   runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import {
+  applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyComposerReferenceInsertionCommand,
@@ -310,7 +310,6 @@ import {
   createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
-  createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
@@ -322,6 +321,11 @@ import {
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "./shortcut-registry.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -2578,7 +2582,7 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleComposerSubmitKey = createComposerSubmitKeyHandler({
+  const handleComposerSubmitShortcut = () => applyComposerSubmitCommand({
     isSubmitDisabled: () => (
       activeAuxiliarySession
         ? activeAuxiliarySession.runState === "running"
@@ -2602,9 +2606,8 @@ export default function AgentSessionWindowApp() {
     submit: () => void handleSend(),
   });
 
-  const handleComposerKeyDown = buildComposerDraftKeyDownHandler({
-    submit: handleComposerSubmitKey,
-  });
+  useShortcutScope("composer");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleComposerSubmitShortcut);
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
     getProvider: () => selectedSession?.provider,
@@ -4159,7 +4162,6 @@ export default function AgentSessionWindowApp() {
           });
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
-        onDraftKeyDown: handleComposerKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: buildOnDraftSelectHandler({
           setComposerCaret,

@@ -62,6 +62,12 @@ import {
   scrollRenderedTextMatchIntoView,
   type RenderedTextMatch,
 } from "./file-explorer/rendered-text-search.js";
+import {
+  appendShortcutLabel,
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "./shortcut-registry.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -2398,33 +2404,22 @@ export function SelectionTextActionSurface({
     }
   }, []);
 
-  const handleKeyDown = useCallback((event: KeyboardEvent) => {
-    const target = event.target;
-    if (
-      event.defaultPrevented ||
-      !(event.ctrlKey || event.metaKey)
-      || event.key.toLocaleLowerCase() !== "a"
-      || (target instanceof HTMLElement && target.matches("input, textarea, select, [contenteditable='true']"))
-    ) {
-      return;
-    }
-
+  const handleSelectAllShortcut = useCallback((): boolean => {
     const surface = surfaceRef.current;
     const selectableBody = surface?.querySelector<HTMLElement>("[data-selection-copy-body='true']") ?? null;
     const selection = typeof window === "undefined" ? null : window.getSelection();
     if (!surface || !selectableBody || !selection) {
-      return;
+      return false;
     }
 
     const resolvedText = selectAllText
       ?? (typeof selectableBody.innerText === "string" ? selectableBody.innerText : selectableBody.textContent ?? "");
-    event.preventDefault();
     surface.focus({ preventScroll: true });
     clearLogicalSelectAll();
     selection.removeAllRanges();
     if (!resolvedText.trim()) {
       setSelectionToolbar(null);
-      return;
+      return true;
     }
 
     logicalSelectAllTextRef.current = resolvedText;
@@ -2432,7 +2427,10 @@ export function SelectionTextActionSurface({
     range.selectNodeContents(selectableBody);
     selection.addRange(range);
     updateSelectionToolbar();
+    return true;
   }, [clearLogicalSelectAll, selectAllText, surfaceRef, updateSelectionToolbar]);
+
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewSelectAll, handleSelectAllShortcut);
 
   const handleCopy = useCallback<ClipboardEventHandler<HTMLDivElement>>((event) => {
     const logicalText = logicalSelectAllTextRef.current;
@@ -2447,14 +2445,6 @@ export function SelectionTextActionSurface({
     clearLogicalSelectAll();
     setSelectionToolbar(null);
   }, [clearLogicalSelectAll, selectAllText]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handleKeyDown]);
 
   useEffect(() => {
     if (typeof document === "undefined" || typeof window === "undefined") {
@@ -2543,6 +2533,28 @@ export function SessionMessageColumn({
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
+
+  useShortcutScope("message-list", isContentActive);
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageFind,
+    () => {
+      setFindOpen(true);
+      return true;
+    },
+    isContentActive,
+  );
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageCloseFind,
+    () => {
+      if (!findOpen) {
+        return false;
+      }
+      setFindOpen(false);
+      return true;
+    },
+    isContentActive,
+  );
+
   const getMessageKey = useCallback(
     (index: number) => messageKeys?.[index] ?? `${sessionId}-${index}`,
     [messageKeys, sessionId],
@@ -2771,23 +2783,6 @@ export function SessionMessageColumn({
       messageVirtualizer.scrollToIndex(firstFindScrollIndex, { align: "center" });
     }
   }, [findQuery, firstFindScrollIndex, messageVirtualizer, sessionId]);
-
-  useEffect(() => {
-    if (!isContentActive) {
-      return;
-    }
-    const handleFindShortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      } else if (event.key === "Escape" && findOpen) {
-        event.preventDefault();
-        setFindOpen(false);
-      }
-    };
-    window.addEventListener("keydown", handleFindShortcut);
-    return () => window.removeEventListener("keydown", handleFindShortcut);
-  }, [findOpen, isContentActive]);
 
   const navigateFindMatch = useCallback((direction: 1 | -1) => {
     if (messageFindMatches.length === 0) {
@@ -3464,7 +3459,7 @@ export type SessionComposerExpandedProps = {
   onRemoveAttachment: (targets: string[]) => void;
   onDraftChange: (value: string, selectionStart: number) => void;
   onDraftFocus: () => void;
-  onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   onDraftPaste?: ClipboardEventHandler<HTMLTextAreaElement>;
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;
@@ -3852,6 +3847,7 @@ export function SessionComposerExpanded({
         <div className={`composer-box${isRunning ? " running" : ""}${isComposerBlockedFeedbackActive ? " blocked-feedback-active" : ""}`}>
           <textarea
             ref={composerTextareaRef}
+            data-shortcut-scope="composer"
             value={draft}
             placeholder={placeholder}
             onChange={(event) => onDraftChange(event.target.value, event.target.selectionStart ?? event.target.value.length)}
@@ -3973,7 +3969,7 @@ export function SessionComposerExpanded({
             type="button"
             onClick={onSendOrCancel}
             disabled={isSendDisabled}
-            title={sendButtonTitle}
+            title={appendShortcutLabel(sendButtonTitle, SHORTCUT_COMMAND_IDS.composerSubmit)}
           >
             Send
           </button>
