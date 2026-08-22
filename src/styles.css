@@ -5513,6 +5513,16 @@ button:disabled {
   border-top: 0;
 }
 
+.workspace-changes-root-group.is-content-sized {
+  display: block;
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
+.workspace-changes-root-group.is-content-sized .workspace-changes-list {
+  overflow: visible;
+}
+
 .workspace-changes-list-inner {
   position: relative;
   min-width: 100%;
@@ -5714,8 +5724,8 @@ button:disabled {
 
 .file-history-commit-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto auto;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto auto;
   gap: 3px 8px;
   width: 100%;
   padding: 8px 9px;
@@ -5758,6 +5768,18 @@ button:disabled {
   color: var(--muted);
   font-size: 0.68rem;
   white-space: nowrap;
+}
+
+.file-history-commit-row-ref-badges {
+  grid-column: 1;
+  align-items: flex-start;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 2px;
+}
+
+.file-history-commit-row-ref-badges .file-history-ref-badge {
+  max-width: 100%;
 }
 
 .file-history-commit-secondary code {
@@ -5866,6 +5888,7 @@ button:disabled {
   display: grid;
   gap: 4px;
   padding: 10px 9px 8px;
+  color: var(--ink);
 }
 
 .file-history-detail-header h3 {
@@ -5901,7 +5924,13 @@ button:disabled {
 }
 
 .file-history-detail-header .file-history-ref-badges {
+  align-items: flex-start;
+  flex-direction: column;
   justify-content: flex-start;
+}
+
+.file-history-detail-header .file-history-ref-badge {
+  max-width: 100%;
 }
 
 .file-history-open-changes {
@@ -5927,7 +5956,7 @@ button:disabled {
 }
 
 .file-history-changed-files {
-  min-height: 220px;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }

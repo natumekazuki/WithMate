@@ -450,9 +450,13 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
   }
 });
 
-test("History detail はcommit metadata、changed file tree、file diffとOpen Changesを同じ状態で開く", async () => {
+test("History detail はcommit metadata、changed file tree、file diffとOpen All Changesを同じ状態で開く", async () => {
   const { dom, restore } = installDom();
   const targetCommit = commit("1", "history detail");
+  targetCommit.refs = [
+    { kind: "branch", name: "feature/history-layout" },
+    { kind: "tag", name: "v6.3.25" },
+  ];
   const detailEntry = changedEntry("src/example.ts");
   const diffRequests: FileRootGitHistoryDiffRequest[] = [];
   const api = {
@@ -492,6 +496,8 @@ test("History detail はcommit metadata、changed file tree、file diffとOpen C
     await flush();
     const commitButton = [...dom.window.document.querySelectorAll<HTMLButtonElement>(".file-history-commit-row")][0];
     assert.ok(commitButton);
+    assert.match(commitButton.textContent ?? "", /feature\/history-layout/);
+    assert.ok(commitButton.querySelector(".file-history-commit-row-ref-badges"));
     await act(async () => commitButton.click());
     await flush();
     dom.window.dispatchEvent(new dom.window.Event("resize"));
@@ -505,7 +511,7 @@ test("History detail はcommit metadata、changed file tree、file diffとOpen C
     await flush();
     assert.equal(diffRequests.at(-1)?.relativePath, "src/example.ts");
     const openChanges = [...dom.window.document.querySelectorAll<HTMLButtonElement>("button")]
-      .find((button) => button.textContent === "Open Changes");
+      .find((button) => button.textContent === "Open All Changes");
     assert.ok(openChanges);
     await act(async () => openChanges.click());
     await flush();

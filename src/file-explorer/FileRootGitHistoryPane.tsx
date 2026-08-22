@@ -536,7 +536,7 @@ export function FileRootGitHistoryPane({
                 disabled={loadingDetail || !!loadingDiffKey || !rootChange}
                 onClick={() => void openCommitDiff(null, false)}
               >
-                Open Changes
+                Open All Changes
               </button>
               {detailMessage ? <p className="file-history-message" role="alert">{detailMessage}</p> : null}
               {loadingDetail ? (
@@ -549,6 +549,7 @@ export function FileRootGitHistoryPane({
                   <FileRootChangesGroup
                     rootChange={rootChange}
                     groupCount={1}
+                    sizing="content"
                     collapsedDirectories={collapsedDirectories}
                     loadingKey={loadingDiffKey}
                     scopes={HISTORY_SCOPES}
@@ -598,18 +599,20 @@ export function FileRootGitHistoryPane({
                 onClick={() => void selectCommit(commit)}
               >
                 <span className="file-history-commit-subject" title={commit.subject}>{commit.subject || "(no subject)"}</span>
-                <span className="file-history-ref-badges">
-                  {commit.refs.map((ref) => (
-                    <span className={`file-history-ref-badge ${ref.kind}`} key={`${ref.kind}:${ref.name}`}>
-                      {ref.kind === "head" ? "HEAD" : ref.name}
-                    </span>
-                  ))}
-                </span>
                 <span className="file-history-commit-secondary">
                   <code>{commit.shortHash}</code>
                   <span>{commitAuthor(commit)}</span>
                   <time dateTime={commit.authoredAt}>{formatCommitDate(commit.authoredAt)}</time>
                 </span>
+                {commit.refs.length > 0 ? (
+                  <span className="file-history-ref-badges file-history-commit-row-ref-badges">
+                    {commit.refs.map((ref) => (
+                      <span className={`file-history-ref-badge ${ref.kind}`} key={`${ref.kind}:${ref.name}`}>
+                        {ref.kind === "head" ? "HEAD" : ref.name}
+                      </span>
+                    ))}
+                  </span>
+                ) : null}
               </button>
             ))
           )}

@@ -73,6 +73,7 @@ function estimatedRowHeight(row: FileRootChangeRow): number {
 type FileRootChangesGroupProps = {
   rootChange: GitRootChanges;
   groupCount: number;
+  sizing?: "bounded" | "content";
   collapsedDirectories: Record<string, boolean>;
   loadingKey: string;
   scopes?: readonly (readonly [FileRootGitChangeScope, string])[];
@@ -89,6 +90,7 @@ type FileRootChangesGroupProps = {
 export function FileRootChangesGroup({
   rootChange,
   groupCount,
+  sizing = "bounded",
   collapsedDirectories,
   loadingKey,
   onToggleDirectory,
@@ -163,11 +165,13 @@ export function FileRootChangesGroup({
     : groupCount === 1
       ? undefined
       : ROOT_GROUP_MAX_HEIGHT;
-  const groupStyle: CSSProperties = {
-    flexBasis: `${minimumHeight}px`,
-    minHeight: `${minimumHeight}px`,
-    ...(maximumHeight === undefined ? {} : { maxHeight: `${maximumHeight}px` }),
-  };
+  const groupStyle: CSSProperties | undefined = sizing === "content"
+    ? undefined
+    : {
+        flexBasis: `${minimumHeight}px`,
+        minHeight: `${minimumHeight}px`,
+        ...(maximumHeight === undefined ? {} : { maxHeight: `${maximumHeight}px` }),
+      };
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -201,7 +205,7 @@ export function FileRootChangesGroup({
 
   return (
     <section
-      className="workspace-changes-root-group"
+      className={`workspace-changes-root-group${sizing === "content" ? " is-content-sized" : ""}`}
       style={groupStyle}
       role="listitem"
       aria-labelledby={headingId}
