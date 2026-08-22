@@ -450,6 +450,75 @@ test("History repository切り替えは古いpageを捨てて新repositoryの先
   }
 });
 
+test("History repository一覧の再読込開始時に旧Diffを即座に失効させる", async () => {
+  const { dom, restore } = installDom();
+  const repositoryChanges: Array<string | null> = [];
+  let repositoryRequests = 0;
+  let resolveReload: ((result: unknown) => void) | null = null;
+  const api = {
+    listFileRootGitHistoryRepositories: async () => {
+      repositoryRequests += 1;
+      if (repositoryRequests === 1) {
+        return { status: "ok" as const, repositories: [repositoryA] };
+      }
+      return new Promise((resolve) => {
+        resolveReload = resolve;
+      });
+    },
+    listFileRootGitHistoryCommits: async () => ({
+      status: "ok" as const,
+      page: { entries: [commit("a", "first commit")], nextCursor: null, hasMore: false },
+    }),
+    getFileRootGitHistoryCommitDetail: async () => ({ status: "commit-not-found" as const, message: "none" }),
+    getFileRootGitHistoryDiff: async () => ({ status: "not-changed" as const, message: "none" }),
+  };
+  let root: Root | null = null;
+  try {
+    const { FileRootGitHistoryPane } = await import("../../src/file-explorer/FileRootGitHistoryPane.js");
+    await act(async () => {
+      root = createRoot(dom.window.document.getElementById("root") as HTMLElement);
+      root.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        refreshRevision: 0,
+        onOpenDiff: async () => null,
+        onRepositoryChange: (repositoryId) => repositoryChanges.push(repositoryId),
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(repositoryChanges.at(-1), repositoryA.repositoryId);
+
+    await act(async () => {
+      root?.render(React.createElement(FileRootGitHistoryPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-2",
+        refreshRevision: 0,
+        onOpenDiff: async () => null,
+        onRepositoryChange: (repositoryId) => repositoryChanges.push(repositoryId),
+      }));
+      await Promise.resolve();
+    });
+    await flush();
+    assert.equal(repositoryRequests, 2);
+    assert.equal(repositoryChanges.at(-1), null);
+
+    await act(async () => {
+      resolveReload?.({ status: "failed", message: "repository reload failed" });
+      await Promise.resolve();
+    });
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restore();
+  }
+});
+
 test("History detail はcommit metadata、changed file tree、file diffとOpen All Changesを同じ状態で開く", async () => {
   const { dom, restore } = installDom();
   const targetCommit = commit("1", "history detail");

@@ -232,6 +232,7 @@ export function FileRootGitHistoryPane({
       : null;
     selectedRepositoryRef.current = null;
     selectedRepositorySessionIdRef.current = sessionId;
+    onRepositoryChange?.(null);
     setSelectedRepository(null);
     setRepositories([]);
     setCommits([]);
@@ -273,7 +274,7 @@ export function FileRootGitHistoryPane({
         setLoadingRepositories(false);
       }
     }
-  }, [api, chooseRepository, enabled, sessionId]);
+  }, [api, chooseRepository, enabled, onRepositoryChange, sessionId]);
 
   useEffect(() => {
     void reloadRepositories();
