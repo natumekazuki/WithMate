@@ -2821,6 +2821,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         }
         return result;
       },
+      resolvePendingCoordinationAnswers: (session) => {
+        if (session.sessionKind !== "default" || !session.roleBinding) return [];
+        return requireCoordinationEventService().listPendingAnswersForSession(
+          session.id,
+          session.roleBinding,
+        );
+      },
       queueCompletedTurnAppraisal: async ({
         session,
         correlationId,

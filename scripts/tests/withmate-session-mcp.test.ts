@@ -118,7 +118,7 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("24 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("25 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
@@ -262,12 +262,24 @@ describe("WithMate Session MCP contract", () => {
         arguments: { eventId: "decision-1", optionId: "continue", idempotencyKey: "resolve-decision-1" },
       });
       assert.equal(invalid.isError, true);
+      const consumed = await client.callTool({
+        name: "coordination.event.consume",
+        arguments: { eventId: "decision-1", idempotencyKey: "consume-decision-1" },
+      });
+      assert.equal(consumed.isError, undefined);
     });
-    assert.deepEqual(requests, [{
-      schemaVersion: "withmate-session-request-v2",
-      operation: "coordination.event.resolve",
-      input: { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" },
-    }]);
+    assert.deepEqual(requests, [
+      {
+        schemaVersion: "withmate-session-request-v2",
+        operation: "coordination.event.resolve",
+        input: { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" },
+      },
+      {
+        schemaVersion: "withmate-session-request-v2",
+        operation: "coordination.event.consume",
+        input: { eventId: "decision-1", idempotencyKey: "consume-decision-1" },
+      },
+    ]);
   });
 
   it("EXT-TRANSCRIPT-13: inline transcript exportの8 MiB超過はpre-dispatchで拒否する", async () => {

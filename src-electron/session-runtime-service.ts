@@ -40,6 +40,7 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
+import type { PendingCoordinationAnswer } from "../src/coordination-event.js";
 import { SessionTurnValidationError } from "./session-turn-validation-error.js";
 import type { PublicTranscriptAttachmentV1, PublicTranscriptTurnOptionsV1 } from "../src/session-transcript.js";
 import {
@@ -151,6 +152,9 @@ export type SessionRuntimeServiceDeps = {
     session: Session,
     query: string,
   ) => Awaitable<CharacterContextResponse | null>;
+  resolvePendingCoordinationAnswers?: (
+    session: Session,
+  ) => Awaitable<PendingCoordinationAnswer[]>;
   queueCompletedTurnAppraisal?: (input: {
     session: Session;
     correlationId: string;
@@ -1279,6 +1283,11 @@ export class SessionRuntimeService {
     const characterContext = await Promise.resolve(
       this.deps.resolveCharacterContext?.(session, nextMessage) ?? null,
     );
+    const pendingCoordinationAnswers = includeSessionRoleContext && session.roleBinding
+      ? await Promise.resolve(
+        this.deps.resolvePendingCoordinationAnswers?.(session) ?? [],
+      )
+      : [];
     throwIfRunCanceled(runAbortController.signal);
     const currentTimestampLabel = this.deps.currentTimestampLabel ?? defaultCurrentTimestampLabel;
 
@@ -1302,6 +1311,7 @@ export class SessionRuntimeService {
         attachments: composerPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
+        pendingCoordinationAnswers,
         agentRuntimeBinding,
         sessionRoleBinding: includeSessionRoleContext ? session.roleBinding : null,
       });
@@ -1542,6 +1552,7 @@ export class SessionRuntimeService {
         attachments: attachmentSnapshot?.attachments ?? dispatchPreview.attachments,
         conversationTimingContext: conversationTimingContext ?? undefined,
         characterContext: characterContext ?? undefined,
+        pendingCoordinationAnswers,
         agentRuntimeBinding,
         signal: runAbortController.signal,
         onApprovalRequest: (approvalRequest) => {

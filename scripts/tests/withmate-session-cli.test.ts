@@ -423,6 +423,32 @@ describe("withmate-session CLI", () => {
     }]);
   });
 
+  test("COORD-CONSUME-01: agentは反映済みのユーザー回答をCLIからconsumeできる", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = { eventId: "decision-1", idempotencyKey: "consume-decision-1" };
+    const exitCode = await runWithMateSessionCli([
+      "coordination", "event", "consume", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("coordination.event.consume", { eventId: "decision-1" } as never),
+        };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.consume",
+      input,
+    }]);
+  });
+
   test("session CRUD commandはcaller-owned idempotency keyを必須にする", async () => {
     const requests: any[] = [];
     const stdout = capture();

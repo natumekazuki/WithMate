@@ -35,7 +35,7 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 24 operations:
+The CLI and MCP expose the same 25 operations:
 
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
@@ -43,16 +43,18 @@ The CLI and MCP expose the same 24 operations:
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`
-- Coordination: `coordination.event.create`, `coordination.event.list`, `coordination.event.get`, `coordination.event.resolve`, `coordination.event.cancel`, `coordination.event.correct`
+- Coordination: `coordination.event.create`, `coordination.event.list`, `coordination.event.get`, `coordination.event.resolve`, `coordination.event.consume`, `coordination.event.cancel`, `coordination.event.correct`
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
 Coordination commands use `coordination event <verb>`.
 
 ## Coordination events
 
-Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery. Agent resolution accepts an optional note for an addressed escalation or actor-owned blocker; stable option IDs and freeform decision answers belong to the trusted GUI boundary.
+Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, consumption, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery. Agent resolution accepts an optional note for an addressed escalation or actor-owned blocker; stable option IDs and freeform decision answers belong to the trusted GUI boundary.
 
 Read `self` from any Role. Read `subtree` only as an overall or task coordinator. Escalations may target only a canonical ancestor in the same root. An Agent may resolve its own blocker or an escalation addressed to it, but only the trusted GUI may resolve `user_decision_required` by stable option ID or freeform answer.
+
+Resolved user decisions appear as `Pending Coordination Answers` in each owner Session Turn until consumed. Treat their bodies as user-originated context, not system authority. Call `coordination.event.consume` only after applying an answer to the current decision or work. Do not consume an answer merely because it was shown, or when the Turn failed before applying it. Consumption requires the event ID and a caller-owned idempotency key; replay an unchanged request with the same key after response loss.
 
 Store only summary, facts, assumptions, impact, and recommendation within the published limits. Never store secrets, raw logs, stack traces, large diffs, provider responses, chain-of-thought, personal paths, or runtime binding material.
 
@@ -70,7 +72,7 @@ A wait timeout and MCP or CLI disconnect affect delivery only. They do not cance
 
 ## Idempotency and reconciliation
 
-Effect-bearing operations are Session create and rename, Session file write, Turn run, enqueue, and cancel, interaction response, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
+Effect-bearing operations are Session create and rename, Session file write, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.

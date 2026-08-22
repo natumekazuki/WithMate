@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  COORDINATION_EVENT_PENDING_ANSWER_LIMIT,
   initialCoordinationEventState,
   type CoordinationEvent,
   type CoordinationEventAction,
@@ -15,6 +16,7 @@ import {
   type CoordinationEventRoleSnapshot,
   type CoordinationEventState,
   type CoordinationEventSummary,
+  type PendingCoordinationAnswer,
 } from "../src/coordination-event.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
@@ -60,6 +62,7 @@ type IdempotencyRow = {
 export type CoordinationMutationOperation =
   | "coordination.event.create"
   | "coordination.event.resolve"
+  | "coordination.event.consume"
   | "coordination.event.cancel"
   | "coordination.event.correct";
 
@@ -264,6 +267,66 @@ export class CoordinationEventStorageV6 {
         throw new CoordinationEventStateConflictError();
       }
       if (event.state !== "open") throw new CoordinationEventStateConflictError();
+    });
+  }
+
+  listPendingAnswers(principal: CoordinationMutationPrincipal): PendingCoordinationAnswer[] {
+    this.assertCanonicalBinding(principal);
+    const rows = this.db.prepare(`
+      SELECT events.id
+      FROM coordination_events_v6 AS events
+      WHERE events.actor_session_id = ?
+        AND events.kind = 'user_decision_required'
+        AND ${PROJECTED_STATE_SQL} = 'resolved'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM coordination_event_actions_v6 AS consumed_actions
+          WHERE consumed_actions.event_id = events.id
+            AND consumed_actions.action_type = 'consumed'
+        )
+      ORDER BY events.sequence ASC
+      LIMIT ?
+    `).all(principal.sessionId, COORDINATION_EVENT_PENDING_ANSWER_LIMIT) as Array<{ id: string }>;
+    return rows.map(({ id }) => toPendingAnswer(this.getRequired(id)));
+  }
+
+  consume(input: {
+    principal: CoordinationMutationPrincipal;
+    eventId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    createdAt: string;
+  }): { event: CoordinationEvent; replayed: boolean } {
+    return this.transaction(() => {
+      const replay = this.resolveReplay(
+        "coordination.event.consume",
+        input.principal.sessionId,
+        input.idempotencyKey,
+        input.requestFingerprint,
+      );
+      if (replay) return { event: this.getRequired(replay.result_event_id), replayed: true };
+      this.assertCanonicalBinding(input.principal);
+      const event = this.getRequired(input.eventId);
+      if (input.principal.actorType !== "session"
+        || event.actorSessionId !== input.principal.sessionId
+        || event.kind !== "user_decision_required") {
+        throw new CoordinationEventNotFoundError();
+      }
+      if (event.state !== "resolved"
+        || event.actions.some((action) => action.type === "consumed")) {
+        throw new CoordinationEventStateConflictError();
+      }
+      this.insertAction(input.eventId, "consumed", input.principal, null, null, null, input.createdAt);
+      this.insertIdempotency(
+        "coordination.event.consume",
+        input.principal.sessionId,
+        input.idempotencyKey,
+        input.requestFingerprint,
+        input.eventId,
+        null,
+        input.createdAt,
+      );
+      return { event: this.getRequired(input.eventId), replayed: false };
     });
   }
 
@@ -539,10 +602,37 @@ const PROJECTED_STATE_SQL = `COALESCE(
    END
    FROM coordination_event_actions_v6 AS actions
    WHERE actions.event_id = events.id
+     AND actions.action_type IN ('resolved', 'cancelled', 'superseded')
    ORDER BY actions.sequence DESC
    LIMIT 1),
   CASE WHEN events.kind IN ('escalation', 'user_decision_required', 'blocker') THEN 'open' ELSE 'recorded' END
 )`;
+
+function toPendingAnswer(event: CoordinationEvent): PendingCoordinationAnswer {
+  const resolution = [...event.actions]
+    .reverse()
+    .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
+  if (!resolution) throw new CoordinationEventStateConflictError();
+  if (resolution.optionId) {
+    const option = event.options.find((candidate) => candidate.id === resolution.optionId);
+    if (!option) throw new CoordinationEventStateConflictError();
+    return {
+      eventId: event.eventId,
+      question: event.payload.summary,
+      answer: { kind: "option", optionId: option.id, label: option.label },
+      resolvedAt: resolution.createdAt,
+      consumption: "pending",
+    };
+  }
+  if (!resolution.note) throw new CoordinationEventStateConflictError();
+  return {
+    eventId: event.eventId,
+    question: event.payload.summary,
+    answer: { kind: "text", text: resolution.note },
+    resolvedAt: resolution.createdAt,
+    consumption: "pending",
+  };
+}
 
 function mapSummaryRow(row: Pick<EventRow,
   "sequence" | "id" | "actor_session_id" | "session_role" | "kind" | "summary" | "created_at" | "projected_state">): CoordinationEventSummary {

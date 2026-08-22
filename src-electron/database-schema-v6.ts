@@ -539,6 +539,7 @@ function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
   const eventSql = tableSql(db, "coordination_events_v6");
   const actionSql = tableSql(db, "coordination_event_actions_v6");
   const idempotencySql = tableSql(db, "coordination_event_idempotency_v6");
+  const normalizedActionSql = actionSql.replace(/\s+/g, " ");
   return eventSql.includes("session_role IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')")
     && eventSql.includes("role_contract_revision = 1")
     && eventSql.includes("delegation_depth BETWEEN 0 AND 2")
@@ -552,12 +553,13 @@ function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
     && eventSql.includes("(kind = 'correction') = (corrected_event_id IS NOT NULL)")
     && eventSql.includes("json_array_length(options_json) BETWEEN 2 AND 8")
     && eventSql.includes("kind <> 'user_decision_required' AND options_json = '[]'")
-    && actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded')")
+    && actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded', 'consumed')")
     && actionSql.includes("actor_type IN ('session', 'trusted_gui')")
     && actionSql.includes("note IS NULL OR length(note) <= 1000")
     && actionSql.includes("actor_type = 'session' OR actor_session_id IS NULL")
     && actionSql.includes("(action_type = 'superseded') = (related_event_id IS NOT NULL)")
-    && idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')")
+    && normalizedActionSql.includes("action_type <> 'consumed' OR ( actor_type = 'session' AND actor_session_id IS NOT NULL AND option_id IS NULL AND note IS NULL AND related_event_id IS NULL )")
+    && idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel', 'coordination.event.correct')")
     && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)")
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_event_actions_v6", "event_id", "coordination_events_v6", "id", "CASCADE")
@@ -1563,7 +1565,7 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     event_id TEXT NOT NULL,
-    action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded')),
+    action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded', 'consumed')),
     actor_type TEXT NOT NULL CHECK (actor_type IN ('session', 'trusted_gui')),
     actor_session_id TEXT,
     option_id TEXT,
@@ -1574,14 +1576,24 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
     FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL,
     FOREIGN KEY (related_event_id) REFERENCES coordination_events_v6(id) ON DELETE CASCADE,
     CHECK (actor_type = 'session' OR actor_session_id IS NULL),
-    CHECK ((action_type = 'superseded') = (related_event_id IS NOT NULL))
+    CHECK ((action_type = 'superseded') = (related_event_id IS NOT NULL)),
+    CHECK (
+      action_type <> 'consumed'
+      OR (
+        actor_type = 'session'
+        AND actor_session_id IS NOT NULL
+        AND option_id IS NULL
+        AND note IS NULL
+        AND related_event_id IS NULL
+      )
+    )
   );
 
   CREATE INDEX IF NOT EXISTS idx_v6_coordination_event_actions_event_sequence
     ON coordination_event_actions_v6(event_id, sequence ASC);
 
   CREATE TABLE IF NOT EXISTS coordination_event_idempotency_v6 (
-    operation TEXT NOT NULL CHECK (operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')),
+    operation TEXT NOT NULL CHECK (operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel', 'coordination.event.correct')),
     principal_session_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
@@ -2601,6 +2613,7 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   const sessionRoleBindingsExisted = tableExists(db, "session_role_bindings_v6");
+  upgradeLegacyCoordinationEventConsumptionSchema(db);
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");
   }
@@ -2765,6 +2778,47 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     throw new Error("Session Role binding data is invalid.");
   }
 
+}
+
+function upgradeLegacyCoordinationEventConsumptionSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "coordination_event_actions_v6")
+    || !tableExists(db, "coordination_event_idempotency_v6")) {
+    return;
+  }
+  const actionSql = tableSql(db, "coordination_event_actions_v6");
+  const idempotencySql = tableSql(db, "coordination_event_idempotency_v6");
+  if (actionSql.includes("'consumed'") && idempotencySql.includes("'coordination.event.consume'")) {
+    return;
+  }
+  const isSupportedLegacySchema = actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded')")
+    && actionSql.includes("(action_type = 'superseded') = (related_event_id IS NOT NULL)")
+    && idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')")
+    && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)");
+  if (!isSupportedLegacySchema) return;
+
+  db.exec(`
+    DROP INDEX IF EXISTS idx_v6_coordination_event_actions_event_sequence;
+    DROP INDEX IF EXISTS idx_v6_coordination_event_idempotency_event;
+    ALTER TABLE coordination_event_actions_v6 RENAME TO coordination_event_actions_v6_legacy;
+    ALTER TABLE coordination_event_idempotency_v6 RENAME TO coordination_event_idempotency_v6_legacy;
+    ${CREATE_V6_COORDINATION_EVENT_TABLES_SQL}
+    INSERT INTO coordination_event_actions_v6 (
+      sequence, id, event_id, action_type, actor_type, actor_session_id,
+      option_id, note, related_event_id, created_at
+    )
+    SELECT sequence, id, event_id, action_type, actor_type, actor_session_id,
+      option_id, note, related_event_id, created_at
+    FROM coordination_event_actions_v6_legacy;
+    INSERT INTO coordination_event_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint,
+      result_event_id, target_event_id, created_at
+    )
+    SELECT operation, principal_session_id, idempotency_key, request_fingerprint,
+      result_event_id, target_event_id, created_at
+    FROM coordination_event_idempotency_v6_legacy;
+    DROP TABLE coordination_event_idempotency_v6_legacy;
+    DROP TABLE coordination_event_actions_v6_legacy;
+  `);
 }
 
 export function ensureV6Schema(db: DatabaseSync): void {

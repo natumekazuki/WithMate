@@ -14,6 +14,7 @@ import {
 import {
   CoordinationEventIdempotencyConflictError,
   CoordinationEventNotFoundError,
+  CoordinationEventStateConflictError,
   CoordinationEventStorageV6,
   type CoordinationMutationPrincipal,
 } from "../../src-electron/coordination-event-storage-v6.js";
@@ -264,6 +265,38 @@ describe("CoordinationEventStorageV6", () => {
       assert.equal(resolved.state, "resolved");
       assert.equal(resolved.actions[0]?.optionId, "change");
       assert.deepEqual(resolved.payload, event.payload);
+      assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), [{
+        eventId: event.eventId,
+        question: "作業を開始した",
+        answer: { kind: "option", optionId: "change", label: "変更" },
+        resolvedAt: NOW,
+        consumption: "pending",
+      }]);
+      assert.throws(
+        () => fixture.storage.consume({
+          principal: principal("task-a"), eventId: event.eventId,
+          idempotencyKey: "consume-wrong", requestFingerprint: "consume-wrong", createdAt: NOW,
+        }),
+        (error) => error instanceof CoordinationEventNotFoundError,
+      );
+      const consumed = fixture.storage.consume({
+        principal: principal("executor-a"), eventId: event.eventId,
+        idempotencyKey: "consume-decision", requestFingerprint: "consume-decision", createdAt: NOW,
+      });
+      assert.equal(consumed.event.state, "resolved");
+      assert.equal(consumed.event.actions.at(-1)?.type, "consumed");
+      assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), []);
+      assert.equal(fixture.storage.consume({
+        principal: principal("executor-a"), eventId: event.eventId,
+        idempotencyKey: "consume-decision", requestFingerprint: "consume-decision", createdAt: NOW,
+      }).replayed, true);
+      assert.throws(
+        () => fixture.storage.consume({
+          principal: principal("executor-a"), eventId: event.eventId,
+          idempotencyKey: "consume-twice", requestFingerprint: "consume-twice", createdAt: NOW,
+        }),
+        (error) => error instanceof CoordinationEventStateConflictError,
+      );
 
       const customEvent = create(fixture.storage, {
         kind: "user_decision_required",
@@ -278,6 +311,13 @@ describe("CoordinationEventStorageV6", () => {
       }).event;
       assert.equal(customResolved.actions[0]?.optionId, null);
       assert.equal(customResolved.actions[0]?.note, "段階的に変更する");
+      assert.deepEqual(fixture.storage.listPendingAnswers(principal("executor-a")), [{
+        eventId: customEvent.eventId,
+        question: "作業を開始した",
+        answer: { kind: "text", text: "段階的に変更する" },
+        resolvedAt: NOW,
+        consumption: "pending",
+      }]);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

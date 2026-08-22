@@ -27,6 +27,7 @@ export const COORDINATION_EVENT_OPEN_KINDS = [
 export const COORDINATION_EVENT_DEFAULT_LIST_LIMIT = 50;
 export const COORDINATION_EVENT_MAX_LIST_LIMIT = 100;
 export const COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16 * 1024;
+export const COORDINATION_EVENT_PENDING_ANSWER_LIMIT = 20;
 
 export type CoordinationEventKind = (typeof COORDINATION_EVENT_KINDS)[number];
 export type CoordinationEventState = (typeof COORDINATION_EVENT_STATES)[number];
@@ -50,7 +51,7 @@ export type CoordinationEventRoleSnapshot = SessionRoleBinding;
 
 export type CoordinationEventAction = {
   sequence: number;
-  type: "resolved" | "cancelled" | "superseded";
+  type: "resolved" | "cancelled" | "superseded" | "consumed";
   actorType: "session" | "trusted_gui";
   actorSessionId: string | null;
   optionId: string | null;
@@ -118,6 +119,11 @@ export type CoordinationEventResolveInput = {
   idempotencyKey: string;
 };
 
+export type CoordinationEventConsumeInput = {
+  eventId: string;
+  idempotencyKey: string;
+};
+
 export type CoordinationEventDecisionResolveInput =
   | {
       eventId: string;
@@ -153,6 +159,16 @@ export type CoordinationEventListResult = {
 export type CoordinationEventCorrectionResult = {
   correction: CoordinationEvent;
   superseded: CoordinationEvent;
+};
+
+export type PendingCoordinationAnswer = {
+  eventId: string;
+  question: string;
+  answer:
+    | { kind: "option"; optionId: string; label: string }
+    | { kind: "text"; text: string };
+  resolvedAt: string;
+  consumption: "pending";
 };
 
 export class CoordinationEventValidationError extends Error {

@@ -85,6 +85,7 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["coordination event list", "coordination.event.list"],
   ["coordination event get", "coordination.event.get"],
   ["coordination event resolve", "coordination.event.resolve"],
+  ["coordination event consume", "coordination.event.consume"],
   ["coordination event cancel", "coordination.event.cancel"],
   ["coordination event correct", "coordination.event.correct"],
   ["transcript export", "transcript.export"],
@@ -207,6 +208,7 @@ function isMutationCommand(command: string, input?: unknown): boolean {
     || command === "turn run" || command === "turn enqueue" || command === "turn cancel"
     || command === "interaction respond"
     || command === "coordination event create" || command === "coordination event resolve"
+    || command === "coordination event consume"
     || command === "coordination event cancel" || command === "coordination event correct"
     || (command === "transcript export"
       && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));

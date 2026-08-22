@@ -19,6 +19,7 @@ import {
   validateCoordinationEventPayload,
   type CoordinationEvent,
   type CoordinationEventCancelInput,
+  type CoordinationEventConsumeInput,
   type CoordinationEventCorrectInput,
   type CoordinationEventCorrectionResult,
   type CoordinationEventCreateInput,
@@ -79,6 +80,7 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "coordination.event.list",
   "coordination.event.get",
   "coordination.event.resolve",
+  "coordination.event.consume",
   "coordination.event.cancel",
   "coordination.event.correct",
   "transcript.export",
@@ -381,6 +383,7 @@ export type SessionRuntimeResultByOperation = {
   "coordination.event.list": CoordinationEventListResult;
   "coordination.event.get": CoordinationEvent;
   "coordination.event.resolve": CoordinationEvent;
+  "coordination.event.consume": CoordinationEvent;
   "coordination.event.cancel": CoordinationEvent;
   "coordination.event.correct": CoordinationEventCorrectionResult;
   "transcript.export": SessionRuntimeTranscriptExportResult;
@@ -540,6 +543,9 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "coordination.event.resolve") {
     return parseCoordinationEventResolveInput(value);
   }
+  if (operation === "coordination.event.consume") {
+    return parseCoordinationEventConsumeInput(value);
+  }
   if (operation === "coordination.event.cancel") {
     return parseCoordinationEventCancelInput(value);
   }
@@ -605,6 +611,15 @@ function parseCoordinationEventResolveInput(value: unknown): CoordinationEventRe
   return {
     eventId: requireNonEmptyString(record.eventId, "eventId"),
     ...(record.note === undefined ? {} : { note: validateCoordinationEventNote(record.note) }),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseCoordinationEventConsumeInput(value: unknown): CoordinationEventConsumeInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["eventId", "idempotencyKey"], "input");
+  return {
+    eventId: requireNonEmptyString(record.eventId, "eventId"),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }

@@ -4,6 +4,7 @@ import {
   CoordinationEventValidationError,
   type CoordinationEvent,
   type CoordinationEventCancelInput,
+  type CoordinationEventConsumeInput,
   type CoordinationEventCorrectInput,
   type CoordinationEventCorrectionResult,
   type CoordinationEventCreateInput,
@@ -13,6 +14,8 @@ import {
   type CoordinationEventListResult,
   type CoordinationEventTrustedListInput,
   type CoordinationEventResolveInput,
+  type CoordinationEventRoleSnapshot,
+  type PendingCoordinationAnswer,
 } from "../src/coordination-event.js";
 import { requireSessionRoleBinding, type SessionRoleBinding } from "../src/session-role-binding.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
@@ -100,6 +103,26 @@ export class CoordinationEventService {
 
   resolve(input: CoordinationEventResolveInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
     return this.resolveAs(input, sessionPrincipal(binding));
+  }
+
+  listPendingAnswersForSession(
+    sessionId: string,
+    roleBinding: CoordinationEventRoleSnapshot,
+  ): PendingCoordinationAnswer[] {
+    return this.deps.storage.listPendingAnswers({ sessionId, actorType: "session", roleBinding });
+  }
+
+  consume(input: CoordinationEventConsumeInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
+    const principal = sessionPrincipal(binding);
+    const outcome = this.deps.storage.consume({
+      principal,
+      eventId: input.eventId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: fingerprint("coordination.event.consume", principal, withoutKey(input)),
+      createdAt: this.now(),
+    });
+    this.publish(outcome.event);
+    return outcome.event;
   }
 
   cancel(input: CoordinationEventCancelInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {

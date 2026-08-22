@@ -247,6 +247,7 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"coordination.event.list",
 	"coordination.event.get",
 	"coordination.event.resolve",
+	"coordination.event.consume",
 	"coordination.event.cancel",
 	"coordination.event.correct",
 	"transcript.export"
@@ -295,6 +296,7 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "coordination.event.list") return parseCoordinationEventListInput(value);
 	if (operation === "coordination.event.get") return parseCoordinationEventGetInput(value);
 	if (operation === "coordination.event.resolve") return parseCoordinationEventResolveInput(value);
+	if (operation === "coordination.event.consume") return parseCoordinationEventConsumeInput(value);
 	if (operation === "coordination.event.cancel") return parseCoordinationEventCancelInput(value);
 	if (operation === "coordination.event.correct") return parseCoordinationEventCorrectInput(value);
 	if (operation === "transcript.export") return parseTranscriptExportInput(value);
@@ -358,6 +360,14 @@ function parseCoordinationEventResolveInput(value) {
 	return {
 		eventId: requireNonEmptyString(record.eventId, "eventId"),
 		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventConsumeInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, ["eventId", "idempotencyKey"], "input");
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
@@ -21320,6 +21330,10 @@ var coordinationResolveInputSchema = object({
 	note: string().trim().min(1).max(1e3).optional(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
+var coordinationConsumeInputSchema = object({
+	eventId: nonEmptyStringSchema,
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
 var coordinationCancelInputSchema = object({
 	eventId: nonEmptyStringSchema,
 	note: string().trim().min(1).max(1e3).optional(),
@@ -21670,7 +21684,8 @@ var coordinationActionSchema = object({
 	type: _enum([
 		"resolved",
 		"cancelled",
-		"superseded"
+		"superseded",
+		"consumed"
 	]),
 	actorType: _enum(["session", "trusted_gui"]),
 	actorSessionId: string().nullable(),
@@ -21762,6 +21777,7 @@ var resultSchemas = {
 	}).strict(),
 	"coordination.event.get": coordinationEventSchema,
 	"coordination.event.resolve": coordinationEventSchema,
+	"coordination.event.consume": coordinationEventSchema,
 	"coordination.event.cancel": coordinationEventSchema,
 	"coordination.event.correct": object({
 		correction: coordinationEventSchema,
@@ -21948,6 +21964,13 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: false
 	},
 	{
+		name: "coordination.event.consume",
+		title: "Consume coordination answer",
+		description: "Mark a resolved user decision as applied by its owner Session.",
+		readOnly: false,
+		destructive: false
+	},
+	{
 		name: "coordination.event.cancel",
 		title: "Cancel coordination event",
 		description: "Cancel an open coordination event created by the bound Session.",
@@ -21978,7 +22001,7 @@ function annotations(definition) {
 	};
 }
 function isMutation(operation, input) {
-	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
+	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
@@ -22182,6 +22205,12 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: coordinationResolveInputSchema,
 		outputSchema: createOutputSchema("coordination.event.resolve")
 	}, async (input) => executeOperation("coordination.event.resolve", input, deps));
+	server.registerTool("coordination.event.consume", {
+		...definitions.get("coordination.event.consume"),
+		annotations: annotations(definitions.get("coordination.event.consume")),
+		inputSchema: coordinationConsumeInputSchema,
+		outputSchema: createOutputSchema("coordination.event.consume")
+	}, async (input) => executeOperation("coordination.event.consume", input, deps));
 	server.registerTool("coordination.event.cancel", {
 		...definitions.get("coordination.event.cancel"),
 		annotations: annotations(definitions.get("coordination.event.cancel")),
@@ -22247,6 +22276,7 @@ var commandMap = /* @__PURE__ */ new Map([
 	["coordination event list", "coordination.event.list"],
 	["coordination event get", "coordination.event.get"],
 	["coordination event resolve", "coordination.event.resolve"],
+	["coordination event consume", "coordination.event.consume"],
 	["coordination event cancel", "coordination.event.cancel"],
 	["coordination event correct", "coordination.event.correct"],
 	["transcript export", "transcript.export"],
@@ -22357,7 +22387,7 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command, input) {
-	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
+	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";

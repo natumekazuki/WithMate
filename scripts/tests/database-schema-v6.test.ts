@@ -348,6 +348,85 @@ describe("database-schema-v6", () => {
     }
   });
 
+  it("COORD-CONSUME-MIGRATE-01: 既存Coordination actionとidempotencyを保持してconsume対応へ更新する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6;");
+      const legacySql = CREATE_V6_COORDINATION_EVENT_TABLES_SQL
+        .replace("'resolved', 'cancelled', 'superseded', 'consumed'", "'resolved', 'cancelled', 'superseded'")
+        .replace(`,
+    CHECK (
+      action_type <> 'consumed'
+      OR (
+        actor_type = 'session'
+        AND actor_session_id IS NOT NULL
+        AND option_id IS NULL
+        AND note IS NULL
+        AND related_event_id IS NULL
+      )
+    )`, "")
+        .replace("'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel'", "'coordination.event.resolve', 'coordination.event.cancel'");
+      db.exec(legacySql);
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id,
+          approval_mode, created_at, updated_at, last_active_at
+        ) VALUES ('consume-owner', 'Owner', 'active', 'codex', 1, 'gpt-5',
+          'on-request', ?, ?, ?)
+      `).run("2026-08-22T00:00:00.000Z", "2026-08-22T00:00:00.000Z", "2026-08-22T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO coordination_events_v6 (
+          id, actor_session_id, session_role, role_contract_revision,
+          root_session_id, parent_session_id, delegation_depth, kind,
+          summary, payload_json, options_json, created_at
+        ) VALUES (?, ?, 'standalone', 1, ?, NULL, 0, 'user_decision_required', ?, ?, ?, ?)
+      `).run(
+        "event-before-consume",
+        "consume-owner",
+        "consume-owner",
+        "Which?",
+        JSON.stringify({ summary: "Which?" }),
+        JSON.stringify([{ id: "yes", label: "Yes" }, { id: "no", label: "No" }]),
+        "2026-08-22T00:01:00.000Z",
+      );
+      db.prepare(`
+        INSERT INTO coordination_event_actions_v6 (
+          id, event_id, action_type, actor_type, actor_session_id,
+          option_id, note, related_event_id, created_at
+        ) VALUES (?, ?, 'resolved', 'trusted_gui', NULL, 'yes', NULL, NULL, ?)
+      `).run("resolve-before-consume", "event-before-consume", "2026-08-22T00:02:00.000Z");
+      db.prepare(`
+        INSERT INTO coordination_event_idempotency_v6 (
+          operation, principal_session_id, idempotency_key, request_fingerprint,
+          result_event_id, target_event_id, created_at
+        ) VALUES ('coordination.event.resolve', ?, ?, ?, ?, ?, ?)
+      `).run(
+        "consume-owner",
+        "resolve-before-consume-key",
+        "fingerprint",
+        "event-before-consume",
+        "event-before-consume",
+        "2026-08-22T00:02:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(tableSql(db, "coordination_event_actions_v6").includes("'consumed'"), true);
+      assert.equal(tableSql(db, "coordination_event_idempotency_v6").includes("'coordination.event.consume'"), true);
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_actions_v6 WHERE id = ?").get("resolve-before-consume") as { count: number }).count,
+        1,
+      );
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_idempotency_v6 WHERE idempotency_key = ?").get("resolve-before-consume-key") as { count: number }).count,
+        1,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it("COORD-MIGRATE-01: malformed Coordination tableは途中適用せずmigrationを拒否する", () => {
     const db = createV6Schema();
     try {
@@ -376,8 +455,22 @@ describe("database-schema-v6", () => {
       },
       {
         tableName: "coordination_event_actions_v6",
-        fragment: "action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded'))",
+        fragment: "action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded', 'consumed'))",
         replacement: "action_type TEXT NOT NULL",
+      },
+      {
+        tableName: "coordination_event_actions_v6",
+        fragment: `CHECK (
+      action_type <> 'consumed'
+      OR (
+        actor_type = 'session'
+        AND actor_session_id IS NOT NULL
+        AND option_id IS NULL
+        AND note IS NULL
+        AND related_event_id IS NULL
+      )
+    )`,
+        replacement: "CHECK (1)",
       },
     ] as const;
 

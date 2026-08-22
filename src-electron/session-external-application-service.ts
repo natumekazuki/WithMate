@@ -9,6 +9,7 @@ import {
   COORDINATION_EVENT_STATES,
   CoordinationEventValidationError,
   type CoordinationEventCancelInput,
+  type CoordinationEventConsumeInput,
   type CoordinationEventCorrectInput,
   type CoordinationEventCreateInput,
   type CoordinationEventGetInput,
@@ -113,7 +114,7 @@ export type SessionExternalApplicationServiceDeps = {
   transcriptService?: Pick<SessionTranscriptService, "export">;
   coordinationService?: Pick<
     CoordinationEventService,
-    "create" | "list" | "get" | "resolve" | "cancel" | "correct"
+    "create" | "list" | "get" | "resolve" | "consume" | "cancel" | "correct"
   >;
   crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
   fileService?: Pick<SessionFileService, "list" | "readText" | "writeText">;
@@ -262,6 +263,9 @@ export class SessionExternalApplicationService {
     }
     if (operation === "coordination.event.resolve") {
       return this.requireCoordinationService().resolve(input as CoordinationEventResolveInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.consume") {
+      return this.requireCoordinationService().consume(input as CoordinationEventConsumeInput, agentRuntimeBinding);
     }
     if (operation === "coordination.event.cancel") {
       return this.requireCoordinationService().cancel(input as CoordinationEventCancelInput, agentRuntimeBinding);
@@ -853,6 +857,7 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "interaction.respond"
         || operation === "coordination.event.create"
         || operation === "coordination.event.resolve"
+        || operation === "coordination.event.consume"
         || operation === "coordination.event.cancel"
         || operation === "coordination.event.correct"
         || operation === "session.files.write_text"
@@ -969,6 +974,7 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "interaction.respond"
     || operation === "coordination.event.create"
     || operation === "coordination.event.resolve"
+    || operation === "coordination.event.consume"
     || operation === "coordination.event.cancel"
     || operation === "coordination.event.correct"
     || operation === "session.files.write_text"

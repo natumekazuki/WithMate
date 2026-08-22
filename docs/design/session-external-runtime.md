@@ -527,18 +527,23 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `coordination.event.list` | `coordination event list` |
 | `coordination.event.get` | `coordination event get` |
 | `coordination.event.resolve` | `coordination event resolve` |
+| `coordination.event.consume` | `coordination event consume` |
 | `coordination.event.cancel` | `coordination event cancel` |
 | `coordination.event.correct` | `coordination event correct` |
 
 `/v1/status`、challenge、認証exchangeを除くSession runtime application operationは、provider実行へ発行されたvalidなruntime bindingを必須とする。bindingの欠落、空白、不正、失効、または`session.runtime.invoke` grant不足ではapplication handlerを呼ぶ前に拒否する。`session.self`はbindingからactor Session IDだけを返す。他のoperationは対象Session IDの明示入力を維持し、actorまたは`session.self`の結果を暗黙のtargetとして再利用しない。
 
-Coordination Eventは通常responseと分離したdedicated historyである。本文とactionをv6 databaseの専用tableへ保存し、stateを初期kindとaction履歴から投影する。actorとRole tupleはruntime bindingから解決し、authorityはcurrent `session_role_bindings_v6`を参照する。CLI、MCP、raw HTTPは六つのshared operationとstrict validatorを共有する。mutationはprincipal Session単位のidempotency keyを必須とし、commit後のpublication failureは`effect: applied`とevent IDを返す。
+Coordination Eventは通常responseと分離したdedicated historyである。本文とactionをv6 databaseの専用tableへ保存し、stateを初期kindとaction履歴から投影する。actorとRole tupleはruntime bindingから解決し、authorityはcurrent `session_role_bindings_v6`を参照する。CLI、MCP、raw HTTPは七つのshared operationとstrict validatorを共有する。mutationはprincipal Session単位のidempotency keyを必須とし、commit後のpublication failureは`effect: applied`とevent IDを返す。
 
 Coordination UIはSession右ペインへ置かず、単一のCoordination Windowへ集約する。Windowはtrusted GUI queryで全Sessionのeventを新しい順に取得し、初期状態ではSessionとstateを絞らない。要対応、回答済み、履歴は利用者が選択するfilterであり、`open`だけを初期表示へ固定しない。Agent向けの`coordination.event.list`は引き続きbinding actorを基準とした`self | subtree` authorityを維持し、全Sessionを読むtrusted GUI queryをCLI、MCP、raw HTTPへ公開しない。
 
 Eventのoriginはactor Sessionである。Windowはcanonical Session projectionからSession titleを主表示し、Character iconを識別補助として表示する。Character nameとiconをCoordination Eventへ複製保存しない。Session filterはHome相当のSession title検索と逐次読み込みで対象を選び、選択後のevent queryへ`sessionId`を渡す。rendererが読込済みevent pageだけをfilterしてはならない。Session groupingとCoordination eventを持つSessionだけを列挙するaggregateはfirst sliceへ含めない。
 
 detailは選択時に取得する。Agent向け`coordination.event.resolve`は、宛先となった`escalation`またはactor自身の`blocker`だけを対象とし、任意の`note`を受け付ける。Agent入力へ`optionId`を公開しない。`user_decision_required`はCoordination Windowのtrusted GUI IPCだけがresolveでき、提示optionのstable IDまたは自由回答のどちらか一方を必須で受け付ける。自由回答はactionの`note`へ保存し、`optionId`は`null`とする。Main Processは対象Eventのactor Sessionから現行Role bindingを取得し、canonical binding検証を通してからmutationを行う。全Sessionを操作する合成principalやcanonical bindingの迂回は作らない。
+
+resolvedになった`user_decision_required`は、owner Sessionがconsumeするまで各通常Turnへ未使用回答として投影する。対象は古い回答から最大20件とし、回答本文はConversation Timingの後かつUser Inputの前にinput contextとして置く。固定の利用規則だけをSystem Promptの`Coordination Events`へ置き、ユーザー回答をsystem authorityへ昇格させない。Agentは回答を実作業へ反映した後に限り、`coordination.event.consume`へEvent IDとcaller-owned idempotency keyを渡す。単に回答を読んだ場合、Turnが失敗した場合、または反映可否を判断できない場合はconsumeしない。
+
+`consume`はEventを作成したSessionのcurrent canonical bindingだけに許可する。対象Eventは`resolved`で、まだ`consumed` actionを持たない`user_decision_required`でなければならない。同じinputとkeyの再送はcanonical replayを返し、別keyによる二重consumeはstate conflictとして拒否する。`consumed`は投影対象から除外するためのactionであり、Eventのpublic stateを`resolved`から変更しない。
 
 storage commit後signalは再読込の契機である。rendererはevent filter、Session ID、request generationを照合し、Event pageとorigin Session projectionの両方が揃った結果だけを表示へ反映する。initial load、通知の追い越し、Session切替後の古いresponseは破棄する。external streaming endpointは持たない。
 

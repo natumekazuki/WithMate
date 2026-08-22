@@ -235,6 +235,10 @@ const coordinationResolveInputSchema = z.object({
   note: z.string().trim().min(1).max(1_000).optional(),
   idempotencyKey: nonEmptyStringSchema,
 }).strict();
+const coordinationConsumeInputSchema = z.object({
+  eventId: nonEmptyStringSchema,
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
 const coordinationCancelInputSchema = z.object({
   eventId: nonEmptyStringSchema,
   note: z.string().trim().min(1).max(1_000).optional(),
@@ -473,7 +477,7 @@ const coordinationSummarySchema = z.object({
 }).strict();
 const coordinationActionSchema = z.object({
   sequence: z.number().int().positive(),
-  type: z.enum(["resolved", "cancelled", "superseded"]),
+  type: z.enum(["resolved", "cancelled", "superseded", "consumed"]),
   actorType: z.enum(["session", "trusted_gui"]),
   actorSessionId: z.string().nullable(),
   optionId: z.string().nullable(),
@@ -540,6 +544,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "coordination.event.list": z.object({ items: z.array(coordinationSummarySchema), nextCursor: z.string().optional() }).strict(),
   "coordination.event.get": coordinationEventSchema,
   "coordination.event.resolve": coordinationEventSchema,
+  "coordination.event.consume": coordinationEventSchema,
   "coordination.event.cancel": coordinationEventSchema,
   "coordination.event.correct": z.object({ correction: coordinationEventSchema, superseded: coordinationEventSchema }).strict(),
   "transcript.export": z.discriminatedUnion("destination", [
@@ -595,6 +600,7 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "coordination.event.list", title: "List coordination events", description: "List visible coordination event summaries.", readOnly: true, destructive: false },
   { name: "coordination.event.get", title: "Get coordination event", description: "Read one visible coordination event by event or idempotency key.", readOnly: true, destructive: false },
   { name: "coordination.event.resolve", title: "Resolve coordination event", description: "Resolve an authorized escalation or blocker event.", readOnly: false, destructive: false },
+  { name: "coordination.event.consume", title: "Consume coordination answer", description: "Mark a resolved user decision as applied by its owner Session.", readOnly: false, destructive: false },
   { name: "coordination.event.cancel", title: "Cancel coordination event", description: "Cancel an open coordination event created by the bound Session.", readOnly: false, destructive: true },
   { name: "coordination.event.correct", title: "Correct coordination event", description: "Append a correction and supersede an event created by the bound Session.", readOnly: false, destructive: true },
   { name: "transcript.export", title: "Export Session transcript", description: "Export a Session transcript inline or into its SessionFolder.", readOnly: false, destructive: true },
@@ -616,6 +622,7 @@ function isMutation(operation: SessionRuntimeOperation, input?: unknown): boolea
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
     || operation === "interaction.respond"
     || operation === "coordination.event.create" || operation === "coordination.event.resolve"
+    || operation === "coordination.event.consume"
     || operation === "coordination.event.cancel" || operation === "coordination.event.correct"
     || (operation === "transcript.export"
       && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
@@ -830,6 +837,10 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     ...definitions.get("coordination.event.resolve")!, annotations: annotations(definitions.get("coordination.event.resolve")!),
     inputSchema: coordinationResolveInputSchema, outputSchema: createOutputSchema("coordination.event.resolve"),
   }, async (input) => executeOperation("coordination.event.resolve", input, deps));
+  server.registerTool("coordination.event.consume", {
+    ...definitions.get("coordination.event.consume")!, annotations: annotations(definitions.get("coordination.event.consume")!),
+    inputSchema: coordinationConsumeInputSchema, outputSchema: createOutputSchema("coordination.event.consume"),
+  }, async (input) => executeOperation("coordination.event.consume", input, deps));
   server.registerTool("coordination.event.cancel", {
     ...definitions.get("coordination.event.cancel")!, annotations: annotations(definitions.get("coordination.event.cancel")!),
     inputSchema: coordinationCancelInputSchema, outputSchema: createOutputSchema("coordination.event.cancel"),
