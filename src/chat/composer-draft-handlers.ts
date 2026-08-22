@@ -1,5 +1,3 @@
-import type { KeyboardEvent } from "react";
-
 export type ComposerDraftSelectionStartProvider = () => number | null | undefined;
 export type ComposerDraftCaretUpdater = (selectionStart: number) => void;
 
@@ -16,10 +14,6 @@ type ComposerDraftCompositionEndHandlerArgs = ComposerDraftSelectHandlerArgs & {
   setIsComposerImeComposing: (isComposing: boolean) => void;
   getSelectionStart: ComposerDraftSelectionStartProvider;
   getFallbackSelectionStart: () => number;
-};
-
-type ComposerDraftKeyDownHandlerArgs = {
-  submit: (event: KeyboardEvent<HTMLTextAreaElement>) => void;
 };
 
 type ComposerDraftChangeCommandArgs = {
@@ -101,9 +95,3 @@ export const buildOnDraftCompositionHandlers = (args: ComposerDraftCompositionEn
   }),
   onDraftCompositionEnd: buildOnDraftCompositionEndHandler(args),
 });
-
-export const buildComposerDraftKeyDownHandler = (args: ComposerDraftKeyDownHandlerArgs) => (
-  event: KeyboardEvent<HTMLTextAreaElement>,
-) => {
-  args.submit(event);
-};

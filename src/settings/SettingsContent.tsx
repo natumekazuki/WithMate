@@ -34,6 +34,7 @@ import {
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
 } from "./settings-ui.js";
+import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -437,6 +438,8 @@ export function HomeSettingsContent({
               </label>
             </div>
           </section>
+
+          <KeyboardShortcutsHelpSection />
 
           </section>
         </div>

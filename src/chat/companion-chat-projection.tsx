@@ -181,7 +181,7 @@ export type CompanionChatProjectionInput = {
   onRemoveAdditionalDirectory: (path: string) => void;
   onDraftChange: SessionComposerExpandedProps["onDraftChange"];
   onDraftFocus: () => void;
-  onDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement>;
+  onDraftKeyDown?: KeyboardEventHandler<HTMLTextAreaElement>;
   onDraftPaste: SessionComposerExpandedProps["onDraftPaste"];
   onDraftSelect: (selectionStart: number) => void;
   onDraftCompositionStart: () => void;

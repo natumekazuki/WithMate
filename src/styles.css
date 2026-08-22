@@ -2423,6 +2423,64 @@ button:disabled {
   max-height: min(760px, calc(100vh - 52px));
 }
 
+.settings-keyboard-shortcuts-dialog {
+  width: min(620px, 100%);
+  max-height: min(720px, calc(100vh - 52px));
+}
+
+.settings-keyboard-shortcuts-content,
+.settings-keyboard-shortcuts-head,
+.settings-keyboard-shortcuts-groups,
+.settings-keyboard-shortcuts-group {
+  display: grid;
+  gap: 12px;
+}
+
+.settings-keyboard-shortcuts-head h2,
+.settings-keyboard-shortcuts-group h3 {
+  margin: 0;
+}
+
+.settings-keyboard-shortcuts-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.settings-keyboard-shortcuts-group h3 {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-keyboard-shortcuts-group dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.settings-keyboard-shortcut-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid rgba(203, 213, 225, 0.12);
+}
+
+.settings-keyboard-shortcut-row dt {
+  color: var(--ink);
+}
+
+.settings-keyboard-shortcut-row dd {
+  margin: 0;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  white-space: nowrap;
+}
+
 .settings-window-shell,
 .memory-window-shell {
   width: 100%;

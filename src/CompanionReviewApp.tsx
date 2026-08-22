@@ -236,7 +236,6 @@ import { buildRuntimeSelectionOptions } from "./runtime-selection-options.js";
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
-  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
@@ -265,6 +264,7 @@ import {
   runGuardedAuxiliarySessionReturnToMainOperationWithApi,
 } from "./auxiliary-session-return-operation.js";
 import {
+  applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyComposerReferenceInsertionCommand,
@@ -279,7 +279,6 @@ import {
   createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
-  createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
@@ -292,6 +291,11 @@ import {
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "./shortcut-registry.js";
 
 function pickInitialFile(files: ChangedFile[]): ChangedFile | null {
   return files[0] ?? null;
@@ -2878,17 +2882,18 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     }
   }
 
-  const handleCompanionSubmitKey = createComposerSubmitKeyHandler({
-    submit: () => void (
-      activeAuxiliarySession
-        ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
-        : sendCompanionTurn()
-    ),
+  const handleCompanionSubmitShortcut = () => applyComposerSubmitCommand({
+    submit: () => {
+      void (
+        activeAuxiliarySession
+          ? sendAuxiliaryMessage(activeAuxiliarySession.composerDraft)
+          : sendCompanionTurn()
+      );
+    },
   });
 
-  const handleCompanionDraftKeyDown: KeyboardEventHandler<HTMLTextAreaElement> = buildComposerDraftKeyDownHandler({
-    submit: handleCompanionSubmitKey,
-  });
+  useShortcutScope("composer");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleCompanionSubmitShortcut);
 
   async function openCompanionWorktree(): Promise<void> {
     const withmateApi = getWithMateApi();
@@ -3197,7 +3202,6 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           });
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
-        onDraftKeyDown: handleCompanionDraftKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: buildOnDraftSelectHandler({
           setComposerCaret,

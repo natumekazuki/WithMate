@@ -57,6 +57,12 @@ import {
 import { PreviewResourceQueue } from "./preview-resource-queue.js";
 import { clampFindMatchIndex } from "../find-text-matches.js";
 import {
+  getShortcutTooltip,
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutScope,
+} from "../shortcut-registry.js";
+import {
   parseUnifiedDiff,
   type UnifiedDiffContentRow,
   type UnifiedDiffDisplayRow,
@@ -950,29 +956,27 @@ export function SessionFilePreview({
   const effectiveImageZoom = typeof imageZoom === "number" ? imageZoom : imageFitZoom;
   const imageZoomLabel = `${effectiveImageZoom}%`;
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        if (previewKind === "text" || previewKind === "markdown") {
-          setFindOpen(true);
-          setFeedback("");
-        } else {
-          setFeedback("Find is available for text, Markdown, and Git diff previews.");
-        }
-      } else if (event.key === "Escape") {
-        if (findOpen) {
-          event.preventDefault();
-          setFindOpen(false);
-        } else if (backNavigation) {
-          event.preventDefault();
-          backNavigation.onBack();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [backNavigation, findOpen, previewKind]);
+  useShortcutScope("file-preview");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
+    if (previewKind === "text" || previewKind === "markdown") {
+      setFindOpen(true);
+      setFeedback("");
+    } else {
+      setFeedback("Find is available for text, Markdown, and Git diff previews.");
+    }
+    return true;
+  });
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewClose, () => {
+    if (findOpen) {
+      setFindOpen(false);
+      return true;
+    }
+    if (backNavigation) {
+      backNavigation.onBack();
+      return true;
+    }
+    return false;
+  });
 
   const navigateMatch = useCallback((direction: 1 | -1) => {
     if (previewKind === "markdown" && markdownMode === "preview") {
@@ -1280,7 +1284,13 @@ export function SessionFilePreview({
             </button>
           )) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
-            <button type="button" onClick={() => setFindOpen(true)}>Find</button>
+            <button
+              type="button"
+              onClick={() => setFindOpen(true)}
+              title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind)}
+            >
+              Find
+            </button>
           ) : null}
           <button type="button" onClick={() => setReloadRevision((current) => current + 1)}>Reload</button>
           <button type="button" onClick={() => void openCurrentFile()}>Open</button>
@@ -1474,23 +1484,25 @@ export function SessionDiffPreview({
     setFeedback("");
   }, [previewIdentity]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!loading && (event.ctrlKey || event.metaKey) && event.key.toLocaleLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        if (findOpen) {
-          setFindOpen(false);
-        } else if (backNavigation) {
-          backNavigation.onBack();
-        }
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [backNavigation, findOpen, loading]);
+  useShortcutScope("file-preview");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
+    if (loading) {
+      return false;
+    }
+    setFindOpen(true);
+    return true;
+  });
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewClose, () => {
+    if (findOpen) {
+      setFindOpen(false);
+      return true;
+    }
+    if (backNavigation) {
+      backNavigation.onBack();
+      return true;
+    }
+    return false;
+  });
 
   const navigate = (direction: 1 | -1) => {
     if (matches.length > 0) {
@@ -1578,7 +1590,14 @@ export function SessionDiffPreview({
               Open Preview
             </button>
           ) : null}
-          <button type="button" disabled={loading} onClick={() => setFindOpen(true)}>Find</button>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => setFindOpen(true)}
+            title={getShortcutTooltip(SHORTCUT_COMMAND_IDS.filePreviewFind)}
+          >
+            Find
+          </button>
           {onReload ? (
             <button
               type="button"
