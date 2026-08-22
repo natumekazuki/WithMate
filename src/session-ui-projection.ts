@@ -9,7 +9,6 @@ import type {
 } from "./app-state.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
-
 export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group";
 
 export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group"];

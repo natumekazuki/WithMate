@@ -10,6 +10,7 @@ import {
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
 import {
   CHARACTER_EDITOR_WINDOW_DEFAULT_BOUNDS,
+  COORDINATION_WINDOW_DEFAULT_BOUNDS,
   COMPANION_CHAT_WINDOW_DEFAULT_BOUNDS,
   COMPANION_REVIEW_WINDOW_DEFAULT_BOUNDS,
   DIFF_WINDOW_DEFAULT_BOUNDS,
@@ -40,6 +41,7 @@ export type AuxWindowServiceDeps<TWindow extends BaseWindowLike> = {
     homeBounds?: boolean;
   }): TWindow;
   loadHomeEntry(window: TWindow, mode: HomeEntryMode): Promise<void>;
+  loadCoordinationEntry?(window: TWindow): Promise<void>;
   loadDiffEntry(window: TWindow, token: string): Promise<void>;
   loadFilePreviewEntry(window: TWindow, token: string): Promise<void>;
   navigateFilePreviewWindow?(
@@ -58,6 +60,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   private sessionMonitorWindow: TWindow | null = null;
   private settingsWindow: TWindow | null = null;
   private memoryV6ReviewWindow: TWindow | null = null;
+  private coordinationWindow: TWindow | null = null;
   private readonly diffWindows = new Map<string, TWindow>();
   private readonly filePreviewWindows = new Map<string, TWindow>();
   private readonly filePreviewResourceTokens = new Map<string, string>();
@@ -81,6 +84,10 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
 
   isSettingsWindow(window: TWindow): boolean {
     return this.settingsWindow === window && !window.isDestroyed();
+  }
+
+  isCoordinationWindow(window: TWindow): boolean {
+    return this.coordinationWindow === window && !window.isDestroyed();
   }
 
   listHomeWindows(): TWindow[] {
@@ -245,6 +252,28 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     return window;
   }
 
+  async openCoordinationWindow(): Promise<TWindow> {
+    const existing = this.reuseWindow(this.coordinationWindow);
+    if (existing) {
+      return existing;
+    }
+    if (!this.deps.loadCoordinationEntry) {
+      throw new Error("Coordination Window entry loader is unavailable.");
+    }
+
+    const window = this.deps.createWindow({
+      ...COORDINATION_WINDOW_DEFAULT_BOUNDS,
+      title: "WithMate Coordination",
+    });
+    this.coordinationWindow = window;
+    window.once("ready-to-show", () => window.show());
+    window.on("closed", () => {
+      this.coordinationWindow = null;
+    });
+    await this.deps.loadCoordinationEntry(window);
+    return window;
+  }
+
   async openCharacterEditorWindow(characterId?: string | null): Promise<TWindow> {
     const normalizedCharacterId = characterId?.trim() ?? "";
     const windowKey = normalizedCharacterId ? `character:${normalizedCharacterId}` : "character:new";
@@ -384,6 +413,11 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   }
 
   closeResetTargetWindows(): void {
+    if (this.coordinationWindow && !this.coordinationWindow.isDestroyed()) {
+      this.coordinationWindow.close();
+    }
+    this.coordinationWindow = null;
+
     if (this.memoryV6ReviewWindow && !this.memoryV6ReviewWindow.isDestroyed()) {
       this.memoryV6ReviewWindow.close();
     }

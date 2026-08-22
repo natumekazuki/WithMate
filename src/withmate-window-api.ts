@@ -22,10 +22,14 @@ import type {
   SessionBackgroundActivityState,
   SessionContextTelemetry,
   MessageArtifact,
-    RunSessionTurnRequest,
-    Session,
-    SessionSummary,
-    SetSessionPinnedRequest,
+  SessionCharacterUsage,
+  RunSessionTurnRequest,
+  Session,
+  SessionSummaryInvalidation,
+  SessionSummaryPageRequest,
+  HomeSessionSummaryPageResult,
+  SessionSummary,
+  SetSessionPinnedRequest,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
@@ -123,6 +127,15 @@ import type {
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
 } from "./file-explorer/file-explorer-contract.js";
+import type {
+  CoordinationEvent,
+  CoordinationEventCancelInput,
+  CoordinationEventTrustedResolveInput,
+  CoordinationEventInvalidation,
+  CoordinationEventSummary,
+  CoordinationEventTrustedListInput,
+  CoordinationEventListResult,
+} from "./coordination-event.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -130,6 +143,7 @@ export type WithMateWindowNavigationApi = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryV6ReviewWindow(): Promise<void>;
+  openCoordinationWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openSessionFilePreviewWindow(
@@ -147,6 +161,13 @@ export type WithMateWindowNavigationApi = {
   openTerminalAtPath(target: string): Promise<void>;
 };
 
+export type WithMateWindowCoordinationApi = {
+  listCoordinationEvents(input: CoordinationEventTrustedListInput): Promise<CoordinationEventListResult>;
+  getCoordinationEvent(eventId: string): Promise<CoordinationEvent>;
+  resolveCoordinationEvent(input: CoordinationEventTrustedResolveInput): Promise<CoordinationEvent>;
+  cancelCoordinationEvent(input: CoordinationEventCancelInput): Promise<CoordinationEvent>;
+};
+
 export type WithMateWindowCatalogApi = {
   getModelCatalog(revision?: number | null): Promise<ModelCatalogSnapshot | null>;
   importModelCatalog(document: ModelCatalogDocument): Promise<ModelCatalogSnapshot>;
@@ -157,7 +178,8 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
-  listSessionSummaries(): Promise<SessionSummary[]>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
+  listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
@@ -327,9 +349,9 @@ export type WithMateWindowSubscriptionApi = {
   subscribeSessionFilePreviewNavigation(
     listener: (payload: SessionFilePreviewWindowPayload) => void,
   ): () => void;
-  subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
-  subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
+  subscribeSessionInvalidation(listener: (payload: SessionSummaryInvalidation) => void): () => void;
   subscribeSessionExecutionsChanged(listener: (event: SessionExecutionChangedEvent) => void): () => void;
+  subscribeCoordinationEventsChanged(listener: (invalidation: CoordinationEventInvalidation) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
@@ -370,6 +392,7 @@ export type WithMateWindowCharacterApi = {
 
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
+  & WithMateWindowCoordinationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi
   & WithMateWindowAuxiliaryApi

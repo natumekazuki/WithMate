@@ -45,14 +45,15 @@ import {
   type RunSessionTurnRequest,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
+  type SessionCharacterUsage,
   type SessionContextTelemetry,
+  type SessionSummaryPageRequest,
+  type HomeSessionSummaryPageResult,
 } from "../src/app-state.js";
 import {
   type DiffPreviewPayload,
   type MessageArtifact,
-  projectSessionSummary,
   type Session,
-  type SessionSummary,
 } from "../src/session-state.js";
 import type {
   CharacterAuthoringSessionStartResult,
@@ -68,10 +69,13 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
-import type {
-  OpenPathOptions,
-  OpenPathResult,
-  SavePastedSessionFileRequest,
+import {
+  buildOpenSessionWindowIdsPage,
+  type OpenPathOptions,
+  type OpenPathResult,
+  type OpenSessionWindowIdsPageRequest,
+  type OpenSessionWindowIdsPageResult,
+  type SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import { createSessionRuntimeError } from "../src/session-external-runtime-contract.js";
 import type {
@@ -202,6 +206,8 @@ import {
   tryRespondToExternalElicitationInteraction,
 } from "./session-interaction-gui-bridge.js";
 import { SessionInteractionStorageV6 } from "./session-interaction-storage-v6.js";
+import { CoordinationEventStorageV6 } from "./coordination-event-storage-v6.js";
+import { CoordinationEventService } from "./coordination-event-service.js";
 import { SessionExecutionPublicProgressStorageV6 } from "./session-execution-public-progress-storage-v6.js";
 import { SessionTranscriptStorageV6 } from "./session-transcript-storage-v6.js";
 import { SessionTranscriptService } from "./session-transcript-service.js";
@@ -307,12 +313,15 @@ import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import { CoordinationEventInvalidationPublisher } from "./coordination-event-invalidation-publisher.js";
+import { coordinationEventRevision, type CoordinationEvent } from "../src/coordination-event.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
+  WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
@@ -438,6 +447,9 @@ let sessionTerminalFailureNotificationStorage: SessionTerminalFailureNotificatio
 let sessionTerminalFailureNotificationService: SessionTerminalFailureNotificationService | null = null;
 let sessionInteractionStorage: SessionInteractionStorageV6 | null = null;
 let sessionInteractionService: SessionInteractionService | null = null;
+let coordinationEventStorage: CoordinationEventStorageV6 | null = null;
+let coordinationEventService: CoordinationEventService | null = null;
+let coordinationEventInvalidationPublisher: CoordinationEventInvalidationPublisher | null = null;
 let sessionExecutionPublicProgressStorage: SessionExecutionPublicProgressStorageV6 | null = null;
 let sessionTranscriptStorage: SessionTranscriptStorageV6 | null = null;
 let sessionTranscriptService: SessionTranscriptService | null = null;
@@ -1263,8 +1275,12 @@ function listSessions(): Session[] {
   return sessions;
 }
 
-function listSessionSummaries(): SessionSummary[] {
-  return sessions.map(projectSessionSummary);
+async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
+  return requireMainQueryService().listSessionSummaryPage(request);
+}
+
+async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
+  return requireMainQueryService().listSessionCharacterUsage();
 }
 
 async function listCompanionSessionSummaries() {
@@ -1392,6 +1408,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             });
           },
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
+          loadCoordinationEntry: (window) => requireWindowEntryLoader().loadCoordinationEntry(window),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadFilePreviewEntry: (window, token) => requireWindowEntryLoader().loadFilePreviewEntry(window, token),
           navigateFilePreviewWindow: (window, payload) => {
@@ -1530,8 +1547,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryV6ReviewWindow,
+                openCoordinationWindow,
                 isSettingsWindow: (window) => requireMainWindowFacade().isSettingsWindow(window),
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
+                isCoordinationWindow: (window) => requireMainWindowFacade().isCoordinationWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
                 isFilePreviewWindow: (window, sessionId) =>
@@ -1612,7 +1631,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 deletePromptTemplate,
               },
               sessionQuery: {
-                listSessionSummaries: () => listSessionSummaries(),
+                listSessionSummaryPage: (request) => listSessionSummaryPage(request),
+                listSessionCharacterUsage: () => listSessionCharacterUsage(),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
@@ -1638,7 +1658,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainQueryService().listWorkspaceSkills(providerId, workspacePath),
                 listWorkspaceCustomAgents: async (providerId, workspacePath) =>
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
-                listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+                listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
                 getSessionFileExplorerOwnerSessionId,
@@ -1793,6 +1813,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainSessionCommandFacade().enqueueSessionTurn(sessionId, request),
                 listSessionTurnExecutions: (sessionId) =>
                   requireMainSessionCommandFacade().listSessionTurnExecutions(sessionId),
+                listCoordinationEvents: (input) =>
+                  requireCoordinationEventService().listAllFromTrustedGui(input),
+                getCoordinationEvent: (eventId) =>
+                  requireCoordinationEventService().getFromCoordinationWindow(eventId),
+                resolveCoordinationEvent: (input) =>
+                  requireCoordinationEventService().resolveFromCoordinationWindow(input),
+                cancelCoordinationEvent: (input) =>
+                  requireCoordinationEventService().cancelFromCoordinationWindow(input),
                 cancelSessionExecution: (sessionId, request) =>
                   requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
@@ -1907,6 +1935,20 @@ function requireMainQueryService(): MainQueryService {
   if (!mainQueryService) {
     mainQueryService = new MainQueryService({
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getSessionSummaryPage: (request) => {
+        const storage = requireSessionStorage();
+        if (!storage.listHomeSessionSummaryPage) {
+          throw new Error("このDBのSession summary page queryは利用できないよ。");
+        }
+        return storage.listHomeSessionSummaryPage(request);
+      },
+      getSessionCharacterUsage: () => {
+        const storage = requireSessionStorage();
+        if (!storage.listSessionCharacterUsage) {
+          throw new Error("このDBのSession character usage queryは利用できないよ。");
+        }
+        return storage.listSessionCharacterUsage();
+      },
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getSessionMessageArtifact: (sessionId, messageIndex) =>
         requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
@@ -1935,7 +1977,6 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
   if (!mainBroadcastFacade) {
     mainBroadcastFacade = new MainBroadcastFacade({
       getWindowBroadcastService: () => requireWindowBroadcastService(),
-      listSessionSummaries: () => listSessionSummaries(),
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       listPromptTemplates,
@@ -2781,6 +2822,13 @@ function requireSessionRuntimeService(): SessionRuntimeService {
         }
         return result;
       },
+      resolvePendingCoordinationResponses: (session) => {
+        if (session.sessionKind !== "default" || !session.roleBinding) return [];
+        return requireCoordinationEventService().listPendingResponsesForSession(
+          session.id,
+          session.roleBinding,
+        );
+      },
       queueCompletedTurnAppraisal: async ({
         session,
         correlationId,
@@ -3213,6 +3261,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
       crudService: requireSessionCrudService(),
       fileService: requireSessionFileService(),
       interactionService: requireSessionInteractionService(),
+      coordinationService: requireCoordinationEventService(),
       progressStorage: requireSessionExecutionPublicProgressStorage(),
       transcriptService: requireSessionTranscriptService(),
       currentModelCatalog: () => getModelCatalog(),
@@ -3647,6 +3696,7 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         return storage.upsertTerminalSession(session, terminalCommit);
       },
       broadcastSessions,
+      broadcastCoordinationEventsChanged,
       runCharacterAffectTurnOwnershipExclusive: (operation) =>
         characterAffectTurnOwnershipCoordinator.runExclusive(operation),
     });
@@ -4011,12 +4061,17 @@ function closeSessionExecutionRuntime(): void {
   sessionScheduleService = null;
   sessionExecutionStorage?.close();
   sessionInteractionStorage?.close();
+  coordinationEventInvalidationPublisher?.dispose();
+  coordinationEventStorage?.close();
   sessionExecutionPublicProgressStorage?.close();
   sessionTranscriptStorage?.close();
   sessionExecutionStorage = null;
   sessionExecutionService = null;
   sessionInteractionStorage = null;
   sessionInteractionService = null;
+  coordinationEventInvalidationPublisher = null;
+  coordinationEventStorage = null;
+  coordinationEventService = null;
   sessionExecutionPublicProgressStorage = null;
   sessionTranscriptStorage = null;
   sessionTranscriptService = null;
@@ -4035,6 +4090,34 @@ function requireSessionInteractionService(): SessionInteractionService {
     sessionInteractionService.expirePendingForRestart(new Date().toISOString());
   }
   return sessionInteractionService;
+}
+
+function requireCoordinationEventService(): CoordinationEventService {
+  if (!coordinationEventService) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    coordinationEventStorage = new CoordinationEventStorageV6(dbPath);
+    coordinationEventService = new CoordinationEventService({
+      storage: coordinationEventStorage,
+      publishCommitted: broadcastCoordinationEventsChanged,
+      getSessionRoleBinding: (sessionId) => requireSessionStorageV6().getSessionRoleBinding(sessionId),
+    });
+  }
+  return coordinationEventService;
+}
+
+function broadcastCoordinationEventsChanged(event?: CoordinationEvent): void {
+  if (!coordinationEventInvalidationPublisher) {
+    coordinationEventInvalidationPublisher = new CoordinationEventInvalidationPublisher({
+      getTargets: () => BrowserWindow.getAllWindows().map((window) => ({
+        isAvailable: () => !window.isDestroyed() && !window.webContents.isDestroyed(),
+        publish: (invalidation) => window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT, invalidation),
+      })),
+    });
+  }
+  coordinationEventInvalidationPublisher.publish({
+    eventId: event?.eventId ?? null,
+    revision: event ? coordinationEventRevision(event) : null,
+  });
 }
 
 function requireSessionExecutionPublicProgressStorage(): SessionExecutionPublicProgressStorageV6 {
@@ -4608,6 +4691,12 @@ function listOpenSessionWindowIds(): string[] {
   return requireMainWindowFacade().listOpenSessionWindowIds();
 }
 
+function listOpenSessionWindowIdsPage(
+  request?: OpenSessionWindowIdsPageRequest | null,
+): OpenSessionWindowIdsPageResult {
+  return buildOpenSessionWindowIdsPage(listOpenSessionWindowIds(), request);
+}
+
 function listOpenCompanionReviewWindowIds(): string[] {
   return requireMainWindowFacade().listOpenCompanionReviewWindowIds();
 }
@@ -4873,6 +4962,10 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 
 async function openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openMemoryV6ReviewWindow();
+}
+
+async function openCoordinationWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openCoordinationWindow();
 }
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {

@@ -74,6 +74,146 @@ var REASONING_EFFORT_SET = /* @__PURE__ */ new Set([
 function isModelReasoningEffort(value) {
 	return typeof value === "string" && REASONING_EFFORT_SET.has(value);
 }
+//#endregion
+//#region src/coordination-event.ts
+var COORDINATION_EVENT_KINDS = [
+	"progress",
+	"decision",
+	"escalation",
+	"user_decision_required",
+	"blocker",
+	"result",
+	"correction"
+];
+var COORDINATION_EVENT_STATES = [
+	"recorded",
+	"open",
+	"resolved",
+	"superseded",
+	"cancelled"
+];
+var COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16 * 1024;
+var CoordinationEventValidationError = class extends Error {
+	code;
+	details;
+	constructor(message, details = {}, code = "INVALID_INPUT") {
+		super(message);
+		this.name = "CoordinationEventValidationError";
+		this.code = code;
+		this.details = details;
+	}
+};
+function validateCoordinationEventPayload(value, field = "payload") {
+	const record = requireObject$1(value, field);
+	assertKeys$1(record, [
+		"summary",
+		"facts",
+		"assumptions",
+		"impact",
+		"recommendation"
+	], field);
+	const payload = {
+		summary: requireText(record.summary, `${field}.summary`, 240),
+		...record.facts === void 0 ? {} : { facts: requireTextList(record.facts, `${field}.facts`) },
+		...record.assumptions === void 0 ? {} : { assumptions: requireTextList(record.assumptions, `${field}.assumptions`) },
+		...record.impact === void 0 ? {} : { impact: requireText(record.impact, `${field}.impact`, 1e3) },
+		...record.recommendation === void 0 ? {} : { recommendation: requireText(record.recommendation, `${field}.recommendation`, 1e3) }
+	};
+	const actualBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+	if (actualBytes > 16384) throw new CoordinationEventValidationError("Coordination event payload exceeds 16 KiB.", {
+		field,
+		actualBytes,
+		maxBytes: COORDINATION_EVENT_MAX_PAYLOAD_BYTES
+	}, "CONTENT_TOO_LARGE");
+	rejectSensitiveText(payload, field);
+	return payload;
+}
+function validateCoordinationEventOptions(value, field = "options") {
+	if (!Array.isArray(value) || value.length < 2 || value.length > 8) throw invalid$1(field, "Coordination event options must contain 2 to 8 items.");
+	const ids = /* @__PURE__ */ new Set();
+	const options = value.map((entry, index) => {
+		const itemField = `${field}[${index}]`;
+		const record = requireObject$1(entry, itemField);
+		assertKeys$1(record, [
+			"id",
+			"label",
+			"description"
+		], itemField);
+		const id = requireStableId(record.id, `${itemField}.id`);
+		if (ids.has(id)) throw invalid$1(`${itemField}.id`, "Coordination option IDs must be unique.");
+		ids.add(id);
+		return {
+			id,
+			label: requireText(record.label, `${itemField}.label`, 120),
+			...record.description === void 0 ? {} : { description: requireText(record.description, `${itemField}.description`, 500) }
+		};
+	});
+	rejectSensitiveValues(options.flatMap((option) => [
+		option.id,
+		option.label,
+		option.description ?? ""
+	]), field);
+	return options;
+}
+function validateCoordinationEventNote(value, field = "note") {
+	const note = requireText(value, field, 1e3);
+	rejectSensitiveValues([note], field);
+	return note;
+}
+function requireTextList(value, field) {
+	if (!Array.isArray(value) || value.length > 8) throw invalid$1(field, "Coordination event list fields contain at most 8 items.");
+	return value.map((item, index) => requireText(item, `${field}[${index}]`, 500));
+}
+function requireText(value, field, maxLength) {
+	if (typeof value !== "string" || !value.trim() || value.length > maxLength) throw invalid$1(field, `${field} must be a non-empty string of at most ${maxLength} characters.`);
+	return value.trim();
+}
+function requireStableId(value, field) {
+	const id = requireText(value, field, 80);
+	if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) throw invalid$1(field, `${field} must be a stable identifier.`);
+	return id;
+}
+function rejectSensitiveText(payload, field) {
+	rejectSensitiveValues([
+		payload.summary,
+		...payload.facts ?? [],
+		...payload.assumptions ?? [],
+		payload.impact ?? "",
+		payload.recommendation ?? ""
+	], field);
+}
+function rejectSensitiveValues(values, field) {
+	const forbidden = [
+		/-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i,
+		/\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
+		/\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
+		/\bAKIA[0-9A-Z]{16}\b/,
+		/\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
+		/\b(?:[a-z0-9]+[_-])*(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,;]+)/i,
+		/\b[a-z]:[\\/][^\s"'<>)]*/i,
+		/\\\\[a-z0-9._$-]+\\[a-z0-9._$ -]+(?:\\[^\s"'<>)]*)?/i,
+		/(?:^|[\s"'(=[{,])\/\/[a-z0-9._$-]+\/[a-z0-9._$ -]+(?:\/[^\s"'<>)]*)?/im,
+		/\\\\[?.]\\[^\s"'<>)]*/i,
+		/(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s"'<>)]*/i,
+		/\b(?:stack trace|traceback \(most recent call last\))\b/i,
+		/\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
+		/^diff --git /im,
+		/^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m,
+		/(?:^|\n)\s*(?:\[[A-Z]{3,}\]|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s/m
+	];
+	if (values.some((text) => forbidden.some((pattern) => pattern.test(text)))) throw new CoordinationEventValidationError("Coordination event payload contains content that must not be stored.", { field }, "SENSITIVE_CONTENT_REJECTED");
+}
+function requireObject$1(value, field) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw invalid$1(field, `${field} must be an object.`);
+	return value;
+}
+function assertKeys$1(record, allowed, field) {
+	const unknown = Object.keys(record).find((key) => !allowed.includes(key));
+	if (unknown) throw invalid$1(`${field}.${unknown}`, `Unknown field: ${field}.${unknown}.`);
+}
+function invalid$1(field, message) {
+	return new CoordinationEventValidationError(message, { field });
+}
 var SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES = 8 * 1024 * 1024;
 var SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES = 1024 * 1024 * 1024;
 //#endregion
@@ -103,6 +243,13 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"turn.cancel",
 	"interaction.list",
 	"interaction.respond",
+	"coordination.event.create",
+	"coordination.event.list",
+	"coordination.event.get",
+	"coordination.event.resolve",
+	"coordination.event.consume",
+	"coordination.event.cancel",
+	"coordination.event.correct",
 	"transcript.export"
 ];
 var SESSION_RUNTIME_PROVIDER_IDS = ["codex", "copilot"];
@@ -145,8 +292,117 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "turn.cancel") return parseCancelInput(value);
 	if (operation === "interaction.list") return parseInteractionListInput(value);
 	if (operation === "interaction.respond") return parseInteractionRespondInput(value);
+	if (operation === "coordination.event.create") return parseCoordinationEventCreateInput(value);
+	if (operation === "coordination.event.list") return parseCoordinationEventListInput(value);
+	if (operation === "coordination.event.get") return parseCoordinationEventGetInput(value);
+	if (operation === "coordination.event.resolve") return parseCoordinationEventResolveInput(value);
+	if (operation === "coordination.event.consume") return parseCoordinationEventConsumeInput(value);
+	if (operation === "coordination.event.cancel") return parseCoordinationEventCancelInput(value);
+	if (operation === "coordination.event.correct") return parseCoordinationEventCorrectInput(value);
 	if (operation === "transcript.export") return parseTranscriptExportInput(value);
 	throw invalid("operation", "Unsupported Session runtime operation.");
+}
+function parseCoordinationEventCreateInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"kind",
+		"payload",
+		"executionId",
+		"targetSessionId",
+		"options",
+		"idempotencyKey"
+	], "input");
+	const kind = requireEnum(record.kind, COORDINATION_EVENT_KINDS.filter((candidate) => candidate !== "correction"), "kind");
+	const targetSessionId = record.targetSessionId === void 0 ? void 0 : requireNonEmptyString(record.targetSessionId, "targetSessionId");
+	const options = record.options === void 0 ? void 0 : validateCoordinationEventOptions(record.options);
+	if (kind === "escalation" !== (targetSessionId !== void 0)) throw invalid("targetSessionId", "targetSessionId is required only for escalation events.");
+	if (kind === "user_decision_required" !== (options !== void 0)) throw invalid("options", "options are required only for user_decision_required events.");
+	return {
+		kind,
+		payload: validateCoordinationEventPayload(record.payload),
+		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
+		...targetSessionId === void 0 ? {} : { targetSessionId },
+		...options === void 0 ? {} : { options },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventListInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"scope",
+		"kind",
+		"state",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		scope: requireEnum(record.scope, ["self", "subtree"], "scope"),
+		...record.kind === void 0 ? {} : { kind: requireEnum(record.kind, COORDINATION_EVENT_KINDS, "kind") },
+		...record.state === void 0 ? {} : { state: requireEnum(record.state, COORDINATION_EVENT_STATES, "state") },
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 100, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseCoordinationEventGetInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, ["eventId", "idempotencyKey"], "input");
+	const hasEventId = record.eventId !== void 0;
+	if (hasEventId === (record.idempotencyKey !== void 0)) throw invalid("input", "Exactly one of eventId or idempotencyKey is required.");
+	return hasEventId ? { eventId: requireNonEmptyString(record.eventId, "eventId") } : { idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+}
+function parseCoordinationEventResolveInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"eventId",
+		"note",
+		"idempotencyKey"
+	], "input");
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventConsumeInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"eventId",
+		"expectedResolutionSequence",
+		"idempotencyKey"
+	], "input");
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		expectedResolutionSequence: requireInteger(record.expectedResolutionSequence, "expectedResolutionSequence", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventCancelInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"eventId",
+		"note",
+		"idempotencyKey"
+	], "input");
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseCoordinationEventCorrectInput(value) {
+	const record = requireObject$1(value, "input");
+	assertKeys$1(record, [
+		"eventId",
+		"payload",
+		"executionId",
+		"idempotencyKey"
+	], "input");
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		payload: validateCoordinationEventPayload(record.payload),
+		...record.executionId === void 0 ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
 }
 function parseSessionCreateInput(value) {
 	const record = requireObject(value, "input");
@@ -21021,6 +21277,80 @@ var sessionFileWriteTextInputSchema = object({
 		message: `content exceeds maxBytes (${actualBytes} > ${value.maxBytes}).`
 	});
 });
+var coordinationPayloadSchema = object({
+	summary: string().trim().min(1).max(240),
+	facts: array(string().trim().min(1).max(500)).max(8).optional(),
+	assumptions: array(string().trim().min(1).max(500)).max(8).optional(),
+	impact: string().trim().min(1).max(1e3).optional(),
+	recommendation: string().trim().min(1).max(1e3).optional()
+}).strict();
+var coordinationOptionSchema = object({
+	id: string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/).max(80),
+	label: string().trim().min(1).max(120),
+	description: string().trim().min(1).max(500).optional()
+}).strict();
+var coordinationCreateInputSchema = object({
+	kind: _enum(COORDINATION_EVENT_KINDS).exclude(["correction"]),
+	payload: coordinationPayloadSchema,
+	executionId: nonEmptyStringSchema.optional(),
+	targetSessionId: nonEmptyStringSchema.optional(),
+	options: array(coordinationOptionSchema).min(2).max(8).optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict().superRefine((value, context) => {
+	if (value.kind === "escalation" !== (value.targetSessionId !== void 0)) context.addIssue({
+		code: "custom",
+		path: ["targetSessionId"],
+		message: "targetSessionId is required only for escalation events."
+	});
+	if (value.kind === "user_decision_required" !== (value.options !== void 0)) context.addIssue({
+		code: "custom",
+		path: ["options"],
+		message: "options are required only for user_decision_required events."
+	});
+	if (value.options && new Set(value.options.map((option) => option.id)).size !== value.options.length) context.addIssue({
+		code: "custom",
+		path: ["options"],
+		message: "option IDs must be unique."
+	});
+});
+var coordinationListInputSchema = object({
+	scope: _enum(["self", "subtree"]),
+	kind: _enum(COORDINATION_EVENT_KINDS).optional(),
+	state: _enum(COORDINATION_EVENT_STATES).optional(),
+	limit: number().int().min(1).max(100).default(50),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var coordinationGetInputSchema = object({
+	eventId: nonEmptyStringSchema.optional(),
+	idempotencyKey: nonEmptyStringSchema.optional()
+}).strict().superRefine((value, context) => {
+	if (value.eventId !== void 0 === (value.idempotencyKey !== void 0)) context.addIssue({
+		code: "custom",
+		path: [],
+		message: "Exactly one of eventId or idempotencyKey is required."
+	});
+});
+var coordinationResolveInputSchema = object({
+	eventId: nonEmptyStringSchema,
+	note: string().trim().min(1).max(1e3).optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var coordinationConsumeInputSchema = object({
+	eventId: nonEmptyStringSchema,
+	expectedResolutionSequence: number().int().positive(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var coordinationCancelInputSchema = object({
+	eventId: nonEmptyStringSchema,
+	note: string().trim().min(1).max(1e3).optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var coordinationCorrectInputSchema = object({
+	eventId: nonEmptyStringSchema,
+	payload: coordinationPayloadSchema,
+	executionId: nonEmptyStringSchema.optional(),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
 var transcriptExportInputSchema = object({
 	sessionId: nonEmptyStringSchema,
 	format: _enum(["json", "markdown"]),
@@ -21345,6 +21675,44 @@ var turnOptionsSchema = union([object({
 		description: string()
 	}).strict())
 }).strict()]);
+var coordinationSummarySchema = object({
+	sequence: number().int().positive(),
+	eventId: string(),
+	actorSessionId: string(),
+	sessionRole: sessionRoleSchema,
+	kind: _enum(COORDINATION_EVENT_KINDS),
+	state: _enum(COORDINATION_EVENT_STATES),
+	summary: string(),
+	createdAt: string()
+}).strict();
+var coordinationActionSchema = object({
+	sequence: number().int().positive(),
+	type: _enum([
+		"responded",
+		"resolved",
+		"cancelled",
+		"superseded",
+		"consumed"
+	]),
+	actorType: _enum(["session", "trusted_gui"]),
+	actorSessionId: string().nullable(),
+	optionId: string().nullable(),
+	note: string().nullable(),
+	relatedEventId: string().nullable(),
+	createdAt: string()
+}).strict();
+var coordinationEventSchema = coordinationSummarySchema.extend({
+	roleContractRevision: literal(1),
+	rootSessionId: string(),
+	parentSessionId: string().nullable(),
+	delegationDepth: number().int().min(0).max(2),
+	payload: coordinationPayloadSchema,
+	executionId: string().nullable(),
+	targetSessionId: string().nullable(),
+	correctedEventId: string().nullable(),
+	options: array(coordinationOptionSchema),
+	actions: array(coordinationActionSchema)
+}).strict();
 var resultSchemas = {
 	"runtime.catalog": object({
 		revision: number().int(),
@@ -21357,6 +21725,13 @@ var resultSchemas = {
 			executor: array(_enum(["task-coordinator", "executor"]))
 		}).strict(),
 		maxDelegationDepth: literal(2),
+		coordinationEvents: object({
+			kinds: tuple(COORDINATION_EVENT_KINDS.map((kind) => literal(kind))),
+			states: tuple(COORDINATION_EVENT_STATES.map((state) => literal(state))),
+			scopes: tuple([literal("self"), literal("subtree")]),
+			defaultListLimit: literal(50),
+			maxListLimit: literal(100)
+		}).strict(),
 		providers: array(object({
 			id: string(),
 			label: string(),
@@ -21402,6 +21777,19 @@ var resultSchemas = {
 		interaction: answeredInteractionSchema,
 		execution: executionSchema
 	}).strict(),
+	"coordination.event.create": coordinationEventSchema,
+	"coordination.event.list": object({
+		items: array(coordinationSummarySchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"coordination.event.get": coordinationEventSchema,
+	"coordination.event.resolve": coordinationEventSchema,
+	"coordination.event.consume": coordinationEventSchema,
+	"coordination.event.cancel": coordinationEventSchema,
+	"coordination.event.correct": object({
+		correction: coordinationEventSchema,
+		superseded: coordinationEventSchema
+	}).strict(),
 	"transcript.export": discriminatedUnion("destination", [object({
 		destination: literal("inline"),
 		format: _enum(["json", "markdown"]),
@@ -21432,7 +21820,13 @@ function createOutputSchema(operation) {
 var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
 	"Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
-	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode."
+	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
+	"Coordination events are public records separate from the normal response; do not change the normal response format when recording one.",
+	"Record a coordination event for a scope or policy decision, an ancestor or user decision request, a blocker opening or clearing, a major work milestone, or a correction.",
+	"Use user_decision_required for user confirmation, selection, or free text; use blocker only for an external condition that prevents your work, and resolve your blocker after work can resume.",
+	"A user may provide or revise a free-text response to your blocker until you apply and consume its latest resolutionSequence; this response does not resolve the blocker.",
+	"Never record secrets, raw logs, stack traces, large diffs, provider responses, private reasoning, or personal environment paths.",
+	"A progress or decision recording failure must not stop the normal response. If user_decision_required cannot be recorded, state the failure and a safe next action in the normal response."
 ].join(" ");
 var SESSION_MCP_TOOL_DEFINITIONS = [
 	{
@@ -21555,6 +21949,55 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: true
 	},
 	{
+		name: "coordination.event.create",
+		title: "Create coordination event",
+		description: "Record a public coordination event for the bound Session and return its stable eventId.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "coordination.event.list",
+		title: "List coordination events",
+		description: "List visible coordination event summaries, including each stable eventId.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "coordination.event.get",
+		title: "Get coordination event",
+		description: "Read one visible coordination event by eventId, or recover it and its stable eventId by the create idempotencyKey.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "coordination.event.resolve",
+		title: "Resolve coordination event",
+		description: "Resolve an authorized escalation or blocker using the exact eventId returned by create, list, or get.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "coordination.event.consume",
+		title: "Consume coordination response",
+		description: "Mark the exact user decision answer or blocker response identified by expectedResolutionSequence as applied by its owner Session. Consuming a blocker response does not resolve the blocker.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "coordination.event.cancel",
+		title: "Cancel coordination event",
+		description: "Cancel an open coordination event created by the bound Session.",
+		readOnly: false,
+		destructive: true
+	},
+	{
+		name: "coordination.event.correct",
+		title: "Correct coordination event",
+		description: "Append a correction and supersede an event created by the bound Session.",
+		readOnly: false,
+		destructive: true
+	},
+	{
 		name: "transcript.export",
 		title: "Export Session transcript",
 		description: "Export a Session transcript inline or into its SessionFolder.",
@@ -21571,7 +22014,7 @@ function annotations(definition) {
 	};
 }
 function isMutation(operation, input) {
-	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "interaction.respond" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
+	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
@@ -21751,6 +22194,48 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: interactionRespondInputSchema,
 		outputSchema: createOutputSchema("interaction.respond")
 	}, async (input) => executeOperation("interaction.respond", input, deps));
+	server.registerTool("coordination.event.create", {
+		...definitions.get("coordination.event.create"),
+		annotations: annotations(definitions.get("coordination.event.create")),
+		inputSchema: coordinationCreateInputSchema,
+		outputSchema: createOutputSchema("coordination.event.create")
+	}, async (input) => executeOperation("coordination.event.create", input, deps));
+	server.registerTool("coordination.event.list", {
+		...definitions.get("coordination.event.list"),
+		annotations: annotations(definitions.get("coordination.event.list")),
+		inputSchema: coordinationListInputSchema,
+		outputSchema: createOutputSchema("coordination.event.list")
+	}, async (input) => executeOperation("coordination.event.list", input, deps));
+	server.registerTool("coordination.event.get", {
+		...definitions.get("coordination.event.get"),
+		annotations: annotations(definitions.get("coordination.event.get")),
+		inputSchema: coordinationGetInputSchema,
+		outputSchema: createOutputSchema("coordination.event.get")
+	}, async (input) => executeOperation("coordination.event.get", input, deps));
+	server.registerTool("coordination.event.resolve", {
+		...definitions.get("coordination.event.resolve"),
+		annotations: annotations(definitions.get("coordination.event.resolve")),
+		inputSchema: coordinationResolveInputSchema,
+		outputSchema: createOutputSchema("coordination.event.resolve")
+	}, async (input) => executeOperation("coordination.event.resolve", input, deps));
+	server.registerTool("coordination.event.consume", {
+		...definitions.get("coordination.event.consume"),
+		annotations: annotations(definitions.get("coordination.event.consume")),
+		inputSchema: coordinationConsumeInputSchema,
+		outputSchema: createOutputSchema("coordination.event.consume")
+	}, async (input) => executeOperation("coordination.event.consume", input, deps));
+	server.registerTool("coordination.event.cancel", {
+		...definitions.get("coordination.event.cancel"),
+		annotations: annotations(definitions.get("coordination.event.cancel")),
+		inputSchema: coordinationCancelInputSchema,
+		outputSchema: createOutputSchema("coordination.event.cancel")
+	}, async (input) => executeOperation("coordination.event.cancel", input, deps));
+	server.registerTool("coordination.event.correct", {
+		...definitions.get("coordination.event.correct"),
+		annotations: annotations(definitions.get("coordination.event.correct")),
+		inputSchema: coordinationCorrectInputSchema,
+		outputSchema: createOutputSchema("coordination.event.correct")
+	}, async (input) => executeOperation("coordination.event.correct", input, deps));
 	server.registerTool("transcript.export", {
 		...definitions.get("transcript.export"),
 		annotations: annotations(definitions.get("transcript.export")),
@@ -21800,6 +22285,13 @@ var commandMap = /* @__PURE__ */ new Map([
 	["turn cancel", "turn.cancel"],
 	["interaction list", "interaction.list"],
 	["interaction respond", "interaction.respond"],
+	["coordination event create", "coordination.event.create"],
+	["coordination event list", "coordination.event.list"],
+	["coordination event get", "coordination.event.get"],
+	["coordination event resolve", "coordination.event.resolve"],
+	["coordination event consume", "coordination.event.consume"],
+	["coordination event cancel", "coordination.event.cancel"],
+	["coordination event correct", "coordination.event.correct"],
 	["transcript export", "transcript.export"],
 	["transcript export", "transcript.export"]
 ]);
@@ -21898,7 +22390,7 @@ async function runWithMateSessionCli(args, deps = {}) {
 			writeOutput(stdout, format, localError(command, "RUNTIME_UNAVAILABLE", error.dispatched ? "Session runtime response was not received after dispatch." : "Session runtime is unavailable.", true, indeterminate ? "indeterminate" : "not_applied"));
 			return error.dispatched ? WITHMATE_SESSION_CLI_EXIT_CODES.transportIndeterminate : WITHMATE_SESSION_CLI_EXIT_CODES.runtimeUnavailable;
 		}
-		if (error instanceof SessionRuntimeValidationError) {
+		if (error instanceof SessionRuntimeValidationError || error instanceof CoordinationEventValidationError) {
 			writeOutput(stdout, format, localError(command, error.code, error.message));
 			return WITHMATE_SESSION_CLI_EXIT_CODES.usage;
 		}
@@ -21908,14 +22400,15 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command, input) {
-	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "interaction respond" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
+	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
+	const coordinationCommand = args[0] === "coordination" && args[1] === "event";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "interaction" || args[0] === "transcript";
-	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|transcript export|status|schema|mcp-server> [options]");
-	const optionStart = fileCommand ? 3 : namespacedCommand ? 2 : 1;
+	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	const optionStart = fileCommand || coordinationCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
 	let useStdin = false;

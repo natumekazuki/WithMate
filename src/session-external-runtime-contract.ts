@@ -8,6 +8,27 @@ import {
 } from "./session-interaction.js";
 import type { ComposerAttachmentKind } from "./runtime-state.js";
 import {
+  COORDINATION_EVENT_DEFAULT_LIST_LIMIT,
+  COORDINATION_EVENT_KINDS,
+  COORDINATION_EVENT_MAX_LIST_LIMIT,
+  COORDINATION_EVENT_STATES,
+  assertKeys as assertCoordinationKeys,
+  requireObject as requireCoordinationObject,
+  validateCoordinationEventOptions,
+  validateCoordinationEventNote,
+  validateCoordinationEventPayload,
+  type CoordinationEvent,
+  type CoordinationEventCancelInput,
+  type CoordinationEventConsumeInput,
+  type CoordinationEventCorrectInput,
+  type CoordinationEventCorrectionResult,
+  type CoordinationEventCreateInput,
+  type CoordinationEventGetInput,
+  type CoordinationEventListInput,
+  type CoordinationEventListResult,
+  type CoordinationEventResolveInput,
+} from "./coordination-event.js";
+import {
   SESSION_ROLE_CONTRACT_REVISION,
   SESSION_ROLE_MAX_DELEGATION_DEPTH,
   type ChildSessionRole,
@@ -55,6 +76,13 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "turn.cancel",
   "interaction.list",
   "interaction.respond",
+  "coordination.event.create",
+  "coordination.event.list",
+  "coordination.event.get",
+  "coordination.event.resolve",
+  "coordination.event.consume",
+  "coordination.event.cancel",
+  "coordination.event.correct",
   "transcript.export",
 ] as const;
 
@@ -70,6 +98,13 @@ export type SessionRuntimeCatalogResult = {
   supportedSessionRoles: SessionRole[];
   allowedChildSessionRoles: Record<SessionRole, ChildSessionRole[]>;
   maxDelegationDepth: typeof SESSION_ROLE_MAX_DELEGATION_DEPTH;
+  coordinationEvents: {
+    kinds: typeof COORDINATION_EVENT_KINDS;
+    states: typeof COORDINATION_EVENT_STATES;
+    scopes: readonly ["self", "subtree"];
+    defaultListLimit: typeof COORDINATION_EVENT_DEFAULT_LIST_LIMIT;
+    maxListLimit: typeof COORDINATION_EVENT_MAX_LIST_LIMIT;
+  };
   providers: Array<{
     id: string;
     label: string;
@@ -344,6 +379,13 @@ export type SessionRuntimeResultByOperation = {
   "turn.cancel": SessionRuntimePublicExecution;
   "interaction.list": SessionRuntimeInteractionListResult;
   "interaction.respond": SessionRuntimeInteractionRespondResult;
+  "coordination.event.create": CoordinationEvent;
+  "coordination.event.list": CoordinationEventListResult;
+  "coordination.event.get": CoordinationEvent;
+  "coordination.event.resolve": CoordinationEvent;
+  "coordination.event.consume": CoordinationEvent;
+  "coordination.event.cancel": CoordinationEvent;
+  "coordination.event.correct": CoordinationEventCorrectionResult;
   "transcript.export": SessionRuntimeTranscriptExportResult;
 };
 
@@ -489,10 +531,130 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "interaction.respond") {
     return parseInteractionRespondInput(value);
   }
+  if (operation === "coordination.event.create") {
+    return parseCoordinationEventCreateInput(value);
+  }
+  if (operation === "coordination.event.list") {
+    return parseCoordinationEventListInput(value);
+  }
+  if (operation === "coordination.event.get") {
+    return parseCoordinationEventGetInput(value);
+  }
+  if (operation === "coordination.event.resolve") {
+    return parseCoordinationEventResolveInput(value);
+  }
+  if (operation === "coordination.event.consume") {
+    return parseCoordinationEventConsumeInput(value);
+  }
+  if (operation === "coordination.event.cancel") {
+    return parseCoordinationEventCancelInput(value);
+  }
+  if (operation === "coordination.event.correct") {
+    return parseCoordinationEventCorrectInput(value);
+  }
   if (operation === "transcript.export") {
     return parseTranscriptExportInput(value);
   }
   throw invalid("operation", "Unsupported Session runtime operation.");
+}
+
+function parseCoordinationEventCreateInput(value: unknown): CoordinationEventCreateInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["kind", "payload", "executionId", "targetSessionId", "options", "idempotencyKey"], "input");
+  const kind = requireEnum(record.kind, COORDINATION_EVENT_KINDS.filter((candidate) => candidate !== "correction"), "kind") as CoordinationEventCreateInput["kind"];
+  const targetSessionId = record.targetSessionId === undefined ? undefined : requireNonEmptyString(record.targetSessionId, "targetSessionId");
+  const options = record.options === undefined ? undefined : validateCoordinationEventOptions(record.options);
+  if ((kind === "escalation") !== (targetSessionId !== undefined)) {
+    throw invalid("targetSessionId", "targetSessionId is required only for escalation events.");
+  }
+  if ((kind === "user_decision_required") !== (options !== undefined)) {
+    throw invalid("options", "options are required only for user_decision_required events.");
+  }
+  return {
+    kind,
+    payload: validateCoordinationEventPayload(record.payload),
+    ...(record.executionId === undefined ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") }),
+    ...(targetSessionId === undefined ? {} : { targetSessionId }),
+    ...(options === undefined ? {} : { options }),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseCoordinationEventListInput(value: unknown): CoordinationEventListInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["scope", "kind", "state", "limit", "cursor"], "input");
+  return {
+    scope: requireEnum(record.scope, ["self", "subtree"] as const, "scope"),
+    ...(record.kind === undefined ? {} : { kind: requireEnum(record.kind, COORDINATION_EVENT_KINDS, "kind") }),
+    ...(record.state === undefined ? {} : { state: requireEnum(record.state, COORDINATION_EVENT_STATES, "state") }),
+    limit: record.limit === undefined
+      ? COORDINATION_EVENT_DEFAULT_LIST_LIMIT
+      : requireInteger(record.limit, "limit", 1, COORDINATION_EVENT_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function parseCoordinationEventGetInput(value: unknown): CoordinationEventGetInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["eventId", "idempotencyKey"], "input");
+  const hasEventId = record.eventId !== undefined;
+  const hasKey = record.idempotencyKey !== undefined;
+  if (hasEventId === hasKey) throw invalid("input", "Exactly one of eventId or idempotencyKey is required.");
+  return hasEventId
+    ? { eventId: requireNonEmptyString(record.eventId, "eventId") }
+    : { idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey") };
+}
+
+function parseCoordinationEventResolveInput(value: unknown): CoordinationEventResolveInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["eventId", "note", "idempotencyKey"], "input");
+  return {
+    eventId: requireNonEmptyString(record.eventId, "eventId"),
+    ...(record.note === undefined ? {} : { note: validateCoordinationEventNote(record.note) }),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseCoordinationEventConsumeInput(value: unknown): CoordinationEventConsumeInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["eventId", "expectedResolutionSequence", "idempotencyKey"], "input");
+  return {
+    eventId: requireNonEmptyString(record.eventId, "eventId"),
+    expectedResolutionSequence: requireInteger(
+      record.expectedResolutionSequence,
+      "expectedResolutionSequence",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    ),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseCoordinationEventCancelInput(value: unknown): CoordinationEventCancelInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["eventId", "note", "idempotencyKey"], "input");
+  return {
+    eventId: requireNonEmptyString(record.eventId, "eventId"),
+    ...(record.note === undefined ? {} : { note: validateCoordinationEventNote(record.note) }),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseCoordinationEventCorrectInput(value: unknown): CoordinationEventCorrectInput {
+  const record = requireCoordinationObject(value, "input");
+  assertCoordinationKeys(record, ["eventId", "payload", "executionId", "idempotencyKey"], "input");
+  return {
+    eventId: requireNonEmptyString(record.eventId, "eventId"),
+    payload: validateCoordinationEventPayload(record.payload),
+    ...(record.executionId === undefined ? {} : { executionId: requireNonEmptyString(record.executionId, "executionId") }),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function requireBoundedString(value: unknown, field: string, maxLength: number): string {
+  const text = requireNonEmptyString(value, field);
+  if (text.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
+  return text;
 }
 
 function parseSessionCreateInput(value: unknown): SessionRuntimeCreateInput {

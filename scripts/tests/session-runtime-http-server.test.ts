@@ -86,6 +86,19 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     response: { kind: "approval", decision: "approve" }, idempotencyKey: "respond-key",
     responseMode: "deferred",
   },
+  "coordination.event.create": {
+    kind: "progress", payload: { summary: "Started" }, idempotencyKey: "coord-create-key",
+  },
+  "coordination.event.list": { scope: "self" },
+  "coordination.event.get": { eventId: "coordination-1" },
+  "coordination.event.resolve": { eventId: "coordination-1", note: "Continue", idempotencyKey: "coord-resolve-key" },
+  "coordination.event.consume": {
+    eventId: "coordination-1", expectedResolutionSequence: 4, idempotencyKey: "coord-consume-key",
+  },
+  "coordination.event.cancel": { eventId: "coordination-1", idempotencyKey: "coord-cancel-key" },
+  "coordination.event.correct": {
+    eventId: "coordination-1", payload: { summary: "Corrected" }, idempotencyKey: "coord-correct-key",
+  },
   "transcript.export": {
     sessionId: "session-1", format: "json", maxBytes: 1024, destination: { kind: "inline" },
   },

@@ -11,6 +11,7 @@ import {
   CREATE_V6_AUDIT_EVENTS_TABLE_SQL,
   CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL,
   CREATE_V6_CHARACTER_AFFECT_TABLES_SQL,
+  CREATE_V6_COORDINATION_EVENT_TABLES_SQL,
   CREATE_V6_CHARACTERS_TABLE_SQL,
   CREATE_V6_MEMORY_PROTECTED_OBJECTS_TABLE_SQL,
   CREATE_V6_PROJECT_SCOPES_TABLE_SQL,
@@ -217,6 +218,7 @@ describe("database-schema-v6", () => {
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_CRUD_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_FILE_WRITE_IDEMPOTENCY_TABLE_SQL), true);
+      assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_COORDINATION_EVENT_TABLES_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL), true);
       assert.equal(CREATE_V6_SCHEMA_SQL.includes(CREATE_V6_SESSION_TRANSCRIPT_EXPORT_IDEMPOTENCY_TABLE_SQL), true);
       assert.equal(
@@ -315,6 +317,287 @@ describe("database-schema-v6", () => {
       );
     } finally {
       db.close();
+    }
+  });
+
+  it("COORD-MIGRATE-01: Coordination storageはempty/populated DBへadditiveかつ再実行可能に適用する", () => {
+    for (const populated of [false, true]) {
+      const db = createV6Schema();
+      try {
+        db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6; DROP TABLE coordination_events_v6;");
+        if (populated) {
+          db.prepare(`
+            INSERT INTO sessions_v6 (
+              id, title, state, provider_id, catalog_revision, model_id,
+              approval_mode, created_at, updated_at, last_active_at
+            ) VALUES ('coordination-existing', 'Existing', 'active', 'codex', 1, 'gpt-5',
+              'on-request', ?, ?, ?)
+          `).run("2026-08-21T00:00:00.000Z", "2026-08-21T00:00:00.000Z", "2026-08-21T00:00:00.000Z");
+        }
+        ensureV6Schema(db);
+        ensureV6Schema(db);
+        assert.equal(tableNames(db).filter((name) => name === "coordination_events_v6").length, 1);
+        assert.equal(tableSql(db, "coordination_events_v6").includes("json_array_length(options_json) BETWEEN 2 AND 8"), true);
+        assert.equal(
+          (db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count,
+          populated ? 1 : 0,
+        );
+      } finally {
+        db.close();
+      }
+    }
+  });
+
+  it("COORD-RESPONSE-MIGRATE-01: 既存actionを保持しtrusted GUIのblocker responseをrespondedへ移行する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6;");
+      const legacySql = CREATE_V6_COORDINATION_EVENT_TABLES_SQL
+        .replace("'responded', 'resolved', 'cancelled', 'superseded', 'consumed'", "'resolved', 'cancelled', 'superseded'")
+        .replace(`,
+    CHECK (
+      action_type <> 'consumed'
+      OR (
+        actor_type = 'session'
+        AND actor_session_id IS NOT NULL
+        AND option_id IS NULL
+        AND note IS NULL
+        AND related_event_id IS NULL
+      )
+    )`, "")
+        .replace("'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel'", "'coordination.event.resolve', 'coordination.event.cancel'");
+      db.exec(legacySql);
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id,
+          approval_mode, created_at, updated_at, last_active_at
+        ) VALUES ('consume-owner', 'Owner', 'active', 'codex', 1, 'gpt-5',
+          'on-request', ?, ?, ?)
+      `).run("2026-08-22T00:00:00.000Z", "2026-08-22T00:00:00.000Z", "2026-08-22T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO coordination_events_v6 (
+          id, actor_session_id, session_role, role_contract_revision,
+          root_session_id, parent_session_id, delegation_depth, kind,
+          summary, payload_json, options_json, created_at
+        ) VALUES (?, ?, 'standalone', 1, ?, NULL, 0, 'user_decision_required', ?, ?, ?, ?)
+      `).run(
+        "event-before-consume",
+        "consume-owner",
+        "consume-owner",
+        "Which?",
+        JSON.stringify({ summary: "Which?" }),
+        JSON.stringify([{ id: "yes", label: "Yes" }, { id: "no", label: "No" }]),
+        "2026-08-22T00:01:00.000Z",
+      );
+      db.prepare(`
+        INSERT INTO coordination_event_actions_v6 (
+          id, event_id, action_type, actor_type, actor_session_id,
+          option_id, note, related_event_id, created_at
+        ) VALUES (?, ?, 'resolved', 'trusted_gui', NULL, 'yes', NULL, NULL, ?)
+      `).run("resolve-before-consume", "event-before-consume", "2026-08-22T00:02:00.000Z");
+      db.prepare(`
+        INSERT INTO coordination_events_v6 (
+          id, actor_session_id, session_role, role_contract_revision,
+          root_session_id, parent_session_id, delegation_depth, kind,
+          summary, payload_json, options_json, created_at
+        ) VALUES (?, ?, 'standalone', 1, ?, NULL, 0, 'blocker', ?, ?, '[]', ?)
+      `).run(
+        "blocker-before-responded",
+        "consume-owner",
+        "consume-owner",
+        "Narrow layout",
+        JSON.stringify({ summary: "Narrow layout" }),
+        "2026-08-22T00:03:00.000Z",
+      );
+      db.prepare(`
+        INSERT INTO coordination_event_actions_v6 (
+          id, event_id, action_type, actor_type, actor_session_id,
+          option_id, note, related_event_id, created_at
+        ) VALUES (?, ?, 'resolved', 'trusted_gui', NULL, NULL, ?, NULL, ?)
+      `).run(
+        "blocker-response-before-responded",
+        "blocker-before-responded",
+        "タイトルとアイコンが若干重なっている",
+        "2026-08-22T00:04:00.000Z",
+      );
+      db.prepare(`
+        INSERT INTO coordination_event_idempotency_v6 (
+          operation, principal_session_id, idempotency_key, request_fingerprint,
+          result_event_id, target_event_id, created_at
+        ) VALUES ('coordination.event.resolve', ?, ?, ?, ?, ?, ?)
+      `).run(
+        "consume-owner",
+        "resolve-before-consume-key",
+        "fingerprint",
+        "event-before-consume",
+        "event-before-consume",
+        "2026-08-22T00:02:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(tableSql(db, "coordination_event_actions_v6").includes("'consumed'"), true);
+      assert.equal(tableSql(db, "coordination_event_actions_v6").includes("'responded'"), true);
+      assert.equal(tableSql(db, "coordination_event_idempotency_v6").includes("'coordination.event.consume'"), true);
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_actions_v6 WHERE id = ?").get("resolve-before-consume") as { count: number }).count,
+        1,
+      );
+      assert.equal(
+        (db.prepare("SELECT action_type FROM coordination_event_actions_v6 WHERE id = ?")
+          .get("blocker-response-before-responded") as { action_type: string }).action_type,
+        "responded",
+      );
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM coordination_event_idempotency_v6 WHERE idempotency_key = ?").get("resolve-before-consume-key") as { count: number }).count,
+        1,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("COORD-RESPONSE-MIGRATE-02: consume対応済みschemaにもrespondedを再実行可能に追加する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6;");
+      db.exec(CREATE_V6_COORDINATION_EVENT_TABLES_SQL.replace(
+        "'responded', 'resolved', 'cancelled', 'superseded', 'consumed'",
+        "'resolved', 'cancelled', 'superseded', 'consumed'",
+      ));
+      db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id,
+          approval_mode, created_at, updated_at, last_active_at
+        ) VALUES ('response-owner', 'Owner', 'active', 'codex', 1, 'gpt-5',
+          'on-request', ?, ?, ?)
+      `).run("2026-08-22T00:00:00.000Z", "2026-08-22T00:00:00.000Z", "2026-08-22T00:00:00.000Z");
+      db.prepare(`
+        INSERT INTO coordination_events_v6 (
+          id, actor_session_id, session_role, role_contract_revision,
+          root_session_id, parent_session_id, delegation_depth, kind,
+          summary, payload_json, options_json, created_at
+        ) VALUES (?, ?, 'standalone', 1, ?, NULL, 0, 'blocker', ?, ?, '[]', ?)
+      `).run(
+        "current-blocker-response",
+        "response-owner",
+        "response-owner",
+        "Narrow layout",
+        JSON.stringify({ summary: "Narrow layout" }),
+        "2026-08-22T00:01:00.000Z",
+      );
+      db.prepare(`
+        INSERT INTO coordination_event_actions_v6 (
+          id, event_id, action_type, actor_type, actor_session_id,
+          option_id, note, related_event_id, created_at
+        ) VALUES (?, ?, 'resolved', 'trusted_gui', NULL, NULL, ?, NULL, ?)
+      `).run(
+        "current-blocker-response-action",
+        "current-blocker-response",
+        "タイトルとアイコンが若干重なっている",
+        "2026-08-22T00:02:00.000Z",
+      );
+
+      ensureV6Schema(db);
+      ensureV6Schema(db);
+
+      assert.equal(
+        (db.prepare("SELECT action_type FROM coordination_event_actions_v6 WHERE id = ?")
+          .get("current-blocker-response-action") as { action_type: string }).action_type,
+        "responded",
+      );
+      assert.equal(tableNames(db).filter((name) => name === "coordination_event_actions_v6").length, 1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("COORD-MIGRATE-01: malformed Coordination tableは途中適用せずmigrationを拒否する", () => {
+    const db = createV6Schema();
+    try {
+      db.exec("DROP TABLE coordination_event_idempotency_v6; DROP TABLE coordination_event_actions_v6; DROP TABLE coordination_events_v6;");
+      db.exec("CREATE TABLE coordination_events_v6 (id TEXT PRIMARY KEY);");
+      const beforeTables = tableNames(db);
+      assert.throws(() => ensureV6Schema(db), /Coordination event schema is invalid/);
+      assert.deepEqual(tableNames(db), beforeTables);
+      assert.deepEqual(columnNames(db, "coordination_events_v6"), ["id"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("COORD-MIGRATE-01: 必要列が揃っていてもCoordination CHECKが一つ欠けたschemaを拒否する", () => {
+    const cases = [
+      {
+        tableName: "coordination_events_v6",
+        fragment: "kind TEXT NOT NULL CHECK (kind IN ('progress', 'decision', 'escalation', 'user_decision_required', 'blocker', 'result', 'correction'))",
+        replacement: "kind TEXT NOT NULL",
+      },
+      {
+        tableName: "coordination_events_v6",
+        fragment: "CHECK ((kind = 'escalation') = (target_session_id IS NOT NULL))",
+        replacement: "CHECK (1)",
+      },
+      {
+        tableName: "coordination_event_actions_v6",
+        fragment: "action_type TEXT NOT NULL CHECK (action_type IN ('responded', 'resolved', 'cancelled', 'superseded', 'consumed'))",
+        replacement: "action_type TEXT NOT NULL",
+      },
+      {
+        tableName: "coordination_event_actions_v6",
+        fragment: `CHECK (
+      action_type <> 'consumed'
+      OR (
+        actor_type = 'session'
+        AND actor_session_id IS NOT NULL
+        AND option_id IS NULL
+        AND note IS NULL
+        AND related_event_id IS NULL
+      )
+    )`,
+        replacement: "CHECK (1)",
+      },
+    ] as const;
+
+    for (const [index, testCase] of cases.entries()) {
+      const directory = mkdtempSync(join(tmpdir(), `withmate-coordination-near-miss-${index}-`));
+      const dbPath = join(directory, APP_DATABASE_V6_FILENAME);
+      const db = createV6Schema(dbPath);
+      try {
+        const originalSql = tableSql(db, testCase.tableName);
+        assert.equal(originalSql.includes(testCase.fragment), true);
+        db.exec("PRAGMA foreign_keys = OFF;");
+        db.exec(originalSql
+          .replace(`CREATE TABLE ${testCase.tableName}`, `CREATE TABLE ${testCase.tableName}_rebuilt`)
+          .replace(testCase.fragment, testCase.replacement));
+        db.exec(`DROP TABLE ${testCase.tableName};`);
+        db.exec(`ALTER TABLE ${testCase.tableName}_rebuilt RENAME TO ${testCase.tableName};`);
+        if (testCase.tableName === "coordination_events_v6") {
+          db.exec(`
+            CREATE INDEX idx_v6_coordination_events_actor_sequence
+              ON coordination_events_v6(actor_session_id, sequence DESC);
+            CREATE INDEX idx_v6_coordination_events_root_sequence
+              ON coordination_events_v6(root_session_id, sequence DESC);
+            CREATE INDEX idx_v6_coordination_events_target
+              ON coordination_events_v6(target_session_id, sequence DESC);
+          `);
+        } else {
+          db.exec(`
+            CREATE INDEX idx_v6_coordination_event_actions_event_sequence
+              ON coordination_event_actions_v6(event_id, sequence ASC);
+          `);
+        }
+
+        assert.throws(() => ensureV6Schema(db), /Coordination event schema is invalid/);
+      } finally {
+        db.close();
+      }
+      try {
+        assert.equal(isValidV6Database(dbPath), false);
+      } finally {
+        rmSync(directory, { recursive: true, force: true });
+      }
     }
   });
 

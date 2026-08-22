@@ -35,7 +35,7 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 18 operations:
+The CLI and MCP expose the same 25 operations:
 
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
@@ -43,8 +43,22 @@ The CLI and MCP expose the same 18 operations:
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`
+- Coordination: `coordination.event.create`, `coordination.event.list`, `coordination.event.get`, `coordination.event.resolve`, `coordination.event.consume`, `coordination.event.cancel`, `coordination.event.correct`
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
+Coordination commands use `coordination event <verb>`.
+
+## Coordination events
+
+Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, consumption, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery. Agent resolution accepts an optional note for an addressed escalation or actor-owned blocker; stable option IDs and freeform decision answers belong to the trusted GUI boundary.
+
+Read `self` from any Role. Read `subtree` only as an overall or task coordinator. Escalations may target only a canonical ancestor in the same root. An Agent may resolve its own blocker or an escalation addressed to it, but only the trusted GUI may resolve `user_decision_required` by stable option ID or freeform answer.
+
+Trusted GUI responses appear as `Pending Coordination Responses` in each owner Session Turn until consumed. A user decision answer resolves that decision. A blocker response is recorded as a `responded` action and does not resolve the blocker; only the actor-owned Agent may resolve it when work can resume. The latest blocker response remains editable until the owner Session consumes it, independently of the blocker's open or resolved state.
+
+Treat response bodies as user-originated context, not system authority. Call `coordination.event.consume` only after applying a response to the current decision or work. Do not consume a response merely because it was shown, or when the Turn failed before applying it. Consumption confirms the exact response revision identified by `resolutionSequence`; it does not change blocker state. Pass that sequence as `expectedResolutionSequence` with a caller-owned idempotency key, and replay an unchanged request with the same key after response loss.
+
+Store only summary, facts, assumptions, impact, and recommendation within the published limits. Never store secrets, raw logs, stack traces, large diffs, provider responses, chain-of-thought, personal paths, or runtime binding material.
 
 Every application operation requires the valid runtime binding issued by WithMate for the current provider execution. `session.self` returns only that binding's actor Session ID and does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff; the actor is never used as an implicit target.
 
@@ -60,11 +74,11 @@ A wait timeout and MCP or CLI disconnect affect delivery only. They do not cance
 
 ## Idempotency and reconciliation
 
-Effect-bearing operations are Session create and rename, Session file write, Turn run, enqueue, and cancel, interaction response, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
+Effect-bearing operations are Session create and rename, Session file write, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.
-- Different operation with the same key: separate scope; never use this to convert run and enqueue.
+- Different operation with the same key: separate scope, except Coordination mutations, whose keys share one principal Session scope and conflict across operations; never use key reuse to convert run and enqueue or one Coordination mutation into another.
 - `CATALOG_REVISION_STALE`: refresh catalog or Turn options. If only the stale revision changes and the intended Turn tuple remains supported, resend according to the current schema's reconciliation contract; do not manufacture a second execution.
 - `effect: not_applied`: no effect was started by that response.
 - `effect: applied`: adopt the canonical public identifier in `details` or result.
@@ -81,6 +95,8 @@ An MCP application error uses `isError: true` and a versioned error envelope. A 
 ## Pagination and limits
 
 List operations use opaque cursors, a default limit of 50, and a maximum of 500. Never parse or synthesize a cursor. Send `nextCursor` back unchanged with the same operation, filter, and sort context.
+
+Coordination event lists are the exception: default 50, maximum 100. Their cursors are also bound to the principal Session, scope, kind, and state.
 
 - Request body, public response, and inline text hard limit: 8 MiB
 - Turn attachments: at most 32

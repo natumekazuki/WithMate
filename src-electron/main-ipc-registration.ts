@@ -1,6 +1,18 @@
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import type {
+  CoordinationEvent,
+  CoordinationEventCancelInput,
+  CoordinationEventTrustedResolveInput,
+  CoordinationEventListResult,
+  CoordinationEventTrustedListInput,
+} from "../src/coordination-event.js";
+import {
+  parseCoordinationEventTrustedResolveInput,
+  parseCoordinationEventTrustedListInput,
+} from "../src/coordination-event.js";
+import { parseSessionRuntimeOperationInput } from "../src/session-external-runtime-contract.js";
 import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -36,6 +48,9 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  SessionCharacterUsage,
+  SessionSummaryPageRequest,
+  HomeSessionSummaryPageResult,
   SessionSummary,
 } from "../src/app-state.js";
 import type {
@@ -143,6 +158,7 @@ import {
   type WorkspaceDirectoryValidationResult,
 } from "../src/workspace-directory-validation.js";
 import { parseCreateSessionRequest } from "./create-session-request.js";
+import { parseSessionSummaryPageRequest } from "./session-summary-query.js";
 import {
   WITHMATE_CANCEL_SESSION_RUN_CHANNEL,
   WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,
@@ -229,8 +245,13 @@ import {
   WITHMATE_CANCEL_AUXILIARY_SESSION_RUN_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL,
   WITHMATE_GET_SESSION_SCHEDULE_CHANNEL,
   WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL,
@@ -257,6 +278,7 @@ import {
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
@@ -297,9 +319,12 @@ import {
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
+  parseOpenSessionWindowIdsPageRequest,
   type ImageFilePickerPurpose,
   type OpenPathOptions,
   type OpenPathResult,
+  type OpenSessionWindowIdsPageRequest,
+  type OpenSessionWindowIdsPageResult,
   type DeleteSessionsLastActiveBeforeRequest,
   type DeleteSessionsResult,
   type ResetAppDatabaseRequest,
@@ -329,8 +354,10 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryV6ReviewWindow(): Promise<void>;
+  openCoordinationWindow(): Promise<void>;
   isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
+  isCoordinationWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
@@ -338,7 +365,8 @@ export type MainIpcRegistrationDeps = {
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
-  listSessionSummaries(): Awaitable<SessionSummary[]>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
@@ -378,7 +406,9 @@ export type MainIpcRegistrationDeps = {
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
-  listOpenSessionWindowIds(): string[];
+  listOpenSessionWindowIdsPage(
+    request?: OpenSessionWindowIdsPageRequest | null,
+  ): OpenSessionWindowIdsPageResult;
   listOpenCompanionReviewWindowIds(): string[];
   listAuxiliarySessions?(parentSessionId: string): Awaitable<AuxiliarySessionSummary[]>;
   listOpenActiveAuxiliarySessionSummaries?(): Awaitable<AuxiliarySessionSummary[]>;
@@ -480,6 +510,10 @@ export type MainIpcRegistrationDeps = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
+  listCoordinationEvents?(input: CoordinationEventTrustedListInput): Awaitable<CoordinationEventListResult>;
+  getCoordinationEvent?(eventId: string): Awaitable<CoordinationEvent>;
+  resolveCoordinationEvent?(input: CoordinationEventTrustedResolveInput): Awaitable<CoordinationEvent>;
+  cancelCoordinationEvent?(input: CoordinationEventCancelInput): Awaitable<CoordinationEvent>;
   listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
   getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
   createSessionSchedule(sessionId: string, input: CreateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
@@ -537,6 +571,7 @@ type MainIpcWindowDeps = Pick<
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
   | "openMemoryV6ReviewWindow"
+  | "openCoordinationWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "isFilePreviewWindow"
@@ -578,6 +613,7 @@ type MainIpcSettingsDeps = Pick<
   | "resolveEventWindow"
   | "resolveHomeWindow"
   | "isSettingsWindow"
+  | "isCoordinationWindow"
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
@@ -635,7 +671,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "isFilePreviewWindow"
   | "getFilePreviewWindowResource"
   | "isFilePreviewTokenWindow"
-  | "listSessionSummaries"
+  | "listSessionSummaryPage"
+  | "listSessionCharacterUsage"
   | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
   | "listSessionAuditLogSummaries"
@@ -653,7 +690,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "listSessionCustomAgents"
   | "listWorkspaceSkills"
   | "listWorkspaceCustomAgents"
-  | "listOpenSessionWindowIds"
+  | "listOpenSessionWindowIdsPage"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
   | "validateWorkspaceDirectory"
@@ -703,6 +740,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "validateWorkspaceDirectory"
   | "resolveSessionWindow"
   | "isSettingsWindow"
+  | "isCoordinationWindow"
   | "getLiveSessionRun"
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
@@ -719,6 +757,10 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "listSessionTurnExecutions"
   | "cancelSessionExecution"
   | "cancelSessionRun"
+  | "listCoordinationEvents"
+  | "getCoordinationEvent"
+  | "resolveCoordinationEvent"
+  | "cancelCoordinationEvent"
 >;
 
 async function assertUsableWorkspaceDirectory(
@@ -771,6 +813,17 @@ function assertMemoryV6ReviewSender(
     return;
   }
   throw new Error("Memory V6 Review IPC is only available from the Memory Review window.");
+}
+
+function assertCoordinationWindowSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "isCoordinationWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.isCoordinationWindow(window)) {
+    return;
+  }
+  throw new Error("Coordination IPC is only available from the Coordination window.");
 }
 
 function assertSettingsWindowSender(
@@ -1086,6 +1139,9 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   ipcMain.handle(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL, async () => {
     await deps.openMemoryV6ReviewWindow();
   });
+  ipcMain.handle(WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL, async () => {
+    await deps.openCoordinationWindow();
+  });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, async (_event, characterId?: string | null) => {
     await deps.openCharacterEditorWindow(characterId ?? null);
   });
@@ -1348,7 +1404,12 @@ function registerPromptTemplateHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
 }
 
 function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcSessionQueryDeps): void {
-  ipcMain.handle(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL, () => deps.listSessionSummaries());
+  ipcMain.handle(
+    WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+    (_event, request: SessionSummaryPageRequest | null | undefined) =>
+      deps.listSessionSummaryPage(parseSessionSummaryPageRequest(request)),
+  );
+  ipcMain.handle(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL, () => deps.listSessionCharacterUsage());
   ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARIES_CHANNEL, (_event, sessionId: string) =>
@@ -1406,7 +1467,11 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     async (_event, providerId: string, workspacePath: string) =>
       deps.listWorkspaceCustomAgents(providerId, workspacePath),
   );
-  ipcMain.handle(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, () => deps.listOpenSessionWindowIds());
+  ipcMain.handle(
+    WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL,
+    (_event, request: OpenSessionWindowIdsPageRequest | null | undefined) =>
+      deps.listOpenSessionWindowIdsPage(parseOpenSessionWindowIdsPageRequest(request)),
+  );
   ipcMain.handle(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL, () => deps.listOpenCompanionReviewWindowIds());
   ipcMain.handle(WITHMATE_GET_SESSION_CHANNEL, (_event, sessionId: string) => {
     if (!sessionId) {
@@ -1721,6 +1786,28 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL, (event, sessionId: string) => {
     assertTargetSessionWindowSender(event, sessionId, deps);
     return deps.listSessionTurnExecutions(sessionId);
+  });
+  ipcMain.handle(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL, (event, input: unknown) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.listCoordinationEvents) throw new Error("Coordination event service is unavailable.");
+    return deps.listCoordinationEvents(parseCoordinationEventTrustedListInput(input));
+  });
+  ipcMain.handle(WITHMATE_GET_COORDINATION_EVENT_CHANNEL, (event, eventId: string) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.getCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.getCoordinationEvent(eventId);
+  });
+  ipcMain.handle(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.resolveCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.resolveCoordinationEvent(parseCoordinationEventTrustedResolveInput(input));
+  });
+  ipcMain.handle(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.cancelCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.cancelCoordinationEvent(
+      parseSessionRuntimeOperationInput("coordination.event.cancel", input) as CoordinationEventCancelInput,
+    );
   });
   ipcMain.handle(
     WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL,

@@ -5,6 +5,12 @@ import { z } from "zod";
 import { APPROVAL_MODE_VALUES } from "../src/approval-mode.js";
 import { CODEX_SANDBOX_MODE_VALUES } from "../src/codex-sandbox-mode.js";
 import {
+  COORDINATION_EVENT_DEFAULT_LIST_LIMIT,
+  COORDINATION_EVENT_KINDS,
+  COORDINATION_EVENT_MAX_LIST_LIMIT,
+  COORDINATION_EVENT_STATES,
+} from "../src/coordination-event.js";
+import {
   SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES,
   SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
 } from "../src/session-transcript.js";
@@ -179,6 +185,72 @@ const sessionFileWriteTextInputSchema = z.object({
     });
   }
 });
+const coordinationPayloadSchema = z.object({
+  summary: z.string().trim().min(1).max(240),
+  facts: z.array(z.string().trim().min(1).max(500)).max(8).optional(),
+  assumptions: z.array(z.string().trim().min(1).max(500)).max(8).optional(),
+  impact: z.string().trim().min(1).max(1_000).optional(),
+  recommendation: z.string().trim().min(1).max(1_000).optional(),
+}).strict();
+const coordinationOptionSchema = z.object({
+  id: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/).max(80),
+  label: z.string().trim().min(1).max(120),
+  description: z.string().trim().min(1).max(500).optional(),
+}).strict();
+const coordinationCreateInputSchema = z.object({
+  kind: z.enum(COORDINATION_EVENT_KINDS).exclude(["correction"]),
+  payload: coordinationPayloadSchema,
+  executionId: nonEmptyStringSchema.optional(),
+  targetSessionId: nonEmptyStringSchema.optional(),
+  options: z.array(coordinationOptionSchema).min(2).max(8).optional(),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict().superRefine((value, context) => {
+  if ((value.kind === "escalation") !== (value.targetSessionId !== undefined)) {
+    context.addIssue({ code: "custom", path: ["targetSessionId"], message: "targetSessionId is required only for escalation events." });
+  }
+  if ((value.kind === "user_decision_required") !== (value.options !== undefined)) {
+    context.addIssue({ code: "custom", path: ["options"], message: "options are required only for user_decision_required events." });
+  }
+  if (value.options && new Set(value.options.map((option) => option.id)).size !== value.options.length) {
+    context.addIssue({ code: "custom", path: ["options"], message: "option IDs must be unique." });
+  }
+});
+const coordinationListInputSchema = z.object({
+  scope: z.enum(["self", "subtree"]),
+  kind: z.enum(COORDINATION_EVENT_KINDS).optional(),
+  state: z.enum(COORDINATION_EVENT_STATES).optional(),
+  limit: z.number().int().min(1).max(COORDINATION_EVENT_MAX_LIST_LIMIT).default(COORDINATION_EVENT_DEFAULT_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const coordinationGetInputSchema = z.object({
+  eventId: nonEmptyStringSchema.optional(),
+  idempotencyKey: nonEmptyStringSchema.optional(),
+}).strict().superRefine((value, context) => {
+  if ((value.eventId !== undefined) === (value.idempotencyKey !== undefined)) {
+    context.addIssue({ code: "custom", path: [], message: "Exactly one of eventId or idempotencyKey is required." });
+  }
+});
+const coordinationResolveInputSchema = z.object({
+  eventId: nonEmptyStringSchema,
+  note: z.string().trim().min(1).max(1_000).optional(),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const coordinationConsumeInputSchema = z.object({
+  eventId: nonEmptyStringSchema,
+  expectedResolutionSequence: z.number().int().positive(),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const coordinationCancelInputSchema = z.object({
+  eventId: nonEmptyStringSchema,
+  note: z.string().trim().min(1).max(1_000).optional(),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const coordinationCorrectInputSchema = z.object({
+  eventId: nonEmptyStringSchema,
+  payload: coordinationPayloadSchema,
+  executionId: nonEmptyStringSchema.optional(),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
 const transcriptExportInputSchema = z.object({
   sessionId: nonEmptyStringSchema,
   format: z.enum(["json", "markdown"]),
@@ -394,6 +466,38 @@ const turnOptionsSchema = z.union([
     }).strict()),
   }).strict(),
 ]);
+const coordinationSummarySchema = z.object({
+  sequence: z.number().int().positive(),
+  eventId: z.string(),
+  actorSessionId: z.string(),
+  sessionRole: sessionRoleSchema,
+  kind: z.enum(COORDINATION_EVENT_KINDS),
+  state: z.enum(COORDINATION_EVENT_STATES),
+  summary: z.string(),
+  createdAt: z.string(),
+}).strict();
+const coordinationActionSchema = z.object({
+  sequence: z.number().int().positive(),
+  type: z.enum(["responded", "resolved", "cancelled", "superseded", "consumed"]),
+  actorType: z.enum(["session", "trusted_gui"]),
+  actorSessionId: z.string().nullable(),
+  optionId: z.string().nullable(),
+  note: z.string().nullable(),
+  relatedEventId: z.string().nullable(),
+  createdAt: z.string(),
+}).strict();
+const coordinationEventSchema = coordinationSummarySchema.extend({
+  roleContractRevision: z.literal(1),
+  rootSessionId: z.string(),
+  parentSessionId: z.string().nullable(),
+  delegationDepth: z.number().int().min(0).max(2),
+  payload: coordinationPayloadSchema,
+  executionId: z.string().nullable(),
+  targetSessionId: z.string().nullable(),
+  correctedEventId: z.string().nullable(),
+  options: z.array(coordinationOptionSchema),
+  actions: z.array(coordinationActionSchema),
+}).strict();
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
@@ -406,6 +510,13 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       executor: z.array(z.enum(["task-coordinator", "executor"])),
     }).strict(),
     maxDelegationDepth: z.literal(2),
+    coordinationEvents: z.object({
+      kinds: z.tuple(COORDINATION_EVENT_KINDS.map((kind) => z.literal(kind)) as [z.ZodLiteral<(typeof COORDINATION_EVENT_KINDS)[number]>, ...z.ZodLiteral<(typeof COORDINATION_EVENT_KINDS)[number]>[]]),
+      states: z.tuple(COORDINATION_EVENT_STATES.map((state) => z.literal(state)) as [z.ZodLiteral<(typeof COORDINATION_EVENT_STATES)[number]>, ...z.ZodLiteral<(typeof COORDINATION_EVENT_STATES)[number]>[]]),
+      scopes: z.tuple([z.literal("self"), z.literal("subtree")]),
+      defaultListLimit: z.literal(COORDINATION_EVENT_DEFAULT_LIST_LIMIT),
+      maxListLimit: z.literal(COORDINATION_EVENT_MAX_LIST_LIMIT),
+    }).strict(),
     providers: z.array(z.object({
       id: z.string(),
       label: z.string(),
@@ -430,6 +541,13 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "turn.cancel": executionSchema,
   "interaction.list": z.object({ items: z.array(interactionSchema), nextCursor: z.string().optional() }).strict(),
   "interaction.respond": z.object({ interaction: answeredInteractionSchema, execution: executionSchema }).strict(),
+  "coordination.event.create": coordinationEventSchema,
+  "coordination.event.list": z.object({ items: z.array(coordinationSummarySchema), nextCursor: z.string().optional() }).strict(),
+  "coordination.event.get": coordinationEventSchema,
+  "coordination.event.resolve": coordinationEventSchema,
+  "coordination.event.consume": coordinationEventSchema,
+  "coordination.event.cancel": coordinationEventSchema,
+  "coordination.event.correct": z.object({ correction: coordinationEventSchema, superseded: coordinationEventSchema }).strict(),
   "transcript.export": z.discriminatedUnion("destination", [
     z.object({ destination: z.literal("inline"), format: z.enum(["json", "markdown"]), byteLength: z.number().int(), content: z.string() }).strict(),
     z.object({
@@ -459,6 +577,12 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
   "Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
   "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
+  "Coordination events are public records separate from the normal response; do not change the normal response format when recording one.",
+  "Record a coordination event for a scope or policy decision, an ancestor or user decision request, a blocker opening or clearing, a major work milestone, or a correction.",
+  "Use user_decision_required for user confirmation, selection, or free text; use blocker only for an external condition that prevents your work, and resolve your blocker after work can resume.",
+  "A user may provide or revise a free-text response to your blocker until you apply and consume its latest resolutionSequence; this response does not resolve the blocker.",
+  "Never record secrets, raw logs, stack traces, large diffs, provider responses, private reasoning, or personal environment paths.",
+  "A progress or decision recording failure must not stop the normal response. If user_decision_required cannot be recorded, state the failure and a safe next action in the normal response.",
 ].join(" ");
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
@@ -479,6 +603,13 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "turn.cancel", title: "Cancel Session execution", description: "Cancel one queued or running execution in the specified Session.", readOnly: false, destructive: true },
   { name: "interaction.list", title: "List Session interactions", description: "List public interactions for the specified Session.", readOnly: true, destructive: false },
   { name: "interaction.respond", title: "Respond to Session interaction", description: "Resolve one pending interaction in the specified execution.", readOnly: false, destructive: true },
+  { name: "coordination.event.create", title: "Create coordination event", description: "Record a public coordination event for the bound Session and return its stable eventId.", readOnly: false, destructive: false },
+  { name: "coordination.event.list", title: "List coordination events", description: "List visible coordination event summaries, including each stable eventId.", readOnly: true, destructive: false },
+  { name: "coordination.event.get", title: "Get coordination event", description: "Read one visible coordination event by eventId, or recover it and its stable eventId by the create idempotencyKey.", readOnly: true, destructive: false },
+  { name: "coordination.event.resolve", title: "Resolve coordination event", description: "Resolve an authorized escalation or blocker using the exact eventId returned by create, list, or get.", readOnly: false, destructive: false },
+  { name: "coordination.event.consume", title: "Consume coordination response", description: "Mark the exact user decision answer or blocker response identified by expectedResolutionSequence as applied by its owner Session. Consuming a blocker response does not resolve the blocker.", readOnly: false, destructive: false },
+  { name: "coordination.event.cancel", title: "Cancel coordination event", description: "Cancel an open coordination event created by the bound Session.", readOnly: false, destructive: true },
+  { name: "coordination.event.correct", title: "Correct coordination event", description: "Append a correction and supersede an event created by the bound Session.", readOnly: false, destructive: true },
   { name: "transcript.export", title: "Export Session transcript", description: "Export a Session transcript inline or into its SessionFolder.", readOnly: false, destructive: true },
 ] as const;
 
@@ -497,6 +628,9 @@ function isMutation(operation: SessionRuntimeOperation, input?: unknown): boolea
     || operation === "session.files.write_text"
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
     || operation === "interaction.respond"
+    || operation === "coordination.event.create" || operation === "coordination.event.resolve"
+    || operation === "coordination.event.consume"
+    || operation === "coordination.event.cancel" || operation === "coordination.event.correct"
     || (operation === "transcript.export"
       && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));
 }
@@ -694,6 +828,34 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: interactionRespondInputSchema,
     outputSchema: createOutputSchema("interaction.respond"),
   }, async (input) => executeOperation("interaction.respond", input, deps));
+  server.registerTool("coordination.event.create", {
+    ...definitions.get("coordination.event.create")!, annotations: annotations(definitions.get("coordination.event.create")!),
+    inputSchema: coordinationCreateInputSchema, outputSchema: createOutputSchema("coordination.event.create"),
+  }, async (input) => executeOperation("coordination.event.create", input, deps));
+  server.registerTool("coordination.event.list", {
+    ...definitions.get("coordination.event.list")!, annotations: annotations(definitions.get("coordination.event.list")!),
+    inputSchema: coordinationListInputSchema, outputSchema: createOutputSchema("coordination.event.list"),
+  }, async (input) => executeOperation("coordination.event.list", input, deps));
+  server.registerTool("coordination.event.get", {
+    ...definitions.get("coordination.event.get")!, annotations: annotations(definitions.get("coordination.event.get")!),
+    inputSchema: coordinationGetInputSchema, outputSchema: createOutputSchema("coordination.event.get"),
+  }, async (input) => executeOperation("coordination.event.get", input, deps));
+  server.registerTool("coordination.event.resolve", {
+    ...definitions.get("coordination.event.resolve")!, annotations: annotations(definitions.get("coordination.event.resolve")!),
+    inputSchema: coordinationResolveInputSchema, outputSchema: createOutputSchema("coordination.event.resolve"),
+  }, async (input) => executeOperation("coordination.event.resolve", input, deps));
+  server.registerTool("coordination.event.consume", {
+    ...definitions.get("coordination.event.consume")!, annotations: annotations(definitions.get("coordination.event.consume")!),
+    inputSchema: coordinationConsumeInputSchema, outputSchema: createOutputSchema("coordination.event.consume"),
+  }, async (input) => executeOperation("coordination.event.consume", input, deps));
+  server.registerTool("coordination.event.cancel", {
+    ...definitions.get("coordination.event.cancel")!, annotations: annotations(definitions.get("coordination.event.cancel")!),
+    inputSchema: coordinationCancelInputSchema, outputSchema: createOutputSchema("coordination.event.cancel"),
+  }, async (input) => executeOperation("coordination.event.cancel", input, deps));
+  server.registerTool("coordination.event.correct", {
+    ...definitions.get("coordination.event.correct")!, annotations: annotations(definitions.get("coordination.event.correct")!),
+    inputSchema: coordinationCorrectInputSchema, outputSchema: createOutputSchema("coordination.event.correct"),
+  }, async (input) => executeOperation("coordination.event.correct", input, deps));
   server.registerTool("transcript.export", {
     ...definitions.get("transcript.export")!,
     annotations: annotations(definitions.get("transcript.export")!),

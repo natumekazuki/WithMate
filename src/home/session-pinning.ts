@@ -1,9 +1,9 @@
-import type { SessionSummary } from "../session-state.js";
+import type { HomeSessionSummary } from "../session-state.js";
 
 export function mergePinnedSessionSummary(
-  summaries: readonly SessionSummary[],
-  saved: SessionSummary,
-): SessionSummary[] {
+  summaries: readonly HomeSessionSummary[],
+  saved: HomeSessionSummary,
+): HomeSessionSummary[] {
   return summaries.map((session) => (
     session.id === saved.id
       ? { ...session, isPinned: saved.isPinned }

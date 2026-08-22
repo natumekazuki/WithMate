@@ -1824,7 +1824,9 @@ export function SessionContextPane({
       return;
     }
 
-    contentNode.scrollTop = activeContextPaneTab === "companion-group" ? 0 : contentNode.scrollHeight;
+    contentNode.scrollTop = activeContextPaneTab === "companion-group"
+      ? 0
+      : contentNode.scrollHeight;
   }, [contentScrollKey]);
 
   return (

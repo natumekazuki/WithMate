@@ -1,6 +1,5 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
-import type { SessionSummary } from "../session-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import {
   clearHomeMateAvatar,
@@ -21,7 +20,7 @@ type HomeMateProfileHandlersContext = {
   setMateCreating: (creating: boolean) => void;
   setMateAvatarUpdating: (updating: boolean) => void;
   setLaunchFeedback: (message: string) => void;
-  setSessions: (sessions: SessionSummary[]) => void;
+  refreshSessionSummaries: () => Promise<void>;
   setCompanionSessions: (sessions: CompanionSessionSummary[]) => void;
 };
 
@@ -47,15 +46,14 @@ export function buildHomeMateProfileHandlers({
   setMateCreating,
   setMateAvatarUpdating,
   setLaunchFeedback,
-  setSessions,
+  refreshSessionSummaries: refreshSessionSummariesBounded,
   setCompanionSessions,
 }: HomeMateProfileHandlersContext): HomeMateProfileHandlers {
   const refreshSessionSummaries = async (api: WithMateWindowApi) => {
-    const [nextSessions, nextCompanionSessions] = await Promise.all([
-      api.listSessionSummaries(),
+    const [nextCompanionSessions] = await Promise.all([
       api.listCompanionSessionSummaries(),
+      refreshSessionSummariesBounded(),
     ]);
-    setSessions(nextSessions);
     setCompanionSessions(nextCompanionSessions);
   };
 
@@ -83,11 +81,10 @@ export function buildHomeMateProfileHandlers({
         setMateCreating,
         setLaunchFeedback,
         hydrateHomeData: async () => {
-          const [nextSessions, nextCompanionSessions] = await Promise.all([
-            api.listSessionSummaries(),
+          const [nextCompanionSessions] = await Promise.all([
             api.listCompanionSessionSummaries(),
+            refreshSessionSummariesBounded(),
           ]);
-          setSessions(nextSessions);
           setCompanionSessions(nextCompanionSessions);
         },
       });

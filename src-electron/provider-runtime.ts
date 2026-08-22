@@ -28,6 +28,7 @@ import type { ConversationTimingContext } from "./conversation-timing.js";
 import type { CharacterContextResponse } from "../src/character-context/character-context-contract.js";
 import type { ProviderAgentRuntimeBindingProjection } from "./agent-runtime-binding.js";
 import type { SessionRoleBinding } from "../src/session-role-binding.js";
+import type { PendingCoordinationResponse } from "../src/coordination-event.js";
 
 export type ProviderPromptComposition = {
   systemBodyText: string;
@@ -50,6 +51,7 @@ export type RunSessionTurnInput = {
   attachments: ComposerAttachment[];
   conversationTimingContext?: ConversationTimingContext;
   characterContext?: CharacterContextResponse;
+  pendingCoordinationResponses?: PendingCoordinationResponse[];
   agentRuntimeBinding?: ProviderAgentRuntimeBindingProjection | null;
   sessionRoleBinding?: SessionRoleBinding | null;
   signal?: AbortSignal;

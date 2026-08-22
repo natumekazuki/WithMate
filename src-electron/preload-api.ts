@@ -1,11 +1,18 @@
 import type { IpcRenderer } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import { normalizeSessionSummaryInvalidation } from "./session-summary-query.js";
+import {
+  normalizeOpenSessionWindowIdsChangedPayload,
+  normalizeOpenSessionWindowIdsPageResult,
+  OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
+} from "../src/withmate-window-types.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
   WithMateWindowCharacterApi,
   WithMateWindowCompanionApi,
+  WithMateWindowCoordinationApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
   WithMateWindowAuxiliaryApi,
@@ -89,6 +96,7 @@ import {
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL,
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
@@ -111,8 +119,13 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -159,13 +172,13 @@ import {
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
-  WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_DROP_COMPANION_TARGET_STASH_CHANNEL,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT,
+  WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT,
   WITHMATE_START_CHARACTER_AUTHORING_SESSION_CHANNEL,
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
@@ -260,6 +273,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openMemoryV6ReviewWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL);
     },
+    openCoordinationWindow() {
+      return ipcRenderer.invoke(WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL);
+    },
     openCharacterEditorWindow(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, characterId ?? null);
     },
@@ -296,6 +312,23 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
   };
 }
 
+function createCoordinationApi(ipcRenderer: IpcRendererLike): WithMateWindowCoordinationApi {
+  return {
+    listCoordinationEvents(input) {
+      return ipcRenderer.invoke(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL, input);
+    },
+    getCoordinationEvent(eventId) {
+      return ipcRenderer.invoke(WITHMATE_GET_COORDINATION_EVENT_CHANNEL, eventId);
+    },
+    resolveCoordinationEvent(input) {
+      return ipcRenderer.invoke(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL, input);
+    },
+    cancelCoordinationEvent(input) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL, input);
+    },
+  };
+}
+
 function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogApi {
   return {
     getModelCatalog(revision) {
@@ -321,8 +354,11 @@ function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogAp
 
 function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionApi {
   return {
-    listSessionSummaries() {
-      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL);
+    listSessionSummaryPage(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL, request ?? null);
+    },
+    listSessionCharacterUsage() {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL);
     },
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
@@ -582,7 +618,7 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL, sessionId, kind);
     },
     listOpenSessionWindowIds() {
-      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL);
+      return listAllOpenSessionWindowIds(ipcRenderer);
     },
     listOpenCompanionReviewWindowIds() {
       return ipcRenderer.invoke(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL);
@@ -782,14 +818,26 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     subscribeSessionFilePreviewNavigation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, listener);
     },
-    subscribeSessionSummaries(listener) {
-      return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);
-    },
     subscribeSessionInvalidation(listener) {
-      return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, (payload: unknown) => {
+        const normalized = normalizeSessionSummaryInvalidation(payload);
+        if (normalized) {
+          listener(normalized);
+        }
+      });
     },
     subscribeSessionExecutionsChanged(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, listener);
+    },
+    subscribeCoordinationEventsChanged(listener) {
+      return subscribe(ipcRenderer, WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT, (payload: unknown) => {
+        if (!payload || typeof payload !== "object") return;
+        const eventId = "eventId" in payload ? payload.eventId : undefined;
+        const revision = "revision" in payload ? payload.revision : undefined;
+        if ((eventId !== null && (typeof eventId !== "string" || !eventId.trim()))
+          || (revision !== null && (!Number.isInteger(revision) || (revision as number) < 0))) return;
+        listener({ eventId, revision: revision as number | null });
+      });
     },
     subscribeModelCatalog(listener) {
       return subscribe(ipcRenderer, WITHMATE_MODEL_CATALOG_CHANGED_EVENT, (catalog: ModelCatalogChangedPayload) => {
@@ -826,7 +874,17 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
       );
     },
     subscribeOpenSessionWindowIds(listener) {
-      return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, (payload: unknown) => {
+        const normalized = normalizeOpenSessionWindowIdsChangedPayload(payload);
+        if (!normalized) {
+          return;
+        }
+        if (normalized.scope === "ids") {
+          listener(normalized.sessionIds);
+          return;
+        }
+        void listAllOpenSessionWindowIds(ipcRenderer).then(listener);
+      });
     },
     subscribeOpenCompanionReviewWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT, listener);
@@ -838,6 +896,29 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
       return subscribe(ipcRenderer, WITHMATE_SESSION_SCHEDULES_CHANGED_EVENT, listener);
     },
   };
+}
+
+async function listAllOpenSessionWindowIds(ipcRenderer: IpcRendererLike): Promise<string[]> {
+  const sessionIds: string[] = [];
+  let cursor: string | null = null;
+  while (true) {
+    const rawPage = await ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, {
+      cursor,
+      limit: OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
+    });
+    const page = normalizeOpenSessionWindowIdsPageResult(rawPage);
+    if (!page) {
+      throw new Error("open Session Window ID page response が不正です。");
+    }
+    sessionIds.push(...page.sessionIds);
+    if (!page.hasMore) {
+      return Array.from(new Set(sessionIds));
+    }
+    if (page.nextCursor === null || page.nextCursor === cursor) {
+      throw new Error("open Session Window ID page cursor が進まないよ。");
+    }
+    cursor = page.nextCursor;
+  }
 }
 
 function reportRendererLog(ipcRenderer: IpcRendererLike, input: RendererLogInput): void {
@@ -898,6 +979,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
+    ...createCoordinationApi(ipcRenderer),
     ...createMemoryV6ReviewApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer),

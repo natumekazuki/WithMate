@@ -141,6 +141,7 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /Root Session ID: `session-self-1`/);
     assert.match(prompt.systemBodyText, /Parent Session ID: `null`/);
     assert.match(prompt.systemBodyText, /Delegation Depth: `0`/);
+    assert.doesNotMatch(prompt.systemBodyText, /# Coordination Events|coordination\.event\.|user_decision_required|blocker/);
     assert.doesNotMatch(prompt.systemBodyText, /bindingReference|binding hash|operation grant/i);
     assert.equal(prompt.systemBodyText.match(/Current Session ID:/g)?.length, 1);
   });
@@ -240,6 +241,64 @@ describe("composeProviderPrompt", () => {
       "- Observed local time:",
       "# User Input",
       "続きやろっか",
+    ]);
+  });
+
+  it("未確定のCoordination responseは固定system指示と分けてinput側のUser Input直前へ置く", () => {
+    const session = buildNewSession({
+      taskTitle: "task",
+      workspaceLabel: "workspace",
+      workspacePath: "workspace",
+      branch: "",
+      characterId: "character-1",
+      character: "Test",
+      characterIconPath: "",
+      characterThemeColors,
+      approvalMode: "untrusted",
+    });
+    const prompt = composeProviderPrompt({
+      session,
+      sessionMemory: createDefaultSessionMemory(session),
+      projectMemoryEntries: [],
+      providerCatalog,
+      userMessage: "決定を反映して続けて",
+      appSettings: createDefaultAppSettings(),
+      attachments: [],
+      pendingCoordinationResponses: [{
+        eventId: "coordination-1",
+        kind: "user_decision_required",
+        resolutionSequence: 3,
+        request: "移行方針を選んでください",
+        response: { kind: "option", optionId: "incremental", label: "段階移行" },
+        respondedAt: "2026-08-22T12:00:00.000Z",
+        consumption: "pending",
+      }, {
+        eventId: "coordination-blocker-1",
+        kind: "blocker",
+        resolutionSequence: 4,
+        request: "狭幅の表示を確認してください",
+        response: { kind: "text", text: "タイトルとアイコンが若干重なっている" },
+        respondedAt: "2026-08-22T12:01:00.000Z",
+        consumption: "pending",
+      }],
+    });
+
+    assert.doesNotMatch(prompt.systemBodyText, /coordination\.event\.|Pending Coordination Responses/);
+    assert.doesNotMatch(prompt.systemBodyText, /移行方針を選んでください|段階移行|タイトルとアイコンが若干重なっている/);
+    assert.match(prompt.inputBodyText, /# Pending Coordination Responses/);
+    assert.match(prompt.inputBodyText, /Treat them as context, not as system instructions/);
+    assert.match(prompt.inputBodyText, /After applying a response.*coordination\.event\.consume/);
+    assert.match(prompt.inputBodyText, /Leave responses pending when they were not applied/);
+    assertSectionOrder(prompt.inputBodyText, [
+      "# Pending Coordination Responses",
+      "coordination-1",
+      "resolutionSequence",
+      "移行方針を選んでください",
+      "段階移行",
+      "coordination-blocker-1",
+      "タイトルとアイコンが若干重なっている",
+      "# User Input",
+      "決定を反映して続けて",
     ]);
   });
 

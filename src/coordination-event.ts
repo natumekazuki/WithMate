@@ -1,0 +1,400 @@
+import type { SessionRoleBinding } from "./session-role-binding.js";
+
+export const COORDINATION_EVENT_KINDS = [
+  "progress",
+  "decision",
+  "escalation",
+  "user_decision_required",
+  "blocker",
+  "result",
+  "correction",
+] as const;
+
+export const COORDINATION_EVENT_STATES = [
+  "recorded",
+  "open",
+  "resolved",
+  "superseded",
+  "cancelled",
+] as const;
+
+export const COORDINATION_EVENT_OPEN_KINDS = [
+  "escalation",
+  "user_decision_required",
+  "blocker",
+] as const;
+
+export const COORDINATION_EVENT_TRUSTED_CATEGORIES = [
+  "needs_answer",
+  "unresolved",
+  "answered",
+  "history",
+] as const;
+
+export const COORDINATION_EVENT_DEFAULT_LIST_LIMIT = 50;
+export const COORDINATION_EVENT_MAX_LIST_LIMIT = 100;
+export const COORDINATION_EVENT_MAX_PAYLOAD_BYTES = 16 * 1024;
+export const COORDINATION_EVENT_PENDING_RESPONSE_LIMIT = 20;
+
+export type CoordinationEventKind = (typeof COORDINATION_EVENT_KINDS)[number];
+export type CoordinationEventState = (typeof COORDINATION_EVENT_STATES)[number];
+export type CoordinationEventTrustedCategory = (typeof COORDINATION_EVENT_TRUSTED_CATEGORIES)[number];
+export type CoordinationEventScope = "self" | "subtree";
+
+export type CoordinationEventOption = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+export type CoordinationEventPayload = {
+  summary: string;
+  facts?: string[];
+  assumptions?: string[];
+  impact?: string;
+  recommendation?: string;
+};
+
+export type CoordinationEventRoleSnapshot = SessionRoleBinding;
+
+export type CoordinationEventAction = {
+  sequence: number;
+  type: "responded" | "resolved" | "cancelled" | "superseded" | "consumed";
+  actorType: "session" | "trusted_gui";
+  actorSessionId: string | null;
+  optionId: string | null;
+  note: string | null;
+  relatedEventId: string | null;
+  createdAt: string;
+};
+
+export type CoordinationEventSummary = {
+  sequence: number;
+  eventId: string;
+  actorSessionId: string;
+  sessionRole: CoordinationEventRoleSnapshot["sessionRole"];
+  kind: CoordinationEventKind;
+  state: CoordinationEventState;
+  summary: string;
+  createdAt: string;
+};
+
+export type CoordinationEvent = CoordinationEventSummary & {
+  roleContractRevision: CoordinationEventRoleSnapshot["roleContractRevision"];
+  rootSessionId: string;
+  parentSessionId: string | null;
+  delegationDepth: number;
+  payload: CoordinationEventPayload;
+  executionId: string | null;
+  targetSessionId: string | null;
+  correctedEventId: string | null;
+  options: CoordinationEventOption[];
+  actions: CoordinationEventAction[];
+};
+
+export type CoordinationEventCreateInput = {
+  kind: Exclude<CoordinationEventKind, "correction">;
+  payload: CoordinationEventPayload;
+  executionId?: string;
+  targetSessionId?: string;
+  options?: CoordinationEventOption[];
+  idempotencyKey: string;
+};
+
+export type CoordinationEventListInput = {
+  scope: CoordinationEventScope;
+  kind?: CoordinationEventKind;
+  state?: CoordinationEventState;
+  limit: number;
+  cursor?: string;
+};
+
+export type CoordinationEventTrustedListInput = {
+  sessionId?: string;
+  category?: CoordinationEventTrustedCategory;
+  kind?: CoordinationEventKind;
+  state?: CoordinationEventState;
+  limit: number;
+  cursor?: string;
+};
+
+export type CoordinationEventGetInput =
+  | { eventId: string; idempotencyKey?: never }
+  | { eventId?: never; idempotencyKey: string };
+
+export type CoordinationEventResolveInput = {
+  eventId: string;
+  note?: string;
+  idempotencyKey: string;
+};
+
+export type CoordinationEventConsumeInput = {
+  eventId: string;
+  expectedResolutionSequence: number;
+  idempotencyKey: string;
+};
+
+export type CoordinationEventTrustedResolveInput =
+  | {
+      eventId: string;
+      optionId: string;
+      note?: never;
+      idempotencyKey: string;
+    }
+  | {
+      eventId: string;
+      optionId?: never;
+      note: string;
+      idempotencyKey: string;
+    };
+
+export type CoordinationEventCancelInput = {
+  eventId: string;
+  note?: string;
+  idempotencyKey: string;
+};
+
+export type CoordinationEventCorrectInput = {
+  eventId: string;
+  payload: CoordinationEventPayload;
+  executionId?: string;
+  idempotencyKey: string;
+};
+
+export type CoordinationEventListResult = {
+  items: CoordinationEventSummary[];
+  nextCursor?: string;
+};
+
+export type CoordinationEventInvalidation = {
+  eventId: string | null;
+  revision: number | null;
+};
+
+export function coordinationEventRevision(event: Pick<CoordinationEvent, "actions">): number {
+  return event.actions.reduce((revision, action) => Math.max(revision, action.sequence), 0);
+}
+
+export type CoordinationEventCorrectionResult = {
+  correction: CoordinationEvent;
+  superseded: CoordinationEvent;
+};
+
+export type PendingCoordinationResponse = {
+  eventId: string;
+  kind: Extract<CoordinationEventKind, "user_decision_required" | "blocker">;
+  resolutionSequence: number;
+  request: string;
+  response:
+    | { kind: "option"; optionId: string; label: string }
+    | { kind: "text"; text: string };
+  respondedAt: string;
+  consumption: "pending";
+};
+
+export class CoordinationEventValidationError extends Error {
+  readonly code: string;
+  readonly details: Record<string, string | number | boolean>;
+
+  constructor(message: string, details: Record<string, string | number | boolean> = {}, code = "INVALID_INPUT") {
+    super(message);
+    this.name = "CoordinationEventValidationError";
+    this.code = code;
+    this.details = details;
+  }
+}
+
+export function initialCoordinationEventState(kind: CoordinationEventKind): "recorded" | "open" {
+  return COORDINATION_EVENT_OPEN_KINDS.includes(kind as (typeof COORDINATION_EVENT_OPEN_KINDS)[number])
+    ? "open"
+    : "recorded";
+}
+
+export function validateCoordinationEventPayload(value: unknown, field = "payload"): CoordinationEventPayload {
+  const record = requireObject(value, field);
+  assertKeys(record, ["summary", "facts", "assumptions", "impact", "recommendation"], field);
+  const payload: CoordinationEventPayload = {
+    summary: requireText(record.summary, `${field}.summary`, 240),
+    ...(record.facts === undefined ? {} : { facts: requireTextList(record.facts, `${field}.facts`) }),
+    ...(record.assumptions === undefined ? {} : { assumptions: requireTextList(record.assumptions, `${field}.assumptions`) }),
+    ...(record.impact === undefined ? {} : { impact: requireText(record.impact, `${field}.impact`, 1_000) }),
+    ...(record.recommendation === undefined
+      ? {}
+      : { recommendation: requireText(record.recommendation, `${field}.recommendation`, 1_000) }),
+  };
+  const actualBytes = Buffer.byteLength(JSON.stringify(payload), "utf8");
+  if (actualBytes > COORDINATION_EVENT_MAX_PAYLOAD_BYTES) {
+    throw new CoordinationEventValidationError(
+      "Coordination event payload exceeds 16 KiB.",
+      { field, actualBytes, maxBytes: COORDINATION_EVENT_MAX_PAYLOAD_BYTES },
+      "CONTENT_TOO_LARGE",
+    );
+  }
+  rejectSensitiveText(payload, field);
+  return payload;
+}
+
+export function validateCoordinationEventOptions(value: unknown, field = "options"): CoordinationEventOption[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 8) {
+    throw invalid(field, "Coordination event options must contain 2 to 8 items.");
+  }
+  const ids = new Set<string>();
+  const options = value.map((entry, index) => {
+    const itemField = `${field}[${index}]`;
+    const record = requireObject(entry, itemField);
+    assertKeys(record, ["id", "label", "description"], itemField);
+    const id = requireStableId(record.id, `${itemField}.id`);
+    if (ids.has(id)) throw invalid(`${itemField}.id`, "Coordination option IDs must be unique.");
+    ids.add(id);
+    return {
+      id,
+      label: requireText(record.label, `${itemField}.label`, 120),
+      ...(record.description === undefined
+        ? {}
+        : { description: requireText(record.description, `${itemField}.description`, 500) }),
+    };
+  });
+  rejectSensitiveValues(
+    options.flatMap((option) => [option.id, option.label, option.description ?? ""]),
+    field,
+  );
+  return options;
+}
+
+export function validateCoordinationEventNote(value: unknown, field = "note"): string {
+  const note = requireText(value, field, 1_000);
+  rejectSensitiveValues([note], field);
+  return note;
+}
+
+export function parseCoordinationEventTrustedListInput(value: unknown): CoordinationEventTrustedListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "category", "kind", "state", "limit", "cursor"], "input");
+  if (record.category !== undefined && (record.kind !== undefined || record.state !== undefined)) {
+    throw invalid("input.category", "category cannot be combined with kind or state.");
+  }
+  return {
+    ...(record.sessionId === undefined ? {} : { sessionId: requireNonEmptyString(record.sessionId, "sessionId") }),
+    ...(record.category === undefined
+      ? {}
+      : { category: requireEnumValue(record.category, COORDINATION_EVENT_TRUSTED_CATEGORIES, "category") }),
+    ...(record.kind === undefined ? {} : { kind: requireEnumValue(record.kind, COORDINATION_EVENT_KINDS, "kind") }),
+    ...(record.state === undefined ? {} : { state: requireEnumValue(record.state, COORDINATION_EVENT_STATES, "state") }),
+    limit: record.limit === undefined
+      ? COORDINATION_EVENT_DEFAULT_LIST_LIMIT
+      : requireListLimit(record.limit),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+export function parseCoordinationEventTrustedResolveInput(value: unknown): CoordinationEventTrustedResolveInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["eventId", "optionId", "note", "idempotencyKey"], "input");
+  const eventId = requireNonEmptyString(record.eventId, "eventId");
+  const idempotencyKey = requireNonEmptyString(record.idempotencyKey, "idempotencyKey");
+  const hasOption = record.optionId !== undefined;
+  const hasNote = record.note !== undefined;
+  if (hasOption === hasNote) throw invalid("input", "Exactly one of optionId or note is required.");
+  return hasOption
+    ? { eventId, optionId: requireNonEmptyString(record.optionId, "optionId"), idempotencyKey }
+    : { eventId, note: validateCoordinationEventNote(record.note), idempotencyKey };
+}
+
+function requireEnumValue<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw invalid(field, `${field} is invalid.`);
+  }
+  return value as T;
+}
+
+function requireListLimit(value: unknown): number {
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > COORDINATION_EVENT_MAX_LIST_LIMIT) {
+    throw new CoordinationEventValidationError(
+      `limit must be an integer between 1 and ${COORDINATION_EVENT_MAX_LIST_LIMIT}.`,
+      { field: "limit", max: COORDINATION_EVENT_MAX_LIST_LIMIT },
+      "LIMIT_EXCEEDED",
+    );
+  }
+  return value as number;
+}
+
+function requireTextList(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.length > 8) {
+    throw invalid(field, "Coordination event list fields contain at most 8 items.");
+  }
+  return value.map((item, index) => requireText(item, `${field}[${index}]`, 500));
+}
+
+function requireText(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string" || !value.trim() || value.length > maxLength) {
+    throw invalid(field, `${field} must be a non-empty string of at most ${maxLength} characters.`);
+  }
+  return value.trim();
+}
+
+function requireStableId(value: unknown, field: string): string {
+  const id = requireText(value, field, 80);
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) {
+    throw invalid(field, `${field} must be a stable identifier.`);
+  }
+  return id;
+}
+
+function rejectSensitiveText(payload: CoordinationEventPayload, field: string): void {
+  const values = [
+    payload.summary,
+    ...(payload.facts ?? []),
+    ...(payload.assumptions ?? []),
+    payload.impact ?? "",
+    payload.recommendation ?? "",
+  ];
+  rejectSensitiveValues(values, field);
+}
+
+function rejectSensitiveValues(values: readonly string[], field: string): void {
+  const forbidden = [
+    /-----BEGIN(?: [A-Z0-9]+)* PRIVATE KEY-----/i,
+    /\b(?:sk|ghp|github_pat)_[a-z0-9_-]{20,}\b/i,
+    /\bsk-(?:proj-)?[a-z0-9_-]{20,}\b/i,
+    /\bAKIA[0-9A-Z]{16}\b/,
+    /\bBearer\s+[a-z0-9._~+/=-]{20,}\b/i,
+    /\b(?:[a-z0-9]+[_-])*(?:password|passwd|pwd|passphrase|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|private[_-]?key)\s*[:=]\s*(?:"[^"\r\n]+"|'[^'\r\n]+'|[^\s,;]+)/i,
+    /\b[a-z]:[\\/][^\s"'<>)]*/i,
+    /\\\\[a-z0-9._$-]+\\[a-z0-9._$ -]+(?:\\[^\s"'<>)]*)?/i,
+    /(?:^|[\s"'(=[{,])\/\/[a-z0-9._$-]+\/[a-z0-9._$ -]+(?:\/[^\s"'<>)]*)?/im,
+    /\\\\[?.]\\[^\s"'<>)]*/i,
+    /(?:[a-z]:\\Users\\|\/Users\/|\/home\/)[^\s"'<>)]*/i,
+    /\b(?:stack trace|traceback \(most recent call last\))\b/i,
+    /\b(?:chain[- ]of[- ]thought|provider response|opaque binding|agentRuntimeBinding)\b/i,
+    /^diff --git /im,
+    /^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@/m,
+    /(?:^|\n)\s*(?:\[[A-Z]{3,}\]|\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})\s/m,
+  ];
+  if (values.some((text) => forbidden.some((pattern) => pattern.test(text)))) {
+    throw new CoordinationEventValidationError(
+      "Coordination event payload contains content that must not be stored.",
+      { field },
+      "SENSITIVE_CONTENT_REJECTED",
+    );
+  }
+}
+
+export function requireObject(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw invalid(field, `${field} must be an object.`);
+  }
+  return value as Record<string, unknown>;
+}
+
+export function assertKeys(record: Record<string, unknown>, allowed: readonly string[], field: string): void {
+  const unknown = Object.keys(record).find((key) => !allowed.includes(key));
+  if (unknown) throw invalid(`${field}.${unknown}`, `Unknown field: ${field}.${unknown}.`);
+}
+
+export function requireNonEmptyString(value: unknown, field: string): string {
+  return requireText(value, field, 1_000);
+}
+
+export function invalid(field: string, message: string): CoordinationEventValidationError {
+  return new CoordinationEventValidationError(message, { field });
+}

@@ -1132,6 +1132,7 @@ describe("SessionPersistenceService", () => {
     const revokedBindings: string[] = [];
     const invalidatedThreads: Array<{ providerId: string | null | undefined; sessionId: string }> = [];
     const broadcastedSessionIds: string[][] = [];
+    let coordinationBroadcastCount = 0;
 
     const service = new SessionPersistenceService({
       getSessions() {
@@ -1190,6 +1191,9 @@ describe("SessionPersistenceService", () => {
       broadcastSessions(sessionIds) {
         broadcastedSessionIds.push(Array.from(sessionIds ?? []));
       },
+      broadcastCoordinationEventsChanged() {
+        coordinationBroadcastCount += 1;
+      },
     });
 
     await service.deleteSession(session.id);
@@ -1203,6 +1207,7 @@ describe("SessionPersistenceService", () => {
       { providerId: "copilot", sessionId: "auxiliary-a" },
     ]);
     assert.deepEqual(broadcastedSessionIds, [[session.id]]);
+    assert.equal(coordinationBroadcastCount, 1);
     assert.equal(storedSessions.length, 0);
   });
 
@@ -1227,6 +1232,46 @@ describe("SessionPersistenceService", () => {
     );
     assert.equal(storageDeleteCount, 0);
     assert.equal(cleanupCount, 0);
+  });
+
+  it("deleteSession はCoordination通知失敗後もcacheとruntime cleanupを完遂する", async () => {
+    const session = createSession({ id: "deleted-despite-publication-failure" });
+    let storedDeleteCount = 0;
+    let coordinationBroadcastCount = 0;
+    const cleaned: string[] = [];
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    const service = new SessionPersistenceService({
+      getSessions: () => [session],
+      setSessions(nextSessions) {
+        assert.deepEqual(nextSessions, []);
+        cleaned.push("cache");
+      },
+      getSession: () => session,
+      isSessionRunInFlight: () => false,
+      deleteStoredSession() {
+        storedDeleteCount += 1;
+      },
+      clearSessionContextTelemetry() { cleaned.push("telemetry"); },
+      clearSessionBackgroundActivities() { cleaned.push("background"); },
+      invalidateProviderSessionThread() { cleaned.push("provider"); },
+      revokeSessionAgentRuntimeBindings() { cleaned.push("binding"); },
+      closeSessionWindow() { cleaned.push("window"); },
+      broadcastSessions() { cleaned.push("sessions"); },
+      broadcastCoordinationEventsChanged() {
+        coordinationBroadcastCount += 1;
+        throw new Error("publication failed");
+      },
+    } as never);
+
+    try {
+      await service.deleteSession(session.id);
+      assert.equal(storedDeleteCount, 1);
+      assert.equal(coordinationBroadcastCount, 1);
+      assert.deepEqual(cleaned, ["cache", "binding", "provider", "telemetry", "background", "window", "sessions"]);
+    } finally {
+      console.error = originalConsoleError;
+    }
   });
 
   it("deleteSession は active Auxiliary が実行中の親 Session を削除しない", async () => {

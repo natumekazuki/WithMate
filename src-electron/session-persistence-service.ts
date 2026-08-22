@@ -67,6 +67,7 @@ export type SessionPersistenceServiceDeps = {
   revokeSessionAgentRuntimeBindings?(sessionId: string): void;
   closeSessionWindow(sessionId: string): void;
   broadcastSessions(sessionIds?: Iterable<string>): void;
+  broadcastCoordinationEventsChanged?(): void;
   runCharacterAffectTurnOwnershipExclusive?: RunCharacterAffectTurnOwnershipExclusive;
 };
 
@@ -338,6 +339,11 @@ export class SessionPersistenceService {
     }
     const deletableSessionIdSet = new Set(deletableSessionIds);
     this.deps.setSessions(this.deps.getSessions().filter((entry) => !deletableSessionIdSet.has(entry.id)));
+    try {
+      this.deps.broadcastCoordinationEventsChanged?.();
+    } catch (error) {
+      console.error("Coordination event refresh publication failed after Session deletion", error);
+    }
 
     for (const sessionId of deletableSessionIds) {
       const deletedSession = currentSessionsById.get(sessionId);

@@ -36,8 +36,14 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
+  WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -91,6 +97,7 @@ function createDeps(overrides: Record<string, unknown> = {}) {
     resolveHomeWindow: () => null,
     isSettingsWindow: () => false,
     isMemoryV6ReviewWindow: () => false,
+    isCoordinationWindow: () => false,
     isFilePreviewWindow: () => false,
     getFilePreviewWindowResource: () => null,
     isFilePreviewTokenWindow: () => false,
@@ -169,7 +176,8 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
@@ -204,6 +212,8 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_ENQUEUE_SESSION_TURN_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CANCEL_SESSION_EXECUTION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL));
 
   const removedChannels = [
     "withmate:open-memory-management-window",
@@ -230,6 +240,31 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const pageRequests: unknown[] = [];
+  const { deps } = createDeps({
+    listSessionSummaryPage: (request: unknown) => {
+      pageRequests.push(request);
+      return { entries: [], nextCursor: null, hasMore: false };
+    },
+    listSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL)?.({}, {
+      scope: "recent", limit: 50, searchText: "  Task ",
+    }),
+    { entries: [], nextCursor: null, hasMore: false },
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL)?.({}), [
+    { characterId: "char-1", sessionKind: "default" },
+  ]);
+  assert.deepEqual(pageRequests, [{
+    scope: "recent", cursor: null, limit: 50, searchText: "task", sessionIds: undefined,
+  }]);
 });
 
 test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {
@@ -344,6 +379,45 @@ test("GUI queue IPC は対象 Session window だけにenqueue/list/cancelを許�
     ["list", "session-1"],
     ["cancel", "session-1", cancelRequest],
   ]);
+});
+
+test("Coordination Window IPCは専用Windowだけに全Session queryとmutationを許可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const coordinationWindow = createWindowStub("http://localhost:5173/coordination.html");
+  const otherWindow = createWindowStub("http://localhost:5173/");
+  let eventWindow = coordinationWindow;
+  const calls: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    isCoordinationWindow: (window: unknown) => window === coordinationWindow,
+    listCoordinationEvents: (input: unknown) => { calls.push(["list", input]); return { items: [] }; },
+    getCoordinationEvent: (eventId: string) => { calls.push(["get", eventId]); return null; },
+    resolveCoordinationEvent: (input: unknown) => { calls.push(["resolve", input]); return null; },
+    cancelCoordinationEvent: (input: unknown) => { calls.push(["cancel", input]); return null; },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await handlers.get(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL)?.({}, { limit: 50 });
+  await handlers.get(WITHMATE_GET_COORDINATION_EVENT_CHANNEL)?.({}, "event-1");
+  await handlers.get(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL)?.({}, {
+    eventId: "event-1", note: "別案", idempotencyKey: "resolve-global-1",
+  });
+  await handlers.get(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL)?.({}, {
+    eventId: "event-2", idempotencyKey: "cancel-global-1",
+  });
+  assert.deepEqual(calls.map((call) => (call as unknown[])[0]), ["list", "get", "resolve", "cancel"]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL)?.({}, {
+      eventId: "event-1", optionId: "a", note: "both", idempotencyKey: "resolve-global-2",
+    }) as Promise<unknown>,
+    /Exactly one/,
+  );
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL)?.({}, { limit: 50 }) as Promise<unknown>,
+    /only available from the Coordination window/,
+  );
 });
 
 test("Session作成はworkspaceを検証し、退役済みCompanion作成はside effect前に拒否する", async () => {

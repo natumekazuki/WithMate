@@ -12,6 +12,13 @@ export const SESSION_WINDOW_DEFAULT_BOUNDS = {
   minHeight: 680,
 } as const;
 
+export const COORDINATION_WINDOW_DEFAULT_BOUNDS = {
+  width: 1280,
+  height: 860,
+  minWidth: 860,
+  minHeight: 620,
+} as const;
+
 export const DIFF_WINDOW_DEFAULT_BOUNDS = {
   width: 1680,
   height: 980,

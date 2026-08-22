@@ -14,6 +14,7 @@ import { AgentRuntimeBindingRegistry, type ResolvedAgentRuntimeBinding } from ".
 import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionFileServiceError } from "../../src-electron/session-file-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
+import { CoordinationEventPublicationError } from "../../src-electron/coordination-event-service.js";
 
 const execution: SessionExecution = {
   id: "execution-1",
@@ -158,6 +159,50 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
   const getResponse = await executeBound(service, "session.get", { sessionId: "missing" });
   assert.equal("error" in getResponse && getResponse.error.code, "SESSION_NOT_FOUND");
   assert.equal("error" in getResponse && getResponse.error.effect, "not_applied");
+});
+
+test("COORD-ADAPTER-01: Coordination operationを同じapplication serviceへdispatchする", async () => {
+  const calls: Array<{ operation: string; input: unknown }> = [];
+  const event = {
+    sequence: 1, eventId: "event-1", actorSessionId: "session-actor", sessionRole: "executor" as const,
+    roleContractRevision: 1 as const, rootSessionId: "root-1", parentSessionId: "task-1", delegationDepth: 2,
+    kind: "progress" as const, state: "recorded" as const, summary: "started", payload: { summary: "started" },
+    executionId: null, targetSessionId: null, correctedEventId: null, options: [], actions: [],
+    createdAt: "2026-08-21T00:00:00.000Z",
+  };
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    executionService: {} as never,
+    crudService: {} as never,
+    coordinationService: {
+      create(input) { calls.push({ operation: "create", input }); return event; },
+      list(input) { calls.push({ operation: "list", input }); return { items: [] }; },
+      get(input) { calls.push({ operation: "get", input }); return event; },
+      resolve(input) { calls.push({ operation: "resolve", input }); return event; },
+      cancel(input) { calls.push({ operation: "cancel", input }); return event; },
+      correct(input) { calls.push({ operation: "correct", input }); return { correction: event, superseded: event }; },
+    },
+  });
+  const input = { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
+  const response = await executeBound(service, "coordination.event.create", input);
+  assert.equal("result" in response && response.result.eventId, "event-1");
+  assert.deepEqual(calls, [{ operation: "create", input }]);
+});
+
+test("COORD-IDEM-01: commit後publication failureはappliedとevent IDを返す", async () => {
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    executionService: {} as never,
+    crudService: {} as never,
+    coordinationService: {
+      create() { throw new CoordinationEventPublicationError("event-committed"); },
+    } as never,
+  });
+  const response = await executeBound(service, "coordination.event.create", {
+    kind: "progress", payload: { summary: "committed" }, idempotencyKey: "key-1",
+  });
+  assert.equal("error" in response && response.error.effect, "applied");
+  assert.equal("error" in response && response.error.details.eventId, "event-committed");
 });
 
 test("EXT-TRANSCRIPT-13: transcript.exportを専用serviceへdispatchし結果をそのまま返す", async () => {
@@ -560,6 +605,13 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         executor: [],
       },
       maxDelegationDepth: 2,
+      coordinationEvents: {
+        kinds: ["progress", "decision", "escalation", "user_decision_required", "blocker", "result", "correction"],
+        states: ["recorded", "open", "resolved", "superseded", "cancelled"],
+        scopes: ["self", "subtree"],
+        defaultListLimit: 50,
+        maxListLimit: 100,
+      },
       providers: [{
         id: "codex",
         label: "Codex",

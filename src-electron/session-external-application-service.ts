@@ -2,6 +2,20 @@ import { createHash } from "node:crypto";
 
 import { approvalModeOptions } from "../src/approval-mode.js";
 import { codexSandboxModeOptions } from "../src/codex-sandbox-mode.js";
+import {
+  COORDINATION_EVENT_DEFAULT_LIST_LIMIT,
+  COORDINATION_EVENT_KINDS,
+  COORDINATION_EVENT_MAX_LIST_LIMIT,
+  COORDINATION_EVENT_STATES,
+  CoordinationEventValidationError,
+  type CoordinationEventCancelInput,
+  type CoordinationEventConsumeInput,
+  type CoordinationEventCorrectInput,
+  type CoordinationEventCreateInput,
+  type CoordinationEventGetInput,
+  type CoordinationEventListInput,
+  type CoordinationEventResolveInput,
+} from "../src/coordination-event.js";
 
 import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
@@ -76,6 +90,12 @@ import { SessionCrudError, type SessionCrudService } from "./session-crud-servic
 import { SessionFileServiceError, type SessionFileService } from "./session-file-service.js";
 import { SessionTranscriptServiceError, type SessionTranscriptService } from "./session-transcript-service.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
+import { CoordinationEventPublicationError, type CoordinationEventService } from "./coordination-event-service.js";
+import {
+  CoordinationEventIdempotencyConflictError,
+  CoordinationEventNotFoundError,
+  CoordinationEventStateConflictError,
+} from "./coordination-event-storage-v6.js";
 import {
   TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
   type SessionExecutionTerminalFailureNotification,
@@ -92,6 +112,10 @@ export type SessionExternalApplicationServiceDeps = {
   >;
   progressStorage?: Pick<SessionExecutionPublicProgressStorageV6, "get">;
   transcriptService?: Pick<SessionTranscriptService, "export">;
+  coordinationService?: Pick<
+    CoordinationEventService,
+    "create" | "list" | "get" | "resolve" | "consume" | "cancel" | "correct"
+  >;
   crudService: Pick<SessionCrudService, "create" | "list" | "get" | "rename">;
   fileService?: Pick<SessionFileService, "list" | "readText" | "writeText">;
   currentModelCatalog(): ModelCatalogSnapshot | null;
@@ -227,6 +251,27 @@ export class SessionExternalApplicationService {
     }
     if (operation === "interaction.respond") {
       return this.respondToInteraction(input as SessionRuntimeInteractionRespondInput);
+    }
+    if (operation === "coordination.event.create") {
+      return this.requireCoordinationService().create(input as CoordinationEventCreateInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.list") {
+      return this.requireCoordinationService().list(input as CoordinationEventListInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.get") {
+      return this.requireCoordinationService().get(input as CoordinationEventGetInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.resolve") {
+      return this.requireCoordinationService().resolve(input as CoordinationEventResolveInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.consume") {
+      return this.requireCoordinationService().consume(input as CoordinationEventConsumeInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.cancel") {
+      return this.requireCoordinationService().cancel(input as CoordinationEventCancelInput, agentRuntimeBinding);
+    }
+    if (operation === "coordination.event.correct") {
+      return this.requireCoordinationService().correct(input as CoordinationEventCorrectInput, agentRuntimeBinding);
     }
     if (operation === "transcript.export") {
       return this.requireTranscriptService().export(input as SessionRuntimeTranscriptExportInput);
@@ -568,6 +613,17 @@ export class SessionExternalApplicationService {
     return this.deps.transcriptService;
   }
 
+  private requireCoordinationService(): NonNullable<SessionExternalApplicationServiceDeps["coordinationService"]> {
+    if (!this.deps.coordinationService) {
+      throw new SessionRuntimeValidationError(
+        "The coordination event service is unavailable.",
+        {},
+        "RUNTIME_UNAVAILABLE",
+      );
+    }
+    return this.deps.coordinationService;
+  }
+
   private isProviderSupported(providerId: string): boolean {
     return this.deps.isProviderSupported?.(providerId) ?? (providerId === "codex" || providerId === "copilot");
   }
@@ -589,6 +645,13 @@ function projectRuntimeCatalog(
       executor: [...SESSION_ROLE_CHILDREN.executor],
     },
     maxDelegationDepth: SESSION_ROLE_MAX_DELEGATION_DEPTH,
+    coordinationEvents: {
+      kinds: COORDINATION_EVENT_KINDS,
+      states: COORDINATION_EVENT_STATES,
+      scopes: ["self", "subtree"],
+      defaultListLimit: COORDINATION_EVENT_DEFAULT_LIST_LIMIT,
+      maxListLimit: COORDINATION_EVENT_MAX_LIST_LIMIT,
+    },
     providers: snapshot.providers
       .filter((provider) => isProviderSupported(provider.id) && isProviderEnabled(provider.id))
       .map((provider) => ({
@@ -792,6 +855,11 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "turn.enqueue"
         || operation === "turn.cancel"
         || operation === "interaction.respond"
+        || operation === "coordination.event.create"
+        || operation === "coordination.event.resolve"
+        || operation === "coordination.event.consume"
+        || operation === "coordination.event.cancel"
+        || operation === "coordination.event.correct"
         || operation === "session.files.write_text"
         ? "applied"
         : "not_applied",
@@ -823,6 +891,31 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
       retryable: error.code === "CATALOG_REVISION_STALE" || error.code === "RUNTIME_UNAVAILABLE",
       details: error.details,
     });
+  }
+  if (error instanceof CoordinationEventValidationError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      details: error.details,
+    });
+  }
+  if (error instanceof CoordinationEventPublicationError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      retryable: error.retryable,
+      effect: error.effect,
+      details: { eventId: error.eventId },
+    });
+  }
+  if (error instanceof CoordinationEventNotFoundError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
+  }
+  if (error instanceof CoordinationEventStateConflictError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
+  }
+  if (error instanceof CoordinationEventIdempotencyConflictError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
   }
   if (error instanceof SessionExecutionQueueFullError) {
     return createSessionRuntimeError({ code: "QUEUE_FULL", message: "The Session execution queue is full." });
@@ -879,6 +972,11 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "turn.enqueue"
     || operation === "turn.cancel"
     || operation === "interaction.respond"
+    || operation === "coordination.event.create"
+    || operation === "coordination.event.resolve"
+    || operation === "coordination.event.consume"
+    || operation === "coordination.event.cancel"
+    || operation === "coordination.event.correct"
     || operation === "session.files.write_text"
     || (operation === "transcript.export"
       && (input === undefined || (input as { destination?: { kind?: string } }).destination?.kind !== "inline"));

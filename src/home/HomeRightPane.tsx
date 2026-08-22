@@ -18,6 +18,7 @@ export type HomeRightPaneProps = {
   characterListFeedback?: string;
   onChangeRightPaneView: (view: "monitor" | "characters" | "schedules") => void;
   onOpenSessionMonitorWindow: () => void;
+  onOpenCoordinationWindow: () => void;
   onOpenSettingsWindow: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
@@ -37,6 +38,7 @@ export function HomeRightPane({
   characterListFeedback = "",
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
+  onOpenCoordinationWindow,
   onOpenSettingsWindow,
   onCreateCharacter,
   onEditCharacter,
@@ -77,6 +79,9 @@ export function HomeRightPane({
             disabled={!canUsePrimaryFeatures}
           >
             {monitorWindowIcon}
+          </button>
+          <button className="launch-toggle" type="button" onClick={onOpenCoordinationWindow} disabled={!canUsePrimaryFeatures}>
+            Coordination
           </button>
           <button className="launch-toggle home-settings-button" type="button" onClick={onOpenSettingsWindow}>
             Settings

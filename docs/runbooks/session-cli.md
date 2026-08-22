@@ -136,4 +136,20 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは`runtime.catalog`、`session.self`、`session.create`、`session.list`、`session.get`、`session.rename`、`session.files.list`、`session.files.read_text`、`session.files.write_text`、`turn.options`、`turn.run`、`turn.enqueue`、`turn.list`、`turn.get`、`turn.cancel`、`interaction.list`、`interaction.respond`、`transcript.export`の18操作で、入力shapeはMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは既存18操作と`coordination.event.create`、`list`、`get`、`resolve`、`consume`、`cancel`、`correct`の計25操作で、入力shapeはMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+
+## Coordination event
+
+通常responseと別に進行や判断を記録する場合は、CLIで`coordination event create|list|get|resolve|consume|cancel|correct --json <input>`を使う。mutationにはcaller-owned idempotency keyが必須である。responseを失った場合は同じkeyの`coordination event get`、既知のevent ID、または同一input・同一keyのreplayでcanonical resultを再照合する。
+
+`list`のscopeは`self`または`subtree`で、subtreeはcoordinatorだけが使える。default limitは50、maximumは100である。cursorはprincipal Session、scope、kind、stateへ結び付くため、別Sessionまたは別filterへ流用しない。権限外、cross-root、非ancestorは存在を区別せず拒否される。
+
+`user_decision_required`はCLI/MCP/HTTPからresolveできない。Coordination Windowのtrusted GUIでstable option IDを選択するか、自由回答を入力する。保存内容へsecret、raw log、stack trace、大きなdiff、provider response、chain-of-thought、個人環境path、binding参照を含めない。
+
+回答はEventを作成したSessionの通常Turnへ、Agentが反映済みとしてconsumeするまで繰り返し渡される。回答を実作業へ反映した後にだけ、次のようにconsumeする。
+
+```powershell
+withmate-session coordination event consume --json '{"eventId":"EVENT_ID","idempotencyKey":"consume-20260822-001"}'
+```
+
+回答を確認しただけの場合、Turnが失敗した場合、またはまだ作業へ反映していない場合はconsumeしない。同じconsumeのresponseを失った場合は、同一inputと同一keyを再送する。

@@ -5,7 +5,7 @@
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
+Electron デスクトップアプリとして、`Home Window` / `Character Editor Window` / `Session Window` / `Coordination Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
 
 ## Manual Test Maintenance
 
@@ -18,6 +18,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Home の session / Character catalog 管理 UI
 - Character Editor Window
 - Session Monitor Window
+- Coordination Window
 - Session の coding agent 作業 UI
 - Diff Window の閲覧 UI
 - Settings Window と model catalog 操作
@@ -174,6 +175,44 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる
 - close は通常の window close と同じ扱いで、session 実行自体は止めない
+
+## Coordination Window
+
+- 全SessionのCoordination Eventを一つの独立windowへ表示する
+- 初期状態はSession filterなし、event filterは「すべて」とする
+- 一覧は新しいeventから並べ、要対応を初期状態で先頭へ固定しない
+- すべて、要対応、回答済み、履歴は同じ一覧に対するfilterとして提供する
+  - 要対応は`open`、回答済みは`resolved`、履歴は`recorded`を対象にする
+  - `superseded`と`cancelled`は「すべて」で確認する
+- Event rowはkind、state、summary、Session title、Character icon、時刻を表示する
+  - Session titleはevent originを示す主情報とする
+  - Character iconはユーザーがSessionを識別するための補助情報とし、Character nameは常設表示しない
+- Session filterはHomeのSession一覧と同じ探索能力を使う
+  - Session titleを検索できる
+  - 一覧末尾への接近時に次pageを自動で読み込む
+  - 選択後はevent queryへ`sessionId`を渡し、読込済みeventだけをrendererで絞らない
+  - 選択中のSession titleをtoolbarへ表示し、解除して全Sessionへ戻せる
+- Event detailは選択時に表示し、本文、関連情報、回答操作を段階表示する
+- Event detailは短縮したEvent IDを表示し、押すとAgentへ渡せる完全なEvent IDをclipboardへコピーする
+- detailのSession titleは所有Sessionを開く導線にし、同じ遷移先の専用buttonを重ねない
+- Window内の常設操作はSession filterとevent filterだけにし、画面内title、説明文、Home遷移、取得済み件数を置かない
+- filter結果が空の場合は説明文や空状態surfaceを置かず、空の一覧として表示する
+- Event一覧とdetailはWindow内で独立してscrollでき、一覧のavatarと本文は重ならない固定gridで配置する
+- Event一覧の次pageも一覧末尾への接近時に自動で読み込み、追加読込buttonを置かない
+- `user_decision_required`は提示optionに加えて「別の回答」を選べる
+  - 提示optionではstable option IDを送る
+  - 別の回答では空でない自由回答を送る
+  - option IDと自由回答を同時に送らない
+  - 回答済みでもAgentが未使用なら現在の回答を選択状態で表示し、変更を許可する
+  - Agentが使用済みなら`使用済み`を表示し、回答操作を読み取り専用にする
+- 自由回答の入力欄はvisible labelやplaceholderを置かず、accessible nameだけを維持する。送信とEvent取消は同じ操作列へ置く
+- blockerは作成したAgentが実作業で障害を解消した後にresolveする。Coordination Windowから状態だけをresolveせず、所有Sessionへの導線とEvent取消だけを提供する
+- storage invalidationやpagination後も選択中Eventを維持し、回答mutation中は操作をlockする
+- storage invalidationはEvent IDとrevisionを通知する。mutation中に届いた同じEventのrevisionがAPI返却値以下なら局所反映だけで再取得せず、返却値より新しければ対象Eventだけを取得する。未知Eventまたは全体invalidationだけ一覧を再取得し、skeletonへの全体置換や選択解除を行わない
+- Session groupingとCoordination Eventを持つSessionだけの列挙はfirst sliceへ含めない
+- loadingは対象領域のskeletonまたはspinner、取得失敗は短い状態と再試行操作で示し、常設説明文を置かない
+- Event pageとorigin Session projectionは同じrequest generationで確定し、古いresponseや片方だけの成功を新しい一覧へ混ぜない
+- native control、visible focus、accessible name、Escまたは外側clickで閉じられるSession pickerを維持する
 
 ## Session Window
 
@@ -363,7 +402,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Interaction Notes
 
-- Home から Session / Settings / Session Monitor を開く
+- Home から Session / Coordination / Settings / Session Monitor を開く
 - Home のスケジュール一覧は全Sessionの状態確認専用とし、各行全体から所有Sessionを開ける。作成、編集、pause、resume、run now、deleteは表示しない
 - Session Headerのschedule iconは中央message listをschedule一覧へ置き換える。一覧中は通常のActionDockを維持し、作成・編集時だけ既存ActionDockをschedule draftのprompt、attachment、Model、Depth、Approval、Sandbox、Custom Agent入力へ切り替える
 - schedule draftはchat draftとSessionの現在入力設定から独立させる。Add Directoryだけは既存どおりSessionの許可対象を即時更新し、scheduleへ許可snapshotを保存しない

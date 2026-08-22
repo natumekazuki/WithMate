@@ -371,6 +371,84 @@ describe("withmate-session CLI", () => {
     assert.deepEqual(stdout.json().result.result, { sessionId: "session-actor" });
   });
 
+  test("COORD-ADAPTER-01: coordination event createは共通operationへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = { kind: "progress", payload: { summary: "started" }, idempotencyKey: "key-1" };
+    const exitCode = await runWithMateSessionCli([
+      "coordination", "event", "create", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("coordination.event.create", { eventId: "event-1" } as never),
+        };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.create",
+      input,
+    }]);
+  });
+
+  test("COORD-RESOLVE-SURFACE-01: agentはCLIでも回答optionなしでblockerを解決できる", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" };
+    const exitCode = await runWithMateSessionCli([
+      "coordination", "event", "resolve", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("coordination.event.resolve", { eventId: "blocker-1" } as never),
+        };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.resolve",
+      input,
+    }]);
+  });
+
+  test("COORD-CONSUME-01: agentは反映済みのユーザー回答をCLIからconsumeできる", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = { eventId: "decision-1", expectedResolutionSequence: 3, idempotencyKey: "consume-decision-1" };
+    const exitCode = await runWithMateSessionCli([
+      "coordination", "event", "consume", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("coordination.event.consume", { eventId: "decision-1" } as never),
+        };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.consume",
+      input,
+    }]);
+  });
+
   test("session CRUD commandはcaller-owned idempotency keyを必須にする", async () => {
     const requests: any[] = [];
     const stdout = capture();
@@ -755,6 +833,17 @@ describe("withmate-session CLI", () => {
     assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
     assert.equal(called, false);
     assert.equal(stdout.json().error.code, "INVALID_INPUT");
+  });
+
+  test("usageはcoordination event consumeを案内する", async () => {
+    const stdout = capture();
+    const exitCode = await runWithMateSessionCli(["unknown"], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.match(stdout.json().error.message, /coordination event create\|list\|get\|resolve\|consume\|cancel\|correct/);
   });
 
   test("CLI-INPUT-LIMIT-01: oversized file inputは全量parse前にCONTENT_TOO_LARGEへ収束する", async () => {

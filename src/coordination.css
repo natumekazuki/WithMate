@@ -1,0 +1,643 @@
+.coordination-page {
+  --surface: rgba(25, 29, 38, 0.94);
+  --surface-strong: rgba(28, 33, 43, 0.98);
+  --surface-deep: rgba(18, 22, 30, 0.98);
+  --line: rgba(203, 213, 225, 0.12);
+  --ink: #edf2f7;
+  --muted: #98a2b3;
+  --orange: #6f8cff;
+  --orange-soft: rgba(111, 140, 255, 0.16);
+  height: 100dvh;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(111, 140, 255, 0.1), transparent 28%),
+    linear-gradient(180deg, #0f131a 0%, #151a22 100%);
+}
+
+.coordination-toolbar {
+  position: relative;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-deep);
+}
+
+.coordination-session-filter {
+  position: relative;
+  width: min(280px, 36vw);
+  min-width: 210px;
+}
+
+.coordination-session-trigger,
+.coordination-filter-tabs button,
+.coordination-state-panel button,
+.coordination-primary-action,
+.coordination-cancel-action {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+
+.coordination-session-trigger {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--surface);
+}
+
+.coordination-session-trigger:hover,
+.coordination-filter-tabs button:hover,
+.coordination-state-panel button:hover,
+.coordination-cancel-action:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.coordination-session-trigger:focus-visible,
+.coordination-filter-tabs button:focus-visible,
+.coordination-session-option:focus-visible,
+.coordination-event-row:focus-visible,
+.coordination-options button:focus-visible,
+.coordination-primary-action:focus-visible,
+.coordination-cancel-action:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
+.coordination-session-trigger-label {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.coordination-session-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  display: grid;
+  place-items: center;
+}
+
+.coordination-session-chevron svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.coordination-session-chevron path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.coordination-session-picker {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 8px);
+  left: 0;
+  width: min(390px, calc(100vw - 36px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+}
+
+.coordination-search-field {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--muted);
+  background: var(--surface-deep);
+}
+
+.coordination-search-field:focus-within {
+  border-color: var(--orange);
+}
+
+.coordination-search-icon {
+  width: 17px;
+  height: 17px;
+  display: inline-grid;
+  flex: 0 0 auto;
+}
+
+.coordination-search-icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+.coordination-search-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+}
+
+.coordination-search-field input::placeholder {
+  color: var(--muted);
+}
+
+.coordination-session-list {
+  max-height: min(420px, calc(100dvh - 92px));
+  margin-top: 8px;
+  display: grid;
+  gap: 2px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.coordination-session-option {
+  min-height: 42px;
+  padding: 5px 8px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.coordination-session-option:hover,
+.coordination-session-option.selected {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.coordination-session-option > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-all-sessions-icon {
+  width: 28px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.coordination-retry-link {
+  padding: 10px;
+  border: 0;
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.coordination-filter-tabs {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.coordination-filter-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.coordination-filter-tabs button {
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  border-color: transparent;
+  color: var(--muted);
+}
+
+.coordination-filter-tabs button.active {
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--orange-soft);
+}
+
+.coordination-workspace {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(360px, 0.9fr) minmax(420px, 1.1fr);
+  overflow: hidden;
+}
+
+.coordination-feed,
+.coordination-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.coordination-feed {
+  border-right: 1px solid var(--line);
+}
+
+.coordination-event-row {
+  width: 100%;
+  min-width: 0;
+  padding: 14px 18px;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.coordination-event-row:hover,
+.coordination-event-row.selected {
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.coordination-event-row.selected {
+  box-shadow: inset 3px 0 var(--orange);
+}
+
+.coordination-event-copy {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.coordination-event-copy > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.coordination-session-title {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.81rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-event-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.coordination-event-id {
+  padding: 1px 2px;
+  border: 0;
+  border-radius: 2px;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  cursor: copy;
+}
+
+.coordination-event-id:hover {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.coordination-event-id:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 2px;
+}
+
+.coordination-kind,
+.coordination-state {
+  display: inline-flex;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.coordination-state-open {
+  border-color: rgba(246, 200, 112, 0.22);
+  color: #f6c870;
+  background: rgba(246, 200, 112, 0.12);
+}
+
+.coordination-state-resolved {
+  border-color: rgba(125, 211, 168, 0.22);
+  color: #7dd3a8;
+  background: rgba(125, 211, 168, 0.12);
+}
+
+.coordination-state-consumed {
+  border-color: rgba(152, 162, 179, 0.2);
+  color: var(--muted);
+  background: rgba(152, 162, 179, 0.08);
+}
+
+.coordination-kind-user_decision_required,
+.coordination-kind-blocker {
+  border-color: rgba(255, 124, 124, 0.22);
+  color: #ff9b9b;
+  background: rgba(255, 124, 124, 0.12);
+}
+
+.coordination-detail {
+  padding: 24px 28px 48px;
+}
+
+.coordination-detail-content {
+  width: min(760px, 100%);
+  display: grid;
+  gap: 18px;
+}
+
+.coordination-detail-content h2,
+.coordination-detail-content h3 {
+  margin: 0;
+}
+
+.coordination-detail-content h2 {
+  overflow-wrap: anywhere;
+  font-size: 1.28rem;
+  line-height: 1.45;
+}
+
+.coordination-detail-origin {
+  min-width: 0;
+  width: fit-content;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.coordination-detail-origin:hover > span:last-child {
+  text-decoration: underline;
+}
+
+.coordination-detail-origin:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 4px;
+  border-radius: 6px;
+}
+
+.coordination-detail-origin > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.coordination-detail-section {
+  display: grid;
+  gap: 7px;
+}
+
+.coordination-detail-section h3,
+.coordination-decision-panel h3 {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+}
+
+.coordination-detail-section p,
+.coordination-detail-section ul {
+  margin: 0;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.coordination-detail-section ul {
+  display: grid;
+  gap: 3px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.coordination-decision-panel {
+  display: grid;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.coordination-options {
+  display: grid;
+  gap: 8px;
+}
+
+.coordination-options button {
+  padding: 12px 14px;
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: inherit;
+  background: var(--surface);
+  text-align: left;
+  cursor: pointer;
+}
+
+.coordination-options button:hover {
+  border-color: color-mix(in srgb, var(--orange) 65%, white 10%);
+}
+
+.coordination-options button.selected {
+  border-color: var(--orange);
+  background: var(--orange-soft);
+}
+
+.coordination-options button span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.coordination-custom-answer {
+  display: block;
+}
+
+.coordination-custom-answer textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 88px;
+  padding: 10px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  background: var(--surface-deep);
+  font: inherit;
+}
+
+.coordination-custom-answer textarea:focus {
+  border-color: var(--orange);
+  outline: 0;
+}
+
+.coordination-session-trigger:disabled,
+.coordination-filter-tabs button:disabled,
+.coordination-event-row:disabled,
+.coordination-options button:disabled,
+.coordination-cancel-action:disabled,
+.coordination-custom-answer textarea:disabled {
+  opacity: 1;
+}
+
+.coordination-custom-answer textarea:disabled {
+  -webkit-text-fill-color: currentColor;
+}
+
+.coordination-primary-action,
+.coordination-cancel-action {
+  padding: 9px 14px;
+}
+
+.coordination-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.coordination-primary-action {
+  border-color: transparent;
+  background: var(--orange);
+}
+
+.coordination-cancel-action {
+  color: #ff9b9b;
+}
+
+.coordination-feedback {
+  margin: 0;
+  color: #ffb4b4;
+  font-size: 0.82rem;
+}
+
+.coordination-state-panel {
+  min-height: 150px;
+  padding: 24px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.coordination-state-panel button {
+  padding: 8px 13px;
+}
+
+.coordination-load-sentinel {
+  min-height: 1px;
+}
+
+.coordination-loading-indicator {
+  min-height: 38px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+
+.coordination-loading-indicator > span:first-child {
+  width: 18px;
+  height: 18px;
+  border: 2px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: coordination-spin 760ms linear infinite;
+}
+
+.coordination-skeleton {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+}
+
+.coordination-skeleton span {
+  height: 72px;
+  border-radius: 8px;
+  background: linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.09), rgba(255,255,255,0.04));
+  background-size: 200% 100%;
+  animation: coordination-pulse 1.2s linear infinite;
+}
+
+.coordination-skeleton.compact span {
+  height: 34px;
+}
+
+@keyframes coordination-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes coordination-pulse {
+  to { background-position: -200% 0; }
+}
+
+@media (max-width: 760px) {
+  .coordination-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .coordination-session-filter {
+    width: 100%;
+  }
+
+  .coordination-workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(200px, 0.8fr) minmax(260px, 1.2fr);
+  }
+
+  .coordination-feed {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .coordination-detail {
+    padding: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .coordination-loading-indicator > span:first-child,
+  .coordination-skeleton span {
+    animation: none;
+  }
+}

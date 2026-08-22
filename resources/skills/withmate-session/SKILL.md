@@ -1,6 +1,6 @@
 ---
 name: withmate-session
-description: Operate persistent WithMate Sessions through the versioned withmate-session CLI or MCP server. Use when Codex needs to create or inspect a separate WithMate Session, run or queue a Turn in an explicit Session, answer an interaction, exchange a SessionFolder brief, export a transcript, or hand work to another persistent Session instead of using an in-task Codex subagent.
+description: Operate persistent WithMate Sessions through the versioned withmate-session CLI or MCP server. Use when Codex needs to create or inspect a separate WithMate Session, run or queue a Turn in an explicit Session, record a durable coordination event, answer an interaction, exchange a SessionFolder brief, export a transcript, or hand work to another persistent Session instead of using an in-task Codex subagent.
 ---
 
 # WithMate Session orchestration
@@ -50,6 +50,14 @@ Do not infer provider support, model, reasoning effort, approval mode, sandbox, 
 - Session file operations support UTF-8 text, not arbitrary binary transfer. Ask the target Session to create large or binary artifacts in its own workspace.
 - Use canonical JSON transcript output for machine processing. Respect requested size limits and never assume truncation.
 - For a handoff, name the destination Session explicitly and compose a natural-language prompt containing the result, changes, verification, remaining issues, and next objective. Do not infer a return destination or auto-handoff a failed execution.
+
+## Record coordination events
+
+- Use `coordination.event.*` only for durable, user-visible coordination facts and state. Keep normal conversational responses separate.
+- Preserve the canonical Role hierarchy: read `self` from any Role and `subtree` only as an overall or task coordinator. Do not send actor, Role, root, parent, or depth in an operation input.
+- Resolve an escalation only when addressed to the actor, resolve an actor-owned blocker only as that actor, and leave user decisions to the trusted GUI. Agent resolution may include an optional note and never sends a decision option ID.
+- A trusted GUI response to a blocker does not resolve it. Apply and consume the latest response separately, then resolve the blocker as its actor only when work can resume.
+- Reconcile a lost mutation response by event ID or idempotency key. Do not repeat a changed input with the old key.
 
 ## Use the live schema
 
