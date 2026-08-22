@@ -7,6 +7,7 @@ export type ShortcutAssignment = "existing" | "new";
 export const SHORTCUT_COMMAND_IDS = {
   messageFind: "session.message.find",
   messageCloseFind: "session.message.close-find",
+  messageToggleCollapse: "session.message.toggle-collapse",
   filePreviewFind: "session.file-preview.find",
   filePreviewClose: "session.file-preview.close",
   filePreviewSelectAll: "session.file-preview.select-all",
@@ -93,6 +94,21 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowRepeat: false,
     showInHelp: true,
     assignment: "existing",
+  },
+  {
+    id: SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+    label: "Toggle message collapse",
+    kind: "withmate",
+    scope: "message-list",
+    accelerators: {
+      windows: { key: "m", ctrlKey: true, shiftKey: true },
+      linux: { key: "m", ctrlKey: true, shiftKey: true },
+      macos: { key: "m", metaKey: true, shiftKey: true },
+    },
+    allowInEditingTarget: false,
+    allowRepeat: false,
+    showInHelp: true,
+    assignment: "new",
   },
   {
     id: SHORTCUT_COMMAND_IDS.filePreviewFind,

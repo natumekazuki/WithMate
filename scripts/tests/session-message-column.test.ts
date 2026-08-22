@@ -19,6 +19,8 @@ import { StableSessionMessageColumn } from "../../src/chat/chat-window.js";
 import { useCompanionCharacterProfile } from "../../src/companion-character-profile.js";
 import type { CompanionSession } from "../../src/companion-state.js";
 import { buildContextPaneProjection } from "../../src/session-ui-projection.js";
+import { buildMessageCollapseTargets } from "../../src/session-message-collapse.js";
+import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
 
@@ -211,6 +213,12 @@ function renderSessionMessageColumn(options: {
   pendingMessageGroupId?: string | null;
   withResponseActions?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
+  messageKeys?: SessionMessageColumnProps["messageKeys"];
+  messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+  collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+  messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+  onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+  onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
 }): string {
   return renderToStaticMarkup(
@@ -279,6 +287,12 @@ type MountedSessionMessageColumn = {
     isContentActive?: boolean;
     isMessageListFollowing?: boolean;
     messageGroups?: SessionMessageColumnProps["messageGroups"];
+    messageKeys?: SessionMessageColumnProps["messageKeys"];
+    messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+    collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+    messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+    onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+    onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
     messages?: Message[];
     onCopyMessageText?: (text: string) => void;
     onQuoteMessageText?: (text: string) => void;
@@ -300,6 +314,12 @@ async function mountSessionMessageColumn(options: {
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
+  messageKeys?: SessionMessageColumnProps["messageKeys"];
+  messageCollapseTargets?: SessionMessageColumnProps["messageCollapseTargets"];
+  collapsedMessageKeys?: SessionMessageColumnProps["collapsedMessageKeys"];
+  messageJumpRequest?: SessionMessageColumnProps["messageJumpRequest"];
+  onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
+  onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
@@ -462,7 +482,11 @@ async function mountSessionMessageColumn(options: {
           sessionId: "session-1",
           character,
           messages: callbacks.messages ?? options.messages,
+          messageKeys: callbacks.messageKeys ?? options.messageKeys,
           messageGroups: callbacks.messageGroups ?? options.messageGroups,
+          messageCollapseTargets: callbacks.messageCollapseTargets ?? options.messageCollapseTargets,
+          collapsedMessageKeys: callbacks.collapsedMessageKeys ?? options.collapsedMessageKeys,
+          messageJumpRequest: callbacks.messageJumpRequest ?? options.messageJumpRequest,
           expandedArtifacts,
           messageListRef,
           isRunning: options.isRunning ?? false,
@@ -478,6 +502,8 @@ async function mountSessionMessageColumn(options: {
           isMessageListFollowing: callbacks.isMessageListFollowing ?? false,
           isContentActive: callbacks.isContentActive ?? options.isContentActive ?? true,
           onMessageListScroll() {},
+          onToggleMessageCollapse: callbacks.onToggleMessageCollapse ?? options.onToggleMessageCollapse,
+          onToggleAllMessageCollapse: callbacks.onToggleAllMessageCollapse ?? options.onToggleAllMessageCollapse,
           onToggleArtifact() {},
           onOpenDiff() {},
           onResolveLiveApproval() {},
@@ -533,6 +559,9 @@ async function mountSessionMessageColumn(options: {
       });
     },
     async cleanup() {
+      for (const input of dom.window.document.querySelectorAll<HTMLInputElement>("input, textarea, [contenteditable='true']")) {
+        input.blur();
+      }
       if (dom.window.document.activeElement instanceof dom.window.HTMLElement) {
         dom.window.document.activeElement.blur();
       }
@@ -602,6 +631,105 @@ test("SessionMessageColumn は全履歴を仮想化し、最新メッセージ�
   assert.match(html, /message 100<\/p>/);
   assert.match(html, /session-message-virtual-row/);
   assert.doesNotMatch(html, /以前のメッセージを読み込む/);
+});
+
+test("SessionMessageColumn は個別・一括collapseをnative controlで操作する", async () => {
+  const messages: Message[] = [
+    { role: "user", text: "first **collapsed** message" },
+    { role: "assistant", text: "second message" },
+  ];
+  const messageKeys = ["session-s-0", "session-s-1"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    messages.map((_, messageIndex): MessageListSource => ({ kind: "session", messageIndex })),
+    messageKeys,
+  );
+  let toggledKey: string | null = null;
+  let allToggleCount = 0;
+  const collapsedMessageKeys = new Set(["session-s-0"]);
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    collapsedMessageKeys,
+    onToggleMessageCollapse: (key) => {
+      toggledKey = key;
+    },
+    onToggleAllMessageCollapse: () => {
+      allToggleCount += 1;
+    },
+  });
+
+  try {
+    const collapsedBody = mounted.container.querySelector("#message-body-session-s-0");
+    assert.ok(collapsedBody);
+    assert.equal(collapsedBody.querySelector(".rich-text"), null);
+    assert.equal(collapsedBody.querySelector(".message-collapsed-preview")?.textContent, "first collapsed message");
+    const individualButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label^='メッセージを展開']",
+    );
+    assert.ok(individualButton);
+    assert.equal(individualButton.getAttribute("aria-controls"), "message-body-session-s-0");
+    await act(async () => {
+      individualButton.click();
+    });
+    assert.equal(toggledKey, "session-s-0");
+
+    const bulkButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label='完了済みmessageをすべて縮小']",
+    );
+    assert.ok(bulkButton);
+    await act(async () => {
+      bulkButton.click();
+    });
+    assert.equal(allToggleCount, 1);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("SessionMessageColumn はfind中だけ縮小messageを一時展開する", async () => {
+  const messages: Message[] = [{ role: "assistant", text: "**needle** remains searchable" }];
+  const messageKeys = ["session-s-0"];
+  const messageCollapseTargets = buildMessageCollapseTargets(
+    messages,
+    [{ kind: "session", messageIndex: 0 }],
+    messageKeys,
+  );
+  const mounted = await mountSessionMessageColumn({
+    messages,
+    messageKeys,
+    messageCollapseTargets,
+    collapsedMessageKeys: new Set(messageKeys),
+  });
+
+  try {
+    assert.ok(mounted.container.querySelector(".message-collapsed-preview"));
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "needle");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+    assert.equal(mounted.container.querySelector(".message-collapsed-preview"), null);
+    assert.ok(mounted.container.querySelector("#message-body-session-s-0 > .rich-text"));
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("SessionMessageColumn は上方向へスクロールして先頭メッセージへ到達できる", async () => {

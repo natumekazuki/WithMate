@@ -5,6 +5,8 @@ import { JSDOM } from "jsdom";
 import {
   getShortcutHelpProjection,
   getShortcutLabel,
+  SHORTCUT_COMMAND_IDS,
+  SHORTCUT_ENTRIES,
   ShortcutDispatcher,
   ShortcutRegistryError,
   type ShortcutAccelerator,
@@ -178,6 +180,29 @@ describe("shortcut projection", () => {
       id: "session.composer.submit",
       label: "Send message",
       acceleratorLabel: "⌘Enter",
+    });
+  });
+
+  it("message collapse shortcut はplatform acceleratorとHelp projectionをregistryから共有する", () => {
+    const entry = SHORTCUT_ENTRIES.find((candidate) => candidate.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+    assert.ok(entry);
+    assert.deepEqual(entry.accelerators, {
+      windows: { key: "m", ctrlKey: true, shiftKey: true },
+      linux: { key: "m", ctrlKey: true, shiftKey: true },
+      macos: { key: "m", metaKey: true, shiftKey: true },
+    });
+    assert.equal(entry.scope, "message-list");
+    assert.equal(entry.allowInEditingTarget, false);
+    assert.equal(entry.allowRepeat, false);
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "windows"), "Ctrl+Shift+M");
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "macos"), "⌘⇧M");
+    const helpItem = getShortcutHelpProjection("windows")
+      .flatMap((group) => group.items)
+      .find((item) => item.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+    assert.deepEqual(helpItem, {
+      id: SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+      label: "Toggle message collapse",
+      acceleratorLabel: "Ctrl+Shift+M",
     });
   });
 });

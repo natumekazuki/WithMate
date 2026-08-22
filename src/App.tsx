@@ -194,6 +194,15 @@ import {
   recoverRejectedSessionSnapshot,
 } from "./session-submit-coordinator.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
+import {
+  buildMessageCollapseTargets,
+  buildMessageNavigatorEntries,
+  reconcileMessageCollapseState,
+  toggleAllMessageCollapseState,
+  toggleMessageCollapseState,
+  type MessageCollapseState,
+  type MessageJumpRequest,
+} from "./session-message-collapse.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
@@ -565,6 +574,15 @@ export default function AgentSessionWindowApp() {
     ownerSessionId: null,
     telemetry: null,
   });
+  const [messageCollapseWindowState, setMessageCollapseWindowState] = useState<{
+    sessionId: string | null;
+    entries: MessageCollapseState;
+  }>({
+    sessionId: null,
+    entries: new Map(),
+  });
+  const [messageJumpRequest, setMessageJumpRequest] = useState<MessageJumpRequest | null>(null);
+  const messageJumpRequestIdRef = useRef(0);
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
@@ -1578,6 +1596,73 @@ export default function AgentSessionWindowApp() {
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
+  const messageCollapseTargets = useMemo(
+    () => buildMessageCollapseTargets(messageListMessages, messageListSources, messageListKeys),
+    [messageListKeys, messageListMessages, messageListSources],
+  );
+  const reconciledMessageCollapseState = useMemo(
+    () => messageCollapseWindowState.sessionId === selectedSessionId
+      ? reconcileMessageCollapseState(messageCollapseWindowState.entries, messageCollapseTargets)
+      : new Map(),
+    [messageCollapseTargets, messageCollapseWindowState.entries, messageCollapseWindowState.sessionId, selectedSessionId],
+  );
+  const collapsedMessageKeys = useMemo(
+    () => new Set(reconciledMessageCollapseState.keys()),
+    [reconciledMessageCollapseState],
+  );
+  const messageNavigatorEntries = useMemo(
+    () => buildMessageNavigatorEntries(messageCollapseTargets, reconciledMessageCollapseState),
+    [messageCollapseTargets, reconciledMessageCollapseState],
+  );
+  useEffect(() => {
+    setMessageCollapseWindowState((current) => {
+      const nextEntries = current.sessionId === selectedSessionId
+        ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
+        : new Map();
+      if (current.sessionId === selectedSessionId
+        && current.entries.size === nextEntries.size
+        && Array.from(nextEntries).every(([key, entry]) => current.entries.get(key) === entry)) {
+        return current;
+      }
+      return { sessionId: selectedSessionId, entries: nextEntries };
+    });
+  }, [messageCollapseTargets, selectedSessionId]);
+  useEffect(() => {
+    setMessageJumpRequest(null);
+  }, [selectedSessionId]);
+  const handleToggleMessageCollapse = useCallback((key: string) => {
+    setMessageCollapseWindowState((current) => {
+      const state = current.sessionId === selectedSessionId
+        ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
+        : new Map();
+      const target = messageCollapseTargets.find((candidate) => candidate.key === key);
+      return target
+        ? { sessionId: selectedSessionId, entries: toggleMessageCollapseState(state, target) }
+        : { sessionId: selectedSessionId, entries: state };
+    });
+  }, [messageCollapseTargets, selectedSessionId]);
+  const handleToggleAllMessageCollapse = useCallback(() => {
+    setMessageCollapseWindowState((current) => {
+      const state = current.sessionId === selectedSessionId
+        ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
+        : new Map();
+      return {
+        sessionId: selectedSessionId,
+        entries: toggleAllMessageCollapseState(state, messageCollapseTargets),
+      };
+    });
+  }, [messageCollapseTargets, selectedSessionId]);
+  const handleJumpToMessage = useCallback((key: string) => {
+    if (!selectedSessionId) {
+      return;
+    }
+    messageJumpRequestIdRef.current += 1;
+    setMessageJumpRequest({
+      sessionId: selectedSessionId,
+      key,
+      requestId: messageJumpRequestIdRef.current,
+    });
+  }, [selectedSessionId]);
   useEffect(() => {
     if (!activeRunSessionId || !liveRunAssistantText) {
       return;
@@ -1985,6 +2070,7 @@ export default function AgentSessionWindowApp() {
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
+      includeMessages: true,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
@@ -3959,6 +4045,11 @@ export default function AgentSessionWindowApp() {
         displayedMessages: renderedMessages,
         displayedMessageKeys: messageListKeys,
         displayedMessageGroups: messageListGroups,
+        messageCollapseTargets,
+        collapsedMessageKeys,
+        messageJumpRequest,
+        messageNavigatorEntries,
+        messageNavigatorCharacter: selectedSessionCharacter,
         expandedArtifacts,
         sessionThemeStyle,
         sessionDockLayoutRef,
@@ -4080,6 +4171,9 @@ export default function AgentSessionWindowApp() {
         onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
+        onToggleMessageCollapse: handleToggleMessageCollapse,
+        onToggleAllMessageCollapse: handleToggleAllMessageCollapse,
+        onJumpToMessage: handleJumpToMessage,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
           loadProjectedMessageArtifact({

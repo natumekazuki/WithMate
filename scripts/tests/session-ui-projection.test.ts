@@ -15,6 +15,7 @@ import {
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
+  contextPaneTabLabel,
   findLatestAuditCommandOperation,
   findLatestLiveCommandStep,
   resolveAvailableContextPaneTabs,
@@ -462,7 +463,7 @@ describe("session-ui-projection", () => {
   });
 
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
-    assert.equal(cycleContextPaneTab("latest-command", 1), "reasoning");
+    assert.equal(cycleContextPaneTab("latest-command", 1), "messages");
     assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
@@ -498,5 +499,26 @@ describe("session-ui-projection", () => {
     const availableTabs = resolveAvailableContextPaneTabs({ isCopilotSession: false });
     assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "latest-command");
     assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "latest-command");
+  });
+
+  it("Messages tab は明示的に有効化したSession Windowだけへ追加される", () => {
+    assert.deepEqual(resolveAvailableContextPaneTabs({
+      isCopilotSession: true,
+      includeMessages: true,
+      hasReasoningCapability: true,
+      hasCompanionGroupMonitor: true,
+    }), [
+      "latest-command",
+      "messages",
+      "reasoning",
+      "tasks",
+      "companion-group",
+    ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
+      "latest-command",
+      "tasks",
+    ]);
+    assert.equal(contextPaneTabLabel("messages"), "Messages");
+    assert.equal(cycleContextPaneTab("latest-command", 1, ["latest-command", "messages"]), "messages");
   });
 });
