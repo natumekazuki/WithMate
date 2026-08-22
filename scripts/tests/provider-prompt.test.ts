@@ -144,6 +144,9 @@ describe("composeProviderPrompt", () => {
     assert.match(prompt.systemBodyText, /# Coordination Events/);
     assert.match(prompt.systemBodyText, /coordination\.event\.\*/);
     assert.match(prompt.systemBodyText, /user_decision_required/);
+    assert.match(prompt.systemBodyText, /ユーザーの確認、選択、自由回答/);
+    assert.match(prompt.systemBodyText, /`blocker`で代用しない/);
+    assert.match(prompt.systemBodyText, /作成Session自身がresolve/);
     assert.match(prompt.systemBodyText, /通常responseを止めない/);
     assert.doesNotMatch(prompt.systemBodyText, /bindingReference|binding hash|operation grant/i);
     assert.equal(prompt.systemBodyText.match(/Current Session ID:/g)?.length, 1);

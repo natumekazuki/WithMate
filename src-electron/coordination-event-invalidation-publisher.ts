@@ -1,6 +1,8 @@
+import type { CoordinationEventInvalidation } from "../src/coordination-event.js";
+
 export type CoordinationEventInvalidationTarget = {
   isAvailable(): boolean;
-  publish(): void;
+  publish(invalidation: CoordinationEventInvalidation): void;
 };
 
 export type CoordinationEventInvalidationPublisherDeps = {
@@ -12,14 +14,17 @@ export type CoordinationEventInvalidationPublisherDeps = {
 
 export class CoordinationEventInvalidationPublisher {
   private retryHandle: unknown | null = null;
+  private retryInvalidation: CoordinationEventInvalidation | null = null;
   private disposed = false;
 
   constructor(private readonly deps: CoordinationEventInvalidationPublisherDeps) {}
 
-  publish(): void {
+  publish(invalidation: CoordinationEventInvalidation): void {
     if (this.disposed) return;
-    const failure = this.publishAvailableTargets();
+    const nextInvalidation = mergeInvalidations(this.retryInvalidation, invalidation);
+    const failure = this.publishAvailableTargets(nextInvalidation);
     if (failure) {
+      this.retryInvalidation = nextInvalidation;
       this.ensureRetry();
       throw failure;
     }
@@ -31,12 +36,12 @@ export class CoordinationEventInvalidationPublisher {
     this.clearRetry();
   }
 
-  private publishAvailableTargets(): unknown | null {
+  private publishAvailableTargets(invalidation: CoordinationEventInvalidation): unknown | null {
     let firstFailure: unknown | null = null;
     for (const target of this.deps.getTargets()) {
       if (!target.isAvailable()) continue;
       try {
-        target.publish();
+        target.publish(invalidation);
       } catch (error) {
         firstFailure ??= error;
       }
@@ -50,16 +55,34 @@ export class CoordinationEventInvalidationPublisher {
     this.retryHandle = schedule(() => {
       this.retryHandle = null;
       if (this.disposed) return;
-      const failure = this.publishAvailableTargets();
+      const invalidation = this.retryInvalidation;
+      if (!invalidation) return;
+      const failure = this.publishAvailableTargets(invalidation);
       if (failure) this.ensureRetry();
+      else this.retryInvalidation = null;
     }, this.deps.retryDelayMs ?? 250);
   }
 
   private clearRetry(): void {
+    this.retryInvalidation = null;
     if (this.retryHandle === null) return;
     (this.deps.cancelRetry ?? clearTimeout)(this.retryHandle);
     this.retryHandle = null;
   }
+}
+
+function mergeInvalidations(
+  current: CoordinationEventInvalidation | null,
+  next: CoordinationEventInvalidation,
+): CoordinationEventInvalidation {
+  if (!current) return next;
+  if (current.eventId === next.eventId && current.eventId !== null) {
+    return {
+      eventId: current.eventId,
+      revision: Math.max(current.revision ?? 0, next.revision ?? 0),
+    };
+  }
+  return { eventId: null, revision: null };
 }
 
 function defaultScheduleRetry(callback: () => void, delayMs: number): ReturnType<typeof setTimeout> {

@@ -131,6 +131,7 @@ import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
   CoordinationEventDecisionResolveInput,
+  CoordinationEventInvalidation,
   CoordinationEventSummary,
   CoordinationEventTrustedListInput,
   CoordinationEventListResult,
@@ -350,7 +351,7 @@ export type WithMateWindowSubscriptionApi = {
   ): () => void;
   subscribeSessionInvalidation(listener: (payload: SessionSummaryInvalidation) => void): () => void;
   subscribeSessionExecutionsChanged(listener: (event: SessionExecutionChangedEvent) => void): () => void;
-  subscribeCoordinationEventsChanged(listener: () => void): () => void;
+  subscribeCoordinationEventsChanged(listener: (invalidation: CoordinationEventInvalidation) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;

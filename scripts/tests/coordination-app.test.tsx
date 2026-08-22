@@ -6,7 +6,7 @@ import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 import CoordinationApp from "../../src/CoordinationApp.js";
-import type { CoordinationEvent } from "../../src/coordination-event.js";
+import type { CoordinationEvent, CoordinationEventInvalidation } from "../../src/coordination-event.js";
 import type { HomeSessionSummary } from "../../src/session-state.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -101,10 +101,11 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     createdAt: "2026-08-22T12:00:00.000Z",
   };
   let currentDetail = decision;
-  let coordinationChanged: (() => void) | undefined;
+  let coordinationChanged: ((invalidation: CoordinationEventInvalidation) => void) | undefined;
   let finishResolution: ((event: CoordinationEvent) => void) | undefined;
   let finishReplacement: (() => void) | undefined;
   let blockNextReplacement = false;
+  const detailQueries: string[] = [];
   const api = {
     listCoordinationEvents(input: unknown) {
       eventQueries.push(input);
@@ -143,15 +144,19 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       }
       return Promise.resolve({ entries: [SESSION], nextCursor: null, hasMore: false });
     },
-    getCoordinationEvent() { return Promise.resolve(currentDetail); },
-    resolveCoordinationEvent() {
+    getCoordinationEvent(eventId: string) {
+      detailQueries.push(eventId);
+      return Promise.resolve(currentDetail);
+    },
+    resolveCoordinationEvent(input: { eventId: string; idempotencyKey: string }) {
+      coordinationChanged?.({ eventId: input.eventId, revision: 2 });
       return new Promise<CoordinationEvent>((resolve) => { finishResolution = resolve; });
     },
     openSession(sessionId: string) {
       openedSessions.push(sessionId);
       return Promise.resolve();
     },
-    subscribeCoordinationEventsChanged(callback: () => void) {
+    subscribeCoordinationEventsChanged(callback: (invalidation: CoordinationEventInvalidation) => void) {
       coordinationChanged = callback;
       return () => undefined;
     },
@@ -196,7 +201,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     blockNextReplacement = true;
     const cursorQueryCount = eventQueries.filter((query) => (query as { cursor?: string }).cursor).length;
     await act(async () => {
-      coordinationChanged?.();
+      coordinationChanged?.({ eventId: null, revision: null });
       eventObserver.trigger();
       await Promise.resolve();
     });
@@ -252,18 +257,35 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
 
     const answerOptions = rootElement.querySelectorAll<HTMLButtonElement>(".coordination-options button");
     assert.equal(answerOptions.length, 2);
+    const detailQueryCountBeforeResolution = detailQueries.length;
+    const eventQueryCountBeforeResolution = eventQueries.length;
     await act(async () => {
       answerOptions[1].click();
       await Promise.resolve();
     });
+    assert.equal(detailQueries.length, detailQueryCountBeforeResolution);
+    assert.equal(eventQueries.length, eventQueryCountBeforeResolution);
     assert.equal(rootElement.querySelector<HTMLButtonElement>(".coordination-session-trigger")?.disabled, true);
     assert.equal(rootElement.querySelector<HTMLButtonElement>(".coordination-filter-tabs button")?.disabled, true);
     assert.equal(rootElement.querySelector<HTMLButtonElement>(".coordination-event-row")?.disabled, true);
 
     const staleResolution = { ...decision, summary: "古い完了応答" };
-    currentDetail = { ...decision, summary: "外部更新後の判断", actions: [...decision.actions] };
+    currentDetail = {
+      ...decision,
+      summary: "外部更新後の判断",
+      actions: [...decision.actions, {
+        sequence: 3,
+        type: "resolved",
+        actorType: "trusted_gui",
+        actorSessionId: null,
+        optionId: "all",
+        note: null,
+        relatedEventId: null,
+        createdAt: "2026-08-22T12:00:30.000Z",
+      }],
+    };
     await act(async () => {
-      coordinationChanged?.();
+      coordinationChanged?.({ eventId: decision.eventId, revision: 3 });
       await Promise.resolve();
       await Promise.resolve();
       finishResolution?.(staleResolution);
@@ -273,7 +295,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     assert.doesNotMatch(rootElement.textContent ?? "", /古い完了応答/);
 
     currentDetail.actions.push({
-      sequence: 2,
+      sequence: 4,
       type: "consumed",
       actorType: "session",
       actorSessionId: SESSION.id,
@@ -296,7 +318,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       actions: [],
     };
     await act(async () => {
-      coordinationChanged?.();
+      coordinationChanged?.({ eventId: decision.eventId, revision: 2 });
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -312,16 +334,17 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       options: [],
     };
     await act(async () => {
-      coordinationChanged?.();
+      coordinationChanged?.({ eventId: decision.eventId, revision: 2 });
       await Promise.resolve();
       await Promise.resolve();
     });
     const openSessionAction = Array.from(
       rootElement.querySelectorAll<HTMLButtonElement>(".coordination-detail-actions button"),
     ).find((button) => button.textContent === "Sessionを開く");
-    assert.ok(openSessionAction);
+    assert.equal(openSessionAction, undefined);
+    assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /イベントを取り消す/);
     await act(async () => {
-      openSessionAction.click();
+      rootElement.querySelector<HTMLButtonElement>(".coordination-detail-origin")?.click();
       await Promise.resolve();
     });
     assert.deepEqual(openedSessions, [SESSION.id, SESSION.id]);

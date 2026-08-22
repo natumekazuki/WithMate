@@ -588,8 +588,8 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const disposeTemplates = api.subscribePromptTemplates((templates) => {
     received.push({ kind: "templates", templates });
   });
-  const disposeCoordination = api.subscribeCoordinationEventsChanged(() => {
-    received.push({ kind: "coordination" });
+  const disposeCoordination = api.subscribeCoordinationEventsChanged((invalidation) => {
+    received.push({ kind: "coordination", invalidation });
   });
 
   listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
@@ -608,7 +608,10 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   });
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   listeners.get("withmate:prompt-templates-changed")?.({}, [{ id: "template-1", name: "Review" }]);
-  listeners.get("withmate:coordination-events-changed")?.({});
+  listeners.get("withmate:coordination-events-changed")?.({}, {
+    eventId: "coordination-1",
+    revision: 2,
+  });
   disposeBoot();
   disposeInvalidation();
   disposeExecutionChanged();
@@ -635,7 +638,10 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
     },
     { kind: "liveRun", sessionId: "session-1", state: { phase: "running" } },
     { kind: "templates", templates: [{ id: "template-1", name: "Review" }] },
-    { kind: "coordination" },
+    {
+      kind: "coordination",
+      invalidation: { eventId: "coordination-1", revision: 2 },
+    },
   ]);
   assert.equal(listeners.has("withmate:live-session-run"), false);
   assert.equal(listeners.has("withmate:sessions-invalidated"), false);

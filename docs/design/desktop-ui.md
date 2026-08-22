@@ -193,7 +193,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 選択後はevent queryへ`sessionId`を渡し、読込済みeventだけをrendererで絞らない
   - 選択中のSession titleをtoolbarへ表示し、解除して全Sessionへ戻せる
 - Event detailは選択時に表示し、本文、関連情報、回答操作を段階表示する
-- detailのSession titleと、Agent側で対応が必要なopen Eventの主操作は、所有Sessionを開く導線にする
+- detailのSession titleは所有Sessionを開く導線にし、同じ遷移先の専用buttonを重ねない
 - Window内の常設操作はSession filterとevent filterだけにし、画面内title、説明文、Home遷移、取得済み件数を置かない
 - filter結果が空の場合は説明文や空状態surfaceを置かず、空の一覧として表示する
 - Event一覧とdetailはWindow内で独立してscrollでき、一覧のavatarと本文は重ならない固定gridで配置する
@@ -205,9 +205,9 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - 回答済みでもAgentが未使用なら現在の回答を選択状態で表示し、変更を許可する
   - Agentが使用済みなら`使用済み`を表示し、回答操作を読み取り専用にする
 - 自由回答の入力欄はvisible labelやplaceholderを置かず、accessible nameだけを維持する。送信とEvent取消は同じ操作列へ置く
-- Agent側で解決するblockerなどのopen Eventは`Sessionを開く`を主操作、Event取消を副操作として表示する
+- blockerは作成したAgentが実作業で障害を解消した後にresolveする。Coordination Windowから状態だけをresolveせず、所有Sessionへの導線とEvent取消だけを提供する
 - storage invalidationやpagination後も選択中Eventを維持し、回答mutation中は操作をlockする
-- storage invalidationは現在の一覧とdetailを残したまま背景更新し、skeletonへの全体置換や選択解除を行わない
+- storage invalidationはEvent IDとrevisionを通知する。mutation中に届いた同じEventのrevisionがAPI返却値以下なら局所反映だけで再取得せず、返却値より新しければ対象Eventだけを取得する。未知Eventまたは全体invalidationだけ一覧を再取得し、skeletonへの全体置換や選択解除を行わない
 - Session groupingとCoordination Eventを持つSessionだけの列挙はfirst sliceへ含めない
 - loadingは対象領域のskeletonまたはspinner、取得失敗は短い状態と再試行操作で示し、常設説明文を置かない
 - Event pageとorigin Session projectionは同じrequest generationで確定し、古いresponseや片方だけの成功を新しい一覧へ混ぜない

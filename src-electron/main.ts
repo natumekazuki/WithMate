@@ -314,6 +314,7 @@ import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { CoordinationEventInvalidationPublisher } from "./coordination-event-invalidation-publisher.js";
+import { coordinationEventRevision, type CoordinationEvent } from "../src/coordination-event.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
@@ -4104,16 +4105,19 @@ function requireCoordinationEventService(): CoordinationEventService {
   return coordinationEventService;
 }
 
-function broadcastCoordinationEventsChanged(): void {
+function broadcastCoordinationEventsChanged(event?: CoordinationEvent): void {
   if (!coordinationEventInvalidationPublisher) {
     coordinationEventInvalidationPublisher = new CoordinationEventInvalidationPublisher({
       getTargets: () => BrowserWindow.getAllWindows().map((window) => ({
         isAvailable: () => !window.isDestroyed() && !window.webContents.isDestroyed(),
-        publish: () => window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT),
+        publish: (invalidation) => window.webContents.send(WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT, invalidation),
       })),
     });
   }
-  coordinationEventInvalidationPublisher.publish();
+  coordinationEventInvalidationPublisher.publish({
+    eventId: event?.eventId ?? null,
+    revision: event ? coordinationEventRevision(event) : null,
+  });
 }
 
 function requireSessionExecutionPublicProgressStorage(): SessionExecutionPublicProgressStorageV6 {

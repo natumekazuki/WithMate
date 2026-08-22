@@ -7,6 +7,7 @@ import type {
   CoordinationEventState,
   CoordinationEventSummary,
 } from "./coordination-event.js";
+import { coordinationEventRevision } from "./coordination-event.js";
 import { renderHomeSearchIcon } from "./home/home-icons.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { CharacterAvatar } from "./ui-utils.js";
@@ -83,11 +84,17 @@ export default function CoordinationApp() {
   const detailGeneration = useRef(0);
   const sessionGeneration = useRef(0);
   const resolutionAttempts = useRef(new Map<string, string>());
+  const eventsRef = useRef<CoordinationEventSummary[]>([]);
+  const pendingMutation = useRef<{ eventId: string; revision: number | null } | null>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const sessionLoadSentinelRef = useRef<HTMLDivElement>(null);
   const eventLoadSentinelRef = useRef<HTMLDivElement>(null);
 
   const activeState = FILTERS.find((entry) => entry.id === filter)?.state;
+
+  useEffect(() => {
+    eventsRef.current = events;
+  }, [events]);
 
   const loadEventSessionSummaries = useCallback(async (
     items: CoordinationEventSummary[],
@@ -265,13 +272,8 @@ export default function CoordinationApp() {
     }
   };
 
-  useEffect(() => api?.subscribeCoordinationEventsChanged(() => {
-    void loadEvents("replace", true);
-    if (selectedEventId) void openDetail(selectedEventId, true);
-  }), [api, loadEvents, selectedEventId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const applyEventUpdate = (event: CoordinationEvent) => {
-    setSelectedEvent(event);
+  const applyEventUpdate = useCallback((event: CoordinationEvent) => {
+    if (selectedEventId === event.eventId) setSelectedEvent(event);
     setEvents((current) => {
       if (activeState && event.state !== activeState) {
         return current.filter((item) => item.eventId !== event.eventId);
@@ -283,7 +285,36 @@ export default function CoordinationApp() {
         summary: event.summary,
       } : item);
     });
-  };
+  }, [activeState, selectedEventId]);
+
+  const refreshInvalidatedEvent = useCallback(async (eventId: string) => {
+    if (!api) return;
+    const isKnown = eventsRef.current.some((event) => event.eventId === eventId);
+    if (!isKnown && selectedEventId !== eventId) {
+      void loadEvents("replace", true);
+      return;
+    }
+    if (selectedEventId === eventId) detailGeneration.current += 1;
+    try {
+      applyEventUpdate(await api.getCoordinationEvent(eventId));
+    } catch {
+      // The last successful projection remains usable until the next invalidation.
+    }
+  }, [api, applyEventUpdate, loadEvents, selectedEventId]);
+
+  useEffect(() => api?.subscribeCoordinationEventsChanged((invalidation) => {
+    const currentMutation = pendingMutation.current;
+    if (invalidation.eventId && invalidation.eventId === currentMutation?.eventId) {
+      currentMutation.revision = Math.max(currentMutation.revision ?? 0, invalidation.revision ?? 0);
+      return;
+    }
+    if (invalidation.eventId) {
+      void refreshInvalidatedEvent(invalidation.eventId);
+      return;
+    }
+    void loadEvents("replace", true);
+    if (selectedEventId) void openDetail(selectedEventId, true);
+  }), [api, loadEvents, refreshInvalidatedEvent, selectedEventId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openEventSession = async () => {
     if (!api || !selectedEvent) return;
@@ -311,6 +342,8 @@ export default function CoordinationApp() {
     setMutationFeedback("");
     setMutationPending(true);
     const eventId = selectedEvent.eventId;
+    const mutation = { eventId, revision: null };
+    pendingMutation.current = mutation;
     const detailGenerationAtStart = detailGeneration.current;
     const eventGenerationAtStart = eventGeneration.current;
     try {
@@ -325,11 +358,16 @@ export default function CoordinationApp() {
       applyEventUpdate(event);
       setCustomAnswer(latestTrustedResolution(event)?.note ?? "");
       setMutationFeedback("");
+      if (mutation.revision !== null && mutation.revision > coordinationEventRevision(event)) {
+        void refreshInvalidatedEvent(eventId);
+      }
     } catch (error) {
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
       setMutationFeedback(error instanceof Error ? error.message : "回答を保存できませんでした。");
+      if (mutation.revision !== null) void refreshInvalidatedEvent(eventId);
     } finally {
+      if (pendingMutation.current === mutation) pendingMutation.current = null;
       setMutationPending(false);
     }
   };
@@ -339,23 +377,31 @@ export default function CoordinationApp() {
     if (!window.confirm(`「${selectedEvent.summary}」を取り消します。取り消すと回答できません。`)) return;
     setMutationFeedback("");
     setMutationPending(true);
+    const idempotencyKey = buildIdempotencyKey("coordination-window-cancel");
     const eventId = selectedEvent.eventId;
+    const mutation = { eventId, revision: null };
+    pendingMutation.current = mutation;
     const detailGenerationAtStart = detailGeneration.current;
     const eventGenerationAtStart = eventGeneration.current;
     try {
       const event = await api.cancelCoordinationEvent({
         eventId,
-        idempotencyKey: buildIdempotencyKey("coordination-window-cancel"),
+        idempotencyKey,
       });
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
       applyEventUpdate(event);
       setMutationFeedback("");
+      if (mutation.revision !== null && mutation.revision > coordinationEventRevision(event)) {
+        void refreshInvalidatedEvent(eventId);
+      }
     } catch (error) {
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
       setMutationFeedback(error instanceof Error ? error.message : "イベントを取り消せませんでした。");
+      if (mutation.revision !== null) void refreshInvalidatedEvent(eventId);
     } finally {
+      if (pendingMutation.current === mutation) pendingMutation.current = null;
       setMutationPending(false);
     }
   };
@@ -563,7 +609,6 @@ export default function CoordinationApp() {
               ) : null}
               {selectedEvent.state === "open" && !canAnswer ? (
                 <div className="coordination-detail-actions">
-                  <button className="coordination-primary-action" type="button" onClick={() => void openEventSession()}>Sessionを開く</button>
                   <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
                 </div>
               ) : null}

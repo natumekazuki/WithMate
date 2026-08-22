@@ -157,6 +157,15 @@ export type CoordinationEventListResult = {
   nextCursor?: string;
 };
 
+export type CoordinationEventInvalidation = {
+  eventId: string | null;
+  revision: number | null;
+};
+
+export function coordinationEventRevision(event: Pick<CoordinationEvent, "actions">): number {
+  return event.actions.reduce((revision, action) => Math.max(revision, action.sequence), 0);
+}
+
 export type CoordinationEventCorrectionResult = {
   correction: CoordinationEvent;
   superseded: CoordinationEvent;

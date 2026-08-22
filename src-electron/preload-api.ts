@@ -830,7 +830,14 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
       return subscribe(ipcRenderer, WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, listener);
     },
     subscribeCoordinationEventsChanged(listener) {
-      return subscribe(ipcRenderer, WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT, (payload: unknown) => {
+        if (!payload || typeof payload !== "object") return;
+        const eventId = "eventId" in payload ? payload.eventId : undefined;
+        const revision = "revision" in payload ? payload.revision : undefined;
+        if ((eventId !== null && (typeof eventId !== "string" || !eventId.trim()))
+          || (revision !== null && (!Number.isInteger(revision) || (revision as number) < 0))) return;
+        listener({ eventId, revision: revision as number | null });
+      });
     },
     subscribeModelCatalog(listener) {
       return subscribe(ipcRenderer, WITHMATE_MODEL_CATALOG_CHANGED_EVENT, (catalog: ModelCatalogChangedPayload) => {
