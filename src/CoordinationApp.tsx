@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { HomeSessionSummary } from "./app-state.js";
 import type {
@@ -115,15 +115,15 @@ export default function CoordinationApp() {
     const appendGeneration = ++eventAppendGeneration.current;
     if (mode === "replace") {
       eventReplacePending.current = true;
-      setEventLoadState("loading");
+      if (!preserveSelection) setEventLoadState("loading");
       setEventCursor(undefined);
       if (!preserveSelection) {
         detailGeneration.current += 1;
         setSelectedEventId(null);
         setSelectedEvent(null);
         setDetailLoadState("loaded");
+        setMutationFeedback("");
       }
-      setMutationFeedback("");
     } else {
       setEventLoadMore(true);
     }
@@ -146,7 +146,7 @@ export default function CoordinationApp() {
     } catch {
       if (generation !== eventGeneration.current
         || (mode === "append" && appendGeneration !== eventAppendGeneration.current)) return;
-      setEventLoadState("error");
+      if (!preserveSelection) setEventLoadState("error");
     } finally {
       if (generation === eventGeneration.current) {
         if (mode === "replace") eventReplacePending.current = false;
@@ -244,29 +244,55 @@ export default function CoordinationApp() {
     return () => observer.disconnect();
   }, [eventCursor, eventLoadMore, eventLoadState, loadEvents]);
 
-  const openDetail = async (eventId: string) => {
+  const openDetail = async (eventId: string, preserveCurrent = false) => {
     if (!api) return;
     const generation = ++detailGeneration.current;
     setSelectedEventId(eventId);
-    setSelectedEvent(null);
-    setDetailLoadState("loading");
-    setMutationFeedback("");
-    setCustomAnswer("");
+    if (!preserveCurrent) {
+      setSelectedEvent(null);
+      setDetailLoadState("loading");
+      setMutationFeedback("");
+      setCustomAnswer("");
+    }
     try {
       const event = await api.getCoordinationEvent(eventId);
       if (generation !== detailGeneration.current) return;
       setSelectedEvent(event);
-      setCustomAnswer(latestTrustedResolution(event)?.note ?? "");
+      if (!preserveCurrent) setCustomAnswer(latestTrustedResolution(event)?.note ?? "");
       setDetailLoadState("loaded");
     } catch {
-      if (generation === detailGeneration.current) setDetailLoadState("error");
+      if (generation === detailGeneration.current && !preserveCurrent) setDetailLoadState("error");
     }
   };
 
   useEffect(() => api?.subscribeCoordinationEventsChanged(() => {
     void loadEvents("replace", true);
-    if (selectedEventId) void openDetail(selectedEventId);
+    if (selectedEventId) void openDetail(selectedEventId, true);
   }), [api, loadEvents, selectedEventId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applyEventUpdate = (event: CoordinationEvent) => {
+    setSelectedEvent(event);
+    setEvents((current) => {
+      if (activeState && event.state !== activeState) {
+        return current.filter((item) => item.eventId !== event.eventId);
+      }
+      return current.map((item) => item.eventId === event.eventId ? {
+        ...item,
+        kind: event.kind,
+        state: event.state,
+        summary: event.summary,
+      } : item);
+    });
+  };
+
+  const openEventSession = async () => {
+    if (!api || !selectedEvent) return;
+    try {
+      await api.openSession(selectedEvent.actorSessionId);
+    } catch (error) {
+      setMutationFeedback(error instanceof Error ? error.message : "Sessionを開けませんでした。");
+    }
+  };
 
   const resolveEvent = async (optionId?: string) => {
     if (!api || !selectedEvent) return;
@@ -296,10 +322,9 @@ export default function CoordinationApp() {
       resolutionAttempts.current.delete(answerFingerprint);
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
-      setSelectedEvent(event);
+      applyEventUpdate(event);
       setCustomAnswer(latestTrustedResolution(event)?.note ?? "");
       setMutationFeedback("");
-      void loadEvents("replace", true);
     } catch (error) {
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
@@ -324,9 +349,8 @@ export default function CoordinationApp() {
       });
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
-      setSelectedEvent(event);
+      applyEventUpdate(event);
       setMutationFeedback("");
-      void loadEvents("replace", true);
     } catch (error) {
       if (detailGenerationAtStart !== detailGeneration.current
         || eventGenerationAtStart !== eventGeneration.current) return;
@@ -346,10 +370,6 @@ export default function CoordinationApp() {
   const canAnswer = selectedEvent?.kind === "user_decision_required"
     && (selectedEvent.state === "open" || (selectedEvent.state === "resolved" && !answerIsConsumed));
   const filterLabel = FILTERS.find((entry) => entry.id === filter)?.label ?? "すべて";
-  const emptyMessage = useMemo(() => selectedSession
-    ? `「${selectedSession.taskTitle}」は該当なし`
-    : "該当なし", [selectedSession]);
-
   return (
     <main className="coordination-page" aria-label="Coordination">
       <div className="coordination-toolbar">
@@ -374,7 +394,6 @@ export default function CoordinationApp() {
                   type="search"
                   value={sessionSearch}
                   onChange={(event) => setSessionSearch(event.target.value)}
-                  placeholder="Sessionを検索"
                   aria-label="Sessionを検索"
                   disabled={mutationPending}
                   autoFocus
@@ -438,7 +457,6 @@ export default function CoordinationApp() {
           {eventLoadState === "error" ? (
             <div className="coordination-state-panel"><span>イベントを読み込めませんでした。</span><button type="button" disabled={mutationPending} onClick={() => void loadEvents("replace")}>再試行</button></div>
           ) : null}
-          {eventLoadState === "loaded" && events.length === 0 ? <div className="coordination-empty">{emptyMessage}</div> : null}
           {events.map((event) => {
             const session = eventSessions[event.actorSessionId];
             return (
@@ -479,13 +497,13 @@ export default function CoordinationApp() {
           ) : null}
           {detailLoadState === "loaded" && selectedEvent ? (
             <div className="coordination-detail-content">
-              <div className="coordination-detail-origin">
+              <button className="coordination-detail-origin" type="button" onClick={() => void openEventSession()}>
                 <CharacterAvatar
                   character={{ name: selectedEventSession?.character ?? "?", iconPath: selectedEventSession?.characterIconPath ?? "" }}
                   size="tiny"
                 />
                 <span>{selectedEventSession?.taskTitle ?? "削除されたSession"}</span>
-              </div>
+              </button>
               <div className="coordination-event-meta">
                 <span className={`coordination-kind coordination-kind-${selectedEvent.kind}`}>{KIND_LABELS[selectedEvent.kind]}</span>
                 <span className={`coordination-state coordination-state-${selectedEvent.state}`}>{STATE_LABELS[selectedEvent.state]}</span>
@@ -519,26 +537,35 @@ export default function CoordinationApp() {
                     ))}
                   </div>
                   <label className="coordination-custom-answer">
-                    <span>別の回答</span>
+                    <span className="sr-only">自由回答</span>
                     <textarea
                       value={customAnswer}
                       disabled={mutationPending}
                       onChange={(event) => setCustomAnswer(event.target.value)}
+                      aria-label="自由回答"
                       rows={4}
                     />
                   </label>
-                  <button
-                    className="coordination-primary-action"
-                    type="button"
-                    disabled={mutationPending || !customAnswer.trim() || selectedResolution?.note === customAnswer.trim()}
-                    onClick={() => void resolveEvent()}
-                  >
-                    {selectedEvent.state === "resolved" ? "回答を変更" : "送信"}
-                  </button>
+                  <div className="coordination-detail-actions">
+                    <button
+                      className="coordination-primary-action"
+                      type="button"
+                      disabled={mutationPending || !customAnswer.trim() || selectedResolution?.note === customAnswer.trim()}
+                      onClick={() => void resolveEvent()}
+                    >
+                      {selectedEvent.state === "resolved" ? "回答を変更" : "送信"}
+                    </button>
+                    {selectedEvent.state === "open" ? (
+                      <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
+                    ) : null}
+                  </div>
                 </section>
               ) : null}
-              {selectedEvent.state === "open" ? (
-                <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
+              {selectedEvent.state === "open" && !canAnswer ? (
+                <div className="coordination-detail-actions">
+                  <button className="coordination-primary-action" type="button" onClick={() => void openEventSession()}>Sessionを開く</button>
+                  <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
+                </div>
               ) : null}
               {mutationPending ? <LoadingIndicator label="変更を保存中" /> : null}
               {mutationFeedback ? <p className="coordination-feedback" role="status">{mutationFeedback}</p> : null}

@@ -347,10 +347,27 @@
 
 .coordination-detail-origin {
   min-width: 0;
+  width: fit-content;
+  padding: 0;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.coordination-detail-origin:hover > span:last-child {
+  text-decoration: underline;
+}
+
+.coordination-detail-origin:focus-visible {
+  outline: 2px solid var(--orange);
+  outline-offset: 4px;
+  border-radius: 6px;
 }
 
 .coordination-detail-origin > span:last-child {
@@ -426,10 +443,7 @@
 }
 
 .coordination-custom-answer {
-  display: grid;
-  gap: 7px;
-  color: var(--muted);
-  font-size: 0.82rem;
+  display: block;
 }
 
 .coordination-custom-answer textarea {
@@ -450,8 +464,14 @@
 
 .coordination-primary-action,
 .coordination-cancel-action {
-  justify-self: start;
   padding: 9px 14px;
+}
+
+.coordination-detail-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .coordination-primary-action {
@@ -469,8 +489,7 @@
   font-size: 0.82rem;
 }
 
-.coordination-state-panel,
-.coordination-empty {
+.coordination-state-panel {
   min-height: 150px;
   padding: 24px;
   display: grid;

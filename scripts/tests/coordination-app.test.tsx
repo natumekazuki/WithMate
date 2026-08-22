@@ -70,6 +70,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
   });
   const eventQueries: unknown[] = [];
   const sessionQueries: unknown[] = [];
+  const openedSessions: string[] = [];
   const decision: CoordinationEvent = {
     sequence: 2,
     eventId: "event-1",
@@ -107,6 +108,9 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
   const api = {
     listCoordinationEvents(input: unknown) {
       eventQueries.push(input);
+      if ((input as { state?: string }).state === "recorded") {
+        return Promise.resolve({ items: [], nextCursor: undefined });
+      }
       if ((input as { cursor?: string }).cursor) return Promise.resolve({ items: [] });
       const result = {
         items: [{
@@ -142,6 +146,10 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     getCoordinationEvent() { return Promise.resolve(currentDetail); },
     resolveCoordinationEvent() {
       return new Promise<CoordinationEvent>((resolve) => { finishResolution = resolve; });
+    },
+    openSession(sessionId: string) {
+      openedSessions.push(sessionId);
+      return Promise.resolve();
     },
     subscribeCoordinationEventsChanged(callback: () => void) {
       coordinationChanged = callback;
@@ -192,6 +200,8 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       eventObserver.trigger();
       await Promise.resolve();
     });
+    assert.equal(rootElement.querySelector(".coordination-feed .coordination-skeleton"), null);
+    assert.ok(rootElement.querySelector(".coordination-event-row"));
     assert.equal(
       eventQueries.filter((query) => (query as { cursor?: string }).cursor).length,
       cursorQueryCount,
@@ -232,6 +242,13 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     assert.match(rootElement.textContent ?? "", /回答を変更/);
     assert.match(rootElement.textContent ?? "", /段階切替/);
     assert.doesNotMatch(rootElement.textContent ?? "", /使用済み/);
+    assert.equal(rootElement.querySelector<HTMLInputElement>(".coordination-search-field input")?.placeholder, "");
+    assert.doesNotMatch(rootElement.textContent ?? "", /別の回答/);
+    await act(async () => {
+      rootElement.querySelector<HTMLButtonElement>(".coordination-detail-origin")?.click();
+      await Promise.resolve();
+    });
+    assert.deepEqual(openedSessions, [SESSION.id]);
 
     const answerOptions = rootElement.querySelectorAll<HTMLButtonElement>(".coordination-options button");
     assert.equal(answerOptions.length, 2);
@@ -271,6 +288,55 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     });
     assert.match(rootElement.textContent ?? "", /使用済み/);
     assert.equal(rootElement.querySelector(".coordination-decision-panel"), null);
+
+    currentDetail = {
+      ...decision,
+      state: "open",
+      summary: "公開方式を選んでください",
+      actions: [],
+    };
+    await act(async () => {
+      coordinationChanged?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const decisionActions = rootElement.querySelector(".coordination-decision-panel .coordination-detail-actions");
+    assert.ok(decisionActions);
+    assert.match(decisionActions.textContent ?? "", /送信/);
+    assert.match(decisionActions.textContent ?? "", /イベントを取り消す/);
+
+    currentDetail = {
+      ...currentDetail,
+      kind: "blocker",
+      summary: "実装方針の確認が必要です",
+      options: [],
+    };
+    await act(async () => {
+      coordinationChanged?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const openSessionAction = Array.from(
+      rootElement.querySelectorAll<HTMLButtonElement>(".coordination-detail-actions button"),
+    ).find((button) => button.textContent === "Sessionを開く");
+    assert.ok(openSessionAction);
+    await act(async () => {
+      openSessionAction.click();
+      await Promise.resolve();
+    });
+    assert.deepEqual(openedSessions, [SESSION.id, SESSION.id]);
+
+    const historyTab = Array.from(
+      rootElement.querySelectorAll<HTMLButtonElement>(".coordination-filter-tabs button"),
+    ).find((button) => button.textContent === "履歴");
+    assert.ok(historyTab);
+    await act(async () => {
+      historyTab.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    assert.equal(rootElement.querySelector(".coordination-empty"), null);
+    assert.doesNotMatch(rootElement.textContent ?? "", /該当なし/);
   } finally {
     await act(async () => root?.unmount());
     Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
