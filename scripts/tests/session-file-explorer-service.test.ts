@@ -939,3 +939,259 @@ test("SessionFileExplorerService は inspection read 中の file 変更を descr
     await rm(basePath, { recursive: true, force: true });
   }
 });
+
+test("SessionFileExplorerService は全 root を本文を読まずに検索し、ranking と root 外 link の境界を守る", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-"));
+  const workspacePath = path.join(basePath, "workspace");
+  const additionalPath = path.join(basePath, "additional");
+  const outsidePath = path.join(basePath, "outside");
+  const sessionFolderPath = path.join(basePath, "user-data", "session-files", "session-1");
+  const linkedOutsidePath = path.join(workspacePath, "linked-outside");
+  let fileReads = 0;
+  try {
+    await mkdir(path.join(workspacePath, "docs", "readme-folder"), { recursive: true });
+    await mkdir(additionalPath, { recursive: true });
+    await mkdir(outsidePath, { recursive: true });
+    await writeFile(path.join(workspacePath, "readme"), "exact");
+    await writeFile(path.join(workspacePath, "README.md"), "prefix");
+    await writeFile(path.join(workspacePath, "note-readme.txt"), "substring");
+    await writeFile(path.join(workspacePath, "docs", "readme-reference.txt"), "prefix path");
+    await writeFile(path.join(workspacePath, "docs", "readme-folder", "notes.txt"), "relative path");
+    await writeFile(path.join(additionalPath, "readme"), "additional exact");
+    await writeFile(path.join(outsidePath, "secret.txt"), "outside");
+    await symlink(outsidePath, linkedOutsidePath, process.platform === "win32" ? "junction" : "dir");
+
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(basePath, "user-data"),
+      async getSessionContext() {
+        return {
+          workspacePath,
+          parentSessionId: "session-1",
+          allowedAdditionalDirectories: [additionalPath],
+        };
+      },
+      async openFile(filePath, flags) {
+        const handle = await open(filePath, flags);
+        return {
+          stat: () => handle.stat(),
+          async read(buffer, offset, length, position) {
+            fileReads += 1;
+            return handle.read(buffer, offset, length, position);
+          },
+          close: () => handle.close(),
+        };
+      },
+    });
+
+    const roots = await service.listRoots("session-1");
+    const additionalRoot = roots.find((root) => root.kind === "additional");
+    assert.ok(additionalRoot);
+    const result = await service.searchFiles({ sessionId: "session-1", query: "  READme " });
+    assert.equal(result.status, "ok");
+    assert.deepEqual(result.groups.map((group) => group.root.id), ["workspace", additionalRoot.id]);
+    assert.deepEqual(result.groups[0]?.entries.map((entry) => entry.relativePath), [
+      "readme",
+      "docs/readme-reference.txt",
+      "README.md",
+      "note-readme.txt",
+      "docs/readme-folder/notes.txt",
+    ]);
+    assert.deepEqual(result.groups[1]?.entries.map((entry) => entry.relativePath), ["readme"]);
+    assert.equal(result.exploredEntryCount > 0, true);
+    assert.equal(fileReads, 0);
+    assert.deepEqual(await service.searchFiles({ sessionId: "session-1", query: "secret" }), {
+      status: "ok",
+      groups: [],
+      exploredEntryCount: result.exploredEntryCount,
+      matchedFileCount: 0,
+      returnedFileCount: 0,
+    });
+    await assert.rejects(() => stat(sessionFolderPath), { code: "ENOENT" });
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+test("SessionFileExplorerService は探索中の identity mismatch で部分結果を返さない", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-identity-"));
+  const workspacePath = path.join(basePath, "workspace");
+  const additionalPath = path.join(basePath, "additional");
+  const outsidePath = path.join(basePath, "outside");
+  try {
+    await mkdir(workspacePath, { recursive: true });
+    await mkdir(additionalPath, { recursive: true });
+    await mkdir(outsidePath, { recursive: true });
+    const outsideStats = await stat(outsidePath);
+    const service = new SessionFileExplorerService({
+      userDataPath: path.join(basePath, "user-data"),
+      async getSessionContext() {
+        return {
+          workspacePath,
+          parentSessionId: "session-1",
+          allowedAdditionalDirectories: [additionalPath],
+        };
+      },
+      async listDirectory(targetPath) {
+        const targetStats = await stat(targetPath);
+        if (path.resolve(targetPath) === path.resolve(additionalPath)) {
+          return {
+            device: outsideStats.dev,
+            inode: outsideStats.ino,
+            entries: [],
+            maxConcurrentStats: 0,
+          };
+        }
+        return {
+          device: targetStats.dev,
+          inode: targetStats.ino,
+          entries: [{ name: "partial.txt", kind: "file", byteLength: 1, modifiedAt: null }],
+          maxConcurrentStats: 0,
+        };
+      },
+    });
+
+    await assert.rejects(
+      () => service.searchFiles({ sessionId: "session-1", query: "partial" }),
+      /directory path が認可後に変更された/,
+    );
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+function syntheticSearchFile(name: string) {
+  return { name, kind: "file" as const, byteLength: 1, modifiedAt: null };
+}
+
+test("SessionFileExplorerService は調査件数上限と返却件数上限を typed result で返す", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-limit-"));
+  const workspacePath = path.join(basePath, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  const entries = Array.from({ length: 4_001 }, (_, index) => (
+    syntheticSearchFile(`target-${String(index).padStart(4, "0")}.txt`)
+  ));
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+    async listDirectory(targetPath) {
+      const targetStats = await stat(targetPath);
+      return {
+        device: targetStats.dev,
+        inode: targetStats.ino,
+        entries,
+        maxConcurrentStats: 0,
+      };
+    },
+  });
+  try {
+    const result = await service.searchFiles({ sessionId: "session-1", query: "target" });
+    assert.equal(result.status, "limit-reached");
+    assert.equal(result.limit, "exploration-and-results");
+    assert.equal(result.exploredEntryCount, 4_000);
+    assert.equal(result.matchedFileCount, 4_000);
+    assert.equal(result.returnedFileCount, 50);
+    assert.equal(result.groups[0]?.entries.length, 50);
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+test("SessionFileExplorerService は返却上限まで遍歴した候補を ranking して返す", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-result-limit-"));
+  const workspacePath = path.join(basePath, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  const entries = [
+    ...Array.from({ length: 60 }, (_, index) => syntheticSearchFile(`a-z-${String(index).padStart(2, "0")}.txt`)),
+    syntheticSearchFile("z"),
+  ];
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+    async listDirectory(targetPath) {
+      const targetStats = await stat(targetPath);
+      return {
+        device: targetStats.dev,
+        inode: targetStats.ino,
+        entries,
+        maxConcurrentStats: 0,
+      };
+    },
+  });
+  try {
+    const result = await service.searchFiles({ sessionId: "session-1", query: "z" });
+    assert.equal(result.status, "limit-reached");
+    assert.equal(result.limit, "results");
+    assert.equal(result.exploredEntryCount, 61);
+    assert.equal(result.matchedFileCount, 61);
+    assert.equal(result.returnedFileCount, 50);
+    assert.equal(result.groups[0]?.entries[0]?.name, "z");
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+test("SessionFileExplorerService は search admission の active 2 / pending 16 と Session 単位 supersede を守る", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-admission-"));
+  const workspacePath = path.join(basePath, "workspace");
+  await mkdir(workspacePath, { recursive: true });
+  let activeListings = 0;
+  let maxActiveListings = 0;
+  let releaseListings!: () => void;
+  let listingsReleased!: Promise<void>;
+  const resetListingGate = () => {
+    listingsReleased = new Promise<void>((resolve) => {
+      releaseListings = resolve;
+    });
+  };
+  resetListingGate();
+  const createService = (sessionId: string) => new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: sessionId, allowedAdditionalDirectories: [] }),
+    async listDirectory(targetPath) {
+      const targetStats = await stat(targetPath);
+      activeListings += 1;
+      maxActiveListings = Math.max(maxActiveListings, activeListings);
+      try {
+        await listingsReleased;
+        return {
+          device: targetStats.dev,
+          inode: targetStats.ino,
+          entries: [],
+          maxConcurrentStats: 0,
+        };
+      } finally {
+        activeListings -= 1;
+      }
+    },
+  });
+  try {
+    const requests = Array.from({ length: 19 }, (_, index) => {
+      const sessionId = `search-${index}`;
+      return createService(sessionId).searchFiles({ sessionId, query: "file" });
+    });
+    const settledRequests = Promise.allSettled(requests);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(activeListings, 2);
+    assert.ok(maxActiveListings <= 2);
+    releaseListings();
+    const results = await settledRequests;
+    assert.equal(results.filter((result) => result.status === "rejected").length, 1);
+
+    resetListingGate();
+    activeListings = 0;
+    maxActiveListings = 0;
+    const activeA = createService("active-a").searchFiles({ sessionId: "active-a", query: "file" });
+    const activeB = createService("active-b").searchFiles({ sessionId: "active-b", query: "file" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(activeListings, 2);
+    const supersededService = createService("superseded");
+    const oldRequest = supersededService.searchFiles({ sessionId: "superseded", query: "old" });
+    const newRequest = supersededService.searchFiles({ sessionId: "superseded", query: "new" });
+    await assert.rejects(oldRequest, /superseded/);
+    releaseListings();
+    await Promise.all([activeA, activeB, newRequest]);
+  } finally {
+    releaseListings?.();
+    await rm(basePath, { recursive: true, force: true });
+  }
+});

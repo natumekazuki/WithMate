@@ -17,10 +17,17 @@ import type {
   SessionFilePreviewTargetResolution,
   SessionFileRoot,
   SessionFileRootKind,
+  SessionFileSearchGroup,
+  SessionFileSearchLimit,
+  SessionFileSearchRequest,
+  SessionFileSearchResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
   isSessionFileRootResource,
+  normalizeSessionFileSearchQuery,
+  SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES,
+  SESSION_FILE_SEARCH_MAX_RESULTS,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   detectSessionFileEncoding,
@@ -39,6 +46,8 @@ const MAX_CHUNK_BYTES = 1024 * 1024;
 const INSPECTION_BYTES = 8192;
 const MAX_CONCURRENT_DIRECTORY_LISTINGS = 4;
 const MAX_PENDING_DIRECTORY_LISTINGS = 32;
+const MAX_CONCURRENT_SESSION_FILE_SEARCHES = 2;
+const MAX_PENDING_SESSION_FILE_SEARCHES = 16;
 
 type DirectoryListingJob = {
   supersessionKey: string;
@@ -95,6 +104,55 @@ function listDirectoryWithAdmission(
   });
 }
 
+type SessionFileSearchJob = {
+  supersessionKey: string;
+  execute(): Promise<SessionFileSearchResult>;
+  resolve(result: SessionFileSearchResult): void;
+  reject(error: unknown): void;
+};
+
+const pendingSessionFileSearches: SessionFileSearchJob[] = [];
+let activeSessionFileSearches = 0;
+
+function drainSessionFileSearchQueue(): void {
+  while (
+    activeSessionFileSearches < MAX_CONCURRENT_SESSION_FILE_SEARCHES &&
+    pendingSessionFileSearches.length > 0
+  ) {
+    const job = pendingSessionFileSearches.shift()!;
+    activeSessionFileSearches += 1;
+    Promise.resolve()
+      .then(() => job.execute())
+      .then(job.resolve, job.reject)
+      .finally(() => {
+        activeSessionFileSearches -= 1;
+        drainSessionFileSearchQueue();
+      });
+  }
+}
+
+function searchSessionFilesWithAdmission(
+  supersessionKey: string,
+  execute: () => Promise<SessionFileSearchResult>,
+): Promise<SessionFileSearchResult> {
+  return new Promise((resolve, reject) => {
+    const supersededIndex = pendingSessionFileSearches.findIndex(
+      (job) => job.supersessionKey === supersessionKey,
+    );
+    if (supersededIndex >= 0) {
+      pendingSessionFileSearches.splice(supersededIndex, 1)[0]?.reject(
+        new Error("File search was superseded by a newer request for the same Session."),
+      );
+    }
+    if (pendingSessionFileSearches.length >= MAX_PENDING_SESSION_FILE_SEARCHES) {
+      reject(new Error("Too many file searches are already waiting."));
+      return;
+    }
+    pendingSessionFileSearches.push({ supersessionKey, execute, resolve, reject });
+    drainSessionFileSearchQueue();
+  });
+}
+
 export type SessionFileExplorerContext = {
   workspacePath: string;
   parentSessionId: string;
@@ -133,6 +191,44 @@ type AuthorizedOpenedFile = {
 };
 
 type AuthorizedResourceKind = "file" | "directory";
+
+type SearchCandidate = {
+  rootIndex: number;
+  root: SessionFileRoot;
+  name: string;
+  relativePath: string;
+  matchRank: number;
+};
+
+function toPublicRoot(root: ResolvedSessionFileRoot): SessionFileRoot {
+  const { absolutePath: _absolutePath, ...publicRoot } = root;
+  return publicRoot;
+}
+
+function compareStablePath(left: string, right: string): number {
+  return left.localeCompare(right, undefined, { sensitivity: "base" })
+    || (left < right ? -1 : left > right ? 1 : 0);
+}
+
+function resolveSearchMatchRank(entry: SessionDirectoryEntry, query: string): number | null {
+  const normalizedName = entry.name.toLocaleLowerCase();
+  if (normalizedName === query) {
+    return 0;
+  }
+  if (normalizedName.startsWith(query)) {
+    return 1;
+  }
+  if (normalizedName.includes(query)) {
+    return 2;
+  }
+  return entry.relativePath.toLocaleLowerCase().includes(query) ? 3 : null;
+}
+
+function compareSearchCandidates(left: SearchCandidate, right: SearchCandidate): number {
+  return left.matchRank - right.matchRank
+    || left.rootIndex - right.rootIndex
+    || compareStablePath(left.relativePath, right.relativePath);
+}
 
 function validateAbsoluteFileResource(
   request: SessionFileAbsoluteResourceRequest,
@@ -455,6 +551,7 @@ export class SessionFileExplorerService {
   private async resolveTargetCandidate(
     request: SessionFileRootResourceRequest,
     allowRoot: boolean,
+    createMissingSessionFolder = allowRoot,
   ): Promise<ResolvedTargetCandidate> {
     validateRootFileResource(request);
     const root = await this.resolveRoot(request.sessionId, request.rootId);
@@ -462,7 +559,7 @@ export class SessionFileExplorerService {
       throw new Error("指定された file root は現在の Session で利用できないよ。");
     }
     const relativePath = normalizeRelativePath(request.relativePath, allowRoot);
-    if (allowRoot && !relativePath && root.kind === "session-folder") {
+    if (createMissingSessionFolder && allowRoot && !relativePath && root.kind === "session-folder") {
       await mkdir(root.absolutePath, { recursive: true });
     }
     const rootRealPath = await realpath(root.absolutePath);
@@ -480,8 +577,9 @@ export class SessionFileExplorerService {
     request: SessionFileRootResourceRequest,
     allowRoot: boolean,
     expectedKind: AuthorizedResourceKind,
+    createMissingSessionFolder = allowRoot,
   ): Promise<AuthorizedOpenedFile> {
-    const candidate = await this.resolveTargetCandidate(request, allowRoot);
+    const candidate = await this.resolveTargetCandidate(request, allowRoot, createMissingSessionFolder);
     return this.openAuthorizedCandidate(candidate, expectedKind);
   }
 
@@ -577,10 +675,18 @@ export class SessionFileExplorerService {
     return targetRealPath;
   }
 
-  async listDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]> {
+  private async listDirectoryEntries(
+    request: SessionDirectoryRequest,
+    createMissingSessionFolder: boolean,
+  ): Promise<SessionDirectoryEntry[]> {
     const supersessionKey = JSON.stringify([request.sessionId, request.rootId, request.relativePath]);
     const snapshot = await listDirectoryWithAdmission(supersessionKey, async () => {
-      const opened = await this.openAuthorizedTarget(request, true, "directory");
+      const opened = await this.openAuthorizedTarget(
+        request,
+        true,
+        "directory",
+        createMissingSessionFolder,
+      );
       try {
         const result = await (this.deps.listDirectory ?? listIdentityBoundDirectory)(opened.targetRealPath);
         if (result.device !== opened.stats.dev || result.inode !== opened.stats.ino) {
@@ -600,6 +706,131 @@ export class SessionFileExplorerService {
       const rightDirectory = right.kind === "directory" ? 0 : 1;
       return leftDirectory - rightDirectory || left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
     });
+  }
+
+  async listDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]> {
+    return this.listDirectoryEntries(request, true);
+  }
+
+  private async searchFilesInternal(request: SessionFileSearchRequest): Promise<SessionFileSearchResult> {
+    const roots = await this.resolveRoots(request.sessionId);
+    const candidates: SearchCandidate[] = [];
+    let exploredEntryCount = 0;
+    let matchedFileCount = 0;
+    let explorationLimitReached = false;
+
+    for (let rootIndex = 0; rootIndex < roots.length && !explorationLimitReached; rootIndex += 1) {
+      const root = roots[rootIndex]!;
+      const directories = [""];
+      while (directories.length > 0) {
+        if (exploredEntryCount >= SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES) {
+          explorationLimitReached = true;
+          break;
+        }
+        directories.sort(compareStablePath);
+        const relativePath = directories.shift()!;
+        let entries: SessionDirectoryEntry[];
+        try {
+          entries = await this.listDirectoryEntries({
+            sessionId: request.sessionId,
+            rootId: root.id,
+            relativePath,
+          }, false);
+        } catch (error) {
+          if (root.kind === "session-folder" && relativePath === "" && isMissingPathError(error)) {
+            continue;
+          }
+          throw error;
+        }
+
+        const remainingEntryCount = SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount;
+        const entriesToInspect = entries.slice(0, remainingEntryCount);
+        exploredEntryCount += entriesToInspect.length;
+        if (entriesToInspect.length < entries.length) {
+          explorationLimitReached = true;
+        }
+
+        for (const entry of entriesToInspect) {
+          if (entry.kind === "directory") {
+            directories.push(entry.relativePath);
+            continue;
+          }
+          if (entry.kind !== "file") {
+            continue;
+          }
+          const matchRank = resolveSearchMatchRank(entry, request.query);
+          if (matchRank === null) {
+            continue;
+          }
+          matchedFileCount += 1;
+          candidates.push({
+            rootIndex,
+            root: toPublicRoot(root),
+            name: entry.name,
+            relativePath: entry.relativePath,
+            matchRank,
+          });
+        }
+        if (explorationLimitReached) {
+          break;
+        }
+      }
+      if (!explorationLimitReached && exploredEntryCount >= SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES) {
+        if (directories.length > 0 || rootIndex < roots.length - 1) {
+          explorationLimitReached = true;
+        }
+      }
+    }
+
+    candidates.sort(compareSearchCandidates);
+    const results = candidates.slice(0, SESSION_FILE_SEARCH_MAX_RESULTS);
+    const resultLimitReached = matchedFileCount > SESSION_FILE_SEARCH_MAX_RESULTS;
+    const limit: SessionFileSearchLimit | null = explorationLimitReached
+      ? resultLimitReached ? "exploration-and-results" : "exploration"
+      : resultLimitReached ? "results" : null;
+    const groups: SessionFileSearchGroup[] = [];
+    for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+      const entries = results
+        .filter((candidate) => candidate.rootIndex === rootIndex)
+        .map(({ name, relativePath }) => ({ name, relativePath }));
+      if (entries.length > 0) {
+        groups.push({ root: toPublicRoot(roots[rootIndex]!), entries });
+      }
+    }
+    if (limit) {
+      return {
+        status: "limit-reached",
+        limit,
+        groups,
+        exploredEntryCount,
+        matchedFileCount,
+        returnedFileCount: results.length,
+      };
+    }
+    return {
+      status: "ok",
+      groups,
+      exploredEntryCount,
+      matchedFileCount,
+      returnedFileCount: results.length,
+    };
+  }
+
+  async searchFiles(request: SessionFileSearchRequest): Promise<SessionFileSearchResult> {
+    const query = normalizeSessionFileSearchQuery(request.query);
+    if (!query) {
+      return {
+        status: "ok",
+        groups: [],
+        exploredEntryCount: 0,
+        matchedFileCount: 0,
+        returnedFileCount: 0,
+      };
+    }
+    return searchSessionFilesWithAdmission(
+      request.sessionId,
+      () => this.searchFilesInternal({ ...request, query }),
+    );
   }
 
   async openFile(request: SessionFileOpenRequest): Promise<OpenPathResult> {

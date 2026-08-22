@@ -1512,6 +1512,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
+                searchSessionFiles: (request) => createSessionFileExplorerService().searchFiles(request),
                 inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
                 readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),

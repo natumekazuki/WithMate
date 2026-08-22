@@ -78,6 +78,7 @@ import {
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
+  WITHMATE_SEARCH_SESSION_FILES_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
@@ -333,6 +334,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     listSessionDirectory(request) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL, request);
+    },
+    searchSessionFiles(request) {
+      return ipcRenderer.invoke(WITHMATE_SEARCH_SESSION_FILES_CHANNEL, request);
     },
     inspectSessionFile(request) {
       return ipcRenderer.invoke(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, request);

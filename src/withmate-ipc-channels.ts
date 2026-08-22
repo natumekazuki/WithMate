@@ -13,6 +13,7 @@ export const WITHMATE_GET_SESSION_CHANNEL = "withmate:get-session";
 export const WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL = "withmate:validate-session-workspace";
 export const WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL = "withmate:list-session-file-roots";
 export const WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL = "withmate:list-session-directory";
+export const WITHMATE_SEARCH_SESSION_FILES_CHANNEL = "withmate:search-session-files";
 export const WITHMATE_INSPECT_SESSION_FILE_CHANNEL = "withmate:inspect-session-file";
 export const WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL = "withmate:read-session-file-chunk";
 export const WITHMATE_OPEN_SESSION_FILE_CHANNEL = "withmate:open-session-file";

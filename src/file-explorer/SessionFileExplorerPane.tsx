@@ -5,10 +5,15 @@ import type {
   SessionDirectoryEntry,
   SessionFileRootResourceRequest,
   SessionFileRoot,
+  SessionFileSearchGroup,
+  SessionFileSearchResult,
 } from "./file-explorer-contract.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
-type FileExplorerApi = Pick<WithMateWindowApi, "listSessionFileRoots" | "listSessionDirectory">;
+type FileExplorerApi = Pick<
+  WithMateWindowApi,
+  "listSessionFileRoots" | "listSessionDirectory" | "searchSessionFiles"
+>;
 
 type SessionFileExplorerPaneProps = {
   api: FileExplorerApi | null;
@@ -30,6 +35,16 @@ type FileTreeRow =
   | { kind: "entry"; rootId: string; entry: SessionDirectoryEntry; depth: number }
   | { kind: "status"; id: string; label: string; depth: number };
 
+type SearchRow =
+  | { kind: "search-root"; group: SessionFileSearchGroup }
+  | {
+      kind: "search-entry";
+      rootId: string;
+      entry: SessionFileSearchGroup["entries"][number];
+    };
+
+type FileExplorerRow = FileTreeRow | SearchRow;
+
 type DirectoryLoadRequest = {
   revision: number;
   requestId: number;
@@ -50,6 +65,15 @@ function entryIcon(entry: SessionDirectoryEntry): string {
   return "·";
 }
 
+function searchLimitMessage(result: Extract<SessionFileSearchResult, { status: "limit-reached" }>): string {
+  const limitLabel = result.limit === "results"
+    ? "result count"
+    : result.limit === "exploration"
+      ? "search scope"
+      : "search scope and result count";
+  return `Search was limited by the ${limitLabel}; ${result.returnedFileCount.toLocaleString()} result(s) shown and more may be omitted.`;
+}
+
 export function SessionFileExplorerPane({
   api,
   sessionId,
@@ -66,6 +90,7 @@ export function SessionFileExplorerPane({
 }: SessionFileExplorerPaneProps) {
   const loadRevisionRef = useRef(0);
   const directoryRequestSequenceRef = useRef(0);
+  const searchRequestSequenceRef = useRef(0);
   const inFlightDirectoryLoadsRef = useRef(new Map<string, DirectoryLoadRequest>());
   const latestDirectoryRequestsRef = useRef(new Map<string, Pick<DirectoryLoadRequest, "revision" | "requestId">>());
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
@@ -75,7 +100,14 @@ export function SessionFileExplorerPane({
   const expandedDirectoriesRef = useRef(expandedDirectories);
   const [loadingDirectories, setLoadingDirectories] = useState<Record<string, boolean>>({});
   const [errorMessage, setErrorMessage] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResult, setSearchResult] = useState<SessionFileSearchResult | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [searchTriggerRevision, setSearchTriggerRevision] = useState(0);
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
+  const treeScrollSnapshotRef = useRef<number | null>(null);
+  const previousSessionIdRef = useRef(sessionId);
 
   const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<void> => {
     if (!api || !sessionId) {
@@ -128,6 +160,10 @@ export function SessionFileExplorerPane({
   const reloadRoots = useCallback(async () => {
     const revision = loadRevisionRef.current + 1;
     loadRevisionRef.current = revision;
+    searchRequestSequenceRef.current += 1;
+    setSearchLoading(false);
+    setSearchError("");
+    setSearchTriggerRevision((current) => current + 1);
     inFlightDirectoryLoadsRef.current.clear();
     latestDirectoryRequestsRef.current.clear();
     setRoots([]);
@@ -157,8 +193,85 @@ export function SessionFileExplorerPane({
     void reloadRoots();
     return () => {
       loadRevisionRef.current += 1;
+      searchRequestSequenceRef.current += 1;
     };
   }, [reloadRoots, rootsRevision]);
+
+  const normalizedSearchQuery = searchQuery.trim();
+  const isSearchActive = activeTab === "files" && normalizedSearchQuery.length > 0;
+
+  useEffect(() => {
+    const snapshot = treeScrollSnapshotRef.current;
+    if (normalizedSearchQuery) {
+      if (snapshot === null) {
+        treeScrollSnapshotRef.current = treeScrollRef.current?.scrollTop ?? 0;
+      }
+      return;
+    }
+    if (snapshot !== null && treeScrollRef.current) {
+      treeScrollRef.current.scrollTop = snapshot;
+      treeScrollSnapshotRef.current = null;
+    }
+  }, [normalizedSearchQuery]);
+
+  const sessionChanged = previousSessionIdRef.current !== sessionId;
+
+  useEffect(() => {
+    if (previousSessionIdRef.current === sessionId) {
+      return;
+    }
+    previousSessionIdRef.current = sessionId;
+    searchRequestSequenceRef.current += 1;
+    setSearchQuery("");
+    setSearchResult(null);
+    setSearchLoading(false);
+    setSearchError("");
+    treeScrollSnapshotRef.current = null;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (sessionChanged) {
+      return;
+    }
+    const query = searchQuery.trim();
+    if (!query) {
+      searchRequestSequenceRef.current += 1;
+      setSearchResult(null);
+      setSearchLoading(false);
+      setSearchError("");
+      return;
+    }
+    if (activeTab !== "files" || !api || !sessionId || !enabled) {
+      searchRequestSequenceRef.current += 1;
+      setSearchLoading(false);
+      return;
+    }
+
+    const requestId = searchRequestSequenceRef.current + 1;
+    searchRequestSequenceRef.current = requestId;
+    setSearchLoading(true);
+    setSearchError("");
+    const isCurrentRequest = () => searchRequestSequenceRef.current === requestId;
+    const promise = Promise.resolve().then(() => api.searchSessionFiles({ sessionId, query: searchQuery }));
+    promise.then((result) => {
+      if (!isCurrentRequest()) {
+        return;
+      }
+      setSearchResult(result);
+      setSearchLoading(false);
+    }).catch((error: unknown) => {
+      if (!isCurrentRequest()) {
+        return;
+      }
+      setSearchLoading(false);
+      setSearchError(error instanceof Error ? error.message : "File search failed.");
+    });
+    return () => {
+      if (isCurrentRequest()) {
+        searchRequestSequenceRef.current += 1;
+      }
+    };
+  }, [activeTab, api, enabled, searchQuery, searchTriggerRevision, sessionChanged, sessionId]);
 
   const toggleDirectory = (rootId: string, relativePath: string) => {
     const key = directoryKey(rootId, relativePath);
@@ -198,8 +311,22 @@ export function SessionFileExplorerPane({
     }
     return rows;
   }, [entriesByDirectory, expandedDirectories, loadingDirectories, roots]);
-  const treeVirtualizer = useVirtualizer({
-    count: treeRows.length,
+  const searchRows = useMemo((): SearchRow[] => {
+    if (!searchResult) {
+      return [];
+    }
+    const rows: SearchRow[] = [];
+    for (const group of searchResult.groups) {
+      rows.push({ kind: "search-root", group });
+      for (const entry of group.entries) {
+        rows.push({ kind: "search-entry", rootId: group.root.id, entry });
+      }
+    }
+    return rows;
+  }, [searchResult]);
+  const visibleRows: FileExplorerRow[] = isSearchActive ? searchRows : treeRows;
+  const fileVirtualizer = useVirtualizer({
+    count: visibleRows.length,
     getScrollElement: () => treeScrollRef.current,
     estimateSize: () => 31,
     overscan: 18,
@@ -209,34 +336,65 @@ export function SessionFileExplorerPane({
   return (
     <aside className="session-file-explorer" aria-label="File Explorer">
       <div className="session-file-explorer-header">
-        <div className="session-file-explorer-tabs" role="tablist" aria-label="File Explorer view">
-          <button
-            className={activeTab === "files" ? "is-active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "files"}
-            onClick={() => onActiveTabChange("files")}
-          >
-            Files
-          </button>
-          <button
-            className={activeTab === "changes" ? "is-active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "changes"}
-            onClick={() => onActiveTabChange("changes")}
-          >
-            Changes
-          </button>
-          <button
-            className={activeTab === "history" ? "is-active" : ""}
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "history"}
-            onClick={() => onActiveTabChange("history")}
-          >
-            History
-          </button>
+        <div className="session-file-explorer-header-main">
+          <div className="session-file-explorer-tabs" role="tablist" aria-label="File Explorer view">
+            <button
+              className={activeTab === "files" ? "is-active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "files"}
+              onClick={() => onActiveTabChange("files")}
+            >
+              Files
+            </button>
+            <button
+              className={activeTab === "changes" ? "is-active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "changes"}
+              onClick={() => onActiveTabChange("changes")}
+            >
+              Changes
+            </button>
+            <button
+              className={activeTab === "history" ? "is-active" : ""}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "history"}
+              onClick={() => onActiveTabChange("history")}
+            >
+              History
+            </button>
+          </div>
+          {activeTab === "files" ? (
+            <div className="session-file-search-control">
+              <div className="session-file-search-input-row" aria-busy={searchLoading || undefined}>
+                <input
+                  className="session-file-search-input"
+                  type="search"
+                  aria-label="Search files"
+                  placeholder="Search files by name or path"
+                  autoComplete="off"
+                  value={searchQuery}
+                  onInput={(event) => setSearchQuery(event.currentTarget.value)}
+                />
+                {searchLoading ? (
+                  <span className="session-file-search-loading" role="status" aria-live="polite">
+                    <span className="session-file-search-spinner" aria-hidden="true" />
+                    <span className="visually-hidden">Searching files…</span>
+                  </span>
+                ) : null}
+              </div>
+              {searchError ? (
+                <div className="session-file-search-error" role="alert">
+                  <span>{searchError}</span>
+                  <button type="button" onClick={() => setSearchTriggerRevision((current) => current + 1)}>
+                    Retry
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <button
           className="session-file-explorer-refresh"
@@ -269,69 +427,135 @@ export function SessionFileExplorerPane({
           historyContent ?? <p className="session-file-tree-empty">No history.</p>
         ) : (
           <>
-            {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
-            {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
-            <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
-              {treeVirtualizer.getVirtualItems().map((virtualRow) => {
-                const row = treeRows[virtualRow.index];
-                if (!row) {
-                  return null;
-                }
-                const rowKey = row.kind === "root"
-                  ? `root:${row.root.id}`
-                  : row.kind === "entry"
-                    ? `entry:${directoryKey(row.rootId, row.entry.relativePath)}`
-                    : row.id;
-                return (
-                  <div
-                    className="session-file-tree-virtual-row"
-                    key={rowKey}
-                    style={{ height: virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
-                  >
-                    {row.kind === "status" ? (
-                      <div className="session-file-tree-status" style={{ paddingLeft: `${10 + row.depth * 14}px` }}>{row.label}</div>
-                    ) : row.kind === "root" ? (
-                      <button
-                        className="session-file-root-row"
-                        type="button"
-                        onClick={() => toggleDirectory(row.root.id, "")}
-                        title={row.root.displayPath}
-                      >
-                        <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`}>▸</span>
-                        <span className="session-file-tree-name">{row.root.label}</span>
-                      </button>
-                    ) : (() => {
-                      const entryKey = directoryKey(row.rootId, row.entry.relativePath);
-                      const isDirectory = row.entry.kind === "directory";
-                      const isSelected = selectedFile?.rootId === row.rootId && selectedFile.relativePath === row.entry.relativePath;
+            {isSearchActive ? (
+              <>
+                {searchLoading && !searchResult ? <p className="session-file-tree-status" role="status">Searching files…</p> : null}
+                {!searchLoading && searchResult?.groups.length === 0 ? (
+                  <p className="session-file-tree-empty">No matching files.</p>
+                ) : null}
+                {searchResult?.groups.length ? (
+                  <div className="session-file-tree-virtual" style={{ height: fileVirtualizer.getTotalSize() }}>
+                    {fileVirtualizer.getVirtualItems().map((virtualRow) => {
+                      const row = searchRows[virtualRow.index];
+                      if (!row) {
+                        return null;
+                      }
+                      const rowKey = row.kind === "search-root"
+                        ? `search-root:${row.group.root.id}`
+                        : `search-entry:${directoryKey(row.rootId, row.entry.relativePath)}`;
                       return (
-                        <button
-                          className={`session-file-tree-row${isSelected ? " is-selected" : ""}`}
-                          type="button"
-                          style={{ paddingLeft: `${10 + row.depth * 14}px` }}
-                          onClick={(event) => {
-                            if (isDirectory) {
-                              toggleDirectory(row.rootId, row.entry.relativePath);
-                            } else if (row.entry.kind === "file") {
-                              onOpenFile(
-                                { sessionId: sessionId!, rootId: row.rootId, relativePath: row.entry.relativePath },
-                                event.ctrlKey || event.metaKey,
-                              );
-                            }
-                          }}
-                          title={row.entry.relativePath}
+                        <div
+                          className="session-file-tree-virtual-row"
+                          key={rowKey}
+                          style={{ height: virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
                         >
-                          <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`}>
-                            {entryIcon(row.entry)}
-                          </span>
-                          <span className="session-file-tree-name">{row.entry.name}</span>
-                        </button>
+                          {row.kind === "search-root" ? (
+                            <div className="session-file-search-root-row" title={row.group.root.displayPath}>
+                              <span className="session-file-tree-icon">▾</span>
+                              <span className="session-file-tree-name">{row.group.root.label}</span>
+                            </div>
+                          ) : (() => {
+                            const isSelected = selectedFile?.rootId === row.rootId
+                              && selectedFile.relativePath === row.entry.relativePath;
+                            return (
+                              <button
+                                className={`session-file-search-row${isSelected ? " is-selected" : ""}`}
+                                type="button"
+                                onClick={(event) => {
+                                  if (!sessionId) {
+                                    return;
+                                  }
+                                  onOpenFile(
+                                    { sessionId, rootId: row.rootId, relativePath: row.entry.relativePath },
+                                    event.ctrlKey || event.metaKey,
+                                  );
+                                }}
+                                title={row.entry.relativePath}
+                              >
+                                <span className="session-file-tree-icon">·</span>
+                                <span className="session-file-search-name">{row.entry.name}</span>
+                                <span className="session-file-search-path">{row.entry.relativePath}</span>
+                              </button>
+                            );
+                          })()}
+                        </div>
                       );
-                    })()}
+                    })}
                   </div>
-                );
-              })}
-            </div>
+                ) : null}
+                {searchResult?.status === "limit-reached" ? (
+                  <p className="session-file-tree-status session-file-search-limit" role="status">
+                    {searchLimitMessage(searchResult)}
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <>
+                {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
+                {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
+                <div className="session-file-tree-virtual" style={{ height: fileVirtualizer.getTotalSize() }}>
+                  {fileVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const row = treeRows[virtualRow.index];
+                    if (!row) {
+                      return null;
+                    }
+                    const rowKey = row.kind === "root"
+                      ? `root:${row.root.id}`
+                      : row.kind === "entry"
+                        ? `entry:${directoryKey(row.rootId, row.entry.relativePath)}`
+                        : row.id;
+                    return (
+                      <div
+                        className="session-file-tree-virtual-row"
+                        key={rowKey}
+                        style={{ height: virtualRow.size, transform: `translateY(${virtualRow.start}px)` }}
+                      >
+                        {row.kind === "status" ? (
+                          <div className="session-file-tree-status" style={{ paddingLeft: `${10 + row.depth * 14}px` }}>{row.label}</div>
+                        ) : row.kind === "root" ? (
+                          <button
+                            className="session-file-root-row"
+                            type="button"
+                            onClick={() => toggleDirectory(row.root.id, "")}
+                            title={row.root.displayPath}
+                          >
+                            <span className={`session-file-tree-icon${expandedDirectories[directoryKey(row.root.id, "")] ? " is-expanded" : ""}`}>▸</span>
+                            <span className="session-file-tree-name">{row.root.label}</span>
+                          </button>
+                        ) : (() => {
+                          const entryKey = directoryKey(row.rootId, row.entry.relativePath);
+                          const isDirectory = row.entry.kind === "directory";
+                          const isSelected = selectedFile?.rootId === row.rootId && selectedFile.relativePath === row.entry.relativePath;
+                          return (
+                            <button
+                              className={`session-file-tree-row${isSelected ? " is-selected" : ""}`}
+                              type="button"
+                              style={{ paddingLeft: `${10 + row.depth * 14}px` }}
+                              onClick={(event) => {
+                                if (isDirectory) {
+                                  toggleDirectory(row.rootId, row.entry.relativePath);
+                                } else if (row.entry.kind === "file") {
+                                  onOpenFile(
+                                    { sessionId: sessionId!, rootId: row.rootId, relativePath: row.entry.relativePath },
+                                    event.ctrlKey || event.metaKey,
+                                  );
+                                }
+                              }}
+                              title={row.entry.relativePath}
+                            >
+                              <span className={`session-file-tree-icon${isDirectory && expandedDirectories[entryKey] ? " is-expanded" : ""}`}>
+                                {entryIcon(row.entry)}
+                              </span>
+                              <span className="session-file-tree-name">{row.entry.name}</span>
+                            </button>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

@@ -81,6 +81,8 @@ import type {
   SessionFilePreviewWindowPayload,
   SessionFileResourceRequest,
   SessionFileRoot,
+  SessionFileSearchRequest,
+  SessionFileSearchResult,
   FileRootChangesRequest,
   FileRootChangesResult,
   FileRootFileDiffRequest,
@@ -269,6 +271,7 @@ export type MainIpcSessionQueryDepsArgs = {
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
+  searchSessionFiles(request: SessionFileSearchRequest): Awaitable<SessionFileSearchResult>;
   inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
@@ -508,6 +511,7 @@ export function createMainIpcRegistrationDeps(
     getSessionFileExplorerOwnerSessionId: args.sessionQuery.getSessionFileExplorerOwnerSessionId,
     listSessionFileRoots: args.sessionQuery.listSessionFileRoots,
     listSessionDirectory: args.sessionQuery.listSessionDirectory,
+    searchSessionFiles: args.sessionQuery.searchSessionFiles,
     inspectSessionFile: args.sessionQuery.inspectSessionFile,
     readSessionFileChunk: args.sessionQuery.readSessionFileChunk,
     openSessionFile: args.sessionQuery.openSessionFile,

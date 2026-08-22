@@ -4,19 +4,25 @@ import { JSDOM } from "jsdom";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-import type { SessionDirectoryEntry } from "../../src/file-explorer/file-explorer-contract.js";
+import type {
+  SessionDirectoryEntry,
+  SessionFileSearchResult,
+} from "../../src/file-explorer/file-explorer-contract.js";
 
 type Deferred<T> = {
   promise: Promise<T>;
   resolve(value: T): void;
+  reject(reason?: unknown): void;
 };
 
 function deferred<T>(): Deferred<T> {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
     resolve = nextResolve;
+    reject = nextReject;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 async function waitFor(condition: () => boolean): Promise<void> {
@@ -42,6 +48,19 @@ function fileEntry(name: string): SessionDirectoryEntry {
   };
 }
 
+function searchResult(name: string, relativePath: string): SessionFileSearchResult {
+  return {
+    status: "ok",
+    groups: [{
+      root: { id: "workspace", kind: "workspace", label: "Workspace", displayPath: "C:\\workspace" },
+      entries: [{ name, relativePath }],
+    }],
+    exploredEntryCount: 1,
+    matchedFileCount: 1,
+    returnedFileCount: 1,
+  };
+}
+
 test("SessionFileExplorerPane は directory load を明示展開と現行 request identity に限定する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -50,6 +69,8 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
   const previousHTMLElement = globalThis.HTMLElement;
   const previousElement = globalThis.Element;
   const previousNode = globalThis.Node;
+  const previousEvent = globalThis.Event;
+  const previousInputEvent = globalThis.InputEvent;
   const previousNavigator = globalThis.navigator;
   const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
     pretendToBeVisual: true,
@@ -103,10 +124,13 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
   Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
   Object.defineProperty(globalThis, "Element", { configurable: true, value: dom.window.Element });
   Object.defineProperty(globalThis, "Node", { configurable: true, value: dom.window.Node });
+  Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
+  Object.defineProperty(globalThis, "InputEvent", { configurable: true, value: dom.window.InputEvent });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
   const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
 
   const directoryRequests: Array<Deferred<SessionDirectoryEntry[]>> = [];
+  const searchRequests: Array<{ query: string; deferred: Deferred<SessionFileSearchResult> }> = [];
   let directoryCalls = 0;
   const api = {
     async listSessionFileRoots() {
@@ -117,6 +141,11 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
       const request = deferred<SessionDirectoryEntry[]>();
       directoryRequests.push(request);
       return request.promise;
+    },
+    searchSessionFiles(request: { query: string }) {
+      const searchRequest = deferred<SessionFileSearchResult>();
+      searchRequests.push({ query: request.query, deferred: searchRequest });
+      return searchRequest.promise;
     },
   };
   let changesRefreshCalls = 0;
@@ -198,6 +227,84 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     assert.match(dom.window.document.body.textContent ?? "", /new\.txt/);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old\.txt/);
 
+    const explorerBody = dom.window.document.querySelector<HTMLElement>(".session-file-explorer-body");
+    assert.ok(explorerBody);
+    explorerBody.scrollTop = 73;
+    const searchInput = dom.window.document.querySelector<HTMLInputElement>(".session-file-search-input");
+    assert.ok(searchInput);
+    const setSearchInputValue = (input: HTMLInputElement, value: string) => {
+      const setter = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new dom.window.InputEvent("input", {
+        bubbles: true,
+        inputType: "insertText",
+        data: value,
+      }));
+    };
+    await act(async () => {
+      setSearchInputValue(searchInput, "new");
+      await Promise.resolve();
+    });
+    await waitFor(() => searchRequests.length === 1);
+    assert.equal(searchRequests[0]?.query, "new");
+    await act(async () => {
+      searchRequests[0]?.deferred.resolve(searchResult("search-result.ts", "src/search-result.ts"));
+      await searchRequests[0]?.deferred.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("search-result.ts") ?? false);
+    assert.match(dom.window.document.body.textContent ?? "", /src\/search-result\.ts/);
+    assert.equal(dom.window.document.querySelectorAll(".session-file-search-root-row").length, 1);
+    const searchRow = dom.window.document.querySelector<HTMLButtonElement>(".session-file-search-row");
+    assert.ok(searchRow);
+    await act(async () => {
+      searchRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
+      searchRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+    });
+
+    await act(async () => {
+      setSearchInputValue(searchInput, "old");
+      await Promise.resolve();
+    });
+    await waitFor(() => searchRequests.length === 2);
+    await act(async () => {
+      setSearchInputValue(searchInput, "newer");
+      await Promise.resolve();
+    });
+    await waitFor(() => searchRequests.length === 3);
+    await act(async () => {
+      searchRequests[2]?.deferred.resolve(searchResult("newer-result.ts", "src/newer-result.ts"));
+      await searchRequests[2]?.deferred.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("newer-result.ts") ?? false);
+    await act(async () => {
+      searchRequests[1]?.deferred.resolve(searchResult("old-result.ts", "src/old-result.ts"));
+      await searchRequests[1]?.deferred.promise;
+    });
+    assert.match(dom.window.document.body.textContent ?? "", /newer-result\.ts/);
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old-result\.ts/);
+
+    await act(async () => {
+      setSearchInputValue(searchInput, "broken");
+      await Promise.resolve();
+    });
+    await waitFor(() => searchRequests.length === 4);
+    await act(async () => {
+      searchRequests[3]?.deferred.reject(new Error("search failed"));
+      await assert.rejects(searchRequests[3]?.deferred.promise, /search failed/);
+    });
+    await waitFor(() => dom.window.document.querySelector(".session-file-search-error") !== null);
+    assert.match(dom.window.document.body.textContent ?? "", /newer-result\.ts/);
+    const retry = dom.window.document.querySelector<HTMLButtonElement>(".session-file-search-error button");
+    assert.ok(retry);
+    await act(async () => retry.click());
+    await waitFor(() => searchRequests.length === 5);
+    await act(async () => {
+      searchRequests[4]?.deferred.resolve(searchResult("recovered.ts", "src/recovered.ts"));
+      await searchRequests[4]?.deferred.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("recovered.ts") ?? false);
+    assert.equal(dom.window.document.querySelector(".session-file-search-error"), null);
+
     await act(async () => {
       root?.render(React.createElement(SessionFileExplorerPane, {
         api,
@@ -214,11 +321,72 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
         changesContent: React.createElement("div", null, "Changes content"),
       }));
     });
+    assert.equal(dom.window.document.querySelector(".session-file-search-input"), null);
     const changesRefresh = dom.window.document.querySelector<HTMLButtonElement>(".session-file-explorer-refresh");
     assert.ok(changesRefresh);
     assert.equal(changesRefresh.ariaLabel, "Refresh changes");
     await act(async () => changesRefresh.click());
     assert.equal(changesRefreshCalls, 1);
+
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-1",
+        enabled: true,
+        rootsRevision: "roots-1",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+      }));
+      await Promise.resolve();
+    });
+    await waitFor(() => searchRequests.length === 6);
+    assert.equal(dom.window.document.querySelector<HTMLInputElement>(".session-file-search-input")?.value, "broken");
+    await act(async () => {
+      searchRequests[5]?.deferred.resolve(searchResult("returned.ts", "src/returned.ts"));
+      await searchRequests[5]?.deferred.promise;
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("returned.ts") ?? false);
+    const restoredSearchInput = dom.window.document.querySelector<HTMLInputElement>(".session-file-search-input");
+    assert.ok(restoredSearchInput);
+    await act(async () => {
+      setSearchInputValue(restoredSearchInput, "");
+      await Promise.resolve();
+    });
+    await waitFor(() => dom.window.document.body.textContent?.includes("new.txt") ?? false);
+    assert.equal(explorerBody.scrollTop, 73);
+    assert.equal(searchRequests.length, 6);
+
+    const sessionSearchInput = dom.window.document.querySelector<HTMLInputElement>(".session-file-search-input");
+    assert.ok(sessionSearchInput);
+    await act(async () => {
+      setSearchInputValue(sessionSearchInput, "stale-session");
+      await Promise.resolve();
+    });
+    await waitFor(() => searchRequests.length === 7);
+    await act(async () => {
+      root?.render(React.createElement(SessionFileExplorerPane, {
+        api,
+        sessionId: "session-2",
+        enabled: true,
+        rootsRevision: "roots-2",
+        selectedFile: null,
+        activeTab: "files",
+        onActiveTabChange() {},
+        onRefreshChanges() {},
+        onOpenFile() {},
+      }));
+      await Promise.resolve();
+    });
+    await waitFor(() => dom.window.document.querySelector<HTMLInputElement>(".session-file-search-input")?.value === "");
+    assert.equal(searchRequests.length, 7);
+    await act(async () => {
+      searchRequests[6]?.deferred.resolve(searchResult("stale-session.ts", "stale-session.ts"));
+      await searchRequests[6]?.deferred.promise;
+    });
+    assert.doesNotMatch(dom.window.document.body.textContent ?? "", /stale-session\.ts/);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
@@ -229,6 +397,8 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: previousHTMLElement });
     Object.defineProperty(globalThis, "Element", { configurable: true, value: previousElement });
     Object.defineProperty(globalThis, "Node", { configurable: true, value: previousNode });
+    Object.defineProperty(globalThis, "Event", { configurable: true, value: previousEvent });
+    Object.defineProperty(globalThis, "InputEvent", { configurable: true, value: previousInputEvent });
     Object.defineProperty(globalThis, "navigator", { configurable: true, value: previousNavigator });
     dom.window.HTMLElement.prototype.getBoundingClientRect = previousGetBoundingClientRect;
     if (previousClientHeight) {

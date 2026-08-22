@@ -39,6 +39,7 @@ import {
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
+  WITHMATE_SEARCH_SESSION_FILES_CHANNEL,
   WITHMATE_INSPECT_SESSION_FILE_CHANNEL,
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
@@ -172,6 +173,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SEARCH_SESSION_FILES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
@@ -605,6 +607,7 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   };
   let currentWindow = ownerWindow;
   const directoryRequests: unknown[] = [];
+  const searchRequests: unknown[] = [];
   const inspectRequests: unknown[] = [];
   const readRequests: unknown[] = [];
   const openRequests: unknown[] = [];
@@ -642,6 +645,16 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     listSessionDirectory: async (request: unknown) => {
       directoryRequests.push(request);
       return [];
+    },
+    searchSessionFiles: async (request: unknown) => {
+      searchRequests.push(request);
+      return {
+        status: "ok",
+        groups: [],
+        exploredEntryCount: 0,
+        matchedFileCount: 0,
+        returnedFileCount: 0,
+      };
     },
     inspectSessionFile: async (request: unknown) => {
       inspectRequests.push(request);
@@ -689,6 +702,26 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const request = { sessionId: "aux-1", rootId: "workspace", relativePath: "src" };
   assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL)?.({}, request), []);
   assert.deepEqual(directoryRequests, [request]);
+  const searchRequest = { sessionId: "aux-1", query: " ReadMe " };
+  assert.deepEqual(await handlers.get(WITHMATE_SEARCH_SESSION_FILES_CHANNEL)?.({}, searchRequest), {
+    status: "ok",
+    groups: [],
+    exploredEntryCount: 0,
+    matchedFileCount: 0,
+    returnedFileCount: 0,
+  });
+  assert.deepEqual(searchRequests, [{ sessionId: "aux-1", query: "readme" }]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SEARCH_SESSION_FILES_CHANNEL)?.({}, { ...searchRequest, unknown: true }) as Promise<unknown>,
+    /未知の field/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SEARCH_SESSION_FILES_CHANNEL)?.({}, {
+      sessionId: "aux-1",
+      query: "x".repeat(513),
+    }) as Promise<unknown>,
+    /長すぎる/,
+  );
   const openRequest = { sessionId: "aux-1", rootId: "workspace", relativePath: "src/App.tsx" };
   assert.deepEqual(await handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, openRequest), {
     status: "opened",
@@ -820,6 +853,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   currentWindow = otherWindow;
   await assert.rejects(
     () => handlers.get(WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL)?.({}, "aux-1") as Promise<unknown>,
+    /owning Session window/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_SEARCH_SESSION_FILES_CHANNEL)?.({}, searchRequest) as Promise<unknown>,
     /owning Session window/,
   );
   await assert.rejects(

@@ -17,6 +17,80 @@ export type SessionDirectoryEntry = {
   modifiedAt: string | null;
 };
 
+export const SESSION_FILE_SEARCH_RAW_QUERY_MAX_LENGTH = 512;
+export const SESSION_FILE_SEARCH_QUERY_MAX_LENGTH = 120;
+export const SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES = 4_000;
+export const SESSION_FILE_SEARCH_MAX_RESULTS = 50;
+
+export type SessionFileSearchRequest = {
+  sessionId: string;
+  query: string;
+};
+
+export type SessionFileSearchEntry = {
+  name: string;
+  relativePath: string;
+};
+
+export type SessionFileSearchGroup = {
+  root: SessionFileRoot;
+  entries: SessionFileSearchEntry[];
+};
+
+export type SessionFileSearchLimit = "exploration" | "results" | "exploration-and-results";
+
+export type SessionFileSearchResult =
+  | {
+      status: "ok";
+      groups: SessionFileSearchGroup[];
+      exploredEntryCount: number;
+      matchedFileCount: number;
+      returnedFileCount: number;
+    }
+  | {
+      status: "limit-reached";
+      limit: SessionFileSearchLimit;
+      groups: SessionFileSearchGroup[];
+      exploredEntryCount: number;
+      matchedFileCount: number;
+      returnedFileCount: number;
+    };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function normalizeSessionFileSearchQuery(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new TypeError("File search query が不正だよ。");
+  }
+  if (value.length > SESSION_FILE_SEARCH_RAW_QUERY_MAX_LENGTH) {
+    throw new RangeError("File search query が長すぎるよ。");
+  }
+  const normalized = value.trim().toLocaleLowerCase();
+  if (normalized.length > SESSION_FILE_SEARCH_QUERY_MAX_LENGTH) {
+    throw new RangeError(`File search query は${SESSION_FILE_SEARCH_QUERY_MAX_LENGTH}文字以内で指定してね。`);
+  }
+  return normalized;
+}
+
+export function parseSessionFileSearchRequest(value: unknown): SessionFileSearchRequest {
+  if (!isRecord(value)) {
+    throw new TypeError("File search request が不正だよ。");
+  }
+  const keys = Object.keys(value).sort();
+  if (keys.length !== 2 || keys[0] !== "query" || keys[1] !== "sessionId") {
+    throw new TypeError("File search request に未知の field があるよ。");
+  }
+  if (typeof value.sessionId !== "string" || !value.sessionId) {
+    throw new TypeError("File search session ID が不正だよ。");
+  }
+  return {
+    sessionId: value.sessionId,
+    query: normalizeSessionFileSearchQuery(value.query),
+  };
+}
+
 export type SessionFileResourceKind = "text" | "markdown" | "image" | "svg" | "binary";
 export type SessionFileEncoding = "utf-8" | "shift_jis" | "utf-16le" | "utf-16be";
 
