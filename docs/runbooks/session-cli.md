@@ -146,10 +146,10 @@ MCP clientにはこのcommandをserver commandとして登録する。公開tool
 
 `user_decision_required`はCLI/MCP/HTTPからresolveできない。Coordination Windowのtrusted GUIでstable option IDを選択するか、自由回答を入力する。保存内容へsecret、raw log、stack trace、大きなdiff、provider response、chain-of-thought、個人環境path、binding参照を含めない。
 
-回答はEventを作成したSessionの通常Turnへ、Agentが反映済みとしてconsumeするまで繰り返し渡される。回答を実作業へ反映した後にだけ、次のようにconsumeする。
+回答はEventを作成したSessionの通常Turnへ、Agentが反映済みとしてconsumeするまで繰り返し渡される。回答を実作業へ反映した後にだけ、投影された`resolutionSequence`を`expectedResolutionSequence`へ指定してconsumeする。
 
 ```powershell
-withmate-session coordination event consume --json '{"eventId":"EVENT_ID","idempotencyKey":"consume-20260822-001"}'
+withmate-session coordination event consume --json '{"eventId":"EVENT_ID","expectedResolutionSequence":42,"idempotencyKey":"consume-20260822-001"}'
 ```
 
 回答を確認しただけの場合、Turnが失敗した場合、またはまだ作業へ反映していない場合はconsumeしない。同じconsumeのresponseを失った場合は、同一inputと同一keyを再送する。

@@ -180,10 +180,12 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 - 全SessionのCoordination Eventを一つの独立windowへ表示する
 - 初期状態はSession filterなし、event filterは「すべて」とする
-- 一覧は新しいeventから並べ、要対応を初期状態で先頭へ固定しない
-- すべて、要対応、回答済み、履歴は同じ一覧に対するfilterとして提供する
-  - 要対応は`open`、回答済みは`resolved`、履歴は`recorded`を対象にする
-  - `superseded`と`cancelled`は「すべて」で確認する
+- 一覧は新しいeventから並べ、要回答や未解決のeventを初期状態で先頭へ固定しない
+- すべて、要回答、未解決、回答済み、履歴は同じ一覧に対するfilterとして提供する
+  - 要回答は`open`の`user_decision_required`を対象にする
+  - 未解決は`open`の`blocker | escalation`を対象にする
+  - 回答済みは`resolved`の`user_decision_required`を対象にする
+  - 履歴は`recorded | cancelled | superseded`と、`resolved`の`blocker | escalation`を対象にする
 - Event rowはkind、state、summary、Session title、Character icon、時刻を表示する
   - Session titleはevent originを示す主情報とする
   - Character iconはユーザーがSessionを識別するための補助情報とし、Character nameは常設表示しない
@@ -199,12 +201,12 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - filter結果が空の場合は説明文や空状態surfaceを置かず、空の一覧として表示する
 - Event一覧とdetailはWindow内で独立してscrollでき、一覧のavatarと本文は重ならない固定gridで配置する
 - Event一覧の次pageも一覧末尾への接近時に自動で読み込み、追加読込buttonを置かない
-- `user_decision_required`は提示optionに加えて「別の回答」を選べる
+- `user_decision_required`は提示optionまたは自由回答で回答できる
   - 提示optionではstable option IDを送る
-  - 別の回答では空でない自由回答を送る
+  - 自由回答では空でない文字列を送る
   - option IDと自由回答を同時に送らない
   - 回答済みでもAgentが未使用なら現在の回答を選択状態で表示し、変更を許可する
-  - Agentが使用済みなら`使用済み`を表示し、回答操作を読み取り専用にする
+  - Agentがconsume済みなら`確定済み`を表示し、回答操作を読み取り専用にする
 - 自由回答の入力欄はvisible labelやplaceholderを置かず、accessible nameだけを維持する。送信とEvent取消は同じ操作列へ置く
 - blockerは作成したAgentが実作業で障害を解消した後にresolveする。Coordination Windowから状態だけをresolveせず、所有Sessionへの導線とEvent取消だけを提供する
 - storage invalidationやpagination後も選択中Eventを維持し、回答mutation中は操作をlockする
