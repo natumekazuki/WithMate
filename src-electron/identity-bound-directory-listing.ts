@@ -14,6 +14,11 @@ function toKind(entry) {
   return "other";
 }
 
+function compareStableName(left, right) {
+  return left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
+    || (left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+}
+
 (async () => {
   const directoryStats = await stat(".");
   process.stdout.write(JSON.stringify({
@@ -31,14 +36,22 @@ function toKind(entry) {
     });
   }
   const dirents = await readdir(".", { withFileTypes: true });
-  const entries = new Array(dirents.length);
+  const rawMaxEntries = process.env.WITHMATE_IDENTITY_DIRECTORY_MAX_ENTRIES || "";
+  const configuredMaxEntries = rawMaxEntries === "" ? null : Number(rawMaxEntries);
+  const hasMaxEntries = configuredMaxEntries !== null
+    && Number.isInteger(configuredMaxEntries)
+    && configuredMaxEntries >= 0;
+  const orderedDirents = hasMaxEntries ? dirents.slice().sort(compareStableName) : dirents;
+  const selectedDirents = hasMaxEntries ? orderedDirents.slice(0, configuredMaxEntries) : orderedDirents;
+  const truncated = selectedDirents.length < dirents.length;
+  const entries = new Array(selectedDirents.length);
   let nextIndex = 0;
   let activeStats = 0;
   let maxConcurrentStats = 0;
-  await Promise.all(Array.from({ length: Math.min(STAT_CONCURRENCY, dirents.length) }, async () => {
-    while (nextIndex < dirents.length) {
+  await Promise.all(Array.from({ length: Math.min(STAT_CONCURRENCY, selectedDirents.length) }, async () => {
+    while (nextIndex < selectedDirents.length) {
       const index = nextIndex++;
-      const entry = dirents[index];
+      const entry = selectedDirents[index];
       activeStats += 1;
       maxConcurrentStats = Math.max(maxConcurrentStats, activeStats);
       try {
@@ -68,7 +81,12 @@ function toKind(entry) {
       }
     }
   }));
-  process.stdout.write(JSON.stringify({ type: "result", entries, maxConcurrentStats }) + "\n");
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    entries,
+    maxConcurrentStats,
+    ...(hasMaxEntries ? { truncated } : {}),
+  }) + "\n");
 })().catch((error) => {
   process.stderr.write(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
@@ -80,12 +98,14 @@ export type IdentityBoundDirectorySnapshot = {
   inode: number;
   entries: Array<Pick<SessionDirectoryEntry, "name" | "kind" | "byteLength" | "modifiedAt">>;
   maxConcurrentStats: number;
+  truncated?: boolean;
 };
 
-type IdentityBoundDirectoryListingOptions = {
+export type IdentityBoundDirectoryListingOptions = {
   delayAfterReadyMs?: number;
   hangAfterReady?: boolean;
   timeoutMs?: number;
+  maxEntries?: number;
   onIdentityBound?: () => void;
   onWorkerStarted?: () => void;
   onWorkerSettled?: () => void;
@@ -99,6 +119,7 @@ type WorkerMessage =
       type: "result";
       entries: IdentityBoundDirectorySnapshot["entries"];
       maxConcurrentStats: number;
+      truncated?: boolean;
     };
 
 function parseWorkerMessage(line: string): WorkerMessage {
@@ -119,6 +140,10 @@ function parseWorkerMessage(line: string): WorkerMessage {
     "maxConcurrentStats" in value &&
     typeof value.maxConcurrentStats === "number"
   ) {
+    const truncated = "truncated" in value ? value.truncated : undefined;
+    if (truncated !== undefined && typeof truncated !== "boolean") {
+      throw new Error("directory worker の truncated flag が不正だよ。");
+    }
     const entries = value.entries.map((entry): IdentityBoundDirectorySnapshot["entries"][number] => {
       if (!entry || typeof entry !== "object" || !("name" in entry) || !("kind" in entry)) {
         throw new Error("directory worker の entry が不正だよ。");
@@ -140,7 +165,12 @@ function parseWorkerMessage(line: string): WorkerMessage {
         modifiedAt: entry.modifiedAt,
       };
     });
-    return { type: "result", entries, maxConcurrentStats: value.maxConcurrentStats };
+    return {
+      type: "result",
+      entries,
+      maxConcurrentStats: value.maxConcurrentStats,
+      ...(truncated === undefined ? {} : { truncated }),
+    };
   }
   throw new Error("directory worker の応答形式が不正だよ。");
 }
@@ -157,6 +187,7 @@ export function listIdentityBoundDirectory(
         ELECTRON_RUN_AS_NODE: "1",
         WITHMATE_IDENTITY_DIRECTORY_DELAY_MS: String(options.delayAfterReadyMs ?? 0),
         WITHMATE_IDENTITY_DIRECTORY_HANG_AFTER_READY: options.hangAfterReady ? "1" : "0",
+        WITHMATE_IDENTITY_DIRECTORY_MAX_ENTRIES: options.maxEntries === undefined ? "" : String(options.maxEntries),
       },
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
@@ -166,6 +197,7 @@ export function listIdentityBoundDirectory(
     let identity: Pick<IdentityBoundDirectorySnapshot, "device" | "inode"> | null = null;
     let entries: IdentityBoundDirectorySnapshot["entries"] | null = null;
     let maxConcurrentStats: number | null = null;
+    let truncated: boolean | undefined;
     let settled = false;
     let terminalError: Error | null = null;
     const timeoutMs = options.timeoutMs ?? DEFAULT_WORKER_TIMEOUT_MS;
@@ -217,6 +249,7 @@ export function listIdentityBoundDirectory(
         } else {
           entries = message.entries;
           maxConcurrentStats = message.maxConcurrentStats;
+          truncated = message.truncated;
         }
       }
     };
@@ -266,7 +299,7 @@ export function listIdentityBoundDirectory(
         settle(new Error("directory worker の応答が途中で終了したよ。"));
         return;
       }
-      settle(null, { ...identity, entries, maxConcurrentStats });
+      settle(null, { ...identity, entries, maxConcurrentStats, ...(truncated === undefined ? {} : { truncated }) });
     });
   });
 }

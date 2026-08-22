@@ -66,6 +66,26 @@ test("listIdentityBoundDirectory は entry metadata の並列取得数を制限�
   }
 });
 
+test("listIdentityBoundDirectory は bounded listing で選択した entry だけを調査する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-limit-"));
+  try {
+    await Promise.all(Array.from({ length: 8 }, (_, index) => (
+      writeFile(path.join(basePath, `entry-${index}.txt`), `${index}`)
+    )));
+    const snapshot = await listIdentityBoundDirectory(basePath, { maxEntries: 3 });
+    assert.equal(snapshot.entries.length, 3);
+    assert.equal(snapshot.truncated, true);
+    assert.ok(snapshot.maxConcurrentStats <= 3);
+    assert.deepEqual(snapshot.entries.map((entry) => entry.name), [
+      "entry-0.txt",
+      "entry-1.txt",
+      "entry-2.txt",
+    ]);
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
 test("listIdentityBoundDirectory は応答しない worker を deadline 後に終了して settle する", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-bound-directory-timeout-"));
   let started = 0;

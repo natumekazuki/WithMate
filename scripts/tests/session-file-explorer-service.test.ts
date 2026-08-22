@@ -1059,6 +1059,40 @@ test("SessionFileExplorerService は探索中の identity mismatch で部分結�
   }
 });
 
+test("SessionFileExplorerService は壊れた Session Folder の ENOTDIR を成功扱いで skip しない", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-session-folder-"));
+  const workspacePath = path.join(basePath, "workspace");
+  const userDataPath = path.join(basePath, "user-data");
+  const sessionFolderPath = path.join(userDataPath, "session-files", "session-1");
+  try {
+    await mkdir(workspacePath, { recursive: true });
+    await mkdir(sessionFolderPath, { recursive: true });
+    const service = new SessionFileExplorerService({
+      userDataPath,
+      getSessionContext: async () => ({
+        workspacePath,
+        parentSessionId: "session-1",
+        allowedAdditionalDirectories: [],
+      }),
+      async openFile(targetPath, flags) {
+        if (path.resolve(targetPath) === path.resolve(sessionFolderPath)) {
+          const error = new Error("session folder directory open failed") as NodeJS.ErrnoException;
+          error.code = "ENOTDIR";
+          throw error;
+        }
+        return open(targetPath, flags);
+      },
+    });
+
+    await assert.rejects(
+      () => service.searchFiles({ sessionId: "session-1", query: "file" }),
+      (error: unknown) => Boolean(error && typeof error === "object" && "code" in error && error.code === "ENOTDIR"),
+    );
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
 function syntheticSearchFile(name: string) {
   return { name, kind: "file" as const, byteLength: 1, modifiedAt: null };
 }
@@ -1070,10 +1104,12 @@ test("SessionFileExplorerService は調査件数上限と返却件数上限を t
   const entries = Array.from({ length: 4_001 }, (_, index) => (
     syntheticSearchFile(`target-${String(index).padStart(4, "0")}.txt`)
   ));
+  let requestedMaxEntries: number | undefined;
   const service = new SessionFileExplorerService({
     userDataPath: path.join(basePath, "user-data"),
     getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
-    async listDirectory(targetPath) {
+    async listDirectory(targetPath, options) {
+      requestedMaxEntries = options?.maxEntries;
       const targetStats = await stat(targetPath);
       return {
         device: targetStats.dev,
@@ -1091,6 +1127,7 @@ test("SessionFileExplorerService は調査件数上限と返却件数上限を t
     assert.equal(result.matchedFileCount, 4_000);
     assert.equal(result.returnedFileCount, 50);
     assert.equal(result.groups[0]?.entries.length, 50);
+    assert.equal(requestedMaxEntries, 4_000);
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }

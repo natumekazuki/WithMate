@@ -243,6 +243,7 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     };
     await act(async () => {
       setSearchInputValue(searchInput, "new");
+      explorerBody.scrollTop = 0;
       await Promise.resolve();
     });
     await waitFor(() => searchRequests.length === 1);

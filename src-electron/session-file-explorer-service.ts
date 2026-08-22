@@ -171,7 +171,7 @@ export type SessionFileExplorerServiceDeps = {
   statPath?(targetPath: string): Promise<Stats>;
   lstatPath?(targetPath: string): Promise<Stats>;
   openFile?(targetPath: string, flags: "r"): Promise<ReadableFileHandle>;
-  listDirectory?(targetPath: string): Promise<IdentityBoundDirectorySnapshot>;
+  listDirectory?(targetPath: string, options?: { maxEntries?: number }): Promise<IdentityBoundDirectorySnapshot>;
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
@@ -198,6 +198,11 @@ type SearchCandidate = {
   name: string;
   relativePath: string;
   matchRank: number;
+};
+
+type DirectoryEntriesResult = {
+  entries: SessionDirectoryEntry[];
+  truncated: boolean;
 };
 
 function toPublicRoot(root: ResolvedSessionFileRoot): SessionFileRoot {
@@ -316,6 +321,13 @@ function isMissingPathError(error: unknown): boolean {
     ? String(error.code)
     : "";
   return code === "ENOENT" || code === "ENOTDIR";
+}
+
+function isMissingSessionFolderRootError(error: unknown): boolean {
+  const code = typeof error === "object" && error !== null && "code" in error
+    ? String(error.code)
+    : "";
+  return code === "ENOENT";
 }
 
 function makeFileRevision(stats: Stats): string {
@@ -678,7 +690,8 @@ export class SessionFileExplorerService {
   private async listDirectoryEntries(
     request: SessionDirectoryRequest,
     createMissingSessionFolder: boolean,
-  ): Promise<SessionDirectoryEntry[]> {
+    maxEntries?: number,
+  ): Promise<DirectoryEntriesResult> {
     const supersessionKey = JSON.stringify([request.sessionId, request.rootId, request.relativePath]);
     const snapshot = await listDirectoryWithAdmission(supersessionKey, async () => {
       const opened = await this.openAuthorizedTarget(
@@ -688,7 +701,15 @@ export class SessionFileExplorerService {
         createMissingSessionFolder,
       );
       try {
-        const result = await (this.deps.listDirectory ?? listIdentityBoundDirectory)(opened.targetRealPath);
+        const result = this.deps.listDirectory
+          ? await this.deps.listDirectory(
+            opened.targetRealPath,
+            maxEntries === undefined ? undefined : { maxEntries },
+          )
+          : await listIdentityBoundDirectory(
+            opened.targetRealPath,
+            maxEntries === undefined ? undefined : { maxEntries },
+          );
         if (result.device !== opened.stats.dev || result.inode !== opened.stats.ino) {
           throw new Error("directory path が認可後に変更されたよ。再実行してね。");
         }
@@ -701,15 +722,18 @@ export class SessionFileExplorerService {
       const relativePath = request.relativePath ? `${request.relativePath}/${entry.name}` : entry.name;
       return { ...entry, relativePath };
     });
-    return results.sort((left, right) => {
-      const leftDirectory = left.kind === "directory" ? 0 : 1;
-      const rightDirectory = right.kind === "directory" ? 0 : 1;
-      return leftDirectory - rightDirectory || left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
-    });
+    return {
+      entries: results.sort((left, right) => {
+        const leftDirectory = left.kind === "directory" ? 0 : 1;
+        const rightDirectory = right.kind === "directory" ? 0 : 1;
+        return leftDirectory - rightDirectory || left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+      }),
+      truncated: snapshot.truncated === true,
+    };
   }
 
   async listDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]> {
-    return this.listDirectoryEntries(request, true);
+    return (await this.listDirectoryEntries(request, true)).entries;
   }
 
   private async searchFilesInternal(request: SessionFileSearchRequest): Promise<SessionFileSearchResult> {
@@ -729,24 +753,24 @@ export class SessionFileExplorerService {
         }
         directories.sort(compareStablePath);
         const relativePath = directories.shift()!;
-        let entries: SessionDirectoryEntry[];
+        let listing: DirectoryEntriesResult;
         try {
-          entries = await this.listDirectoryEntries({
+          listing = await this.listDirectoryEntries({
             sessionId: request.sessionId,
             rootId: root.id,
             relativePath,
-          }, false);
+          }, false, SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount);
         } catch (error) {
-          if (root.kind === "session-folder" && relativePath === "" && isMissingPathError(error)) {
+          if (root.kind === "session-folder" && relativePath === "" && isMissingSessionFolderRootError(error)) {
             continue;
           }
           throw error;
         }
 
         const remainingEntryCount = SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount;
-        const entriesToInspect = entries.slice(0, remainingEntryCount);
+        const entriesToInspect = listing.entries.slice(0, remainingEntryCount);
         exploredEntryCount += entriesToInspect.length;
-        if (entriesToInspect.length < entries.length) {
+        if (listing.truncated || entriesToInspect.length < listing.entries.length) {
           explorationLimitReached = true;
         }
 

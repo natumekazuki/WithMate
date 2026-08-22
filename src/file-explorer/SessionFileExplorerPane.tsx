@@ -203,9 +203,6 @@ export function SessionFileExplorerPane({
   useEffect(() => {
     const snapshot = treeScrollSnapshotRef.current;
     if (normalizedSearchQuery) {
-      if (snapshot === null) {
-        treeScrollSnapshotRef.current = treeScrollRef.current?.scrollTop ?? 0;
-      }
       return;
     }
     if (snapshot !== null && treeScrollRef.current) {
@@ -376,7 +373,13 @@ export function SessionFileExplorerPane({
                   placeholder="Search files by name or path"
                   autoComplete="off"
                   value={searchQuery}
-                  onInput={(event) => setSearchQuery(event.currentTarget.value)}
+                  onInput={(event) => {
+                    const nextQuery = event.currentTarget.value;
+                    if (!normalizedSearchQuery && nextQuery.trim() && treeScrollSnapshotRef.current === null) {
+                      treeScrollSnapshotRef.current = treeScrollRef.current?.scrollTop ?? 0;
+                    }
+                    setSearchQuery(nextQuery);
+                  }}
                 />
                 {searchLoading ? (
                   <span className="session-file-search-loading" role="status" aria-live="polite">
