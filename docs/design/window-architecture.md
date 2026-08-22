@@ -1,12 +1,12 @@
 # Window Architecture
 
 - 作成日: 2026-03-12
-- 対象: `Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務分離
+- 対象: `Home Window` / `Character Editor Window` / `Session Window` / `Coordination Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務分離
 
 ## Goal
 
 Issue `#2 Homeとセッションは別ウインドウにする` に合わせて、WithMate の UI を
-`Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window`
+`Home Window` / `Character Editor Window` / `Session Window` / `Coordination Window` / `Diff Window` / `Settings Window` / `Session Monitor Window`
 へ分離する。Home は管理ハブ、Character Editor は Character 作成・編集面、Session は chat 実行面として役割を固定し、V5 preview では legacy MateTalk window / `mate-talk` chat mode を current window として扱わない。Electron 実装時の window lifecycle を明確にする。
 
 ## Boundary
@@ -28,6 +28,7 @@ Issue `#2 Homeとセッションは別ウインドウにする` に合わせて�
   - Character catalog の表示
   - Character 作成・編集 window の起点
   - 新規セッション起動
+  - `Coordination Window` の起点
   - `Settings Window` の起点
 - `Character Editor Window`
   - Character metadata / icon / theme 編集
@@ -41,6 +42,10 @@ Issue `#2 Homeとセッションは別ウインドウにする` に合わせて�
   - artifact summary の閲覧
   - session title の rename
   - session 削除
+- `Coordination Window`
+  - 全SessionのCoordination Eventの閲覧
+  - Sessionとevent stateによる絞り込み
+  - trusted GUIとしてのユーザー判断の回答
 - `Diff Window`
   - 広い面積での diff 深掘り
 - `Settings Window`
@@ -69,6 +74,8 @@ Home は `PowerShell -> cd -> codex resume` の手前にある判断をまとめ
 - `Settings`
   - 独立した `Settings Window` を開く
   - model catalog import / export の起点
+- `Coordination`
+  - 単一の`Coordination Window`を開く
 - 将来的な session / Character 情報の検索、並び替え
 
 Home に置かないもの:
@@ -135,9 +142,29 @@ Session は `codex` 起動後の実作業面とする。
 Session に置かないもの:
 
 - 全セッションの一覧常設
+- Coordination Eventの全Session横断feed
 - Mate 一覧の管理 UI
 - 新規 session launch form
 - Mate 編集フォーム
+
+### Coordination Window
+
+Coordination Windowは、通常responseと分離して保存されたCoordination Eventを全Session横断で確認し、必要な判断へ回答する面とする。
+
+- 初期表示はSessionとstateを絞らない「すべて」とし、新しいeventから並べる
+- Eventのoriginはactor Sessionとし、Session titleを主表示する
+- Character iconはSession識別の補助として表示し、Character nameを主見出しにしない
+- Session filterはHome相当のSession title検索と逐次読み込みを使う
+- Eventの要対応、回答済み、履歴は利用者が選択するfilterとして提供する
+- `user_decision_required`は提示optionまたは自由回答でresolveする
+- Event detailは選択時に表示し、一覧へ常設説明を重ねない
+
+Coordination Windowに置かないもの:
+
+- Sessionの作成、rename、delete
+- Session treeまたはRole編集
+- chat composer
+- Coordination Eventを持つSessionだけを探す専用aggregate
 
 ### Diff Window
 
@@ -224,7 +251,7 @@ approval mode は実行ポリシーのため、session 中の変更を許可す�
 ## Window Placement Policy
 
 - アプリ起動時に最初に出る `Home Window` は current default bounds を使う
-- `Session / Settings / Diff / Session Monitor` の新規 window は、cursor がある display の workArea を基準に開く
+- `Session / Coordination / Settings / Diff / Session Monitor` の新規 window は、cursor がある display の workArea を基準に開く
 - 新規 window の左上は cursor そのものではなく、視認しやすいよう少し右下へ offset して置く
 - display workArea からはみ出す場合は clamp し、少なくとも titlebar が画面外へ消えないようにする
 - 既に開いている window を再利用する時は位置を変えず、restore / focus だけを行う
@@ -249,6 +276,13 @@ approval mode は実行ポリシーのため、session 中の変更を許可す�
 - `閉じて続行` を選んだ場合、window は閉じても Main Process 側の session 実行は継続する
 - `sessionKind = "character-authoring"` でも window lifecycle 自体は通常 session と同じにする
 - split-screen でも `message list + Action Dock -> right pane` の縦 stack へ到達できる幅まで縮められるようにする
+
+### Coordination Window Lifecycle
+
+- `Home Window`から必要時に開く
+- 1 windowを再利用する
+- 閉じてもSession実行とCoordination Eventの保存状態は変えない
+- storage commit後のinvalidationを受けた場合は、現在のfilterを維持したまま再取得する
 
 ### Settings Window Lifecycle
 

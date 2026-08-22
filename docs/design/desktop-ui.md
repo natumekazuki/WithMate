@@ -5,7 +5,7 @@
 
 ## Goal
 
-Electron デスクトップアプリとして、`Home Window` / `Character Editor Window` / `Session Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
+Electron デスクトップアプリとして、`Home Window` / `Character Editor Window` / `Session Window` / `Coordination Window` / `Diff Window` / `Settings Window` / `Session Monitor Window` の責務を整理し、現行 UI の入口を 1 枚で把握できるようにする。V5 preview では legacy MateTalk runtime / `mate-talk` mode を current UI として扱わない。
 
 ## Manual Test Maintenance
 
@@ -18,6 +18,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - Home の session / Character catalog 管理 UI
 - Character Editor Window
 - Session Monitor Window
+- Coordination Window
 - Session の coding agent 作業 UI
 - Diff Window の閲覧 UI
 - Settings Window と model catalog 操作
@@ -174,6 +175,29 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - row では `avatar / taskTitle / workspace / state badge` を表示し、クリックで session を開く
 - window 内の `Home` button から通常の `Home Window` を前面へ戻せる
 - close は通常の window close と同じ扱いで、session 実行自体は止めない
+
+## Coordination Window
+
+- 全SessionのCoordination Eventを一つの独立windowへ表示する
+- 初期状態はSession filterなし、event filterは「すべて」とする
+- 一覧は新しいeventから並べ、要対応を初期状態で先頭へ固定しない
+- 要対応、回答済み、すべて、履歴は同じ一覧に対するfilterとして提供する
+- Event rowはkind、state、summary、Session title、Character icon、時刻を表示する
+  - Session titleはevent originを示す主情報とする
+  - Character iconはユーザーがSessionを識別するための補助情報とし、Character nameは常設表示しない
+- Session filterはHomeのSession一覧と同じ探索能力を使う
+  - Session titleを検索できる
+  - 一覧を逐次読み込みできる
+  - 選択後はevent queryへ`sessionId`を渡し、読込済みeventだけをrendererで絞らない
+  - 選択中のSession titleをtoolbarへ表示し、解除して全Sessionへ戻せる
+- Event detailは選択時に表示し、本文、関連情報、回答操作を段階表示する
+- `user_decision_required`は提示optionに加えて「別の回答」を選べる
+  - 提示optionではstable option IDを送る
+  - 別の回答では空でない自由回答を送る
+  - option IDと自由回答を同時に送らない
+- Session groupingとCoordination Eventを持つSessionだけの列挙はfirst sliceへ含めない
+- loadingは対象領域のskeletonまたはspinner、取得失敗は短い状態と再試行操作で示し、常設説明文を置かない
+- native control、visible focus、accessible name、Escまたは外側clickで閉じられるSession pickerを維持する
 
 ## Session Window
 
@@ -363,7 +387,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 
 ## Interaction Notes
 
-- Home から Session / Settings / Session Monitor を開く
+- Home から Session / Coordination / Settings / Session Monitor を開く
 - Home のスケジュール一覧は全Sessionの状態確認専用とし、各行全体から所有Sessionを開ける。作成、編集、pause、resume、run now、deleteは表示しない
 - Session Headerのschedule iconは中央message listをschedule一覧へ置き換える。一覧中は通常のActionDockを維持し、作成・編集時だけ既存ActionDockをschedule draftのprompt、attachment、Model、Depth、Approval、Sandbox、Custom Agent入力へ切り替える
 - schedule draftはchat draftとSessionの現在入力設定から独立させる。Add Directoryだけは既存どおりSessionの許可対象を即時更新し、scheduleへ許可snapshotを保存しない

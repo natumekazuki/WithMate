@@ -534,7 +534,11 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 
 Coordination Eventは通常responseと分離したdedicated historyである。本文とactionをv6 databaseの専用tableへ保存し、stateを初期kindとaction履歴から投影する。actorとRole tupleはruntime bindingから解決し、authorityはcurrent `session_role_bindings_v6`を参照する。CLI、MCP、raw HTTPは六つのshared operationとstrict validatorを共有する。mutationはprincipal Session単位のidempotency keyを必須とし、commit後のpublication failureは`effect: applied`とevent IDを返す。
 
-右ペインのCoordination feedは、eventがあるSessionだけに表示する。coordinatorはsubtree、それ以外はselfを取得する。openのuser decision、blocker、escalationを優先し、detailは展開時に取得する。user decisionのresolveだけはtarget Session Windowのtrusted GUI IPCでstable option IDを選ぶ。storage commit後signalは再読込の契機であり、rendererはSession IDとrequest revisionを照合してinitial load、通知の追い越し、Session切替後の古いresponseを捨てる。external streaming endpointは持たない。
+Coordination UIはSession右ペインへ置かず、単一のCoordination Windowへ集約する。Windowはtrusted GUI queryで全Sessionのeventを新しい順に取得し、初期状態ではSessionとstateを絞らない。要対応、回答済み、履歴は利用者が選択するfilterであり、`open`だけを初期表示へ固定しない。Agent向けの`coordination.event.list`は引き続きbinding actorを基準とした`self | subtree` authorityを維持し、全Sessionを読むtrusted GUI queryをCLI、MCP、raw HTTPへ公開しない。
+
+Eventのoriginはactor Sessionである。Windowはcanonical Session projectionからSession titleを主表示し、Character iconを識別補助として表示する。Character nameとiconをCoordination Eventへ複製保存しない。Session filterはHome相当のSession title検索と逐次読み込みで対象を選び、選択後のevent queryへ`sessionId`を渡す。rendererが読込済みevent pageだけをfilterしてはならない。Session groupingとCoordination eventを持つSessionだけを列挙するaggregateはfirst sliceへ含めない。
+
+detailは選択時に取得する。`user_decision_required`はtrusted GUI IPCだけがresolveでき、提示optionのstable IDまたは自由回答のどちらか一方を受け付ける。自由回答はactionの`note`へ保存し、`optionId`は`null`とする。storage commit後signalは再読込の契機であり、rendererはevent filter、Session ID、request revisionを照合してinitial load、通知の追い越し、Session切替後の古いresponseを捨てる。external streaming endpointは持たない。
 
 `turn.run`と`turn.enqueue`は、bindingのactor Session IDとcanonical Character stateから次のinitiatorをexecution作成時に確定し、`request_json`へ保存する。GUI送信は`{ kind: "user" }`を保存する。
 

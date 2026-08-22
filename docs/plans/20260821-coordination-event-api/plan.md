@@ -2,7 +2,7 @@
 
 ## Scope
 
-通常responseとTurn command busから分離したCoordination Eventを、dedicated storage、shared external runtime、trusted GUI IPC、System Prompt、既存Session右ペインへ一つの契約として追加する。work item、汎用operation ID、external streaming、archive、retentionは対象外とする。
+通常responseとTurn command busから分離したCoordination Eventを、dedicated storage、shared external runtime、trusted GUI IPC、System Prompt、独立したCoordination Windowへ一つの契約として追加する。work item、汎用operation ID、external streaming、archive、retentionは対象外とする。
 
 ## Closure Plan
 
@@ -48,12 +48,12 @@
 
 ### COORD-UI-01
 
-- Accepted contract / exact anchor: 添付要求と既存Session right-pane architecture。eventがある場合だけCoordination tabを出し、未解決優先、detailはprogressive disclosure、user decisionはtrusted GUI IPCだけでresolveする。
-- Scope / semantic owner: main IPC query/mutation/signal、renderer request-generation state、right-pane projection/component。
-- Failure mode / consumer impact: initial load中event消失、out-of-order/Session切替でstale表示、判断待ちの見落とし、通常chat layout分岐、空説明card。
-- State transitions / failure timing: Session選択、initial load、commit後signal、refresh response、option resolution。
-- Direct verification: async state owner test、projection/component/IPC test、分離起動visual check。
-- Independent review trigger: reactive UIとtrusted mutationのcross-process interaction。
+- Accepted contract / exact anchor: ユーザー要求とADR 027。全Sessionの全eventを独立したCoordination Windowへ表示し、初期filterは「すべて」とする。EventはSessionをoriginとし、Session titleを主表示、Character iconを識別補助に使う。Session filterはHome相当の探索操作を使い、user decisionはtrusted GUI IPCから提示optionまたは自由回答でresolveする。
+- Scope / semantic owner: main IPCの全Session query、Session titleとCharacter iconのprojection、event/session filter、mutation/signal、renderer request-generation state、Coordination Window component。
+- Failure mode / consumer impact: initial load中event消失、読込済みpageだけへのSession filter、out-of-order responseでstale表示、既定で判断待ちだけが表示される、Characterをevent originと誤認する、自由回答を保存できない。
+- State transitions / failure timing: Window initial load、Session探索と選択、event filter変更、commit後signal、refresh response、optionまたは自由回答のresolution。
+- Direct verification: default filter、Session query/filter、async state owner、projection/component/IPC、resolution union、分離起動visual check。
+- Independent review trigger: reactive UI、全Session trusted projection、trusted mutationのcross-process interaction。
 - Gate: ready。
 
 ### COORD-PROMPT-01
@@ -97,19 +97,19 @@
 
 ### COORD-UI-01
 
-- Canonical owner: trusted main IPCとrenderer feed state owner。
-- Siblings in scope: initial load、commit signal、out-of-order response、Session selection、tab availability、detail toggle、option resolution。
-- Excluded siblings and reason:独自chat layout、Session tree/Role editorは対象外。
-- Failure points: request in-flight、signal arrival、old response arrival、selected Session change、mutation response loss。
-- Direct checks: generation comparison、refresh coalescing、projection ordering、component interaction、visual smoke。
-- Independent review lens: stale overwriteとuntrusted resolution path。
+- Canonical owner: trusted main IPC、Coordination Window feed state owner、canonical Session projection。
+- Siblings in scope: initial load、commit signal、out-of-order response、event filter、Home相当のSession探索、Session selection、detail、optionまたは自由回答のresolution。
+- Excluded siblings and reason: Session grouping、Coordination eventがあるSessionだけを返すaggregate、Session tree/Role editorはfirst sliceの対象外。
+- Failure points: request in-flight、signal arrival、old response arrival、selected Session変更、Session listの追加page取得、mutation response loss。
+- Direct checks: default「すべて」、generation comparison、refresh coalescing、server-side Session filter、Session/Character projection、resolutionの排他的入力、component interaction、visual smoke。
+- Independent review lens: stale overwrite、cross-Session data projection、untrusted resolution path。
 
 ## Test Design Gate
 
 - Storage failure: event本文またはactionが片側だけcommitされる。Consumerは履歴と現在stateを誤認する。OwnerはCoordination SQLite transaction。Observableはrowsとrestart後projection。Layerはintegration。
 - Authority failure: request fieldまたは別rootからeventを参照・変更できる。Consumerは機密性とscopeを失う。Ownerはapplication authority boundary。Observableはnot-found-equivalent errorとmutationなし。Layerはapplication integration。
 - Adapter failure: CLI/MCP/HTTPで受理fieldまたはerrorがずれる。Consumerはtransportで契約が変わる。Ownerはshared parser/schema projection。Observableは同一input/output/error。Layerはcontract/integration。
-- Reactive failure:古いloadが新しいSession/feedを上書きする。Consumerは誤った判断事項を見る。Ownerはrenderer feed state owner。Observableは選択Sessionと表示items。Layerはstate/component interaction。
+- Reactive failure:古いloadが新しいSession/feedを上書きする、または読込済みpageだけをSession filterする。Consumerは欠けたeventや別Sessionの判断事項を見る。Ownerはtrusted GUI queryとrenderer feed state owner。Observableは初期filter、選択Session、表示items、cursor。Layerはstate/component interaction。
 - Prompt failure:response形式強制またはprivate binding漏洩が起きる。Consumerは通常会話とauthority境界を失う。Ownerはprompt composer。Observableは生成system prompt。Layerはunit。
 
 既存checkはCoordination domainを扱わないためdistinctである。各testはproduction entry/result、DB state、DOM interactionを観測し、private call順やmarkup snapshotは固定しない。
