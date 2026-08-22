@@ -10,6 +10,7 @@ import {
   type CoordinationEventGetInput,
   type CoordinationEventListInput,
   type CoordinationEventListResult,
+  type CoordinationEventTrustedListInput,
   type CoordinationEventResolveInput,
 } from "../src/coordination-event.js";
 import { requireSessionRoleBinding, type SessionRoleBinding } from "../src/session-role-binding.js";
@@ -78,6 +79,15 @@ export class CoordinationEventService {
     return {
       ...result,
       ...(result.nextCursor ? { nextCursor: encodeCursor(principal.sessionId, input, Number(result.nextCursor)) } : {}),
+    };
+  }
+
+  listAllFromTrustedGui(input: CoordinationEventTrustedListInput): CoordinationEventListResult {
+    const beforeSequence = input.cursor ? decodeTrustedCursor(input, input.cursor) : null;
+    const result = this.deps.storage.listTrusted(input, beforeSequence);
+    return {
+      ...result,
+      ...(result.nextCursor ? { nextCursor: encodeTrustedCursor(input, Number(result.nextCursor)) } : {}),
     };
   }
 
@@ -260,6 +270,35 @@ function decodeCursor(principalSessionId: string, input: CoordinationEventListIn
       || value.operation !== "coordination.event.list"
       || value.principalSessionId !== principalSessionId
       || value.scope !== input.scope
+      || value.kind !== (input.kind ?? null)
+      || value.state !== (input.state ?? null)
+      || !Number.isSafeInteger(value.beforeSequence)
+      || (value.beforeSequence as number) < 1) {
+      throw new Error("invalid cursor");
+    }
+    return value.beforeSequence as number;
+  } catch {
+    throw new CoordinationEventValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
+}
+
+function encodeTrustedCursor(input: CoordinationEventTrustedListInput, beforeSequence: number): string {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    operation: "coordination.event.list.trusted",
+    sessionId: input.sessionId ?? null,
+    kind: input.kind ?? null,
+    state: input.state ?? null,
+    beforeSequence,
+  }), "utf8").toString("base64url");
+}
+
+function decodeTrustedCursor(input: CoordinationEventTrustedListInput, cursor: string): number {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (value.version !== 1
+      || value.operation !== "coordination.event.list.trusted"
+      || value.sessionId !== (input.sessionId ?? null)
       || value.kind !== (input.kind ?? null)
       || value.state !== (input.state ?? null)
       || !Number.isSafeInteger(value.beforeSequence)

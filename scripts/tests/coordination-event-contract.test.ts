@@ -6,6 +6,7 @@ import {
   validateCoordinationEventOptions,
   validateCoordinationEventPayload,
   initialCoordinationEventState,
+  parseCoordinationEventTrustedListInput,
 } from "../../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
 
@@ -154,5 +155,16 @@ describe("Coordination event contract", () => {
       }),
       (error) => error instanceof CoordinationEventValidationError && error.code === "SENSITIVE_CONTENT_REJECTED",
     );
+  });
+
+  it("COORD-FEED-02: trusted GUI listは全Sessionを既定にし、server-side Session filterを検証する", () => {
+    assert.deepEqual(parseCoordinationEventTrustedListInput({}), { limit: 50 });
+    assert.deepEqual(parseCoordinationEventTrustedListInput({ sessionId: "session-a", state: "open", limit: 25 }), {
+      sessionId: "session-a",
+      state: "open",
+      limit: 25,
+    });
+    assert.throws(() => parseCoordinationEventTrustedListInput({ scope: "subtree" }), /Unknown field/);
+    assert.throws(() => parseCoordinationEventTrustedListInput({ limit: 101 }), /limit/i);
   });
 });

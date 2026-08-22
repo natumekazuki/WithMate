@@ -4,6 +4,25 @@
 
 通常responseとTurn command busから分離したCoordination Eventを、dedicated storage、shared external runtime、trusted GUI IPC、System Prompt、独立したCoordination Windowへ一つの契約として追加する。work item、汎用operation ID、external streaming、archive、retentionは対象外とする。
 
+## Home Session paginationとの実装境界
+
+`feat/v6.3.25`から移植するHome Session paginationは、Session summaryのbounded query、検索、逐次読み込み、stale response防止、background refreshを所有する。Coordination Windowはこの実装を共通helperとして参照せず、Session探索の操作と状態遷移だけを同じ設計にする。
+
+Home Session paginationの移植前に、次を実装できる。
+
+- `user_decision_required`をoption IDまたは自由回答のどちらか一方でresolveする契約
+- trusted GUIが全SessionのCoordination Eventを取得するbounded query
+- `sessionId`、kind、stateをcursorへ束縛するserver-side filter
+- Agent向け`self | subtree` queryとtrusted GUI queryの分離
+
+次はHome Session paginationの移植後に接続する。
+
+- Coordination Windowから利用するSession title検索とSession summaryの逐次読み込み
+- Homeと同じ再取得規則、scroll末尾のsentinel、読み込み済みpageの維持
+- Session titleとCharacter iconを含むSession選択肢のrenderer projection
+
+Coordination WindowのElectron entry、preload、IPC、renderer shellはHome paginationと同じ統合ファイルを変更するため、移植後の現行責務へ接続する。先行実装ではHome固有のquery stateを複製せず、Coordination Event側のquery契約を先に閉じる。
+
 ## Closure Plan
 
 ### COORD-EVENT-01

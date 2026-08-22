@@ -231,7 +231,7 @@ describe("CoordinationEventStorageV6", () => {
     }
   });
 
-  it("COORD-EVENT-01: user decisionはtrusted GUI optionだけがresolveでき、本文を更新しない", async () => {
+  it("COORD-EVENT-01: user decisionはtrusted GUIがoptionか自由回答の片方だけでresolveできる", async () => {
     const fixture = await createFixture();
     try {
       const event = create(fixture.storage, {
@@ -249,6 +249,10 @@ describe("CoordinationEventStorageV6", () => {
         principal: principal("root-b", "trusted_gui"), eventId: event.eventId, optionId: "keep", note: null,
         idempotencyKey: "cross-root-gui", requestFingerprint: "cross-root-gui", createdAt: NOW,
       }));
+      assert.throws(() => fixture.storage.resolve({
+        principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: "keep", note: "両方は不可",
+        idempotencyKey: "both-answer-kinds", requestFingerprint: "both-answer-kinds", createdAt: NOW,
+      }));
       const resolved = fixture.storage.resolve({
         principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: "change", note: null,
         idempotencyKey: "gui-resolve", requestFingerprint: "gui-resolve", createdAt: NOW,
@@ -256,6 +260,58 @@ describe("CoordinationEventStorageV6", () => {
       assert.equal(resolved.state, "resolved");
       assert.equal(resolved.actions[0]?.optionId, "change");
       assert.deepEqual(resolved.payload, event.payload);
+
+      const customEvent = create(fixture.storage, {
+        kind: "user_decision_required",
+        executionId: null,
+        options: [{ id: "keep", label: "維持" }, { id: "change", label: "変更" }],
+        idempotencyKey: "decision-custom",
+        requestFingerprint: "decision-custom",
+      }).event;
+      const customResolved = fixture.storage.resolve({
+        principal: principal("root-a", "trusted_gui"), eventId: customEvent.eventId, optionId: null, note: "段階的に変更する",
+        idempotencyKey: "custom-answer", requestFingerprint: "custom-answer", createdAt: NOW,
+      }).event;
+      assert.equal(customResolved.actions[0]?.optionId, null);
+      assert.equal(customResolved.actions[0]?.note, "段階的に変更する");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("COORD-FEED-02: trusted GUI queryは全rootを既定表示しSession filterをDBへ適用する", async () => {
+    const fixture = await createFixture();
+    try {
+      const rootA = create(fixture.storage, {
+        principal: principal("root-a"), executionId: null,
+        idempotencyKey: "trusted-root-a", requestFingerprint: "trusted-root-a",
+      }).event;
+      const rootB = create(fixture.storage, {
+        principal: principal("root-b"), executionId: null,
+        idempotencyKey: "trusted-root-b", requestFingerprint: "trusted-root-b",
+      }).event;
+      const service = new CoordinationEventService({ storage: fixture.storage, publishCommitted() {} });
+
+      const firstPage = service.listAllFromTrustedGui({ limit: 1 });
+      assert.equal(firstPage.items.length, 1);
+      assert.ok(firstPage.nextCursor);
+      const secondPage = service.listAllFromTrustedGui({ limit: 1, cursor: firstPage.nextCursor });
+      assert.deepEqual(
+        new Set([...firstPage.items, ...secondPage.items].map((event) => event.eventId)),
+        new Set([rootA.eventId, rootB.eventId]),
+      );
+
+      const filtered = service.listAllFromTrustedGui({ sessionId: "root-a", limit: 50 });
+      assert.deepEqual(filtered.items.map((event) => event.eventId), [rootA.eventId]);
+      assert.throws(() => service.listAllFromTrustedGui({
+        sessionId: "root-a",
+        limit: 1,
+        cursor: firstPage.nextCursor,
+      }));
+      assert.equal(service.list({ scope: "subtree", limit: 50 }, binding("root-a")).items.some(
+        (event) => event.eventId === rootB.eventId,
+      ), false);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

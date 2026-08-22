@@ -100,6 +100,14 @@ export type CoordinationEventListInput = {
   cursor?: string;
 };
 
+export type CoordinationEventTrustedListInput = {
+  sessionId?: string;
+  kind?: CoordinationEventKind;
+  state?: CoordinationEventState;
+  limit: number;
+  cursor?: string;
+};
+
 export type CoordinationEventGetInput =
   | { eventId: string; idempotencyKey?: never }
   | { eventId?: never; idempotencyKey: string };
@@ -207,6 +215,38 @@ export function validateCoordinationEventNote(value: unknown, field = "note"): s
   const note = requireText(value, field, 1_000);
   rejectSensitiveValues([note], field);
   return note;
+}
+
+export function parseCoordinationEventTrustedListInput(value: unknown): CoordinationEventTrustedListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["sessionId", "kind", "state", "limit", "cursor"], "input");
+  return {
+    ...(record.sessionId === undefined ? {} : { sessionId: requireNonEmptyString(record.sessionId, "sessionId") }),
+    ...(record.kind === undefined ? {} : { kind: requireEnumValue(record.kind, COORDINATION_EVENT_KINDS, "kind") }),
+    ...(record.state === undefined ? {} : { state: requireEnumValue(record.state, COORDINATION_EVENT_STATES, "state") }),
+    limit: record.limit === undefined
+      ? COORDINATION_EVENT_DEFAULT_LIST_LIMIT
+      : requireListLimit(record.limit),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function requireEnumValue<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
+  if (typeof value !== "string" || !allowed.includes(value as T)) {
+    throw invalid(field, `${field} is invalid.`);
+  }
+  return value as T;
+}
+
+function requireListLimit(value: unknown): number {
+  if (!Number.isInteger(value) || (value as number) < 1 || (value as number) > COORDINATION_EVENT_MAX_LIST_LIMIT) {
+    throw new CoordinationEventValidationError(
+      `limit must be an integer between 1 and ${COORDINATION_EVENT_MAX_LIST_LIMIT}.`,
+      { field: "limit", max: COORDINATION_EVENT_MAX_LIST_LIMIT },
+      "LIMIT_EXCEEDED",
+    );
+  }
+  return value as number;
 }
 
 function requireTextList(value: unknown, field: string): string[] {

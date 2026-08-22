@@ -9,6 +9,7 @@ import {
   type CoordinationEventKind,
   type CoordinationEventListInput,
   type CoordinationEventListResult,
+  type CoordinationEventTrustedListInput,
   type CoordinationEventOption,
   type CoordinationEventPayload,
   type CoordinationEventRoleSnapshot,
@@ -157,6 +158,25 @@ export class CoordinationEventStorageV6 {
       clauses.push("(events.actor_session_id = ? OR events.parent_session_id = ?)");
       parameters.push(principal.sessionId, principal.sessionId);
     }
+    return this.queryList(input, beforeSequence, clauses, parameters);
+  }
+
+  listTrusted(input: CoordinationEventTrustedListInput, beforeSequence: number | null): CoordinationEventListResult {
+    const clauses: string[] = [];
+    const parameters: Array<string | number> = [];
+    if (input.sessionId) {
+      clauses.push("events.actor_session_id = ?");
+      parameters.push(input.sessionId);
+    }
+    return this.queryList(input, beforeSequence, clauses, parameters);
+  }
+
+  private queryList(
+    input: Pick<CoordinationEventListInput, "kind" | "state" | "limit">,
+    beforeSequence: number | null,
+    clauses: string[],
+    parameters: Array<string | number>,
+  ): CoordinationEventListResult {
     if (beforeSequence !== null) {
       clauses.push("events.sequence < ?");
       parameters.push(beforeSequence);
@@ -175,7 +195,7 @@ export class CoordinationEventStorageV6 {
         events.kind, events.summary, events.created_at,
         ${PROJECTED_STATE_SQL} AS projected_state
       FROM coordination_events_v6 AS events
-      WHERE ${clauses.join(" AND ")}
+      ${clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : ""}
       ORDER BY events.sequence DESC
       LIMIT ?
     `).all(...parameters) as Array<Pick<EventRow,
@@ -227,10 +247,12 @@ export class CoordinationEventStorageV6 {
           throw new CoordinationEventNotFoundError();
         }
       } else if (event.kind === "user_decision_required") {
+        const hasOption = input.optionId !== null;
+        const hasNote = input.note !== null && input.note.trim().length > 0;
         if (input.principal.actorType !== "trusted_gui"
           || !canView(input.principal, event)
-          || !input.optionId
-          || !event.options.some((option) => option.id === input.optionId)) {
+          || hasOption === hasNote
+          || (hasOption && !event.options.some((option) => option.id === input.optionId))) {
           throw new CoordinationEventNotFoundError();
         }
       } else {
