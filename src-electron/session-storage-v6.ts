@@ -366,7 +366,7 @@ export class SessionStorageV6 {
       where.push(keyset.sql);
       params.push(...keyset.params);
     }
-    if (search.sql) {
+    if (!isOpenScope && search.sql) {
       where.push(search.sql);
       params.push(...search.params);
     }

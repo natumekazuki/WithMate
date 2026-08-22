@@ -124,3 +124,11 @@
 - Finding 2は `open` requestの重複除去後ID数より小さい `limit` をparserで拒否し、storage側でも `open` pageが `hasMore: true` / cursorなしを返さない不変条件を保持した。Homeは引き続き100 ID単位でchunk取得する。
 - 回帰確認はV1/V2/V3/V6 storage、Main query、Home query、parserを含む targeted 77 tests、`npm run typecheck`、`npm test`（2603 pass / 0 fail / 1 skipped）、`npm run build`、bounded benchmark（1000 Sessionでpage 50件）で実施した。buildに既存のLightningCSS `::highlight` warningとlarge chunk warningがあるが、終了コードは0だった。
 - これは既存 `HOME_SESSION_SUMMARY_PAGE_V1` のfinding family修正なので、complete-diff holistic reviewは再実行せず、直接検証とfinding family限定のtargeted closureで閉じる。
+
+## Review finding closure (2026-08-22 open search)
+
+- `open` scopeの非空 `searchText` をpublic parserで拒否し、未指定または空文字列は受理する。`recent` / `pinned` の検索条件は従来どおり維持する。
+- V1/V2/V3/V6のpage queryは、`open` scopeでは検索SQLをWHEREへ追加しない。open ID集合はparserで重複除去し、存在しないIDを無視し、`hasMore: false` / `nextCursor: null`を維持する。
+- V1/V2/V3/V6のstorage testで、複数の存在ID、missing ID、重複ID、summary-only projection、recent / pinned検索の回帰を直接確認した。V6の既存テストは、検索語によるSession欠落を期待するassertionから、指定された存在Sessionを全件返すassertionへ修正した。
+- `session-summary-query` と4 storageのtargeted 51 tests、`npm run typecheck`、`npm test`（2603 pass / 0 fail / 1 skipped）、`npm run build`は成功した。buildには既存のLightningCSS `::highlight` warningとlarge chunk warningがあるが、終了コードは0だった。
+- これは既存 `HOME_SESSION_SUMMARY_PAGE_V1` の同一finding familyに対するcurrent-scope repairであり、complete-diff holistic reviewは再実行せず、直接検証とfinding family限定のtargeted closureで閉じる。

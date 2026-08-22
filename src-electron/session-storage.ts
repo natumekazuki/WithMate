@@ -577,7 +577,7 @@ export class SessionStorage {
       where.push(keyset.sql);
       params.push(...keyset.params);
     }
-    if (search.sql) {
+    if (parsed.scope !== "open" && search.sql) {
       where.push(search.sql);
       params.push(...search.params);
     }

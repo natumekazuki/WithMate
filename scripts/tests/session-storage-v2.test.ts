@@ -409,7 +409,16 @@ describe("SessionStorageV2", () => {
         assert.deepEqual(storage.listSessionSummaries().map((session) => session.id), ["session-valid"]);
         const pageIds = storage.listSessionSummaryPage({ scope: "recent", limit: 10 }).entries.map((session) => session.id);
         assert.deepEqual(new Set(pageIds), new Set(["session-valid", "session-bad-directories"]));
-        assert.equal("provider" in storage.listSessionSummaryPage({ scope: "recent", limit: 1 }).entries[0]!, false);
+        const openPage = storage.listSessionSummaryPage({
+          scope: "open",
+          sessionIds: ["session-valid", "session-bad-directories", "missing", "session-valid"],
+          searchText: "",
+        });
+        assert.deepEqual(openPage.entries.map((session) => session.id).sort(), ["session-bad-directories", "session-valid"]);
+        assert.equal(openPage.entries.length, 2);
+        assert.equal(openPage.hasMore, false);
+        assert.equal(openPage.nextCursor, null);
+        assert.equal("provider" in openPage.entries[0]!, false);
         assert.throws(() => {
           storage.getSession("session-bad-directories");
         });

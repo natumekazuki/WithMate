@@ -295,8 +295,13 @@ describe("SessionStorageV6", () => {
 
       const pinnedPage = storage?.listSessionSummaryPage({ scope: "pinned" });
       assert.deepEqual(pinnedPage?.entries.map((entry) => entry.id), ["older"]);
-      const openPage = storage?.listSessionSummaryPage({ scope: "open", sessionIds: ["older", "same-a"], searchText: "literal" });
-      assert.deepEqual(openPage?.entries.map((entry) => entry.id), ["same-a"]);
+      const openPage = storage?.listSessionSummaryPage({
+        scope: "open",
+        sessionIds: ["older", "same-a", "missing", "older"],
+        searchText: "",
+      });
+      assert.deepEqual(openPage?.entries.map((entry) => entry.id).sort(), ["older", "same-a"]);
+      assert.equal(openPage?.entries.length, 2);
       assert.equal(openPage?.hasMore, false);
       assert.equal(openPage?.nextCursor, null);
       assert.deepEqual(Object.keys(openPage?.entries[0] ?? {}).sort(), [

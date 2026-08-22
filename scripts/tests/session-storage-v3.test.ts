@@ -198,8 +198,21 @@ describe("SessionStorageV3", () => {
           threadId: "hidden-thread",
           allowedAdditionalDirectories: ["C:/hidden"],
         });
+        const secondSession = await storage.upsertSession(createSession({
+          id: "session-v3-home-page-second",
+          taskTitle: "Another page",
+          workspaceLabel: "workspace-another",
+        }));
 
-        const page = await storage.listSessionSummaryPage({ scope: "open", sessionIds: [session.id] });
+        const page = await storage.listSessionSummaryPage({
+          scope: "open",
+          sessionIds: [session.id, "missing", secondSession.id, session.id],
+          searchText: "",
+        });
+        assert.deepEqual(page.entries.map((entry) => entry.id).sort(), [session.id, secondSession.id].sort());
+        assert.equal(page.entries.length, 2);
+        assert.equal(page.hasMore, false);
+        assert.equal(page.nextCursor, null);
         assert.deepEqual(Object.keys(page.entries[0] ?? {}).sort(), [
           "accessMode",
           "character",
