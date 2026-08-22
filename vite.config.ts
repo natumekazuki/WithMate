@@ -18,6 +18,7 @@ export default defineConfig({
         review: path.resolve(projectRoot, "review.html"),
         boot: path.resolve(projectRoot, "boot.html"),
         characterEditor: path.resolve(projectRoot, "character-editor.html"),
+        coordination: path.resolve(projectRoot, "coordination.html"),
       },
     },
   },

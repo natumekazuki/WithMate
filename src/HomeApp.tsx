@@ -78,6 +78,7 @@ import {
   openCharacterEditorWindow,
   openCompanionReviewWindow,
   openMemoryV6ReviewWindow,
+  openCoordinationWindow,
   openSessionMonitorWindow,
   openSessionWindow,
   openSettingsWindow,
@@ -970,6 +971,7 @@ export default function HomeApp() {
       handlers: {
         onChangeRightPaneView: setRightPaneView,
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
+        onOpenCoordinationWindow: () => void openCoordinationWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
         onCreateCharacter: () => void openCharacterEditorWindow(),
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),

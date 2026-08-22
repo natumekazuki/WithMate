@@ -116,6 +116,40 @@ test("AuxWindowService は singleton window を再利用する", async () => {
   assert.equal(service.isSettingsWindow(settings), false);
 });
 
+test("AuxWindowService は Coordination Window をsingletonとして識別しclose後に作り直す", async () => {
+  const stubs: ReturnType<typeof createWindowStub>[] = [];
+  const loads: unknown[] = [];
+  const service = new AuxWindowService({
+    createWindow() {
+      const stub = createWindowStub();
+      stubs.push(stub);
+      return stub.window;
+    },
+    async loadHomeEntry() {},
+    async loadCoordinationEntry(window) { loads.push(window); },
+    async loadDiffEntry() {},
+    async loadFilePreviewEntry() {},
+    async loadChatEntry() {},
+    async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
+    onCompanionReviewWindowsChanged() {},
+    generateDiffToken() { return "token"; },
+  });
+
+  const first = await service.openCoordinationWindow();
+  const reused = await service.openCoordinationWindow();
+  assert.equal(reused, first);
+  assert.equal(service.isCoordinationWindow(first), true);
+  assert.equal(stubs.length, 1);
+  assert.equal(loads.length, 1);
+
+  first.close();
+  assert.equal(service.isCoordinationWindow(first), false);
+  const reopened = await service.openCoordinationWindow();
+  assert.notEqual(reopened, first);
+  assert.equal(stubs.length, 2);
+});
+
 test("AuxWindowService は diff preview を保持し reset 時に close する", async () => {
   const diffLoads: string[] = [];
   const diffStub = createWindowStub();

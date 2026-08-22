@@ -7,6 +7,7 @@ import type { HomeMonitorEntry } from "./home-session-projection.js";
 type HomeRightPaneHandlers = {
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
+  onOpenCoordinationWindow: () => void;
   onOpenSettingsWindow: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
@@ -50,6 +51,7 @@ export function buildHomeRightPaneProps({
     characterListFeedback,
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
+    onOpenCoordinationWindow: handlers.onOpenCoordinationWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,
     onCreateCharacter: handlers.onCreateCharacter,
     onEditCharacter: handlers.onEditCharacter,

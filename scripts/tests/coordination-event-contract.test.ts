@@ -41,6 +41,21 @@ describe("Coordination event contract", () => {
       eventId: "event-1",
       idempotencyKey: "create-1",
     }), /Exactly one/);
+    assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.resolve", {
+      eventId: "event-1",
+      idempotencyKey: "resolve-1",
+    }), /Exactly one/);
+    assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.resolve", {
+      eventId: "event-1",
+      optionId: "a",
+      note: "both",
+      idempotencyKey: "resolve-2",
+    }), /Exactly one/);
+    assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
+      eventId: "event-1",
+      note: "自由回答",
+      idempotencyKey: "resolve-3",
+    }), { eventId: "event-1", note: "自由回答", idempotencyKey: "resolve-3" });
     for (const kind of ["progress", "decision", "blocker", "result"] as const) {
       const parsed = parseSessionRuntimeOperationInput("coordination.event.create", {
         kind, payload: { summary: kind }, idempotencyKey: `create-${kind}`,

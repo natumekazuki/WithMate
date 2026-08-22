@@ -20,6 +20,10 @@ export async function openMemoryV6ReviewWindow() {
   await withWithMateApi((api) => api.openMemoryV6ReviewWindow());
 }
 
+export async function openCoordinationWindow() {
+  await withWithMateApi((api) => api.openCoordinationWindow());
+}
+
 export async function openCharacterEditorWindow(characterId?: string | null) {
   await withWithMateApi((api) => api.openCharacterEditorWindow(characterId ?? null));
 }

@@ -156,8 +156,11 @@ Coordination Windowは、通常responseと分離して保存されたCoordinatio
 - Character iconはSession識別の補助として表示し、Character nameを主見出しにしない
 - Session filterはHome相当のSession title検索と逐次読み込みを使う
 - Eventの要対応、回答済み、履歴は利用者が選択するfilterとして提供する
+- 履歴filterは`recorded`を対象にし、`superseded`と`cancelled`は「すべて」で確認する
 - `user_decision_required`は提示optionまたは自由回答でresolveする
 - Event detailは選択時に表示し、一覧へ常設説明を重ねない
+- trusted GUI mutationはEvent ownerの現行Session Role bindingを取得し、既存のcanonical binding検証を通す。全Sessionを操作できる合成principalは作らない
+- Event pageとorigin Session projectionは同じrequest generationで取得し、両方が揃った結果だけを表示へ反映する
 
 Coordination Windowに置かないもの:
 
@@ -281,6 +284,7 @@ approval mode は実行ポリシーのため、session 中の変更を許可す�
 
 - `Home Window`から必要時に開く
 - 1 windowを再利用する
+- 最小化中のwindowはrestoreしてfocusし、既存windowの位置を動かさない
 - 閉じてもSession実行とCoordination Eventの保存状態は変えない
 - storage commit後のinvalidationを受けた場合は、現在のfilterを維持したまま再取得する
 

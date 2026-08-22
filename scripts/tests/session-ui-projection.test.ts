@@ -17,7 +17,6 @@ import {
   cycleContextPaneTab,
   findLatestAuditCommandOperation,
   findLatestLiveCommandStep,
-  orderCoordinationEventSummaries,
   resolveAvailableContextPaneTabs,
 } from "../../src/session-ui-projection.js";
 
@@ -464,7 +463,7 @@ describe("session-ui-projection", () => {
 
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
     assert.equal(cycleContextPaneTab("latest-command", 1), "reasoning");
-    assert.equal(cycleContextPaneTab("latest-command", -1), "coordination");
+    assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
   it("available tabs は non-Copilot で Tasks を除外し、Reasoning は capability がある時点で表示する", () => {
@@ -492,33 +491,6 @@ describe("session-ui-projection", () => {
     assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCompanionGroupMonitor: true }), [
       "latest-command",
       "companion-group",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCoordinationEvents: true }), [
-      "latest-command",
-      "coordination",
-    ]);
-    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasCoordinationFeedError: true }), [
-      "latest-command",
-      "coordination",
-    ]);
-  });
-
-  it("Coordination feedはopenのuser decision、blocker、escalationを優先してから新しい順に並べる", () => {
-    const base = {
-      actorSessionId: "session-1",
-      sessionRole: "executor" as const,
-      summary: "summary",
-      createdAt: "2026-08-21T00:00:00.000Z",
-    };
-    const ordered = orderCoordinationEventSummaries([
-      { ...base, sequence: 8, eventId: "recorded", kind: "result", state: "recorded" },
-      { ...base, sequence: 5, eventId: "escalation", kind: "escalation", state: "open" },
-      { ...base, sequence: 6, eventId: "blocker", kind: "blocker", state: "open" },
-      { ...base, sequence: 7, eventId: "decision", kind: "user_decision_required", state: "open" },
-      { ...base, sequence: 9, eventId: "resolved", kind: "user_decision_required", state: "resolved" },
-    ]);
-    assert.deepEqual(ordered.map((event) => event.eventId), [
-      "decision", "blocker", "escalation", "resolved", "recorded",
     ]);
   });
 

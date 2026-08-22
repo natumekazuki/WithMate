@@ -27,6 +27,10 @@ export class WindowEntryLoader {
     await this.load(window, "boot.html", "");
   }
 
+  async loadCoordinationEntry(window: WindowLike): Promise<void> {
+    await this.load(window, "coordination.html", "");
+  }
+
   async loadDiffEntry(window: WindowLike, token: string): Promise<void> {
     const search = `?token=${encodeURIComponent(token)}`;
     await this.load(window, "diff.html", search);

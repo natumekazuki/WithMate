@@ -136,13 +136,6 @@ export type AgentSessionChatProjectionInput = {
   selectedSessionContextTelemetryProjection: SessionContextPaneProps["selectedSessionContextTelemetryProjection"];
   selectedContextEmptyText: string;
   latestCommandEmptyText: string;
-  coordinationEvents: NonNullable<SessionContextPaneProps["coordinationEvents"]>;
-  coordinationEventDetails: NonNullable<SessionContextPaneProps["coordinationEventDetails"]>;
-  coordinationResolutionPendingEventId: string | null;
-  coordinationFeedErrorMessage: string | null;
-  onLoadCoordinationEvent: NonNullable<SessionContextPaneProps["onLoadCoordinationEvent"]>;
-  onResolveCoordinationOption: NonNullable<SessionContextPaneProps["onResolveCoordinationOption"]>;
-  onRetryCoordinationEvents: NonNullable<SessionContextPaneProps["onRetryCoordinationEvents"]>;
   selectedDiff: DiffPreviewPayload | null;
   selectedDiffThemeStyle: CSSProperties;
   auditLogsOpen: boolean;
@@ -413,13 +406,6 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: input.selectedContextEmptyText,
     latestCommandEmptyText: input.latestCommandEmptyText,
-    coordinationEvents: input.coordinationEvents,
-    coordinationEventDetails: input.coordinationEventDetails,
-    coordinationResolutionPendingEventId: input.coordinationResolutionPendingEventId,
-    coordinationFeedErrorMessage: input.coordinationFeedErrorMessage,
-    onLoadCoordinationEvent: input.onLoadCoordinationEvent,
-    onResolveCoordinationOption: input.onResolveCoordinationOption,
-    onRetryCoordinationEvents: input.onRetryCoordinationEvents,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });

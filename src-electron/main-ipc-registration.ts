@@ -5,8 +5,10 @@ import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
   CoordinationEventResolveInput,
-  CoordinationEventSummary,
+  CoordinationEventListResult,
+  CoordinationEventTrustedListInput,
 } from "../src/coordination-event.js";
+import { parseCoordinationEventTrustedListInput } from "../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../src/session-external-runtime-contract.js";
 import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import type {
@@ -243,10 +245,10 @@ import {
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
-  WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL,
-  WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL,
-  WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL,
-  WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_SESSION_SCHEDULES_CHANNEL,
   WITHMATE_GET_SESSION_SCHEDULE_CHANNEL,
   WITHMATE_CREATE_SESSION_SCHEDULE_CHANNEL,
@@ -273,6 +275,7 @@ import {
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL,
   WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL,
   WITHMATE_MERGE_COMPANION_SELECTED_FILES_CHANNEL,
   WITHMATE_PICK_DIRECTORY_CHANNEL,
@@ -348,8 +351,10 @@ export type MainIpcRegistrationDeps = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryV6ReviewWindow(): Promise<void>;
+  openCoordinationWindow(): Promise<void>;
   isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
+  isCoordinationWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
@@ -502,16 +507,10 @@ export type MainIpcRegistrationDeps = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
-  listSessionCoordinationEvents?(sessionId: string): Awaitable<CoordinationEventSummary[]>;
-  getSessionCoordinationEvent?(sessionId: string, eventId: string): Awaitable<CoordinationEvent>;
-  resolveSessionCoordinationEvent?(
-    sessionId: string,
-    input: CoordinationEventResolveInput,
-  ): Awaitable<CoordinationEvent>;
-  cancelSessionCoordinationEvent?(
-    sessionId: string,
-    input: CoordinationEventCancelInput,
-  ): Awaitable<CoordinationEvent>;
+  listCoordinationEvents?(input: CoordinationEventTrustedListInput): Awaitable<CoordinationEventListResult>;
+  getCoordinationEvent?(eventId: string): Awaitable<CoordinationEvent>;
+  resolveCoordinationEvent?(input: CoordinationEventResolveInput): Awaitable<CoordinationEvent>;
+  cancelCoordinationEvent?(input: CoordinationEventCancelInput): Awaitable<CoordinationEvent>;
   listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
   getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
   createSessionSchedule(sessionId: string, input: CreateSessionScheduleInput): Awaitable<SessionScheduleProjection>;
@@ -569,6 +568,7 @@ type MainIpcWindowDeps = Pick<
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
   | "openMemoryV6ReviewWindow"
+  | "openCoordinationWindow"
   | "openCharacterEditorWindow"
   | "openDiffWindow"
   | "isFilePreviewWindow"
@@ -610,6 +610,7 @@ type MainIpcSettingsDeps = Pick<
   | "resolveEventWindow"
   | "resolveHomeWindow"
   | "isSettingsWindow"
+  | "isCoordinationWindow"
   | "isMemoryV6ReviewWindow"
   | "getAppSettings"
   | "updateAppSettings"
@@ -736,6 +737,7 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "validateWorkspaceDirectory"
   | "resolveSessionWindow"
   | "isSettingsWindow"
+  | "isCoordinationWindow"
   | "getLiveSessionRun"
   | "getProviderQuotaTelemetry"
   | "getSessionContextTelemetry"
@@ -752,10 +754,10 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "listSessionTurnExecutions"
   | "cancelSessionExecution"
   | "cancelSessionRun"
-  | "listSessionCoordinationEvents"
-  | "getSessionCoordinationEvent"
-  | "resolveSessionCoordinationEvent"
-  | "cancelSessionCoordinationEvent"
+  | "listCoordinationEvents"
+  | "getCoordinationEvent"
+  | "resolveCoordinationEvent"
+  | "cancelCoordinationEvent"
 >;
 
 async function assertUsableWorkspaceDirectory(
@@ -808,6 +810,17 @@ function assertMemoryV6ReviewSender(
     return;
   }
   throw new Error("Memory V6 Review IPC is only available from the Memory Review window.");
+}
+
+function assertCoordinationWindowSender(
+  event: IpcMainInvokeEvent,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "isCoordinationWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (window && deps.isCoordinationWindow(window)) {
+    return;
+  }
+  throw new Error("Coordination IPC is only available from the Coordination window.");
 }
 
 function assertSettingsWindowSender(
@@ -1122,6 +1135,9 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
   });
   ipcMain.handle(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL, async () => {
     await deps.openMemoryV6ReviewWindow();
+  });
+  ipcMain.handle(WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL, async () => {
+    await deps.openCoordinationWindow();
   });
   ipcMain.handle(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, async (_event, characterId?: string | null) => {
     await deps.openCharacterEditorWindow(characterId ?? null);
@@ -1768,29 +1784,27 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
     assertTargetSessionWindowSender(event, sessionId, deps);
     return deps.listSessionTurnExecutions(sessionId);
   });
-  ipcMain.handle(WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL, (event, sessionId: string) => {
-    assertTargetSessionWindowSender(event, sessionId, deps);
-    if (!deps.listSessionCoordinationEvents) throw new Error("Coordination event service is unavailable.");
-    return deps.listSessionCoordinationEvents(sessionId);
+  ipcMain.handle(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL, (event, input: unknown) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.listCoordinationEvents) throw new Error("Coordination event service is unavailable.");
+    return deps.listCoordinationEvents(parseCoordinationEventTrustedListInput(input));
   });
-  ipcMain.handle(WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL, (event, sessionId: string, eventId: string) => {
-    assertTargetSessionWindowSender(event, sessionId, deps);
-    if (!deps.getSessionCoordinationEvent) throw new Error("Coordination event service is unavailable.");
-    return deps.getSessionCoordinationEvent(sessionId, eventId);
+  ipcMain.handle(WITHMATE_GET_COORDINATION_EVENT_CHANNEL, (event, eventId: string) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.getCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.getCoordinationEvent(eventId);
   });
-  ipcMain.handle(WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL, (event, sessionId: string, input: unknown) => {
-    assertTargetSessionWindowSender(event, sessionId, deps);
-    if (!deps.resolveSessionCoordinationEvent) throw new Error("Coordination event service is unavailable.");
-    return deps.resolveSessionCoordinationEvent(
-      sessionId,
+  ipcMain.handle(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.resolveCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.resolveCoordinationEvent(
       parseSessionRuntimeOperationInput("coordination.event.resolve", input) as CoordinationEventResolveInput,
     );
   });
-  ipcMain.handle(WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL, (event, sessionId: string, input: unknown) => {
-    assertTargetSessionWindowSender(event, sessionId, deps);
-    if (!deps.cancelSessionCoordinationEvent) throw new Error("Coordination event service is unavailable.");
-    return deps.cancelSessionCoordinationEvent(
-      sessionId,
+  ipcMain.handle(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
+    assertCoordinationWindowSender(event, deps);
+    if (!deps.cancelCoordinationEvent) throw new Error("Coordination event service is unavailable.");
+    return deps.cancelCoordinationEvent(
       parseSessionRuntimeOperationInput("coordination.event.cancel", input) as CoordinationEventCancelInput,
     );
   });

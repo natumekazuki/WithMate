@@ -394,6 +394,7 @@ describe("CoordinationEventStorageV6", () => {
       const service = new CoordinationEventService({
         storage: fixture.storage,
         now: () => new Date(NOW),
+        getSessionRoleBinding: (sessionId) => sessionId === "root-a" ? principal("root-a").roleBinding : null,
         publishCommitted() {
           publishCalls += 1;
           if (publishCalls === 1) throw new Error("publication failed");
@@ -416,7 +417,7 @@ describe("CoordinationEventStorageV6", () => {
         idempotencyKey: "decision-service",
       }, binding("root-a"));
       const resolution = { eventId: decision.eventId, optionId: "a", idempotencyKey: "shared-surface-key" };
-      service.resolveFromTrustedGui("root-a", principal("root-a").roleBinding, resolution);
+      service.resolveFromCoordinationWindow(resolution);
       assert.throws(
         () => service.resolve(resolution, binding("root-a")),
         CoordinationEventIdempotencyConflictError,
@@ -427,33 +428,54 @@ describe("CoordinationEventStorageV6", () => {
     }
   });
 
-  it("COORD-FEED-01: GUI feedは100件より古いopen eventも全pageから保持する", async () => {
+  it("COORD-WINDOW-01: 専用Windowはevent ownerの現行bindingで全rootの判断を取得・回答できる", async () => {
     const fixture = await createFixture();
     try {
-      const blocker = create(fixture.storage, {
-        kind: "blocker",
-        executionId: null,
-        idempotencyKey: "old-blocker",
-        requestFingerprint: "old-blocker",
-      }).event;
-      for (let index = 0; index < 101; index += 1) {
-        create(fixture.storage, {
-          kind: "progress",
-          executionId: null,
-          idempotencyKey: `progress-${index}`,
-          requestFingerprint: `progress-${index}`,
-        });
-      }
       const service = new CoordinationEventService({
         storage: fixture.storage,
+        now: () => new Date(NOW),
+        getSessionRoleBinding: (sessionId) => sessionId === "root-b" ? principal("root-b").roleBinding : null,
         publishCommitted() {},
       });
-      const items = service.listFeedFromTrustedGui("root-a", principal("root-a").roleBinding, "subtree");
-      assert.equal(items.some((event) => event.eventId === blocker.eventId && event.state === "open"), true);
-      assert.equal(items.length, 101);
+      const decision = service.create({
+        kind: "user_decision_required",
+        payload: { summary: "別rootの判断" },
+        options: [{ id: "a", label: "A" }, { id: "b", label: "B" }],
+        idempotencyKey: "global-decision",
+      }, binding("root-b"));
+
+      assert.equal(service.getFromCoordinationWindow(decision.eventId).rootSessionId, "root-b");
+      const staleBindingService = new CoordinationEventService({
+        storage: fixture.storage,
+        now: () => new Date(NOW),
+        getSessionRoleBinding: () => principal("root-a").roleBinding,
+        publishCommitted() {},
+      });
+      assert.throws(() => staleBindingService.resolveFromCoordinationWindow({
+        eventId: decision.eventId,
+        note: "不正なbinding",
+        idempotencyKey: "stale-binding-resolution",
+      }), CoordinationEventNotFoundError);
+      const resolved = service.resolveFromCoordinationWindow({
+        eventId: decision.eventId,
+        note: "自由回答",
+        idempotencyKey: "global-resolution",
+      });
+      assert.equal(resolved.state, "resolved");
+      assert.deepEqual(resolved.actions.at(-1), {
+        sequence: resolved.actions.at(-1)?.sequence,
+        type: "resolved",
+        actorType: "trusted_gui",
+        actorSessionId: null,
+        optionId: null,
+        note: "自由回答",
+        relatedEventId: null,
+        createdAt: NOW,
+      });
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
     }
   });
+
 });

@@ -132,6 +132,8 @@ import type {
   CoordinationEventCancelInput,
   CoordinationEventResolveInput,
   CoordinationEventSummary,
+  CoordinationEventTrustedListInput,
+  CoordinationEventListResult,
 } from "./coordination-event.js";
 
 export type WithMateWindowNavigationApi = {
@@ -140,6 +142,7 @@ export type WithMateWindowNavigationApi = {
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
   openMemoryV6ReviewWindow(): Promise<void>;
+  openCoordinationWindow(): Promise<void>;
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   openSessionFilePreviewWindow(
@@ -155,6 +158,13 @@ export type WithMateWindowNavigationApi = {
   openCrashDumpFolder(): Promise<void>;
   openSessionTerminal(sessionId: string): Promise<void>;
   openTerminalAtPath(target: string): Promise<void>;
+};
+
+export type WithMateWindowCoordinationApi = {
+  listCoordinationEvents(input: CoordinationEventTrustedListInput): Promise<CoordinationEventListResult>;
+  getCoordinationEvent(eventId: string): Promise<CoordinationEvent>;
+  resolveCoordinationEvent(input: CoordinationEventResolveInput): Promise<CoordinationEvent>;
+  cancelCoordinationEvent(input: CoordinationEventCancelInput): Promise<CoordinationEvent>;
 };
 
 export type WithMateWindowCatalogApi = {
@@ -203,10 +213,6 @@ export type WithMateWindowSessionApi = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): Promise<void>;
-  listSessionCoordinationEvents(sessionId: string): Promise<CoordinationEventSummary[]>;
-  getSessionCoordinationEvent(sessionId: string, eventId: string): Promise<CoordinationEvent>;
-  resolveSessionCoordinationEvent(sessionId: string, input: CoordinationEventResolveInput): Promise<CoordinationEvent>;
-  cancelSessionCoordinationEvent(sessionId: string, input: CoordinationEventCancelInput): Promise<CoordinationEvent>;
   listSessionAuditLogs(sessionId: string): Promise<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Promise<AuditLogSummary[]>;
   listSessionAuditLogSummaryPage(
@@ -385,6 +391,7 @@ export type WithMateWindowCharacterApi = {
 
 export type WithMateWindowApi =
   & WithMateWindowNavigationApi
+  & WithMateWindowCoordinationApi
   & MemoryV6ReviewApi
   & WithMateWindowCatalogApi
   & WithMateWindowAuxiliaryApi

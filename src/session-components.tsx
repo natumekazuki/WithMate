@@ -18,7 +18,6 @@ import type {
   SessionContextTelemetry,
   AuditLogSummary,
 } from "./app-state.js";
-import type { CoordinationEvent, CoordinationEventSummary } from "./coordination-event.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
 import {
@@ -1633,30 +1632,7 @@ export type SessionContextPaneProps = {
   latestCommandEmptyText?: string;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
-  coordinationEvents?: CoordinationEventSummary[];
-  coordinationEventDetails?: Record<string, CoordinationEvent>;
-  coordinationResolutionPendingEventId?: string | null;
-  coordinationFeedErrorMessage?: string | null;
-  onLoadCoordinationEvent?: (eventId: string) => void;
-  onResolveCoordinationOption?: (eventId: string, optionId: string) => void;
-  onRetryCoordinationEvents?: () => void;
 };
-
-export function CoordinationFeedErrorNotice({
-  message,
-  onRetry,
-}: {
-  message: string | null;
-  onRetry?: () => void;
-}) {
-  if (!message) return null;
-  return (
-    <div className="coordination-feed-error" role="alert">
-      <span>{message}</span>
-      <button type="button" onClick={onRetry}>再試行</button>
-    </div>
-  );
-}
 
 type SessionPaneErrorBoundaryProps = {
   children: ReactNode;
@@ -1773,13 +1749,6 @@ export function SessionContextPane({
   latestCommandEmptyText = "",
   onCycleContextPaneTab,
   onOpenCompanionReview,
-  coordinationEvents = [],
-  coordinationEventDetails = {},
-  coordinationResolutionPendingEventId = null,
-  coordinationFeedErrorMessage = null,
-  onLoadCoordinationEvent,
-  onResolveCoordinationOption,
-  onRetryCoordinationEvents,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taskEntries = backgroundTasks ?? [];
@@ -1807,15 +1776,12 @@ export function SessionContextPane({
         return companionGroupMonitorEntries
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
           .join("|");
-      case "coordination":
-        return coordinationEvents.map((event) => `${event.eventId}:${event.state}:${event.sequence}`).join("|");
       default:
         return "";
     }
   }, [
     activeContextPaneTab,
     companionGroupMonitorEntries,
-    coordinationEvents,
     latestCommandView,
     liveRunReasoningText,
     runningDetailsEntries,
@@ -1858,7 +1824,7 @@ export function SessionContextPane({
       return;
     }
 
-    contentNode.scrollTop = activeContextPaneTab === "companion-group" || activeContextPaneTab === "coordination"
+    contentNode.scrollTop = activeContextPaneTab === "companion-group"
       ? 0
       : contentNode.scrollHeight;
   }, [contentScrollKey]);
@@ -2032,72 +1998,6 @@ export function SessionContextPane({
                   <p className="command-monitor-empty-subtle">Copilot の sub-agent や background shell がある時だけここへ出るよ。</p>
                 </div>
               )
-            ) : null}
-
-            {activeContextPaneTab === "coordination" ? (
-              <div className="coordination-feed" aria-label="Coordination events">
-                <CoordinationFeedErrorNotice
-                  message={coordinationFeedErrorMessage}
-                  onRetry={onRetryCoordinationEvents}
-                />
-                {coordinationEvents.map((event) => {
-                  const detail = coordinationEventDetails[event.eventId];
-                  return (
-                    <article key={`${event.eventId}:${event.state}`} className={`coordination-feed-item ${event.state}`}>
-                      <div className="coordination-feed-meta">
-                        <span>{event.kind}</span>
-                        <span>{event.state}</span>
-                        <time dateTime={event.createdAt}>{new Date(event.createdAt).toLocaleString()}</time>
-                      </div>
-                      <p>{event.summary}</p>
-                      <span className="coordination-feed-actor">{event.actorSessionId}</span>
-                      <details onToggle={(toggleEvent) => {
-                        if (toggleEvent.currentTarget.open && !detail) onLoadCoordinationEvent?.(event.eventId);
-                      }}>
-                        <summary>詳細</summary>
-                        {detail ? (
-                          <div className="coordination-feed-detail">
-                            {(detail.payload.facts ?? []).map((fact) => <p key={`fact-${fact}`}>{fact}</p>)}
-                            {(detail.payload.assumptions ?? []).map((assumption) => <p key={`assumption-${assumption}`}>{assumption}</p>)}
-                            {detail.payload.impact ? <p>{detail.payload.impact}</p> : null}
-                            {detail.payload.recommendation ? <p>{detail.payload.recommendation}</p> : null}
-                            {detail.correctedEventId ? (
-                              <p className="coordination-feed-relation">訂正対象: {detail.correctedEventId}</p>
-                            ) : null}
-                            {detail.actions.length > 0 ? (
-                              <ol className="coordination-action-history" aria-label="状態変更履歴">
-                                {detail.actions.map((action) => (
-                                  <li key={action.sequence}>
-                                    <span>{action.type}</span>
-                                    {action.optionId ? <span>option: {action.optionId}</span> : null}
-                                    {action.note ? <span>{action.note}</span> : null}
-                                    <time dateTime={action.createdAt}>{new Date(action.createdAt).toLocaleString()}</time>
-                                  </li>
-                                ))}
-                              </ol>
-                            ) : null}
-                            {detail.kind === "user_decision_required" && detail.state === "open" ? (
-                              <div className="coordination-option-list">
-                                {detail.options.map((option) => (
-                                  <button
-                                    key={option.id}
-                                    type="button"
-                                    disabled={coordinationResolutionPendingEventId === event.eventId}
-                                    onClick={() => onResolveCoordinationOption?.(event.eventId, option.id)}
-                                    title={option.description}
-                                  >
-                                    {option.label}
-                                  </button>
-                                ))}
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : <span className="coordination-feed-detail-loading" role="status" aria-label="詳細を読み込み中" />}
-                      </details>
-                    </article>
-                  );
-                })}
-              </div>
             ) : null}
 
             {activeContextPaneTab === "reasoning" ? (

@@ -538,7 +538,9 @@ Coordination UIはSession右ペインへ置かず、単一のCoordination Window
 
 Eventのoriginはactor Sessionである。Windowはcanonical Session projectionからSession titleを主表示し、Character iconを識別補助として表示する。Character nameとiconをCoordination Eventへ複製保存しない。Session filterはHome相当のSession title検索と逐次読み込みで対象を選び、選択後のevent queryへ`sessionId`を渡す。rendererが読込済みevent pageだけをfilterしてはならない。Session groupingとCoordination eventを持つSessionだけを列挙するaggregateはfirst sliceへ含めない。
 
-detailは選択時に取得する。`user_decision_required`はtrusted GUI IPCだけがresolveでき、提示optionのstable IDまたは自由回答のどちらか一方を受け付ける。自由回答はactionの`note`へ保存し、`optionId`は`null`とする。storage commit後signalは再読込の契機であり、rendererはevent filter、Session ID、request revisionを照合してinitial load、通知の追い越し、Session切替後の古いresponseを捨てる。external streaming endpointは持たない。
+detailは選択時に取得する。`user_decision_required`はCoordination Windowのtrusted GUI IPCだけがresolveでき、提示optionのstable IDまたは自由回答のどちらか一方を受け付ける。自由回答はactionの`note`へ保存し、`optionId`は`null`とする。Main Processは対象Eventのactor Sessionから現行Role bindingを取得し、canonical binding検証を通してからmutationを行う。全Sessionを操作する合成principalやcanonical bindingの迂回は作らない。
+
+storage commit後signalは再読込の契機である。rendererはevent filter、Session ID、request generationを照合し、Event pageとorigin Session projectionの両方が揃った結果だけを表示へ反映する。initial load、通知の追い越し、Session切替後の古いresponseは破棄する。external streaming endpointは持たない。
 
 `turn.run`と`turn.enqueue`は、bindingのactor Session IDとcanonical Character stateから次のinitiatorをexecution作成時に確定し、`request_json`へ保存する。GUI送信は`{ kind: "user" }`を保存する。
 

@@ -9,11 +9,9 @@ import type {
 } from "./app-state.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
-import type { CoordinationEventSummary } from "./coordination-event.js";
+export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group";
 
-export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group" | "coordination";
-
-export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group", "coordination"];
+export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group"];
 
 export type LatestCommandView = {
   status: string;
@@ -357,8 +355,6 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "Tasks";
     case "companion-group":
       return "CompanionGroup";
-    case "coordination":
-      return "Coordination";
     default:
       return tab;
   }
@@ -369,15 +365,11 @@ export function resolveAvailableContextPaneTabs({
   hasCompanionGroupMonitor = false,
   hasReasoningCapability = false,
   hasReasoningText = false,
-  hasCoordinationEvents = false,
-  hasCoordinationFeedError = false,
 }: {
   isCopilotSession: boolean;
   hasCompanionGroupMonitor?: boolean;
   hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
-  hasCoordinationEvents?: boolean;
-  hasCoordinationFeedError?: boolean;
 }): ContextPaneTabKey[] {
   return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
     if (tab === "reasoning") {
@@ -392,27 +384,7 @@ export function resolveAvailableContextPaneTabs({
       return hasCompanionGroupMonitor;
     }
 
-    if (tab === "coordination") return hasCoordinationEvents || hasCoordinationFeedError;
-
     return true;
-  });
-}
-
-const COORDINATION_OPEN_PRIORITY = ["user_decision_required", "blocker", "escalation"] as const;
-
-export function orderCoordinationEventSummaries(
-  items: readonly CoordinationEventSummary[],
-): CoordinationEventSummary[] {
-  return [...items].sort((left, right) => {
-    const leftPriority = left.state === "open"
-      ? COORDINATION_OPEN_PRIORITY.indexOf(left.kind as (typeof COORDINATION_OPEN_PRIORITY)[number])
-      : -1;
-    const rightPriority = right.state === "open"
-      ? COORDINATION_OPEN_PRIORITY.indexOf(right.kind as (typeof COORDINATION_OPEN_PRIORITY)[number])
-      : -1;
-    const leftBucket = leftPriority >= 0 ? leftPriority : COORDINATION_OPEN_PRIORITY.length;
-    const rightBucket = rightPriority >= 0 ? rightPriority : COORDINATION_OPEN_PRIORITY.length;
-    return leftBucket !== rightBucket ? leftBucket - rightBucket : right.sequence - left.sequence;
   });
 }
 
@@ -469,9 +441,6 @@ export function buildContextPaneProjection({
     case "companion-group":
       badgeLabel = companionGroupMonitorEntries.length > 0 ? String(companionGroupMonitorEntries.length) : "";
       break;
-    case "coordination":
-      badgeLabel = "";
-      break;
     default:
       badgeLabel = "";
       break;
@@ -490,9 +459,6 @@ export function buildContextPaneProjection({
       break;
     case "companion-group":
       toneClassName = companionGroupToneClassName;
-      break;
-    case "coordination":
-      toneClassName = "neutral";
       break;
     default:
       toneClassName = "unknown";

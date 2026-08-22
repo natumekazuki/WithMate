@@ -182,6 +182,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 初期状態はSession filterなし、event filterは「すべて」とする
 - 一覧は新しいeventから並べ、要対応を初期状態で先頭へ固定しない
 - 要対応、回答済み、すべて、履歴は同じ一覧に対するfilterとして提供する
+  - 要対応は`open`、回答済みは`resolved`、履歴は`recorded`を対象にする
+  - `superseded`と`cancelled`は「すべて」で確認する
 - Event rowはkind、state、summary、Session title、Character icon、時刻を表示する
   - Session titleはevent originを示す主情報とする
   - Character iconはユーザーがSessionを識別するための補助情報とし、Character nameは常設表示しない
@@ -197,6 +199,7 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
   - option IDと自由回答を同時に送らない
 - Session groupingとCoordination Eventを持つSessionだけの列挙はfirst sliceへ含めない
 - loadingは対象領域のskeletonまたはspinner、取得失敗は短い状態と再試行操作で示し、常設説明文を置かない
+- Event pageとorigin Session projectionは同じrequest generationで確定し、古いresponseや片方だけの成功を新しい一覧へ混ぜない
 - native control、visible focus、accessible name、Escまたは外側clickで閉じられるSession pickerを維持する
 
 ## Session Window

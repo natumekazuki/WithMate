@@ -216,6 +216,10 @@ export class CoordinationEventStorageV6 {
     return event;
   }
 
+  getTrusted(eventId: string): CoordinationEvent {
+    return this.getRequired(eventId);
+  }
+
   getByIdempotencyKey(principal: CoordinationMutationPrincipal, key: string): CoordinationEvent {
     this.assertCanonicalBinding(principal);
     const row = this.db.prepare(`

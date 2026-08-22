@@ -1407,6 +1407,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             });
           },
           loadHomeEntry: (window, mode) => requireWindowEntryLoader().loadHomeEntry(window, mode),
+          loadCoordinationEntry: (window) => requireWindowEntryLoader().loadCoordinationEntry(window),
           loadDiffEntry: (window, token) => requireWindowEntryLoader().loadDiffEntry(window, token),
           loadFilePreviewEntry: (window, token) => requireWindowEntryLoader().loadFilePreviewEntry(window, token),
           navigateFilePreviewWindow: (window, payload) => {
@@ -1545,8 +1546,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 openSessionMonitorWindow,
                 openSettingsWindow,
                 openMemoryV6ReviewWindow,
+                openCoordinationWindow,
                 isSettingsWindow: (window) => requireMainWindowFacade().isSettingsWindow(window),
                 isMemoryV6ReviewWindow: (window) => requireMainWindowFacade().isMemoryV6ReviewWindow(window),
+                isCoordinationWindow: (window) => requireMainWindowFacade().isCoordinationWindow(window),
                 openCharacterEditorWindow,
                 openDiffWindow,
                 isFilePreviewWindow: (window, sessionId) =>
@@ -1809,42 +1812,14 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainSessionCommandFacade().enqueueSessionTurn(sessionId, request),
                 listSessionTurnExecutions: (sessionId) =>
                   requireMainSessionCommandFacade().listSessionTurnExecutions(sessionId),
-                listSessionCoordinationEvents: (sessionId) => {
-                  const session = getSession(sessionId);
-                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
-                  const scope = session.roleBinding.sessionRole === "overall-coordinator"
-                    || session.roleBinding.sessionRole === "task-coordinator"
-                    ? "subtree"
-                    : "self";
-                  return requireCoordinationEventService().listFeedFromTrustedGui(
-                    sessionId,
-                    session.roleBinding,
-                    scope,
-                  );
-                },
-                getSessionCoordinationEvent: (sessionId, eventId) => {
-                  const session = getSession(sessionId);
-                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
-                  return requireCoordinationEventService().getFromTrustedGui(sessionId, session.roleBinding, eventId);
-                },
-                resolveSessionCoordinationEvent: (sessionId, input) => {
-                  const session = getSession(sessionId);
-                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
-                  return requireCoordinationEventService().resolveFromTrustedGui(
-                    sessionId,
-                    session.roleBinding,
-                    input,
-                  );
-                },
-                cancelSessionCoordinationEvent: (sessionId, input) => {
-                  const session = getSession(sessionId);
-                  if (!session?.roleBinding) throw new Error("Session Role binding is unavailable.");
-                  return requireCoordinationEventService().cancelFromTrustedGui(
-                    sessionId,
-                    session.roleBinding,
-                    input,
-                  );
-                },
+                listCoordinationEvents: (input) =>
+                  requireCoordinationEventService().listAllFromTrustedGui(input),
+                getCoordinationEvent: (eventId) =>
+                  requireCoordinationEventService().getFromCoordinationWindow(eventId),
+                resolveCoordinationEvent: (input) =>
+                  requireCoordinationEventService().resolveFromCoordinationWindow(input),
+                cancelCoordinationEvent: (input) =>
+                  requireCoordinationEventService().cancelFromCoordinationWindow(input),
                 cancelSessionExecution: (sessionId, request) =>
                   requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
@@ -4116,6 +4091,7 @@ function requireCoordinationEventService(): CoordinationEventService {
     coordinationEventService = new CoordinationEventService({
       storage: coordinationEventStorage,
       publishCommitted: broadcastCoordinationEventsChanged,
+      getSessionRoleBinding: (sessionId) => requireSessionStorageV6().getSessionRoleBinding(sessionId),
     });
   }
   return coordinationEventService;
@@ -4975,6 +4951,10 @@ async function openSettingsWindow(): Promise<BrowserWindow> {
 
 async function openMemoryV6ReviewWindow(): Promise<BrowserWindow> {
   return requireMainWindowFacade().openMemoryV6ReviewWindow();
+}
+
+async function openCoordinationWindow(): Promise<BrowserWindow> {
+  return requireMainWindowFacade().openCoordinationWindow();
 }
 
 async function openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow> {

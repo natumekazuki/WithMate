@@ -32,6 +32,14 @@ export class MainWindowFacade {
     return this.deps.getAuxWindowService().openMemoryV6ReviewWindow();
   }
 
+  async openCoordinationWindow(): Promise<BrowserWindow> {
+    return this.deps.getAuxWindowService().openCoordinationWindow();
+  }
+
+  isCoordinationWindow(window: BrowserWindow): boolean {
+    return this.deps.getAuxWindowService().isCoordinationWindow(window);
+  }
+
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean {
     return this.deps.getAuxWindowService().isMemoryV6ReviewWindow(window);
   }

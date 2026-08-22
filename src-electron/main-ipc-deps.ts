@@ -28,6 +28,8 @@ import type {
   CoordinationEventCancelInput,
   CoordinationEventResolveInput,
   CoordinationEventSummary,
+  CoordinationEventListResult,
+  CoordinationEventTrustedListInput,
 } from "../src/coordination-event.js";
 import type {
   MarkdownLinkContextMenuRequest,
@@ -154,8 +156,10 @@ export type MainIpcWindowDepsArgs = {
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
   openMemoryV6ReviewWindow(): Promise<BrowserWindow>;
+  openCoordinationWindow(): Promise<BrowserWindow>;
   isSettingsWindow(window: BrowserWindow): boolean;
   isMemoryV6ReviewWindow(window: BrowserWindow): boolean;
+  isCoordinationWindow(window: BrowserWindow): boolean;
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
@@ -347,16 +351,10 @@ export type MainIpcSessionRuntimeDepsArgs = {
   runSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<Session>;
   enqueueSessionTurn(sessionId: string, request: RunSessionTurnRequest): Promise<EnqueueSessionTurnResult>;
   listSessionTurnExecutions(sessionId: string): Awaitable<SessionTurnExecutionProjection[]>;
-  listSessionCoordinationEvents(sessionId: string): Awaitable<CoordinationEventSummary[]>;
-  getSessionCoordinationEvent(sessionId: string, eventId: string): Awaitable<CoordinationEvent>;
-  resolveSessionCoordinationEvent(
-    sessionId: string,
-    input: CoordinationEventResolveInput,
-  ): Awaitable<CoordinationEvent>;
-  cancelSessionCoordinationEvent(
-    sessionId: string,
-    input: CoordinationEventCancelInput,
-  ): Awaitable<CoordinationEvent>;
+  listCoordinationEvents(input: CoordinationEventTrustedListInput): Awaitable<CoordinationEventListResult>;
+  getCoordinationEvent(eventId: string): Awaitable<CoordinationEvent>;
+  resolveCoordinationEvent(input: CoordinationEventResolveInput): Awaitable<CoordinationEvent>;
+  cancelCoordinationEvent(input: CoordinationEventCancelInput): Awaitable<CoordinationEvent>;
   cancelSessionExecution(
     sessionId: string,
     request: CancelSessionExecutionRequest,
@@ -452,8 +450,12 @@ export function createMainIpcRegistrationDeps(
     openMemoryV6ReviewWindow: async () => {
       await args.window.openMemoryV6ReviewWindow();
     },
+    openCoordinationWindow: async () => {
+      await args.window.openCoordinationWindow();
+    },
     isSettingsWindow: args.window.isSettingsWindow,
     isMemoryV6ReviewWindow: args.window.isMemoryV6ReviewWindow,
+    isCoordinationWindow: args.window.isCoordinationWindow,
     openCharacterEditorWindow: async (characterId) => {
       await args.window.openCharacterEditorWindow(characterId);
     },
@@ -588,6 +590,10 @@ export function createMainIpcRegistrationDeps(
     runSessionTurn: args.sessionRuntime.runSessionTurn,
     enqueueSessionTurn: args.sessionRuntime.enqueueSessionTurn,
     listSessionTurnExecutions: args.sessionRuntime.listSessionTurnExecutions,
+    listCoordinationEvents: args.sessionRuntime.listCoordinationEvents,
+    getCoordinationEvent: args.sessionRuntime.getCoordinationEvent,
+    resolveCoordinationEvent: args.sessionRuntime.resolveCoordinationEvent,
+    cancelCoordinationEvent: args.sessionRuntime.cancelCoordinationEvent,
     cancelSessionExecution: args.sessionRuntime.cancelSessionExecution,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
     listSessionSchedules: args.sessionSchedules.listSessionSchedules,

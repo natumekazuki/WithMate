@@ -12,6 +12,7 @@ import type {
   WithMateWindowCatalogApi,
   WithMateWindowCharacterApi,
   WithMateWindowCompanionApi,
+  WithMateWindowCoordinationApi,
   WithMateWindowNavigationApi,
   WithMateWindowObservabilityApi,
   WithMateWindowAuxiliaryApi,
@@ -95,6 +96,7 @@ import {
   WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_CHANNEL,
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
+  WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL,
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
@@ -120,10 +122,10 @@ import {
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
-  WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL,
-  WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL,
-  WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL,
-  WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
+  WITHMATE_GET_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL,
+  WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -271,6 +273,9 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openMemoryV6ReviewWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL);
     },
+    openCoordinationWindow() {
+      return ipcRenderer.invoke(WITHMATE_OPEN_COORDINATION_WINDOW_CHANNEL);
+    },
     openCharacterEditorWindow(characterId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL, characterId ?? null);
     },
@@ -303,6 +308,23 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     },
     openTerminalAtPath(target) {
       return ipcRenderer.invoke(WITHMATE_OPEN_TERMINAL_AT_PATH_CHANNEL, target);
+    },
+  };
+}
+
+function createCoordinationApi(ipcRenderer: IpcRendererLike): WithMateWindowCoordinationApi {
+  return {
+    listCoordinationEvents(input) {
+      return ipcRenderer.invoke(WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL, input);
+    },
+    getCoordinationEvent(eventId) {
+      return ipcRenderer.invoke(WITHMATE_GET_COORDINATION_EVENT_CHANNEL, eventId);
+    },
+    resolveCoordinationEvent(input) {
+      return ipcRenderer.invoke(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL, input);
+    },
+    cancelCoordinationEvent(input) {
+      return ipcRenderer.invoke(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL, input);
     },
   };
 }
@@ -418,18 +440,6 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     cancelSessionRun(sessionId) {
       return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_RUN_CHANNEL, sessionId);
-    },
-    listSessionCoordinationEvents(sessionId) {
-      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_COORDINATION_EVENTS_CHANNEL, sessionId);
-    },
-    getSessionCoordinationEvent(sessionId, eventId) {
-      return ipcRenderer.invoke(WITHMATE_GET_SESSION_COORDINATION_EVENT_CHANNEL, sessionId, eventId);
-    },
-    resolveSessionCoordinationEvent(sessionId, input) {
-      return ipcRenderer.invoke(WITHMATE_RESOLVE_SESSION_COORDINATION_EVENT_CHANNEL, sessionId, input);
-    },
-    cancelSessionCoordinationEvent(sessionId, input) {
-      return ipcRenderer.invoke(WITHMATE_CANCEL_SESSION_COORDINATION_EVENT_CHANNEL, sessionId, input);
     },
     listSessionAuditLogs(sessionId) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, sessionId);
@@ -962,6 +972,7 @@ export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateW
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
+    ...createCoordinationApi(ipcRenderer),
     ...createMemoryV6ReviewApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
     ...createSessionApi(ipcRenderer),

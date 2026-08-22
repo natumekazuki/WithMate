@@ -33,6 +33,7 @@ export class CoordinationEventPublicationError extends Error {
 export type CoordinationEventServiceDeps = {
   storage: CoordinationEventStorageV6;
   publishCommitted(event: CoordinationEvent): void;
+  getSessionRoleBinding?(sessionId: string): SessionRoleBinding | null;
   now?(): Date;
 };
 
@@ -68,20 +69,6 @@ export class CoordinationEventService {
     };
   }
 
-  listFromTrustedGui(
-    viewerSessionId: string,
-    roleBinding: SessionRoleBinding,
-    input: CoordinationEventListInput,
-  ): CoordinationEventListResult {
-    const principal: CoordinationMutationPrincipal = { sessionId: viewerSessionId, roleBinding, actorType: "trusted_gui" };
-    const beforeSequence = input.cursor ? decodeCursor(principal.sessionId, input, input.cursor) : null;
-    const result = this.deps.storage.list(principal, input, beforeSequence);
-    return {
-      ...result,
-      ...(result.nextCursor ? { nextCursor: encodeCursor(principal.sessionId, input, Number(result.nextCursor)) } : {}),
-    };
-  }
-
   listAllFromTrustedGui(input: CoordinationEventTrustedListInput): CoordinationEventListResult {
     const beforeSequence = input.cursor ? decodeTrustedCursor(input, input.cursor) : null;
     const result = this.deps.storage.listTrusted(input, beforeSequence);
@@ -91,28 +78,16 @@ export class CoordinationEventService {
     };
   }
 
-  listFeedFromTrustedGui(
-    viewerSessionId: string,
-    roleBinding: SessionRoleBinding,
-    scope: CoordinationEventListInput["scope"],
-  ): CoordinationEventListResult["items"] {
-    const openItems: CoordinationEventListResult["items"] = [];
-    let cursor: string | undefined;
-    do {
-      const page = this.listFromTrustedGui(viewerSessionId, roleBinding, {
-        scope,
-        state: "open",
-        limit: 100,
-        ...(cursor ? { cursor } : {}),
-      });
-      openItems.push(...page.items);
-      cursor = page.nextCursor;
-    } while (cursor);
+  getFromCoordinationWindow(eventId: string): CoordinationEvent {
+    return this.deps.storage.getTrusted(eventId);
+  }
 
-    const recentItems = this.listFromTrustedGui(viewerSessionId, roleBinding, { scope, limit: 100 }).items;
-    const merged = new Map(openItems.map((event) => [event.eventId, event]));
-    for (const event of recentItems) merged.set(event.eventId, event);
-    return [...merged.values()];
+  resolveFromCoordinationWindow(input: CoordinationEventResolveInput): CoordinationEvent {
+    return this.resolveAs(input, this.coordinationWindowPrincipalFor(input.eventId));
+  }
+
+  cancelFromCoordinationWindow(input: CoordinationEventCancelInput): CoordinationEvent {
+    return this.cancelAs(input, this.coordinationWindowPrincipalFor(input.eventId));
   }
 
   get(input: CoordinationEventGetInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
@@ -122,35 +97,12 @@ export class CoordinationEventService {
       : this.deps.storage.getByIdempotencyKey(principal, input.idempotencyKey!);
   }
 
-  getFromTrustedGui(viewerSessionId: string, roleBinding: SessionRoleBinding, eventId: string): CoordinationEvent {
-    return this.deps.storage.getVisible(
-      { sessionId: viewerSessionId, roleBinding, actorType: "trusted_gui" },
-      eventId,
-    );
-  }
-
   resolve(input: CoordinationEventResolveInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
     return this.resolveAs(input, sessionPrincipal(binding));
   }
 
-  resolveFromTrustedGui(
-    viewerSessionId: string,
-    roleBinding: SessionRoleBinding,
-    input: CoordinationEventResolveInput,
-  ): CoordinationEvent {
-    return this.resolveAs(input, { sessionId: viewerSessionId, roleBinding, actorType: "trusted_gui" });
-  }
-
   cancel(input: CoordinationEventCancelInput, binding: ResolvedAgentRuntimeBinding): CoordinationEvent {
     return this.cancelAs(input, sessionPrincipal(binding));
-  }
-
-  cancelFromTrustedGui(
-    viewerSessionId: string,
-    roleBinding: SessionRoleBinding,
-    input: CoordinationEventCancelInput,
-  ): CoordinationEvent {
-    return this.cancelAs(input, { sessionId: viewerSessionId, roleBinding, actorType: "trusted_gui" });
   }
 
   correct(input: CoordinationEventCorrectInput, binding: ResolvedAgentRuntimeBinding): CoordinationEventCorrectionResult {
@@ -194,6 +146,17 @@ export class CoordinationEventService {
     });
     this.publish(outcome.event);
     return outcome.event;
+  }
+
+  private coordinationWindowPrincipalFor(eventId: string): CoordinationMutationPrincipal {
+    const event = this.deps.storage.getTrusted(eventId);
+    const roleBinding = this.deps.getSessionRoleBinding?.(event.actorSessionId) ?? null;
+    if (!roleBinding) throw new CoordinationEventValidationError(
+      "The event owner no longer has a canonical Session Role binding.",
+      { field: "eventId" },
+      "SESSION_BINDING_FORBIDDEN",
+    );
+    return { sessionId: event.actorSessionId, actorType: "trusted_gui", roleBinding };
   }
 
   private publish(event: CoordinationEvent): void {

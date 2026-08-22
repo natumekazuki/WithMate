@@ -112,12 +112,19 @@ export type CoordinationEventGetInput =
   | { eventId: string; idempotencyKey?: never }
   | { eventId?: never; idempotencyKey: string };
 
-export type CoordinationEventResolveInput = {
-  eventId: string;
-  optionId?: string;
-  note?: string;
-  idempotencyKey: string;
-};
+export type CoordinationEventResolveInput =
+  | {
+      eventId: string;
+      optionId: string;
+      note?: never;
+      idempotencyKey: string;
+    }
+  | {
+      eventId: string;
+      optionId?: never;
+      note: string;
+      idempotencyKey: string;
+    };
 
 export type CoordinationEventCancelInput = {
   eventId: string;
