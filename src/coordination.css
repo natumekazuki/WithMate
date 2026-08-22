@@ -464,6 +464,19 @@
   outline: 0;
 }
 
+.coordination-session-trigger:disabled,
+.coordination-filter-tabs button:disabled,
+.coordination-event-row:disabled,
+.coordination-options button:disabled,
+.coordination-cancel-action:disabled,
+.coordination-custom-answer textarea:disabled {
+  opacity: 1;
+}
+
+.coordination-custom-answer textarea:disabled {
+  -webkit-text-fill-color: currentColor;
+}
+
 .coordination-primary-action,
 .coordination-cancel-action {
   padding: 9px 14px;

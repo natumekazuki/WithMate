@@ -612,7 +612,7 @@ export default function CoordinationApp() {
                   <button className="coordination-cancel-action" type="button" disabled={mutationPending} onClick={() => void cancelEvent()}>イベントを取り消す</button>
                 </div>
               ) : null}
-              {mutationPending ? <LoadingIndicator label="変更を保存中" /> : null}
+              {mutationPending ? <span className="sr-only" role="status" aria-live="polite">変更を保存中</span> : null}
               {mutationFeedback ? <p className="coordination-feedback" role="status">{mutationFeedback}</p> : null}
             </div>
           ) : null}
