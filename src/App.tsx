@@ -105,6 +105,7 @@ import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDia
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   createAuxiliaryHeaderActions,
+  createMessageCollapseHeaderAction,
   resolveAuxiliaryHeaderActionState,
 } from "./chat/chat-header-actions.js";
 import {
@@ -3870,6 +3871,17 @@ export default function AgentSessionWindowApp() {
     onStart: handleOpenAuxiliaryLaunchDialog,
     onReturnToMain: () => void handleReturnToMainSession(),
   });
+  const sessionHeaderActions = (
+    <>
+      {messageCollapseTargets.length > 0 ? (
+        createMessageCollapseHeaderAction({
+          allMessagesCollapsed: messageCollapseTargets.every((target) => collapsedMessageKeys.has(target.key)),
+          onToggle: handleToggleAllMessageCollapse,
+        })
+      ) : null}
+      {auxiliaryHeaderActions}
+    </>
+  );
 
   if (!desktopRuntime) {
     return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
@@ -4157,7 +4169,7 @@ export default function AgentSessionWindowApp() {
         auditLogsTotal,
         auditLogsErrorMessage,
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
-        headerActions: auxiliaryHeaderActions,
+        headerActions: sessionHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
         onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),

@@ -2663,8 +2663,6 @@ export function SessionMessageColumn({
     () => new Map(messageCollapseTargets.map((target) => [target.key, target])),
     [messageCollapseTargets],
   );
-  const allMessagesCollapsed = messageCollapseTargets.length > 0
-    && messageCollapseTargets.every((target) => collapsedMessageKeys.has(target.key));
 
   useShortcutScope("message-list", isContentActive);
   useShortcutCommandHandler(
@@ -3193,18 +3191,6 @@ export function SessionMessageColumn({
         onNext={() => navigateFindMatch(1)}
         onClose={() => setFindOpen(false)}
       />
-      {messageCollapseTargets.length > 0 && onToggleAllMessageCollapse ? (
-        <div className="message-collapse-toolbar" role="group" aria-label="完了済みmessageの表示">
-          <button
-            className="message-collapse-toolbar-button"
-            type="button"
-            onClick={onToggleAllMessageCollapse}
-            aria-label={allMessagesCollapsed ? "完了済みmessageをすべて展開" : "完了済みmessageをすべて縮小"}
-          >
-            {allMessagesCollapsed ? "すべて展開" : "すべて縮小"}
-          </button>
-        </div>
-      ) : null}
       <div className="session-message-list" ref={messageListRef} onScroll={handleMessageListScroll}>
         {messages.length > 0 || isRunning ? (
           <div className="session-message-list-window">

@@ -354,6 +354,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       messageCollapseTargets: input.messageCollapseTargets,
       collapsedMessageKeys: input.collapsedMessageKeys,
       messageJumpRequest: input.messageJumpRequest,
+      isContentActive: input.mainContent === undefined,
       onToggleMessageCollapse: input.onToggleMessageCollapse,
       onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
       expandedArtifacts: input.expandedArtifacts,

@@ -170,6 +170,7 @@ export type LiveSessionMessageColumnProps = {
   messageCollapseTargets?: ChatMessageColumnProps["messageCollapseTargets"];
   collapsedMessageKeys?: ChatMessageColumnProps["collapsedMessageKeys"];
   messageJumpRequest?: ChatMessageColumnProps["messageJumpRequest"];
+  isContentActive?: ChatMessageColumnProps["isContentActive"];
   onToggleMessageCollapse?: ChatMessageColumnProps["onToggleMessageCollapse"];
   onToggleAllMessageCollapse?: ChatMessageColumnProps["onToggleAllMessageCollapse"];
   expandedArtifacts: Record<string, boolean>;
@@ -347,6 +348,7 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     messageCollapseTargets: input.messageCollapseTargets,
     collapsedMessageKeys: input.collapsedMessageKeys,
     messageJumpRequest: input.messageJumpRequest,
+    isContentActive: input.isContentActive,
     onToggleMessageCollapse: input.onToggleMessageCollapse,
     onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
     expandedArtifacts: input.expandedArtifacts,

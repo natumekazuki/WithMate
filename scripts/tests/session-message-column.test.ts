@@ -675,14 +675,20 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     });
     assert.equal(toggledKey, "session-s-0");
 
-    const bulkButton = mounted.container.querySelector<HTMLButtonElement>(
-      "button[aria-label='完了済みmessageをすべて縮小']",
-    );
-    assert.ok(bulkButton);
+    const messageList = mounted.messageListRef.current;
+    assert.ok(messageList);
+    const shortcutEvent = new mounted.dom.window.KeyboardEvent("keydown", {
+      key: "M",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
     await act(async () => {
-      bulkButton.click();
+      messageList.dispatchEvent(shortcutEvent);
     });
     assert.equal(allToggleCount, 1);
+    assert.equal(shortcutEvent.defaultPrevented, true);
   } finally {
     await mounted.cleanup();
   }

@@ -420,6 +420,16 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操�
   assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
 });
 
+test("buildAgentSessionChatWindowProps は central preview 中に message shortcut scope を無効にする", () => {
+  const chatProps = buildAgentSessionChatWindowProps(createProjectionInput());
+  const previewProps = buildAgentSessionChatWindowProps(createProjectionInput({
+    mainContent: React.createElement("div", null, "preview"),
+  }));
+
+  assert.equal(chatProps.messageColumnProps.isContentActive, true);
+  assert.equal(previewProps.messageColumnProps.isContentActive, false);
+});
+
 test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {
   const onToggleHeaderExpanded = () => {};
   const onCycleContextPaneTab = () => {};
