@@ -112,7 +112,13 @@ export type CoordinationEventGetInput =
   | { eventId: string; idempotencyKey?: never }
   | { eventId?: never; idempotencyKey: string };
 
-export type CoordinationEventResolveInput =
+export type CoordinationEventResolveInput = {
+  eventId: string;
+  note?: string;
+  idempotencyKey: string;
+};
+
+export type CoordinationEventDecisionResolveInput =
   | {
       eventId: string;
       optionId: string;
@@ -236,6 +242,19 @@ export function parseCoordinationEventTrustedListInput(value: unknown): Coordina
       : requireListLimit(record.limit),
     ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
   };
+}
+
+export function parseCoordinationEventDecisionResolveInput(value: unknown): CoordinationEventDecisionResolveInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["eventId", "optionId", "note", "idempotencyKey"], "input");
+  const eventId = requireNonEmptyString(record.eventId, "eventId");
+  const idempotencyKey = requireNonEmptyString(record.idempotencyKey, "idempotencyKey");
+  const hasOption = record.optionId !== undefined;
+  const hasNote = record.note !== undefined;
+  if (hasOption === hasNote) throw invalid("input", "Exactly one of optionId or note is required.");
+  return hasOption
+    ? { eventId, optionId: requireNonEmptyString(record.optionId, "optionId"), idempotencyKey }
+    : { eventId, note: validateCoordinationEventNote(record.note), idempotencyKey };
 }
 
 function requireEnumValue<T extends string>(value: unknown, allowed: readonly T[], field: string): T {

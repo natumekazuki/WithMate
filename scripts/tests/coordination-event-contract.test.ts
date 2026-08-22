@@ -6,6 +6,7 @@ import {
   validateCoordinationEventOptions,
   validateCoordinationEventPayload,
   initialCoordinationEventState,
+  parseCoordinationEventDecisionResolveInput,
   parseCoordinationEventTrustedListInput,
 } from "../../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
@@ -41,16 +42,15 @@ describe("Coordination event contract", () => {
       eventId: "event-1",
       idempotencyKey: "create-1",
     }), /Exactly one/);
-    assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.resolve", {
+    assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "event-1",
       idempotencyKey: "resolve-1",
-    }), /Exactly one/);
+    }), { eventId: "event-1", idempotencyKey: "resolve-1" });
     assert.throws(() => parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "event-1",
       optionId: "a",
-      note: "both",
       idempotencyKey: "resolve-2",
-    }), /Exactly one/);
+    }), /Unknown field/);
     assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
       eventId: "event-1",
       note: "自由回答",
@@ -181,5 +181,28 @@ describe("Coordination event contract", () => {
     });
     assert.throws(() => parseCoordinationEventTrustedListInput({ scope: "subtree" }), /Unknown field/);
     assert.throws(() => parseCoordinationEventTrustedListInput({ limit: 101 }), /limit/i);
+  });
+
+  it("COORD-RESOLVE-SURFACE-01: agent解決とtrusted GUI回答の入力契約を分離する", () => {
+    assert.deepEqual(parseSessionRuntimeOperationInput("coordination.event.resolve", {
+      eventId: "blocker-1",
+      idempotencyKey: "resolve-blocker-1",
+    }), {
+      eventId: "blocker-1",
+      idempotencyKey: "resolve-blocker-1",
+    });
+    assert.deepEqual(parseCoordinationEventDecisionResolveInput({
+      eventId: "decision-1",
+      optionId: "continue",
+      idempotencyKey: "resolve-decision-1",
+    }), {
+      eventId: "decision-1",
+      optionId: "continue",
+      idempotencyKey: "resolve-decision-1",
+    });
+    assert.throws(() => parseCoordinationEventDecisionResolveInput({
+      eventId: "decision-1",
+      idempotencyKey: "resolve-decision-2",
+    }), /Exactly one/);
   });
 });

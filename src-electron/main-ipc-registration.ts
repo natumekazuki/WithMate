@@ -4,11 +4,14 @@ import type { RendererLogInput } from "../src/app-log-types.js";
 import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
-  CoordinationEventResolveInput,
+  CoordinationEventDecisionResolveInput,
   CoordinationEventListResult,
   CoordinationEventTrustedListInput,
 } from "../src/coordination-event.js";
-import { parseCoordinationEventTrustedListInput } from "../src/coordination-event.js";
+import {
+  parseCoordinationEventDecisionResolveInput,
+  parseCoordinationEventTrustedListInput,
+} from "../src/coordination-event.js";
 import { parseSessionRuntimeOperationInput } from "../src/session-external-runtime-contract.js";
 import { normalizeSessionTurnCorrelation } from "../src/runtime-state.js";
 import type {
@@ -509,7 +512,7 @@ export type MainIpcRegistrationDeps = {
   cancelSessionRun(sessionId: string): void;
   listCoordinationEvents?(input: CoordinationEventTrustedListInput): Awaitable<CoordinationEventListResult>;
   getCoordinationEvent?(eventId: string): Awaitable<CoordinationEvent>;
-  resolveCoordinationEvent?(input: CoordinationEventResolveInput): Awaitable<CoordinationEvent>;
+  resolveCoordinationEvent?(input: CoordinationEventDecisionResolveInput): Awaitable<CoordinationEvent>;
   cancelCoordinationEvent?(input: CoordinationEventCancelInput): Awaitable<CoordinationEvent>;
   listSessionSchedules(sessionId?: string | null): Awaitable<SessionScheduleSummary[]>;
   getSessionSchedule(sessionId: string, scheduleId: string): Awaitable<SessionScheduleProjection | null>;
@@ -1797,9 +1800,7 @@ function registerSessionRuntimeHandlers(ipcMain: IpcHandleRegistrar, deps: MainI
   ipcMain.handle(WITHMATE_RESOLVE_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
     assertCoordinationWindowSender(event, deps);
     if (!deps.resolveCoordinationEvent) throw new Error("Coordination event service is unavailable.");
-    return deps.resolveCoordinationEvent(
-      parseSessionRuntimeOperationInput("coordination.event.resolve", input) as CoordinationEventResolveInput,
-    );
+    return deps.resolveCoordinationEvent(parseCoordinationEventDecisionResolveInput(input));
   });
   ipcMain.handle(WITHMATE_CANCEL_COORDINATION_EVENT_CHANNEL, (event, input: unknown) => {
     assertCoordinationWindowSender(event, deps);

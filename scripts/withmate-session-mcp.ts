@@ -232,7 +232,6 @@ const coordinationGetInputSchema = z.object({
 });
 const coordinationResolveInputSchema = z.object({
   eventId: nonEmptyStringSchema,
-  optionId: nonEmptyStringSchema.optional(),
   note: z.string().trim().min(1).max(1_000).optional(),
   idempotencyKey: nonEmptyStringSchema,
 }).strict();

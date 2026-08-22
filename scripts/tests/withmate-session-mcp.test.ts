@@ -239,6 +239,37 @@ describe("WithMate Session MCP contract", () => {
     }]);
   });
 
+  it("COORD-RESOLVE-SURFACE-01: agentは回答optionなしでblockerを解決できる", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult(envelope.operation, publicCoordinationEvent as never),
+        };
+      },
+    }), async (client) => {
+      const result = await client.callTool({
+        name: "coordination.event.resolve",
+        arguments: { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" },
+      });
+      assert.equal(result.isError, undefined);
+      const invalid = await client.callTool({
+        name: "coordination.event.resolve",
+        arguments: { eventId: "decision-1", optionId: "continue", idempotencyKey: "resolve-decision-1" },
+      });
+      assert.equal(invalid.isError, true);
+    });
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.resolve",
+      input: { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" },
+    }]);
+  });
+
   it("EXT-TRANSCRIPT-13: inline transcript exportの8 MiB超過はpre-dispatchで拒否する", async () => {
     let calls = 0;
     await withClient(createWithMateSessionMcpServer({

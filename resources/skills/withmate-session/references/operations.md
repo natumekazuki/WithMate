@@ -50,9 +50,9 @@ Coordination commands use `coordination event <verb>`.
 
 ## Coordination events
 
-Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery.
+Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery. Agent resolution accepts an optional note for an addressed escalation or actor-owned blocker; stable option IDs and freeform decision answers belong to the trusted GUI boundary.
 
-Read `self` from any Role. Read `subtree` only as an overall or task coordinator. Escalations may target only a canonical ancestor in the same root. An Agent may resolve its own blocker or an escalation addressed to it, but only the trusted GUI may resolve `user_decision_required` by stable option ID.
+Read `self` from any Role. Read `subtree` only as an overall or task coordinator. Escalations may target only a canonical ancestor in the same root. An Agent may resolve its own blocker or an escalation addressed to it, but only the trusted GUI may resolve `user_decision_required` by stable option ID or freeform answer.
 
 Store only summary, facts, assumptions, impact, and recommendation within the published limits. Never store secrets, raw logs, stack traces, large diffs, provider responses, chain-of-thought, personal paths, or runtime binding material.
 

@@ -397,6 +397,32 @@ describe("withmate-session CLI", () => {
     }]);
   });
 
+  test("COORD-RESOLVE-SURFACE-01: agentはCLIでも回答optionなしでblockerを解決できる", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = { eventId: "blocker-1", idempotencyKey: "resolve-blocker-1" };
+    const exitCode = await runWithMateSessionCli([
+      "coordination", "event", "resolve", "--json", JSON.stringify(input),
+    ], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return {
+          ok: true,
+          status: 200,
+          value: createSessionRuntimeResult("coordination.event.resolve", { eventId: "blocker-1" } as never),
+        };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "coordination.event.resolve",
+      input,
+    }]);
+  });
+
   test("session CRUD commandはcaller-owned idempotency keyを必須にする", async () => {
     const requests: any[] = [];
     const stdout = capture();

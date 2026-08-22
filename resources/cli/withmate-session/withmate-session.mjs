@@ -352,22 +352,13 @@ function parseCoordinationEventResolveInput(value) {
 	const record = requireObject$1(value, "input");
 	assertKeys$1(record, [
 		"eventId",
-		"optionId",
 		"note",
 		"idempotencyKey"
 	], "input");
-	const eventId = requireNonEmptyString(record.eventId, "eventId");
-	const idempotencyKey = requireNonEmptyString(record.idempotencyKey, "idempotencyKey");
-	const hasOption = record.optionId !== void 0;
-	if (hasOption === (record.note !== void 0)) throw invalid("input", "Exactly one of optionId or note is required.");
-	return hasOption ? {
-		eventId,
-		optionId: requireNonEmptyString(record.optionId, "optionId"),
-		idempotencyKey
-	} : {
-		eventId,
-		note: validateCoordinationEventNote(record.note),
-		idempotencyKey
+	return {
+		eventId: requireNonEmptyString(record.eventId, "eventId"),
+		...record.note === void 0 ? {} : { note: validateCoordinationEventNote(record.note) },
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
 function parseCoordinationEventCancelInput(value) {
@@ -21326,7 +21317,6 @@ var coordinationGetInputSchema = object({
 });
 var coordinationResolveInputSchema = object({
 	eventId: nonEmptyStringSchema,
-	optionId: nonEmptyStringSchema.optional(),
 	note: string().trim().min(1).max(1e3).optional(),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();

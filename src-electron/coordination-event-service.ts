@@ -7,6 +7,7 @@ import {
   type CoordinationEventCorrectInput,
   type CoordinationEventCorrectionResult,
   type CoordinationEventCreateInput,
+  type CoordinationEventDecisionResolveInput,
   type CoordinationEventGetInput,
   type CoordinationEventListInput,
   type CoordinationEventListResult,
@@ -82,7 +83,7 @@ export class CoordinationEventService {
     return this.deps.storage.getTrusted(eventId);
   }
 
-  resolveFromCoordinationWindow(input: CoordinationEventResolveInput): CoordinationEvent {
+  resolveFromCoordinationWindow(input: CoordinationEventDecisionResolveInput): CoordinationEvent {
     return this.resolveAs(input, this.coordinationWindowPrincipalFor(input.eventId));
   }
 
@@ -120,11 +121,14 @@ export class CoordinationEventService {
     return outcome.result;
   }
 
-  private resolveAs(input: CoordinationEventResolveInput, principal: CoordinationMutationPrincipal): CoordinationEvent {
+  private resolveAs(
+    input: CoordinationEventResolveInput | CoordinationEventDecisionResolveInput,
+    principal: CoordinationMutationPrincipal,
+  ): CoordinationEvent {
     const outcome = this.deps.storage.resolve({
       principal,
       eventId: input.eventId,
-      optionId: input.optionId ?? null,
+      optionId: "optionId" in input ? input.optionId ?? null : null,
       note: input.note ?? null,
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprint("coordination.event.resolve", principal, withoutKey(input)),
