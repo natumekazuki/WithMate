@@ -1,5 +1,6 @@
 export {
   buildNewSession,
+  cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
   CURRENT_SESSION_SCHEMA_VERSION,
@@ -9,8 +10,10 @@ export {
   isReadOnlySession,
   normalizeSession,
   normalizeSessionAccessMode,
+  normalizeHomeSessionSummary,
   normalizeSessionSummary,
   parseSetSessionPinnedRequest,
+  projectHomeSessionSummary,
   projectSessionSummary,
 } from "./session-state.js";
 export type {
@@ -20,6 +23,8 @@ export type {
   DiffPreviewPayload,
   Message,
   MessageArtifact,
+  HomeSessionSummary,
+  HomeSessionSummaryPageResult,
   Session,
   SessionAccessMode,
   SessionCharacterUsage,

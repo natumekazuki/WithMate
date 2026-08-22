@@ -16,11 +16,13 @@
   - `672a0ecb24cffcc918600aa55b73e04a8d51f7f9`
   - `6d4acc842e25ce71134a569e171a5a7b55bec07c`
   - `672cba28d3de52714a0d4f4f12b6df2f427a782a`
+  - `a54ff4896087edc90d589536b379478e16921221`
+  - `15b9118cc40fe4c0f0b727d2e61295d18f385208`
 - cherry-pickしないmerge commit:
   - `90513b0aab26dcaed34b9a985f85f7622e5385c5`
   - `d59a05b9eadfe77dac6cf0b2cd753142a1407d54`
 
-source branchが進んでも、上記4 commitの挙動を移植対象とする。別の変更が必要になった場合は、同じaccepted contractに属する根拠を確認してからscopeへ加える。
+source branchが進んでも、上記6 commitの挙動を移植対象とする。別の変更が必要になった場合は、同じaccepted contractに属する根拠を確認してからscopeへ加える。
 
 ## Accepted contract
 

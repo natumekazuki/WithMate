@@ -1,12 +1,12 @@
 import { useEffect, useRef, type ReactNode } from "react";
 
-import { isReadOnlySession, type SessionSummary } from "../app-state.js";
+import { isReadOnlySession, type HomeSessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
 import { getHomeCompanionSessionState, type HomeSessionState } from "./home-session-projection.js";
 import { buildCardThemeStyle, CharacterAvatar } from "../ui-utils.js";
 
 export type HomeRecentSessionsPanelProps = {
-  filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
+  filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
   companionSessions: CompanionSessionSummary[];
   normalizedSessionSearch: string;
   searchText: string;
@@ -23,7 +23,7 @@ export type HomeRecentSessionsPanelProps = {
   canUsePrimaryFeatures?: boolean;
 };
 
-function getAgentSessionModeBadge(session: SessionSummary): { className: string; label: string } {
+function getAgentSessionModeBadge(session: HomeSessionSummary): { className: string; label: string } {
   if (session.sessionKind === "character-authoring") {
     return {
       className: "session-mode-badge character",

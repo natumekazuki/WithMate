@@ -5,9 +5,9 @@ import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import type {
   Session,
   SessionCharacterUsage,
+  HomeSessionSummaryPageResult,
   SessionSummary,
   SessionSummaryPageRequest,
-  SessionSummaryPageResult,
 } from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
@@ -69,7 +69,7 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "listSessionIdsLastActiveBefore"
 > & Pick<SessionStorage, "close"> & {
   listSessionIdsWithChildren?(sessionIds: readonly string[]): Awaitable<ReadonlySet<string>>;
-  listHomeSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  listHomeSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
 };
 export type SessionStorageWrite = AwaitableStorageMethods<

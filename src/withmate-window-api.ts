@@ -27,7 +27,7 @@ import type {
   Session,
   SessionSummaryInvalidation,
   SessionSummaryPageRequest,
-  SessionSummaryPageResult,
+  HomeSessionSummaryPageResult,
   SessionSummary,
   SetSessionPinnedRequest,
 } from "./app-state.js";
@@ -161,7 +161,7 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
-  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<SessionSummaryPageResult>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;

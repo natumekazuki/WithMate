@@ -252,6 +252,8 @@ describe("SessionStorageV2", () => {
       const second = storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1, cursor: first.nextCursor });
       assert.deepEqual(first.entries.map((entry) => entry.id), ["new"]);
       assert.deepEqual(second.entries.map((entry) => entry.id), ["old"]);
+      assert.equal("provider" in (first.entries[0] ?? {}), false);
+      assert.equal("threadId" in (first.entries[0] ?? {}), false);
       assert.deepEqual(storage.listSessionCharacterUsage(), [{ characterId: "char-a", sessionKind: "default" }]);
       storage.close();
     });

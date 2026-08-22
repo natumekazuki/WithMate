@@ -64,6 +64,8 @@ describe("SessionStorage", () => {
         assert.equal(first.hasMore, true);
         assert.equal(second.entries.length, 1);
         assert.notEqual(first.entries[0]?.id, second.entries[0]?.id);
+        assert.equal("provider" in (first.entries[0] ?? {}), false);
+        assert.equal("threadId" in (first.entries[0] ?? {}), false);
         assert.deepEqual(
           storage.listSessionCharacterUsage().map((usage) => usage.characterId).sort(),
           ["char-a", "char-b"],
