@@ -835,6 +835,17 @@ describe("withmate-session CLI", () => {
     assert.equal(stdout.json().error.code, "INVALID_INPUT");
   });
 
+  test("usageはcoordination event consumeを案内する", async () => {
+    const stdout = capture();
+    const exitCode = await runWithMateSessionCli(["unknown"], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+    });
+
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.usage);
+    assert.match(stdout.json().error.message, /coordination event create\|list\|get\|resolve\|consume\|cancel\|correct/);
+  });
+
   test("CLI-INPUT-LIMIT-01: oversized file inputは全量parse前にCONTENT_TOO_LARGEへ収束する", async () => {
     const directory = await mkdtemp(join(tmpdir(), "withmate-session-cli-input-"));
     const inputPath = join(directory, "oversized.json");

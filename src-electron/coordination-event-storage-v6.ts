@@ -275,6 +275,9 @@ export class CoordinationEventStorageV6 {
     const rows = this.db.prepare(`
       SELECT events.id
       FROM coordination_events_v6 AS events
+      INNER JOIN coordination_event_actions_v6 AS resolved_actions
+        ON resolved_actions.event_id = events.id
+        AND resolved_actions.action_type = 'resolved'
       WHERE events.actor_session_id = ?
         AND events.kind = 'user_decision_required'
         AND ${PROJECTED_STATE_SQL} = 'resolved'
@@ -284,7 +287,7 @@ export class CoordinationEventStorageV6 {
           WHERE consumed_actions.event_id = events.id
             AND consumed_actions.action_type = 'consumed'
         )
-      ORDER BY events.sequence ASC
+      ORDER BY resolved_actions.sequence ASC
       LIMIT ?
     `).all(principal.sessionId, COORDINATION_EVENT_PENDING_ANSWER_LIMIT) as Array<{ id: string }>;
     return rows.map(({ id }) => toPendingAnswer(this.getRequired(id)));

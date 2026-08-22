@@ -324,6 +324,39 @@ describe("CoordinationEventStorageV6", () => {
     }
   });
 
+  it("COORD-EVENT-01: pending回答は回答確定順の古い方から最大20件を返す", async () => {
+    const fixture = await createFixture();
+    try {
+      const events = Array.from({ length: 21 }, (_, index) => create(fixture.storage, {
+        kind: "user_decision_required",
+        executionId: null,
+        options: [{ id: "continue", label: "続行" }, { id: "stop", label: "停止" }],
+        idempotencyKey: `pending-order-create-${index}`,
+        requestFingerprint: `pending-order-create-${index}`,
+      }).event);
+
+      for (const [resolutionIndex, event] of [...events].reverse().entries()) {
+        fixture.storage.resolve({
+          principal: principal("root-a", "trusted_gui"),
+          eventId: event.eventId,
+          optionId: "continue",
+          note: null,
+          idempotencyKey: `pending-order-resolve-${resolutionIndex}`,
+          requestFingerprint: `pending-order-resolve-${resolutionIndex}`,
+          createdAt: `2026-08-21T12:${String(resolutionIndex).padStart(2, "0")}:00.000Z`,
+        });
+      }
+
+      assert.deepEqual(
+        fixture.storage.listPendingAnswers(principal("executor-a")).map((answer) => answer.eventId),
+        [...events].reverse().slice(0, 20).map((event) => event.eventId),
+      );
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("COORD-FEED-02: trusted GUI queryは全rootを既定表示しSession filterをDBへ適用する", async () => {
     const fixture = await createFixture();
     try {

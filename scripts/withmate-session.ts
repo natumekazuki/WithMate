@@ -231,7 +231,7 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
     : coordinationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
     : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
   }
   const optionStart = fileCommand || coordinationCommand ? 3 : namespacedCommand ? 2 : 1;
   let json: string | undefined;
