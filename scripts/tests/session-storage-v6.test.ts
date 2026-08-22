@@ -295,9 +295,38 @@ describe("SessionStorageV6", () => {
 
       const pinnedPage = storage?.listSessionSummaryPage({ scope: "pinned" });
       assert.deepEqual(pinnedPage?.entries.map((entry) => entry.id), ["older"]);
-      const openPage = storage?.listSessionSummaryPage({ scope: "open", sessionIds: ["older", "same-a"], searchText: "literal" });
-      assert.deepEqual(openPage?.entries.map((entry) => entry.id), ["same-a"]);
-      assert.equal("messages" in (openPage?.entries[0] ?? {}), false);
+      const openPage = storage?.listSessionSummaryPage({
+        scope: "open",
+        sessionIds: ["older", "same-a", "missing", "older"],
+        searchText: "",
+      });
+      assert.deepEqual(openPage?.entries.map((entry) => entry.id).sort(), ["older", "same-a"]);
+      assert.equal(openPage?.entries.length, 2);
+      assert.equal(openPage?.hasMore, false);
+      assert.equal(openPage?.nextCursor, null);
+      assert.deepEqual(Object.keys(openPage?.entries[0] ?? {}).sort(), [
+        "accessMode",
+        "character",
+        "characterIconPath",
+        "characterId",
+        "characterThemeColors",
+        "id",
+        "isPinned",
+        "runState",
+        "sessionKind",
+        "sourceSchemaVersion",
+        "status",
+        "taskTitle",
+        "updatedAt",
+        "workspaceLabel",
+        "workspacePath",
+      ]);
+      assert.equal("provider" in (openPage?.entries[0] ?? {}), false);
+      assert.equal("threadId" in (openPage?.entries[0] ?? {}), false);
+      assert.throws(
+        () => storage?.listSessionSummaryPage({ scope: "open", sessionIds: ["older", "same-a"], limit: 1 }),
+        /ID数以上/,
+      );
 
       assert.deepEqual(storage?.listSessionCharacterUsage().map((entry) => entry.characterId), ["char-b", "char-a"]);
     } finally {

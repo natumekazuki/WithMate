@@ -5,7 +5,11 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
-import { type SessionCharacterUsage, type SessionSummary } from "./session-state.js";
+import {
+  projectHomeSessionSummary,
+  type HomeSessionSummary,
+  type SessionCharacterUsage,
+} from "./session-state.js";
 import {
   startSessionSummaryInvalidationSubscription,
   type SessionSummariesLoadStatus,
@@ -101,7 +105,7 @@ type HomeRightPaneView = "monitor" | "characters";
 
 type HomeSessionSummariesState = {
   status: SessionSummariesLoadStatus;
-  summaries: SessionSummary[];
+  summaries: HomeSessionSummary[];
   recentPages: HomeLoadedSessionSummaryPage[];
   recentCursor: string | null;
   hasMoreRecent: boolean;
@@ -110,7 +114,7 @@ type HomeSessionSummariesState = {
   hasMorePinned: boolean;
   loadingRecentPage: boolean;
   loadingPinnedPage: boolean;
-  openSummaries: SessionSummary[];
+  openSummaries: HomeSessionSummary[];
   characterUsageStatus: SessionSummariesLoadStatus;
   characterUsage: SessionCharacterUsage[];
 };
@@ -411,7 +415,7 @@ export default function HomeApp() {
     }
     setPendingSessionPinIds((current) => current.includes(sessionId) ? current : [...current, sessionId]);
     try {
-      const saved = await api.setSessionPinned({ sessionId, isPinned });
+      const saved = projectHomeSessionSummary(await api.setSessionPinned({ sessionId, isPinned }));
       setSessionSummariesState((current) => ({
         ...current,
         summaries: mergePinnedSessionSummary(current.summaries, saved),

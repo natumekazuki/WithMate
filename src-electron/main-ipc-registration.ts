@@ -37,7 +37,7 @@ import type {
   SessionContextTelemetry,
   SessionCharacterUsage,
   SessionSummaryPageRequest,
-  SessionSummaryPageResult,
+  HomeSessionSummaryPageResult,
   SessionSummary,
 } from "../src/app-state.js";
 import type {
@@ -324,7 +324,7 @@ export type MainIpcRegistrationDeps = {
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
-  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;

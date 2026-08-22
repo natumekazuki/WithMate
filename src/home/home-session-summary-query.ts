@@ -1,28 +1,28 @@
 import type {
+  HomeSessionSummary,
   SessionCharacterUsage,
-  SessionSummary,
-  SessionSummaryPageResult,
+  HomeSessionSummaryPageResult,
 } from "../session-state.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
 export const HOME_SESSION_SUMMARY_OPEN_ID_CHUNK_SIZE = 100;
 
 export type HomeSessionSummarySnapshot = {
-  recent: SessionSummaryPageResult;
-  pinned: SessionSummaryPageResult;
-  open: SessionSummary[];
+  recent: HomeSessionSummaryPageResult;
+  pinned: HomeSessionSummaryPageResult;
+  open: HomeSessionSummary[];
   characterUsage: SessionCharacterUsage[];
 };
 
 export type HomeLoadedSessionSummaryPage = {
   requestCursor: string | null;
-  page: SessionSummaryPageResult;
+  page: HomeSessionSummaryPageResult;
 };
 
 export type HomeSessionSummaryPageCollection = {
   recent: HomeLoadedSessionSummaryPage[];
   pinned: HomeLoadedSessionSummaryPage[];
-  open: SessionSummary[];
+  open: HomeSessionSummary[];
 };
 
 export type HomeSessionSummaryQueryApi = Pick<
@@ -38,9 +38,9 @@ function chunkSessionIds(sessionIds: readonly string[]): string[][] {
   return chunks;
 }
 
-export function mergeSessionSummaryEntries(...sources: readonly SessionSummary[][]): SessionSummary[] {
+export function mergeSessionSummaryEntries(...sources: readonly HomeSessionSummary[][]): HomeSessionSummary[] {
   const seen = new Set<string>();
-  const merged: SessionSummary[] = [];
+  const merged: HomeSessionSummary[] = [];
   for (const source of sources) {
     for (const summary of source) {
       if (seen.has(summary.id)) {
@@ -55,7 +55,7 @@ export function mergeSessionSummaryEntries(...sources: readonly SessionSummary[]
 
 export function buildHomeSessionSummaryEntries(
   pages: HomeSessionSummaryPageCollection,
-): SessionSummary[] {
+): HomeSessionSummary[] {
   return mergeSessionSummaryEntries(
     ...pages.pinned.map(({ page }) => page.entries),
     ...pages.recent.map(({ page }) => page.entries),
@@ -66,7 +66,7 @@ export function buildHomeSessionSummaryEntries(
 export async function listOpenSessionSummaryEntries(
   api: HomeSessionSummaryQueryApi,
   openSessionIds: readonly string[],
-): Promise<SessionSummary[]> {
+): Promise<HomeSessionSummary[]> {
   const chunks = chunkSessionIds(Array.from(new Set(openSessionIds)));
   if (chunks.length === 0) {
     return [];
@@ -100,7 +100,7 @@ export async function fetchHomeSessionSummaryPage(
   scope: "recent" | "pinned",
   cursor: string | null,
   searchText: string,
-): Promise<SessionSummaryPageResult> {
+): Promise<HomeSessionSummaryPageResult> {
   return api.listSessionSummaryPage({
     scope,
     ...(cursor ? { cursor } : {}),

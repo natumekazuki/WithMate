@@ -187,6 +187,57 @@ function readSessionBlobIds(db: DatabaseSync, sessionId: string): string[] {
 }
 
 describe("SessionStorageV3", () => {
+  it("listSessionSummaryPage は Home 用の bounded projection だけを返す", async () => {
+    await withTempV3Database(async ({ dbPath, blobRootPath }) => {
+      const storage = new SessionStorageV3(dbPath, blobRootPath);
+      try {
+        const session = await storage.upsertSession({
+          ...createSession({ id: "session-v3-home-page", taskTitle: "Home page", workspaceLabel: "workspace-home" }),
+          provider: "copilot",
+          model: "hidden-model",
+          threadId: "hidden-thread",
+          allowedAdditionalDirectories: ["C:/hidden"],
+        });
+        const secondSession = await storage.upsertSession(createSession({
+          id: "session-v3-home-page-second",
+          taskTitle: "Another page",
+          workspaceLabel: "workspace-another",
+        }));
+
+        const page = await storage.listSessionSummaryPage({
+          scope: "open",
+          sessionIds: [session.id, "missing", secondSession.id, session.id],
+          searchText: "",
+        });
+        assert.deepEqual(page.entries.map((entry) => entry.id).sort(), [session.id, secondSession.id].sort());
+        assert.equal(page.entries.length, 2);
+        assert.equal(page.hasMore, false);
+        assert.equal(page.nextCursor, null);
+        assert.deepEqual(Object.keys(page.entries[0] ?? {}).sort(), [
+          "accessMode",
+          "character",
+          "characterIconPath",
+          "characterId",
+          "characterThemeColors",
+          "id",
+          "isPinned",
+          "runState",
+          "sessionKind",
+          "sourceSchemaVersion",
+          "status",
+          "taskTitle",
+          "updatedAt",
+          "workspaceLabel",
+          "workspacePath",
+        ]);
+        assert.equal("provider" in (page.entries[0] ?? {}), false);
+        assert.equal("threadId" in (page.entries[0] ?? {}), false);
+      } finally {
+        storage.close();
+      }
+    });
+  });
+
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
     await withTempV3Database(async ({ dbPath, blobRootPath }) => {
       const storage = new SessionStorageV3(dbPath, blobRootPath);

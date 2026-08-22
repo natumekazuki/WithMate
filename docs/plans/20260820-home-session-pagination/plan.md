@@ -116,3 +116,19 @@
 - query textとopen Session ID集合からquery keyを作り、query key変更時に旧request tokenを即時失効させる。cursor/page stateはlayout effectで破棄し、debounced refreshの旧responseを適用しない。
 - reviewで挙がった100件超のopen Window ID取得中の集合変化は、offset paginationをSession ID keyset cursorへ変更して閉じた。前pageのIDが閉じても後続IDを欠落させないtestを追加した。
 - finding familyのtargeted 143 tests、`npm run typecheck`、`npm run build`は成功した。既存のLightningCSS warningとlarge chunk warningは継続している。
+
+## Review finding closure (2026-08-22)
+
+- 参照された `9fdab775` ではなく、task branchの現行tip `1dad4366`を正本として確認した。checkout、reset、rebaseは行っていない。
+- Finding 1は `HomeSessionSummary` / `HomeSessionSummaryPageResult` を公開page contractのcanonical typeとし、Home consumer、Main query、IPC dependency / registration、window API、V1/V2/V3/V6 storageのpage経路を同じ型へ揃えた。各page SQLはHome表示に必要な列とkeyset cursor用の `last_active_at` だけを明示し、V6のruntime policy / Character snapshotも必要なJSON pathだけを抽出する。既存の `listSessionSummaries()` とdetail取得の広いprojectionは内部用途として残した。
+- Finding 2は `open` requestの重複除去後ID数より小さい `limit` をparserで拒否し、storage側でも `open` pageが `hasMore: true` / cursorなしを返さない不変条件を保持した。Homeは引き続き100 ID単位でchunk取得する。
+- 回帰確認はV1/V2/V3/V6 storage、Main query、Home query、parserを含む targeted 77 tests、`npm run typecheck`、`npm test`（2603 pass / 0 fail / 1 skipped）、`npm run build`、bounded benchmark（1000 Sessionでpage 50件）で実施した。buildに既存のLightningCSS `::highlight` warningとlarge chunk warningがあるが、終了コードは0だった。
+- これは既存 `HOME_SESSION_SUMMARY_PAGE_V1` のfinding family修正なので、complete-diff holistic reviewは再実行せず、直接検証とfinding family限定のtargeted closureで閉じる。
+
+## Review finding closure (2026-08-22 open search)
+
+- `open` scopeの非空 `searchText` をpublic parserで拒否し、未指定または空文字列は受理する。`recent` / `pinned` の検索条件は従来どおり維持する。
+- V1/V2/V3/V6のpage queryは、`open` scopeでは検索SQLをWHEREへ追加しない。open ID集合はparserで重複除去し、存在しないIDを無視し、`hasMore: false` / `nextCursor: null`を維持する。
+- V1/V2/V3/V6のstorage testで、複数の存在ID、missing ID、重複ID、summary-only projection、recent / pinned検索の回帰を直接確認した。V6の既存テストは、検索語によるSession欠落を期待するassertionから、指定された存在Sessionを全件返すassertionへ修正した。
+- `session-summary-query` と4 storageのtargeted 51 tests、`npm run typecheck`、`npm test`（2603 pass / 0 fail / 1 skipped）、`npm run build`は成功した。buildには既存のLightningCSS `::highlight` warningとlarge chunk warningがあるが、終了コードは0だった。
+- これは既存 `HOME_SESSION_SUMMARY_PAGE_V1` の同一finding familyに対するcurrent-scope repairであり、complete-diff holistic reviewは再実行せず、直接検証とfinding family限定のtargeted closureで閉じる。

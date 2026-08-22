@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 
 import type { HomeRecentSessionsPanelProps } from "./HomeRecentSessionsPanel.js";
 import type { HomeSessionState } from "./home-session-projection.js";
-import type { SessionSummary } from "../app-state.js";
+import type { HomeSessionSummary } from "../app-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
 
 type HomeRecentSessionsPanelHandlers = {
@@ -14,7 +14,7 @@ type HomeRecentSessionsPanelHandlers = {
 };
 
 export type HomeRecentSessionsPanelPropsInput = {
-  filteredSessionEntries: Array<{ session: SessionSummary; state: HomeSessionState }>;
+  filteredSessionEntries: Array<{ session: HomeSessionSummary; state: HomeSessionState }>;
   companionSessions: CompanionSessionSummary[];
   normalizedSessionSearch: string;
   searchText: string;

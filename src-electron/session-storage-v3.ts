@@ -1,17 +1,21 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
+  CURRENT_SESSION_SCHEMA_VERSION,
+  normalizeHomeSessionSummary,
   normalizeSession,
   normalizeSessionSummary,
   summarizeMessageArtifact,
   type Message,
   type MessageArtifact,
+  type HomeSessionSummary,
   type Session,
   type SessionCharacterUsage,
   type SessionSummaryPageRequest,
-  type SessionSummaryPageResult,
+  type HomeSessionSummaryPageResult,
   type SessionSummary,
 } from "../src/session-state.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
@@ -65,6 +69,24 @@ type SessionHeaderRow = {
 };
 
 type SessionSummaryHeaderRow = Omit<SessionHeaderRow, "character_runtime_snapshot_json">;
+
+type HomeSessionSummaryRow = {
+  id: string;
+  task_title: string;
+  status: string;
+  updated_at: string;
+  workspace_label: string;
+  workspace_path: string;
+  session_kind: string;
+  character_id: string;
+  character_name: string;
+  character_icon_path: string;
+  character_theme_main: string;
+  character_theme_sub: string;
+  run_state: string;
+  is_pinned: number;
+  last_active_at: string | number;
+};
 
 type SessionAuditLogCountRow = {
   id: string;
@@ -248,6 +270,23 @@ const SESSION_SUMMARY_HEADER_COLUMNS = `
   custom_agent_name,
   allowed_additional_directories_json,
   thread_id
+`;
+
+const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
+  id,
+  task_title,
+  status,
+  updated_at,
+  workspace_label,
+  workspace_path,
+  session_kind,
+  character_id,
+  character_name,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  run_state,
+  0 AS is_pinned
 `;
 
 const SESSION_DETAIL_HEADER_COLUMNS = `
@@ -525,6 +564,29 @@ function rowToSessionSummary(row: SessionSummaryHeaderRow, mode: SessionRowParse
   }
 
   return summary;
+}
+
+function rowToHomeSessionSummary(row: HomeSessionSummaryRow): HomeSessionSummary | null {
+  return normalizeHomeSessionSummary({
+    id: row.id,
+    taskTitle: row.task_title,
+    status: row.status,
+    updatedAt: row.updated_at,
+    isPinned: row.is_pinned === 1,
+    workspaceLabel: row.workspace_label,
+    workspacePath: row.workspace_path,
+    sessionKind: row.session_kind,
+    accessMode: "active",
+    sourceSchemaVersion: CURRENT_SESSION_SCHEMA_VERSION - 1,
+    characterId: row.character_id,
+    character: row.character_name,
+    characterIconPath: row.character_icon_path,
+    characterThemeColors: {
+      main: row.character_theme_main,
+      sub: row.character_theme_sub,
+    },
+    runState: row.run_state,
+  });
 }
 
 function rowToSession(row: SessionHeaderRow, messages: Message[], mode: SessionRowParseMode = "skip"): Session | null {
@@ -924,7 +986,7 @@ export class SessionStorageV3 {
     });
   }
 
-  async listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<SessionSummaryPageResult> {
+  async listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
     return this.withDb((db) => {
       const parsed = parseSessionSummaryPageRequest(request);
       const cursor = parsed.scope === "open"
@@ -953,22 +1015,22 @@ export class SessionStorageV3 {
         where.push(keyset.sql);
         params.push(...keyset.params);
       }
-      if (search.sql) {
+      if (parsed.scope !== "open" && search.sql) {
         where.push(search.sql);
         params.push(...search.params);
       }
       const rows = db.prepare(`
-        SELECT ${SESSION_SUMMARY_HEADER_COLUMNS}, last_active_at
+        SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}, last_active_at
         FROM sessions AS s
         ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
         ORDER BY s.last_active_at DESC, s.id DESC
         LIMIT ?
-      `).all(...params, parsed.limit + 1) as SessionSummaryHeaderRow[];
+      `).all(...params, parsed.limit + 1) as HomeSessionSummaryRow[];
       const visibleRows = rows.slice(0, parsed.limit);
-      const entries = cloneSessionSummaries(
-        visibleRows.map((row) => rowToSessionSummary(row)).filter((summary): summary is SessionSummary => summary !== null),
+      const entries = cloneHomeSessionSummaries(
+        visibleRows.map((row) => rowToHomeSessionSummary(row)).filter((summary): summary is HomeSessionSummary => summary !== null),
       );
-      const hasMore = rows.length > parsed.limit;
+      const hasMore = parsed.scope !== "open" && rows.length > parsed.limit;
       const lastRow = visibleRows.at(-1);
       return {
         entries,

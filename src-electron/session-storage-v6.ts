@@ -1,19 +1,22 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
   CURRENT_SESSION_SCHEMA_VERSION,
   normalizeMessage,
+  normalizeHomeSessionSummary,
   normalizeSession,
   normalizeSessionSummary,
   summarizeMessageArtifact,
   type Message,
   type MessageArtifact,
+  type HomeSessionSummary,
   type Session,
   type SessionCharacterUsage,
   type SessionSummaryPageRequest,
-  type SessionSummaryPageResult,
+  type HomeSessionSummaryPageResult,
   type SessionSummary,
 } from "../src/session-state.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
@@ -22,6 +25,7 @@ import {
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
 import {
+  UNKNOWN_CHARACTER_OWNER_ID,
   isUnknownCharacterOwnerId,
   normalizeCharacterOwnerId,
   recoverStoredCharacterOwnerId,
@@ -70,6 +74,26 @@ type SessionV6Row = {
   last_active_at: string;
 };
 
+type HomeSessionSummaryV6Row = {
+  id: string;
+  task_title: string;
+  status: string;
+  updated_at: string;
+  workspace_label: string;
+  workspace_path: string;
+  session_kind: string;
+  access_mode: string;
+  source_schema_version: number;
+  character_id: string;
+  character_name: string | null;
+  character_icon_path: string | null;
+  character_theme_main: string | null;
+  character_theme_sub: string | null;
+  run_state: string | null;
+  is_pinned: number;
+  last_active_at: string;
+};
+
 type MessageV6Row = {
   role: "user" | "assistant" | "tool" | "system";
   body: string;
@@ -100,6 +124,67 @@ const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
 const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function v6RuntimeJsonValue(path: string): string {
+  return `CASE WHEN json_valid(s.runtime_policy_json) THEN json_extract(s.runtime_policy_json, '${path}') ELSE NULL END`;
+}
+
+function v6SnapshotJsonValue(path: string): string {
+  return `CASE WHEN json_valid(s.character_snapshot_json) THEN json_extract(s.character_snapshot_json, '${path}') ELSE NULL END`;
+}
+
+const V6_HOME_RUNTIME_CHARACTER_ID_EXPRESSION = v6RuntimeJsonValue("$.characterId");
+const V6_HOME_CHARACTER_ID_EXPRESSION = `COALESCE(
+  NULLIF(TRIM(s.character_id), ''),
+  NULLIF(TRIM(CAST(${V6_HOME_RUNTIME_CHARACTER_ID_EXPRESSION} AS TEXT)), ''),
+  '${UNKNOWN_CHARACTER_OWNER_ID}'
+)`;
+const V6_HOME_SNAPSHOT_STRUCTURE_EXPRESSION = `CASE WHEN json_valid(s.character_snapshot_json) THEN
+  CASE WHEN json_type(s.character_snapshot_json, '$.characterId') = 'text'
+    AND json_type(s.character_snapshot_json, '$.name') = 'text'
+    AND json_type(s.character_snapshot_json, '$.definitionMarkdown') = 'text'
+    THEN 1 ELSE 0 END
+  ELSE 0 END`;
+const V6_HOME_SNAPSHOT_MATCH_EXPRESSION = `CASE WHEN ${V6_HOME_SNAPSHOT_STRUCTURE_EXPRESSION} = 1 THEN
+  CASE WHEN TRIM(COALESCE(json_extract(s.character_snapshot_json, '$.characterId'), '')) = TRIM(${V6_HOME_CHARACTER_ID_EXPRESSION})
+    AND TRIM(${V6_HOME_CHARACTER_ID_EXPRESSION}) <> '${UNKNOWN_CHARACTER_OWNER_ID}'
+    THEN 1 ELSE 0 END
+  ELSE 0 END`;
+const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
+  s.id,
+  s.title AS task_title,
+  CASE
+    WHEN ${v6RuntimeJsonValue("$.appStatus")} IN ('running', 'idle', 'saved') THEN ${v6RuntimeJsonValue("$.appStatus")}
+    WHEN s.state = 'active' THEN 'running'
+    ELSE 'idle'
+  END AS status,
+  COALESCE(NULLIF(s.updated_at, ''), s.last_active_at) AS updated_at,
+  COALESCE(${v6RuntimeJsonValue("$.workspaceLabel")}, '') AS workspace_label,
+  s.workspace_path,
+  s.session_kind,
+  COALESCE(${v6RuntimeJsonValue("$.accessMode")}, 'active') AS access_mode,
+  COALESCE(${v6RuntimeJsonValue("$.sourceSchemaVersion")}, ${CURRENT_SESSION_SCHEMA_VERSION}) AS source_schema_version,
+  ${V6_HOME_CHARACTER_ID_EXPRESSION} AS character_id,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.name")}
+    ELSE ${v6RuntimeJsonValue("$.characterName")}
+  END AS character_name,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.iconFilePath")}
+    ELSE ${v6RuntimeJsonValue("$.characterIconPath")}
+  END AS character_icon_path,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.theme.main")}
+    ELSE ${v6RuntimeJsonValue("$.characterThemeColors.main")}
+  END AS character_theme_main,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.theme.sub")}
+    ELSE ${v6RuntimeJsonValue("$.characterThemeColors.sub")}
+  END AS character_theme_sub,
+  COALESCE(${v6RuntimeJsonValue("$.runState")}, 'idle') AS run_state,
+  s.is_pinned,
+  s.last_active_at
+`;
 
 function logSessionRunStuckInvestigation(
   event: string,
@@ -256,7 +341,7 @@ export class SessionStorageV6 {
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
   }
 
-  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): SessionSummaryPageResult {
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
     const parsed = parseSessionSummaryPageRequest(request);
     const isOpenScope = parsed.scope === "open";
     const cursor = parsed.scope === "open"
@@ -281,21 +366,25 @@ export class SessionStorageV6 {
       where.push(keyset.sql);
       params.push(...keyset.params);
     }
-    if (search.sql) {
+    if (!isOpenScope && search.sql) {
       where.push(search.sql);
       params.push(...search.params);
     }
 
     const rows = this.db.prepare(`
-      SELECT s.*
+      SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}
       FROM sessions_v6 AS s
       ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
       ORDER BY s.last_active_at DESC, s.id DESC
       LIMIT ?
-    `).all(...params, parsed.limit + 1) as SessionV6Row[];
+    `).all(...params, parsed.limit + 1) as HomeSessionSummaryV6Row[];
     const visibleRows = rows.slice(0, parsed.limit);
-    const entries = cloneSessionSummaries(visibleRows.map((row) => this.rowToSessionSummary(row)));
-    const hasMore = rows.length > parsed.limit;
+    const entries = cloneHomeSessionSummaries(
+      visibleRows
+        .map((row) => this.rowToHomeSessionSummary(row))
+        .filter((summary): summary is HomeSessionSummary => summary !== null),
+    );
+    const hasMore = parsed.scope !== "open" && rows.length > parsed.limit;
     const lastRow = visibleRows.at(-1);
 
     return {
@@ -694,6 +783,29 @@ export class SessionStorageV6 {
       throw new Error(`V6 session row を summary に変換できないよ: ${row.id}`);
     }
     return summary;
+  }
+
+  private rowToHomeSessionSummary(row: HomeSessionSummaryV6Row): HomeSessionSummary | null {
+    return normalizeHomeSessionSummary({
+      id: row.id,
+      taskTitle: row.task_title,
+      status: row.status,
+      updatedAt: row.updated_at,
+      isPinned: row.is_pinned === 1,
+      workspaceLabel: row.workspace_label,
+      workspacePath: row.workspace_path,
+      sessionKind: row.session_kind,
+      accessMode: row.access_mode,
+      sourceSchemaVersion: row.source_schema_version,
+      characterId: row.character_id,
+      character: row.character_name,
+      characterIconPath: row.character_icon_path,
+      characterThemeColors: {
+        main: row.character_theme_main,
+        sub: row.character_theme_sub,
+      },
+      runState: row.run_state,
+    });
   }
 
   private rowToSession(row: SessionV6Row): Session {

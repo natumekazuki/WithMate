@@ -14,8 +14,9 @@ import {
   type AuditLogSummaryPageResult,
   type SessionCharacterUsage,
   type SessionSummaryPageRequest,
-  type SessionSummaryPageResult,
+  type HomeSessionSummaryPageResult,
   type SessionSummary,
+  cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
 } from "../src/app-state.js";
@@ -25,7 +26,7 @@ import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainQueryServiceDeps = {
   getSessionSummaries(): Awaitable<SessionSummary[]>;
-  getSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  getSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   getSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -70,10 +71,10 @@ export class MainQueryService {
     return cloneSessionSummaries(await this.deps.getSessionSummaries());
   }
 
-  async listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<SessionSummaryPageResult> {
+  async listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
     const page = await this.deps.getSessionSummaryPage(request);
     return {
-      entries: cloneSessionSummaries(page.entries),
+      entries: cloneHomeSessionSummaries(page.entries),
       nextCursor: page.nextCursor,
       hasMore: page.hasMore,
     };

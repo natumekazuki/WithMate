@@ -142,6 +142,12 @@ export function parseSessionSummaryPageRequest(value: unknown): ParsedSessionSum
     if (cursor) {
       throw new TypeError("open Session query は cursor を受け付けません。");
     }
+    if (searchText) {
+      throw new TypeError("open Session query は検索条件を受け付けません。");
+    }
+    if (sessionIds.length > 0 && limit < sessionIds.length) {
+      throw new RangeError("open Session query のlimitは指定したID数以上にしてね。");
+    }
   } else if (sessionIds.length > 0) {
     throw new TypeError("recent / pinned query に open Session ID は指定できません。");
   }
