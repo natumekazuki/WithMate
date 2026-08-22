@@ -321,7 +321,8 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       rootElement.querySelector<HTMLButtonElement>(".coordination-event-row")?.click();
       await Promise.resolve();
     });
-    assert.match(rootElement.textContent ?? "", /使用済み/);
+    assert.match(rootElement.textContent ?? "", /確定済み/);
+    assert.doesNotMatch(rootElement.textContent ?? "", /使用済み/);
     assert.equal(rootElement.querySelector(".coordination-decision-panel"), null);
 
     currentDetail = {

@@ -574,8 +574,9 @@ export default function CoordinationApp() {
               </button>
               <div className="coordination-event-meta">
                 <span className={`coordination-kind coordination-kind-${selectedEvent.kind}`}>{KIND_LABELS[selectedEvent.kind]}</span>
-                <span className={`coordination-state coordination-state-${selectedEvent.state}`}>{STATE_LABELS[selectedEvent.state]}</span>
-                {answerIsConsumed ? <span className="coordination-state coordination-state-consumed">使用済み</span> : null}
+                <span className={`coordination-state coordination-state-${answerIsConsumed ? "consumed" : selectedEvent.state}`}>
+                  {answerIsConsumed ? "確定済み" : STATE_LABELS[selectedEvent.state]}
+                </span>
                 <button
                   className="coordination-event-id"
                   type="button"
