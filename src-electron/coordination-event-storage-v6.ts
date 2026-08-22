@@ -251,6 +251,7 @@ export class CoordinationEventStorageV6 {
         const hasNote = input.note !== null && input.note.trim().length > 0;
         if (input.principal.actorType !== "trusted_gui"
           || !canView(input.principal, event)
+          || (input.note !== null && !hasNote)
           || hasOption === hasNote
           || (hasOption && !event.options.some((option) => option.id === input.optionId))) {
           throw new CoordinationEventNotFoundError();

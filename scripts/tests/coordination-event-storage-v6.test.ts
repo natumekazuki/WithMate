@@ -253,6 +253,10 @@ describe("CoordinationEventStorageV6", () => {
         principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: "keep", note: "両方は不可",
         idempotencyKey: "both-answer-kinds", requestFingerprint: "both-answer-kinds", createdAt: NOW,
       }));
+      assert.throws(() => fixture.storage.resolve({
+        principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: null, note: "   ",
+        idempotencyKey: "blank-custom-answer", requestFingerprint: "blank-custom-answer", createdAt: NOW,
+      }));
       const resolved = fixture.storage.resolve({
         principal: principal("root-a", "trusted_gui"), eventId: event.eventId, optionId: "change", note: null,
         idempotencyKey: "gui-resolve", requestFingerprint: "gui-resolve", createdAt: NOW,
@@ -306,6 +310,16 @@ describe("CoordinationEventStorageV6", () => {
       assert.deepEqual(filtered.items.map((event) => event.eventId), [rootA.eventId]);
       assert.throws(() => service.listAllFromTrustedGui({
         sessionId: "root-a",
+        limit: 1,
+        cursor: firstPage.nextCursor,
+      }));
+      assert.throws(() => service.listAllFromTrustedGui({
+        kind: "result",
+        limit: 1,
+        cursor: firstPage.nextCursor,
+      }));
+      assert.throws(() => service.listAllFromTrustedGui({
+        state: "open",
         limit: 1,
         cursor: firstPage.nextCursor,
       }));
