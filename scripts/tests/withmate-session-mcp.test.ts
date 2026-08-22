@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import {
+  SESSION_MCP_SERVER_INSTRUCTIONS,
   SESSION_MCP_TOOL_DEFINITIONS,
   createWithMateSessionMcpServer,
 } from "../withmate-session-mcp.js";
@@ -119,6 +120,10 @@ function parseToolError(result: { content: unknown[] }): any {
 
 describe("WithMate Session MCP contract", () => {
   it("25 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /scope or policy decision/);
+    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Use user_decision_required/);
+    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Never record secrets/);
+    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /must not stop the normal response/);
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));

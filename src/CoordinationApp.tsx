@@ -448,7 +448,11 @@ export default function CoordinationApp() {
             title={selectedSessionLabel}
           >
             <span className="coordination-session-trigger-label">{selectedSessionLabel}</span>
-            <span aria-hidden="true">⌄</span>
+            <span className="coordination-session-chevron" aria-hidden="true">
+              <svg viewBox="0 0 12 12" focusable="false">
+                <path d="M2.5 4 6 8 9.5 4" />
+              </svg>
+            </span>
           </button>
           {pickerOpen ? (
             <div className="coordination-session-picker" role="dialog" aria-label="Sessionを選択">

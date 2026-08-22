@@ -77,8 +77,8 @@ Coordination WindowのElectron entry、preload、IPC、renderer shellはHome pag
 
 ### COORD-PROMPT-01
 
-- Accepted contract / exact anchor: 添付要求。capability、登録条件、失敗時の扱いだけをSession System Promptへ追加し、response形式やprivate bindingを強制・漏洩しない。
-- Scope / semantic owner: provider prompt composition。
+- Accepted contract / exact anchor: 静的なCoordination利用規則はMCP server instructionsとtool descriptionへ置き、System Promptへ追加しない。未使用回答があるTurnだけ回答本文と反映後のconsume指示をinput contextへ投影する。
+- Scope / semantic owner: MCP tool surface、provider input context composition。
 - Failure mode / consumer impact: Agentが判断待ち登録失敗を隠す、通常response形式が固定される、opaque/private detailがpromptへ漏れる。
 - State transitions / failure timing: provider generation prompt composition。
 - Direct verification: prompt content/absence test。

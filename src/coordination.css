@@ -85,6 +85,28 @@
   text-align: left;
 }
 
+.coordination-session-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  display: grid;
+  place-items: center;
+}
+
+.coordination-session-chevron svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.coordination-session-chevron path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 .coordination-session-picker {
   position: absolute;
   z-index: 10;

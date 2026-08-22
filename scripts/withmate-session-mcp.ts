@@ -577,6 +577,11 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
   "Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
   "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
+  "Coordination events are public records separate from the normal response; do not change the normal response format when recording one.",
+  "Record a coordination event for a scope or policy decision, an ancestor or user decision request, a blocker opening or clearing, a major work milestone, or a correction.",
+  "Use user_decision_required for user confirmation, selection, or free text; use blocker only for an external condition that prevents your work, and resolve your blocker after work can resume.",
+  "Never record secrets, raw logs, stack traces, large diffs, provider responses, private reasoning, or personal environment paths.",
+  "A progress or decision recording failure must not stop the normal response. If user_decision_required cannot be recorded, state the failure and a safe next action in the normal response.",
 ].join(" ");
 
 export const SESSION_MCP_TOOL_DEFINITIONS = [
