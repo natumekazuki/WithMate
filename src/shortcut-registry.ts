@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 
+import { getWithMateApi } from "./renderer-withmate-api.js";
+
 export type ShortcutPlatform = "windows" | "linux" | "macos";
 export type ShortcutCommandKind = "standard" | "withmate";
 export type ShortcutAssignment = "existing" | "new";
@@ -13,6 +15,8 @@ export const SHORTCUT_COMMAND_IDS = {
   filePreviewSelectAll: "session.file-preview.select-all",
   composerSubmit: "session.composer.submit",
 } as const;
+
+export const MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND = "renderer.session-message-collapse-shortcut";
 
 export type ShortcutCommandId = typeof SHORTCUT_COMMAND_IDS[keyof typeof SHORTCUT_COMMAND_IDS];
 
@@ -437,12 +441,23 @@ function isAltGraphEvent(event: KeyboardEvent): boolean {
   return event.getModifierState?.("AltGraph") === true || (event.ctrlKey && event.altKey);
 }
 
-function isBlockedKeyboardEvent(event: KeyboardEvent): boolean {
-  return event.defaultPrevented
-    || event.isComposing
-    || event.key === "Dead"
-    || event.key === "Process"
-    || isAltGraphEvent(event);
+function getBlockedKeyboardEventReason(event: KeyboardEvent): string | null {
+  if (event.defaultPrevented) {
+    return "default-prevented";
+  }
+  if (event.isComposing) {
+    return "ime-composing";
+  }
+  if (event.key === "Dead") {
+    return "dead-key";
+  }
+  if (event.key === "Process") {
+    return "process-key";
+  }
+  if (isAltGraphEvent(event)) {
+    return "alt-graph";
+  }
+  return null;
 }
 
 function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerator): boolean {
@@ -452,6 +467,109 @@ function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerat
     && event.metaKey === expected.metaKey
     && event.shiftKey === expected.shiftKey
     && event.altKey === expected.altKey;
+}
+
+function shouldReportMessageCollapseShortcut(event: KeyboardEvent): boolean {
+  const normalizedKey = event.key.toLowerCase();
+  return event.code === "KeyM"
+    || normalizedKey === "m"
+    || event.key === "Control"
+    || event.key === "Shift"
+    || event.key === "Meta";
+}
+
+function describeShortcutTarget(target: EventTarget | null): Record<string, string | null> | null {
+  if (!target || typeof target !== "object") {
+    return null;
+  }
+
+  const candidate = target as {
+    nodeName?: unknown;
+    id?: unknown;
+    getAttribute?: (name: string) => string | null;
+  };
+  return {
+    nodeName: typeof candidate.nodeName === "string" ? candidate.nodeName : null,
+    id: typeof candidate.id === "string" && candidate.id.length > 0 ? candidate.id : null,
+    shortcutScope: typeof candidate.getAttribute === "function"
+      ? candidate.getAttribute("data-shortcut-scope")
+      : null,
+  };
+}
+
+function describeShortcutEvent(event: KeyboardEvent): Record<string, unknown> {
+  return {
+    key: event.key,
+    code: event.code,
+    ctrlKey: event.ctrlKey,
+    metaKey: event.metaKey,
+    shiftKey: event.shiftKey,
+    altKey: event.altKey,
+    repeat: event.repeat,
+    isComposing: event.isComposing,
+    defaultPrevented: event.defaultPrevented,
+    target: describeShortcutTarget(event.target),
+    activeElement: typeof document === "undefined" ? null : describeShortcutTarget(document.activeElement),
+  };
+}
+
+function reportMessageCollapseShortcutDiagnostic(
+  phase: string,
+  details: Record<string, unknown>,
+  event?: KeyboardEvent,
+): void {
+  if (event && !shouldReportMessageCollapseShortcut(event)) {
+    return;
+  }
+
+  const data = {
+    phase,
+    ...(event ? describeShortcutEvent(event) : {}),
+    ...details,
+  };
+  const api = getWithMateApi();
+  if (!api) {
+    return;
+  }
+
+  try {
+    api.reportRendererLog({
+      level: "info",
+      kind: MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
+      message: `Session message collapse shortcut diagnostic: ${phase}`,
+      url: typeof window === "undefined" ? undefined : window.location.href,
+      data,
+    });
+  } catch {
+    // Diagnostics must never change shortcut behavior.
+  }
+}
+
+function describeMessageCollapseEntry(
+  entry: ShortcutEntry | undefined,
+  event: KeyboardEvent,
+  platform: ShortcutPlatform,
+  activeScopes: ReadonlySet<string>,
+  handlers: ReadonlyMap<string, ShortcutHandler>,
+): Record<string, unknown> | null {
+  if (!entry) {
+    return null;
+  }
+
+  return {
+    id: entry.id,
+    scope: entry.scope,
+    activeScope: activeScopes.has(entry.scope),
+    handlerRegistered: handlers.has(entry.id),
+    acceleratorMatches: matchesAccelerator(event, entry.accelerators[platform]),
+    repeatAllowed: !event.repeat || entry.allowRepeat,
+    editingTarget: isEditingTarget(event.target),
+    allowInEditingTarget: entry.allowInEditingTarget,
+    editingTargetScope: entry.editingTargetScope ?? null,
+    editingTargetScopeMatches: entry.editingTargetScope
+      ? isWithinEditingTargetScope(event.target, entry.editingTargetScope)
+      : null,
+  };
 }
 
 type ShortcutDispatcherOptions = Readonly<{
@@ -530,7 +648,19 @@ export class ShortcutDispatcher {
   }
 
   dispatch(event: KeyboardEvent): boolean {
-    if (isBlockedKeyboardEvent(event)) {
+    const shouldReportDiagnostic = shouldReportMessageCollapseShortcut(event);
+    if (shouldReportDiagnostic) {
+      reportMessageCollapseShortcutDiagnostic("received", {
+        activeScopes: Array.from(this.activeScopes),
+        registeredHandlers: Array.from(this.handlers.keys()),
+      }, event);
+    }
+
+    const blockedReason = getBlockedKeyboardEventReason(event);
+    if (blockedReason) {
+      if (shouldReportDiagnostic) {
+        reportMessageCollapseShortcutDiagnostic("blocked", { reason: blockedReason }, event);
+      }
       return false;
     }
 
@@ -550,9 +680,27 @@ export class ShortcutDispatcher {
       return matchesAccelerator(event, entry.accelerators[this.platform]);
     });
     if (candidates.length === 0) {
+      if (shouldReportDiagnostic) {
+        reportMessageCollapseShortcutDiagnostic("no-match", {
+          activeScopes: Array.from(this.activeScopes),
+          registeredHandlers: Array.from(this.handlers.keys()),
+          messageCollapseCommand: describeMessageCollapseEntry(
+            this.entries.find((entry) => entry.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse),
+            event,
+            this.platform,
+            this.activeScopes,
+            this.handlers,
+          ),
+        }, event);
+      }
       return false;
     }
     if (candidates.length > 1) {
+      if (shouldReportDiagnostic) {
+        reportMessageCollapseShortcutDiagnostic("collision", {
+          commandIds: candidates.map((entry) => entry.id),
+        }, event);
+      }
       throw new ShortcutRegistryError(
         `Multiple active shortcut commands match ${event.key}: ${candidates.map((entry) => entry.id).join(", ")}`,
       );
@@ -566,11 +714,45 @@ export class ShortcutDispatcher {
     if (!handler) {
       return false;
     }
-    const handled = handler({ command, event, platform: this.platform });
+    if (shouldReportDiagnostic) {
+      reportMessageCollapseShortcutDiagnostic("matched", {
+        commandId: command.id,
+        scope: command.scope,
+      }, event);
+    }
+
+    let handled: boolean | void;
+    try {
+      handled = handler({ command, event, platform: this.platform });
+    } catch (error) {
+      if (shouldReportDiagnostic) {
+        reportMessageCollapseShortcutDiagnostic("handler-threw", {
+          commandId: command.id,
+          error: error instanceof Error ? {
+            name: error.name,
+            message: error.message,
+          } : String(error),
+        }, event);
+      }
+      throw error;
+    }
     if (handled === false) {
+      if (shouldReportDiagnostic) {
+        reportMessageCollapseShortcutDiagnostic("handler-rejected", {
+          commandId: command.id,
+          handlerResult: false,
+        }, event);
+      }
       return false;
     }
     event.preventDefault();
+    if (shouldReportDiagnostic) {
+      reportMessageCollapseShortcutDiagnostic("handled", {
+        commandId: command.id,
+        handlerResult: handled ?? "void",
+        defaultPreventedAfterHandler: event.defaultPrevented,
+      }, event);
+    }
     return true;
   }
 

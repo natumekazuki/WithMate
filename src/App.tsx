@@ -332,6 +332,7 @@ import {
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
 import {
+  MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
   useShortcutScope,
@@ -1643,6 +1644,21 @@ export default function AgentSessionWindowApp() {
     });
   }, [messageCollapseTargets, selectedSessionId]);
   const handleToggleAllMessageCollapse = useCallback(() => {
+    try {
+      getWithMateApi()?.reportRendererLog({
+        level: "info",
+        kind: MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
+        message: "Session message collapse state toggle requested",
+        url: typeof window === "undefined" ? undefined : window.location.href,
+        data: {
+          phase: "state-toggle-requested",
+          sessionId: selectedSessionId,
+          targetCount: messageCollapseTargets.length,
+        },
+      });
+    } catch {
+      // Diagnostics must never change message collapse behavior.
+    }
     setMessageCollapseWindowState((current) => {
       const state = current.sessionId === selectedSessionId
         ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
