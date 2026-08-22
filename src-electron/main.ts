@@ -45,14 +45,15 @@ import {
   type RunSessionTurnRequest,
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
+  type SessionCharacterUsage,
   type SessionContextTelemetry,
+  type SessionSummaryPageRequest,
+  type HomeSessionSummaryPageResult,
 } from "../src/app-state.js";
 import {
   type DiffPreviewPayload,
   type MessageArtifact,
-  projectSessionSummary,
   type Session,
-  type SessionSummary,
 } from "../src/session-state.js";
 import type {
   CharacterAuthoringSessionStartResult,
@@ -68,10 +69,13 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
-import type {
-  OpenPathOptions,
-  OpenPathResult,
-  SavePastedSessionFileRequest,
+import {
+  buildOpenSessionWindowIdsPage,
+  type OpenPathOptions,
+  type OpenPathResult,
+  type OpenSessionWindowIdsPageRequest,
+  type OpenSessionWindowIdsPageResult,
+  type SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import { createSessionRuntimeError } from "../src/session-external-runtime-contract.js";
 import type {
@@ -1263,8 +1267,12 @@ function listSessions(): Session[] {
   return sessions;
 }
 
-function listSessionSummaries(): SessionSummary[] {
-  return sessions.map(projectSessionSummary);
+async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
+  return requireMainQueryService().listSessionSummaryPage(request);
+}
+
+async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
+  return requireMainQueryService().listSessionCharacterUsage();
 }
 
 async function listCompanionSessionSummaries() {
@@ -1612,7 +1620,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 deletePromptTemplate,
               },
               sessionQuery: {
-                listSessionSummaries: () => listSessionSummaries(),
+                listSessionSummaryPage: (request) => listSessionSummaryPage(request),
+                listSessionCharacterUsage: () => listSessionCharacterUsage(),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
@@ -1638,7 +1647,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainQueryService().listWorkspaceSkills(providerId, workspacePath),
                 listWorkspaceCustomAgents: async (providerId, workspacePath) =>
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
-                listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+                listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
                 getSessionFileExplorerOwnerSessionId,
@@ -1907,6 +1916,20 @@ function requireMainQueryService(): MainQueryService {
   if (!mainQueryService) {
     mainQueryService = new MainQueryService({
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getSessionSummaryPage: (request) => {
+        const storage = requireSessionStorage();
+        if (!storage.listHomeSessionSummaryPage) {
+          throw new Error("このDBのSession summary page queryは利用できないよ。");
+        }
+        return storage.listHomeSessionSummaryPage(request);
+      },
+      getSessionCharacterUsage: () => {
+        const storage = requireSessionStorage();
+        if (!storage.listSessionCharacterUsage) {
+          throw new Error("このDBのSession character usage queryは利用できないよ。");
+        }
+        return storage.listSessionCharacterUsage();
+      },
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getSessionMessageArtifact: (sessionId, messageIndex) =>
         requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
@@ -1935,7 +1958,6 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
   if (!mainBroadcastFacade) {
     mainBroadcastFacade = new MainBroadcastFacade({
       getWindowBroadcastService: () => requireWindowBroadcastService(),
-      listSessionSummaries: () => listSessionSummaries(),
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       listPromptTemplates,
@@ -4606,6 +4628,12 @@ function clearAllSessionBackgroundActivities(): void {
 
 function listOpenSessionWindowIds(): string[] {
   return requireMainWindowFacade().listOpenSessionWindowIds();
+}
+
+function listOpenSessionWindowIdsPage(
+  request?: OpenSessionWindowIdsPageRequest | null,
+): OpenSessionWindowIdsPageResult {
+  return buildOpenSessionWindowIdsPage(listOpenSessionWindowIds(), request);
 }
 
 function listOpenCompanionReviewWindowIds(): string[] {

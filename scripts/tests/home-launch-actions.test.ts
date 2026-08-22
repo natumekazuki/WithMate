@@ -165,9 +165,10 @@ function createStartHomeLaunchHarness(overrides: Partial<Parameters<typeof start
       characterEntries: createCharacterEntries(),
       selectedProviderId: "codex",
       sessions: [],
+      sessionCharacterUsage: [],
       openSessionWindowIds: [],
       openSessionWindowIdsLoadStatus: "loaded" as const,
-      sessionSummariesLoadStatus: "loaded" as const,
+      sessionCharacterUsageLoadStatus: "loaded" as const,
       createSession: async () => createSessionSummary(),
       createCompanionSession: async () => createCompanionSession(),
       openSessionWindow: async (sessionId: string) => {
@@ -264,6 +265,7 @@ describe("home-launch-actions", () => {
         characterSelectionMode: "random",
       },
       sessions: [createSessionSummary({ id: "recent-mia", characterId: "mia" })],
+      sessionCharacterUsage: [{ characterId: "mia", sessionKind: "default" }],
       random: () => 0.4,
       createSession: async (input) => {
         capturedCharacterId = input.characterId;
@@ -310,7 +312,7 @@ describe("home-launch-actions", () => {
         ...createReadyDraft(),
         characterSelectionMode: "random",
       },
-      sessionSummariesLoadStatus: "loading",
+      sessionCharacterUsageLoadStatus: "loading",
       createSession: async () => {
         createCount += 1;
         return createSessionSummary();
@@ -331,7 +333,7 @@ describe("home-launch-actions", () => {
         ...createReadyDraft(),
         characterSelectionMode: "random",
       },
-      sessionSummariesLoadStatus: "error",
+      sessionCharacterUsageLoadStatus: "error",
       createSession: async () => {
         createCount += 1;
         return createSessionSummary();
@@ -407,7 +409,7 @@ describe("home-launch-actions", () => {
   it("履歴の読み込み失敗後でも固定Characterのsessionは開始できる", async () => {
     let capturedCharacterId = "";
     const harness = createStartHomeLaunchHarness({
-      sessionSummariesLoadStatus: "error",
+      sessionCharacterUsageLoadStatus: "error",
       createSession: async (input) => {
         capturedCharacterId = input.characterId;
         return createSessionSummary();
@@ -472,6 +474,7 @@ describe("home-launch-actions", () => {
       },
       requestedMode: "companion",
       sessions: [createSessionSummary({ id: "recent-mia", characterId: "mia" })],
+      sessionCharacterUsage: [{ characterId: "mia", sessionKind: "default" }],
       random: () => 0.4,
       createCompanionSession: async (input) => {
         capturedCharacterId = input.characterId;

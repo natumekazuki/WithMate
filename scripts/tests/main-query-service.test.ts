@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Session, SessionSummary } from "../../src/app-state.js";
+import {
+  projectHomeSessionSummary,
+  type Session,
+  type SessionSummary,
+} from "../../src/app-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainQueryService } from "../../src-electron/main-query-service.js";
 
@@ -254,5 +258,40 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
   assert.notEqual(session, targetSession);
   assert.equal(session?.id, "session-1");
   assert.equal(requestedSessionId, "session-1");
+});
+
+test("MainQueryService は bounded summary page と Character usage を clone して返す", async () => {
+  const entry = createSessionSummary({ id: "page-session" });
+  const usage = { characterId: "char-page", sessionKind: "default" as const };
+  const service = new MainQueryService({
+    getSessionSummaries: () => [],
+    getSessionSummaryPage: () => ({ entries: [entry], nextCursor: "cursor-1", hasMore: true }),
+    getSessionCharacterUsage: () => [usage],
+    getSession: () => null,
+    getSessionMessageArtifact: () => null,
+    getAuditLogs: () => [],
+    getAuditLogSummaries: () => [],
+    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getAuditLogDetail: () => null,
+    getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
+    getAppSettings: () => ({}) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+    launchTerminalAtPath: async () => undefined,
+  });
+  const page = await service.listSessionSummaryPage({ scope: "recent", limit: 1 });
+  const usages = await service.listSessionCharacterUsage();
+  assert.deepEqual(page, {
+    entries: [projectHomeSessionSummary(entry)],
+    nextCursor: "cursor-1",
+    hasMore: true,
+  });
+  assert.equal("provider" in page.entries[0], false);
+  assert.equal("threadId" in page.entries[0], false);
+  assert.notEqual(page.entries[0], entry);
+  assert.deepEqual(usages, [usage]);
+  assert.notEqual(usages[0], usage);
 });
 

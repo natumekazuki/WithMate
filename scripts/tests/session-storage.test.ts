@@ -48,6 +48,36 @@ function createSession(
 }
 
 describe("SessionStorage", () => {
+  it("legacy DBでもHome summaryをbounded pageで取得できる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      try {
+        storage.upsertSession(createSession("new", "workspace-a", "char-a", "A"));
+        storage.upsertSession(createSession("old", "workspace-b", "char-b", "B"));
+
+        const first = storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1 });
+        const second = storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1, cursor: first.nextCursor });
+        assert.equal(first.entries.length, 1);
+        assert.equal(first.hasMore, true);
+        assert.equal(second.entries.length, 1);
+        assert.notEqual(first.entries[0]?.id, second.entries[0]?.id);
+        assert.equal("provider" in (first.entries[0] ?? {}), false);
+        assert.equal("threadId" in (first.entries[0] ?? {}), false);
+        assert.deepEqual(
+          storage.listSessionCharacterUsage().map((usage) => usage.characterId).sort(),
+          ["char-a", "char-b"],
+        );
+      } finally {
+        storage.close();
+      }
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("insertSession は同一 ID create を拒否して既存 Session を保持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

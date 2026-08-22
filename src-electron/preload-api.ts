@@ -1,6 +1,12 @@
 import type { IpcRenderer } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import { normalizeSessionSummaryInvalidation } from "./session-summary-query.js";
+import {
+  normalizeOpenSessionWindowIdsChangedPayload,
+  normalizeOpenSessionWindowIdsPageResult,
+  OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
+} from "../src/withmate-window-types.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
@@ -111,7 +117,8 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
@@ -159,7 +166,6 @@ import {
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
-  WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
@@ -321,8 +327,11 @@ function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogAp
 
 function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionApi {
   return {
-    listSessionSummaries() {
-      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL);
+    listSessionSummaryPage(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL, request ?? null);
+    },
+    listSessionCharacterUsage() {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL);
     },
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
@@ -582,7 +591,7 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL, sessionId, kind);
     },
     listOpenSessionWindowIds() {
-      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL);
+      return listAllOpenSessionWindowIds(ipcRenderer);
     },
     listOpenCompanionReviewWindowIds() {
       return ipcRenderer.invoke(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL);
@@ -782,11 +791,13 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     subscribeSessionFilePreviewNavigation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, listener);
     },
-    subscribeSessionSummaries(listener) {
-      return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);
-    },
     subscribeSessionInvalidation(listener) {
-      return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, (payload: unknown) => {
+        const normalized = normalizeSessionSummaryInvalidation(payload);
+        if (normalized) {
+          listener(normalized);
+        }
+      });
     },
     subscribeSessionExecutionsChanged(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_EXECUTIONS_CHANGED_EVENT, listener);
@@ -826,7 +837,17 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
       );
     },
     subscribeOpenSessionWindowIds(listener) {
-      return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, (payload: unknown) => {
+        const normalized = normalizeOpenSessionWindowIdsChangedPayload(payload);
+        if (!normalized) {
+          return;
+        }
+        if (normalized.scope === "ids") {
+          listener(normalized.sessionIds);
+          return;
+        }
+        void listAllOpenSessionWindowIds(ipcRenderer).then(listener);
+      });
     },
     subscribeOpenCompanionReviewWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT, listener);
@@ -838,6 +859,29 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
       return subscribe(ipcRenderer, WITHMATE_SESSION_SCHEDULES_CHANGED_EVENT, listener);
     },
   };
+}
+
+async function listAllOpenSessionWindowIds(ipcRenderer: IpcRendererLike): Promise<string[]> {
+  const sessionIds: string[] = [];
+  let cursor: string | null = null;
+  while (true) {
+    const rawPage = await ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, {
+      cursor,
+      limit: OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
+    });
+    const page = normalizeOpenSessionWindowIdsPageResult(rawPage);
+    if (!page) {
+      throw new Error("open Session Window ID page response が不正です。");
+    }
+    sessionIds.push(...page.sessionIds);
+    if (!page.hasMore) {
+      return Array.from(new Set(sessionIds));
+    }
+    if (page.nextCursor === null || page.nextCursor === cursor) {
+      throw new Error("open Session Window ID page cursor が進まないよ。");
+    }
+    cursor = page.nextCursor;
+  }
 }
 
 function reportRendererLog(ipcRenderer: IpcRendererLike, input: RendererLogInput): void {

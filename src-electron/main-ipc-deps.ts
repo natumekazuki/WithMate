@@ -17,6 +17,9 @@ import type {
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  SessionCharacterUsage,
+  SessionSummaryPageRequest,
+  HomeSessionSummaryPageResult,
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
@@ -106,6 +109,8 @@ import type {
   ResetAppDatabaseRequest,
   SavePastedSessionFileRequest,
   OpenPathResult,
+  OpenSessionWindowIdsPageRequest,
+  OpenSessionWindowIdsPageResult,
 } from "../src/withmate-window-types.js";
 import type {
   CreateMateInput,
@@ -224,7 +229,8 @@ export type MainIpcPromptTemplateDepsArgs = {
 };
 
 export type MainIpcSessionQueryDepsArgs = {
-  listSessionSummaries(): Awaitable<SessionSummary[]>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
   listSessionAuditLogSummaries(sessionId: string): Awaitable<AuditLogSummary[]>;
@@ -264,7 +270,9 @@ export type MainIpcSessionQueryDepsArgs = {
   listSessionCustomAgents(sessionId: string): Promise<DiscoveredCustomAgent[]>;
   listWorkspaceSkills(providerId: string, workspacePath: string): Promise<DiscoveredSkill[]>;
   listWorkspaceCustomAgents(providerId: string, workspacePath: string): Promise<DiscoveredCustomAgent[]>;
-  listOpenSessionWindowIds(): string[];
+  listOpenSessionWindowIdsPage(
+    request?: OpenSessionWindowIdsPageRequest | null,
+  ): OpenSessionWindowIdsPageResult;
   listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
@@ -492,7 +500,8 @@ export function createMainIpcRegistrationDeps(
     createPromptTemplate: args.promptTemplates.createPromptTemplate,
     updatePromptTemplate: args.promptTemplates.updatePromptTemplate,
     deletePromptTemplate: args.promptTemplates.deletePromptTemplate,
-    listSessionSummaries: args.sessionQuery.listSessionSummaries,
+    listSessionSummaryPage: args.sessionQuery.listSessionSummaryPage,
+    listSessionCharacterUsage: args.sessionQuery.listSessionCharacterUsage,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,
     listSessionAuditLogSummaries: args.sessionQuery.listSessionAuditLogSummaries,
@@ -510,7 +519,7 @@ export function createMainIpcRegistrationDeps(
     listSessionCustomAgents: args.sessionQuery.listSessionCustomAgents,
     listWorkspaceSkills: args.sessionQuery.listWorkspaceSkills,
     listWorkspaceCustomAgents: args.sessionQuery.listWorkspaceCustomAgents,
-    listOpenSessionWindowIds: args.sessionQuery.listOpenSessionWindowIds,
+    listOpenSessionWindowIdsPage: args.sessionQuery.listOpenSessionWindowIdsPage,
     listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
     getSessionFileExplorerOwnerSessionId: args.sessionQuery.getSessionFileExplorerOwnerSessionId,

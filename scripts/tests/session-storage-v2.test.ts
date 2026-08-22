@@ -237,6 +237,28 @@ function createSession(taskTitle: string, workspaceLabel: string, characterId: s
 }
 
 describe("SessionStorageV2", () => {
+  it("legacy V2 DBでもHome summaryをbounded pageで取得できる", async () => {
+    await withTempV2Database(async (dbPath) => {
+      const db = new DatabaseSync(dbPath);
+      try {
+        insertSessionHeader(db, { id: "new", lastActiveAt: 200 });
+        insertSessionHeader(db, { id: "old", lastActiveAt: 100 });
+      } finally {
+        db.close();
+      }
+
+      const storage = new SessionStorageV2(dbPath);
+      const first = storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1 });
+      const second = storage.listHomeSessionSummaryPage({ scope: "recent", limit: 1, cursor: first.nextCursor });
+      assert.deepEqual(first.entries.map((entry) => entry.id), ["new"]);
+      assert.deepEqual(second.entries.map((entry) => entry.id), ["old"]);
+      assert.equal("provider" in (first.entries[0] ?? {}), false);
+      assert.equal("threadId" in (first.entries[0] ?? {}), false);
+      assert.deepEqual(storage.listSessionCharacterUsage(), [{ characterId: "char-a", sessionKind: "default" }]);
+      storage.close();
+    });
+  });
+
   it("listSessionSummaries は V2 sessions header から summary を復元する", async () => {
     await withTempV2Database((dbPath) => {
       const db = new DatabaseSync(dbPath);
