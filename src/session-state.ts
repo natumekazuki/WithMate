@@ -96,6 +96,24 @@ export type SessionSummary = Omit<Session, "messages" | "stream" | "characterRun
 };
 export type SessionDetail = Session;
 
+export type HomeSessionSummary = {
+  id: string;
+  taskTitle: string;
+  status: Session["status"];
+  updatedAt: string;
+  isPinned: boolean;
+  workspaceLabel: string;
+  workspacePath: string;
+  sessionKind: SessionKind;
+  accessMode: SessionAccessMode;
+  sourceSchemaVersion: number;
+  characterId: string;
+  character: string;
+  characterIconPath: string;
+  characterThemeColors: CharacterThemeColors;
+  runState: string;
+};
+
 export const SESSION_SUMMARY_PAGE_SCOPES = ["recent", "pinned", "open"] as const;
 export type SessionSummaryPageScope = (typeof SESSION_SUMMARY_PAGE_SCOPES)[number];
 
@@ -107,11 +125,12 @@ export type SessionSummaryPageRequest = {
   sessionIds?: readonly string[] | null;
 };
 
-export type SessionSummaryPageResult = {
-  entries: SessionSummary[];
+export type HomeSessionSummaryPageResult = {
+  entries: HomeSessionSummary[];
   nextCursor: string | null;
   hasMore: boolean;
 };
+export type SessionSummaryPageResult = HomeSessionSummaryPageResult;
 
 export type SessionCharacterUsage = {
   characterId: string;
@@ -430,6 +449,74 @@ export function normalizeSessionSummary(value: unknown): SessionSummary | null {
   return normalizeSessionSummaryShape(value);
 }
 
+function normalizeHomeSessionSummaryShape(value: unknown): HomeSessionSummary | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const candidate = value as Partial<HomeSessionSummary>;
+  const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+  if (!id) {
+    return null;
+  }
+
+  const characterName = typeof candidate.character === "string" && candidate.character.trim()
+    ? candidate.character
+    : "キャラクター";
+  return {
+    id,
+    taskTitle:
+      typeof candidate.taskTitle === "string" && candidate.taskTitle.trim()
+        ? candidate.taskTitle
+        : "既存セッション",
+    status:
+      candidate.status === "running" || candidate.status === "idle" || candidate.status === "saved"
+        ? candidate.status
+        : "idle",
+    updatedAt:
+      typeof candidate.updatedAt === "string" && candidate.updatedAt.trim()
+        ? candidate.updatedAt === "just now"
+          ? currentTimestampLabel()
+          : candidate.updatedAt
+        : currentTimestampLabel(),
+    isPinned: candidate.isPinned === true,
+    workspaceLabel:
+      typeof candidate.workspaceLabel === "string" && candidate.workspaceLabel.trim()
+        ? candidate.workspaceLabel
+        : "workspace",
+    workspacePath: typeof candidate.workspacePath === "string" ? candidate.workspacePath : "",
+    sessionKind: candidate.sessionKind === "character-authoring" ? candidate.sessionKind : "default",
+    accessMode: normalizeSessionAccessMode(candidate.accessMode),
+    sourceSchemaVersion:
+      typeof candidate.sourceSchemaVersion === "number" &&
+      Number.isInteger(candidate.sourceSchemaVersion) &&
+      candidate.sourceSchemaVersion > 0
+        ? candidate.sourceSchemaVersion
+        : CURRENT_SESSION_SCHEMA_VERSION - 1,
+    characterId: recoverStoredCharacterOwnerId(candidate.characterId),
+    character: characterName,
+    characterIconPath:
+      typeof candidate.characterIconPath === "string" && candidate.characterIconPath.trim()
+        ? candidate.characterIconPath
+        : "",
+    characterThemeColors: normalizeCharacterThemeColors(candidate.characterThemeColors),
+    runState: typeof candidate.runState === "string" && candidate.runState.trim() ? candidate.runState : "idle",
+  };
+}
+
+export function normalizeHomeSessionSummary(value: unknown): HomeSessionSummary | null {
+  return normalizeHomeSessionSummaryShape(value);
+}
+
+export function projectHomeSessionSummary(session: Session | SessionSummary | HomeSessionSummary): HomeSessionSummary {
+  const summary = normalizeHomeSessionSummaryShape(session);
+  if (!summary) {
+    throw new Error("Home session summary へ変換できない session 形式だよ。");
+  }
+
+  return summary;
+}
+
 export function projectSessionSummary(session: Session | SessionSummary): SessionSummary {
   const summary = normalizeSessionSummaryShape(session);
   if (!summary) {
@@ -472,6 +559,10 @@ export function cloneSessions(sessions: Session[]): Session[] {
 
 export function cloneSessionSummaries(sessions: SessionSummary[]): SessionSummary[] {
   return JSON.parse(JSON.stringify(sessions)) as SessionSummary[];
+}
+
+export function cloneHomeSessionSummaries(sessions: HomeSessionSummary[]): HomeSessionSummary[] {
+  return JSON.parse(JSON.stringify(sessions.map((session) => projectHomeSessionSummary(session)))) as HomeSessionSummary[];
 }
 
 function artifactSummaryText(value: string): string {

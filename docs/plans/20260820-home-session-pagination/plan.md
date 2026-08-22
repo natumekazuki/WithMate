@@ -116,3 +116,11 @@
 - query textとopen Session ID集合からquery keyを作り、query key変更時に旧request tokenを即時失効させる。cursor/page stateはlayout effectで破棄し、debounced refreshの旧responseを適用しない。
 - reviewで挙がった100件超のopen Window ID取得中の集合変化は、offset paginationをSession ID keyset cursorへ変更して閉じた。前pageのIDが閉じても後続IDを欠落させないtestを追加した。
 - finding familyのtargeted 143 tests、`npm run typecheck`、`npm run build`は成功した。既存のLightningCSS warningとlarge chunk warningは継続している。
+
+## Review finding closure (2026-08-22)
+
+- 参照された `9fdab775` ではなく、task branchの現行tip `1dad4366`を正本として確認した。checkout、reset、rebaseは行っていない。
+- Finding 1は `HomeSessionSummary` / `HomeSessionSummaryPageResult` を公開page contractのcanonical typeとし、Home consumer、Main query、IPC dependency / registration、window API、V1/V2/V3/V6 storageのpage経路を同じ型へ揃えた。各page SQLはHome表示に必要な列とkeyset cursor用の `last_active_at` だけを明示し、V6のruntime policy / Character snapshotも必要なJSON pathだけを抽出する。既存の `listSessionSummaries()` とdetail取得の広いprojectionは内部用途として残した。
+- Finding 2は `open` requestの重複除去後ID数より小さい `limit` をparserで拒否し、storage側でも `open` pageが `hasMore: true` / cursorなしを返さない不変条件を保持した。Homeは引き続き100 ID単位でchunk取得する。
+- 回帰確認はV1/V2/V3/V6 storage、Main query、Home query、parserを含む targeted 77 tests、`npm run typecheck`、`npm test`（2603 pass / 0 fail / 1 skipped）、`npm run build`、bounded benchmark（1000 Sessionでpage 50件）で実施した。buildに既存のLightningCSS `::highlight` warningとlarge chunk warningがあるが、終了コードは0だった。
+- これは既存 `HOME_SESSION_SUMMARY_PAGE_V1` のfinding family修正なので、complete-diff holistic reviewは再実行せず、直接検証とfinding family限定のtargeted closureで閉じる。

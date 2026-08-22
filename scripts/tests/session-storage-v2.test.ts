@@ -407,6 +407,9 @@ describe("SessionStorageV2", () => {
       const storage = new SessionStorageV2(dbPath);
       try {
         assert.deepEqual(storage.listSessionSummaries().map((session) => session.id), ["session-valid"]);
+        const pageIds = storage.listSessionSummaryPage({ scope: "recent", limit: 10 }).entries.map((session) => session.id);
+        assert.deepEqual(new Set(pageIds), new Set(["session-valid", "session-bad-directories"]));
+        assert.equal("provider" in storage.listSessionSummaryPage({ scope: "recent", limit: 1 }).entries[0]!, false);
         assert.throws(() => {
           storage.getSession("session-bad-directories");
         });

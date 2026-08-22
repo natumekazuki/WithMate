@@ -48,7 +48,7 @@ import {
   type SessionContextTelemetry,
   type SessionCharacterUsage,
   type SessionSummaryPageRequest,
-  type SessionSummaryPageResult,
+  type HomeSessionSummaryPageResult,
 } from "../src/app-state.js";
 import {
   type DiffPreviewPayload,
@@ -1141,7 +1141,7 @@ function listSessions(): Session[] {
   return sessions;
 }
 
-async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<SessionSummaryPageResult> {
+async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
   return requireMainQueryService().listSessionSummaryPage(request);
 }
 

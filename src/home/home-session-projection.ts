@@ -1,4 +1,4 @@
-import type { SessionSummary } from "../app-state.js";
+import type { HomeSessionSummary } from "../app-state.js";
 import type { AuxiliarySessionSummary } from "../auxiliary-session-state.js";
 import type { CompanionSessionSummary } from "../companion-state.js";
 import { sessionStateLabel } from "../ui-utils.js";
@@ -10,7 +10,7 @@ export type HomeSessionState = {
 
 export type HomeAgentMonitorEntry = {
   kind: "agent";
-  session: SessionSummary;
+  session: HomeSessionSummary;
   activeAuxiliarySession?: AuxiliarySessionSummary | null;
   state: HomeSessionState;
 };
@@ -36,7 +36,7 @@ export type HomeSessionProjection = {
   monitorCompletedEmptyMessage: string;
 };
 
-export function getHomeSessionKindSearchLabels(session: SessionSummary): string[] {
+export function getHomeSessionKindSearchLabels(session: HomeSessionSummary): string[] {
   if (session.sessionKind === "character-authoring") {
     return ["character", "character authoring", "authoring", "agent"];
   }
@@ -45,7 +45,7 @@ export function getHomeSessionKindSearchLabels(session: SessionSummary): string[
 }
 
 export function getHomeSessionState(
-  session: SessionSummary,
+  session: HomeSessionSummary,
   activeAuxiliarySession?: AuxiliarySessionSummary | null,
 ): HomeSessionState {
   if (
@@ -204,7 +204,7 @@ export function buildCompanionGroupMonitorEntries(
 }
 
 export function buildHomeSessionProjection(
-  sessions: readonly SessionSummary[],
+  sessions: readonly HomeSessionSummary[],
   openSessionWindowIds: readonly string[],
   sessionSearchText: string,
   companionSessions: readonly CompanionSessionSummary[] = [],

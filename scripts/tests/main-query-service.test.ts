@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Session, SessionSummary } from "../../src/app-state.js";
+import {
+  projectHomeSessionSummary,
+  type Session,
+  type SessionSummary,
+} from "../../src/app-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainQueryService } from "../../src-electron/main-query-service.js";
 
@@ -134,7 +138,13 @@ test("MainQueryService は bounded summary page と Character usage を clone �
   const page = await service.listSessionSummaryPage({ scope: "recent", limit: 1 });
   const usages = await service.listSessionCharacterUsage();
 
-  assert.deepEqual(page, { entries: [entry], nextCursor: "cursor-1", hasMore: true });
+  assert.deepEqual(page, {
+    entries: [projectHomeSessionSummary(entry)],
+    nextCursor: "cursor-1",
+    hasMore: true,
+  });
+  assert.equal("provider" in page.entries[0], false);
+  assert.equal("threadId" in page.entries[0], false);
   assert.notEqual(page.entries[0], entry);
   assert.deepEqual(usages, [usage]);
   assert.notEqual(usages[0], usage);

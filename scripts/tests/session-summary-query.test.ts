@@ -25,6 +25,11 @@ test("Session summary parser は page / query / open ID の上限を守る", () 
     scope: "open",
     sessionIds: Array.from({ length: 101 }, (_, index) => `session-${index}`),
   }), /100件ずつ/);
+  assert.throws(() => parseSessionSummaryPageRequest({
+    scope: "open",
+    sessionIds: ["session-a", "session-b"],
+    limit: 1,
+  }), /ID数以上/);
   assert.throws(() => parseSessionSummaryPageRequest({ searchText: "x".repeat(121) }), /120文字以内/);
 });
 

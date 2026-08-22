@@ -19,7 +19,7 @@ import type {
   SessionContextTelemetry,
   SessionCharacterUsage,
   SessionSummaryPageRequest,
-  SessionSummaryPageResult,
+  HomeSessionSummaryPageResult,
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
@@ -220,7 +220,7 @@ export type MainIpcPromptTemplateDepsArgs = {
 };
 
 export type MainIpcSessionQueryDepsArgs = {
-  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;

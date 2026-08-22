@@ -7,7 +7,7 @@ import type {
   SessionCharacterUsage,
   SessionSummary,
   SessionSummaryPageRequest,
-  SessionSummaryPageResult,
+  HomeSessionSummaryPageResult,
 } from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
@@ -68,7 +68,7 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "getSessionMessageArtifact"
   | "listSessionIdsLastActiveBefore"
 > & Pick<SessionStorage, "close"> & {
-  listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<SessionSummaryPageResult>;
+  listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
 };
 export type SessionStorageWrite = AwaitableStorageMethods<
