@@ -51,7 +51,7 @@ type DirectoryLoadRequest = {
   promise: Promise<void>;
 };
 
-const SESSION_FILE_SEARCH_DEBOUNCE_MS = 250;
+const SESSION_FILE_SEARCH_DEBOUNCE_MS = 400;
 
 function directoryKey(rootId: string, relativePath: string): string {
   return `${rootId}\u0000${relativePath}`;
@@ -103,6 +103,7 @@ export function SessionFileExplorerPane({
   const [loadingDirectories, setLoadingDirectories] = useState<Record<string, boolean>>({});
   const [errorMessage, setErrorMessage] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchViewQuery, setSearchViewQuery] = useState("");
   const [searchResult, setSearchResult] = useState<SessionFileSearchResult | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState("");
@@ -200,7 +201,7 @@ export function SessionFileExplorerPane({
   }, [reloadRoots, rootsRevision]);
 
   const normalizedSearchQuery = searchQuery.trim();
-  const isSearchActive = activeTab === "files" && normalizedSearchQuery.length > 0;
+  const isSearchActive = activeTab === "files" && searchViewQuery.length > 0;
 
   useEffect(() => {
     const snapshot = treeScrollSnapshotRef.current;
@@ -222,11 +223,24 @@ export function SessionFileExplorerPane({
     previousSessionIdRef.current = sessionId;
     searchRequestSequenceRef.current += 1;
     setSearchQuery("");
+    setSearchViewQuery("");
     setSearchResult(null);
     setSearchLoading(false);
     setSearchError("");
     treeScrollSnapshotRef.current = null;
   }, [sessionId]);
+
+  useEffect(() => {
+    const cancelSessionId = sessionId;
+    if (!api || !cancelSessionId) {
+      return;
+    }
+    return () => {
+      void api.cancelSessionFileSearch({ sessionId: cancelSessionId }).catch(() => {
+        // Search cancellation is best effort; stale response guards remain authoritative.
+      });
+    };
+  }, [activeTab, api, enabled, rootsRevision, searchTriggerRevision, sessionId]);
 
   useEffect(() => {
     if (sessionChanged) {
@@ -235,9 +249,15 @@ export function SessionFileExplorerPane({
     const query = searchQuery.trim();
     if (!query) {
       searchRequestSequenceRef.current += 1;
+      setSearchViewQuery("");
       setSearchResult(null);
       setSearchLoading(false);
       setSearchError("");
+      if (api && sessionId) {
+        void api.cancelSessionFileSearch({ sessionId }).catch(() => {
+          // Search cancellation is best effort; stale response guards remain authoritative.
+        });
+      }
       return;
     }
     if (activeTab !== "files" || !api || !sessionId || !enabled) {
@@ -252,11 +272,12 @@ export function SessionFileExplorerPane({
     setSearchError("");
     const isCurrentRequest = () => searchRequestSequenceRef.current === requestId;
     const debounceTimer = setTimeout(() => {
-      const promise = Promise.resolve().then(() => api.searchSessionFiles({ sessionId, query: searchQuery }));
+      const promise = Promise.resolve().then(() => api.searchSessionFiles({ sessionId, query }));
       promise.then((result) => {
         if (!isCurrentRequest()) {
           return;
         }
+        setSearchViewQuery(query);
         setSearchResult(result);
         setSearchLoading(false);
       }).catch((error: unknown) => {
@@ -271,11 +292,6 @@ export function SessionFileExplorerPane({
       clearTimeout(debounceTimer);
       if (isCurrentRequest()) {
         searchRequestSequenceRef.current += 1;
-      }
-      if (api && sessionId && query) {
-        void api.cancelSessionFileSearch({ sessionId }).catch(() => {
-          // Search cancellation is best effort; stale response guards remain authoritative.
-        });
       }
     };
   }, [activeTab, api, enabled, searchQuery, searchTriggerRevision, sessionChanged, sessionId]);
@@ -381,7 +397,7 @@ export function SessionFileExplorerPane({
               <div className="session-file-search-input-row" aria-busy={searchLoading || undefined}>
                 <input
                   className="session-file-search-input"
-                  type="search"
+                  type="text"
                   aria-label="Search files"
                   autoComplete="off"
                   value={searchQuery}
@@ -504,6 +520,7 @@ export function SessionFileExplorerPane({
                     title={searchLimitStatusMessage}
                   >
                     <span className="session-file-search-limit-icon" aria-hidden="true">⚠</span>
+                    <span className="session-file-search-limit-label">Search limited · results may be incomplete</span>
                     <span className="visually-hidden">{searchLimitStatusMessage}</span>
                   </div>
                 ) : null}

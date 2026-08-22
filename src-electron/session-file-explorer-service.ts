@@ -143,11 +143,23 @@ function listDirectoryWithAdmission(
   });
 }
 
-type SessionFileSearchJob = {
-  supersessionKey: string;
-  execute(signal: AbortSignal): Promise<SessionFileSearchResult>;
+type SessionFileSearchSnapshot = {
+  roots: ResolvedSessionFileRoot[];
+  entries: SearchSnapshotEntry[];
+  exploredEntryCount: number;
+  explorationLimitReached: boolean;
+};
+
+type SessionFileSearchSubscriber = {
+  query: string;
   resolve(result: SessionFileSearchResult): void;
   reject(error: unknown): void;
+};
+
+type SessionFileSearchJob = {
+  supersessionKey: string;
+  execute(signal: AbortSignal): Promise<SessionFileSearchSnapshot>;
+  subscriber: SessionFileSearchSubscriber | null;
   controller: AbortController;
 };
 
@@ -162,22 +174,41 @@ const sessionFileSearchSupersededError = () => (
 
 const sessionFileSearchCancelledError = () => new Error("File search was cancelled.");
 
+function rejectSessionFileSearchSubscriber(
+  job: SessionFileSearchJob,
+  error: unknown,
+): void {
+  const subscriber = job.subscriber;
+  job.subscriber = null;
+  subscriber?.reject(error);
+}
+
+function supersedeSessionFileSearchSubscriber(job: SessionFileSearchJob): void {
+  rejectSessionFileSearchSubscriber(job, sessionFileSearchSupersededError());
+}
+
 function startSessionFileSearchJob(job: SessionFileSearchJob): void {
   if (job.controller.signal.aborted) {
-    job.reject(sessionFileSearchSupersededError());
+    rejectSessionFileSearchSubscriber(job, sessionFileSearchSupersededError());
     return;
   }
   activeSessionFileSearches += 1;
   activeSessionFileSearchJobs.set(job.supersessionKey, job);
   Promise.resolve()
     .then(() => job.execute(job.controller.signal))
-    .then((result) => {
+    .then((snapshot) => {
       if (job.controller.signal.aborted) {
-        job.reject(sessionFileSearchCancelledError());
+        rejectSessionFileSearchSubscriber(job, sessionFileSearchCancelledError());
         return;
       }
-      job.resolve(result);
-    }, job.reject)
+      const subscriber = job.subscriber;
+      job.subscriber = null;
+      if (subscriber) {
+        subscriber.resolve(projectSessionFileSearchSnapshot(snapshot, subscriber.query));
+      }
+    }, (error) => {
+      rejectSessionFileSearchSubscriber(job, error);
+    })
     .finally(() => {
       activeSessionFileSearches -= 1;
       if (activeSessionFileSearchJobs.get(job.supersessionKey) === job) {
@@ -199,7 +230,7 @@ function drainSessionFileSearchQueue(): void {
   ) {
     const job = pendingSessionFileSearches.shift()!;
     if (job.controller.signal.aborted) {
-      job.reject(sessionFileSearchSupersededError());
+      rejectSessionFileSearchSubscriber(job, sessionFileSearchSupersededError());
       continue;
     }
     startSessionFileSearchJob(job);
@@ -208,25 +239,34 @@ function drainSessionFileSearchQueue(): void {
 
 function searchSessionFilesWithAdmission(
   supersessionKey: string,
-  execute: (signal: AbortSignal) => Promise<SessionFileSearchResult>,
+  query: string,
+  execute: (signal: AbortSignal) => Promise<SessionFileSearchSnapshot>,
 ): Promise<SessionFileSearchResult> {
   return new Promise((resolve, reject) => {
-    const supersededIndex = pendingSessionFileSearches.findIndex(
+    const pendingJob = pendingSessionFileSearches.find(
       (job) => job.supersessionKey === supersessionKey,
     );
-    if (supersededIndex >= 0) {
-      pendingSessionFileSearches.splice(supersededIndex, 1)[0]?.reject(
-        sessionFileSearchSupersededError(),
-      );
+    if (pendingJob) {
+      supersedeSessionFileSearchSubscriber(pendingJob);
+      pendingJob.subscriber = { query, resolve, reject };
+      return;
     }
 
     const previousReplacement = replacementSessionFileSearchJobs.get(supersessionKey);
     if (previousReplacement) {
-      replacementSessionFileSearchJobs.delete(supersessionKey);
-      previousReplacement.reject(sessionFileSearchSupersededError());
+      supersedeSessionFileSearchSubscriber(previousReplacement);
+      previousReplacement.subscriber = { query, resolve, reject };
+      return;
     }
 
     const activeJob = activeSessionFileSearchJobs.get(supersessionKey);
+    if (activeJob && !activeJob.controller.signal.aborted) {
+      // Query changes share the in-flight bounded scan; only the latest projection
+      // is kept for the renderer, so typing does not restart filesystem traversal.
+      supersedeSessionFileSearchSubscriber(activeJob);
+      activeJob.subscriber = { query, resolve, reject };
+      return;
+    }
     if (!activeJob && pendingSessionFileSearches.length >= MAX_PENDING_SESSION_FILE_SEARCHES) {
       reject(new Error("Too many file searches are already waiting."));
       return;
@@ -234,8 +274,7 @@ function searchSessionFilesWithAdmission(
     const job = {
       supersessionKey,
       execute,
-      resolve,
-      reject,
+      subscriber: { query, resolve, reject },
       controller: new AbortController(),
     } satisfies SessionFileSearchJob;
     activeJob?.controller.abort();
@@ -253,14 +292,21 @@ function cancelSessionFileSearchWithAdmission(supersessionKey: string): void {
     (job) => job.supersessionKey === supersessionKey,
   );
   if (pendingIndex >= 0) {
-    pendingSessionFileSearches.splice(pendingIndex, 1)[0]?.reject(sessionFileSearchCancelledError());
+    const pendingJob = pendingSessionFileSearches.splice(pendingIndex, 1)[0];
+    if (pendingJob) {
+      rejectSessionFileSearchSubscriber(pendingJob, sessionFileSearchCancelledError());
+    }
   }
   const replacement = replacementSessionFileSearchJobs.get(supersessionKey);
   if (replacement) {
     replacementSessionFileSearchJobs.delete(supersessionKey);
-    replacement.reject(sessionFileSearchCancelledError());
+    rejectSessionFileSearchSubscriber(replacement, sessionFileSearchCancelledError());
   }
-  activeSessionFileSearchJobs.get(supersessionKey)?.controller.abort();
+  const activeJob = activeSessionFileSearchJobs.get(supersessionKey);
+  if (activeJob) {
+    rejectSessionFileSearchSubscriber(activeJob, sessionFileSearchCancelledError());
+    activeJob.controller.abort();
+  }
   drainSessionFileSearchQueue();
 }
 
@@ -303,6 +349,12 @@ type AuthorizedOpenedFile = {
 
 type AuthorizedResourceKind = "file" | "directory";
 
+type SearchSnapshotEntry = {
+  rootIndex: number;
+  name: string;
+  relativePath: string;
+};
+
 type SearchCandidate = {
   rootIndex: number;
   root: SessionFileRoot;
@@ -326,7 +378,7 @@ function compareStablePath(left: string, right: string): number {
     || (left < right ? -1 : left > right ? 1 : 0);
 }
 
-function resolveSearchMatchRank(entry: SessionDirectoryEntry, query: string): number | null {
+function resolveSearchMatchRank(entry: SearchSnapshotEntry, query: string): number | null {
   const normalizedName = entry.name.toLocaleLowerCase();
   if (normalizedName === query) {
     return 0;
@@ -344,6 +396,58 @@ function compareSearchCandidates(left: SearchCandidate, right: SearchCandidate):
   return left.matchRank - right.matchRank
     || left.rootIndex - right.rootIndex
     || compareStablePath(left.relativePath, right.relativePath);
+}
+
+function projectSessionFileSearchSnapshot(
+  snapshot: SessionFileSearchSnapshot,
+  query: string,
+): SessionFileSearchResult {
+  const candidates: SearchCandidate[] = [];
+  for (const entry of snapshot.entries) {
+    const matchRank = resolveSearchMatchRank(entry, query);
+    if (matchRank === null) {
+      continue;
+    }
+    candidates.push({
+      rootIndex: entry.rootIndex,
+      root: toPublicRoot(snapshot.roots[entry.rootIndex]!),
+      name: entry.name,
+      relativePath: entry.relativePath,
+      matchRank,
+    });
+  }
+  candidates.sort(compareSearchCandidates);
+  const results = candidates.slice(0, SESSION_FILE_SEARCH_MAX_RESULTS);
+  const resultLimitReached = candidates.length > SESSION_FILE_SEARCH_MAX_RESULTS;
+  const limit: SessionFileSearchLimit | null = snapshot.explorationLimitReached
+    ? resultLimitReached ? "exploration-and-results" : "exploration"
+    : resultLimitReached ? "results" : null;
+  const groups: SessionFileSearchGroup[] = [];
+  for (let rootIndex = 0; rootIndex < snapshot.roots.length; rootIndex += 1) {
+    const entries = results
+      .filter((candidate) => candidate.rootIndex === rootIndex)
+      .map(({ name, relativePath }) => ({ name, relativePath }));
+    if (entries.length > 0) {
+      groups.push({ root: toPublicRoot(snapshot.roots[rootIndex]!), entries });
+    }
+  }
+  if (limit) {
+    return {
+      status: "limit-reached",
+      limit,
+      groups,
+      exploredEntryCount: snapshot.exploredEntryCount,
+      matchedFileCount: candidates.length,
+      returnedFileCount: results.length,
+    };
+  }
+  return {
+    status: "ok",
+    groups,
+    exploredEntryCount: snapshot.exploredEntryCount,
+    matchedFileCount: candidates.length,
+    returnedFileCount: results.length,
+  };
 }
 
 function throwIfFileSearchCancelled(signal: AbortSignal): void {
@@ -866,15 +970,14 @@ export class SessionFileExplorerService {
     return (await this.listDirectoryEntries(request, true)).entries;
   }
 
-  private async searchFilesInternal(
-    request: SessionFileSearchRequest,
+  private async scanSearchFilesInternal(
+    sessionId: string,
     signal: AbortSignal,
-  ): Promise<SessionFileSearchResult> {
+  ): Promise<SessionFileSearchSnapshot> {
     throwIfFileSearchCancelled(signal);
-    const roots = await this.resolveRoots(request.sessionId);
-    const candidates: SearchCandidate[] = [];
+    const roots = await this.resolveRoots(sessionId);
+    const entries: SearchSnapshotEntry[] = [];
     let exploredEntryCount = 0;
-    let matchedFileCount = 0;
     let explorationLimitReached = false;
 
     for (let rootIndex = 0; rootIndex < roots.length && !explorationLimitReached; rootIndex += 1) {
@@ -891,7 +994,7 @@ export class SessionFileExplorerService {
         let listing: DirectoryEntriesResult;
         try {
           listing = await this.listDirectoryEntries({
-            sessionId: request.sessionId,
+            sessionId,
             rootId: root.id,
             relativePath,
           }, false, SESSION_FILE_SEARCH_MAX_EXPLORATION_ENTRIES - exploredEntryCount, signal);
@@ -922,17 +1025,10 @@ export class SessionFileExplorerService {
           if (entry.kind !== "file") {
             continue;
           }
-          const matchRank = resolveSearchMatchRank(entry, request.query);
-          if (matchRank === null) {
-            continue;
-          }
-          matchedFileCount += 1;
-          candidates.push({
+          entries.push({
             rootIndex,
-            root: toPublicRoot(root),
             name: entry.name,
             relativePath: entry.relativePath,
-            matchRank,
           });
         }
         if (explorationLimitReached) {
@@ -946,37 +1042,11 @@ export class SessionFileExplorerService {
       }
     }
 
-    candidates.sort(compareSearchCandidates);
-    const results = candidates.slice(0, SESSION_FILE_SEARCH_MAX_RESULTS);
-    const resultLimitReached = matchedFileCount > SESSION_FILE_SEARCH_MAX_RESULTS;
-    const limit: SessionFileSearchLimit | null = explorationLimitReached
-      ? resultLimitReached ? "exploration-and-results" : "exploration"
-      : resultLimitReached ? "results" : null;
-    const groups: SessionFileSearchGroup[] = [];
-    for (let rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
-      const entries = results
-        .filter((candidate) => candidate.rootIndex === rootIndex)
-        .map(({ name, relativePath }) => ({ name, relativePath }));
-      if (entries.length > 0) {
-        groups.push({ root: toPublicRoot(roots[rootIndex]!), entries });
-      }
-    }
-    if (limit) {
-      return {
-        status: "limit-reached",
-        limit,
-        groups,
-        exploredEntryCount,
-        matchedFileCount,
-        returnedFileCount: results.length,
-      };
-    }
     return {
-      status: "ok",
-      groups,
+      roots,
+      entries,
       exploredEntryCount,
-      matchedFileCount,
-      returnedFileCount: results.length,
+      explorationLimitReached,
     };
   }
 
@@ -993,7 +1063,8 @@ export class SessionFileExplorerService {
     }
     return searchSessionFilesWithAdmission(
       request.sessionId,
-      (signal) => this.searchFilesInternal({ ...request, query }, signal),
+      query,
+      (signal) => this.scanSearchFilesInternal(request.sessionId, signal),
     );
   }
 

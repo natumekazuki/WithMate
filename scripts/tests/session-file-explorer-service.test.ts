@@ -1233,17 +1233,17 @@ test("SessionFileExplorerService は search admission の active 2 / pending 16 
   }
 });
 
-test("SessionFileExplorerService は新しい同一 Session の検索で実行中の listing を cancel する", async () => {
-  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-cancel-"));
+test("SessionFileExplorerService は新しい同一 Session の検索で in-flight scan を共有する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-shared-scan-"));
   const workspacePath = path.join(basePath, "workspace");
   await mkdir(workspacePath, { recursive: true });
   let listingStarted!: () => void;
-  let listingAborted!: () => void;
+  let releaseListing!: () => void;
   const started = new Promise<void>((resolve) => {
     listingStarted = resolve;
   });
-  const aborted = new Promise<void>((resolve) => {
-    listingAborted = resolve;
+  const listingReleased = new Promise<void>((resolve) => {
+    releaseListing = resolve;
   });
   let listingCalls = 0;
   const service = new SessionFileExplorerService({
@@ -1252,18 +1252,11 @@ test("SessionFileExplorerService は新しい同一 Session の検索で実行�
     async listDirectory(targetPath, options) {
       const targetStats = await stat(targetPath);
       listingCalls += 1;
-      if (listingCalls === 1) {
-        const signal = options?.signal;
-        assert.ok(signal);
-        listingStarted();
-        await new Promise<void>((_resolve, reject) => {
-          const onAbort = () => {
-            listingAborted();
-            reject(new Error("directory listing was cancelled"));
-          };
-          signal.addEventListener("abort", onAbort, { once: true });
-        });
-      }
+      const signal = options?.signal;
+      assert.ok(signal);
+      assert.equal(signal.aborted, false);
+      listingStarted();
+      await listingReleased;
       return {
         device: targetStats.dev,
         inode: targetStats.ino,
@@ -1276,12 +1269,14 @@ test("SessionFileExplorerService は新しい同一 Session の検索で実行�
     const oldRequest = service.searchFiles({ sessionId: "session-1", query: "old" });
     await started;
     const newRequest = service.searchFiles({ sessionId: "session-1", query: "new" });
-    await aborted;
     await assert.rejects(oldRequest, /superseded/);
+    assert.equal(listingCalls, 1);
+    releaseListing();
     const result = await newRequest;
     assert.equal(result.status, "ok");
     assert.equal(result.returnedFileCount, 0);
   } finally {
+    releaseListing?.();
     await rm(basePath, { recursive: true, force: true });
   }
 });
@@ -1317,24 +1312,28 @@ test("SessionFileExplorerService は明示的な cancel で active search と wo
     const request = service.searchFiles({ sessionId: "session-1", query: "file" });
     await started;
     service.cancelSearch({ sessionId: "session-1" });
-    await assert.rejects(request, /superseded/);
+    await assert.rejects(request, /cancelled/);
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }
 });
 
-test("SessionFileExplorerService は pending 満杯でも active 同一 Session の replacement を受け付ける", async () => {
-  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-replacement-"));
+test("SessionFileExplorerService は pending 満杯でも active 同一 Session の scan を共有する", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-search-shared-admission-"));
   const workspacePath = path.join(basePath, "workspace");
   await mkdir(workspacePath, { recursive: true });
   let targetListingStarted!: () => void;
   let blockerListingStarted!: () => void;
+  let releaseTarget!: () => void;
   let releaseBlockers!: () => void;
   const targetStarted = new Promise<void>((resolve) => {
     targetListingStarted = resolve;
   });
   const blockerStarted = new Promise<void>((resolve) => {
     blockerListingStarted = resolve;
+  });
+  const targetReleased = new Promise<void>((resolve) => {
+    releaseTarget = resolve;
   });
   const blockersReleased = new Promise<void>((resolve) => {
     releaseBlockers = resolve;
@@ -1347,18 +1346,10 @@ test("SessionFileExplorerService は pending 満杯でも active 同一 Session 
       const targetStats = await stat(targetPath);
       if (sessionId === "replacement-target") {
         targetListingCalls += 1;
-        if (targetListingCalls === 1) {
-          const signal = options?.signal;
-          assert.ok(signal);
-          targetListingStarted();
-          await new Promise<void>((_resolve, reject) => {
-            signal.addEventListener("abort", () => reject(new Error("directory listing was cancelled")), { once: true });
-          });
-        }
-      } else {
-        if (sessionId === "replacement-blocker") {
-          blockerListingStarted();
-        }
+        targetListingStarted();
+        await targetReleased;
+      } else if (sessionId === "replacement-blocker") {
+        blockerListingStarted();
         await blockersReleased;
       }
       return {
@@ -1384,12 +1375,15 @@ test("SessionFileExplorerService は pending 満杯でも active 同一 Session 
     });
     const replacementRequest = targetService.searchFiles({ sessionId: "replacement-target", query: "new" });
     await assert.rejects(oldRequest, /superseded/);
-    const replacementResult = await replacementRequest;
-    assert.equal(replacementResult.status, "ok");
-    assert.equal(replacementResult.returnedFileCount, 0);
+    assert.equal(targetListingCalls, 1);
+    releaseTarget();
+    const sharedResult = await replacementRequest;
+    assert.equal(sharedResult.status, "ok");
+    assert.equal(sharedResult.returnedFileCount, 0);
     releaseBlockers();
     await Promise.all([blockerRequest, ...queuedRequests]);
   } finally {
+    releaseTarget?.();
     releaseBlockers?.();
     await rm(basePath, { recursive: true, force: true });
   }

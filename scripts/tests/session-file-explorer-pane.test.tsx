@@ -254,6 +254,9 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     assert.equal(searchRequests.length, 0);
     await waitFor(() => searchRequests.length === 1);
     assert.equal(searchRequests[0]?.query, "new");
+    assert.equal(searchInput.type, "text");
+    assert.match(dom.window.document.body.textContent ?? "", /new\.txt/);
+    assert.equal(dom.window.document.querySelector(".session-file-search-root-row"), null);
     assert.equal(searchInput.getAttribute("placeholder"), null);
     assert.equal(dom.window.document.querySelector(".session-file-search-loading"), null);
     assert.equal(dom.window.document.querySelector(".session-file-tree-status"), null);
@@ -276,6 +279,10 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     const searchLimit = dom.window.document.querySelector<HTMLElement>(".session-file-search-limit");
     assert.ok(searchLimit);
     assert.equal(searchLimit.querySelector(".session-file-search-limit-icon")?.textContent, "⚠");
+    assert.equal(
+      searchLimit.querySelector(".session-file-search-limit-label")?.textContent,
+      "Search limited · results may be incomplete",
+    );
     assert.match(searchLimit.getAttribute("title") ?? "", /Search was limited/);
     assert.match(searchLimit.querySelector(".visually-hidden")?.textContent ?? "", /more may be omitted/);
     const searchRow = dom.window.document.querySelector<HTMLButtonElement>(".session-file-search-row");
@@ -307,10 +314,12 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     assert.match(dom.window.document.body.textContent ?? "", /newer-result\.ts/);
     assert.doesNotMatch(dom.window.document.body.textContent ?? "", /old-result\.ts/);
 
+    const cancelCountBeforeQueryChange = cancelRequests.length;
     await act(async () => {
       setSearchInputValue(searchInput, "broken");
       await Promise.resolve();
     });
+    assert.equal(cancelRequests.length, cancelCountBeforeQueryChange);
     await waitFor(() => searchRequests.length === 4);
     await act(async () => {
       searchRequests[3]?.deferred.reject(new Error("search failed"));
