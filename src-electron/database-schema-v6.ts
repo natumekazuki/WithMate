@@ -553,7 +553,7 @@ function hasValidCoordinationEventSchemaIfPresent(db: DatabaseSync): boolean {
     && eventSql.includes("(kind = 'correction') = (corrected_event_id IS NOT NULL)")
     && eventSql.includes("json_array_length(options_json) BETWEEN 2 AND 8")
     && eventSql.includes("kind <> 'user_decision_required' AND options_json = '[]'")
-    && actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded', 'consumed')")
+    && actionSql.includes("action_type IN ('responded', 'resolved', 'cancelled', 'superseded', 'consumed')")
     && actionSql.includes("actor_type IN ('session', 'trusted_gui')")
     && actionSql.includes("note IS NULL OR length(note) <= 1000")
     && actionSql.includes("actor_type = 'session' OR actor_session_id IS NULL")
@@ -1565,7 +1565,7 @@ export const CREATE_V6_COORDINATION_EVENT_TABLES_SQL = `
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     event_id TEXT NOT NULL,
-    action_type TEXT NOT NULL CHECK (action_type IN ('resolved', 'cancelled', 'superseded', 'consumed')),
+    action_type TEXT NOT NULL CHECK (action_type IN ('responded', 'resolved', 'cancelled', 'superseded', 'consumed')),
     actor_type TEXT NOT NULL CHECK (actor_type IN ('session', 'trusted_gui')),
     actor_session_id TEXT,
     option_id TEXT,
@@ -2613,7 +2613,7 @@ export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
 function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   const targetTagStatsExisted = tableExists(db, "memory_target_tag_stats_v6");
   const sessionRoleBindingsExisted = tableExists(db, "session_role_bindings_v6");
-  upgradeLegacyCoordinationEventConsumptionSchema(db);
+  upgradeLegacyCoordinationEventActionSchema(db);
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");
   }
@@ -2780,21 +2780,26 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
 }
 
-function upgradeLegacyCoordinationEventConsumptionSchema(db: DatabaseSync): void {
+function upgradeLegacyCoordinationEventActionSchema(db: DatabaseSync): void {
   if (!tableExists(db, "coordination_event_actions_v6")
     || !tableExists(db, "coordination_event_idempotency_v6")) {
     return;
   }
   const actionSql = tableSql(db, "coordination_event_actions_v6");
   const idempotencySql = tableSql(db, "coordination_event_idempotency_v6");
-  if (actionSql.includes("'consumed'") && idempotencySql.includes("'coordination.event.consume'")) {
+  if (actionSql.includes("'responded'") && idempotencySql.includes("'coordination.event.consume'")) {
     return;
   }
-  const isSupportedLegacySchema = actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded')")
+  const hasSupportedLegacyActions = (
+    actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded')")
+      || actionSql.includes("action_type IN ('resolved', 'cancelled', 'superseded', 'consumed')")
+  )
     && actionSql.includes("(action_type = 'superseded') = (related_event_id IS NOT NULL)")
-    && idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')")
-    && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)");
-  if (!isSupportedLegacySchema) return;
+  const hasSupportedLegacyIdempotency = (
+    idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.cancel', 'coordination.event.correct')")
+      || idempotencySql.includes("operation IN ('coordination.event.create', 'coordination.event.resolve', 'coordination.event.consume', 'coordination.event.cancel', 'coordination.event.correct')")
+  ) && idempotencySql.includes("PRIMARY KEY (principal_session_id, idempotency_key)");
+  if (!hasSupportedLegacyActions || !hasSupportedLegacyIdempotency) return;
 
   db.exec(`
     DROP INDEX IF EXISTS idx_v6_coordination_event_actions_event_sequence;
@@ -2806,9 +2811,18 @@ function upgradeLegacyCoordinationEventConsumptionSchema(db: DatabaseSync): void
       sequence, id, event_id, action_type, actor_type, actor_session_id,
       option_id, note, related_event_id, created_at
     )
-    SELECT sequence, id, event_id, action_type, actor_type, actor_session_id,
-      option_id, note, related_event_id, created_at
-    FROM coordination_event_actions_v6_legacy;
+    SELECT legacy.sequence, legacy.id, legacy.event_id,
+      CASE
+        WHEN legacy.action_type = 'resolved'
+          AND legacy.actor_type = 'trusted_gui'
+          AND events.kind = 'blocker'
+        THEN 'responded'
+        ELSE legacy.action_type
+      END,
+      legacy.actor_type, legacy.actor_session_id, legacy.option_id, legacy.note,
+      legacy.related_event_id, legacy.created_at
+    FROM coordination_event_actions_v6_legacy AS legacy
+    INNER JOIN coordination_events_v6 AS events ON events.id = legacy.event_id;
     INSERT INTO coordination_event_idempotency_v6 (
       operation, principal_session_id, idempotency_key, request_fingerprint,
       result_event_id, target_event_id, created_at

@@ -59,7 +59,7 @@ export type CoordinationEventRoleSnapshot = SessionRoleBinding;
 
 export type CoordinationEventAction = {
   sequence: number;
-  type: "resolved" | "cancelled" | "superseded" | "consumed";
+  type: "responded" | "resolved" | "cancelled" | "superseded" | "consumed";
   actorType: "session" | "trusted_gui";
   actorSessionId: string | null;
   optionId: string | null;

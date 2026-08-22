@@ -376,7 +376,7 @@ describe("CoordinationEventStorageV6", () => {
     }
   });
 
-  it("COORD-BLOCKER-RESPONSE-01: blockerの解決情報はtrusted GUIで変更できowner反映後に確定する", async () => {
+  it("COORD-BLOCKER-RESPONSE-01: blockerへの回答は未解決のまま変更できowner反映後に確定する", async () => {
     const fixture = await createFixture();
     try {
       const blocker = create(fixture.storage, {
@@ -395,6 +395,8 @@ describe("CoordinationEventStorageV6", () => {
         requestFingerprint: "blocker-response-first",
         createdAt: NOW,
       }).event;
+      assert.equal(first.state, "open");
+      assert.equal(first.actions.at(-1)?.type, "responded");
       const firstResolutionSequence = first.actions.at(-1)?.sequence;
       assert.ok(firstResolutionSequence);
       assert.deepEqual(fixture.storage.listPendingResponses(principal("executor-a")), [{
@@ -416,6 +418,8 @@ describe("CoordinationEventStorageV6", () => {
         requestFingerprint: "blocker-response-revised",
         createdAt: "2026-08-21T12:01:00.000Z",
       }).event;
+      assert.equal(revised.state, "open");
+      assert.equal(revised.actions.filter((action) => action.type === "responded").length, 2);
       const latestResolutionSequence = revised.actions.at(-1)?.sequence;
       assert.ok(latestResolutionSequence);
       assert.throws(
@@ -437,6 +441,7 @@ describe("CoordinationEventStorageV6", () => {
         idempotencyKey: "blocker-consume", requestFingerprint: "blocker-consume", createdAt: NOW,
       }).event;
       assert.equal(consumed.actions.at(-1)?.type, "consumed");
+      assert.equal(consumed.state, "open");
       assert.deepEqual(fixture.storage.listPendingResponses(principal("executor-a")), []);
       assert.throws(
         () => fixture.storage.resolve({
@@ -447,6 +452,18 @@ describe("CoordinationEventStorageV6", () => {
         }),
         (error) => error instanceof CoordinationEventStateConflictError,
       );
+
+      const resolvedAfterConsumption = fixture.storage.resolve({
+        principal: principal("executor-a"),
+        eventId: blocker.eventId,
+        optionId: null,
+        note: null,
+        idempotencyKey: "blocker-resolve-after-consume",
+        requestFingerprint: "blocker-resolve-after-consume",
+        createdAt: NOW,
+      }).event;
+      assert.equal(resolvedAfterConsumption.state, "resolved");
+      assert.equal(resolvedAfterConsumption.actions.at(-1)?.type, "resolved");
 
       const agentResolvedBlocker = create(fixture.storage, {
         kind: "blocker",

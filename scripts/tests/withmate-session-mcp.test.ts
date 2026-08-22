@@ -122,7 +122,8 @@ describe("WithMate Session MCP contract", () => {
   it("25 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /scope or policy decision/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Use user_decision_required/);
-    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /revise free-text resolution information for your blocker/);
+    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /free-text response to your blocker/);
+    assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /does not resolve the blocker/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Never record secrets/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /must not stop the normal response/);
     await withClient(createWithMateSessionMcpServer(), async (client) => {

@@ -363,10 +363,10 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
     ).find((button) => button.textContent === "Sessionを開く");
     assert.equal(openSessionAction, undefined);
     assert.match(rootElement.querySelector(".coordination-detail .coordination-event-meta")?.textContent ?? "", /未解決/);
-    assert.match(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /解決情報/);
-    assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /解決として送信/);
+    assert.doesNotMatch(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /解決情報/);
+    assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /送信/);
     assert.match(rootElement.querySelector(".coordination-detail-actions")?.textContent ?? "", /イベントを取り消す/);
-    assert.ok(rootElement.querySelector<HTMLTextAreaElement>('textarea[aria-label="解決情報"]'));
+    assert.ok(rootElement.querySelector<HTMLTextAreaElement>('textarea[aria-label="ブロッカーへの回答"]'));
     await act(async () => {
       rootElement.querySelector<HTMLButtonElement>(".coordination-detail-origin")?.click();
       await Promise.resolve();
@@ -375,10 +375,10 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
 
     currentDetail = {
       ...currentDetail,
-      state: "resolved",
+      state: "open",
       actions: [{
         sequence: 5,
-        type: "resolved",
+        type: "responded",
         actorType: "trusted_gui",
         actorSessionId: null,
         optionId: null,
@@ -391,9 +391,10 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       rootElement.querySelector<HTMLButtonElement>(".coordination-event-row")?.click();
       await Promise.resolve();
     });
-    assert.match(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /解決情報を変更/);
+    assert.doesNotMatch(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /解決情報/);
+    assert.match(rootElement.querySelector(".coordination-decision-panel")?.textContent ?? "", /変更/);
     assert.equal(
-      rootElement.querySelector<HTMLTextAreaElement>('textarea[aria-label="解決情報"]')?.value,
+      rootElement.querySelector<HTMLTextAreaElement>('textarea[aria-label="ブロッカーへの回答"]')?.value,
       "タイトルとアイコンが若干重なっている",
     );
 
@@ -412,6 +413,7 @@ test("Coordination Windowは必要なfilterだけを置き、未使用の回答�
       await Promise.resolve();
     });
     assert.match(rootElement.textContent ?? "", /確定済み/);
+    assert.match(rootElement.querySelector(".coordination-detail .coordination-event-meta")?.textContent ?? "", /未解決/);
     assert.match(rootElement.textContent ?? "", /タイトルとアイコンが若干重なっている/);
     assert.equal(rootElement.querySelector(".coordination-decision-panel"), null);
 

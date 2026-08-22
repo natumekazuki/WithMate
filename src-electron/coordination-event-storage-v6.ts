@@ -254,7 +254,7 @@ export class CoordinationEventStorageV6 {
     requestFingerprint: string;
     createdAt: string;
   }): { event: CoordinationEvent; replayed: boolean } {
-    return this.transition("coordination.event.resolve", "resolved", input, (event) => {
+    return this.transition("coordination.event.resolve", input, (event) => {
       if (!canView(input.principal, event)) throw new CoordinationEventNotFoundError();
       if (event.kind === "escalation") {
         if (input.principal.actorType !== "session" || event.targetSessionId !== input.principal.sessionId || input.optionId) {
@@ -264,15 +264,16 @@ export class CoordinationEventStorageV6 {
       } else if (event.kind === "blocker") {
         const hasNote = input.note !== null && input.note.trim().length > 0;
         if (input.principal.actorType === "trusted_gui") {
-          const hasTrustedResolution = event.actions.some(
-            (action) => action.type === "resolved" && action.actorType === "trusted_gui",
+          const hasTrustedResponse = event.actions.some(
+            (action) => action.type === "responded" && action.actorType === "trusted_gui",
           );
           const hasBeenConsumed = event.actions.some((action) => action.type === "consumed");
           if (!canView(input.principal, event) || input.optionId || !hasNote) {
             throw new CoordinationEventNotFoundError();
           }
+          if (hasBeenConsumed) throw new CoordinationEventStateConflictError();
           if (event.state !== "open"
-            && (event.state !== "resolved" || !hasTrustedResolution || hasBeenConsumed)) {
+            && (event.state !== "resolved" || !hasTrustedResponse)) {
             throw new CoordinationEventStateConflictError();
           }
         } else {
@@ -298,7 +299,9 @@ export class CoordinationEventStorageV6 {
       } else {
         throw new CoordinationEventStateConflictError();
       }
-    });
+    }, (event) => event.kind === "blocker" && input.principal.actorType === "trusted_gui"
+      ? "responded"
+      : "resolved");
   }
 
   listPendingResponses(principal: CoordinationMutationPrincipal): PendingCoordinationResponse[] {
@@ -308,12 +311,18 @@ export class CoordinationEventStorageV6 {
       FROM coordination_events_v6 AS events
       WHERE events.actor_session_id = ?
         AND events.kind IN ('user_decision_required', 'blocker')
-        AND ${PROJECTED_STATE_SQL} = 'resolved'
+        AND (
+          (events.kind = 'user_decision_required' AND ${PROJECTED_STATE_SQL} = 'resolved')
+          OR (events.kind = 'blocker' AND ${PROJECTED_STATE_SQL} IN ('open', 'resolved'))
+        )
         AND EXISTS (
           SELECT 1
           FROM coordination_event_actions_v6 AS resolved_actions
           WHERE resolved_actions.event_id = events.id
-            AND resolved_actions.action_type = 'resolved'
+            AND resolved_actions.action_type = CASE events.kind
+              WHEN 'blocker' THEN 'responded'
+              ELSE 'resolved'
+            END
             AND resolved_actions.actor_type = 'trusted_gui'
         )
         AND NOT EXISTS (
@@ -326,7 +335,10 @@ export class CoordinationEventStorageV6 {
         SELECT MAX(resolved_actions.sequence)
         FROM coordination_event_actions_v6 AS resolved_actions
         WHERE resolved_actions.event_id = events.id
-          AND resolved_actions.action_type = 'resolved'
+          AND resolved_actions.action_type = CASE events.kind
+            WHEN 'blocker' THEN 'responded'
+            ELSE 'resolved'
+          END
           AND resolved_actions.actor_type = 'trusted_gui'
       ) ASC
       LIMIT ?
@@ -357,14 +369,18 @@ export class CoordinationEventStorageV6 {
         || (event.kind !== "user_decision_required" && event.kind !== "blocker")) {
         throw new CoordinationEventNotFoundError();
       }
-      if (event.state !== "resolved"
+      const consumableState = event.kind === "blocker"
+        ? event.state === "open" || event.state === "resolved"
+        : event.state === "resolved";
+      if (!consumableState
         || event.actions.some((action) => action.type === "consumed")) {
         throw new CoordinationEventStateConflictError();
       }
-      const latestResolution = [...event.actions]
+      const expectedActionType = event.kind === "blocker" ? "responded" : "resolved";
+      const latestResponse = [...event.actions]
         .reverse()
-        .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
-      if (!latestResolution || latestResolution.sequence !== input.expectedResolutionSequence) {
+        .find((action) => action.type === expectedActionType && action.actorType === "trusted_gui");
+      if (!latestResponse || latestResponse.sequence !== input.expectedResolutionSequence) {
         throw new CoordinationEventStateConflictError();
       }
       this.insertAction(input.eventId, "consumed", input.principal, null, null, null, input.createdAt);
@@ -390,7 +406,7 @@ export class CoordinationEventStorageV6 {
     requestFingerprint: string;
     createdAt: string;
   }): { event: CoordinationEvent; replayed: boolean } {
-    return this.transition("coordination.event.cancel", "cancelled", input, (event) => {
+    return this.transition("coordination.event.cancel", input, (event) => {
       if (!canView(input.principal, event)) throw new CoordinationEventNotFoundError();
       if (input.principal.actorType === "session" && event.actorSessionId !== input.principal.sessionId) {
         throw new CoordinationEventNotFoundError();
@@ -399,7 +415,7 @@ export class CoordinationEventStorageV6 {
         throw new CoordinationEventNotFoundError();
       }
       if (event.state !== "open") throw new CoordinationEventStateConflictError();
-    });
+    }, "cancelled");
   }
 
   correct(input: {
@@ -452,7 +468,6 @@ export class CoordinationEventStorageV6 {
 
   private transition(
     operation: "coordination.event.resolve" | "coordination.event.cancel",
-    action: "resolved" | "cancelled",
     input: {
       principal: CoordinationMutationPrincipal;
       eventId: string;
@@ -463,6 +478,7 @@ export class CoordinationEventStorageV6 {
       createdAt: string;
     },
     authorize: (event: CoordinationEvent) => void,
+    action: "responded" | "resolved" | "cancelled" | ((event: CoordinationEvent) => "responded" | "resolved"),
   ): { event: CoordinationEvent; replayed: boolean } {
     return this.transaction(() => {
       const replay = this.resolveReplay(operation, input.principal.sessionId, input.idempotencyKey, input.requestFingerprint);
@@ -470,7 +486,8 @@ export class CoordinationEventStorageV6 {
       this.assertCanonicalBinding(input.principal);
       const event = this.getRequired(input.eventId);
       authorize(event);
-      this.insertAction(input.eventId, action, input.principal, input.optionId, input.note, null, input.createdAt);
+      const actionType = typeof action === "function" ? action(event) : action;
+      this.insertAction(input.eventId, actionType, input.principal, input.optionId, input.note, null, input.createdAt);
       this.insertIdempotency(operation, input.principal.sessionId, input.idempotencyKey, input.requestFingerprint, input.eventId, null, input.createdAt);
       return { event: this.getRequired(input.eventId), replayed: false };
     });
@@ -663,9 +680,10 @@ function toPendingResponse(event: CoordinationEvent): PendingCoordinationRespons
   if (event.kind !== "user_decision_required" && event.kind !== "blocker") {
     throw new CoordinationEventStateConflictError();
   }
+  const expectedActionType = event.kind === "blocker" ? "responded" : "resolved";
   const resolution = [...event.actions]
     .reverse()
-    .find((action) => action.type === "resolved" && action.actorType === "trusted_gui");
+    .find((action) => action.type === expectedActionType && action.actorType === "trusted_gui");
   if (!resolution) throw new CoordinationEventStateConflictError();
   if (resolution.optionId) {
     if (event.kind !== "user_decision_required") throw new CoordinationEventStateConflictError();
