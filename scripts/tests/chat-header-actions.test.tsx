@@ -172,7 +172,13 @@ test("createMessageCollapseHeaderAction は既存header button語彙とshortcut�
   assert.match(html, /class="drawer-toggle compact secondary"/);
   assert.match(html, /aria-label="完了済みmessageをすべて縮小"/);
   assert.match(html, /title="完了済みmessageをすべて縮小 \(Ctrl\+Shift\+M\)"/);
-  assert.match(html, />すべて縮小<\/button>/);
+  assert.match(html, />Collapse<\/button>/);
+
+  const expandedHtml = renderToStaticMarkup(createMessageCollapseHeaderAction({
+    allMessagesCollapsed: true,
+    onToggle: noop,
+  }));
+  assert.match(expandedHtml, />Expand<\/button>/);
 });
 
 test("SessionHeader はmessage collapse actionをAuxiliaryの左隣へ描画する", () => {

@@ -87,7 +87,7 @@ export function createMessageCollapseHeaderAction({
   allMessagesCollapsed,
   onToggle,
 }: MessageCollapseHeaderActionOptions) {
-  const label = allMessagesCollapsed ? "すべて展開" : "すべて縮小";
+  const label = allMessagesCollapsed ? "Expand" : "Collapse";
   const accessibleLabel = allMessagesCollapsed
     ? "完了済みmessageをすべて展開"
     : "完了済みmessageをすべて縮小";

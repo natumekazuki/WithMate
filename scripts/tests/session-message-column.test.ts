@@ -675,8 +675,6 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
     });
     assert.equal(toggledKey, "session-s-0");
 
-    const messageList = mounted.messageListRef.current;
-    assert.ok(messageList);
     const shortcutEvent = new mounted.dom.window.KeyboardEvent("keydown", {
       key: "M",
       ctrlKey: true,
@@ -685,7 +683,7 @@ test("SessionMessageColumn は個別・一括collapseをnative controlで操作�
       cancelable: true,
     });
     await act(async () => {
-      messageList.dispatchEvent(shortcutEvent);
+      mounted.dom.window.document.body.dispatchEvent(shortcutEvent);
     });
     assert.equal(allToggleCount, 1);
     assert.equal(shortcutEvent.defaultPrevented, true);
