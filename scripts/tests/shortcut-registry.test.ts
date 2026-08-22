@@ -4,6 +4,7 @@ import { JSDOM } from "jsdom";
 
 import {
   getShortcutHelpProjection,
+  getShortcutEntry,
   getShortcutLabel,
   SHORTCUT_COMMAND_IDS,
   SHORTCUT_ENTRIES,
@@ -192,7 +193,7 @@ describe("shortcut projection", () => {
       macos: { key: "m", metaKey: true, shiftKey: true },
     });
     assert.equal(entry.scope, "message-list");
-    assert.equal(entry.allowInEditingTarget, false);
+    assert.equal(entry.allowInEditingTarget, true);
     assert.equal(entry.allowRepeat, false);
     assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "windows"), "Ctrl+Shift+M");
     assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "macos"), "⌘⇧M");
@@ -310,6 +311,39 @@ describe("shortcut dispatcher", () => {
       composer.dispatchEvent(composerEvent);
       assert.equal(calls, 1);
       assert.equal(composerEvent.defaultPrevented, true);
+
+      releaseScope();
+      dispatcher.dispose();
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  it("message collapse shortcut はcomposerへfocus中もmessage-list scopeで発火する", () => {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+      const dispatcher = new ShortcutDispatcher({
+        eventTarget: dom.window,
+        platform: "windows",
+        entries: [entry],
+      });
+      let calls = 0;
+      dispatcher.registerHandler(entry.id, () => {
+        calls += 1;
+        return true;
+      });
+      const releaseScope = dispatcher.registerScope("message-list");
+      const textarea = dom.window.document.createElement("textarea");
+      dom.window.document.body.append(textarea);
+      textarea.focus();
+
+      const event = createKeyboardEvent(dom, { key: "M", ctrlKey: true, shiftKey: true });
+      textarea.dispatchEvent(event);
+      assert.equal(calls, 1);
+      assert.equal(event.defaultPrevented, true);
 
       releaseScope();
       dispatcher.dispose();

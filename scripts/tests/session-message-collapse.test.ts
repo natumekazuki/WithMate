@@ -110,6 +110,21 @@ test("同じkeyのsource/role/body変更、消えたkey、Session切り替えで
   assert.equal(reconcileMessageCollapseState(collapsed, []).size, 0);
 });
 
+test("個別toggleは別messageの縮小状態を保持する", () => {
+  const targets = buildMessageCollapseTargets(
+    [message("user", "user message"), message("assistant", "assistant response")],
+    [sessionSource(0), sessionSource(1)],
+    ["user-key", "assistant-key"],
+  );
+
+  const userCollapsed = toggleMessageCollapseState(new Map(), targets[0]!);
+  const bothCollapsed = toggleMessageCollapseState(userCollapsed, targets[1]!);
+  assert.deepEqual(Array.from(bothCollapsed.keys()), ["user-key", "assistant-key"]);
+
+  const assistantOnlyCollapsed = toggleMessageCollapseState(bothCollapsed, targets[0]!);
+  assert.deepEqual(Array.from(assistantOnlyCollapsed.keys()), ["assistant-key"]);
+});
+
 test("一括toggle は一件でも展開中なら全縮小、全縮小済みなら全展開する", () => {
   const targets = buildMessageCollapseTargets(
     [message("user", "one"), message("assistant", "two")],

@@ -105,7 +105,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
       linux: { key: "m", ctrlKey: true, shiftKey: true },
       macos: { key: "m", metaKey: true, shiftKey: true },
     },
-    allowInEditingTarget: false,
+    allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
     assignment: "new",

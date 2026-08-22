@@ -137,8 +137,11 @@ export function toggleMessageCollapseState(
   state: MessageCollapseState,
   target: MessageCollapseTarget,
 ): Map<string, MessageCollapseStateEntry> {
-  const next = reconcileMessageCollapseState(state, [target]);
-  if (next.has(target.key)) {
+  // The caller reconciles the complete projection before toggling. Preserve
+  // unrelated entries here so an individual toggle cannot clear other rows.
+  const next = new Map(state);
+  const current = next.get(target.key);
+  if (current && isMatchingCollapseStateEntry(current, target)) {
     next.delete(target.key);
   } else {
     next.set(target.key, {
