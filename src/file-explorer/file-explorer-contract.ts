@@ -82,7 +82,7 @@ export type SessionFilePreviewWindowOpenRequest =
 
 export type SessionFilePreviewWindowView =
   | { kind: "preview" }
-  | { kind: "diff"; scope: FileRootGitChangeScope };
+  | { kind: "diff"; scope: FileRootGitDiffScope };
 
 export type SessionFilePreviewWindowPayload = {
   resource: SessionFileResourceRequest;
@@ -179,8 +179,15 @@ export type SessionFileChunkResult = {
   revision: string;
 };
 
-export type FileRootGitChangeScope = "working-tree" | "staged";
-export type FileRootGitChangeKind = "added" | "modified" | "deleted" | "renamed" | "untracked";
+export type FileRootGitDiffScope = "working-tree" | "staged";
+export type FileRootGitChangeScope = FileRootGitDiffScope | "commit";
+export type FileRootGitChangeKind =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked";
 
 export type FileRootGitChangeEntry = {
   relativePath: string;
@@ -200,7 +207,7 @@ export type FileRootChangesResult =
 
 export type FileRootFileDiffRequest = FileRootChangesRequest & {
   relativePath: string;
-  scope: FileRootGitChangeScope;
+  scope: FileRootGitDiffScope;
 };
 
 export function buildFileRootDiffPreviewWindowRequest(
@@ -218,5 +225,81 @@ export function buildFileRootDiffPreviewWindowRequest(
 }
 
 export type FileRootFileDiffResult =
-  | { status: "ok"; relativePath: string; scope: FileRootGitChangeScope; patch: string }
+  | { status: "ok"; relativePath: string; scope: FileRootGitDiffScope; patch: string }
   | { status: "untracked" | "not-changed" | "not-git" | "root-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryRepository = {
+  repositoryId: string;
+  rootId: string;
+  label: string;
+  displayPath: string;
+};
+
+export type FileRootGitHistoryRepositoriesRequest = {
+  sessionId: string;
+};
+
+export type FileRootGitHistoryRepositoriesResult =
+  | { status: "ok"; repositories: FileRootGitHistoryRepository[] }
+  | { status: "failed"; message: string };
+
+export type FileRootGitHistoryRequest = {
+  sessionId: string;
+  repositoryId: string;
+  rootId: string;
+};
+
+export type FileRootGitHistoryRefKind = "head" | "branch" | "tag";
+
+export type FileRootGitHistoryRef = {
+  kind: FileRootGitHistoryRefKind;
+  name: string;
+};
+
+export type FileRootGitHistoryCommit = {
+  id: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  refs: FileRootGitHistoryRef[];
+  parentIds: string[];
+};
+
+export type FileRootGitHistoryCommitsRequest = FileRootGitHistoryRequest & {
+  cursor?: string | null;
+};
+
+export type FileRootGitHistoryPage = {
+  entries: FileRootGitHistoryCommit[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export type FileRootGitHistoryCommitsResult =
+  | { status: "ok"; page: FileRootGitHistoryPage }
+  | { status: "repository-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryCommitDetailRequest = FileRootGitHistoryRequest & {
+  commitId: string;
+};
+
+export type FileRootGitHistoryCommitDetailResult =
+  | {
+      status: "ok";
+      commit: FileRootGitHistoryCommit;
+      entries: FileRootGitChangeEntry[];
+    }
+  | { status: "commit-not-found" | "repository-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryDiffRequest = FileRootGitHistoryCommitDetailRequest & {
+  relativePath?: string | null;
+};
+
+export type FileRootGitHistoryDiffResult =
+  | { status: "ok"; commitId: string; relativePath: string | null; patch: string }
+  | {
+      status: "commit-not-found" | "not-changed" | "repository-not-found" | "failed";
+      message: string;
+    };

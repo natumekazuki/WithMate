@@ -106,6 +106,14 @@ import type {
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
+  FileRootGitHistoryCommitDetailRequest,
+  FileRootGitHistoryCommitDetailResult,
+  FileRootGitHistoryCommitsRequest,
+  FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryDiffResult,
+  FileRootGitHistoryRepositoriesRequest,
+  FileRootGitHistoryRepositoriesResult,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   areSessionFileResourcesEqual,
@@ -183,6 +191,10 @@ import {
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -414,6 +426,18 @@ export type MainIpcRegistrationDeps = {
   ): Awaitable<MarkdownLinkContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Awaitable<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Awaitable<FileRootFileDiffResult>;
+  listFileRootGitHistoryRepositories(
+    request: FileRootGitHistoryRepositoriesRequest,
+  ): Awaitable<FileRootGitHistoryRepositoriesResult>;
+  listFileRootGitHistoryCommits(
+    request: FileRootGitHistoryCommitsRequest,
+  ): Awaitable<FileRootGitHistoryCommitsResult>;
+  getFileRootGitHistoryCommitDetail(
+    request: FileRootGitHistoryCommitDetailRequest,
+  ): Awaitable<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryDiff(
+    request: FileRootGitHistoryDiffRequest,
+  ): Awaitable<FileRootGitHistoryDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
   getDiffPreview(token: string): DiffPreviewPayload | null;
   getLiveSessionRun(sessionId: string): LiveSessionRunState | null;
@@ -630,6 +654,10 @@ type MainIpcSessionQueryDeps = Pick<
   | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
   | "getFileRootDiff"
+  | "listFileRootGitHistoryRepositories"
+  | "listFileRootGitHistoryCommits"
+  | "getFileRootGitHistoryCommitDetail"
+  | "getFileRootGitHistoryDiff"
   | "getSessionMessageArtifact"
   | "getDiffPreview"
   | "previewComposerInput"
@@ -910,6 +938,54 @@ function assertValidSessionFileResourceRequest(
     )
   ) {
     throw new TypeError("File preview resource is invalid.");
+  }
+}
+
+function assertValidGitHistoryRequest(input: unknown): asserts input is {
+  sessionId: string;
+  repositoryId: string;
+  rootId: string;
+} {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("Git history request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (
+    typeof candidate.sessionId !== "string"
+    || !candidate.sessionId
+    || typeof candidate.repositoryId !== "string"
+    || !/^git:[0-9a-f]{24}$/u.test(candidate.repositoryId)
+    || typeof candidate.rootId !== "string"
+    || !candidate.rootId
+  ) {
+    throw new TypeError("Git history request is invalid.");
+  }
+}
+
+function assertValidGitHistoryCommitId(commitId: unknown): asserts commitId is string {
+  if (typeof commitId !== "string" || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(commitId)) {
+    throw new TypeError("Git history commit id is invalid.");
+  }
+}
+
+function assertValidGitHistoryCursor(cursor: unknown): asserts cursor is string | null | undefined {
+  if (cursor !== undefined && cursor !== null && (typeof cursor !== "string" || !/^(?:0|[1-9][0-9]{0,8})$/u.test(cursor))) {
+    throw new TypeError("Git history cursor is invalid.");
+  }
+}
+
+function assertValidGitHistoryRelativePath(relativePath: unknown): asserts relativePath is string | null | undefined {
+  if (relativePath === undefined || relativePath === null) {
+    return;
+  }
+  if (
+    typeof relativePath !== "string"
+    || !relativePath
+    || relativePath.startsWith("/")
+    || /^[a-zA-Z]:[\\/]/u.test(relativePath)
+    || relativePath.replaceAll("\\", "/").split("/").some((segment) => !segment || segment === "." || segment === "..")
+  ) {
+    throw new TypeError("Git history file path is invalid.");
   }
 }
 
@@ -1530,6 +1606,44 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     }, deps);
     return deps.getFileRootDiff(request);
   });
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+    async (event, request: FileRootGitHistoryRepositoriesRequest) => {
+      if (!request || typeof request.sessionId !== "string" || !request.sessionId) {
+        throw new TypeError("Git history repositories request is invalid.");
+      }
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootGitHistoryRepositories(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+    async (event, request: FileRootGitHistoryCommitsRequest) => {
+      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCursor(request.cursor);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.listFileRootGitHistoryCommits(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+    async (event, request: FileRootGitHistoryCommitDetailRequest) => {
+      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCommitId(request.commitId);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.getFileRootGitHistoryCommitDetail(request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
+    async (event, request: FileRootGitHistoryDiffRequest) => {
+      assertValidGitHistoryRequest(request);
+      assertValidGitHistoryCommitId(request.commitId);
+      assertValidGitHistoryRelativePath(request.relativePath);
+      await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
+      return deps.getFileRootGitHistoryDiff(request);
+    },
+  );
   ipcMain.handle(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, (_event, sessionId: string, messageIndex: number) => {
     if (!sessionId || !Number.isInteger(messageIndex) || messageIndex < 0) {
       return null;

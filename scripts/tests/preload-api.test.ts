@@ -307,6 +307,29 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-file-root-diff",
     args: [{ sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx", scope: "working-tree" }],
   });
+  const historyRequest = {
+    sessionId: "session-1",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    rootId: "workspace",
+  };
+  assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
+    channel: "withmate:list-file-root-git-history-repositories",
+    args: [{ sessionId: "session-1" }],
+  });
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, cursor: "100" }), {
+    channel: "withmate:list-file-root-git-history-commits",
+    args: [{ ...historyRequest, cursor: "100" }],
+  });
+  const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
+  assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {
+    channel: "withmate:get-file-root-git-history-commit-detail",
+    args: [historyDetailRequest],
+  });
+  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
+  assert.deepEqual(await api.getFileRootGitHistoryDiff(historyDiffRequest), {
+    channel: "withmate:get-file-root-git-history-diff",
+    args: [historyDiffRequest],
+  });
   assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
     channel: "withmate:create-auxiliary-session",
     args: [{ parentSessionId: "session-1", provider: "copilot" }],
@@ -419,6 +442,10 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCharacterUsage",
     "listSessionSummaryPage",
     "listFileRootChanges",
+    "listFileRootGitHistoryRepositories",
+    "listFileRootGitHistoryCommits",
+    "getFileRootGitHistoryCommitDetail",
+    "getFileRootGitHistoryDiff",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
     "mergeCompanionSelectedFiles",

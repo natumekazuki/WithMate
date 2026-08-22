@@ -20,7 +20,7 @@ import type {
   SessionFileDescriptor,
   SessionFileResourceRequest,
   SessionFileRoot,
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
 } from "./file-explorer-contract.js";
 import {
   getSessionFileResourceDisplayPath,
@@ -93,9 +93,9 @@ type SessionFilePreviewProps = {
   };
   onCopyText: (text: string) => void;
   onQuoteText?: (text: string) => void;
-  diffScopes?: FileRootGitChangeScope[];
-  onOpenDiff?: (scope: FileRootGitChangeScope) => Promise<string | null>;
-  diffLoadingScope?: FileRootGitChangeScope | null;
+  diffScopes?: FileRootGitDiffScope[];
+  onOpenDiff?: (scope: FileRootGitDiffScope) => Promise<string | null>;
+  diffLoadingScope?: FileRootGitDiffScope | null;
   diffAvailabilityMessage?: string;
   chatNotice?: string;
 };
@@ -1173,7 +1173,7 @@ export function SessionFilePreview({
     });
   }, [api, encoding, markdownImageQueue, request, roots]);
 
-  const openDiff = useCallback(async (scope: FileRootGitChangeScope) => {
+  const openDiff = useCallback(async (scope: FileRootGitDiffScope) => {
     if (!onOpenDiff) {
       return;
     }

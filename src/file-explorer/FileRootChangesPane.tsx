@@ -8,8 +8,8 @@ import {
 import type {
   FileRootFileDiffRequest,
   FileRootChangesResult,
-  FileRootGitChangeEntry,
-  FileRootGitChangeScope,
+    FileRootGitChangeEntry,
+    FileRootGitChangeScope,
   SessionFileRootResourceRequest,
 } from "./file-explorer-contract.js";
 
@@ -155,6 +155,9 @@ export function FileRootChangesPane({
       } catch (error) {
         setMessage(error instanceof Error ? error.message : "The file preview could not be opened.");
       }
+      return;
+    }
+    if (scope === "commit") {
       return;
     }
     const request = { sessionId, rootId, relativePath: entry.relativePath, scope };

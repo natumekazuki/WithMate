@@ -89,6 +89,10 @@ import {
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -353,6 +357,18 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     getFileRootDiff(request) {
       return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, request);
+    },
+    listFileRootGitHistoryRepositories(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL, request);
+    },
+    listFileRootGitHistoryCommits(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL, request);
+    },
+    getFileRootGitHistoryCommitDetail(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL, request);
+    },
+    getFileRootGitHistoryDiff(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL, request);
     },
     getSessionMessageArtifact(sessionId, messageIndex) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);

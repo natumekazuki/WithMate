@@ -2,7 +2,7 @@ import type {
   SessionFileEncoding,
   SessionFileRoot,
   FileRootChangesResult,
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
 } from "./file-explorer-contract.js";
 import { findTextMatches } from "../find-text-matches.js";
 import { detectSessionFileEncoding } from "./file-content-detection.js";
@@ -70,13 +70,15 @@ export function calculateImageFitZoom(
 export function projectFileRootDiffAvailability(
   result: FileRootChangesResult,
   relativePath: string,
-): { scopes: FileRootGitChangeScope[]; message: string } {
+): { scopes: FileRootGitDiffScope[]; message: string } {
   if (result.status !== "ok") {
     return { scopes: [], message: "" };
   }
   const change = result.entries.find((entry) => entry.relativePath === relativePath);
   return {
-    scopes: change?.scopes.filter((scope) => change.kinds[scope] !== "untracked") ?? [],
+    scopes: change?.scopes.filter((scope): scope is FileRootGitDiffScope => (
+      scope !== "commit" && change.kinds[scope] !== "untracked"
+    )) ?? [],
     message: "",
   };
 }

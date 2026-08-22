@@ -306,6 +306,14 @@ export class SessionFileExplorerService {
     return (await this.resolveRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
   }
 
+  async resolveHistoryRoots(sessionId: string): Promise<ResolvedSessionFileRoot[]> {
+    return (await this.resolveRoots(sessionId)).filter((root) => root.kind !== "session-folder");
+  }
+
+  async resolveHistoryRoot(sessionId: string, rootId: string): Promise<ResolvedSessionFileRoot | null> {
+    return (await this.resolveHistoryRoots(sessionId)).find((candidate) => candidate.id === rootId) ?? null;
+  }
+
   async resolvePreviewTarget(
     sessionId: string,
     target: string,

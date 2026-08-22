@@ -16,11 +16,13 @@ type SessionFileExplorerPaneProps = {
   enabled: boolean;
   rootsRevision: string;
   selectedFile: SessionFileRootResourceRequest | null;
-  activeTab: "files" | "changes";
-  onActiveTabChange: (tab: "files" | "changes") => void;
+  activeTab: "files" | "changes" | "history";
+  onActiveTabChange: (tab: "files" | "changes" | "history") => void;
   onRefreshChanges: () => void;
+  onRefreshHistory?: () => void;
   onOpenFile: (request: SessionFileRootResourceRequest, openInWindow: boolean) => void;
   changesContent?: ReactNode;
+  historyContent?: ReactNode;
 };
 
 type FileTreeRow =
@@ -57,8 +59,10 @@ export function SessionFileExplorerPane({
   activeTab,
   onActiveTabChange,
   onRefreshChanges,
+  onRefreshHistory,
   onOpenFile,
   changesContent,
+  historyContent,
 }: SessionFileExplorerPaneProps) {
   const loadRevisionRef = useRef(0);
   const directoryRequestSequenceRef = useRef(0);
@@ -224,6 +228,15 @@ export function SessionFileExplorerPane({
           >
             Changes
           </button>
+          <button
+            className={activeTab === "history" ? "is-active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "history"}
+            onClick={() => onActiveTabChange("history")}
+          >
+            History
+          </button>
         </div>
         <button
           className="session-file-explorer-refresh"
@@ -233,10 +246,14 @@ export function SessionFileExplorerPane({
               onRefreshChanges();
               return;
             }
+            if (activeTab === "history") {
+              onRefreshHistory?.();
+              return;
+            }
             void reloadRoots();
           }}
-          aria-label={activeTab === "changes" ? "Refresh changes" : "Refresh files"}
-          title={activeTab === "changes" ? "Refresh changes" : "Refresh files"}
+          aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
+          title={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
         >
           ↻
         </button>
@@ -244,10 +261,12 @@ export function SessionFileExplorerPane({
 
       <div
         ref={treeScrollRef}
-        className={`session-file-explorer-body${activeTab === "changes" ? " has-changes" : ""}`}
+        className={`session-file-explorer-body${activeTab === "changes" ? " has-changes" : activeTab === "history" ? " has-history" : ""}`}
       >
         {activeTab === "changes" ? (
           changesContent ?? <p className="session-file-tree-empty">No changes.</p>
+        ) : activeTab === "history" ? (
+          historyContent ?? <p className="session-file-tree-empty">No history.</p>
         ) : (
           <>
             {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
