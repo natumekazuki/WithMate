@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import type { SessionDirectoryEntry } from "../src/file-explorer/file-explorer-contract.js";
 
 const WORKER_SOURCE = String.raw`
-const { lstat, readdir, stat } = require("node:fs/promises");
+const { lstat, opendir, readdir, stat } = require("node:fs/promises");
 
 const STAT_CONCURRENCY = 32;
 
@@ -17,6 +17,46 @@ function toKind(entry) {
 function compareStableName(left, right) {
   return left.name.localeCompare(right.name, undefined, { sensitivity: "base" })
     || (left.name < right.name ? -1 : left.name > right.name ? 1 : 0);
+}
+
+function pushBoundedDirent(heap, entry, maxEntries) {
+  if (maxEntries === 0) {
+    return;
+  }
+  if (heap.length < maxEntries) {
+    heap.push(entry);
+    let index = heap.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (compareStableName(heap[parent], heap[index]) >= 0) {
+        break;
+      }
+      [heap[parent], heap[index]] = [heap[index], heap[parent]];
+      index = parent;
+    }
+    return;
+  }
+  if (compareStableName(entry, heap[0]) >= 0) {
+    return;
+  }
+  heap[0] = entry;
+  let index = 0;
+  while (true) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    let largest = index;
+    if (left < heap.length && compareStableName(heap[left], heap[largest]) > 0) {
+      largest = left;
+    }
+    if (right < heap.length && compareStableName(heap[right], heap[largest]) > 0) {
+      largest = right;
+    }
+    if (largest === index) {
+      break;
+    }
+    [heap[index], heap[largest]] = [heap[largest], heap[index]];
+    index = largest;
+  }
 }
 
 (async () => {
@@ -35,15 +75,30 @@ function compareStableName(left, right) {
       setInterval(() => undefined, 1_000);
     });
   }
-  const dirents = await readdir(".", { withFileTypes: true });
   const rawMaxEntries = process.env.WITHMATE_IDENTITY_DIRECTORY_MAX_ENTRIES || "";
   const configuredMaxEntries = rawMaxEntries === "" ? null : Number(rawMaxEntries);
   const hasMaxEntries = configuredMaxEntries !== null
     && Number.isInteger(configuredMaxEntries)
     && configuredMaxEntries >= 0;
-  const orderedDirents = hasMaxEntries ? dirents.slice().sort(compareStableName) : dirents;
-  const selectedDirents = hasMaxEntries ? orderedDirents.slice(0, configuredMaxEntries) : orderedDirents;
-  const truncated = selectedDirents.length < dirents.length;
+  let selectedDirents;
+  let truncated = false;
+  if (hasMaxEntries) {
+    const heap = [];
+    let totalEntryCount = 0;
+    const directory = await opendir(".");
+    try {
+      for await (const entry of directory) {
+        totalEntryCount += 1;
+        pushBoundedDirent(heap, entry, configuredMaxEntries);
+      }
+    } finally {
+      await directory.close().catch(() => undefined);
+    }
+    selectedDirents = heap.sort(compareStableName);
+    truncated = totalEntryCount > configuredMaxEntries;
+  } else {
+    selectedDirents = await readdir(".", { withFileTypes: true });
+  }
   const entries = new Array(selectedDirents.length);
   let nextIndex = 0;
   let activeStats = 0;
