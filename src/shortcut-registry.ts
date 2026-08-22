@@ -497,8 +497,25 @@ function describeShortcutTarget(target: EventTarget | null): Record<string, stri
   };
 }
 
+function describeShortcutWindowState(): Record<string, unknown> {
+  if (typeof document === "undefined") {
+    return {
+      documentHasFocus: null,
+      visibilityState: null,
+      activeElement: null,
+    };
+  }
+
+  return {
+    documentHasFocus: typeof document.hasFocus === "function" ? document.hasFocus() : null,
+    visibilityState: document.visibilityState,
+    activeElement: describeShortcutTarget(document.activeElement),
+  };
+}
+
 function describeShortcutEvent(event: KeyboardEvent): Record<string, unknown> {
   return {
+    eventType: event.type,
     key: event.key,
     code: event.code,
     ctrlKey: event.ctrlKey,
@@ -509,7 +526,7 @@ function describeShortcutEvent(event: KeyboardEvent): Record<string, unknown> {
     isComposing: event.isComposing,
     defaultPrevented: event.defaultPrevented,
     target: describeShortcutTarget(event.target),
-    activeElement: typeof document === "undefined" ? null : describeShortcutTarget(document.activeElement),
+    ...describeShortcutWindowState(),
   };
 }
 
@@ -589,6 +606,34 @@ export class ShortcutDispatcher {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     this.dispatch(event);
+  };
+
+  private readonly onKeyUp = (event: KeyboardEvent): void => {
+    if (!shouldReportMessageCollapseShortcut(event)) {
+      return;
+    }
+    reportMessageCollapseShortcutDiagnostic("keyup", {}, event);
+  };
+
+  private readonly onWindowFocus = (): void => {
+    reportMessageCollapseShortcutDiagnostic("window-focus", {
+      eventType: "focus",
+      ...describeShortcutWindowState(),
+    });
+  };
+
+  private readonly onWindowBlur = (): void => {
+    reportMessageCollapseShortcutDiagnostic("window-blur", {
+      eventType: "blur",
+      ...describeShortcutWindowState(),
+    });
+  };
+
+  private readonly onVisibilityChange = (): void => {
+    reportMessageCollapseShortcutDiagnostic("visibility-change", {
+      eventType: "visibilitychange",
+      ...describeShortcutWindowState(),
+    });
   };
 
   constructor(options: ShortcutDispatcherOptions) {
@@ -790,7 +835,16 @@ export class ShortcutDispatcher {
       return;
     }
     this.eventTarget.addEventListener("keydown", this.onKeyDown);
+    this.eventTarget.addEventListener("keyup", this.onKeyUp);
+    this.eventTarget.addEventListener("focus", this.onWindowFocus);
+    this.eventTarget.addEventListener("blur", this.onWindowBlur);
+    this.eventTarget.document?.addEventListener("visibilitychange", this.onVisibilityChange);
     this.listening = true;
+    reportMessageCollapseShortcutDiagnostic("listener-started", {
+      activeScopes: Array.from(this.activeScopes),
+      registeredHandlers: Array.from(this.handlers.keys()),
+      ...describeShortcutWindowState(),
+    });
   }
 
   private stop(): void {
@@ -798,6 +852,10 @@ export class ShortcutDispatcher {
       return;
     }
     this.eventTarget.removeEventListener("keydown", this.onKeyDown);
+    this.eventTarget.removeEventListener("keyup", this.onKeyUp);
+    this.eventTarget.removeEventListener("focus", this.onWindowFocus);
+    this.eventTarget.removeEventListener("blur", this.onWindowBlur);
+    this.eventTarget.document?.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.listening = false;
   }
 }
