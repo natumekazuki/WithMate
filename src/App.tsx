@@ -171,6 +171,7 @@ import {
   type GlossaryEntry,
   type SessionGlossaryProjection,
 } from "./glossary-contract.js";
+import { createGlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
@@ -875,6 +876,7 @@ export default function AgentSessionWindowApp() {
     isFilesPaneResizing,
     handleStartContextRailResize,
     handleStartFilesPaneResize,
+    handleShowContextRail,
     handleToggleContextRailVisibility,
     handleToggleFilesPaneVisibility,
   } = useSessionSidePanes({
@@ -1531,6 +1533,27 @@ export default function AgentSessionWindowApp() {
       setSelectedGlossaryTerm(null);
     }
   }, [selectedGlossaryTerm, sessionGlossaryProjection]);
+
+  const glossaryAnnotationMatcher = useMemo(
+    () => sessionGlossaryProjection?.state.status === "valid"
+      ? createGlossaryAnnotationMatcher(
+        sessionGlossaryProjection.state.entries,
+        sessionGlossaryProjection.state.revision,
+      )
+      : undefined,
+    [sessionGlossaryProjection],
+  );
+  const handleActivateGlossaryEntry = useCallback((canonicalTerm: string) => {
+    if (
+      sessionGlossaryProjection?.state.status !== "valid"
+      || !sessionGlossaryProjection.state.entries.some((entry) => entry.term === canonicalTerm)
+    ) {
+      return;
+    }
+    setSelectedGlossaryTerm(canonicalTerm);
+    setActiveContextPaneTab("glossary");
+    handleShowContextRail();
+  }, [handleShowContextRail, sessionGlossaryProjection]);
 
   const handleLoadMoreGlossarySearchResults = useCallback(() => {
     const query = glossarySearchQuery.trim();
@@ -4340,6 +4363,8 @@ export default function AgentSessionWindowApp() {
           onSelectTerm: setSelectedGlossaryTerm,
           onBackToList: () => setSelectedGlossaryTerm(null),
         },
+        glossaryAnnotationMatcher,
+        onActivateGlossaryEntry: handleActivateGlossaryEntry,
         selectedBackgroundTasks,
         selectedCompanionGroupMonitorEntries,
         isCopilotSession,

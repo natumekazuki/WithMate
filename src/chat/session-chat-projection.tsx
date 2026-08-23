@@ -51,6 +51,8 @@ export type AgentSessionChatProjectionInput = {
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
   messageNavigatorCharacter?: CharacterProfile;
   glossaryPaneProps: SessionContextPaneProps["glossaryPaneProps"];
+  glossaryAnnotationMatcher?: SessionMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: SessionMessageColumnProps["onActivateGlossaryEntry"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
@@ -381,6 +383,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       getChangedFilesEmptyText: input.getChangedFilesEmptyText,
       onCopyMessageText: input.onCopyMessageText,
       onQuoteMessageText: input.onQuoteMessageText,
+      glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
+      onActivateGlossaryEntry: input.onActivateGlossaryEntry,
     }),
     composer: composerDockProps.composer,
     compactActionDock: composerDockProps.compactActionDock,

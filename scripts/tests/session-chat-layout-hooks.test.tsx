@@ -651,6 +651,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
       isFilesPaneResizing,
       handleStartContextRailResize,
       handleStartFilesPaneResize,
+      handleShowContextRail,
       handleToggleContextRailVisibility,
       handleToggleFilesPaneVisibility,
     } = useSessionSidePanes({
@@ -696,6 +697,15 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
         "files splitter",
       ),
       React.createElement(
+        "button",
+        {
+          type: "button",
+          onClick: handleShowContextRail,
+          "data-testid": "show-context",
+        },
+        "show context",
+      ),
+      React.createElement(
         "output",
         { "data-testid": "visibility" },
         isContextRailVisible ? "visible" : "hidden",
@@ -719,6 +729,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     const splitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"splitter\"]");
     const filesToggle = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-toggle\"]");
     const filesSplitter = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"files-splitter\"]");
+    const showContext = dom.window.document.querySelector<HTMLButtonElement>("[data-testid=\"show-context\"]");
     const visibility = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"visibility\"]");
     const activePane = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"active-pane\"]");
     const resizing = dom.window.document.querySelector<HTMLOutputElement>("[data-testid=\"resizing\"]");
@@ -726,6 +737,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     assert.ok(splitter);
     assert.ok(filesToggle);
     assert.ok(filesSplitter);
+    assert.ok(showContext);
     assert.ok(visibility);
     assert.ok(activePane);
     assert.ok(resizing);
@@ -779,7 +791,7 @@ test("useSessionSidePanes は保存済み状態を一度だけ反映し、左右
     await act(async () => filesSplitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(activePane.textContent, "files");
     assert.equal(workbench.style.getPropertyValue("--session-file-explorer-width"), "700px");
-    await act(async () => splitter.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+    await act(async () => showContext.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
     assert.equal(activePane.textContent, "context");
     assert.equal(visibility.textContent, "visible");
 

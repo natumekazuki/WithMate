@@ -196,6 +196,8 @@ export type LiveSessionMessageColumnProps = {
   getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
+  glossaryAnnotationMatcher?: ChatMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: ChatMessageColumnProps["onActivateGlossaryEntry"];
 };
 
 export type LiveSessionComposerProps = Omit<
@@ -374,6 +376,8 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     getChangedFilesEmptyText: input.getChangedFilesEmptyText,
     onCopyMessageText: input.onCopyMessageText,
     onQuoteMessageText: input.onQuoteMessageText,
+    glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: input.onActivateGlossaryEntry,
   };
 }
 

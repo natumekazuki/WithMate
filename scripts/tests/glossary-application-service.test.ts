@@ -8,12 +8,11 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   GlossaryApplicationService,
-  normalizeGlossaryLookup,
   parseGlossaryDocument,
   serializeGlossaryDocument,
   type ResolvedGlossaryCheckout,
 } from "../../src-electron/glossary-application-service.js";
-import type { GlossaryEntry } from "../../src/glossary-contract.js";
+import { normalizeGlossaryLookup, type GlossaryEntry } from "../../src/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];

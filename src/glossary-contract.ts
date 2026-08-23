@@ -13,6 +13,16 @@ export const GLOSSARY_LIMITS = {
   maxPageSize: 200,
 } as const;
 
+const GLOSSARY_LOOKUP_WHITESPACE_PATTERN = /\s+/gu;
+
+export function normalizeGlossaryLookup(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(GLOSSARY_LOOKUP_WHITESPACE_PATTERN, " ")
+    .trim();
+}
+
 export type GlossaryEntryInput = {
   term: string;
   aliases?: readonly string[];

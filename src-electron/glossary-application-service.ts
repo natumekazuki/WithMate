@@ -19,6 +19,7 @@ import {
   GLOSSARY_LIMITS,
   GLOSSARY_RELATIVE_PATH,
   GLOSSARY_SCHEMA_VERSION,
+  normalizeGlossaryLookup,
   type GlossaryCheckoutSummary,
   type GlossaryCreateBatchRequest,
   type GlossaryCreateRequest,
@@ -41,7 +42,6 @@ import {
 } from "../src/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
-const LOOKUP_WHITESPACE_PATTERN = /\p{White_Space}+/gu;
 const NORMALIZED_REVISION_PATTERN = /^[a-f0-9]{64}$/;
 
 export type GlossaryFileIdentity = {
@@ -204,14 +204,6 @@ export function restoreGlossaryCheckoutAuthority(
 
 function codePointLength(value: string): number {
   return Array.from(value).length;
-}
-
-export function normalizeGlossaryLookup(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLowerCase()
-    .replace(LOOKUP_WHITESPACE_PATTERN, " ")
-    .trim();
 }
 
 function rawRevision(raw: string): string {

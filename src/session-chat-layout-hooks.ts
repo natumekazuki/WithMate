@@ -888,6 +888,17 @@ export function useSessionSidePanes({
     onSidePaneChange?.(nextSidePane);
   }, [onSidePaneChange]);
 
+  const handleShowContextRail = useCallback(() => {
+    if (!enabled || activeSidePaneRef.current === "context") {
+      return;
+    }
+    setResizingSidePane(null);
+    hasInteractedWithSidePaneRef.current = true;
+    activeSidePaneRef.current = "context";
+    setActiveSidePane("context");
+    onSidePaneChange?.("context");
+  }, [enabled, onSidePaneChange]);
+
   const handleToggleFilesPaneVisibility = useCallback(() => {
     if (!enabled || !filesPaneEnabled) {
       return;
@@ -926,6 +937,7 @@ export function useSessionSidePanes({
     isFilesPaneResizing: resizingSidePane === "files",
     handleStartContextRailResize,
     handleStartFilesPaneResize,
+    handleShowContextRail,
     handleToggleContextRailVisibility,
     handleToggleFilesPaneVisibility,
   };

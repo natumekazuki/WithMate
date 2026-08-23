@@ -7297,6 +7297,70 @@ button:disabled {
   line-height: 1.6;
 }
 
+.glossary-annotation {
+  border-radius: 3px;
+  color: inherit;
+  cursor: pointer;
+  text-decoration-line: underline;
+  text-decoration-style: dotted;
+  text-decoration-color: color-mix(in srgb, var(--character-main) 72%, currentColor);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  user-select: text;
+}
+
+.glossary-annotation:hover,
+.glossary-annotation:focus-visible {
+  background: color-mix(in srgb, var(--character-main-soft) 58%, transparent);
+  text-decoration-style: solid;
+}
+
+.glossary-annotation:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--character-main) 72%, #ffffff);
+  outline-offset: 2px;
+}
+
+.glossary-annotation-tooltip {
+  position: fixed;
+  z-index: 45;
+  display: grid;
+  box-sizing: border-box;
+  gap: 6px;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: min(240px, calc(100vh - 16px));
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--character-sub) 30%, rgba(148, 163, 184, 0.34));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--character-sub-soft) 16%, rgba(12, 18, 27, 0.98));
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  line-height: 1.45;
+  pointer-events: none;
+}
+
+.glossary-annotation-tooltip-term,
+.glossary-annotation-tooltip-definition {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.glossary-annotation-tooltip-term {
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.glossary-annotation-tooltip-definition {
+  max-height: 190px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+  -webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 82%, transparent 100%);
+}
+
 .message-source-text {
   display: block;
   white-space: pre-wrap;

@@ -20,6 +20,7 @@ import type {
 } from "./app-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
+import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
@@ -2350,6 +2351,8 @@ export type SessionMessageColumnProps = {
   onQuoteMessageText?: (text: string) => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
+  glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
+  onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
 function getNonBlankSelectionText(selection: Selection): string | null {
@@ -2668,6 +2671,8 @@ export function SessionMessageColumn({
   onQuoteMessageText,
   isContentActive = true,
   messageViewMode = "preview",
+  glossaryAnnotationMatcher,
+  onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
@@ -3196,6 +3201,9 @@ export function SessionMessageColumn({
               displayMode={messageViewMode}
               onOpenPath={onOpenPath}
               markdownLinkFileContext={markdownLinkFileContext}
+              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+              glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
+              onActivateGlossaryEntry={onActivateGlossaryEntry}
             />
           </div>
         ) : null}
@@ -3362,6 +3370,9 @@ export function SessionMessageColumn({
                         displayMode={messageViewMode}
                         onOpenPath={onOpenPath}
                         markdownLinkFileContext={markdownLinkFileContext}
+                        glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                        glossaryAnnotationScopeKey={messageKey}
+                        onActivateGlossaryEntry={onActivateGlossaryEntry}
                       />
                     ) : (
                       <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>

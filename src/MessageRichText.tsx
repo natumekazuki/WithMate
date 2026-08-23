@@ -32,6 +32,12 @@ import type {
   MarkdownLinkContextMenuResult,
 } from "./markdown-link-context-menu.js";
 import { getSessionFileObjectCopyFeedbackTone } from "./file-explorer/session-file-object-copy-contract.js";
+import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
+import {
+  GlossaryAnnotationSpan,
+  MessageGlossaryAnnotationProvider,
+  useMessageGlossaryAnnotations,
+} from "./glossary/MessageGlossaryAnnotations.js";
 
 export type MessageViewMode = "preview" | "source";
 
@@ -43,6 +49,9 @@ type MessageRichTextProps = {
   onOpenPath?: (target: string) => void;
   resolveImageSource?: (target: string) => Promise<string | null>;
   markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
+  glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
+  glossaryAnnotationScopeKey?: string;
+  onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
 type MarkdownRenderMode = "light" | "full";
@@ -741,6 +750,7 @@ function createMarkdownComponents(
   const enableMermaid = options?.enableMermaid ?? true;
   return {
     ...markdownComponents,
+    span: GlossaryAnnotationSpan,
     pre: ({ children, node, ...props }) => {
       const isFenced = isFencedCodeBlock(node, options?.markdown ?? "");
       const child = Children.toArray(children)[0];
@@ -810,12 +820,21 @@ function MessageMarkdownPreview({
   onOpenPath,
   resolveImageSource,
   markdownLinkFileContext,
+  glossaryAnnotationMatcher,
+  glossaryAnnotationScopeKey = "",
+  onActivateGlossaryEntry,
 }: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
   const footnoteLabelId = `${footnotePrefix}footnote-label`;
   const shouldDefer = !forceFullRender && shouldDeferRichMarkdownRender();
   const [copyFeedback, setCopyFeedback] = useState<MessageCopyFeedback | null>(null);
+  const glossaryAnnotations = useMessageGlossaryAnnotations({
+    matcher: glossaryAnnotationMatcher,
+    scopeKey: glossaryAnnotationScopeKey,
+    text,
+    onActivate: onActivateGlossaryEntry,
+  });
   const [renderState, setRenderState] = useState<{ text: string; mode: MarkdownRenderMode }>(() => ({
     text,
     mode: shouldDefer ? "light" : "full",
@@ -857,8 +876,11 @@ function MessageMarkdownPreview({
     ],
   );
   const rehypePlugins = useMemo<PluggableList>(
-    () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
-    [footnoteLabelId, isFullRender],
+    () => [
+      ...(isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),
+      ...(glossaryAnnotations.rehypePlugin ? [glossaryAnnotations.rehypePlugin] : []),
+    ],
+    [footnoteLabelId, glossaryAnnotations.rehypePlugin, isFullRender],
   );
   const remarkPlugins = useMemo<PluggableList>(
     () => (
@@ -895,18 +917,20 @@ function MessageMarkdownPreview({
 
   return (
     <div className={`${className} rich-text`.trim()} data-markdown-render-mode={renderMode}>
-      <ReactMarkdown
-        components={components}
-        rehypePlugins={rehypePlugins}
-        urlTransform={markdownUrlTransform}
-        remarkPlugins={remarkPlugins}
-        remarkRehypeOptions={{
-          clobberPrefix: footnotePrefix,
-          handlers: { yaml: renderMarkdownFrontmatter },
-        }}
-      >
-        {text}
-      </ReactMarkdown>
+      <MessageGlossaryAnnotationProvider controller={glossaryAnnotations.controller}>
+        <ReactMarkdown
+          components={components}
+          rehypePlugins={rehypePlugins}
+          urlTransform={markdownUrlTransform}
+          remarkPlugins={remarkPlugins}
+          remarkRehypeOptions={{
+            clobberPrefix: footnotePrefix,
+            handlers: { yaml: renderMarkdownFrontmatter },
+          }}
+        >
+          {text}
+        </ReactMarkdown>
+      </MessageGlossaryAnnotationProvider>
       {copyFeedback ? (
         <span
           className={`message-copy-toast message-link-copy-toast ${copyFeedback.tone}`}

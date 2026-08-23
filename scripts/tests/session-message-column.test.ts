@@ -23,6 +23,7 @@ import { buildMessageCollapseTargets } from "../../src/session-message-collapse.
 import type { MessageListSource } from "../../src/auxiliary-session-message-projection.js";
 import type { CharacterProfile, LiveApprovalRequest, LiveElicitationRequest, Message } from "../../src/app-state.js";
 import { resolveSelectionActionOverlayPosition } from "../../src/chat/selection-action-overlay.js";
+import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -220,6 +221,8 @@ function renderSessionMessageColumn(options: {
   onToggleMessageCollapse?: SessionMessageColumnProps["onToggleMessageCollapse"];
   onToggleAllMessageCollapse?: SessionMessageColumnProps["onToggleAllMessageCollapse"];
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
+  glossaryAnnotationMatcher?: SessionMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: SessionMessageColumnProps["onActivateGlossaryEntry"];
 }): string {
   return renderToStaticMarkup(
     React.createElement(SessionMessageColumn, {
@@ -252,6 +255,8 @@ function renderSessionMessageColumn(options: {
       onCopyMessageText: options.withResponseActions ? () => {} : undefined,
       onQuoteMessageText: options.withResponseActions ? () => {} : undefined,
       messageViewMode: options.messageViewMode,
+      glossaryAnnotationMatcher: options.glossaryAnnotationMatcher,
+      onActivateGlossaryEntry: options.onActivateGlossaryEntry,
     }),
   );
 }
@@ -631,6 +636,40 @@ test("SessionMessageColumn は全履歴を仮想化し、最新メッセージ�
   assert.match(html, /message 100<\/p>/);
   assert.match(html, /session-message-virtual-row/);
   assert.doesNotMatch(html, /以前のメッセージを読み込む/);
+});
+
+test("SessionMessageColumn はvalid glossaryを通常messageへだけ投影しSourceでは注釈しない", () => {
+  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
+    term: "Runtime",
+    aliases: [],
+    definition: "Runtime definition",
+  }], "revision-1");
+  const messages: Message[] = [{
+    role: "assistant",
+    text: "Runtime",
+    artifact: {
+      title: "Runtime artifact",
+      activitySummary: [],
+      operationTimeline: [{ type: "command_execution", summary: "Runtime", details: "Runtime" }],
+      changedFiles: [],
+      runChecks: [],
+    },
+  }];
+  const previewHtml = renderSessionMessageColumn({
+    messages,
+    expandedArtifacts: { "message-0": true },
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: () => undefined,
+  });
+  const sourceHtml = renderSessionMessageColumn({
+    messages,
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: () => undefined,
+    messageViewMode: "source",
+  });
+
+  assert.equal((previewHtml.match(/class="glossary-annotation"/g) ?? []).length, 1);
+  assert.doesNotMatch(sourceHtml, /class="glossary-annotation"/);
 });
 
 test("SessionMessageColumn は個別・一括collapseをnative controlで操作する", async () => {
