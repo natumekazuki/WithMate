@@ -88,6 +88,7 @@ import {
   type AppSettings,
 } from "./provider-settings-state.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { ShortcutSettingsProvider } from "./shortcut-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import { SessionHeader } from "./session-components.js";
@@ -294,6 +295,7 @@ import { isTerminalAuditLogPhase } from "./audit-log-phase.js";
 import {
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
+  useShortcutDispatcherSettings,
   useShortcutScope,
 } from "./shortcut-registry.js";
 
@@ -2892,6 +2894,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
     },
   });
 
+  useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
   useShortcutScope("composer");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleCompanionSubmitShortcut);
 
@@ -3014,8 +3017,9 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
 
   if (!isMergeView) {
     return (
-      <>
-      <ChatWindow {...buildCompanionChatWindowProps({
+      <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+        <>
+        <ChatWindow {...buildCompanionChatWindowProps({
         session: displayedSession ?? snapshot.session,
         character: companionCharacterProfile!,
         displayedMessages: messageListMessages,
@@ -3253,26 +3257,28 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
         onLoadAuditLogDetail: handleLoadAuditLogDetail,
         onLoadAuditLogOperationDetail: handleLoadAuditLogOperationDetail,
         onCloseAuditLog: () => setAuditLogsOpen(false),
-      })} />
-      <AuxiliaryLaunchProviderDialog
-        open={auxiliaryLaunchDialogOpen}
-        providers={auxiliaryLaunchProviderItems}
-        selectedProviderId={auxiliaryLaunchProviderId}
-        feedback={auxiliaryLaunchFeedback}
-        starting={isAuxiliaryActionPending}
-        onClose={handleCloseAuxiliaryLaunchDialog}
-        onSelectProvider={handleSelectAuxiliaryLaunchProvider}
-        onStart={() => void handleStartAuxiliarySession()}
-      />
-      </>
+        })} />
+        <AuxiliaryLaunchProviderDialog
+          open={auxiliaryLaunchDialogOpen}
+          providers={auxiliaryLaunchProviderItems}
+          selectedProviderId={auxiliaryLaunchProviderId}
+          feedback={auxiliaryLaunchFeedback}
+          starting={isAuxiliaryActionPending}
+          onClose={handleCloseAuxiliaryLaunchDialog}
+          onSelectProvider={handleSelectAuxiliaryLaunchProvider}
+          onStart={() => void handleStartAuxiliarySession()}
+        />
+        </>
+      </ShortcutSettingsProvider>
     );
   }
 
   return (
-    <div
-      className={`page-shell companion-review-page theme-accent${isHeaderExpanded ? "" : " companion-review-page-header-collapsed"}`}
-      style={themeStyle}
-    >
+    <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+      <div
+        className={`page-shell companion-review-page theme-accent${isHeaderExpanded ? "" : " companion-review-page-header-collapsed"}`}
+        style={themeStyle}
+      >
       <section className="companion-review-shell panel rise-1">
         {isHeaderExpanded ? (
           <SessionHeader
@@ -3569,6 +3575,7 @@ export default function CompanionReviewApp({ viewMode: forcedViewMode }: Compani
           </section>
         </div>
       </section>
-    </div>
+      </div>
+    </ShortcutSettingsProvider>
   );
 }

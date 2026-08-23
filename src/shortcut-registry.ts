@@ -1,12 +1,34 @@
 import { useEffect, useRef } from "react";
 
-export type ShortcutPlatform = "windows" | "linux" | "macos";
+import {
+  DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES,
+  DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+  isAllowedShortcutAccelerator,
+  normalizeKeyboardShortcutSettings,
+  normalizeShortcutAccelerator as normalizeAccelerator,
+  normalizeShortcutKey as normalizeKey,
+  shortcutAcceleratorSignature as acceleratorSignature,
+  updateKeyboardShortcutBinding,
+  type KeyboardShortcutPolicyEntry,
+  type KeyboardShortcutSettings,
+  type ShortcutAccelerator,
+  type ShortcutBindingKind,
+  type ShortcutPlatform,
+} from "./keyboard-shortcut-state.js";
+
 export type ShortcutCommandKind = "standard" | "withmate";
 export type ShortcutAssignment = "existing" | "new";
+export type { KeyboardShortcutSettings, ShortcutAccelerator, ShortcutPlatform } from "./keyboard-shortcut-state.js";
+export {
+  captureShortcutAccelerator,
+  DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+  normalizeKeyboardShortcutSettings,
+} from "./keyboard-shortcut-state.js";
 
 export const SHORTCUT_COMMAND_IDS = {
   messageFind: "session.message.find",
   messageCloseFind: "session.message.close-find",
+  messageToggleCollapse: "session.message.toggle-collapse",
   filePreviewFind: "session.file-preview.find",
   filePreviewClose: "session.file-preview.close",
   filePreviewSelectAll: "session.file-preview.select-all",
@@ -14,14 +36,6 @@ export const SHORTCUT_COMMAND_IDS = {
 } as const;
 
 export type ShortcutCommandId = typeof SHORTCUT_COMMAND_IDS[keyof typeof SHORTCUT_COMMAND_IDS];
-
-export type ShortcutAccelerator = Readonly<{
-  key: string;
-  ctrlKey?: boolean;
-  metaKey?: boolean;
-  shiftKey?: boolean;
-  altKey?: boolean;
-}>;
 
 export type ShortcutEntry = Readonly<{
   id: string;
@@ -37,6 +51,8 @@ export type ShortcutEntry = Readonly<{
   editingTargetScope?: string;
   allowRepeat: boolean;
   showInHelp: boolean;
+  customizable: boolean;
+  bindingKind?: ShortcutBindingKind;
   assignment: ShortcutAssignment;
 }>;
 
@@ -63,98 +79,110 @@ const EXCLUSIVE_SCOPE_GROUPS: Record<string, string | undefined> = {
   "file-preview": "session-content",
 };
 
+const DEFAULT_POLICY_ENTRIES_BY_ID = new Map(
+  DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES.map((entry) => [entry.id, entry]),
+);
+
+function getDefaultShortcutEntryFields(commandId: string): Pick<
+  ShortcutEntry,
+  "id" | "scope" | "accelerators" | "customizable" | "bindingKind"
+> {
+  const entry = DEFAULT_POLICY_ENTRIES_BY_ID.get(commandId);
+  if (!entry) {
+    throw new Error(`Missing default keyboard shortcut policy entry: ${commandId}`);
+  }
+  return {
+    id: entry.id,
+    scope: entry.scope,
+    accelerators: entry.accelerators,
+    customizable: entry.customizable,
+    ...(entry.bindingKind ? { bindingKind: entry.bindingKind } : {}),
+  };
+}
+
+function getKeyboardShortcutPolicyEntries(
+  entries: readonly ShortcutEntry[],
+): readonly KeyboardShortcutPolicyEntry[] {
+  return entries.map((entry) => ({
+    id: entry.id,
+    scope: entry.scope,
+    exclusiveScopeGroup: EXCLUSIVE_SCOPE_GROUPS[entry.scope],
+    accelerators: entry.accelerators,
+    customizable: entry.customizable,
+    ...(entry.bindingKind ? { bindingKind: entry.bindingKind } : {}),
+  }));
+}
+
 export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
   {
-    id: SHORTCUT_COMMAND_IDS.messageFind,
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageFind),
     label: "Find messages",
     kind: "standard",
-    scope: "message-list",
-    accelerators: {
-      windows: { key: "f", ctrlKey: true },
-      linux: { key: "f", ctrlKey: true },
-      macos: { key: "f", metaKey: true },
-    },
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
-    id: SHORTCUT_COMMAND_IDS.messageCloseFind,
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageCloseFind),
     label: "Close message search",
     kind: "standard",
-    scope: "message-list",
-    accelerators: {
-      windows: { key: "Escape" },
-      linux: { key: "Escape" },
-      macos: { key: "Escape" },
-    },
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
-    id: SHORTCUT_COMMAND_IDS.filePreviewFind,
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.messageToggleCollapse),
+    label: "Toggle message collapse",
+    kind: "withmate",
+    allowInEditingTarget: true,
+    allowRepeat: false,
+    showInHelp: true,
+    customizable: true,
+    assignment: "new",
+  },
+  {
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.filePreviewFind),
     label: "Find in file preview",
     kind: "standard",
-    scope: "file-preview",
-    accelerators: {
-      windows: { key: "f", ctrlKey: true },
-      linux: { key: "f", ctrlKey: true },
-      macos: { key: "f", metaKey: true },
-    },
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
-    id: SHORTCUT_COMMAND_IDS.filePreviewClose,
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.filePreviewClose),
     label: "Close file preview or search",
     kind: "standard",
-    scope: "file-preview",
-    accelerators: {
-      windows: { key: "Escape" },
-      linux: { key: "Escape" },
-      macos: { key: "Escape" },
-    },
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
-    id: SHORTCUT_COMMAND_IDS.filePreviewSelectAll,
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.filePreviewSelectAll),
     label: "Select all preview text",
     kind: "standard",
-    scope: "file-preview",
-    accelerators: {
-      windows: { key: "a", ctrlKey: true },
-      linux: { key: "a", ctrlKey: true },
-      macos: { key: "a", metaKey: true },
-    },
     allowInEditingTarget: false,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
-    id: SHORTCUT_COMMAND_IDS.composerSubmit,
+    ...getDefaultShortcutEntryFields(SHORTCUT_COMMAND_IDS.composerSubmit),
     label: "Send message",
     kind: "withmate",
-    scope: "composer",
-    accelerators: {
-      windows: { key: "Enter", ctrlKey: true },
-      linux: { key: "Enter", ctrlKey: true },
-      macos: { key: "Enter", metaKey: true },
-    },
     allowInEditingTarget: true,
     editingTargetScope: "composer",
     allowRepeat: false,
     showInHelp: true,
-    // This is an existing WithMate assignment retained for compatibility. New
-    // WithMate assignments are validated against Ctrl/Cmd+Shift+A-Z below.
+    // This is an existing WithMate assignment retained for compatibility.
     assignment: "existing",
   },
 ];
@@ -178,36 +206,6 @@ export class ShortcutRegistryError extends Error {
   }
 }
 
-function normalizeKey(key: string): string {
-  const aliases: Record<string, string> = {
-    Esc: "Escape",
-    Spacebar: " ",
-  };
-  const normalized = aliases[key] ?? key;
-  return normalized.length === 1 ? normalized.toLocaleLowerCase("en-US") : normalized;
-}
-
-function normalizeAccelerator(accelerator: ShortcutAccelerator): Required<ShortcutAccelerator> {
-  return {
-    key: normalizeKey(accelerator.key),
-    ctrlKey: accelerator.ctrlKey === true,
-    metaKey: accelerator.metaKey === true,
-    shiftKey: accelerator.shiftKey === true,
-    altKey: accelerator.altKey === true,
-  };
-}
-
-function acceleratorSignature(accelerator: ShortcutAccelerator): string {
-  const normalized = normalizeAccelerator(accelerator);
-  return [
-    normalized.key,
-    normalized.ctrlKey,
-    normalized.metaKey,
-    normalized.shiftKey,
-    normalized.altKey,
-  ].join("/");
-}
-
 function canScopesBeActiveTogether(left: string, right: string): boolean {
   if (left === right) {
     return true;
@@ -216,23 +214,6 @@ function canScopesBeActiveTogether(left: string, right: string): boolean {
   const leftGroup = EXCLUSIVE_SCOPE_GROUPS[left];
   const rightGroup = EXCLUSIVE_SCOPE_GROUPS[right];
   return leftGroup === undefined || leftGroup !== rightGroup;
-}
-
-function isAllowedNewWithMateAccelerator(
-  accelerator: ShortcutAccelerator,
-  platform: ShortcutPlatform,
-): boolean {
-  const normalized = normalizeAccelerator(accelerator);
-  const isLetter = /^[a-z]$/.test(normalized.key);
-  if (!isLetter || !normalized.shiftKey || normalized.altKey) {
-    return false;
-  }
-
-  if (platform === "macos") {
-    return normalized.metaKey && !normalized.ctrlKey;
-  }
-
-  return normalized.ctrlKey && !normalized.metaKey;
 }
 
 export function validateShortcutEntries(entries: readonly ShortcutEntry[]): void {
@@ -249,18 +230,17 @@ export function validateShortcutEntries(entries: readonly ShortcutEntry[]): void
     if (!entry.label.trim()) {
       throw new ShortcutRegistryError(`Shortcut label must not be empty: ${entry.id}`);
     }
-    if (entry.kind === "withmate" && entry.assignment === "new") {
-      for (const platform of ["windows", "linux"] as const) {
-        if (!isAllowedNewWithMateAccelerator(entry.accelerators[platform], platform)) {
+    const requiresPolicy = entry.customizable || (entry.kind === "withmate" && entry.assignment === "new");
+    if (requiresPolicy) {
+      if (!entry.bindingKind) {
+        throw new ShortcutRegistryError(`Customizable shortcut is missing a binding policy: ${entry.id}`);
+      }
+      for (const platform of ["windows", "linux", "macos"] as const) {
+        if (!isAllowedShortcutAccelerator(entry.accelerators[platform], platform, entry.bindingKind)) {
           throw new ShortcutRegistryError(
-            `WithMate shortcut is outside Ctrl+Shift+A-Z: ${entry.id}`,
+            `Shortcut accelerator is outside its platform policy: ${entry.id} (${platform})`,
           );
         }
-      }
-      if (!isAllowedNewWithMateAccelerator(entry.accelerators.macos, "macos")) {
-        throw new ShortcutRegistryError(
-          `WithMate shortcut is outside Cmd+Shift+A-Z: ${entry.id}`,
-        );
       }
     }
   }
@@ -291,6 +271,62 @@ validateShortcutEntries(SHORTCUT_ENTRIES);
 
 const SHORTCUT_ENTRIES_BY_ID = new Map(SHORTCUT_ENTRIES.map((entry) => [entry.id, entry]));
 
+function resolveShortcutAcceleratorForEntry(
+  entry: ShortcutEntry,
+  platform: ShortcutPlatform,
+  settings: KeyboardShortcutSettings,
+): ShortcutAccelerator {
+  return entry.customizable
+    ? settings.overrides[entry.id]?.[platform] ?? entry.accelerators[platform]
+    : entry.accelerators[platform];
+}
+
+export function validateShortcutSettings(
+  entries: readonly ShortcutEntry[],
+  settings: KeyboardShortcutSettings,
+): void {
+  const policyEntries = getKeyboardShortcutPolicyEntries(entries);
+  const normalized = normalizeKeyboardShortcutSettings(settings, policyEntries, { removeCollisions: false });
+  for (let index = 0; index < entries.length; index += 1) {
+    const left = entries[index];
+    if (!left) {
+      continue;
+    }
+    for (let otherIndex = index + 1; otherIndex < entries.length; otherIndex += 1) {
+      const right = entries[otherIndex];
+      if (!right || !canScopesBeActiveTogether(left.scope, right.scope)) {
+        continue;
+      }
+      for (const platform of ["windows", "linux", "macos"] as const) {
+        const leftAccelerator = resolveShortcutAcceleratorForEntry(left, platform, normalized);
+        const rightAccelerator = resolveShortcutAcceleratorForEntry(right, platform, normalized);
+        if (acceleratorSignature(leftAccelerator) !== acceleratorSignature(rightAccelerator)) {
+          continue;
+        }
+        throw new ShortcutRegistryError(
+          `Shortcut accelerator collision in active scopes: ${left.id} / ${right.id} (${platform})`,
+        );
+      }
+    }
+  }
+}
+
+export function updateShortcutBinding(
+  settings: KeyboardShortcutSettings,
+  commandId: string,
+  platform: ShortcutPlatform,
+  accelerator: ShortcutAccelerator | null,
+): KeyboardShortcutSettings {
+  const entry = getShortcutEntry(commandId);
+  if (!entry.customizable) {
+    throw new ShortcutRegistryError(`Shortcut is fixed and cannot be customized: ${commandId}`);
+  }
+  const policyEntries = getKeyboardShortcutPolicyEntries(SHORTCUT_ENTRIES);
+  const nextSettings = updateKeyboardShortcutBinding(settings, commandId, platform, accelerator, policyEntries);
+  validateShortcutSettings(SHORTCUT_ENTRIES, nextSettings);
+  return nextSettings;
+}
+
 export function getShortcutEntry(commandId: string): ShortcutEntry {
   const entry = SHORTCUT_ENTRIES_BY_ID.get(commandId);
   if (!entry) {
@@ -315,8 +351,13 @@ export function detectShortcutPlatform(): ShortcutPlatform {
 export function getShortcutAccelerator(
   commandId: string,
   platform: ShortcutPlatform = detectShortcutPlatform(),
+  settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
 ): ShortcutAccelerator {
-  return getShortcutEntry(commandId).accelerators[platform];
+  const normalized = normalizeKeyboardShortcutSettings(
+    settings,
+    getKeyboardShortcutPolicyEntries(SHORTCUT_ENTRIES),
+  );
+  return resolveShortcutAcceleratorForEntry(getShortcutEntry(commandId), platform, normalized);
 }
 
 function formatKey(key: string): string {
@@ -357,30 +398,38 @@ export function formatShortcutAccelerator(
 export function getShortcutLabel(
   commandId: string,
   platform: ShortcutPlatform = detectShortcutPlatform(),
+  settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
 ): string {
-  return formatShortcutAccelerator(getShortcutAccelerator(commandId, platform), platform);
+  return formatShortcutAccelerator(getShortcutAccelerator(commandId, platform, settings), platform);
 }
 
 export function getShortcutTooltip(
   commandId: string,
   platform: ShortcutPlatform = detectShortcutPlatform(),
+  settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
 ): string {
   const entry = getShortcutEntry(commandId);
-  return `${entry.label} (${getShortcutLabel(commandId, platform)})`;
+  return `${entry.label} (${getShortcutLabel(commandId, platform, settings)})`;
 }
 
 export function appendShortcutLabel(
   label: string | undefined,
   commandId: string,
   platform: ShortcutPlatform = detectShortcutPlatform(),
+  settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
 ): string {
   const baseLabel = label?.trim() || getShortcutEntry(commandId).label;
-  return `${baseLabel} (${getShortcutLabel(commandId, platform)})`;
+  return `${baseLabel} (${getShortcutLabel(commandId, platform, settings)})`;
 }
 
 export function getShortcutHelpProjection(
   platform: ShortcutPlatform = detectShortcutPlatform(),
+  settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
 ): readonly ShortcutHelpGroup[] {
+  const normalized = normalizeKeyboardShortcutSettings(
+    settings,
+    getKeyboardShortcutPolicyEntries(SHORTCUT_ENTRIES),
+  );
   const groups = new Map<string, ShortcutHelpItem[]>();
   for (const entry of SHORTCUT_ENTRIES) {
     if (!entry.showInHelp) {
@@ -390,7 +439,10 @@ export function getShortcutHelpProjection(
     group.push({
       id: entry.id,
       label: entry.label,
-      acceleratorLabel: formatShortcutAccelerator(entry.accelerators[platform], platform),
+      acceleratorLabel: formatShortcutAccelerator(
+        resolveShortcutAcceleratorForEntry(entry, platform, normalized),
+        platform,
+      ),
     });
     groups.set(entry.scope, group);
   }
@@ -421,12 +473,23 @@ function isAltGraphEvent(event: KeyboardEvent): boolean {
   return event.getModifierState?.("AltGraph") === true || (event.ctrlKey && event.altKey);
 }
 
-function isBlockedKeyboardEvent(event: KeyboardEvent): boolean {
-  return event.defaultPrevented
-    || event.isComposing
-    || event.key === "Dead"
-    || event.key === "Process"
-    || isAltGraphEvent(event);
+function getBlockedKeyboardEventReason(event: KeyboardEvent): string | null {
+  if (event.defaultPrevented) {
+    return "default-prevented";
+  }
+  if (event.isComposing) {
+    return "ime-composing";
+  }
+  if (event.key === "Dead") {
+    return "dead-key";
+  }
+  if (event.key === "Process") {
+    return "process-key";
+  }
+  if (isAltGraphEvent(event)) {
+    return "alt-graph";
+  }
+  return null;
 }
 
 function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerator): boolean {
@@ -442,12 +505,14 @@ type ShortcutDispatcherOptions = Readonly<{
   eventTarget: Window;
   platform?: ShortcutPlatform;
   entries?: readonly ShortcutEntry[];
+  settings?: KeyboardShortcutSettings;
 }>;
 
 export class ShortcutDispatcher {
   private readonly eventTarget: Window;
   private readonly platform: ShortcutPlatform;
   private readonly entries: readonly ShortcutEntry[];
+  private settings: KeyboardShortcutSettings = DEFAULT_KEYBOARD_SHORTCUT_SETTINGS;
   private readonly handlers = new Map<string, ShortcutHandler>();
   private readonly activeScopes = new Set<string>();
   private readonly scopeRegistrations = new Map<string, Set<symbol>>();
@@ -462,6 +527,16 @@ export class ShortcutDispatcher {
     this.platform = options.platform ?? detectShortcutPlatform();
     this.entries = options.entries ?? SHORTCUT_ENTRIES;
     validateShortcutEntries(this.entries);
+    if (options.settings) {
+      this.setSettings(options.settings);
+    }
+  }
+
+  setSettings(settings: KeyboardShortcutSettings): void {
+    this.settings = normalizeKeyboardShortcutSettings(
+      settings,
+      getKeyboardShortcutPolicyEntries(this.entries),
+    );
   }
 
   registerHandler(commandId: string, handler: ShortcutHandler): () => void {
@@ -514,7 +589,8 @@ export class ShortcutDispatcher {
   }
 
   dispatch(event: KeyboardEvent): boolean {
-    if (isBlockedKeyboardEvent(event)) {
+    const blockedReason = getBlockedKeyboardEventReason(event);
+    if (blockedReason) {
       return false;
     }
 
@@ -531,7 +607,7 @@ export class ShortcutDispatcher {
       if (!entry.allowInEditingTarget && isEditingTarget(event.target)) {
         return false;
       }
-      return matchesAccelerator(event, entry.accelerators[this.platform]);
+      return matchesAccelerator(event, resolveShortcutAcceleratorForEntry(entry, this.platform, this.settings));
     });
     if (candidates.length === 0) {
       return false;
@@ -550,7 +626,9 @@ export class ShortcutDispatcher {
     if (!handler) {
       return false;
     }
-    const handled = handler({ command, event, platform: this.platform });
+
+    let handled: boolean | void;
+    handled = handler({ command, event, platform: this.platform });
     if (handled === false) {
       return false;
     }
@@ -577,7 +655,10 @@ export class ShortcutDispatcher {
         if (!right || left.scope === right.scope) {
           continue;
         }
-        if (acceleratorSignature(left.accelerators[this.platform]) !== acceleratorSignature(right.accelerators[this.platform])) {
+        if (
+          acceleratorSignature(resolveShortcutAcceleratorForEntry(left, this.platform, this.settings))
+          !== acceleratorSignature(resolveShortcutAcceleratorForEntry(right, this.platform, this.settings))
+        ) {
           continue;
         }
         throw new ShortcutRegistryError(
@@ -620,6 +701,17 @@ export function getShortcutDispatcher(targetWindow?: Window): ShortcutDispatcher
   const dispatcher = new ShortcutDispatcher({ eventTarget: currentWindow });
   dispatchersByWindow.set(currentWindow, dispatcher);
   return dispatcher;
+}
+
+export function useShortcutDispatcherSettings(settings: KeyboardShortcutSettings): void {
+  const dispatcher = getShortcutDispatcher();
+  useEffect(() => {
+    if (!dispatcher) {
+      return undefined;
+    }
+    dispatcher.setSettings(settings);
+    return undefined;
+  }, [dispatcher, settings]);
 }
 
 export function useShortcutScope(scope: string, active = true): void {

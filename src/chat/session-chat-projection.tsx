@@ -14,6 +14,11 @@ import {
   type SessionRetryBannerProps,
 } from "../session-components.js";
 import type { ContextPaneTabKey } from "../session-ui-projection.js";
+import type {
+  MessageCollapseTarget,
+  MessageJumpRequest,
+  MessageNavigatorEntry,
+} from "../session-message-collapse.js";
 import { ChatSessionModals } from "./chat-session-modals.js";
 import type { ChatWindowProps } from "./chat-window.js";
 import { buildLiveSessionWindowShellProps } from "./live-session-window-props.js";
@@ -40,6 +45,11 @@ export type AgentSessionChatProjectionInput = {
   displayedMessages: Message[];
   displayedMessageKeys?: SessionMessageColumnProps["messageKeys"];
   displayedMessageGroups?: SessionMessageColumnProps["messageGroups"];
+  messageCollapseTargets?: readonly MessageCollapseTarget[];
+  collapsedMessageKeys?: ReadonlySet<string>;
+  messageJumpRequest?: MessageJumpRequest | null;
+  messageNavigatorEntries?: readonly MessageNavigatorEntry[];
+  messageNavigatorCharacter?: CharacterProfile;
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
@@ -154,6 +164,9 @@ export type AgentSessionChatProjectionInput = {
   onOpenSessionExplorer: () => void;
   onOpenSessionFilesExplorer: () => void;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onToggleMessageCollapse?: (key: string) => void;
+  onToggleAllMessageCollapse?: () => void;
+  onJumpToMessage?: (key: string) => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: SessionMessageColumnProps["onOpenDiff"];
@@ -338,6 +351,12 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       messages: input.displayedMessages,
       messageKeys: input.displayedMessageKeys,
       messageGroups: input.displayedMessageGroups,
+      messageCollapseTargets: input.messageCollapseTargets,
+      collapsedMessageKeys: input.collapsedMessageKeys,
+      messageJumpRequest: input.messageJumpRequest,
+      isContentActive: input.mainContent === undefined,
+      onToggleMessageCollapse: input.onToggleMessageCollapse,
+      onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
       expandedArtifacts: input.expandedArtifacts,
       messageListRef: input.messageListRef,
       isRunning: input.isSelectedSessionRunning,
@@ -390,6 +409,9 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     selectedSessionContextTelemetryProjection: input.selectedSessionContextTelemetryProjection,
     contextEmptyText: input.selectedContextEmptyText,
     latestCommandEmptyText: input.latestCommandEmptyText,
+    messageNavigatorEntries: input.messageNavigatorEntries,
+    messageNavigatorCharacter: input.messageNavigatorCharacter,
+    onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
   });

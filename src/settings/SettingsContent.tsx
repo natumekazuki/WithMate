@@ -1,4 +1,5 @@
 import type { AppSettings } from "../app-state.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
@@ -48,6 +49,7 @@ export type HomeSettingsContentProps = {
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
+  onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
@@ -109,6 +111,7 @@ export function HomeSettingsContent({
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeScrollToLatestOnSend,
+  onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
@@ -439,7 +442,10 @@ export function HomeSettingsContent({
             </div>
           </section>
 
-          <KeyboardShortcutsHelpSection />
+          <KeyboardShortcutsHelpSection
+            settings={settingsDraft.keyboardShortcuts}
+            onChange={onChangeKeyboardShortcuts}
+          />
 
           </section>
         </div>

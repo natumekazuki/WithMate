@@ -3,14 +3,26 @@ import { describe, it } from "node:test";
 import { JSDOM } from "jsdom";
 
 import {
+  captureShortcutAccelerator,
+  DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   getShortcutHelpProjection,
+  getShortcutEntry,
   getShortcutLabel,
+  getShortcutTooltip,
+  SHORTCUT_COMMAND_IDS,
+  SHORTCUT_ENTRIES,
   ShortcutDispatcher,
   ShortcutRegistryError,
   type ShortcutAccelerator,
   type ShortcutEntry,
+  updateShortcutBinding,
   validateShortcutEntries,
+  validateShortcutSettings,
 } from "../../src/shortcut-registry.js";
+import {
+  isAllowedShortcutAccelerator,
+  normalizeKeyboardShortcutSettings,
+} from "../../src/keyboard-shortcut-state.js";
 
 function createEntry(overrides: Partial<ShortcutEntry> = {}): ShortcutEntry {
   return {
@@ -26,6 +38,7 @@ function createEntry(overrides: Partial<ShortcutEntry> = {}): ShortcutEntry {
     allowInEditingTarget: false,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
     ...overrides,
   };
@@ -116,11 +129,12 @@ describe("shortcut registry validation", () => {
     }
   });
 
-  it("new WithMate assignmentをCtrl/Cmd+Shift+A-Zに限定する", () => {
+  it("customizableなWithMate assignmentをplatform別のpolicyに限定する", () => {
     const valid = createEntry({
       id: "new-withmate",
       kind: "withmate",
       assignment: "new",
+      bindingKind: "letter",
       accelerators: {
         windows: { key: "a", ctrlKey: true, shiftKey: true },
         linux: { key: "a", ctrlKey: true, shiftKey: true },
@@ -128,6 +142,15 @@ describe("shortcut registry validation", () => {
       },
     });
     assert.doesNotThrow(() => validateShortcutEntries([valid]));
+    assert.doesNotThrow(() => validateShortcutEntries([{
+      ...valid,
+      id: "alt-shift-withmate",
+      accelerators: {
+        windows: { key: "a", altKey: true, shiftKey: true },
+        linux: { key: "a", altKey: true, shiftKey: true },
+        macos: { key: "a", metaKey: true, altKey: true },
+      },
+    }]));
 
     const invalidAccelerators: ShortcutAccelerator[] = [
       { key: "a", ctrlKey: true },
@@ -162,6 +185,184 @@ describe("shortcut registry validation", () => {
       ShortcutRegistryError,
     );
   });
+
+  it("shortcut policyは文字入力を奪う組み合わせとcollisionを拒否する", () => {
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "x", ctrlKey: true, shiftKey: true }, "windows", "letter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "x", altKey: true, shiftKey: true }, "linux", "letter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "x", metaKey: true, shiftKey: true }, "macos", "letter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "x", metaKey: true, altKey: true }, "macos", "letter"),
+      true,
+    );
+
+    for (const accelerator of [
+      { key: "x" },
+      { key: "x", shiftKey: true },
+      { key: "x", altKey: true },
+      { key: "x", ctrlKey: true, altKey: true },
+    ]) {
+      assert.equal(
+        isAllowedShortcutAccelerator(accelerator, "windows", "letter"),
+        false,
+      );
+    }
+
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "Enter", ctrlKey: true }, "windows", "enter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "Enter", altKey: true }, "windows", "enter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "Enter", metaKey: true }, "macos", "enter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "Enter", altKey: true }, "macos", "enter"),
+      true,
+    );
+    assert.equal(
+      isAllowedShortcutAccelerator({ key: "Enter", ctrlKey: true, altKey: true }, "windows", "enter"),
+      false,
+    );
+
+    const captured = captureShortcutAccelerator({
+      key: "X",
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      isComposing: false,
+      repeat: false,
+    });
+    assert.equal(captured.kind, "accepted");
+    if (captured.kind === "accepted") {
+      assert.throws(
+        () => updateShortcutBinding(
+          DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+          SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+          "windows",
+          captured.accelerator,
+        ),
+        /Invalid keyboard shortcut accelerator/,
+      );
+    }
+
+    assert.throws(
+      () => updateShortcutBinding(
+        DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+        SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+        "windows",
+        { key: "f", ctrlKey: true },
+      ),
+      /Invalid keyboard shortcut accelerator/,
+    );
+  });
+
+  it("保存済み設定の無効platform overrideを除外し、有効なoverrideを保持する", () => {
+    const normalized = normalizeKeyboardShortcutSettings({
+      overrides: {
+        [SHORTCUT_COMMAND_IDS.messageToggleCollapse]: {
+          windows: { key: "x" },
+          linux: { key: "x", altKey: true, shiftKey: true },
+          macos: { key: "x", metaKey: true, shiftKey: true },
+        },
+        [SHORTCUT_COMMAND_IDS.composerSubmit]: {
+          windows: { key: "Enter", ctrlKey: true, altKey: true },
+        },
+        [SHORTCUT_COMMAND_IDS.messageFind]: {
+          windows: { key: "g", ctrlKey: true },
+        },
+        "unknown.command": {
+          windows: { key: "x", ctrlKey: true, shiftKey: true },
+        },
+      },
+    });
+
+    assert.deepEqual(normalized.overrides, {
+      [SHORTCUT_COMMAND_IDS.messageToggleCollapse]: {
+        linux: { key: "x", altKey: true, shiftKey: true },
+        macos: { key: "x", metaKey: true, shiftKey: true },
+      },
+    });
+
+    const collisionPolicy = [
+      {
+        id: "first",
+        scope: "scope",
+        accelerators: {
+          windows: { key: "a", ctrlKey: true, shiftKey: true },
+          linux: { key: "a", ctrlKey: true, shiftKey: true },
+          macos: { key: "a", metaKey: true, shiftKey: true },
+        },
+        customizable: true,
+        bindingKind: "letter",
+      },
+      {
+        id: "second",
+        scope: "scope",
+        accelerators: {
+          windows: { key: "b", ctrlKey: true, shiftKey: true },
+          linux: { key: "b", ctrlKey: true, shiftKey: true },
+          macos: { key: "b", metaKey: true, shiftKey: true },
+        },
+        customizable: true,
+        bindingKind: "letter",
+      },
+    ] as const;
+    assert.deepEqual(
+      normalizeKeyboardShortcutSettings({
+        overrides: {
+          first: {
+            windows: { key: "b", ctrlKey: true, shiftKey: true },
+          },
+        },
+      }, collisionPolicy).overrides,
+      {},
+    );
+
+    const firstEntry = createEntry({
+      id: "first",
+      customizable: true,
+      bindingKind: "letter",
+      accelerators: {
+        windows: { key: "a", ctrlKey: true, shiftKey: true },
+        linux: { key: "a", ctrlKey: true, shiftKey: true },
+        macos: { key: "a", metaKey: true, shiftKey: true },
+      },
+    });
+    const secondEntry = createEntry({
+      id: "second",
+      customizable: true,
+      bindingKind: "letter",
+      accelerators: {
+        windows: { key: "b", ctrlKey: true, shiftKey: true },
+        linux: { key: "b", ctrlKey: true, shiftKey: true },
+        macos: { key: "b", metaKey: true, shiftKey: true },
+      },
+    });
+    assert.throws(
+      () => validateShortcutSettings([firstEntry, secondEntry], {
+        overrides: {
+          first: {
+            windows: { key: "b", ctrlKey: true, shiftKey: true },
+          },
+        },
+      }),
+      ShortcutRegistryError,
+    );
+  });
 });
 
 describe("shortcut projection", () => {
@@ -179,6 +380,146 @@ describe("shortcut projection", () => {
       label: "Send message",
       acceleratorLabel: "⌘Enter",
     });
+    assert.equal(
+      getShortcutEntry(SHORTCUT_COMMAND_IDS.composerSubmit).customizable,
+      true,
+    );
+
+    const windowsSettings = updateShortcutBinding(
+      DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+      SHORTCUT_COMMAND_IDS.composerSubmit,
+      "windows",
+      { key: "Enter", altKey: true },
+    );
+    assert.equal(
+      getShortcutLabel(SHORTCUT_COMMAND_IDS.composerSubmit, "windows", windowsSettings),
+      "Alt+Enter",
+    );
+    assert.equal(
+      getShortcutTooltip(SHORTCUT_COMMAND_IDS.composerSubmit, "windows", windowsSettings),
+      "Send message (Alt+Enter)",
+    );
+    const windowsHelpItem = getShortcutHelpProjection("windows", windowsSettings)
+      .flatMap((group) => group.items)
+      .find((item) => item.id === SHORTCUT_COMMAND_IDS.composerSubmit);
+    assert.equal(windowsHelpItem?.acceleratorLabel, "Alt+Enter");
+
+    const resetSettings = updateShortcutBinding(
+      windowsSettings,
+      SHORTCUT_COMMAND_IDS.composerSubmit,
+      "windows",
+      null,
+    );
+    assert.equal(
+      getShortcutLabel(SHORTCUT_COMMAND_IDS.composerSubmit, "windows", resetSettings),
+      "Ctrl+Enter",
+    );
+  });
+
+  it("message collapse shortcut はplatform acceleratorとHelp projectionをregistryから共有する", () => {
+    const entry = SHORTCUT_ENTRIES.find((candidate) => candidate.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+    assert.ok(entry);
+    assert.deepEqual(entry.accelerators, {
+      windows: { key: "m", ctrlKey: true, shiftKey: true },
+      linux: { key: "m", ctrlKey: true, shiftKey: true },
+      macos: { key: "m", metaKey: true, shiftKey: true },
+    });
+    assert.equal(entry.scope, "message-list");
+    assert.equal(entry.allowInEditingTarget, true);
+    assert.equal(entry.allowRepeat, false);
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "windows"), "Ctrl+Shift+M");
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "macos"), "⌘⇧M");
+    const helpItem = getShortcutHelpProjection("windows")
+      .flatMap((group) => group.items)
+      .find((item) => item.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+    assert.deepEqual(helpItem, {
+      id: SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+      label: "Toggle message collapse",
+      acceleratorLabel: "Ctrl+Shift+M",
+    });
+  });
+
+  it("ユーザー設定のoverrideを実効labelとHelp projectionへ反映する", () => {
+    const settings = updateShortcutBinding(
+      DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+      SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+      "windows",
+      { key: "x", ctrlKey: true, shiftKey: true },
+    );
+
+    assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "windows", settings), "Ctrl+Shift+X");
+    assert.equal(
+      getShortcutLabel(SHORTCUT_COMMAND_IDS.messageFind, "windows", {
+        overrides: {
+          [SHORTCUT_COMMAND_IDS.messageFind]: {
+            windows: { key: "g", ctrlKey: true },
+          },
+        },
+      }),
+      "Ctrl+F",
+    );
+    const helpItem = getShortcutHelpProjection("windows", settings)
+      .flatMap((group) => group.items)
+      .find((item) => item.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+    assert.equal(helpItem?.acceleratorLabel, "Ctrl+Shift+X");
+
+    assert.throws(
+      () => updateShortcutBinding(
+        settings,
+        SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+        "windows",
+        { key: "Enter", ctrlKey: true },
+      ),
+      /Invalid keyboard shortcut accelerator/,
+    );
+    assert.throws(
+      () => updateShortcutBinding(
+        settings,
+        SHORTCUT_COMMAND_IDS.messageFind,
+        "windows",
+        { key: "g", ctrlKey: true },
+      ),
+      ShortcutRegistryError,
+    );
+  });
+
+  it("登録入力は修飾キー単独、IME、repeat、AltGraphを拒否する", () => {
+    const baseEvent = {
+      key: "M",
+      ctrlKey: true,
+      metaKey: false,
+      shiftKey: true,
+      altKey: false,
+      isComposing: false,
+      repeat: false,
+      getModifierState: () => false,
+    };
+    assert.deepEqual(captureShortcutAccelerator(baseEvent), {
+      kind: "accepted",
+      accelerator: { key: "m", ctrlKey: true, shiftKey: true },
+    });
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, key: "Shift" }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, isComposing: true }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, repeat: true }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({ ...baseEvent, altKey: true }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({
+      ...baseEvent,
+      key: "Dead",
+      ctrlKey: false,
+      shiftKey: false,
+    }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({
+      ...baseEvent,
+      key: "Process",
+      ctrlKey: false,
+      shiftKey: false,
+    }).kind, "rejected");
+    assert.equal(captureShortcutAccelerator({
+      ...baseEvent,
+      key: "",
+      ctrlKey: false,
+      shiftKey: false,
+    }).kind, "rejected");
   });
 });
 
@@ -285,6 +626,180 @@ describe("shortcut dispatcher", () => {
       composer.dispatchEvent(composerEvent);
       assert.equal(calls, 1);
       assert.equal(composerEvent.defaultPrevented, true);
+
+      releaseScope();
+      dispatcher.dispose();
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  it("Send messageの有効なoverrideをdispatcherへ反映する", () => {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.composerSubmit);
+      const settings = updateShortcutBinding(
+        DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+        entry.id,
+        "windows",
+        { key: "Enter", altKey: true },
+      );
+      const dispatcher = new ShortcutDispatcher({
+        eventTarget: dom.window,
+        platform: "windows",
+        settings,
+      });
+      let calls = 0;
+      dispatcher.registerHandler(entry.id, () => {
+        calls += 1;
+        return true;
+      });
+      const releaseScope = dispatcher.registerScope(entry.scope);
+      const composer = dom.window.document.createElement("textarea");
+      composer.dataset.shortcutScope = "composer";
+      dom.window.document.body.append(composer);
+
+      const defaultEvent = createKeyboardEvent(dom, { key: "Enter", ctrlKey: true });
+      composer.dispatchEvent(defaultEvent);
+      assert.equal(calls, 0);
+      assert.equal(defaultEvent.defaultPrevented, false);
+
+      const overrideEvent = createKeyboardEvent(dom, { key: "Enter", altKey: true });
+      composer.dispatchEvent(overrideEvent);
+      assert.equal(calls, 1);
+      assert.equal(overrideEvent.defaultPrevented, true);
+
+      releaseScope();
+      dispatcher.dispose();
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  it("message collapse shortcut はcomposerへfocus中もmessage-list scopeで発火する", () => {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+      const dispatcher = new ShortcutDispatcher({
+        eventTarget: dom.window,
+        platform: "windows",
+        entries: [entry],
+      });
+      let calls = 0;
+      dispatcher.registerHandler(entry.id, () => {
+        calls += 1;
+        return true;
+      });
+      const releaseScope = dispatcher.registerScope("message-list");
+      const textarea = dom.window.document.createElement("textarea");
+      dom.window.document.body.append(textarea);
+      textarea.focus();
+
+      const event = createKeyboardEvent(dom, { key: "M", ctrlKey: true, shiftKey: true });
+      textarea.dispatchEvent(event);
+      assert.equal(calls, 1);
+      assert.equal(event.defaultPrevented, true);
+
+      releaseScope();
+      dispatcher.dispose();
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  it("dispatcherは保存済みoverrideを使い、既定キーでは発火しない", () => {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.messageToggleCollapse);
+      const settings = updateShortcutBinding(
+        DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+        entry.id,
+        "windows",
+        { key: "x", ctrlKey: true, shiftKey: true },
+      );
+      const dispatcher = new ShortcutDispatcher({
+        eventTarget: dom.window,
+        platform: "windows",
+        settings,
+      });
+      let calls = 0;
+      dispatcher.registerHandler(entry.id, () => {
+        calls += 1;
+        return true;
+      });
+      const releaseScope = dispatcher.registerScope(entry.scope);
+
+      const defaultEvent = createKeyboardEvent(dom, { key: "m", ctrlKey: true, shiftKey: true });
+      dom.window.document.body.dispatchEvent(defaultEvent);
+      assert.equal(calls, 0);
+      assert.equal(defaultEvent.defaultPrevented, false);
+
+      const overrideEvent = createKeyboardEvent(dom, { key: "x", ctrlKey: true, shiftKey: true });
+      dom.window.document.body.dispatchEvent(overrideEvent);
+      assert.equal(calls, 1);
+      assert.equal(overrideEvent.defaultPrevented, true);
+
+      releaseScope();
+      dispatcher.dispose();
+    } finally {
+      restore();
+      dom.window.close();
+    }
+  });
+
+  it("collisionする保存値でdispatcher初期化を失敗させず、既定値へfallbackする", () => {
+    const dom = new JSDOM("<!doctype html><body></body>");
+    const restore = installDomGlobals(dom);
+    try {
+      const first = createEntry({
+        id: "first",
+        customizable: true,
+        bindingKind: "letter",
+        accelerators: {
+          windows: { key: "a", ctrlKey: true, shiftKey: true },
+          linux: { key: "a", ctrlKey: true, shiftKey: true },
+          macos: { key: "a", metaKey: true, shiftKey: true },
+        },
+      });
+      const second = createEntry({
+        id: "second",
+        customizable: true,
+        bindingKind: "letter",
+        accelerators: {
+          windows: { key: "b", ctrlKey: true, shiftKey: true },
+          linux: { key: "b", ctrlKey: true, shiftKey: true },
+          macos: { key: "b", metaKey: true, shiftKey: true },
+        },
+      });
+
+      const dispatcher = new ShortcutDispatcher({
+        eventTarget: dom.window,
+        platform: "windows",
+        entries: [first, second],
+        settings: {
+          overrides: {
+            first: {
+              windows: { key: "b", ctrlKey: true, shiftKey: true },
+            },
+          },
+        },
+      });
+      let calls = 0;
+      dispatcher.registerHandler(first.id, () => {
+        calls += 1;
+        return true;
+      });
+      const releaseScope = dispatcher.registerScope(first.scope);
+      const event = createKeyboardEvent(dom, { key: "a", ctrlKey: true, shiftKey: true });
+      dom.window.document.body.dispatchEvent(event);
+      assert.equal(calls, 1);
+      assert.equal(event.defaultPrevented, true);
 
       releaseScope();
       dispatcher.dispose();

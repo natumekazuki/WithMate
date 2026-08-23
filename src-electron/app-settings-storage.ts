@@ -24,6 +24,7 @@ const SESSION_ACTION_DOCK_PRESENTATION_KEY = "session_action_dock_presentation";
 const SESSION_SIDE_PANE_KEY = "session_side_pane";
 const SESSION_LAYOUT_PRIORITY_KEY = "session_layout_priority";
 const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
+const KEYBOARD_SHORTCUTS_KEY = "keyboard_shortcuts_json";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
@@ -146,6 +147,13 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(SESSION_LAYOUT_PRIORITY_KEY, DEFAULT_APP_SETTINGS.chatLayoutPreference.priority, updatedAt);
+    this.db
+      .prepare(`
+        INSERT INTO app_settings (setting_key, setting_value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(setting_key) DO NOTHING
+      `)
+      .run(KEYBOARD_SHORTCUTS_KEY, JSON.stringify(DEFAULT_APP_SETTINGS.keyboardShortcuts), updatedAt);
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -303,6 +311,18 @@ export class AppSettingsStorage {
       }
     }
 
+    const keyboardShortcutsJson = rows.find((row) => row.setting_key === KEYBOARD_SHORTCUTS_KEY)?.setting_value;
+    if (keyboardShortcutsJson) {
+      try {
+        settings.keyboardShortcuts = normalizeAppSettings({
+          ...settings,
+          keyboardShortcuts: JSON.parse(keyboardShortcutsJson),
+        }).keyboardShortcuts;
+      } catch {
+        settings.keyboardShortcuts = createDefaultAppSettings().keyboardShortcuts;
+      }
+    }
+
     const userMicrocopyCatalogJson = rows.find((row) => row.setting_key === USER_MICROCOPY_CATALOG_KEY)?.setting_value;
     if (userMicrocopyCatalogJson) {
       try {
@@ -391,6 +411,15 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(SCROLL_TO_LATEST_ON_SEND_KEY, String(normalized.scrollToLatestOnSend), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(KEYBOARD_SHORTCUTS_KEY, JSON.stringify(normalized.keyboardShortcuts), updatedAt);
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

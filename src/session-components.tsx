@@ -1,4 +1,4 @@
-import { Component, Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
+import { Component, Fragment, createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ClipboardEventHandler, type CSSProperties, type Dispatch, type ErrorInfo, type KeyboardEvent as ReactKeyboardEvent, type KeyboardEventHandler, type ReactNode, type RefObject, type SetStateAction, type UIEventHandler } from "react";
 import { createPortal } from "react-dom";
 import { useVirtualizer } from "@tanstack/react-virtual";
 
@@ -44,6 +44,7 @@ import {
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
+import { useShortcutSettings } from "./shortcut-settings-context.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
 import { ComposerAttachmentMenu } from "./chat/composer-attachment-menu.js";
@@ -68,6 +69,11 @@ import {
   useShortcutCommandHandler,
   useShortcutScope,
 } from "./shortcut-registry.js";
+import type {
+  MessageCollapseTarget,
+  MessageJumpRequest,
+  MessageNavigatorEntry,
+} from "./session-message-collapse.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -1634,7 +1640,10 @@ export type SessionContextPaneProps = {
   selectedSessionContextTelemetryProjection: SessionContextTelemetryProjection;
   contextEmptyText: string;
   latestCommandEmptyText?: string;
+  messageNavigatorEntries?: readonly MessageNavigatorEntry[];
+  messageNavigatorCharacter?: CharacterProfile;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
+  onJumpToMessage?: (key: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
 };
 
@@ -1751,10 +1760,15 @@ export function SessionContextPane({
   selectedSessionContextTelemetryProjection,
   contextEmptyText,
   latestCommandEmptyText = "",
+  messageNavigatorEntries = [],
+  messageNavigatorCharacter,
   onCycleContextPaneTab,
+  onJumpToMessage,
   onOpenCompanionReview,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const messageNavigatorButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const [messageNavigatorFocusIndex, setMessageNavigatorFocusIndex] = useState(0);
   const taskEntries = backgroundTasks ?? [];
   const availableTabCount = availableContextPaneTabs.length;
   const canCycleContextPaneTab = availableTabCount > 1;
@@ -1780,6 +1794,10 @@ export function SessionContextPane({
         return companionGroupMonitorEntries
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
           .join("|");
+      case "messages":
+        return messageNavigatorEntries
+          .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}`)
+          .join("|");
       default:
         return "";
     }
@@ -1790,9 +1808,64 @@ export function SessionContextPane({
     liveRunReasoningText,
     runningDetailsEntries,
     isSelectedSessionRunning,
+    messageNavigatorEntries,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
   ]);
+
+  useEffect(() => {
+    setMessageNavigatorFocusIndex((current) => messageNavigatorEntries.length === 0
+      ? 0
+      : Math.min(current, messageNavigatorEntries.length - 1));
+  }, [messageNavigatorEntries.length]);
+
+  const handleMessageNavigatorKeyDown = useCallback((event: ReactKeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (messageNavigatorEntries.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      const nextIndex = (index + direction + messageNavigatorEntries.length) % messageNavigatorEntries.length;
+      const nextEntry = messageNavigatorEntries[nextIndex];
+      setMessageNavigatorFocusIndex(nextIndex);
+      nextEntry && messageNavigatorButtonRefs.current[nextEntry.key]?.focus();
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const entry = messageNavigatorEntries[index];
+      if (entry) {
+        onJumpToMessage?.(entry.key);
+      }
+    }
+  }, [messageNavigatorEntries, onJumpToMessage]);
+
+  const messageNavigatorCharacterName = messageNavigatorCharacter?.name.trim() || "Character";
+  const messageNavigatorSpeakerLabel = (entry: MessageNavigatorEntry): string => {
+    if (entry.role === "user") {
+      return "あなたのメッセージ";
+    }
+    return entry.sourceKind === "auxiliary"
+      ? `${messageNavigatorCharacterName}（Auxiliary）`
+      : messageNavigatorCharacterName;
+  };
+
+  const renderMessageNavigatorSpeaker = (entry: MessageNavigatorEntry) => {
+    if (entry.role === "user") {
+      return <span className="messages-navigator-speaker-glyph user" aria-hidden="true">↗</span>;
+    }
+    if (entry.sourceKind === "session" && messageNavigatorCharacter) {
+      return <CharacterAvatar character={messageNavigatorCharacter} size="tiny" />;
+    }
+    return (
+      <span className={`messages-navigator-speaker-glyph assistant${entry.accent ? " accent" : ""}`} aria-hidden="true">
+        ✦
+      </span>
+    );
+  };
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
     const { session, state } = entry;
@@ -1828,7 +1901,9 @@ export function SessionContextPane({
       return;
     }
 
-    contentNode.scrollTop = activeContextPaneTab === "companion-group" ? 0 : contentNode.scrollHeight;
+    contentNode.scrollTop = activeContextPaneTab === "companion-group" || activeContextPaneTab === "messages"
+      ? 0
+      : contentNode.scrollHeight;
   }, [contentScrollKey]);
 
   return (
@@ -2027,6 +2102,46 @@ export function SessionContextPane({
               )
             ) : null}
 
+            {activeContextPaneTab === "messages" ? (
+              messageNavigatorEntries.length > 0 ? (
+                <div className="messages-navigator" role="list" aria-label="Messages">
+                  {messageNavigatorEntries.map((entry, index) => {
+                    const speakerLabel = messageNavigatorSpeakerLabel(entry);
+                    return (
+                      <button
+                        key={entry.key}
+                        ref={(node) => {
+                          messageNavigatorButtonRefs.current[entry.key] = node;
+                        }}
+                        className={`messages-navigator-row${entry.isCollapsed ? " is-collapsed" : ""}`}
+                        type="button"
+                        tabIndex={index === messageNavigatorFocusIndex ? 0 : -1}
+                        aria-label={`${speakerLabel}: ${entry.preview}`}
+                        title={`${speakerLabel}: ${entry.preview}`}
+                        onFocus={() => setMessageNavigatorFocusIndex(index)}
+                        onKeyDown={(event) => handleMessageNavigatorKeyDown(event, index)}
+                        onClick={() => onJumpToMessage?.(entry.key)}
+                      >
+                        <span className={`messages-navigator-speaker${entry.accent ? " accent" : ""}`}>
+                          {renderMessageNavigatorSpeaker(entry)}
+                        </span>
+                        <span className="messages-navigator-copy">
+                          <span className="messages-navigator-preview">{entry.preview}</span>
+                          {entry.isCollapsed ? (
+                            <span className="messages-navigator-state" aria-label="縮小中">縮小中</span>
+                          ) : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="command-monitor-empty-shell">
+                  <p className="command-monitor-empty">メッセージはまだないよ。</p>
+                </div>
+              )
+            ) : null}
+
             {activeContextPaneTab === "companion-group" ? (
               companionGroupMonitorEntries.length > 0 ? (
                 <div className="command-monitor-confirmed-list">
@@ -2180,6 +2295,9 @@ export type SessionMessageColumnProps = {
   character: CharacterProfile;
   messages: Message[];
   messageKeys?: string[];
+  messageCollapseTargets?: readonly MessageCollapseTarget[];
+  collapsedMessageKeys?: ReadonlySet<string>;
+  messageJumpRequest?: MessageJumpRequest | null;
   messageGroups?: Array<{
     id: string;
     label: string;
@@ -2198,6 +2316,8 @@ export type SessionMessageColumnProps = {
   pendingMessageGroupId?: string | null;
   isMessageListFollowing: boolean;
   onMessageListScroll: UIEventHandler<HTMLDivElement>;
+  onToggleMessageCollapse?: (key: string) => void;
+  onToggleAllMessageCollapse?: () => void;
   onToggleArtifact: (artifactKey: string) => void;
   onLoadArtifactDetail?: (messageIndex: number) => Promise<MessageArtifact | null>;
   onOpenDiff: (title: string, file: ChangedFile) => void;
@@ -2499,6 +2619,9 @@ export function SessionMessageColumn({
   character,
   messages,
   messageKeys,
+  messageCollapseTargets = [],
+  collapsedMessageKeys = new Set(),
+  messageJumpRequest = null,
   messageGroups,
   expandedArtifacts,
   messageListRef,
@@ -2513,6 +2636,8 @@ export function SessionMessageColumn({
   pendingMessageGroupId = null,
   isMessageListFollowing,
   onMessageListScroll,
+  onToggleMessageCollapse,
+  onToggleAllMessageCollapse,
   onToggleArtifact,
   onLoadArtifactDetail,
   onResolveLiveApproval,
@@ -2531,8 +2656,14 @@ export function SessionMessageColumn({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [currentFindMatch, setCurrentFindMatch] = useState(0);
+  const [messageJumpHighlightKey, setMessageJumpHighlightKey] = useState<string | null>(null);
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
+  const handledMessageJumpRequestIdRef = useRef<number | null>(null);
+  const messageCollapseTargetByKey = useMemo(
+    () => new Map(messageCollapseTargets.map((target) => [target.key, target])),
+    [messageCollapseTargets],
+  );
 
   useShortcutScope("message-list", isContentActive);
   useShortcutCommandHandler(
@@ -2550,6 +2681,20 @@ export function SessionMessageColumn({
         return false;
       }
       setFindOpen(false);
+      return true;
+    },
+    isContentActive,
+  );
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageToggleCollapse,
+    () => {
+      const targetCount = messageCollapseTargets.length;
+      const callbackAvailable = Boolean(onToggleAllMessageCollapse);
+      const accepted = targetCount > 0 && callbackAvailable;
+      if (!accepted || !onToggleAllMessageCollapse) {
+        return false;
+      }
+      onToggleAllMessageCollapse();
       return true;
     },
     isContentActive,
@@ -2583,6 +2728,37 @@ export function SessionMessageColumn({
     })
   );
   const virtualMessages = messageVirtualizer.getVirtualItems();
+  useEffect(() => {
+    if (!messageJumpRequest || messageJumpRequest.sessionId !== sessionId) {
+      return;
+    }
+    if (handledMessageJumpRequestIdRef.current === messageJumpRequest.requestId) {
+      return;
+    }
+    const messageIndex = messageKeys?.indexOf(messageJumpRequest.key) ?? -1;
+    if (messageIndex < 0) {
+      return;
+    }
+
+    handledMessageJumpRequestIdRef.current = messageJumpRequest.requestId;
+    messageVirtualizer.scrollToIndex(messageIndex, { align: "start" });
+    setMessageJumpHighlightKey(messageJumpRequest.key);
+  }, [messageJumpRequest, messageKeys, messageVirtualizer, sessionId]);
+
+  useEffect(() => {
+    if (!messageJumpHighlightKey || typeof window === "undefined") {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setMessageJumpHighlightKey((current) => current === messageJumpHighlightKey ? null : current);
+    }, 1200);
+    return () => window.clearTimeout(timeoutId);
+  }, [messageJumpHighlightKey]);
+
+  useEffect(() => {
+    setMessageJumpHighlightKey(null);
+    handledMessageJumpRequestIdRef.current = null;
+  }, [sessionId]);
   const hasPendingMessageText =
     !hasLiveRunAssistantText &&
     liveApprovalRequest === null &&
@@ -2651,6 +2827,14 @@ export function SessionMessageColumn({
     }
     return matches;
   }, [findQuery, messageRenderedSearchTexts, pendingMessageGroupEndIndex, pendingRenderedSearchText]);
+  const findMatchMessageIndexes = useMemo(
+    () => new Set(
+      messageFindMatches
+        .filter((match): match is Extract<typeof match, { kind: "message" }> => match.kind === "message")
+        .map((match) => match.messageIndex),
+    ),
+    [messageFindMatches],
+  );
   const activeCurrentFindMatch = clampFindMatchIndex(currentFindMatch, messageFindMatches.length);
   const canRenderGroupedPendingInlineContent =
     pendingMessageGroupEndIndex >= 0 &&
@@ -2802,7 +2986,13 @@ export function SessionMessageColumn({
     });
   }, [getFindMatchScrollIndex, messageFindMatches, messageVirtualizer]);
 
-  const visibleMessageSignature = virtualMessages.map((message) => message.index).join(",");
+  const visibleMessageSignature = virtualMessages.map((message) => {
+    const key = getMessageKey(message.index);
+    const target = messageCollapseTargetByKey.get(key);
+    const isCollapsed = !!target && collapsedMessageKeys.has(key);
+    const isTemporarilyExpanded = findOpen && hasFindQuery && findMatchMessageIndexes.has(message.index);
+    return `${message.index}:${isCollapsed && !isTemporarilyExpanded ? "collapsed" : "expanded"}`;
+  }).join(",");
   useLayoutEffect(() => {
     const messageListElement = messageListRef.current;
     if (!isContentActive || !findOpen || !findQuery.trim() || !messageListElement) {
@@ -2865,6 +3055,8 @@ export function SessionMessageColumn({
     findQuery,
     isContentActive,
     messageFindMatches,
+    messageCollapseTargetByKey,
+    collapsedMessageKeys,
     messageListRef,
     pendingMessageGroupEndIndex,
     visibleMessageSignature,
@@ -3045,6 +3237,12 @@ export function SessionMessageColumn({
               [];
             const artifactOperationsOpen = isArtifactFoldOpen(artifactKey, "operations");
             const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
+            const messageCollapseTarget = messageCollapseTargetByKey.get(messageKey);
+            const isMessageCollapsed = !!messageCollapseTarget && collapsedMessageKeys.has(messageKey);
+            const isFindMatch = findMatchMessageIndexes.has(absoluteIndex);
+            const shouldRenderFullMessage = !isMessageCollapsed || (findOpen && hasFindQuery && isFindMatch);
+            const messageBodyId = `message-body-${messageKey.replace(/[^a-zA-Z0-9_-]/gu, "-")}`;
+            const messageCollapseLabel = isMessageCollapsed ? "メッセージを展開" : "メッセージを縮小";
 
             return (
               <div
@@ -3052,7 +3250,9 @@ export function SessionMessageColumn({
                 ref={messageVirtualizer.measureElement}
                 className={`session-message-virtual-row${
                   doesMessageGroupContinue ? " auxiliary-message-group-continues" : ""
-                }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}`}
+                }${absoluteIndex === messages.length - 1 ? " session-message-virtual-row-end" : ""}${
+                  messageJumpHighlightKey === messageKey ? " message-jump-highlight" : ""
+                }`}
                 data-index={absoluteIndex}
               >
                 {isMessageGroupStart && messageGroup ? (
@@ -3094,7 +3294,21 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
+                <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${messageCollapseTarget ? " has-message-collapse-control" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
+                  {messageCollapseTarget && onToggleMessageCollapse ? (
+                    <button
+                      className="message-collapse-toggle"
+                      type="button"
+                      onClick={() => onToggleMessageCollapse(messageKey)}
+                      aria-expanded={!isMessageCollapsed}
+                      aria-controls={messageBodyId}
+                      aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                      title={messageCollapseLabel}
+                    >
+                      <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                      <span className="visually-hidden">{messageCollapseLabel}</span>
+                    </button>
+                  ) : null}
                   {artifact && !isAssistant ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
@@ -3114,15 +3328,20 @@ export function SessionMessageColumn({
                     </button>
                   ) : null}
                   <div
+                    id={messageBodyId}
                     data-message-body="true"
                     data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                   >
-                    <MessageRichText
-                      text={message.text}
-                      forceFullRender={findOpen && hasFindQuery}
-                      displayMode={messageViewMode}
-                      onOpenPath={onOpenPath}
-                    />
+                    {shouldRenderFullMessage ? (
+                      <MessageRichText
+                        text={message.text}
+                        forceFullRender={findOpen && hasFindQuery}
+                        displayMode={messageViewMode}
+                        onOpenPath={onOpenPath}
+                      />
+                    ) : (
+                      <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
+                    )}
                   </div>
 
                   {artifact ? (
@@ -3549,6 +3768,7 @@ export function SessionComposerExpanded({
 }: SessionComposerExpandedProps) {
   const customAgentListRef = useRef<HTMLDivElement | null>(null);
   const [isAttachmentMenuOpen, setIsAttachmentMenuOpen] = useState(false);
+  const keyboardShortcuts = useShortcutSettings();
 
   useEffect(() => {
     if (!showAttachmentControls || isRunning || composerBlocked) {
@@ -3969,7 +4189,12 @@ export function SessionComposerExpanded({
             type="button"
             onClick={onSendOrCancel}
             disabled={isSendDisabled}
-            title={appendShortcutLabel(sendButtonTitle, SHORTCUT_COMMAND_IDS.composerSubmit)}
+            title={appendShortcutLabel(
+              sendButtonTitle,
+              SHORTCUT_COMMAND_IDS.composerSubmit,
+              undefined,
+              keyboardShortcuts,
+            )}
           >
             Send
           </button>
