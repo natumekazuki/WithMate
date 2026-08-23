@@ -456,7 +456,7 @@ test("ChatWindow の Skill panel は矢印・Enter・Escapeとfocus復帰を扱�
   }
 });
 
-test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操作を compact ActionDock へ共有する", async () => {
+test("ChatWindow は button とshortcutで共有表示modeを双方向に切り替える", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
   const previousWindow = globalThis.window;
@@ -474,6 +474,14 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
     unobserve() {}
     disconnect() {}
   }
+  Object.defineProperty(dom.window.HTMLElement.prototype, "attachEvent", {
+    configurable: true,
+    value() {},
+  });
+  Object.defineProperty(dom.window.HTMLElement.prototype, "detachEvent", {
+    configurable: true,
+    value() {},
+  });
   Object.defineProperty(globalThis, "window", { configurable: true, value: dom.window });
   Object.defineProperty(globalThis, "document", { configurable: true, value: dom.window.document });
   Object.defineProperty(globalThis, "HTMLElement", { configurable: true, value: dom.window.HTMLElement });
@@ -506,6 +514,20 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
     assert.ok(sourceButton);
     assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
 
+    const composerTextarea = dom.window.document.querySelector<HTMLTextAreaElement>("textarea");
+    assert.ok(composerTextarea);
+    composerTextarea.focus();
+    const editingShortcutEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "K",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => composerTextarea.dispatchEvent(editingShortcutEvent));
+    assert.equal(editingShortcutEvent.defaultPrevented, false);
+    assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+
     const expandButton = dom.window.document.querySelector<HTMLButtonElement>(
       ".session-action-dock-compact-content .session-action-dock-compact-expand-button",
     );
@@ -525,6 +547,68 @@ test("ChatWindow は Quote 対応 chat の表示 mode と通常時の展開操�
       )?.getAttribute("aria-pressed"),
       "true",
     );
+
+    const sourceText = source?.firstChild;
+    assert.ok(sourceText);
+    const selection = dom.window.getSelection();
+    assert.ok(selection);
+    const range = dom.window.document.createRange();
+    range.selectNodeContents(sourceText);
+    selection.addRange(range);
+    assert.equal(selection.rangeCount, 1);
+
+    const shortcutEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "K",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => dom.window.document.body.dispatchEvent(shortcutEvent));
+    assert.equal(shortcutEvent.defaultPrevented, true);
+    assert.equal(selection.rangeCount, 0);
+    assert.ok(dom.window.document.querySelector("[data-pending-message-body='true'] a"));
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "false");
+    assert.equal(
+      dom.window.document.querySelector<HTMLButtonElement>(
+        ".session-action-dock-expanded-content .composer-message-view-mode-button:first-child",
+      )?.getAttribute("aria-pressed"),
+      "true",
+    );
+
+    const secondShortcutEvent = new dom.window.KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await act(async () => dom.window.document.body.dispatchEvent(secondShortcutEvent));
+    assert.equal(secondShortcutEvent.defaultPrevented, true);
+    assert.equal(
+      dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body")?.textContent,
+      "[label](https://example.test/source)",
+    );
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
+
+    const rapidShortcutEvents = [0, 1].map(() => new dom.window.KeyboardEvent("keydown", {
+      key: "k",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+    await act(async () => {
+      for (const event of rapidShortcutEvents) {
+        dom.window.document.body.dispatchEvent(event);
+      }
+    });
+    assert.ok(rapidShortcutEvents.every((event) => event.defaultPrevented));
+    assert.equal(
+      dom.window.document.querySelector("[data-pending-message-body='true'] > .message-body")?.textContent,
+      "[label](https://example.test/source)",
+    );
+    assert.equal(sourceButton.getAttribute("aria-pressed"), "true");
   } finally {
     await act(async () => root?.unmount());
     dom.window.close();

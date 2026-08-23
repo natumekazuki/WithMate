@@ -439,6 +439,44 @@ describe("shortcut projection", () => {
     });
   });
 
+  it("Preview / Source shortcut はcustomizableなplatform acceleratorとHelp projectionを共有する", () => {
+    const entry = getShortcutEntry(SHORTCUT_COMMAND_IDS.messageToggleViewMode);
+    assert.deepEqual(entry.accelerators, {
+      windows: { key: "k", ctrlKey: true, shiftKey: true },
+      linux: { key: "k", ctrlKey: true, shiftKey: true },
+      macos: { key: "k", metaKey: true, shiftKey: true },
+    });
+    assert.equal(entry.scope, "message-list");
+    assert.equal(entry.allowInEditingTarget, false);
+    assert.equal(entry.allowRepeat, false);
+    assert.equal(entry.customizable, true);
+    assert.equal(entry.bindingKind, "letter");
+    assert.equal(getShortcutLabel(entry.id, "windows"), "Ctrl+Shift+K");
+    assert.equal(getShortcutLabel(entry.id, "macos"), "⌘⇧K");
+
+    const settings = updateShortcutBinding(
+      DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
+      entry.id,
+      "windows",
+      { key: "y", altKey: true, shiftKey: true },
+    );
+    assert.equal(getShortcutLabel(entry.id, "windows", settings), "Alt+Shift+Y");
+    assert.deepEqual(
+      getShortcutHelpProjection("windows", settings)
+        .flatMap((group) => group.items)
+        .find((item) => item.id === entry.id),
+      {
+        id: entry.id,
+        label: "Toggle Preview / Source",
+        acceleratorLabel: "Alt+Shift+Y",
+      },
+    );
+    assert.equal(
+      getShortcutLabel(SHORTCUT_COMMAND_IDS.composerSubmit, "windows", settings),
+      "Ctrl+Enter",
+    );
+  });
+
   it("ユーザー設定のoverrideを実効labelとHelp projectionへ反映する", () => {
     const settings = updateShortcutBinding(
       DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,

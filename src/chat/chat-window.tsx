@@ -9,6 +9,7 @@ import {
   type ComponentProps,
   type MouseEventHandler,
   type PointerEventHandler,
+  type SetStateAction,
 } from "react";
 
 import type { MessageViewMode } from "../MessageRichText.js";
@@ -34,6 +35,10 @@ import {
   type SessionSkillItem,
 } from "../session-components.js";
 import { focusRovingItemByKey } from "../a11y.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+} from "../shortcut-registry.js";
 
 type ChatScreenProps = ComponentProps<typeof SessionChatScreen>;
 
@@ -343,10 +348,18 @@ export function ChatWindow({
   const skillButtonRef = useRef<HTMLButtonElement | null>(null);
   const wasSkillPickerOpenRef = useRef(false);
   const showMessageViewModeControls = messageColumnProps.onQuoteMessageText !== undefined;
-  const handleMessageViewModeChange = useCallback((mode: MessageViewMode) => {
+  const handleMessageViewModeChange = useCallback((mode: SetStateAction<MessageViewMode>) => {
     window.getSelection()?.removeAllRanges();
     setMessageViewMode(mode);
   }, []);
+  useShortcutCommandHandler(
+    SHORTCUT_COMMAND_IDS.messageToggleViewMode,
+    () => {
+      handleMessageViewModeChange((currentMode) => currentMode === "preview" ? "source" : "preview");
+      return true;
+    },
+    showMessageViewModeControls,
+  );
 
   useEffect(() => {
     const isOpen = skillPickerProps?.isOpen ?? false;

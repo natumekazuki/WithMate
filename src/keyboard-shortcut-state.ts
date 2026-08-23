@@ -100,6 +100,18 @@ export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcut
     bindingKind: "letter",
   },
   {
+    id: "session.message.toggle-view-mode",
+    scope: "message-list",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "k", ctrlKey: true, shiftKey: true },
+      linux: { key: "k", ctrlKey: true, shiftKey: true },
+      macos: { key: "k", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
     id: "session.file-preview.find",
     scope: "file-preview",
     exclusiveScopeGroup: "session-content",
