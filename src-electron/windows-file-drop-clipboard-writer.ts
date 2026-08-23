@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 
 const POWERSHELL_TIMEOUT_MS = 8_000;
 const OPERATION_MARKER_FORMAT = "WithMate File Copy Operation";
@@ -79,6 +80,7 @@ export type WindowsFileDropClipboardWriterDeps = {
   platform?: NodeJS.Platform;
   runHelper?(request: ClipboardHelperProcessRequest): Promise<ClipboardHelperProcessResult>;
   createOperationMarker?(): string;
+  systemRoot?: string;
 };
 
 export class WindowsFileDropClipboardWriter {
@@ -98,7 +100,8 @@ export class WindowsFileDropClipboardWriter {
     } catch {
       return { status: "failed-before-write" };
     }
-    const runHelper = this.deps.runHelper ?? runPowerShellClipboardHelper;
+    const runHelper = this.deps.runHelper
+      ?? ((request) => runPowerShellClipboardHelper(request, this.deps.systemRoot ?? process.env.SystemRoot));
     let writeResult: ClipboardHelperProcessResult;
     try {
       writeResult = await runHelper({ mode: "write", payload });
@@ -147,19 +150,39 @@ export function encodeClipboardHelperPayload(payload: ClipboardHelperProcessRequ
   });
 }
 
+export function resolveWindowsPowerShellExecutablePath(systemRoot: string | undefined): string | null {
+  const trimmedRoot = systemRoot?.trim() ?? "";
+  if (!/^[a-zA-Z]:[\\/]/u.test(trimmedRoot)) {
+    return null;
+  }
+  return path.win32.join(
+    path.win32.resolve(trimmedRoot),
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
 function runPowerShellClipboardHelper(
   request: ClipboardHelperProcessRequest,
+  systemRoot: string | undefined,
 ): Promise<ClipboardHelperProcessResult> {
   const script = request.mode === "write" ? WRITE_FILE_DROP_SCRIPT : VERIFY_FILE_DROP_SCRIPT;
+  const powerShellExecutablePath = resolveWindowsPowerShellExecutablePath(systemRoot);
+  if (!powerShellExecutablePath) {
+    return Promise.resolve({ started: false, exitCode: null, timedOut: false, stdout: "" });
+  }
   return new Promise((resolve) => {
     let started = false;
     let settled = false;
     let timedOut = false;
     let stdout = "";
     const child = spawn(
-      "powershell.exe",
+      powerShellExecutablePath,
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-EncodedCommand", encodePowerShellScript(script)],
       {
+        cwd: path.win32.dirname(powerShellExecutablePath),
         stdio: ["pipe", "pipe", "ignore"],
         windowsHide: true,
       },

@@ -105,6 +105,61 @@ test("Markdown linkはmainの既存解決境界でfile resourceへ収束した�
   }
 });
 
+test("Markdown linkはroot外absolute-file preview resourceをcopy対象にしない", async () => {
+  const writes: string[] = [];
+  const authorizationRequests: SessionFileResourceRequest[] = [];
+  const service = new SessionFileObjectCopyService({
+    platform: "win32",
+    createAuthorizationBoundary: () => ({
+      async resolvePreviewTarget(sessionId) {
+        return { type: "file", resource: { sessionId, absolutePath: "C:\\outside\\report.txt" } };
+      },
+      async withAuthorizedFilePath(request, operation) {
+        authorizationRequests.push(request);
+        return { result: await operation("C:\\outside\\report.txt"), targetStillCurrent: true };
+      },
+    }),
+    async writeNativeFileDrop(targetPath) {
+      writes.push(targetPath);
+      return { status: "copied" };
+    },
+  });
+
+  assert.equal(await service.resolveCopyableLinkResource({
+    sessionId: "session-1",
+    target: "C:\\outside\\report.txt",
+  }), null);
+  assert.deepEqual(authorizationRequests, []);
+  assert.deepEqual(writes, []);
+});
+
+test("現在のabsolute-file preview resourceは明示Copy File操作でcopyできる", async () => {
+  const absoluteResource: SessionFileResourceRequest = {
+    sessionId: "session-1",
+    absolutePath: "C:\\outside\\report.txt",
+  };
+  const writes: string[] = [];
+  const service = new SessionFileObjectCopyService({
+    platform: "win32",
+    createAuthorizationBoundary: () => ({
+      async resolvePreviewTarget() {
+        return { type: "not-found", targetPath: "", message: "unused" };
+      },
+      async withAuthorizedFilePath(request, operation) {
+        assert.deepEqual(request, absoluteResource);
+        return { result: await operation(absoluteResource.absolutePath), targetStillCurrent: true };
+      },
+    }),
+    async writeNativeFileDrop(targetPath) {
+      writes.push(targetPath);
+      return { status: "copied" };
+    },
+  });
+
+  assert.equal((await service.copyResource(absoluteResource)).status, "copied");
+  assert.deepEqual(writes, [absoluteResource.absolutePath]);
+});
+
 test("file object copy serviceはcopy operationを直列化してread-back競合を避ける", async () => {
   const order: string[] = [];
   let releaseFirst!: () => void;

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   encodeClipboardHelperPayload,
+  resolveWindowsPowerShellExecutablePath,
   WindowsFileDropClipboardWriter,
   type ClipboardHelperProcessRequest,
   type ClipboardHelperProcessResult,
@@ -29,6 +30,21 @@ test("Windows file-drop writerは非ASCII pathをASCII-safeなhelper payloadへ�
   const parsed = JSON.parse(encoded) as { pathBase64: string; markerBase64: string };
   assert.equal(Buffer.from(parsed.pathBase64, "base64").toString("utf8"), "C:\\資料\\設計メモ.md");
   assert.equal(Buffer.from(parsed.markerBase64, "base64").toString("utf8"), "操作-1");
+});
+
+test("Windows file-drop writerはSystem32のPowerShellを絶対pathで解決する", async () => {
+  assert.equal(
+    resolveWindowsPowerShellExecutablePath("C:\\Windows"),
+    "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  );
+  assert.equal(resolveWindowsPowerShellExecutablePath("relative\\Windows"), null);
+  assert.equal(resolveWindowsPowerShellExecutablePath(undefined), null);
+
+  const writer = new WindowsFileDropClipboardWriter({
+    platform: "win32",
+    systemRoot: "relative\\Windows",
+  });
+  assert.deepEqual(await writer.copyFile("C:\\data.txt"), { status: "failed-before-write" });
 });
 
 test("Windows file-drop writerはwriteと別processの三形式read-back一致後だけ成功する", async () => {
