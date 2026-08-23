@@ -10,11 +10,12 @@ import type {
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
-export type ContextPaneTabKey = "latest-command" | "messages" | "reasoning" | "tasks" | "companion-group";
+export type ContextPaneTabKey = "latest-command" | "messages" | "glossary" | "reasoning" | "tasks" | "companion-group";
 
 export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = [
   "latest-command",
   "messages",
+  "glossary",
   "reasoning",
   "tasks",
   "companion-group",
@@ -358,6 +359,8 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "LatestCommand";
     case "messages":
       return "Messages";
+    case "glossary":
+      return "Glossary";
     case "reasoning":
       return "Reasoning";
     case "tasks":
@@ -372,12 +375,14 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
 export function resolveAvailableContextPaneTabs({
   isCopilotSession,
   includeMessages = false,
+  includeGlossary = false,
   hasCompanionGroupMonitor = false,
   hasReasoningCapability = false,
   hasReasoningText = false,
 }: {
   isCopilotSession: boolean;
   includeMessages?: boolean;
+  includeGlossary?: boolean;
   hasCompanionGroupMonitor?: boolean;
   hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
@@ -389,6 +394,10 @@ export function resolveAvailableContextPaneTabs({
 
     if (tab === "messages") {
       return includeMessages;
+    }
+
+    if (tab === "glossary") {
+      return includeGlossary;
     }
 
     if (tab === "tasks") {

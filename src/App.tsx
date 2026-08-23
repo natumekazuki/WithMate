@@ -166,6 +166,11 @@ import type {
   FileRootGitHistoryDiffRequest,
   SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
+import {
+  GLOSSARY_RELATIVE_PATH,
+  type GlossaryEntry,
+  type SessionGlossaryProjection,
+} from "./glossary-contract.js";
 import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
@@ -587,6 +592,14 @@ export default function AgentSessionWindowApp() {
   const [messageJumpRequest, setMessageJumpRequest] = useState<MessageJumpRequest | null>(null);
   const messageJumpRequestIdRef = useRef(0);
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
+  const [sessionGlossaryProjection, setSessionGlossaryProjection] = useState<SessionGlossaryProjection | null>(null);
+  const [glossarySearchQuery, setGlossarySearchQuery] = useState("");
+  const [glossarySearchEntries, setGlossarySearchEntries] = useState<GlossaryEntry[]>([]);
+  const [glossarySearchTotal, setGlossarySearchTotal] = useState(0);
+  const [isGlossarySearchLoading, setIsGlossarySearchLoading] = useState(false);
+  const [glossarySearchError, setGlossarySearchError] = useState("");
+  const [selectedGlossaryTerm, setSelectedGlossaryTerm] = useState<string | null>(null);
+  const glossarySearchRequestIdRef = useRef(0);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
@@ -1404,6 +1417,168 @@ export default function AgentSessionWindowApp() {
   }, [isEditingTitle, selectedSession]);
 
   useEffect(() => {
+    let active = true;
+    let highestSequence = 0;
+    setSessionGlossaryProjection(null);
+    setGlossarySearchQuery("");
+    setGlossarySearchEntries([]);
+    setGlossarySearchTotal(0);
+    setGlossarySearchError("");
+    setSelectedGlossaryTerm(null);
+
+    if (!withmateApi || !selectedSession) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const applyProjection = (projection: SessionGlossaryProjection) => {
+      if (!active || projection.sessionId !== selectedSession.id || projection.sequence < highestSequence) {
+        return;
+      }
+      highestSequence = projection.sequence;
+      setSessionGlossaryProjection(projection);
+    };
+    const unsubscribe = withmateApi.subscribeSessionGlossary(applyProjection);
+    void withmateApi.getSessionGlossaryProjection(selectedSession.id)
+      .then(applyProjection)
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        setSessionGlossaryProjection({
+          sessionId: selectedSession.id,
+          scopeRevision: "renderer-load-error",
+          sequence: highestSequence + 1,
+          checkout: {
+            repositoryName: selectedSession.workspaceLabel || "Repository",
+            branch: selectedSession.branch || "unavailable",
+            pathLabel: selectedSession.workspaceLabel || "Repository",
+          },
+          state: {
+            status: "watch-error",
+            relativePath: GLOSSARY_RELATIVE_PATH,
+            revision: null,
+            message: error instanceof Error ? error.message : "用語集を読み込めませんでした。",
+          },
+        });
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.id, withmateApi]);
+
+  useEffect(() => {
+    let active = true;
+    const requestId = ++glossarySearchRequestIdRef.current;
+    const query = glossarySearchQuery.trim();
+    if (
+      !withmateApi
+      || !selectedSession
+      || sessionGlossaryProjection?.state.status !== "valid"
+      || !query
+    ) {
+      setGlossarySearchEntries([]);
+      setGlossarySearchTotal(0);
+      setIsGlossarySearchLoading(false);
+      setGlossarySearchError("");
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsGlossarySearchLoading(true);
+    setGlossarySearchError("");
+    void withmateApi.searchSessionGlossary(selectedSession.id, {
+      query,
+      offset: 0,
+      pageSize: 100,
+    }).then((result) => {
+      if (!active || glossarySearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (!result.ok) {
+        setGlossarySearchEntries([]);
+        setGlossarySearchTotal(0);
+        setGlossarySearchError(result.message);
+      } else {
+        setGlossarySearchEntries(result.entries);
+        setGlossarySearchTotal(result.total);
+      }
+      setIsGlossarySearchLoading(false);
+    }).catch((error) => {
+      if (active && glossarySearchRequestIdRef.current === requestId) {
+        setGlossarySearchEntries([]);
+        setGlossarySearchTotal(0);
+        setGlossarySearchError(error instanceof Error ? error.message : "用語集を検索できませんでした。");
+        setIsGlossarySearchLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [glossarySearchQuery, selectedSession?.id, sessionGlossaryProjection?.state.status, sessionGlossaryProjection?.state.revision, withmateApi]);
+
+  useEffect(() => {
+    if (
+      selectedGlossaryTerm
+      && sessionGlossaryProjection?.state.status === "valid"
+      && !sessionGlossaryProjection.state.entries.some((entry) => entry.term === selectedGlossaryTerm)
+    ) {
+      setSelectedGlossaryTerm(null);
+    }
+  }, [selectedGlossaryTerm, sessionGlossaryProjection]);
+
+  const handleLoadMoreGlossarySearchResults = useCallback(() => {
+    const query = glossarySearchQuery.trim();
+    if (
+      !withmateApi
+      || !selectedSession
+      || !query
+      || isGlossarySearchLoading
+      || glossarySearchEntries.length >= glossarySearchTotal
+    ) {
+      return;
+    }
+    setIsGlossarySearchLoading(true);
+    setGlossarySearchError("");
+    const requestId = ++glossarySearchRequestIdRef.current;
+    void withmateApi.searchSessionGlossary(selectedSession.id, {
+      query,
+      offset: glossarySearchEntries.length,
+      pageSize: 100,
+    }).then((result) => {
+      if (glossarySearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (!result.ok) {
+        setGlossarySearchError(result.message);
+      } else if (result.revision === sessionGlossaryProjection?.state.revision) {
+        setGlossarySearchEntries((current) => [...current, ...result.entries]);
+        setGlossarySearchTotal(result.total);
+      }
+      setIsGlossarySearchLoading(false);
+    }).catch((error) => {
+      if (glossarySearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      setGlossarySearchError(error instanceof Error ? error.message : "用語集を検索できませんでした。");
+      setIsGlossarySearchLoading(false);
+    });
+  }, [
+    glossarySearchEntries.length,
+    glossarySearchQuery,
+    glossarySearchTotal,
+    isGlossarySearchLoading,
+    selectedSession,
+    sessionGlossaryProjection?.state.revision,
+    withmateApi,
+  ]);
+
+  useEffect(() => {
     applySessionDocumentTitle(resolveAgentSessionDocumentTitle({
       sessionTitle: selectedSession?.taskTitle,
       sessionId: selectedId,
@@ -2074,6 +2249,7 @@ export default function AgentSessionWindowApp() {
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       includeMessages: true,
+      includeGlossary: true,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
@@ -4151,6 +4327,19 @@ export default function AgentSessionWindowApp() {
         activeContextPaneTab,
         availableContextPaneTabs,
         contextPaneProjection,
+        glossaryPaneProps: {
+          projection: sessionGlossaryProjection,
+          searchQuery: glossarySearchQuery,
+          searchEntries: glossarySearchEntries,
+          searchTotal: glossarySearchTotal,
+          searchLoading: isGlossarySearchLoading,
+          searchError: glossarySearchError,
+          selectedTerm: selectedGlossaryTerm,
+          onSearchQueryChange: setGlossarySearchQuery,
+          onLoadMoreSearchResults: handleLoadMoreGlossarySearchResults,
+          onSelectTerm: setSelectedGlossaryTerm,
+          onBackToList: () => setSelectedGlossaryTerm(null),
+        },
         selectedBackgroundTasks,
         selectedCompanionGroupMonitorEntries,
         isCopilotSession,

@@ -100,6 +100,12 @@ import type {
   SessionFileObjectCopyRequest,
   SessionFileObjectCopyResult,
 } from "../src/file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "../src/glossary-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type {
   CreateSessionRequest,
@@ -280,6 +286,12 @@ export type MainIpcSessionQueryDepsArgs = {
   ): OpenSessionWindowIdsPageResult;
   listOpenCompanionReviewWindowIds(): string[];
   getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Awaitable<GlossaryOperationResult<GlossaryListResult>>;
+  ensureSessionGlossarySubscription(sessionId: string): Awaitable<void>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
@@ -521,6 +533,9 @@ export function createMainIpcRegistrationDeps(
     listOpenSessionWindowIdsPage: args.sessionQuery.listOpenSessionWindowIdsPage,
     listOpenCompanionReviewWindowIds: args.sessionQuery.listOpenCompanionReviewWindowIds,
     getSession: args.sessionQuery.getSession,
+    getSessionGlossaryProjection: args.sessionQuery.getSessionGlossaryProjection,
+    searchSessionGlossary: args.sessionQuery.searchSessionGlossary,
+    ensureSessionGlossarySubscription: args.sessionQuery.ensureSessionGlossarySubscription,
     getSessionFileExplorerOwnerSessionId: args.sessionQuery.getSessionFileExplorerOwnerSessionId,
     listSessionFileRoots: args.sessionQuery.listSessionFileRoots,
     listSessionDirectory: args.sessionQuery.listSessionDirectory,

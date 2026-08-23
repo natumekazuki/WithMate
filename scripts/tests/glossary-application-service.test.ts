@@ -382,3 +382,86 @@ describe("Glossary lookup and search projection", () => {
     if (!batch.ok) assert.equal(batch.code, "GLOSSARY_LIMIT_EXCEEDED");
   });
 });
+
+describe("Glossary external update projection", () => {
+  it("watch eventごとにcurrent fileを再読込し、valid・invalid・missing・recoveryを投影する", async () => {
+    const { root, target } = await createRepository();
+    type FakeWatcher = {
+      path: string;
+      closed: boolean;
+      change: (filename: string | null) => void;
+      error: (error: Error) => void;
+    };
+    const watchers: FakeWatcher[] = [];
+    const service = new GlossaryApplicationService({
+      watchDebounceMs: 0,
+      watchPath: (targetPath, listener) => {
+        const errorListeners: Array<(error: Error) => void> = [];
+        const watcher: FakeWatcher = {
+          path: targetPath,
+          closed: false,
+          change: (filename) => listener("rename", filename),
+          error: (error) => errorListeners.forEach((errorListener) => errorListener(error)),
+        };
+        watchers.push(watcher);
+        return {
+          close: () => {
+            watcher.closed = true;
+          },
+          on: (_event, errorListener) => {
+            errorListeners.push(errorListener as (error: Error) => void);
+            return undefined as never;
+          },
+        };
+      },
+    });
+    const states: string[] = [];
+    const dispose = service.subscribe(target, (state) => states.push(state.status));
+    const waitForStateCount = async (count: number) => {
+      for (let attempt = 0; attempt < 100 && states.length < count; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(states.length, count);
+    };
+    await writeGlossary(root, [{ term: "First", aliases: [], definition: "valid" }]);
+    watchers.find((watcher) => watcher.path === root)?.change(".withmate");
+    await waitForStateCount(1);
+
+    await writeFile(path.join(root, ".withmate", "glossary.yaml"), "schemaVersion: [\n", "utf8");
+    [...watchers].reverse().find((watcher) => !watcher.closed && watcher.path.endsWith(".withmate"))?.change("glossary.yaml");
+    await waitForStateCount(2);
+
+    await rm(path.join(root, ".withmate", "glossary.yaml"));
+    [...watchers].reverse().find((watcher) => !watcher.closed && watcher.path.endsWith(".withmate"))?.change("glossary.yaml");
+    await waitForStateCount(3);
+
+    await writeGlossary(root, [{ term: "Recovered", aliases: [], definition: "valid again" }]);
+    [...watchers].reverse().find((watcher) => !watcher.closed && watcher.path.endsWith(".withmate"))?.change("glossary.yaml");
+    await waitForStateCount(4);
+
+    assert.deepEqual(states, ["valid", "invalid", "missing", "valid"]);
+    dispose();
+    assert.equal(watchers.every((watcher) => watcher.closed), true);
+  });
+
+  it("watcher failureはstale snapshotではなくwatch-errorを返す", async () => {
+    const { root, target } = await createRepository();
+    const errors: Array<(error: Error) => void> = [];
+    const service = new GlossaryApplicationService({
+      watchPath: () => ({
+        close() {},
+        on: (_event, listener) => {
+          errors.push(listener as (error: Error) => void);
+          return undefined as never;
+        },
+      }),
+    });
+    const states: string[] = [];
+    const dispose = service.subscribe(target, (state) => states.push(state.status));
+    await writeGlossary(root, [{ term: "Stale", aliases: [], definition: "must not remain" }]);
+    errors[0]?.(new Error("watch failed"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(states, ["watch-error"]);
+    dispose();
+  });
+});

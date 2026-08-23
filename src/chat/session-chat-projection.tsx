@@ -50,6 +50,7 @@ export type AgentSessionChatProjectionInput = {
   messageJumpRequest?: MessageJumpRequest | null;
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
   messageNavigatorCharacter?: CharacterProfile;
+  glossaryPaneProps: SessionContextPaneProps["glossaryPaneProps"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
@@ -411,6 +412,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     latestCommandEmptyText: input.latestCommandEmptyText,
     messageNavigatorEntries: input.messageNavigatorEntries,
     messageNavigatorCharacter: input.messageNavigatorCharacter,
+    glossaryPaneProps: input.glossaryPaneProps,
     onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,

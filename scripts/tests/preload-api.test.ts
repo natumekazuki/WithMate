@@ -74,6 +74,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-memory-v6-review-window",
     args: [],
   });
+  assert.deepEqual(await api.getSessionGlossaryProjection("session-1"), {
+    channel: "withmate:get-session-glossary-projection",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.searchSessionGlossary("session-1", { query: "runtime" }), {
+    channel: "withmate:search-session-glossary",
+    args: ["session-1", { query: "runtime" }],
+  });
   assert.deepEqual(await api.getMemoryV6FileUsage(), {
     channel: "withmate:get-memory-v6-file-usage",
     args: [],
@@ -420,6 +428,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "getSession",
+    "getSessionGlossaryProjection",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
     "getSessionAuditLogOperationDetail",
@@ -509,6 +518,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runSessionTurn",
     "savePastedSessionFile",
     "searchMemoryV6Entries",
+    "searchSessionGlossary",
     "setMateAvatar",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
@@ -529,6 +539,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeSessionInvalidation",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
+    "subscribeSessionGlossary",
     "syncCompanionTarget",
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
@@ -651,12 +662,16 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
   const api = createWithMateWindowApi(ipcRenderer as never);
   const quotaReceived: unknown[] = [];
   const backgroundReceived: unknown[] = [];
+  const glossaryReceived: unknown[] = [];
 
   const disposeQuota = api.subscribeProviderQuotaTelemetry((providerId, telemetry) => {
     quotaReceived.push({ providerId, telemetry });
   });
   const disposeBackground = api.subscribeSessionBackgroundActivity((sessionId, kind, state) => {
     backgroundReceived.push({ sessionId, kind, state });
+  });
+  const disposeGlossary = api.subscribeSessionGlossary((projection) => {
+    glossaryReceived.push(projection);
   });
 
   listeners.get("withmate:provider-quota-telemetry")?.({}, {
@@ -668,11 +683,27 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
     kind: "monologue",
     state: { kind: "monologue", status: "running" },
   });
+  listeners.get("withmate:session-glossary-changed")?.({}, {
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 2,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  });
   disposeQuota();
   disposeBackground();
+  disposeGlossary();
 
   assert.deepEqual(quotaReceived, [{ providerId: "copilot", telemetry: { provider: "copilot", snapshots: [] } }]);
   assert.deepEqual(backgroundReceived, [
     { sessionId: "session-1", kind: "monologue", state: { kind: "monologue", status: "running" } },
   ]);
+  assert.deepEqual(glossaryReceived, [{
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 2,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  }]);
+  assert.equal(listeners.has("withmate:session-glossary-changed"), false);
 });

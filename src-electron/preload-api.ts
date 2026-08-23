@@ -75,6 +75,7 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -167,7 +168,9 @@ import {
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
+  WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
@@ -332,6 +335,12 @@ function createSessionApi(
     },
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
+    },
+    getSessionGlossaryProjection(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL, sessionId);
+    },
+    searchSessionGlossary(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL, sessionId, request);
     },
     validateSessionWorkspace(sessionId) {
       return ipcRenderer.invoke(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL, sessionId);
@@ -808,6 +817,9 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
         listener(payload.sessionId, payload.kind, payload.state ?? null);
         },
       );
+    },
+    subscribeSessionGlossary(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT, listener);
     },
     subscribeOpenSessionWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, (payload: unknown) => {

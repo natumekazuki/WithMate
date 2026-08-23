@@ -124,6 +124,12 @@ import type {
   SessionFileObjectCopyRequest,
   SessionFileObjectCopyResult,
 } from "./file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "./glossary-contract.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -162,6 +168,11 @@ export type WithMateWindowSessionApi = {
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  getSessionGlossaryProjection(sessionId: string): Promise<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Promise<GlossaryOperationResult<GlossaryListResult>>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
@@ -343,6 +354,7 @@ export type WithMateWindowSubscriptionApi = {
       state: SessionBackgroundActivityState | null,
     ) => void,
   ): () => void;
+  subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;

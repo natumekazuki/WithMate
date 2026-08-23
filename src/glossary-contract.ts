@@ -57,6 +57,29 @@ export type GlossarySnapshot =
       issues: GlossaryValidationIssue[];
     };
 
+export type GlossaryWatchErrorState = {
+  status: "watch-error";
+  relativePath: typeof GLOSSARY_RELATIVE_PATH;
+  revision: null;
+  message: string;
+};
+
+export type GlossaryProjectionState = GlossarySnapshot | GlossaryWatchErrorState;
+
+export type GlossaryCheckoutSummary = {
+  repositoryName: string;
+  branch: string;
+  pathLabel: string;
+};
+
+export type SessionGlossaryProjection = {
+  sessionId: string;
+  scopeRevision: string;
+  sequence: number;
+  checkout: GlossaryCheckoutSummary;
+  state: GlossaryProjectionState;
+};
+
 export type GlossaryEffect = "applied" | "none" | "unknown";
 export type GlossaryMutationOutcome = "applied" | "converged";
 

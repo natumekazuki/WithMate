@@ -521,4 +521,13 @@ describe("session-ui-projection", () => {
     assert.equal(contextPaneTabLabel("messages"), "Messages");
     assert.equal(cycleContextPaneTab("latest-command", 1, ["latest-command", "messages"]), "messages");
   });
+
+  it("Glossary tabはAgent Sessionで明示的に有効化し、既存right pane順へ追加する", () => {
+    assert.deepEqual(resolveAvailableContextPaneTabs({
+      isCopilotSession: false,
+      includeMessages: true,
+      includeGlossary: true,
+    }), ["latest-command", "messages", "glossary"]);
+    assert.equal(contextPaneTabLabel("glossary"), "Glossary");
+  });
 });

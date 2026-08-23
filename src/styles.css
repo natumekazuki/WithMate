@@ -6383,6 +6383,128 @@ button:disabled {
   padding-top: 0;
 }
 
+.command-monitor-stack.glossary {
+  align-content: start;
+  margin-top: 0;
+}
+
+.glossary-pane,
+.glossary-list-view,
+.glossary-entry-detail {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.glossary-pane-checkout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 10px;
+  align-items: baseline;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--character-sub) 20%, transparent);
+}
+
+.glossary-pane-checkout strong,
+.glossary-pane-checkout span,
+.glossary-pane-checkout small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glossary-pane-checkout span,
+.glossary-pane-checkout small,
+.glossary-list-count,
+.glossary-entry-aliases {
+  color: var(--muted);
+}
+
+.glossary-pane-checkout small {
+  grid-column: 1 / -1;
+}
+
+.glossary-pane-status {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.glossary-pane-status strong,
+.glossary-pane-status p {
+  margin: 0;
+}
+
+.glossary-pane-status.invalid,
+.glossary-search-error {
+  color: #ffb4ad;
+}
+
+.glossary-search-field input {
+  width: 100%;
+}
+
+.glossary-entry-list {
+  display: grid;
+  gap: 4px;
+  min-height: 0;
+  max-height: min(62vh, 680px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.glossary-entry-row {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.glossary-entry-row:hover,
+.glossary-entry-row:focus-visible {
+  background: color-mix(in srgb, var(--character-main-soft) 52%, transparent);
+}
+
+.glossary-entry-row span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.glossary-list-count,
+.glossary-search-error,
+.glossary-entry-aliases,
+.glossary-entry-definition {
+  margin: 0;
+}
+
+.glossary-list-count {
+  font-size: 0.76rem;
+}
+
+.glossary-load-more,
+.glossary-back-button {
+  justify-self: start;
+}
+
+.glossary-entry-detail h3 {
+  margin: 0 0 4px;
+}
+
+.glossary-entry-definition {
+  color: var(--ink);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
 .session-page .command-monitor-shell {
   border-color: color-mix(in srgb, var(--character-sub) 20%, rgba(203, 213, 225, 0.14));
   background: color-mix(in srgb, var(--character-sub-soft) 14%, rgba(12, 18, 27, 0.96));

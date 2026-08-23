@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import type { Stats } from "node:fs";
+import { watch, type FSWatcher, type Stats } from "node:fs";
 import {
   lstat,
   mkdir,
@@ -19,6 +19,7 @@ import {
   GLOSSARY_LIMITS,
   GLOSSARY_RELATIVE_PATH,
   GLOSSARY_SCHEMA_VERSION,
+  type GlossaryCheckoutSummary,
   type GlossaryCreateBatchRequest,
   type GlossaryCreateRequest,
   type GlossaryDeleteRequest,
@@ -31,6 +32,7 @@ import {
   type GlossaryOperationErrorCode,
   type GlossaryOperationResult,
   type GlossaryPageRequest,
+  type GlossaryProjectionState,
   type GlossarySearchRequest,
   type GlossarySnapshot,
   type GlossaryUpdateRequest,
@@ -65,11 +67,12 @@ export type GlossaryCheckoutAuthoritySnapshot = {
 
 export type GlossaryMutationGuard = () => Promise<ResolvedGlossaryCheckout | null>;
 
-export type GlossaryCheckoutDisplay = {
-  repositoryName: string;
-  branch: string;
-  pathLabel: string;
-};
+export type GlossaryWatchHandle = Pick<FSWatcher, "close" | "on">;
+
+export type GlossaryWatchPath = (
+  targetPath: string,
+  listener: (eventType: string, filename: string | Buffer | null) => void,
+) => GlossaryWatchHandle;
 
 type ValidRead = Extract<GlossarySnapshot, { status: "valid" }> & {
   raw: string;
@@ -99,6 +102,8 @@ export type GlossaryApplicationServiceDeps = {
   runGit?: (cwd: string, args: readonly string[]) => Promise<string>;
   beforeRename?: (temporaryPath: string, targetPath: string) => Promise<void>;
   renamePath?: (oldPath: string, newPath: string) => Promise<void>;
+  watchPath?: GlossaryWatchPath;
+  watchDebounceMs?: number;
 };
 
 class GlossaryServiceFailure extends Error {
@@ -554,6 +559,8 @@ export class GlossaryApplicationService {
   readonly #runGit: (cwd: string, args: readonly string[]) => Promise<string>;
   readonly #beforeRename?: GlossaryApplicationServiceDeps["beforeRename"];
   readonly #renamePath: (oldPath: string, newPath: string) => Promise<void>;
+  readonly #watchPath: GlossaryWatchPath;
+  readonly #watchDebounceMs: number;
 
   constructor(deps: GlossaryApplicationServiceDeps = {}) {
     this.#runGit = deps.runGit ?? (async (cwd, args) => {
@@ -567,6 +574,12 @@ export class GlossaryApplicationService {
     });
     this.#beforeRename = deps.beforeRename;
     this.#renamePath = deps.renamePath ?? rename;
+    this.#watchPath = deps.watchPath ?? ((targetPath, listener) => watch(
+      targetPath,
+      { persistent: false },
+      listener,
+    ));
+    this.#watchDebounceMs = deps.watchDebounceMs ?? 60;
   }
 
   async resolvePrimaryCheckout(workspacePath: string): Promise<ResolvedGlossaryCheckout> {
@@ -602,7 +615,7 @@ export class GlossaryApplicationService {
     return publicSnapshot(await this.#readInternal(await this.#revalidateCheckout(target)));
   }
 
-  async describeCheckout(target: ResolvedGlossaryCheckout): Promise<GlossaryCheckoutDisplay> {
+  async describeCheckout(target: ResolvedGlossaryCheckout): Promise<GlossaryCheckoutSummary> {
     const current = await this.#revalidateCheckout(target);
     const branch = (await this.#runGit(current.rootPath, ["branch", "--show-current"])).trim();
     const pathLabel = path.basename(current.rootPath);
@@ -615,6 +628,105 @@ export class GlossaryApplicationService {
 
   async validate(target: ResolvedGlossaryCheckout): Promise<GlossaryValidationResult> {
     return { ok: true, snapshot: await this.read(target) };
+  }
+
+  subscribe(
+    target: ResolvedGlossaryCheckout,
+    listener: (state: GlossaryProjectionState) => void,
+  ): () => void {
+    let disposed = false;
+    let reloadTimer: NodeJS.Timeout | null = null;
+    let rootWatcher: GlossaryWatchHandle | null = null;
+    let directoryWatcher: GlossaryWatchHandle | null = null;
+
+    const emitWatchError = (error: unknown) => {
+      if (disposed) {
+        return;
+      }
+      listener({
+        status: "watch-error",
+        relativePath: GLOSSARY_RELATIVE_PATH,
+        revision: null,
+        message: error instanceof Error ? error.message : "Glossary watcher failed.",
+      });
+    };
+
+    const closeDirectoryWatcher = () => {
+      directoryWatcher?.close();
+      directoryWatcher = null;
+    };
+
+    const attachErrorHandler = (watcher: GlossaryWatchHandle, onError: (error: unknown) => void) => {
+      watcher.on("error", onError);
+    };
+
+    const armDirectoryWatcher = async () => {
+      closeDirectoryWatcher();
+      const directory = await this.#inspectGlossaryDirectory(target, false);
+      if (!directory || disposed) {
+        return;
+      }
+      directoryWatcher = this.#watchPath(directory.path, (_eventType, filename) => {
+        const name = filename?.toString();
+        if (!name || name === "glossary.yaml" || name.startsWith(".glossary-")) {
+          scheduleReload();
+        }
+      });
+      attachErrorHandler(directoryWatcher, (error) => {
+        emitWatchError(error);
+        closeDirectoryWatcher();
+        scheduleReload();
+      });
+    };
+
+    const reload = async () => {
+      if (disposed) {
+        return;
+      }
+      try {
+        await armDirectoryWatcher();
+        listener(await this.read(target));
+      } catch (error) {
+        emitWatchError(error);
+      }
+    };
+
+    const scheduleReload = () => {
+      if (disposed || reloadTimer) {
+        return;
+      }
+      reloadTimer = setTimeout(() => {
+        reloadTimer = null;
+        void reload();
+      }, this.#watchDebounceMs);
+    };
+
+    try {
+      rootWatcher = this.#watchPath(target.rootPath, (_eventType, filename) => {
+        const name = filename?.toString();
+        if (!name || name === ".withmate") {
+          scheduleReload();
+        }
+      });
+      attachErrorHandler(rootWatcher, (error) => {
+        emitWatchError(error);
+        rootWatcher?.close();
+        rootWatcher = null;
+      });
+      void armDirectoryWatcher().catch(emitWatchError);
+    } catch (error) {
+      queueMicrotask(() => emitWatchError(error));
+    }
+
+    return () => {
+      disposed = true;
+      if (reloadTimer) {
+        clearTimeout(reloadTimer);
+      }
+      closeDirectoryWatcher();
+      rootWatcher?.close();
+      rootWatcher = null;
+    };
   }
 
   async list(

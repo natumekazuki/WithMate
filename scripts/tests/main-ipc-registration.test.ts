@@ -36,6 +36,8 @@ import {
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -920,6 +922,56 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
       },
     }) as Promise<unknown>,
     /File preview resource is invalid/,
+  );
+});
+
+test("Glossary IPCはtarget Session windowだけをauthorityとし、renderer pathを受け取らない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost/?sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost/?sessionId=session-2");
+  let eventWindow = ownerWindow;
+  let subscriptionCount = 0;
+  const projection = {
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 1,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : otherWindow,
+    ensureSessionGlossarySubscription: async () => {
+      subscriptionCount += 1;
+    },
+    getSessionGlossaryProjection: async () => projection,
+    searchSessionGlossary: async (_sessionId: string, request: { query: string }) => ({
+      ok: true,
+      revision: null,
+      entries: [],
+      total: 0,
+      offset: 0,
+      pageSize: 50,
+      query: request.query,
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const getProjection = handlers.get(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL)!;
+  assert.deepEqual(await getProjection({ sender: {} }, "session-1"), projection);
+  assert.equal(subscriptionCount, 1);
+  const search = handlers.get(WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL)!;
+  const searchResult = await search({ sender: {} }, "session-1", { query: "runtime" });
+  assert.equal((searchResult as { ok: boolean }).ok, true);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => Promise.resolve(getProjection({ sender: {} }, "session-1")),
+    /target Session window/,
+  );
+  await assert.rejects(
+    () => Promise.resolve(search({ sender: {} }, "session-1", { query: "runtime", path: "C:\\other" })),
+    /target Session window/,
   );
 });
 

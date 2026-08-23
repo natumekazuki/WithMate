@@ -31,6 +31,10 @@ describe("AgentRuntimeBindingRegistry", () => {
     assert.equal(retry.bindingId, first.bindingId);
     assert.equal(retry.bindingReference, first.bindingReference);
     assert.equal(retry.executionGeneration, first.executionGeneration);
+    assert.equal(
+      registry.getExecutionGeneration("session-a", "codex"),
+      first.executionGeneration,
+    );
     assert.equal(registry.resolve(first.bindingReference, "character.context.get").ok, true);
     assert.deepEqual(registry.resolve(first.bindingReference, "memory.write"), {
       ok: false,
@@ -58,6 +62,7 @@ describe("AgentRuntimeBindingRegistry", () => {
     });
 
     registry.revokeSession("session-a");
+    assert.equal(registry.getExecutionGeneration("session-a", "codex"), null);
     assert.equal(registry.resolve(next.bindingReference, "character.context.get").ok, false);
     const other = registry.issueOrReuse({
       actorSessionId: "session-b",

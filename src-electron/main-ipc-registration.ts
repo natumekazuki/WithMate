@@ -121,6 +121,12 @@ import type {
   SessionFileObjectCopyRequest,
   SessionFileObjectCopyResult,
 } from "../src/file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "../src/glossary-contract.js";
 import {
   areSessionFileResourcesEqual,
   isSessionFileRootResource,
@@ -184,6 +190,7 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -285,6 +292,7 @@ import {
   WITHMATE_UPDATE_COMPANION_SESSION_CHANNEL,
   WITHMATE_UPDATE_SESSION_CHANNEL,
   WITHMATE_SET_SESSION_PINNED_CHANNEL,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
 } from "../src/withmate-ipc-channels.js";
 import {
   parseImageFilePickerPurpose,
@@ -410,6 +418,12 @@ export type MainIpcRegistrationDeps = {
   exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
   getSession(sessionId: string): Awaitable<Session | null>;
+  getSessionGlossaryProjection(sessionId: string): Awaitable<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Awaitable<GlossaryOperationResult<GlossaryListResult>>;
+  ensureSessionGlossarySubscription(sessionId: string): Awaitable<void>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
@@ -657,6 +671,9 @@ type MainIpcSessionQueryDeps = Pick<
   | "listOpenSessionWindowIdsPage"
   | "listOpenCompanionReviewWindowIds"
   | "getSession"
+  | "getSessionGlossaryProjection"
+  | "searchSessionGlossary"
+  | "ensureSessionGlossarySubscription"
   | "validateWorkspaceDirectory"
   | "getSessionFileExplorerOwnerSessionId"
   | "listSessionFileRoots"
@@ -821,6 +838,17 @@ function assertSessionDeleteSender(
     return;
   }
   throw new Error("Session delete IPC is only available from Home, Settings, or the target Session window.");
+}
+
+function assertOwningSessionWindowSender(
+  event: IpcMainInvokeEvent,
+  sessionId: string,
+  deps: Pick<MainIpcRegistrationDeps, "resolveEventWindow" | "resolveSessionWindow">,
+): void {
+  const window = deps.resolveEventWindow(event);
+  if (!window || deps.resolveSessionWindow(sessionId) !== window) {
+    throw new Error("Glossary IPC is only available from the target Session window.");
+  }
 }
 
 async function assertSessionFileExplorerSender(
@@ -1561,6 +1589,24 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     }
     return deps.getSession(sessionId);
   });
+  ipcMain.handle(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL, async (event, sessionId: string) => {
+    if (typeof sessionId !== "string" || !sessionId) {
+      throw new TypeError("Session ID is invalid.");
+    }
+    assertOwningSessionWindowSender(event, sessionId, deps);
+    await deps.ensureSessionGlossarySubscription(sessionId);
+    return deps.getSessionGlossaryProjection(sessionId);
+  });
+  ipcMain.handle(
+    WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
+    async (event, sessionId: string, request: GlossarySearchRequest) => {
+      if (typeof sessionId !== "string" || !sessionId || !request || typeof request.query !== "string") {
+        throw new TypeError("Glossary search request is invalid.");
+      }
+      assertOwningSessionWindowSender(event, sessionId, deps);
+      return deps.searchSessionGlossary(sessionId, request);
+    },
+  );
   ipcMain.handle(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL, async (event, sessionId: string) => {
     if (typeof sessionId !== "string" || !sessionId) {
       throw new TypeError("Session ID is invalid.");

@@ -257,10 +257,12 @@ import {
   projectGlossaryCheckoutAuthority,
 } from "./glossary-application-service.js";
 import { GlossaryRuntimeService } from "./glossary-runtime-service.js";
+import { GlossarySessionProjectionService } from "./glossary-session-projection-service.js";
 import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-schema.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
@@ -415,6 +417,14 @@ const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordina
 const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
 const glossaryApplicationService = new GlossaryApplicationService();
+const glossarySessionProjectionService = new GlossarySessionProjectionService({
+  applicationService: glossaryApplicationService,
+  getSession,
+  getBindingGeneration: (sessionId, providerId) =>
+    agentRuntimeBindingRegistry.getExecutionGeneration(sessionId, providerId),
+});
+const glossaryProjectionSubscriptions = new Map<string, { windowId: number; dispose: () => void }>();
+const pendingGlossaryProjectionSubscriptions = new Map<string, Promise<void>>();
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -612,6 +622,56 @@ async function resolveAgentRuntimeActorSession(sessionId: string) {
 
 function getGlossaryProactiveCreateLimit(): number | null {
   return requireAppSettingsStorage().getSettings().glossaryProactiveCreateLimit;
+}
+
+async function ensureSessionGlossarySubscription(sessionId: string): Promise<void> {
+  const existing = glossaryProjectionSubscriptions.get(sessionId);
+  const window = requireSessionWindowBridge().getWindow(sessionId);
+  if (!window || window.isDestroyed()) {
+    existing?.dispose();
+    glossaryProjectionSubscriptions.delete(sessionId);
+    return;
+  }
+  if (existing?.windowId === window.id) {
+    return;
+  }
+  existing?.dispose();
+  glossaryProjectionSubscriptions.delete(sessionId);
+
+  const pending = pendingGlossaryProjectionSubscriptions.get(sessionId);
+  if (pending) {
+    await pending;
+    return;
+  }
+  const subscribe = (async () => {
+    const dispose = await glossarySessionProjectionService.subscribe(sessionId, (projection) => {
+      const targetWindow = requireSessionWindowBridge().getWindow(sessionId);
+      if (targetWindow && !targetWindow.isDestroyed()) {
+        targetWindow.webContents.send(WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT, projection);
+      }
+    });
+    const currentWindow = requireSessionWindowBridge().getWindow(sessionId);
+    if (!currentWindow || currentWindow.isDestroyed() || currentWindow.id !== window.id) {
+      dispose();
+      return;
+    }
+    glossaryProjectionSubscriptions.set(sessionId, { windowId: window.id, dispose });
+    window.once("closed", () => {
+      const current = glossaryProjectionSubscriptions.get(sessionId);
+      if (current?.windowId === window.id) {
+        current.dispose();
+        glossaryProjectionSubscriptions.delete(sessionId);
+      }
+    });
+  })();
+  pendingGlossaryProjectionSubscriptions.set(sessionId, subscribe);
+  try {
+    await subscribe;
+  } finally {
+    if (pendingGlossaryProjectionSubscriptions.get(sessionId) === subscribe) {
+      pendingGlossaryProjectionSubscriptions.delete(sessionId);
+    }
+  }
 }
 
 const glossaryRuntimeService = new GlossaryRuntimeService({
@@ -1621,6 +1681,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
+                getSessionGlossaryProjection: (sessionId) =>
+                  glossarySessionProjectionService.load(sessionId),
+                searchSessionGlossary: (sessionId, request) =>
+                  glossarySessionProjectionService.search(sessionId, request),
+                ensureSessionGlossarySubscription,
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),

@@ -241,6 +241,23 @@ export class AgentRuntimeBindingRegistry {
     return this.bindingsByKey.size;
   }
 
+  getExecutionGeneration(
+    actorSessionId: string,
+    providerId: string,
+    now = new Date(),
+  ): string | null {
+    const key = bindingKey(actorSessionId.trim(), providerId.trim());
+    const active = this.bindingsByKey.get(key);
+    if (!active) {
+      return null;
+    }
+    if (isExpired(active.record, now)) {
+      this.revokeActiveBinding(key, active);
+      return null;
+    }
+    return active.record.executionGeneration;
+  }
+
   private project(active: ActiveBinding, transport: "env"): ProviderAgentRuntimeBindingProjection {
     return {
       bindingId: active.record.bindingId,
