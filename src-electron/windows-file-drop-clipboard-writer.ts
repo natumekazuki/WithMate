@@ -9,12 +9,14 @@ const WRITE_FILE_DROP_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$targetPath = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.pathBase64))
+$operationMarker = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.markerBase64))
 Add-Type -AssemblyName System.Windows.Forms
 $data = [System.Windows.Forms.DataObject]::new()
-$data.SetData([System.Windows.Forms.DataFormats]::FileDrop, $true, [string[]]@([string]$request.path))
+$data.SetData([System.Windows.Forms.DataFormats]::FileDrop, $true, [string[]]@($targetPath))
 $effect = [System.IO.MemoryStream]::new([byte[]](1, 0, 0, 0), $false)
 $data.SetData("Preferred DropEffect", $false, $effect)
-$markerBytes = [System.Text.Encoding]::UTF8.GetBytes([string]$request.marker)
+$markerBytes = [System.Text.Encoding]::UTF8.GetBytes($operationMarker)
 $marker = [System.IO.MemoryStream]::new($markerBytes, $false)
 $data.SetData("${OPERATION_MARKER_FORMAT}", $false, $marker)
 [Console]::Out.Write("${WRITE_READY_MARKER}")
@@ -26,6 +28,8 @@ const VERIFY_FILE_DROP_SCRIPT = String.raw`
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+$targetPath = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.pathBase64))
+$operationMarker = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String([string]$request.markerBase64))
 Add-Type -AssemblyName System.Windows.Forms
 $data = [System.Windows.Forms.Clipboard]::GetDataObject()
 $matches = $false
@@ -38,14 +42,14 @@ if ($null -ne $data) {
   $actualMarker = if ($null -ne $markerBytes) { [System.Text.Encoding]::UTF8.GetString($markerBytes) } else { "" }
   $matches = (
     ($files.Count -eq 1) -and
-    [string]::Equals($files[0], [string]$request.path, [System.StringComparison]::OrdinalIgnoreCase) -and
+    [string]::Equals($files[0], $targetPath, [System.StringComparison]::OrdinalIgnoreCase) -and
     ($null -ne $effectBytes) -and
     ($effectBytes.Length -eq 4) -and
     ($effectBytes[0] -eq 1) -and
     ($effectBytes[1] -eq 0) -and
     ($effectBytes[2] -eq 0) -and
     ($effectBytes[3] -eq 0) -and
-    [string]::Equals($actualMarker, [string]$request.marker, [System.StringComparison]::Ordinal)
+    [string]::Equals($actualMarker, $operationMarker, [System.StringComparison]::Ordinal)
   )
 }
 [Console]::Out.Write((@{ match = $matches } | ConvertTo-Json -Compress))
@@ -136,6 +140,13 @@ function encodePowerShellScript(source: string): string {
   return Buffer.from(source, "utf16le").toString("base64");
 }
 
+export function encodeClipboardHelperPayload(payload: ClipboardHelperProcessRequest["payload"]): string {
+  return JSON.stringify({
+    pathBase64: Buffer.from(payload.path, "utf8").toString("base64"),
+    markerBase64: Buffer.from(payload.marker, "utf8").toString("base64"),
+  });
+}
+
 function runPowerShellClipboardHelper(
   request: ClipboardHelperProcessRequest,
 ): Promise<ClipboardHelperProcessResult> {
@@ -179,6 +190,6 @@ function runPowerShellClipboardHelper(
     child.stdin.on("error", () => {
       // Process settlement determines whether the native write could have started.
     });
-    child.stdin.end(JSON.stringify(request.payload));
+    child.stdin.end(encodeClipboardHelperPayload(request.payload));
   });
 }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  encodeClipboardHelperPayload,
   WindowsFileDropClipboardWriter,
   type ClipboardHelperProcessRequest,
   type ClipboardHelperProcessResult,
@@ -16,6 +17,18 @@ const completed = (stdout = ""): ClipboardHelperProcessResult => ({
 const writeStarted = (overrides: Partial<ClipboardHelperProcessResult> = {}): ClipboardHelperProcessResult => ({
   ...completed("WITHMATE_FILE_DROP_READY"),
   ...overrides,
+});
+
+test("Windows file-drop writerは非ASCII pathをASCII-safeなhelper payloadへ変換する", () => {
+  const encoded = encodeClipboardHelperPayload({
+    path: "C:\\資料\\設計メモ.md",
+    marker: "操作-1",
+  });
+  assert.match(encoded, /^[\x00-\x7f]+$/u);
+
+  const parsed = JSON.parse(encoded) as { pathBase64: string; markerBase64: string };
+  assert.equal(Buffer.from(parsed.pathBase64, "base64").toString("utf8"), "C:\\資料\\設計メモ.md");
+  assert.equal(Buffer.from(parsed.markerBase64, "base64").toString("utf8"), "操作-1");
 });
 
 test("Windows file-drop writerはwriteと別processの三形式read-back一致後だけ成功する", async () => {
