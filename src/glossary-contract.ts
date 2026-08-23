@@ -1,4 +1,5 @@
 export const GLOSSARY_SCHEMA_VERSION = 1 as const;
+export const GLOSSARY_RUNTIME_SCHEMA_VERSION = "withmate-glossary-v1" as const;
 export const GLOSSARY_RELATIVE_PATH = ".withmate/glossary.yaml";
 
 export const GLOSSARY_LIMITS = {
@@ -69,7 +70,29 @@ export type GlossaryOperationErrorCode =
   | "GLOSSARY_TARGET_INVALID"
   | "GLOSSARY_TARGET_CHANGED"
   | "GLOSSARY_EFFECT_UNKNOWN"
-  | "GLOSSARY_IO_ERROR";
+  | "GLOSSARY_IO_ERROR"
+  | "GLOSSARY_SESSION_BINDING_REQUIRED"
+  | "GLOSSARY_SESSION_BINDING_INVALID"
+  | "GLOSSARY_SESSION_BINDING_FORBIDDEN"
+  | "GLOSSARY_CHECKOUT_NOT_FOUND"
+  | "GLOSSARY_TRANSPORT_ERROR";
+
+export type GlossaryCheckoutSelector =
+  | { kind: "primary" }
+  | { kind: "checkout"; checkoutId: string };
+
+export type GlossaryCheckoutTarget = {
+  checkoutId: string;
+  selector: Extract<GlossaryCheckoutSelector, { kind: "checkout" }>;
+  isPrimary: true;
+  repositoryName: string;
+  branch: string;
+  pathLabel: string;
+};
+
+export type GlossaryRuntimeEnvelope<T> = T & {
+  schemaVersion: typeof GLOSSARY_RUNTIME_SCHEMA_VERSION;
+};
 
 export type GlossaryOperationError = {
   ok: false;

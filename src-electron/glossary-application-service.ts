@@ -42,7 +42,7 @@ const execFileAsync = promisify(execFile);
 const LOOKUP_WHITESPACE_PATTERN = /\p{White_Space}+/gu;
 const NORMALIZED_REVISION_PATTERN = /^[a-f0-9]{64}$/;
 
-type FileIdentity = {
+export type GlossaryFileIdentity = {
   device: bigint;
   inode: bigint;
 };
@@ -50,28 +50,43 @@ type FileIdentity = {
 export type ResolvedGlossaryCheckout = {
   rootPath: string;
   rootRealPath: string;
-  rootIdentity: FileIdentity;
-  gitMarkerIdentity: FileIdentity;
+  rootIdentity: GlossaryFileIdentity;
+  gitMarkerIdentity: GlossaryFileIdentity;
 };
 
-export type GlossaryMutationGuard = () => Promise<ResolvedGlossaryCheckout>;
+export type GlossaryCheckoutAuthoritySnapshot = {
+  rootPath: string;
+  rootRealPath: string;
+  rootDevice: string;
+  rootInode: string;
+  gitMarkerDevice: string;
+  gitMarkerInode: string;
+};
+
+export type GlossaryMutationGuard = () => Promise<ResolvedGlossaryCheckout | null>;
+
+export type GlossaryCheckoutDisplay = {
+  repositoryName: string;
+  branch: string;
+  pathLabel: string;
+};
 
 type ValidRead = Extract<GlossarySnapshot, { status: "valid" }> & {
   raw: string;
-  fileIdentity: FileIdentity;
+  fileIdentity: GlossaryFileIdentity;
 };
 
 type MissingRead = Extract<GlossarySnapshot, { status: "missing" }>;
 type InvalidRead = Exclude<GlossarySnapshot, { status: "valid" } | { status: "missing" }> & {
   raw: string;
-  fileIdentity: FileIdentity;
+  fileIdentity: GlossaryFileIdentity;
 };
 type InternalRead = MissingRead | ValidRead | InvalidRead;
 
 type DirectoryIdentity = {
   path: string;
   realPath: string;
-  identity: FileIdentity;
+  identity: GlossaryFileIdentity;
 };
 
 type MutationPlan = {
@@ -131,22 +146,55 @@ function isMissingError(error: unknown): boolean {
   return isNodeError(error) && error.code === "ENOENT";
 }
 
-function identityFromStats(stats: Stats): FileIdentity {
+function identityFromStats(stats: Stats): GlossaryFileIdentity {
   return {
     device: BigInt(stats.dev),
     inode: BigInt(stats.ino),
   };
 }
 
-function sameIdentity(left: FileIdentity, right: FileIdentity): boolean {
+function sameIdentity(left: GlossaryFileIdentity, right: GlossaryFileIdentity): boolean {
   return left.device === right.device && left.inode === right.inode;
 }
 
-function sameCheckout(left: ResolvedGlossaryCheckout, right: ResolvedGlossaryCheckout): boolean {
+export function areResolvedGlossaryCheckoutsEqual(
+  left: ResolvedGlossaryCheckout,
+  right: ResolvedGlossaryCheckout,
+): boolean {
   return path.resolve(left.rootPath) === path.resolve(right.rootPath)
     && left.rootRealPath === right.rootRealPath
     && sameIdentity(left.rootIdentity, right.rootIdentity)
     && sameIdentity(left.gitMarkerIdentity, right.gitMarkerIdentity);
+}
+
+export function projectGlossaryCheckoutAuthority(
+  target: ResolvedGlossaryCheckout,
+): GlossaryCheckoutAuthoritySnapshot {
+  return {
+    rootPath: target.rootPath,
+    rootRealPath: target.rootRealPath,
+    rootDevice: target.rootIdentity.device.toString(),
+    rootInode: target.rootIdentity.inode.toString(),
+    gitMarkerDevice: target.gitMarkerIdentity.device.toString(),
+    gitMarkerInode: target.gitMarkerIdentity.inode.toString(),
+  };
+}
+
+export function restoreGlossaryCheckoutAuthority(
+  snapshot: GlossaryCheckoutAuthoritySnapshot,
+): ResolvedGlossaryCheckout {
+  return {
+    rootPath: snapshot.rootPath,
+    rootRealPath: snapshot.rootRealPath,
+    rootIdentity: {
+      device: BigInt(snapshot.rootDevice),
+      inode: BigInt(snapshot.rootInode),
+    },
+    gitMarkerIdentity: {
+      device: BigInt(snapshot.gitMarkerDevice),
+      inode: BigInt(snapshot.gitMarkerInode),
+    },
+  };
 }
 
 function codePointLength(value: string): number {
@@ -554,6 +602,17 @@ export class GlossaryApplicationService {
     return publicSnapshot(await this.#readInternal(await this.#revalidateCheckout(target)));
   }
 
+  async describeCheckout(target: ResolvedGlossaryCheckout): Promise<GlossaryCheckoutDisplay> {
+    const current = await this.#revalidateCheckout(target);
+    const branch = (await this.#runGit(current.rootPath, ["branch", "--show-current"])).trim();
+    const pathLabel = path.basename(current.rootPath);
+    return {
+      repositoryName: pathLabel,
+      branch: branch || "(detached HEAD)",
+      pathLabel,
+    };
+  }
+
   async validate(target: ResolvedGlossaryCheckout): Promise<GlossaryValidationResult> {
     return { ok: true, snapshot: await this.read(target) };
   }
@@ -872,7 +931,7 @@ export class GlossaryApplicationService {
 
   async #revalidateCheckout(target: ResolvedGlossaryCheckout): Promise<ResolvedGlossaryCheckout> {
     const current = await this.resolvePrimaryCheckout(target.rootPath);
-    if (!sameCheckout(target, current)) {
+    if (!areResolvedGlossaryCheckoutsEqual(target, current)) {
       fail("GLOSSARY_TARGET_CHANGED", "Primary checkout identity changed.");
     }
     return current;
@@ -921,7 +980,7 @@ export class GlossaryApplicationService {
     await this.#revalidateCheckout(target);
     if (guard) {
       const guardedTarget = await guard();
-      if (!sameCheckout(target, guardedTarget)) {
+      if (!guardedTarget || !areResolvedGlossaryCheckoutsEqual(target, guardedTarget)) {
         fail("GLOSSARY_TARGET_CHANGED", "Runtime binding no longer authorizes this checkout.");
       }
     }

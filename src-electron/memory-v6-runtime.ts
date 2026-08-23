@@ -20,6 +20,8 @@ import {
   createMemoryV6HttpServer,
   type MemoryV6HttpServer,
   type AgentRuntimeActorSession,
+  type AgentRuntimeExtensionRequest,
+  type AgentRuntimeExtensionResponse,
 } from "./memory-v6-http-server.js";
 import type { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { createMemoryV6ProjectResolver } from "./memory-v6-project-resolver.js";
@@ -60,6 +62,9 @@ export type StartMemoryV6RuntimeApiOptions = {
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+  routeAgentRuntimeExtension?: (
+    request: AgentRuntimeExtensionRequest,
+  ) => Promise<AgentRuntimeExtensionResponse | null> | AgentRuntimeExtensionResponse | null;
 };
 
 export type PublishMemoryV6DiscoveryFileOptions = {
@@ -360,6 +365,7 @@ export async function startMemoryV6RuntimeApi(
       runtimeInstanceId,
       agentRuntimeBindingRegistry: options.agentRuntimeBindingRegistry,
       resolveActorSession: options.resolveActorSession,
+      routeAgentRuntimeExtension: options.routeAgentRuntimeExtension,
     });
     await server.start();
 

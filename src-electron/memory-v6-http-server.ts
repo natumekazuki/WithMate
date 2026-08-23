@@ -51,12 +51,30 @@ export type MemoryV6HttpServerOptions = {
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+  routeAgentRuntimeExtension?: (
+    request: AgentRuntimeExtensionRequest,
+  ) => Promise<AgentRuntimeExtensionResponse | null> | AgentRuntimeExtensionResponse | null;
 };
 
 export type AgentRuntimeActorSession = {
   id: string;
   providerId: string;
   characterId: string;
+  workspacePath?: string;
+};
+
+export type AgentRuntimeExtensionRequest = {
+  method: "GET" | "POST";
+  path: string;
+  body: unknown;
+  transport: CharacterContextTransport;
+  bindingReference?: string;
+  fallbackFrom?: "mcp";
+};
+
+export type AgentRuntimeExtensionResponse = {
+  status: number;
+  value: unknown;
 };
 
 export type MemoryV6HttpServer = {
@@ -863,6 +881,18 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         const operationUrl = new URL(payload.operation.path, "http://127.0.0.1");
         if (operationUrl.pathname === "/v1/status" && payload.operation.method === "GET") {
           writeJson(response, 200, { ok: true, runtimeInstanceId });
+          return;
+        }
+        const extensionResponse = await options.routeAgentRuntimeExtension?.({
+          method: payload.operation.method,
+          path: payload.operation.path,
+          body: payload.operation.body,
+          transport: payload.adapter,
+          bindingReference: payload.bindingReference,
+          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+        }) ?? null;
+        if (extensionResponse) {
+          writeJson(response, extensionResponse.status, extensionResponse.value);
           return;
         }
         const route = routeByPath.get(operationUrl.pathname);

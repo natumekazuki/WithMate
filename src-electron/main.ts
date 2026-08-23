@@ -251,6 +251,12 @@ import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
+  GlossaryApplicationService,
+  projectGlossaryCheckoutAuthority,
+} from "./glossary-application-service.js";
+import { GlossaryRuntimeService } from "./glossary-runtime-service.js";
+import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-schema.js";
+import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
@@ -403,6 +409,7 @@ let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
+const glossaryApplicationService = new GlossaryApplicationService();
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -574,6 +581,76 @@ function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null
   return createMemoryV6ReviewService().forgetEntry(entryId, reason);
 }
 
+async function resolveAgentRuntimeActorSession(sessionId: string) {
+  const session = getSession(sessionId);
+  if (session) {
+    return {
+      id: session.id,
+      providerId: session.provider,
+      characterId: session.characterId,
+      workspacePath: session.workspacePath,
+    };
+  }
+  if (!auxiliarySessionStorage) {
+    return null;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+  return auxiliary
+    ? {
+        id: auxiliary.id,
+        providerId: auxiliary.provider,
+        characterId: auxiliary.characterId,
+        workspacePath: auxiliary.workspacePath,
+      }
+    : null;
+}
+
+function getGlossaryProactiveCreateLimit(): number | null {
+  const settings = requireAppSettingsStorage().getSettings() as AppSettings & {
+    glossaryProactiveCreateLimit?: unknown;
+  };
+  return Number.isInteger(settings.glossaryProactiveCreateLimit)
+    && typeof settings.glossaryProactiveCreateLimit === "number"
+    && settings.glossaryProactiveCreateLimit >= 0
+    && settings.glossaryProactiveCreateLimit <= 100
+    ? settings.glossaryProactiveCreateLimit
+    : null;
+}
+
+const glossaryRuntimeService = new GlossaryRuntimeService({
+  applicationService: glossaryApplicationService,
+  bindingRegistry: agentRuntimeBindingRegistry,
+  resolveActorSession: resolveAgentRuntimeActorSession,
+  getProactiveCreateLimit: getGlossaryProactiveCreateLimit,
+});
+
+async function issueProviderAgentRuntimeBinding(
+  session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
+  providerId: string,
+) {
+  let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
+  try {
+    glossaryAuthority = projectGlossaryCheckoutAuthority(
+      await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath),
+    );
+  } catch {
+    // Non-Git workspaces keep Memory grants but do not receive glossary authority.
+  }
+  return agentRuntimeBindingRegistry.issueOrReuse({
+    actorSessionId: session.id,
+    providerId,
+    authoritySnapshot: {
+      characterId: session.characterId,
+      sessionKind: session.sessionKind,
+      ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
+    },
+    operationGrants: [
+      ...getMemoryV6AgentRuntimeOperations(),
+      ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
+    ],
+  });
+}
+
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
   if (memoryV6RuntimeApi) {
     return;
@@ -593,19 +670,8 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
       agentRuntimeBindingRegistry,
-      resolveActorSession: async (sessionId) => {
-        const session = getSession(sessionId);
-        if (session) {
-          return { id: session.id, providerId: session.provider, characterId: session.characterId };
-        }
-        if (!auxiliarySessionStorage) {
-          return null;
-        }
-        const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
-        return auxiliary
-          ? { id: auxiliary.id, providerId: auxiliary.provider, characterId: auxiliary.characterId }
-          : null;
-      },
+      resolveActorSession: resolveAgentRuntimeActorSession,
+      routeAgentRuntimeExtension: (request) => glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -2515,15 +2581,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getProviderCodingAdapter,
       resetProviderSessionThread,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
-        agentRuntimeBindingRegistry.issueOrReuse({
-          actorSessionId: session.id,
-          providerId: provider.id,
-          authoritySnapshot: {
-            characterId: session.characterId,
-            sessionKind: session.sessionKind,
-          },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
-        }),
+        issueProviderAgentRuntimeBinding(session, provider.id),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2735,15 +2793,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       resolveProviderCatalog,
       getProviderCodingAdapter,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
-        agentRuntimeBindingRegistry.issueOrReuse({
-          actorSessionId: session.id,
-          providerId: provider.id,
-          authoritySnapshot: {
-            characterId: session.characterId,
-            sessionKind: "auxiliary",
-          },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
-        }),
+        issueProviderAgentRuntimeBinding(session, provider.id),
       resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
