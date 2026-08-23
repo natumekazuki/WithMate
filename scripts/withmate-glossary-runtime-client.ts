@@ -49,7 +49,7 @@ export function createGlossaryTransportError(
     code: "GLOSSARY_TRANSPORT_ERROR",
     message,
     effect,
-    retryable: true,
+    retryable: effect === "none",
   };
 }
 

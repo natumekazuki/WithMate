@@ -171,6 +171,7 @@ describe("withmate-glossary CLI contract", () => {
     if (!result.ok) {
       assert.equal(result.code, "GLOSSARY_TRANSPORT_ERROR");
       assert.equal(result.effect, "unknown");
+      assert.equal(result.retryable, false);
     }
   });
 });

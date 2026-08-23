@@ -167,9 +167,11 @@ export class GlossarySessionProjectionService {
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
     let armedScopeRevision: string | null = null;
+    let armGeneration = 0;
     let deliveryGeneration = 0;
 
     const arm = async (): Promise<void> => {
+      const currentArmGeneration = ++armGeneration;
       unsubscribe?.();
       unsubscribe = null;
       const session = this.#getSession(sessionId);
@@ -182,11 +184,11 @@ export class GlossarySessionProjectionService {
       } catch {
         return;
       }
-      if (disposed) {
+      if (disposed || currentArmGeneration !== armGeneration) {
         return;
       }
       armedScopeRevision = scope.scopeRevision;
-      unsubscribe = this.#applicationService.subscribe(scope.target, (state) => {
+      const nextUnsubscribe = this.#applicationService.subscribe(scope.target, (state) => {
         const currentDeliveryGeneration = ++deliveryGeneration;
         void (async () => {
           const currentSession = this.#getSession(sessionId);
@@ -217,11 +219,17 @@ export class GlossarySessionProjectionService {
           }
         })();
       });
+      if (disposed || currentArmGeneration !== armGeneration) {
+        nextUnsubscribe();
+        return;
+      }
+      unsubscribe = nextUnsubscribe;
     };
 
     await arm();
     return () => {
       disposed = true;
+      armGeneration += 1;
       deliveryGeneration += 1;
       unsubscribe?.();
       unsubscribe = null;

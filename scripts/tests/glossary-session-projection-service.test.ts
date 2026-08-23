@@ -174,4 +174,94 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
     assert.deepEqual(projections, ["Current"]);
     dispose();
   });
+
+  it("並行scope re-armは古いattemptを破棄し、disposeで全watch handleを閉じる", async () => {
+    const repositoryA = await createRepository();
+    const repositoryB = await createRepository();
+    const repositoryC = await createRepository();
+    let session = {
+      id: "session-1",
+      provider: "codex",
+      workspacePath: repositoryA.root,
+      workspaceLabel: "repository-a",
+      branch: "main",
+    };
+    let releaseSlowArm: (() => void) | null = null;
+    const slowArm = new Promise<void>((resolve) => {
+      releaseSlowArm = resolve;
+    });
+    let markSlowArmStarted: (() => void) | null = null;
+    const slowArmStarted = new Promise<void>((resolve) => {
+      markSlowArmStarted = resolve;
+    });
+    let repositoryBResolves = 0;
+    type Subscription = {
+      target: ResolvedGlossaryCheckout;
+      listener: (state: GlossaryProjectionState) => void;
+      closed: boolean;
+    };
+    const subscriptions: Subscription[] = [];
+    class RearmingProjectionService extends GlossaryApplicationService {
+      override async resolvePrimaryCheckout(workspacePath: string): Promise<ResolvedGlossaryCheckout> {
+        if (workspacePath === repositoryB.root) {
+          repositoryBResolves += 1;
+          if (repositoryBResolves === 2) {
+            markSlowArmStarted?.();
+            await slowArm;
+          }
+          return repositoryB.target;
+        }
+        return workspacePath === repositoryC.root ? repositoryC.target : repositoryA.target;
+      }
+
+      override async describeCheckout(target: ResolvedGlossaryCheckout) {
+        return {
+          repositoryName: path.basename(target.rootPath),
+          branch: "main",
+          pathLabel: path.basename(target.rootPath),
+        };
+      }
+
+      override subscribe(
+        target: ResolvedGlossaryCheckout,
+        listener: (state: GlossaryProjectionState) => void,
+      ): () => void {
+        const subscription = { target, listener, closed: false };
+        subscriptions.push(subscription);
+        return () => {
+          subscription.closed = true;
+        };
+      }
+    }
+    const service = new GlossarySessionProjectionService({
+      applicationService: new RearmingProjectionService(),
+      getSession: () => session,
+      getBindingGeneration: () => "generation-1",
+    });
+    const dispose = await service.subscribe(session.id, () => undefined);
+    const staleState: GlossaryProjectionState = {
+      status: "invalid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "stale",
+      issues: [{ path: "$", code: "INVALID_YAML", message: "stale state" }],
+    };
+
+    session = { ...session, workspacePath: repositoryB.root, workspaceLabel: "repository-b" };
+    subscriptions[0].listener(staleState);
+    await slowArmStarted;
+    session = { ...session, workspacePath: repositoryC.root, workspaceLabel: "repository-c" };
+    subscriptions[0].listener(staleState);
+    for (let attempt = 0; attempt < 20 && subscriptions.length < 2; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    releaseSlowArm?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(subscriptions.map((subscription) => subscription.target.rootPath), [
+      repositoryA.target.rootPath,
+      repositoryC.target.rootPath,
+    ]);
+    dispose();
+    assert.equal(subscriptions.every((subscription) => subscription.closed), true);
+  });
 });

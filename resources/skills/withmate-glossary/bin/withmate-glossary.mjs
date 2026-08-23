@@ -20267,7 +20267,7 @@ function createGlossaryTransportError(message, effect = "none") {
 		code: "GLOSSARY_TRANSPORT_ERROR",
 		message,
 		effect,
-		retryable: true
+		retryable: effect === "none"
 	};
 }
 function createGlossaryBindingRequiredError() {
