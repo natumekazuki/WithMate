@@ -286,6 +286,58 @@ describe("AppSettingsStorage", () => {
     }
   });
 
+  it("keyboard shortcutの無効なplatform overrideだけを除外して有効値を再loadできる", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new AppSettingsStorage(dbPath);
+      storage.close();
+
+      const persistedDatabase = new DatabaseSync(dbPath);
+      persistedDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run(JSON.stringify({
+          overrides: {
+            "session.message.toggle-collapse": {
+              windows: { key: "x" },
+              linux: { key: "x", altKey: true, shiftKey: true },
+              macos: { key: "x", metaKey: true, shiftKey: true },
+            },
+            "session.composer.submit": {
+              windows: { key: "Enter", altKey: true },
+              linux: { key: "Enter", ctrlKey: true, altKey: true },
+              macos: { key: "Enter", altKey: true },
+            },
+            "session.message.find": {
+              windows: { key: "g", ctrlKey: true },
+            },
+            "unknown.command": {
+              windows: { key: "x", ctrlKey: true, shiftKey: true },
+            },
+          },
+        }), "keyboard_shortcuts_json");
+      persistedDatabase.close();
+
+      const reopened = new AppSettingsStorage(dbPath);
+      const loaded = reopened.getSettings();
+      reopened.close();
+
+      assert.deepEqual(loaded.keyboardShortcuts.overrides, {
+        "session.message.toggle-collapse": {
+          linux: { key: "x", altKey: true, shiftKey: true },
+          macos: { key: "x", metaKey: true, shiftKey: true },
+        },
+        "session.composer.submit": {
+          windows: { key: "Enter", altKey: true },
+          macos: { key: "Enter", altKey: true },
+        },
+      });
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("chat layout の対象1項目だけを更新し、他の app settings と再読込結果を維持する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

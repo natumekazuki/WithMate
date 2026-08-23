@@ -8,6 +8,17 @@ export type ShortcutAccelerator = Readonly<{
   altKey?: boolean;
 }>;
 
+export type ShortcutBindingKind = "letter" | "enter";
+
+export type KeyboardShortcutPolicyEntry = Readonly<{
+  id: string;
+  scope: string;
+  exclusiveScopeGroup?: string;
+  accelerators: Readonly<Record<ShortcutPlatform, ShortcutAccelerator>>;
+  customizable: boolean;
+  bindingKind?: ShortcutBindingKind;
+}>;
+
 export type KeyboardShortcutOverride = Readonly<Partial<Record<ShortcutPlatform, ShortcutAccelerator>>>;
 
 export type KeyboardShortcutSettings = Readonly<{
@@ -53,20 +64,106 @@ export type ShortcutCaptureEvent = Readonly<{
 
 const SHORTCUT_PLATFORMS: readonly ShortcutPlatform[] = ["windows", "linux", "macos"];
 
+export const DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES: readonly KeyboardShortcutPolicyEntry[] = [
+  {
+    id: "session.message.find",
+    scope: "message-list",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "f", ctrlKey: true },
+      linux: { key: "f", ctrlKey: true },
+      macos: { key: "f", metaKey: true },
+    },
+    customizable: false,
+  },
+  {
+    id: "session.message.close-find",
+    scope: "message-list",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "Escape" },
+      linux: { key: "Escape" },
+      macos: { key: "Escape" },
+    },
+    customizable: false,
+  },
+  {
+    id: "session.message.toggle-collapse",
+    scope: "message-list",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "m", ctrlKey: true, shiftKey: true },
+      linux: { key: "m", ctrlKey: true, shiftKey: true },
+      macos: { key: "m", metaKey: true, shiftKey: true },
+    },
+    customizable: true,
+    bindingKind: "letter",
+  },
+  {
+    id: "session.file-preview.find",
+    scope: "file-preview",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "f", ctrlKey: true },
+      linux: { key: "f", ctrlKey: true },
+      macos: { key: "f", metaKey: true },
+    },
+    customizable: false,
+  },
+  {
+    id: "session.file-preview.close",
+    scope: "file-preview",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "Escape" },
+      linux: { key: "Escape" },
+      macos: { key: "Escape" },
+    },
+    customizable: false,
+  },
+  {
+    id: "session.file-preview.select-all",
+    scope: "file-preview",
+    exclusiveScopeGroup: "session-content",
+    accelerators: {
+      windows: { key: "a", ctrlKey: true },
+      linux: { key: "a", ctrlKey: true },
+      macos: { key: "a", metaKey: true },
+    },
+    customizable: false,
+  },
+  {
+    id: "session.composer.submit",
+    scope: "composer",
+    accelerators: {
+      windows: { key: "Enter", ctrlKey: true },
+      linux: { key: "Enter", ctrlKey: true },
+      macos: { key: "Enter", metaKey: true },
+    },
+    customizable: true,
+    bindingKind: "enter",
+  },
+];
+
 const MODIFIER_ONLY_KEYS = new Set([
   "Alt",
   "AltGraph",
   "CapsLock",
   "Control",
+  "Ctrl",
+  "Command",
+  "Cmd",
   "Fn",
   "FnLock",
   "Hyper",
   "Meta",
   "NumLock",
+  "Option",
   "OS",
   "ScrollLock",
   "Shift",
   "Super",
+  "Win",
 ].map((key) => key.toLocaleLowerCase("en-US")));
 
 export function createDefaultKeyboardShortcutSettings(): KeyboardShortcutSettings {
@@ -104,6 +201,53 @@ export function shortcutAcceleratorSignature(accelerator: ShortcutAccelerator): 
   ].join("/");
 }
 
+export function isAllowedShortcutAccelerator(
+  accelerator: ShortcutAccelerator,
+  platform: ShortcutPlatform,
+  bindingKind: ShortcutBindingKind,
+): boolean {
+  const normalized = normalizeShortcutAccelerator(accelerator);
+  if (
+    !normalized.key ||
+    isModifierOnlyKey(normalized.key) ||
+    normalized.key === "Dead" ||
+    normalized.key === "Process" ||
+    isAltGraphAccelerator(normalized)
+  ) {
+    return false;
+  }
+
+  if (bindingKind === "letter") {
+    if (!/^[a-z]$/.test(normalized.key)) {
+      return false;
+    }
+
+    if (platform === "macos") {
+      return (
+        normalized.metaKey && normalized.shiftKey && !normalized.ctrlKey && !normalized.altKey
+      ) || (
+        normalized.metaKey && normalized.altKey && !normalized.ctrlKey && !normalized.shiftKey
+      );
+    }
+
+    return (
+      normalized.ctrlKey && normalized.shiftKey && !normalized.metaKey && !normalized.altKey
+    ) || (
+      normalized.altKey && normalized.shiftKey && !normalized.ctrlKey && !normalized.metaKey
+    );
+  }
+
+  if (normalized.key !== "Enter") {
+    return false;
+  }
+
+  if (platform === "macos") {
+    return !normalized.ctrlKey && (normalized.metaKey || normalized.altKey);
+  }
+
+  return !normalized.metaKey && (normalized.ctrlKey || normalized.altKey);
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
@@ -116,7 +260,11 @@ function isModifierOnlyKey(key: string): boolean {
   return MODIFIER_ONLY_KEYS.has(key.toLocaleLowerCase("en-US"));
 }
 
-function parseShortcutAccelerator(value: unknown): ShortcutAccelerator | null {
+function parseShortcutAccelerator(
+  value: unknown,
+  platform?: ShortcutPlatform,
+  bindingKind?: ShortcutBindingKind,
+): ShortcutAccelerator | null {
   if (!isRecord(value) || typeof value.key !== "string") {
     return null;
   }
@@ -133,23 +281,122 @@ function parseShortcutAccelerator(value: unknown): ShortcutAccelerator | null {
     ...(value.shiftKey === true ? { shiftKey: true } : {}),
     ...(value.altKey === true ? { altKey: true } : {}),
   };
-  return isAltGraphAccelerator(accelerator) ? null : accelerator;
+  if (isAltGraphAccelerator(accelerator)) {
+    return null;
+  }
+  if (platform && bindingKind && !isAllowedShortcutAccelerator(accelerator, platform, bindingKind)) {
+    return null;
+  }
+  return accelerator;
 }
 
-export function normalizeKeyboardShortcutSettings(value: unknown): KeyboardShortcutSettings {
+export type ShortcutNormalizationOptions = Readonly<{
+  removeCollisions?: boolean;
+}>;
+
+function canShortcutScopesBeActiveTogether(
+  left: KeyboardShortcutPolicyEntry,
+  right: KeyboardShortcutPolicyEntry,
+): boolean {
+  if (left.scope === right.scope) {
+    return true;
+  }
+
+  return (
+    left.exclusiveScopeGroup === undefined ||
+    left.exclusiveScopeGroup !== right.exclusiveScopeGroup
+  );
+}
+
+function removeShortcutOverride(
+  overrides: Record<string, Partial<Record<ShortcutPlatform, ShortcutAccelerator>>>,
+  commandId: string,
+  platform: ShortcutPlatform,
+): void {
+  const commandOverrides = overrides[commandId];
+  if (!commandOverrides) {
+    return;
+  }
+
+  delete commandOverrides[platform];
+  if (Object.keys(commandOverrides).length === 0) {
+    delete overrides[commandId];
+  }
+}
+
+function removeShortcutOverrideCollisions(
+  settings: KeyboardShortcutSettings,
+  policyEntries: readonly KeyboardShortcutPolicyEntry[],
+): KeyboardShortcutSettings {
+  const overrides: Record<string, Partial<Record<ShortcutPlatform, ShortcutAccelerator>>> = Object.fromEntries(
+    Object.entries(settings.overrides).map(([commandId, commandOverrides]) => [commandId, { ...commandOverrides }]),
+  );
+
+  for (const platform of SHORTCUT_PLATFORMS) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (let leftIndex = 0; leftIndex < policyEntries.length; leftIndex += 1) {
+        const left = policyEntries[leftIndex];
+        const leftAccelerator = overrides[left.id]?.[platform] ?? left.accelerators[platform];
+        for (let rightIndex = leftIndex + 1; rightIndex < policyEntries.length; rightIndex += 1) {
+          const right = policyEntries[rightIndex];
+          if (!canShortcutScopesBeActiveTogether(left, right)) {
+            continue;
+          }
+
+          const rightAccelerator = overrides[right.id]?.[platform] ?? right.accelerators[platform];
+          if (shortcutAcceleratorSignature(leftAccelerator) !== shortcutAcceleratorSignature(rightAccelerator)) {
+            continue;
+          }
+
+          const removableIds = [left, right]
+            .filter((entry) => entry.customizable && overrides[entry.id]?.[platform])
+            .map((entry) => entry.id);
+          if (removableIds.length === 0) {
+            continue;
+          }
+
+          for (const commandId of removableIds) {
+            removeShortcutOverride(overrides, commandId, platform);
+          }
+          changed = true;
+          break;
+        }
+        if (changed) {
+          break;
+        }
+      }
+    }
+  }
+
+  return { overrides };
+}
+
+export function normalizeKeyboardShortcutSettings(
+  value: unknown,
+  policyEntries: readonly KeyboardShortcutPolicyEntry[] = DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES,
+  options: ShortcutNormalizationOptions = {},
+): KeyboardShortcutSettings {
   if (!isRecord(value) || !isRecord(value.overrides)) {
     return createDefaultKeyboardShortcutSettings();
   }
 
+  const policyById = new Map(policyEntries.map((entry) => [entry.id, entry]));
   const overrides: Record<string, KeyboardShortcutOverride> = {};
   for (const [commandId, rawCommandOverrides] of Object.entries(value.overrides)) {
-    if (!commandId.trim() || !isRecord(rawCommandOverrides)) {
+    const policyEntry = policyById.get(commandId);
+    if (!commandId.trim() || !policyEntry?.customizable || !policyEntry.bindingKind || !isRecord(rawCommandOverrides)) {
       continue;
     }
 
     const commandOverrides: Partial<Record<ShortcutPlatform, ShortcutAccelerator>> = {};
     for (const platform of SHORTCUT_PLATFORMS) {
-      const accelerator = parseShortcutAccelerator(rawCommandOverrides[platform]);
+      const accelerator = parseShortcutAccelerator(
+        rawCommandOverrides[platform],
+        platform,
+        policyEntry.bindingKind,
+      );
       if (accelerator) {
         commandOverrides[platform] = accelerator;
       }
@@ -160,7 +407,10 @@ export function normalizeKeyboardShortcutSettings(value: unknown): KeyboardShort
     }
   }
 
-  return { overrides };
+  const normalizedSettings = { overrides };
+  return options.removeCollisions === false
+    ? normalizedSettings
+    : removeShortcutOverrideCollisions(normalizedSettings, policyEntries);
 }
 
 export function updateKeyboardShortcutBinding(
@@ -168,8 +418,14 @@ export function updateKeyboardShortcutBinding(
   commandId: string,
   platform: ShortcutPlatform,
   accelerator: ShortcutAccelerator | null,
+  policyEntries: readonly KeyboardShortcutPolicyEntry[] = DEFAULT_KEYBOARD_SHORTCUT_POLICY_ENTRIES,
 ): KeyboardShortcutSettings {
-  const normalizedSettings = normalizeKeyboardShortcutSettings(settings);
+  const policyEntry = policyEntries.find((entry) => entry.id === commandId);
+  if (!policyEntry?.customizable || !policyEntry.bindingKind) {
+    throw new Error("Keyboard shortcut command is not customizable.");
+  }
+
+  const normalizedSettings = normalizeKeyboardShortcutSettings(settings, policyEntries);
   const overrides: Record<string, KeyboardShortcutOverride> = Object.fromEntries(
     Object.entries(normalizedSettings.overrides).map(([id, commandOverrides]) => [id, { ...commandOverrides }]),
   );
@@ -178,7 +434,7 @@ export function updateKeyboardShortcutBinding(
   if (accelerator === null) {
     delete commandOverrides[platform];
   } else {
-    const normalizedAccelerator = parseShortcutAccelerator(accelerator);
+    const normalizedAccelerator = parseShortcutAccelerator(accelerator, platform, policyEntry.bindingKind);
     if (!normalizedAccelerator) {
       throw new Error("Invalid keyboard shortcut accelerator.");
     }

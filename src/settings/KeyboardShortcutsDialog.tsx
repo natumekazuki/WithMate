@@ -7,6 +7,7 @@ import {
   detectShortcutPlatform,
   getShortcutHelpProjection,
   getShortcutEntry,
+  normalizeKeyboardShortcutSettings,
   ShortcutRegistryError,
   updateShortcutBinding,
   type KeyboardShortcutSettings,
@@ -77,6 +78,7 @@ export function KeyboardShortcutsDialog({
       return undefined;
     }
 
+    const effectiveSettings = normalizeKeyboardShortcutSettings(settings);
     const handleCaptureKeyDown = (event: KeyboardEvent) => {
       const result = captureShortcutAccelerator(event);
       event.preventDefault();
@@ -87,7 +89,7 @@ export function KeyboardShortcutsDialog({
       }
 
       try {
-        onChange(updateShortcutBinding(settings, capturingCommandId, platform, result.accelerator));
+        onChange(updateShortcutBinding(effectiveSettings, capturingCommandId, platform, result.accelerator));
         setCapturingCommandId(null);
         setCaptureError("");
       } catch (error) {
@@ -103,7 +105,8 @@ export function KeyboardShortcutsDialog({
     return null;
   }
 
-  const groups = getShortcutHelpProjection(platform, settings);
+  const effectiveSettings = normalizeKeyboardShortcutSettings(settings);
+  const groups = getShortcutHelpProjection(platform, effectiveSettings);
   const isEditable = onChange !== undefined;
   return (
     <LaunchDialogShell
@@ -151,13 +154,13 @@ export function KeyboardShortcutsDialog({
                           >
                             {capturingCommandId === item.id ? "Press keys..." : "Change"}
                           </button>
-                          {settings.overrides[item.id]?.[platform] ? (
+                          {effectiveSettings.overrides[item.id]?.[platform] ? (
                             <button
                               className="launch-toggle compact secondary"
                               type="button"
                               onClick={() => {
                                 try {
-                                  onChange?.(updateShortcutBinding(settings, item.id, platform, null));
+                                  onChange?.(updateShortcutBinding(effectiveSettings, item.id, platform, null));
                                   setCapturingCommandId(null);
                                   setCaptureError("");
                                 } catch (error) {
