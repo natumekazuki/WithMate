@@ -12,6 +12,7 @@ import {
   GLOSSARY_MCP_TOOL_DEFINITIONS,
   createWithMateGlossaryMcpServer,
 } from "../withmate-glossary-mcp.js";
+import { callGlossaryRuntime } from "../withmate-glossary-runtime-client.js";
 import {
   runWithMateGlossaryCli,
   WITHMATE_GLOSSARY_CLI_EXIT_CODES,
@@ -148,5 +149,28 @@ describe("withmate-glossary CLI contract", () => {
     assert.equal(exitCode, WITHMATE_GLOSSARY_CLI_EXIT_CODES.operationError);
     assert.equal(calls, 0);
     assert.equal((JSON.parse(output) as { code: string }).code, "GLOSSARY_SESSION_BINDING_REQUIRED");
+  });
+
+  it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect unknownにする", async () => {
+    const result = await callGlossaryRuntime({
+      operation: "create",
+      path: GLOSSARY_RUNTIME_OPERATION_PATHS.create,
+      body: {
+        schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+        selector: { kind: "primary" },
+        mode: "explicit",
+        entry: { term: "Runtime", definition: "definition" },
+      },
+    }, {
+      adapter: "cli",
+      env: CLI_ENV,
+      runtimeCall: async () => ({ ok: true, status: 200, value: {} }),
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "GLOSSARY_TRANSPORT_ERROR");
+      assert.equal(result.effect, "unknown");
+    }
   });
 });

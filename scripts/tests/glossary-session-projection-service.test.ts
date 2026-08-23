@@ -12,7 +12,7 @@ import {
   type ResolvedGlossaryCheckout,
 } from "../../src-electron/glossary-application-service.js";
 import { GlossarySessionProjectionService } from "../../src-electron/glossary-session-projection-service.js";
-import type { GlossarySnapshot } from "../../src/glossary-contract.js";
+import type { GlossaryProjectionState, GlossarySnapshot } from "../../src/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -104,5 +104,74 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
     if (!search.ok) {
       assert.equal(search.code, "GLOSSARY_INVALID_FILE");
     }
+  });
+
+  it("並行watch deliveryは新しいeventを優先し、遅れて完了した古いstateを破棄する", async () => {
+    const { root, target } = await createRepository();
+    let releaseFirstScope: (() => void) | null = null;
+    const firstScope = new Promise<void>((resolve) => {
+      releaseFirstScope = resolve;
+    });
+    let resolveCount = 0;
+    let emit: ((state: GlossaryProjectionState) => void) | null = null;
+    class DelayedProjectionService extends GlossaryApplicationService {
+      override async resolvePrimaryCheckout(): Promise<ResolvedGlossaryCheckout> {
+        resolveCount += 1;
+        if (resolveCount === 2) {
+          await firstScope;
+        }
+        return target;
+      }
+
+      override async describeCheckout() {
+        return { repositoryName: "repository", branch: "main", pathLabel: "repository" };
+      }
+
+      override subscribe(
+        _target: ResolvedGlossaryCheckout,
+        listener: (state: GlossaryProjectionState) => void,
+      ): () => void {
+        emit = listener;
+        return () => undefined;
+      }
+    }
+    const session = {
+      id: "session-1",
+      provider: "codex",
+      workspacePath: root,
+      workspaceLabel: "projection-repo",
+      branch: "main",
+    };
+    const service = new GlossarySessionProjectionService({
+      applicationService: new DelayedProjectionService(),
+      getSession: () => session,
+      getBindingGeneration: () => "generation-1",
+    });
+    const projections: string[] = [];
+    const dispose = await service.subscribe(session.id, (projection) => {
+      projections.push(projection.state.status === "valid" ? projection.state.entries[0]?.term ?? "" : projection.state.status);
+    });
+    const firstState: GlossaryProjectionState = {
+      status: "invalid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "old",
+      issues: [{ path: "$", code: "INVALID_YAML", message: "old invalid state" }],
+    };
+    const secondState: GlossaryProjectionState = {
+      status: "valid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "new",
+      entries: [{ term: "Current", aliases: [], definition: "current state" }],
+    };
+
+    emit?.(firstState);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    emit?.(secondState);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    releaseFirstScope?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    assert.deepEqual(projections, ["Current"]);
+    dispose();
   });
 });

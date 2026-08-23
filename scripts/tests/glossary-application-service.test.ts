@@ -317,6 +317,32 @@ describe("GLOSSARY-ATOMIC-MUTATION file service", () => {
     if (!denied.ok) assert.equal(denied.code, "GLOSSARY_TARGET_CHANGED");
   });
 
+  it("current file再読込中に失効したruntime guardはrename直前に拒否する", async () => {
+    const { root, target } = await createRepository();
+    const changedTarget = { ...target, rootRealPath: `${target.rootRealPath}-changed` };
+    let guardCalls = 0;
+    let renameCalls = 0;
+    const service = new GlossaryApplicationService({
+      renamePath: async () => {
+        renameCalls += 1;
+      },
+    });
+
+    const denied = await service.create(
+      target,
+      { mode: "explicit", entry: { term: "Denied", definition: "binding expired during read" } },
+      async () => {
+        guardCalls += 1;
+        return guardCalls >= 4 ? changedTarget : target;
+      },
+    );
+
+    assert.equal(denied.ok, false);
+    if (!denied.ok) assert.equal(denied.code, "GLOSSARY_TARGET_CHANGED");
+    assert.equal(renameCalls, 0);
+    await assert.rejects(() => readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8"));
+  });
+
   it(".withmate symlinkまたはjunction越しのwriteを拒否する", async () => {
     const { root, target } = await createRepository();
     const outside = await mkdtemp(path.join(os.tmpdir(), "withmate-glossary-outside-"));

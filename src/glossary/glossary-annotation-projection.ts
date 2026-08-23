@@ -93,41 +93,81 @@ function createGraphemeSegments(value: string): Array<{ segment: string; index: 
 }
 
 function normalizeTextWithOffsets(value: string): NormalizedTextProjection {
+  let compatibilityNormalized = "";
+  const compatibilityStarts: number[] = [];
+  const compatibilityEnds: number[] = [];
+
+  for (const { segment, index } of createGraphemeSegments(value)) {
+    const normalizedSegment = segment.normalize("NFKC");
+    const originalEnd = index + segment.length;
+    for (const character of normalizedSegment) {
+      compatibilityNormalized += character;
+      for (let unit = 0; unit < character.length; unit += 1) {
+        compatibilityStarts.push(index);
+        compatibilityEnds.push(originalEnd);
+      }
+    }
+  }
+
+  if (compatibilityNormalized !== value.normalize("NFKC")) {
+    return { value: "", originalStarts: [], originalEnds: [] };
+  }
+
+  const lowered = compatibilityNormalized.toLowerCase();
+  const loweredStarts: number[] = [];
+  const loweredEnds: number[] = [];
+  for (let index = 0; index < compatibilityNormalized.length;) {
+    const character = String.fromCodePoint(compatibilityNormalized.codePointAt(index) ?? 0);
+    const loweredLength = character.toLowerCase().length;
+    const originalStart = compatibilityStarts[index];
+    const originalEnd = compatibilityEnds[index + character.length - 1];
+    for (let unit = 0; unit < loweredLength; unit += 1) {
+      loweredStarts.push(originalStart);
+      loweredEnds.push(originalEnd);
+    }
+    index += character.length;
+  }
+  if (loweredStarts.length !== lowered.length) {
+    return { value: "", originalStarts: [], originalEnds: [] };
+  }
+
   let normalized = "";
   const originalStarts: number[] = [];
   const originalEnds: number[] = [];
-
-  for (const { segment, index } of createGraphemeSegments(value)) {
-    const normalizedSegment = segment.normalize("NFKC").toLowerCase();
-    const originalEnd = index + segment.length;
-    for (const character of normalizedSegment) {
-      if (/^\s$/u.test(character)) {
-        if (normalized.endsWith(" ")) {
-          originalEnds[originalEnds.length - 1] = originalEnd;
-          continue;
-        }
+  for (let index = 0; index < lowered.length;) {
+    const character = String.fromCodePoint(lowered.codePointAt(index) ?? 0);
+    const originalStart = loweredStarts[index];
+    const originalEnd = loweredEnds[index + character.length - 1];
+    if (/^\s$/u.test(character)) {
+      if (normalized.endsWith(" ")) {
+        originalEnds[originalEnds.length - 1] = originalEnd;
+      } else {
         normalized += " ";
-        originalStarts.push(index);
+        originalStarts.push(originalStart);
         originalEnds.push(originalEnd);
-        continue;
       }
+    } else {
       normalized += character;
       for (let unit = 0; unit < character.length; unit += 1) {
-        originalStarts.push(index);
+        originalStarts.push(originalStart);
         originalEnds.push(originalEnd);
       }
     }
+    index += character.length;
   }
 
   let start = 0;
   let end = normalized.length;
   while (start < end && normalized[start] === " ") start += 1;
   while (end > start && normalized[end - 1] === " ") end -= 1;
-  return {
+  const projection = {
     value: normalized.slice(start, end),
     originalStarts: originalStarts.slice(start, end),
     originalEnds: originalEnds.slice(start, end),
   };
+  return projection.value === normalizeGlossaryLookup(value)
+    ? projection
+    : { value: "", originalStarts: [], originalEnds: [] };
 }
 
 function codePointBefore(value: string, index: number): string {

@@ -167,6 +167,7 @@ export class GlossarySessionProjectionService {
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
     let armedScopeRevision: string | null = null;
+    let deliveryGeneration = 0;
 
     const arm = async (): Promise<void> => {
       unsubscribe?.();
@@ -186,6 +187,7 @@ export class GlossarySessionProjectionService {
       }
       armedScopeRevision = scope.scopeRevision;
       unsubscribe = this.#applicationService.subscribe(scope.target, (state) => {
+        const currentDeliveryGeneration = ++deliveryGeneration;
         void (async () => {
           const currentSession = this.#getSession(sessionId);
           if (!currentSession || disposed) {
@@ -193,16 +195,23 @@ export class GlossarySessionProjectionService {
           }
           try {
             const currentScope = await this.#resolveScope(currentSession);
+            if (disposed || currentDeliveryGeneration !== deliveryGeneration) {
+              return;
+            }
             if (currentScope.scopeRevision !== armedScopeRevision || !this.#sameScope(scope, currentScope)) {
               await arm();
-              if (!disposed) {
-                listener(await this.load(sessionId));
+              if (disposed || currentDeliveryGeneration !== deliveryGeneration) {
+                return;
+              }
+              const projection = await this.load(sessionId);
+              if (!disposed && currentDeliveryGeneration === deliveryGeneration) {
+                listener(projection);
               }
               return;
             }
             listener(this.#project(currentScope, state));
           } catch (error) {
-            if (!disposed) {
+            if (!disposed && currentDeliveryGeneration === deliveryGeneration) {
               listener(this.#unavailableProjection(sessionId, currentSession, error));
             }
           }
@@ -213,6 +222,7 @@ export class GlossarySessionProjectionService {
     await arm();
     return () => {
       disposed = true;
+      deliveryGeneration += 1;
       unsubscribe?.();
       unsubscribe = null;
     };

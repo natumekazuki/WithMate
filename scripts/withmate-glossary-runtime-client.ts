@@ -115,7 +115,7 @@ export async function callGlossaryRuntime(input: {
     }
     return createGlossaryTransportError(
       "WithMate runtime returned a non-glossary response.",
-      isWriteOperation(input.operation) && response.status >= 500 ? "unknown" : "none",
+      isWriteOperation(input.operation) ? "unknown" : "none",
     );
   } catch (error) {
     const wasDispatched = error instanceof WithMateMemoryRuntimeExchangeError

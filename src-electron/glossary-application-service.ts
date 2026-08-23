@@ -1137,6 +1137,7 @@ export class GlossaryApplicationService {
         }
         fail("GLOSSARY_CONFLICT", "Glossary changed before mutation.");
       }
+      await this.#runGuard(target, guard);
 
       let renameError: unknown = null;
       try {

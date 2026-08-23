@@ -67,6 +67,18 @@ describe("GLOSSARY-ANNOTATION-PROJECTION", () => {
     }]);
   });
 
+  it("context-sensitive lowercaseでもcanonical lookupと同じ結果と元範囲を使う", () => {
+    const matcher = createGlossaryAnnotationMatcher([entry("ΟΣ")], "revision-1");
+
+    assert.deepEqual(matcher.matchText("ΟΣ", matcher.createMessageBudget()), [{
+      start: 0,
+      end: 2,
+      matchedText: "ΟΣ",
+      canonicalTerm: "ΟΣ",
+      definition: "ΟΣ definition",
+    }]);
+  });
+
   it("正規化で展開されたgraphemeの途中だけに一致する候補は別範囲として装飾しない", () => {
     const partialMatcher = createGlossaryAnnotationMatcher([entry("f")], "revision-1");
     const completeMatcher = createGlossaryAnnotationMatcher([entry("ff")], "revision-1");
