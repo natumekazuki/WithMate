@@ -157,7 +157,9 @@ import { WorkspaceDirectoryValidationService } from "./workspace-directory-valid
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
+import { SessionFileObjectCopyService } from "./session-file-object-copy-service.js";
 import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
+import { WindowsFileDropClipboardWriter } from "./windows-file-drop-clipboard-writer.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
@@ -303,9 +305,23 @@ const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
+const windowsFileDropClipboardWriter = new WindowsFileDropClipboardWriter({ platform: process.platform });
+const sessionFileObjectCopyService = new SessionFileObjectCopyService({
+  platform: process.platform,
+  createAuthorizationBoundary: createSessionFileExplorerService,
+  writeNativeFileDrop: (targetPath) => windowsFileDropClipboardWriter.copyFile(targetPath),
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
   writeText: (target) => clipboard.writeText(target),
+  resolveCopyableFile: (request) => request.fileContext
+    ? sessionFileObjectCopyService.resolveCopyableLinkResource({
+        ...request.fileContext,
+        target: request.target,
+      })
+    : Promise.resolve(null),
+  copyFile: (resource) => sessionFileObjectCopyService.copyResource(resource),
 });
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
@@ -1435,6 +1451,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     event.sender,
                     request.point,
+                  ),
+                copySessionFileObject: (_event, request) =>
+                  sessionFileObjectCopyService.copyResource(request.resource),
+                showSessionFileObjectCopyContextMenu: (event, request) =>
+                  sessionFileObjectCopyService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
                   ),
                 showMarkdownLinkContextMenu: (event, request) =>
                   markdownLinkContextMenuService.showContextMenu(
@@ -3605,14 +3628,21 @@ async function getSessionFileExplorerContext(sessionId: string): Promise<Session
   }
 
   const session = await getRuntimeSession(sessionId);
-  if (!session) {
-    return null;
+  if (session) {
+    return {
+      workspacePath: session.workspacePath,
+      parentSessionId: session.id,
+      allowedAdditionalDirectories: session.allowedAdditionalDirectories,
+    };
   }
-  return {
-    workspacePath: session.workspacePath,
-    parentSessionId: session.id,
-    allowedAdditionalDirectories: session.allowedAdditionalDirectories,
-  };
+  const companionSession = await requireCompanionStorage().getSession(sessionId);
+  return companionSession
+    ? {
+        workspacePath: companionSession.worktreePath,
+        parentSessionId: companionSession.id,
+        allowedAdditionalDirectories: companionSession.allowedAdditionalDirectories ?? [],
+      }
+    : null;
 }
 
 async function getSessionFileExplorerOwnerSessionId(sessionId: string): Promise<string | null> {

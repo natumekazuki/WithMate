@@ -4832,6 +4832,7 @@ button:disabled {
 
 .session-file-tree-status,
 .session-file-tree-empty,
+.session-file-tree-feedback,
 .session-file-tree-error {
   margin: 6px;
   color: var(--muted);

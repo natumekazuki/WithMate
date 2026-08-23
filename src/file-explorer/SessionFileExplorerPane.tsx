@@ -8,7 +8,13 @@ import type {
 } from "./file-explorer-contract.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
-type FileExplorerApi = Pick<WithMateWindowApi, "listSessionFileRoots" | "listSessionDirectory">;
+type FileExplorerApi = Pick<
+  WithMateWindowApi,
+  | "listSessionFileRoots"
+  | "listSessionDirectory"
+  | "isSessionFileObjectCopyAvailable"
+  | "showSessionFileObjectCopyContextMenu"
+>;
 
 type SessionFileExplorerPaneProps = {
   api: FileExplorerApi | null;
@@ -64,6 +70,7 @@ export function SessionFileExplorerPane({
   changesContent,
   historyContent,
 }: SessionFileExplorerPaneProps) {
+  const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
   const loadRevisionRef = useRef(0);
   const directoryRequestSequenceRef = useRef(0);
   const inFlightDirectoryLoadsRef = useRef(new Map<string, DirectoryLoadRequest>());
@@ -75,6 +82,7 @@ export function SessionFileExplorerPane({
   const expandedDirectoriesRef = useRef(expandedDirectories);
   const [loadingDirectories, setLoadingDirectories] = useState<Record<string, boolean>>({});
   const [errorMessage, setErrorMessage] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<void> => {
@@ -137,6 +145,7 @@ export function SessionFileExplorerPane({
     expandedDirectoriesRef.current = {};
     setLoadingDirectories({});
     setErrorMessage("");
+    setFeedbackMessage("");
     if (!api || !sessionId || !enabled) {
       return;
     }
@@ -270,6 +279,9 @@ export function SessionFileExplorerPane({
         ) : (
           <>
             {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
+            {feedbackMessage ? (
+              <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
+            ) : null}
             {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
             <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
               {treeVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -318,6 +330,29 @@ export function SessionFileExplorerPane({
                                 event.ctrlKey || event.metaKey,
                               );
                             }
+                          }}
+                          onContextMenu={(event) => {
+                            if (!api || !fileObjectCopyAvailable || row.entry.kind !== "file") {
+                              return;
+                            }
+                            event.preventDefault();
+                            void api.showSessionFileObjectCopyContextMenu({
+                              resource: {
+                                sessionId: sessionId!,
+                                rootId: row.rootId,
+                                relativePath: row.entry.relativePath,
+                              },
+                              point: {
+                                x: Math.max(0, Math.round(event.clientX)),
+                                y: Math.max(0, Math.round(event.clientY)),
+                              },
+                            }).then((result) => {
+                              if (result.status !== "dismissed") {
+                                setFeedbackMessage(result.message);
+                              }
+                            }).catch(() => {
+                              setFeedbackMessage("File copy menu could not be opened.");
+                            });
                           }}
                           title={row.entry.relativePath}
                         >

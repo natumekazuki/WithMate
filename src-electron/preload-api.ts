@@ -86,6 +86,8 @@ import {
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
@@ -314,8 +316,14 @@ function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogAp
   };
 }
 
-function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionApi {
+function createSessionApi(
+  ipcRenderer: IpcRendererLike,
+  platform: NodeJS.Platform,
+): WithMateWindowSessionApi {
   return {
+    isSessionFileObjectCopyAvailable() {
+      return platform === "win32";
+    },
     listSessionSummaryPage(request) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL, request ?? null);
     },
@@ -351,6 +359,12 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     },
     showSessionFilePreviewImageContextMenu(request) {
       return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, request);
+    },
+    copySessionFileObject(request) {
+      return ipcRenderer.invoke(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL, request);
+    },
+    showSessionFileObjectCopyContextMenu(request) {
+      return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL, request);
     },
     listFileRootChanges(request) {
       return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, request);
@@ -894,13 +908,16 @@ function installRendererErrorLogging(ipcRenderer: IpcRendererLike): void {
   });
 }
 
-export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowApi {
+export function createWithMateWindowApi(
+  ipcRenderer: IpcRendererLike,
+  platform: NodeJS.Platform = process.platform,
+): WithMateWindowApi {
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
     ...createMemoryV6ReviewApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
-    ...createSessionApi(ipcRenderer),
+    ...createSessionApi(ipcRenderer, platform),
     ...createAuxiliaryApi(ipcRenderer),
     ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),

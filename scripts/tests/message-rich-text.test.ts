@@ -39,7 +39,7 @@ function clickMarkdownLink(target: string) {
 }
 
 async function openMarkdownLinkContextMenu(target: string) {
-  const requests: Array<{ target: string; point: { x: number; y: number } }> = [];
+  const requests: unknown[] = [];
   let defaultPrevented = false;
 
   const result = await handleMarkdownLinkContextMenu(
@@ -612,7 +612,7 @@ test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡�
     value: {
       async showMarkdownLinkContextMenu(request: { target: string; point: { x: number; y: number } }) {
         requests.push(request);
-        return { status: "copied" } as const;
+        return { status: "link-copied" } as const;
       },
     },
   });
@@ -627,6 +627,7 @@ test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡�
       root?.render(React.createElement(MessageRichText, {
         text: "[candidate](docs/candidate-source%20final.json)",
         forceFullRender: true,
+        markdownLinkFileContext: { sessionId: "session-1" },
       }));
     });
     const anchor = container.querySelector("a");
@@ -645,6 +646,7 @@ test("MessageRichText はrender済みlinkの右clickでtargetをcopy menuへ渡�
     assert.deepEqual(requests, [{
       target: "docs/candidate-source%20final.json",
       point: { x: 80, y: 160 },
+      fileContext: { sessionId: "session-1" },
     }]);
     assert.equal(container.querySelector(".message-link-copy-toast")?.textContent, "リンクをコピーしました。");
   } finally {

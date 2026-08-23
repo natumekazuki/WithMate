@@ -2660,6 +2660,7 @@ export function SessionMessageColumn({
   const selectionToolbarRef = useRef<HTMLDivElement | null>(null);
   const previousMessageViewModeRef = useRef(messageViewMode);
   const handledMessageJumpRequestIdRef = useRef<number | null>(null);
+  const markdownLinkFileContext = useMemo(() => ({ sessionId }), [sessionId]);
   const messageCollapseTargetByKey = useMemo(
     () => new Map(messageCollapseTargets.map((target) => [target.key, target])),
     [messageCollapseTargets],
@@ -3173,6 +3174,7 @@ export function SessionMessageColumn({
               forceFullRender={findOpen && hasFindQuery}
               displayMode={messageViewMode}
               onOpenPath={onOpenPath}
+              markdownLinkFileContext={markdownLinkFileContext}
             />
           </div>
         ) : null}
@@ -3338,6 +3340,7 @@ export function SessionMessageColumn({
                         forceFullRender={findOpen && hasFindQuery}
                         displayMode={messageViewMode}
                         onOpenPath={onOpenPath}
+                        markdownLinkFileContext={markdownLinkFileContext}
                       />
                     ) : (
                       <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
@@ -3416,7 +3419,11 @@ export function SessionMessageColumn({
                                           <div id={operationPanelId} className="artifact-operation-body">
                                             {operation.type === "agent_message" ? (
                                               <div className="artifact-operation-message">
-                                                <MessageRichText text={operation.summary} onOpenPath={onOpenPath} />
+                                                <MessageRichText
+                                                  text={operation.summary}
+                                                  onOpenPath={onOpenPath}
+                                                  markdownLinkFileContext={markdownLinkFileContext}
+                                                />
                                               </div>
                                             ) : (
                                               <p>{operation.summary}</p>
