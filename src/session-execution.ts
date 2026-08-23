@@ -53,6 +53,7 @@ export type SessionOutboundExecutionRecord = {
   sequence: number;
   executionId: string;
   targetSessionId: string;
+  sourceMessageSequence: number;
   operation: SessionExecutionOperation;
   targetSessionTitle: string;
   targetSessionRole: import("./session-role-binding.js").SessionRole;

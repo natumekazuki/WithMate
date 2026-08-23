@@ -1530,6 +1530,7 @@ test("MainSessionCommandFacade はactive executionとsource側outbound projectio
           sequence: 5,
           executionId: "outbound-1",
           targetSessionId: "s-2",
+          sourceMessageSequence: 0,
           operation: "turn.enqueue",
           targetSessionTitle: "Target snapshot",
           targetSessionRole: "executor",
@@ -1613,6 +1614,7 @@ test("MainSessionCommandFacade はactive executionとsource側outbound projectio
       state: "accepted",
       queuePosition: null,
       canCancel: false,
+      sourceMessageSequence: 0,
       createdAt: "2026-08-16T00:00:02.000Z",
       updatedAt: "2026-08-16T00:00:02.000Z",
       relatedSession: {

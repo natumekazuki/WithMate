@@ -459,6 +459,7 @@ function projectSessionOutboundExecutions(
     state: "accepted" as const,
     queuePosition: null,
     canCancel: false,
+    sourceMessageSequence: execution.sourceMessageSequence,
     createdAt: execution.createdAt,
     updatedAt: execution.createdAt,
     relatedSession: {

@@ -179,6 +179,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "operation",
     "target_session_title_snapshot",
     "target_session_role_snapshot",
+    "source_message_seq_anchor",
     "user_message",
     "accepted_at",
   ],
@@ -474,6 +475,9 @@ export function isValidV6Database(dbPath: string): boolean {
       return false;
     }
     if (!hasValidCoordinationEventSchemaIfPresent(db)) {
+      return false;
+    }
+    if (!hasValidSessionExecutionOriginSchema(db)) {
       return false;
     }
     return hasNoForeignKeyViolations(db);
@@ -1410,6 +1414,7 @@ export const CREATE_V6_SESSION_EXECUTION_ORIGINS_TABLE_SQL = `
     target_session_role_snapshot TEXT NOT NULL CHECK (
       target_session_role_snapshot IN ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')
     ),
+    source_message_seq_anchor INTEGER NOT NULL CHECK (source_message_seq_anchor >= -1),
     user_message TEXT NOT NULL,
     accepted_at TEXT NOT NULL,
     FOREIGN KEY (source_session_id) REFERENCES sessions_v6(id) ON DELETE CASCADE,
@@ -2656,7 +2661,6 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   if (!hasValidCoordinationEventSchemaIfPresent(db)) {
     throw new Error("Coordination event schema is invalid.");
   }
-
   ensureSessionCrudIdempotencyPrincipalScope(db);
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
@@ -2704,7 +2708,6 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   ensureSessionFileWriteIdempotencyStates(db);
   ensureSessionTranscriptExportProofColumns(db);
   ensureSessionInteractionExpiryReasons(db);
-  backfillSessionExecutionOrigins(db);
 
   if (!tableExists(db, "auxiliary_sessions")) {
     db.exec(CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL);
@@ -2734,6 +2737,11 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   db.exec(CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL);
   db.exec(CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL);
   db.exec(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL);
+  upgradeSessionExecutionOriginSchema(db);
+  backfillSessionExecutionOrigins(db);
+  if (!hasValidSessionExecutionOriginSchema(db)) {
+    throw new Error("Session execution origin schema is invalid.");
+  }
 
   if (tableExists(db, "memory_protected_objects_v6")) {
     const protectedObjectColumns = tableColumnNames(db, "memory_protected_objects_v6");
@@ -2817,13 +2825,52 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
 
 }
 
+function hasPrimaryKeyColumns(
+  db: DatabaseSync,
+  tableName: string,
+  expectedColumns: readonly string[],
+): boolean {
+  const columns = db.prepare("SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk ASC")
+    .all(tableName) as Array<{ name?: unknown }>;
+  return columns.length === expectedColumns.length
+    && columns.every((column, position) => column.name === expectedColumns[position]);
+}
+
+function hasIndexForColumns(
+  db: DatabaseSync,
+  tableName: string,
+  expectedColumns: readonly string[],
+): boolean {
+  const indexes = db.prepare("SELECT name FROM pragma_index_list(?)").all(tableName) as Array<{ name?: unknown }>;
+  return indexes.some((index) => {
+    if (typeof index.name !== "string") return false;
+    const columns = db.prepare("SELECT name FROM pragma_index_info(?) ORDER BY seqno ASC")
+      .all(index.name) as Array<{ name?: unknown }>;
+    return columns.length === expectedColumns.length
+      && columns.every((column, position) => column.name === expectedColumns[position]);
+  });
+}
+
+function hasValidSessionExecutionOriginSchema(db: DatabaseSync, requireMessageAnchor = true): boolean {
+  if (!tableExists(db, "session_execution_origins_v6")) return false;
+  const sql = tableSql(db, "session_execution_origins_v6").replace(/\s+/g, " ").toLowerCase();
+  return hasPrimaryKeyColumns(db, "session_execution_origins_v6", ["execution_id"])
+    && hasUniqueIndexForColumns(db, "session_execution_origins_v6", ["execution_sequence"])
+    && hasIndexForColumns(db, "session_execution_origins_v6", ["source_session_id", "execution_sequence"])
+    && hasForeignKey(db, "session_execution_origins_v6", "source_session_id", "sessions_v6", "id", "CASCADE")
+    && sql.includes("operation in ('turn.run', 'turn.enqueue')")
+    && sql.includes("target_session_role_snapshot in ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')")
+    && (!requireMessageAnchor || sql.includes("source_message_seq_anchor >= -1"))
+    && sql.includes("source_session_id <> target_session_id");
+}
+
 function backfillSessionExecutionOrigins(db: DatabaseSync): void {
   if (!tableExists(db, "session_executions_v6") || !tableExists(db, "session_execution_origins_v6")) return;
   db.exec(`
     INSERT OR IGNORE INTO session_execution_origins_v6 (
       execution_id, execution_sequence, source_session_id, target_session_id,
       operation, target_session_title_snapshot, target_session_role_snapshot,
-      user_message, accepted_at
+      source_message_seq_anchor, user_message, accepted_at
     )
     SELECT
       execution.id,
@@ -2833,6 +2880,17 @@ function backfillSessionExecutionOrigins(db: DatabaseSync): void {
       execution.operation,
       target.title,
       binding.session_role,
+      COALESCE((
+        SELECT MAX(source_turn.user_message_seq)
+        FROM session_turns_v6 AS source_turn
+        WHERE source_turn.session_id = trim(json_extract(execution.request_json, '$.initiator.sessionId'))
+          AND source_turn.started_at <= execution.created_at
+      ), (
+        SELECT MAX(message.seq)
+        FROM session_messages_v6 AS message
+        WHERE message.session_id = trim(json_extract(execution.request_json, '$.initiator.sessionId'))
+          AND message.created_at <= execution.created_at
+      ), -1),
       json_extract(execution.request_json, '$.turn.userMessage'),
       execution.created_at
     FROM session_executions_v6 AS execution
@@ -2843,6 +2901,33 @@ function backfillSessionExecutionOrigins(db: DatabaseSync): void {
     WHERE json_type(execution.request_json, '$.initiator.sessionId') = 'text'
       AND json_type(execution.request_json, '$.turn.userMessage') = 'text'
       AND trim(json_extract(execution.request_json, '$.initiator.sessionId')) <> execution.session_id
+  `);
+}
+
+function upgradeSessionExecutionOriginSchema(db: DatabaseSync): void {
+  if (!tableExists(db, "session_execution_origins_v6")) return;
+  const columns = tableColumnNames(db, "session_execution_origins_v6");
+  const hasMessageAnchor = columns.has("source_message_seq_anchor");
+  if (!hasValidSessionExecutionOriginSchema(db, hasMessageAnchor)) {
+    throw new Error("Session execution origin schema is invalid.");
+  }
+  if (hasMessageAnchor) return;
+  db.exec(`
+    ALTER TABLE session_execution_origins_v6
+      ADD COLUMN source_message_seq_anchor INTEGER NOT NULL DEFAULT -1
+      CHECK (source_message_seq_anchor >= -1);
+    UPDATE session_execution_origins_v6
+    SET source_message_seq_anchor = COALESCE((
+      SELECT MAX(source_turn.user_message_seq)
+      FROM session_turns_v6 AS source_turn
+      WHERE source_turn.session_id = session_execution_origins_v6.source_session_id
+        AND source_turn.started_at <= session_execution_origins_v6.accepted_at
+    ), (
+      SELECT MAX(message.seq)
+      FROM session_messages_v6 AS message
+      WHERE message.session_id = session_execution_origins_v6.source_session_id
+        AND message.created_at <= session_execution_origins_v6.accepted_at
+    ), -1);
   `);
 }
 

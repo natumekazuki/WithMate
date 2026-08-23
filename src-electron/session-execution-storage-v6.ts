@@ -358,7 +358,7 @@ export class SessionExecutionStorageV6 {
     const rows = this.db.prepare(`
       SELECT execution_sequence, execution_id, target_session_id, operation,
              target_session_title_snapshot, target_session_role_snapshot,
-             user_message, accepted_at
+             source_message_seq_anchor, user_message, accepted_at
       FROM session_execution_origins_v6
       WHERE source_session_id = ?
       ORDER BY execution_sequence ASC
@@ -369,6 +369,7 @@ export class SessionExecutionStorageV6 {
       operation: SessionExecutionOperation;
       target_session_title_snapshot: string;
       target_session_role_snapshot: SessionOutboundExecutionRecord["targetSessionRole"];
+      source_message_seq_anchor: number;
       user_message: string;
       accepted_at: string;
     }>;
@@ -376,6 +377,7 @@ export class SessionExecutionStorageV6 {
       sequence: row.execution_sequence,
       executionId: row.execution_id,
       targetSessionId: row.target_session_id,
+      sourceMessageSequence: row.source_message_seq_anchor,
       operation: row.operation,
       targetSessionTitle: row.target_session_title_snapshot,
       targetSessionRole: row.target_session_role_snapshot,
@@ -686,15 +688,22 @@ export class SessionExecutionStorageV6 {
       INSERT INTO session_execution_origins_v6 (
         execution_id, execution_sequence, source_session_id, target_session_id,
         operation, target_session_title_snapshot, target_session_role_snapshot,
-        user_message, accepted_at
+        source_message_seq_anchor, user_message, accepted_at
       )
-      SELECT id, sequence, ?, session_id, operation, ?, ?, ?, ?
+      SELECT id, sequence, ?, session_id, operation, ?, ?,
+        COALESCE((
+          SELECT MAX(message.seq)
+          FROM session_messages_v6 AS message
+          WHERE message.session_id = ?
+        ), -1),
+        ?, ?
       FROM session_executions_v6
       WHERE id = ? AND session_id = ?
     `).run(
       origin.sourceSessionId,
       origin.targetSessionTitle,
       origin.targetSessionRole,
+      origin.sourceSessionId,
       origin.userMessage,
       acceptedAt,
       executionId,

@@ -333,6 +333,15 @@ describe("database-schema-v6", () => {
       insertSession.run("source-session", "Source", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z");
       insertSession.run("target-session", "Target snapshot", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z");
       db.prepare(`
+        INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
+        VALUES ('source-session', 2, 'user', '{}', '2026-08-23T00:02:00.000Z')
+      `).run();
+      db.prepare(`
+        INSERT INTO session_turns_v6 (
+          session_id, phase, user_message_seq, started_at, updated_at
+        ) VALUES ('source-session', 'running', 2, '2026-08-23T00:00:00.500Z', '2026-08-23T00:00:00.500Z')
+      `).run();
+      db.prepare(`
         INSERT INTO session_executions_v6 (
           id, session_id, operation, state, request_json, created_at, updated_at
         ) VALUES (?, ?, 'turn.enqueue', 'queued', ?, ?, ?)
@@ -352,7 +361,8 @@ describe("database-schema-v6", () => {
 
       const origins = db.prepare(`
         SELECT execution_id, source_session_id, target_session_id,
-               target_session_title_snapshot, target_session_role_snapshot, user_message
+               target_session_title_snapshot, target_session_role_snapshot,
+               source_message_seq_anchor, user_message
         FROM session_execution_origins_v6
       `).all() as Array<Record<string, unknown>>;
       assert.deepEqual(origins.map((origin) => ({ ...origin })), [{
@@ -361,10 +371,42 @@ describe("database-schema-v6", () => {
         target_session_id: "target-session",
         target_session_title_snapshot: "Target snapshot",
         target_session_role_snapshot: "standalone",
+        source_message_seq_anchor: 2,
         user_message: "legacy request",
       }]);
     } finally {
       db.close();
+    }
+  });
+
+  it("ORCH-OUTBOUND-SCHEMA-01: origin tableのPK・UNIQUE・CHECK欠落を有効なV6 DBとして受理しない", () => {
+    const dirPath = mkdtempSync(join(tmpdir(), "withmate-v6-origin-schema-"));
+    try {
+      const dbPath = join(dirPath, APP_DATABASE_V6_FILENAME);
+      const db = createV6Schema(dbPath);
+      db.exec(`
+        PRAGMA foreign_keys = OFF;
+        DROP TABLE session_execution_origins_v6;
+        CREATE TABLE session_execution_origins_v6 (
+          execution_id TEXT,
+          execution_sequence INTEGER,
+          source_session_id TEXT,
+          target_session_id TEXT,
+          operation TEXT,
+          target_session_title_snapshot TEXT,
+          target_session_role_snapshot TEXT,
+          source_message_seq_anchor INTEGER,
+          user_message TEXT,
+          accepted_at TEXT
+        );
+        CREATE INDEX idx_v6_session_execution_origins_source_sequence
+          ON session_execution_origins_v6(source_session_id, execution_sequence ASC);
+      `);
+      db.close();
+
+      assert.equal(isValidV6Database(dbPath), false);
+    } finally {
+      rmSync(dirPath, { recursive: true, force: true });
     }
   });
 

@@ -25,6 +25,19 @@ describe("withmate-session managed Skill contract", () => {
     assert.doesNotMatch(`${skill}\n${operations}`, /node_modules/);
   });
 
+  it("Agent間TurnのRole/hierarchy authority matrixを配布Skillとreferenceへ同期する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /sessionTurnCommunicationContractRevision/);
+    assert.match(contract, /standalone actor may target only itself/);
+    assert.match(contract, /overall coordinator may target itself or a direct task coordinator or executor child/);
+    assert.match(contract, /sibling task coordinator with the same root and parent/);
+    assert.match(contract, /executor may target only itself or its direct parent/);
+    assert.match(contract, /Trusted GUI messages are a separate user-invocation boundary/);
+  });
+
   it("authority、discovery、retry、queue、interaction、file、handoff contractを保持する", async () => {
     const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");

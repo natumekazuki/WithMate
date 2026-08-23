@@ -2075,6 +2075,7 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージはtarget snapshot�
     state: "accepted" as const,
     queuePosition: null,
     canCancel: false as const,
+    sourceMessageSequence: 0,
     createdAt: "2026-08-23T00:00:00.000Z",
     updatedAt: "2026-08-23T00:00:00.000Z",
     relatedSession: {
@@ -2117,6 +2118,7 @@ test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけ�
       state: "accepted",
       queuePosition: null,
       canCancel: false,
+      sourceMessageSequence: 0,
       createdAt: "2026-08-23T00:00:00.000Z",
       updatedAt: "2026-08-23T00:00:00.000Z",
       relatedSession: {

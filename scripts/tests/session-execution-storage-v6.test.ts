@@ -44,6 +44,10 @@ async function createFixture(): Promise<{
     `);
     insertSession.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
     insertSession.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    db.prepare(`
+      INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
+      VALUES ('session-1', 0, 'user', '{"text":"source"}', ?)
+    `).run(CREATED_AT);
     insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
@@ -86,6 +90,7 @@ describe("SessionExecutionStorageV6", () => {
         sequence: 1,
         executionId: "execution-1",
         targetSessionId: "session-2",
+        sourceMessageSequence: 0,
         operation: "turn.enqueue",
         targetSessionTitle: "Session 2",
         targetSessionRole: "standalone",

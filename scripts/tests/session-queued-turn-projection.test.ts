@@ -4,6 +4,7 @@ import test from "node:test";
 import { buildMessageListProjection } from "../../src/auxiliary-session-message-projection.js";
 import { appendTurnExecutionsToMessageList } from "../../src/session-queued-turn-projection.js";
 import type {
+  SessionOutboundTurn,
   SessionQueuedTurn,
   SessionRunningTurn,
 } from "../../src/session-turn-execution.js";
@@ -26,6 +27,28 @@ function queuedTurn(executionId: string, queuePosition: number, userMessage: str
     canCancel: true,
     createdAt: "2026-08-16T00:00:00.000Z",
     updatedAt: "2026-08-16T00:00:00.000Z",
+  };
+}
+
+function outboundTurn(executionId: string, sourceMessageSequence: number, userMessage: string): SessionOutboundTurn {
+  return {
+    executionId,
+    sessionId: "target-session",
+    clientRequestId: null,
+    userMessage,
+    initiator: null,
+    state: "accepted",
+    queuePosition: null,
+    canCancel: false,
+    sourceMessageSequence,
+    createdAt: `2026-08-16T00:00:0${sourceMessageSequence + 1}.000Z`,
+    updatedAt: `2026-08-16T00:00:0${sourceMessageSequence + 1}.000Z`,
+    relatedSession: {
+      direction: "outbound",
+      sessionId: "target-session",
+      titleSnapshot: "Target",
+      roleSnapshot: "executor",
+    },
   };
 }
 
@@ -333,4 +356,24 @@ test("live responseがSession hydrationより先着しても昇格userの直下�
     "二つ目の応答",
     "その次",
   ]);
+});
+
+test("ORCH-OUTBOUND-ORDER-01: outbound Turnはacceptance時のsource message位置へmergeする", () => {
+  const base = buildMessageListProjection([
+    { role: "user", text: "before" },
+    { role: "assistant", text: "later response" },
+    { role: "user", text: "future turn" },
+  ], [], "session-1");
+
+  const projection = appendTurnExecutionsToMessageList(base, [
+    outboundTurn("execution-outbound", 0, "delegated during first turn"),
+  ], "idle");
+
+  assert.deepEqual(projection.messages.map((message) => message.text), [
+    "before",
+    "delegated during first turn",
+    "later response",
+    "future turn",
+  ]);
+  assert.equal(projection.turnExecutions[1]?.executionId, "execution-outbound");
 });

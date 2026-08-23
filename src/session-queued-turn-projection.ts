@@ -23,19 +23,20 @@ export function appendTurnExecutionsToMessageList(
   const outboundTurns = executions
     .filter((execution) => execution.state === "accepted")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.executionId.localeCompare(right.executionId));
+  const mergedProjection = mergeOutboundTurns(projection, outboundTurns);
   const runningInsertIndex = projectedRunningExecutions.length > 0
-    ? projection.sources.findIndex((source) => (
+    ? mergedProjection.sources.findIndex((source) => (
         source.kind === "live-assistant" && source.sessionId === runningExecution?.sessionId
       ))
     : -1;
   const persistedRunningIndex = runningExecution && projectedRunningExecutions.length === 0
-    ? projection.messages.findLastIndex((message, index) => (
+    ? mergedProjection.messages.findLastIndex((message, index) => (
       message.role === "user"
       && message.text === runningExecution.userMessage
-      && projection.sources[index]?.kind === "session"
+      && mergedProjection.sources[index]?.kind === "session"
     ))
     : -1;
-  const runningPrefixLength = runningInsertIndex >= 0 ? runningInsertIndex : projection.messages.length;
+  const runningPrefixLength = runningInsertIndex >= 0 ? runningInsertIndex : mergedProjection.messages.length;
   const runningMessages = projectedRunningExecutions.map((execution) => ({
     role: "user" as const,
     text: execution.userMessage,
@@ -49,18 +50,16 @@ export function appendTurnExecutionsToMessageList(
   const queuedSources = sortedQueuedTurns.map((execution) => ({ kind: "turn-execution" as const, execution }));
   const queuedKeys = sortedQueuedTurns.map((execution) => `turn-execution-${execution.executionId}`);
   const turnExecutions: Array<SessionTurnExecutionProjection | null> = [
-    ...projection.messages.slice(0, runningPrefixLength).map(() => null),
+    ...mergedProjection.turnExecutions.slice(0, runningPrefixLength),
     ...projectedRunningExecutions,
-    ...projection.messages.slice(runningPrefixLength).map(() => null),
+    ...mergedProjection.turnExecutions.slice(runningPrefixLength),
     ...sortedQueuedTurns,
-    ...outboundTurns,
   ];
   const keys = [
-    ...projection.keys.slice(0, runningPrefixLength),
+    ...mergedProjection.keys.slice(0, runningPrefixLength),
     ...runningKeys,
-    ...projection.keys.slice(runningPrefixLength),
+    ...mergedProjection.keys.slice(runningPrefixLength),
     ...queuedKeys,
-    ...outboundTurns.map((execution) => `turn-execution-${execution.executionId}`),
   ];
   if (persistedRunningIndex >= 0 && runningExecution) {
     turnExecutions[persistedRunningIndex] = runningExecution;
@@ -68,27 +67,58 @@ export function appendTurnExecutionsToMessageList(
   }
   return {
     messages: [
-      ...projection.messages.slice(0, runningPrefixLength),
+      ...mergedProjection.messages.slice(0, runningPrefixLength),
       ...runningMessages,
-      ...projection.messages.slice(runningPrefixLength),
+      ...mergedProjection.messages.slice(runningPrefixLength),
       ...queuedMessages,
-      ...outboundTurns.map((execution) => ({ role: "user" as const, text: execution.userMessage })),
     ],
     sources: [
-      ...projection.sources.slice(0, runningPrefixLength),
+      ...mergedProjection.sources.slice(0, runningPrefixLength),
       ...runningSources,
-      ...projection.sources.slice(runningPrefixLength),
+      ...mergedProjection.sources.slice(runningPrefixLength),
       ...queuedSources,
-      ...outboundTurns.map((execution) => ({ kind: "turn-execution" as const, execution })),
     ],
     keys,
     groups: [
-      ...projection.groups.slice(0, runningPrefixLength),
+      ...mergedProjection.groups.slice(0, runningPrefixLength),
       ...projectedRunningExecutions.map(() => null),
-      ...projection.groups.slice(runningPrefixLength),
+      ...mergedProjection.groups.slice(runningPrefixLength),
       ...sortedQueuedTurns.map(() => null),
-      ...outboundTurns.map(() => null),
     ],
     turnExecutions,
   };
+}
+
+function mergeOutboundTurns(
+  projection: MessageListProjection,
+  outboundTurns: Extract<SessionTurnExecutionProjection, { state: "accepted" }>[],
+): SessionTurnMessageProjection {
+  const merged: SessionTurnMessageProjection = {
+    messages: [...projection.messages],
+    sources: [...projection.sources],
+    keys: [...projection.keys],
+    groups: [...projection.groups],
+    turnExecutions: projection.messages.map(() => null),
+  };
+  for (const execution of outboundTurns) {
+    const anchorIndex = merged.sources.findLastIndex((source) => (
+      source.kind === "session" && source.messageIndex <= execution.sourceMessageSequence
+    ));
+    let insertionIndex = anchorIndex + 1;
+    while (true) {
+      const existing = merged.turnExecutions[insertionIndex];
+      if (
+        merged.sources[insertionIndex]?.kind !== "turn-execution"
+        || existing?.state !== "accepted"
+        || existing.sourceMessageSequence > execution.sourceMessageSequence
+      ) break;
+      insertionIndex += 1;
+    }
+    merged.messages.splice(insertionIndex, 0, { role: "user", text: execution.userMessage });
+    merged.sources.splice(insertionIndex, 0, { kind: "turn-execution", execution });
+    merged.keys.splice(insertionIndex, 0, `turn-execution-${execution.executionId}`);
+    merged.groups.splice(insertionIndex, 0, null);
+    merged.turnExecutions.splice(insertionIndex, 0, execution);
+  }
+  return merged;
 }

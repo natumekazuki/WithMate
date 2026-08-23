@@ -152,7 +152,7 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
 - `audit_logs`
   - turn 実行と background task の監査ログ
 - `session_execution_origins_v6`
-  - cross-Session executionのsource Session ID、canonical target Session ID、target titleとRoleのacceptance snapshot
+  - cross-Session executionのsource Session ID、canonical target Session ID、target titleとRoleのacceptance snapshot、source message sequence anchor
   - source Sessionからは`(source_session_id, execution_sequence)` indexで取得し、`request_json`をquery ownerにしない
   - target Sessionの外部キーを持たず、target削除後も履歴を維持する。source Session削除時はcascadeする
 - `project_scopes` / `project_memory_entries`

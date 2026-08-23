@@ -21717,6 +21717,7 @@ var resultSchemas = {
 	"runtime.catalog": object({
 		revision: number().int(),
 		sessionRoleContractRevision: literal(1),
+		sessionTurnCommunicationContractRevision: literal(1),
 		supportedSessionRoles: array(sessionRoleSchema),
 		allowedChildSessionRoles: object({
 			standalone: array(_enum(["task-coordinator", "executor"])),
