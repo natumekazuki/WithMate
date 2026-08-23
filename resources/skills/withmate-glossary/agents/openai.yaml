@@ -1,0 +1,4 @@
+interface:
+  display_name: "WithMate Glossary"
+  short_description: "Repository glossary lookup and safe updates"
+  default_prompt: "Use $withmate-glossary to look up or safely add repository terms."

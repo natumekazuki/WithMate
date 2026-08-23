@@ -38,6 +38,9 @@ export const SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL = "送信時にチャット
 export const SETTINGS_MEMORY_FILE_QUOTA_LABEL = "Memory file quota";
 export const SETTINGS_MEMORY_FILE_QUOTA_HELP =
   "Protected Object の全体容量上限。現在使用量が上限を超えている場合、新しい file append は失敗する。";
+export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL = "Glossary proactive create limit";
+export const SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP =
+  "Agentが1 turnで自発登録できる最大件数。0は自発登録だけを無効にし、明示的な作成依頼には影響しない。";
 export const SETTINGS_RESET_DATABASE_LABEL = "DB を初期化";
 export const SETTINGS_RESET_DATABASE_HELP =
   "Danger Zone: app settings などの DB 内容を初期化する。";

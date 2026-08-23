@@ -12,6 +12,42 @@ import {
 import { AppSettingsStorage } from "../../src-electron/app-settings-storage.js";
 
 describe("AppSettingsStorage", () => {
+  it("glossary proactive create limitは初期値5を保存し、0を維持し、欠落・不正値をfallbackしない", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const initialStorage = new AppSettingsStorage(dbPath);
+      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 5);
+      initialStorage.updateSettings({
+        ...initialStorage.getSettings(),
+        glossaryProactiveCreateLimit: 0,
+      });
+      assert.equal(initialStorage.getSettings().glossaryProactiveCreateLimit, 0);
+      initialStorage.close();
+
+      const invalidDatabase = new DatabaseSync(dbPath);
+      invalidDatabase
+        .prepare("UPDATE app_settings SET setting_value = ? WHERE setting_key = ?")
+        .run("invalid", "glossary_proactive_create_limit");
+      invalidDatabase.close();
+      const invalidStorage = new AppSettingsStorage(dbPath);
+      assert.equal(invalidStorage.getSettings().glossaryProactiveCreateLimit, null);
+      invalidStorage.close();
+
+      const missingDatabase = new DatabaseSync(dbPath);
+      missingDatabase
+        .prepare("DELETE FROM app_settings WHERE setting_key = ?")
+        .run("glossary_proactive_create_limit");
+      missingDatabase.close();
+      const missingStorage = new AppSettingsStorage(dbPath);
+      assert.equal(missingStorage.getSettings().glossaryProactiveCreateLimit, null);
+      missingStorage.close();
+    } finally {
+      await rm(tempDirectory, { recursive: true, force: true });
+    }
+  });
+
   it("保存済みの旧 path error 既定値を読み込み時に現在の既定値へ移行する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-app-settings-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

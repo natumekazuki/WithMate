@@ -208,8 +208,10 @@ import { SessionLaunchSelectionService } from "./session-launch-selection-servic
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import {
-  ManagedMemorySkillService,
+  ManagedSkillDistributionService,
+  type ManagedSkillBundleDescriptor,
   type ManagedMemorySkillSyncResult,
+  WITHMATE_GLOSSARY_SKILL_NAME,
   WITHMATE_MEMORY_SKILL_NAME,
 } from "./managed-memory-skill-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
@@ -307,6 +309,9 @@ const bundledCharacterAuthoringSkillPath = app.isPackaged
 const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
+const bundledGlossarySkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_GLOSSARY_SKILL_NAME);
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
@@ -349,7 +354,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
-let managedMemorySkillService: ManagedMemorySkillService | null = null;
+let managedSkillDistributionService: ManagedSkillDistributionService | null = null;
 let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
@@ -606,15 +611,7 @@ async function resolveAgentRuntimeActorSession(sessionId: string) {
 }
 
 function getGlossaryProactiveCreateLimit(): number | null {
-  const settings = requireAppSettingsStorage().getSettings() as AppSettings & {
-    glossaryProactiveCreateLimit?: unknown;
-  };
-  return Number.isInteger(settings.glossaryProactiveCreateLimit)
-    && typeof settings.glossaryProactiveCreateLimit === "number"
-    && settings.glossaryProactiveCreateLimit >= 0
-    && settings.glossaryProactiveCreateLimit <= 100
-    ? settings.glossaryProactiveCreateLimit
-    : null;
+  return requireAppSettingsStorage().getSettings().glossaryProactiveCreateLimit;
 }
 
 const glossaryRuntimeService = new GlossaryRuntimeService({
@@ -725,10 +722,11 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
 
 async function syncManagedMemorySkillBestEffort(): Promise<void> {
   try {
-    const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
-    managedMemorySkillSyncResults = results;
-    const failed = results.filter((result) => result.status === "failed");
-    const collisions = results.filter((result) => result.status === "skipped-collision");
+    const distribution = requireManagedSkillDistributionService();
+    const memoryResults = await distribution.syncConfiguredProviderSkills(MANAGED_MEMORY_SKILL_BUNDLE);
+    managedMemorySkillSyncResults = memoryResults;
+    const failed = memoryResults.filter((result) => result.status === "failed");
+    const collisions = memoryResults.filter((result) => result.status === "skipped-collision");
     for (const result of failed) {
       recordMemoryV6DiagnosticError(
         "memory-v6.skill.sync.provider-failed",
@@ -741,7 +739,7 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       process: "main",
       message: "Memory V6 managed skill sync completed",
       data: {
-        results,
+        results: memoryResults,
       },
     });
   } catch (error) {
@@ -754,6 +752,31 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       kind: "memory-v6.skill.sync.failed",
       process: "main",
       message: "Memory V6 managed skill sync failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+
+  try {
+    const results = await requireManagedSkillDistributionService().syncConfiguredProviderSkills(
+      MANAGED_GLOSSARY_SKILL_BUNDLE,
+    );
+    const failed = results.filter((result) => result.status === "failed");
+    const collisions = results.filter((result) => result.status === "skipped-collision");
+    writeAppLog({
+      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
+      kind: "glossary.skill.sync.completed",
+      process: "main",
+      message: "Glossary managed skill sync completed",
+      data: {
+        results,
+      },
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "glossary.skill.sync.failed",
+      process: "main",
+      message: "Glossary managed skill sync failed",
       error: appLogService.errorToLogError(error),
     });
   }
@@ -2156,18 +2179,31 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   return characterAuthoringService;
 }
 
-function requireManagedMemorySkillService(): ManagedMemorySkillService {
-  if (!managedMemorySkillService) {
-    managedMemorySkillService = new ManagedMemorySkillService({
-      bundledSkillPath: bundledMemorySkillPath,
+const MANAGED_MEMORY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
+  skillName: WITHMATE_MEMORY_SKILL_NAME,
+  bundledSkillPath: bundledMemorySkillPath,
+  documentationRelativePaths: ["SKILL.md", "reference"],
+};
+
+const MANAGED_GLOSSARY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
+  skillName: WITHMATE_GLOSSARY_SKILL_NAME,
+  bundledSkillPath: bundledGlossarySkillPath,
+  documentationRelativePaths: ["SKILL.md", "agents"],
+};
+
+function requireManagedSkillDistributionService(): ManagedSkillDistributionService {
+  if (!managedSkillDistributionService) {
+    managedSkillDistributionService = new ManagedSkillDistributionService({
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getAppVersion: () => app.getVersion(),
       isPackagedApp: () => app.isPackaged,
-      shouldSyncSkillMarkdownOnly: () => requireMemoryCliShimService().isPathShimUsable(),
+      shouldSyncDocumentationOnly: (bundle) => bundle.skillName === WITHMATE_MEMORY_SKILL_NAME
+        ? requireMemoryCliShimService().isPathShimUsable()
+        : false,
     });
   }
 
-  return managedMemorySkillService;
+  return managedSkillDistributionService;
 }
 
 function requireMemoryCliShimService(): MemoryCliShimService {
@@ -3264,7 +3300,7 @@ function closePersistentStores(): void {
   characterStorage = null;
   characterService = null;
   characterAuthoringService = null;
-  managedMemorySkillService = null;
+  managedSkillDistributionService = null;
   memoryCliShimService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
