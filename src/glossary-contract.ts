@@ -1,0 +1,146 @@
+export const GLOSSARY_SCHEMA_VERSION = 1 as const;
+export const GLOSSARY_RELATIVE_PATH = ".withmate/glossary.yaml";
+
+export const GLOSSARY_LIMITS = {
+  maxFileBytes: 2 * 1024 * 1024,
+  maxEntries: 2_000,
+  maxBatchEntries: 100,
+  maxTermCodePoints: 200,
+  maxAliasesPerEntry: 20,
+  maxDefinitionCodePoints: 50_000,
+  maxQueryCodePoints: 500,
+  maxPageSize: 200,
+} as const;
+
+export type GlossaryEntryInput = {
+  term: string;
+  aliases?: readonly string[];
+  definition: string;
+};
+
+export type GlossaryEntry = {
+  term: string;
+  aliases: string[];
+  definition: string;
+};
+
+export type GlossaryValidationIssue = {
+  path: string;
+  code: string;
+  message: string;
+};
+
+export type GlossarySnapshot =
+  | {
+      status: "missing";
+      relativePath: typeof GLOSSARY_RELATIVE_PATH;
+      revision: null;
+    }
+  | {
+      status: "valid";
+      relativePath: typeof GLOSSARY_RELATIVE_PATH;
+      revision: string;
+      entries: GlossaryEntry[];
+    }
+  | {
+      status: "invalid";
+      relativePath: typeof GLOSSARY_RELATIVE_PATH;
+      revision: string;
+      issues: GlossaryValidationIssue[];
+    }
+  | {
+      status: "unsupported";
+      relativePath: typeof GLOSSARY_RELATIVE_PATH;
+      revision: string;
+      schemaVersion: number | string | null;
+      issues: GlossaryValidationIssue[];
+    };
+
+export type GlossaryEffect = "applied" | "none" | "unknown";
+export type GlossaryMutationOutcome = "applied" | "converged";
+
+export type GlossaryOperationErrorCode =
+  | "GLOSSARY_INVALID_REQUEST"
+  | "GLOSSARY_LIMIT_EXCEEDED"
+  | "GLOSSARY_NOT_FOUND"
+  | "GLOSSARY_CONFLICT"
+  | "GLOSSARY_INVALID_FILE"
+  | "GLOSSARY_UNSUPPORTED_SCHEMA"
+  | "GLOSSARY_TARGET_INVALID"
+  | "GLOSSARY_TARGET_CHANGED"
+  | "GLOSSARY_EFFECT_UNKNOWN"
+  | "GLOSSARY_IO_ERROR";
+
+export type GlossaryOperationError = {
+  ok: false;
+  code: GlossaryOperationErrorCode;
+  message: string;
+  effect: GlossaryEffect;
+  retryable: boolean;
+  issues?: GlossaryValidationIssue[];
+};
+
+export type GlossaryListResult = {
+  ok: true;
+  revision: string | null;
+  entries: GlossaryEntry[];
+  total: number;
+  offset: number;
+  pageSize: number;
+};
+
+export type GlossaryGetResult = {
+  ok: true;
+  revision: string;
+  matchedText: string;
+  entry: GlossaryEntry;
+};
+
+export type GlossaryValidationResult = {
+  ok: true;
+  snapshot: GlossarySnapshot;
+};
+
+export type GlossaryMutationResult = {
+  ok: true;
+  outcome: GlossaryMutationOutcome;
+  effect: Extract<GlossaryEffect, "applied" | "none">;
+  revision: string | null;
+  entries: GlossaryEntry[];
+};
+
+export type GlossaryOperationResult<T> = T | GlossaryOperationError;
+
+export type GlossaryCreateMode = "explicit" | "proactive";
+
+export type GlossaryCreateRequest = {
+  mode: GlossaryCreateMode;
+  entry: GlossaryEntryInput;
+  proactiveCreateLimit?: number | null;
+};
+
+export type GlossaryCreateBatchRequest = {
+  mode: GlossaryCreateMode;
+  entries: readonly GlossaryEntryInput[];
+  proactiveCreateLimit?: number | null;
+};
+
+export type GlossaryUpdateRequest = {
+  expectedRevision: string;
+  targetTerm: string;
+  entry: GlossaryEntryInput;
+};
+
+export type GlossaryDeleteRequest = {
+  expectedRevision: string;
+  targetTerm: string;
+};
+
+export type GlossaryPageRequest = {
+  offset?: number;
+  pageSize?: number;
+};
+
+export type GlossarySearchRequest = GlossaryPageRequest & {
+  query: string;
+};
