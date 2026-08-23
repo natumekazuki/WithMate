@@ -39,6 +39,7 @@ import type { CompanionSessionSummary } from "./companion-state.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
 import { startRelatedSessionDetailsSubscription } from "./related-session-details-subscription.js";
+import type { RelatedSessionDetails } from "./related-session-details.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   createDefaultAppSettings,
@@ -496,14 +497,15 @@ export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessionsBase] = useState<Session[]>([]);
-  const [relatedSessionDetails, setRelatedSessionDetails] = useState<Array<{
-    sessionId: string;
-    taskTitle: string;
-  }>>([]);
+  const [relatedSessionDetails, setRelatedSessionDetails] = useState<RelatedSessionDetails[]>([]);
   const originSessionDetails = useMemo(() => {
     const details = new Map(relatedSessionDetails.map((session) => [session.sessionId, session]));
     for (const session of sessions) {
-      details.set(session.id, { sessionId: session.id, taskTitle: session.taskTitle });
+      details.set(session.id, {
+        sessionId: session.id,
+        status: "found",
+        taskTitle: session.taskTitle,
+      });
     }
     return [...details.values()];
   }, [relatedSessionDetails, sessions]);

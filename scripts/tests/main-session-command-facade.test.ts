@@ -1614,6 +1614,7 @@ test("MainSessionCommandFacade はactive executionとsource側outbound projectio
       state: "accepted",
       queuePosition: null,
       canCancel: false,
+      acceptanceSequence: 5,
       sourceMessageSequence: 0,
       createdAt: "2026-08-16T00:00:02.000Z",
       updatedAt: "2026-08-16T00:00:02.000Z",

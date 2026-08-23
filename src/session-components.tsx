@@ -33,6 +33,7 @@ import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { SessionQueuedTurn, SessionTurnExecutionProjection } from "./session-turn-execution.js";
+import type { RelatedSessionDetails } from "./related-session-details.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -2238,10 +2239,7 @@ export type SessionMessageColumnProps = {
   messageViewMode?: MessageViewMode;
 };
 
-export type SessionOriginDetails = {
-  sessionId: string;
-  taskTitle: string;
-};
+export type SessionOriginDetails = RelatedSessionDetails;
 
 const RELATED_SESSION_MESSAGE_PREVIEW_LENGTH = 240;
 
@@ -3126,9 +3124,16 @@ export function SessionMessageColumn({
               ? "session-origin session-outbound"
               : isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
             const originDetailsKey = `${artifactKey}-${outboundTurn ? "related-session" : "origin-session"}`;
-            const originDetailsExpanded = originDetailsKey
-              ? expandedArtifacts[originDetailsKey] ?? false
-              : false;
+            const currentFindMatch = messageFindMatches[activeCurrentFindMatch] ?? null;
+            const findExpandsOutboundMessage = Boolean(
+              outboundTurn
+              && findOpen
+              && hasFindQuery
+              && currentFindMatch?.kind === "message"
+              && currentFindMatch.messageIndex === absoluteIndex,
+            );
+            const originDetailsExpanded = (expandedArtifacts[originDetailsKey] ?? false)
+              || findExpandsOutboundMessage;
             const currentOriginSession = sessionInitiator
               ? originSessionDetails.find((details) => details.sessionId === sessionInitiator.sessionId) ?? null
               : outboundTurn
@@ -3283,7 +3288,8 @@ export function SessionMessageColumn({
                           <dt>Session ID</dt>
                           <dd><code>{outboundTurn?.relatedSession.sessionId ?? sessionInitiator?.sessionId}</code></dd>
                         </div>
-                        {currentOriginSession ? (
+                        {currentOriginSession?.status === "found"
+                        || (currentOriginSession?.status === "error" && currentOriginSession.taskTitle) ? (
                           <div>
                             <dt>タイトル</dt>
                             <dd>
@@ -3292,7 +3298,9 @@ export function SessionMessageColumn({
                                   className="origin-session-link"
                                   type="button"
                                   onClick={() => onOpenOriginSession(outboundTurn?.relatedSession.sessionId ?? sessionInitiator!.sessionId)}
-                                  aria-label={`${currentOriginSession.taskTitle}を別Windowで開く`}
+                                  aria-label={currentOriginSession.status === "error"
+                                    ? `${currentOriginSession.taskTitle}を別Windowで開く（最新情報の取得に失敗）`
+                                    : `${currentOriginSession.taskTitle}を別Windowで開く`}
                                 >
                                   <span>{currentOriginSession.taskTitle}</span>
                                   <span aria-hidden="true">↗</span>
@@ -3301,7 +3309,7 @@ export function SessionMessageColumn({
                             </dd>
                           </div>
                         ) : null}
-                        {outboundTurn && !currentOriginSession ? (
+                        {outboundTurn && currentOriginSession?.status === "missing" ? (
                           <div>
                             <dt>タイトル</dt>
                             <dd>
@@ -3310,6 +3318,25 @@ export function SessionMessageColumn({
                                 type="button"
                                 disabled
                                 aria-label={`${outboundTurn.relatedSession.titleSnapshot}は削除済みのため開けません`}
+                              >
+                                <span>{outboundTurn.relatedSession.titleSnapshot}</span>
+                              </button>
+                            </dd>
+                          </div>
+                        ) : null}
+                        {outboundTurn && (!currentOriginSession
+                          || currentOriginSession.status === "loading"
+                          || (currentOriginSession.status === "error" && !currentOriginSession.taskTitle)) ? (
+                          <div>
+                            <dt>タイトル</dt>
+                            <dd>
+                              <button
+                                className="origin-session-link"
+                                type="button"
+                                disabled
+                                aria-label={!currentOriginSession || currentOriginSession.status === "loading"
+                                  ? `${outboundTurn.relatedSession.titleSnapshot}の存在を確認中のため開けません`
+                                  : `${outboundTurn.relatedSession.titleSnapshot}の情報取得に失敗したため開けません`}
                               >
                                 <span>{outboundTurn.relatedSession.titleSnapshot}</span>
                               </button>

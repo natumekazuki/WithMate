@@ -37,6 +37,7 @@ import {
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
@@ -177,6 +178,7 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
@@ -245,10 +247,15 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
 test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const pageRequests: unknown[] = [];
+  const relatedRequests: unknown[] = [];
   const { deps } = createDeps({
     listSessionSummaryPage: (request: unknown) => {
       pageRequests.push(request);
       return { entries: [], nextCursor: null, hasMore: false };
+    },
+    listRelatedSessionSummaries: (sessionIds: unknown) => {
+      relatedRequests.push(sessionIds);
+      return [{ sessionId: "session-1", taskTitle: "Session 1" }];
     },
     listSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
   });
@@ -262,9 +269,18 @@ test("Session summary IPC は bounded requestをparseしてpage / Character usag
   assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL)?.({}), [
     { characterId: "char-1", sessionKind: "default" },
   ]);
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL)?.({}, ["session-1", "missing"]),
+    [{ sessionId: "session-1", taskTitle: "Session 1" }],
+  );
+  await assert.rejects(
+    handlers.get(WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL)?.({}, ["session-1", 1]),
+    /関連Session/,
+  );
   assert.deepEqual(pageRequests, [{
     scope: "recent", cursor: null, limit: 50, searchText: "task", sessionIds: undefined,
   }]);
+  assert.deepEqual(relatedRequests, [["session-1", "missing"]]);
 });
 
 test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {

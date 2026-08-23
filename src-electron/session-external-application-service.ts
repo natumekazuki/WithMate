@@ -64,6 +64,7 @@ import {
 import {
   SESSION_TURN_COMMUNICATION_CONTRACT_REVISION,
   canSendSessionTurn,
+  type SessionTurnAuthoritySession,
 } from "../src/session-turn-communication-authority.js";
 import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
 import {
@@ -132,6 +133,7 @@ export type SessionExternalApplicationServiceDeps = {
     description: string;
   }>>;
   resolveTurnInitiator(actorSessionId: string): Promise<Extract<TurnInitiator, { kind: "session" }> | null>;
+  getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
   projectTerminalFailureNotification?(
     execution: SessionExecution,
     request: unknown,
@@ -446,10 +448,26 @@ export class SessionExternalApplicationService {
     targetSessionId: string,
     userMessage: string,
   ): Promise<{ origin?: import("../src/session-execution.js").SessionExecutionOriginSnapshot }> {
-    const actor = await this.deps.crudService.get(actorSessionId);
+    const actor = this.deps.getTurnAuthoritySession(actorSessionId);
+    if (!actor) {
+      throw new SessionCrudError(
+        "SESSION_NOT_FOUND",
+        "The requested Session was not found.",
+        false,
+        { sessionId: actorSessionId },
+      );
+    }
     const target = actorSessionId === targetSessionId
       ? actor
-      : await this.deps.crudService.get(targetSessionId);
+      : this.deps.getTurnAuthoritySession(targetSessionId);
+    if (!target) {
+      throw new SessionCrudError(
+        "SESSION_NOT_FOUND",
+        "The requested Session was not found.",
+        false,
+        { sessionId: targetSessionId },
+      );
+    }
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
     if (!canSendSessionTurn(

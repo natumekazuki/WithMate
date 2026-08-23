@@ -280,6 +280,8 @@ async function mountSessionMessageColumn(options: {
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
+  turnExecutions?: SessionMessageColumnProps["turnExecutions"];
+  originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
@@ -296,7 +298,6 @@ async function mountSessionMessageColumn(options: {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const messageListRef = createRef<HTMLDivElement>();
-  const root = createRoot(container);
   const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
   const originalAttachEvent = (dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }).attachEvent;
   const originalDetachEvent = (dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }).detachEvent;
@@ -420,6 +421,7 @@ async function mountSessionMessageColumn(options: {
   Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
   Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const root = createRoot(container);
 
   const MessageColumn = options.component ?? SessionMessageColumn;
   const character = createCharacterProfile();
@@ -443,6 +445,8 @@ async function mountSessionMessageColumn(options: {
           character,
           messages: callbacks.messages ?? options.messages,
           messageGroups: callbacks.messageGroups ?? options.messageGroups,
+          turnExecutions: options.turnExecutions,
+          originSessionDetails: options.originSessionDetails,
           expandedArtifacts,
           messageListRef,
           isRunning: options.isRunning ?? false,
@@ -1508,7 +1512,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(container.querySelector(".message-response-actions"), null);
     await clearSelection();
   } finally {
-    mounted.cleanup();
+    await mounted.cleanup();
   }
 });
 
@@ -1986,6 +1990,7 @@ test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトル�
     }],
     originSessionDetails: [{
       sessionId: "actor-session",
+      status: "found",
       taskTitle: "現在の呼出元Session",
     }],
     onOpenOriginSession() {},
@@ -2075,6 +2080,7 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージはtarget snapshot�
     state: "accepted" as const,
     queuePosition: null,
     canCancel: false as const,
+    acceptanceSequence: 1,
     sourceMessageSequence: 0,
     createdAt: "2026-08-23T00:00:00.000Z",
     updatedAt: "2026-08-23T00:00:00.000Z",
@@ -2098,7 +2104,7 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージはtarget snapshot�
     messages: [{ role: "user", text: fullMessage }],
     expandedArtifacts: { "session-1-0-related-session": true },
     turnExecutions: [baseExecution],
-    originSessionDetails: [{ sessionId: "target-session", taskTitle: "Current Target", sessionRole: "executor" }],
+    originSessionDetails: [{ sessionId: "target-session", status: "found", taskTitle: "Current Target" }],
     onOpenOriginSession() {},
   });
   assert.match(expanded, /FULL-END/);
@@ -2118,6 +2124,7 @@ test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけ�
       state: "accepted",
       queuePosition: null,
       canCancel: false,
+      acceptanceSequence: 1,
       sourceMessageSequence: 0,
       createdAt: "2026-08-23T00:00:00.000Z",
       updatedAt: "2026-08-23T00:00:00.000Z",
@@ -2128,11 +2135,123 @@ test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけ�
         roleSnapshot: "task-coordinator",
       },
     }],
-    originSessionDetails: [],
+    originSessionDetails: [{ sessionId: "deleted-target", status: "missing" }],
     onOpenOriginSession() {},
   });
   assert.match(html, /Deleted Target/);
   assert.match(html, /disabled="" aria-label="Deleted Targetは削除済みのため開けません"/);
+});
+
+test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示しない", () => {
+  const execution = {
+    executionId: "execution-target-state",
+    sessionId: "target-session",
+    clientRequestId: null,
+    userMessage: "delegated",
+    initiator: null,
+    state: "accepted" as const,
+    queuePosition: null,
+    canCancel: false as const,
+    acceptanceSequence: 1,
+    sourceMessageSequence: 0,
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
+    relatedSession: {
+      direction: "outbound" as const,
+      sessionId: "target-session",
+      titleSnapshot: "Target Snapshot",
+      roleSnapshot: "executor" as const,
+    },
+  };
+  const loading = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-related-session": true },
+    turnExecutions: [execution],
+    originSessionDetails: [{ sessionId: "target-session", status: "loading" }],
+  });
+  assert.match(loading, /Target Snapshotの存在を確認中のため開けません/);
+  assert.doesNotMatch(loading, /削除済み/);
+
+  const error = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-related-session": true },
+    turnExecutions: [execution],
+    originSessionDetails: [{ sessionId: "target-session", status: "error" }],
+  });
+  assert.match(error, /Target Snapshotの情報取得に失敗したため開けません/);
+  assert.doesNotMatch(error, /削除済み/);
+});
+
+test("ORCH-OUTBOUND-FIND-01: preview外の現在matchを含む外向きMessageを自動展開する", async () => {
+  class TestHighlight {
+    readonly ranges: Range[] = [];
+    constructor(...ranges: Range[]) {
+      assert.equal(ranges.length, 0);
+    }
+    add(range: Range) {
+      this.ranges.push(range);
+      return this;
+    }
+  }
+  const fullMessage = `${"preview ".repeat(40)}hidden-needle`;
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "user", text: fullMessage }],
+    turnExecutions: [{
+      executionId: "execution-find-outbound",
+      sessionId: "target-session",
+      clientRequestId: null,
+      userMessage: fullMessage,
+      initiator: null,
+      state: "accepted",
+      queuePosition: null,
+      canCancel: false,
+      acceptanceSequence: 1,
+      sourceMessageSequence: 0,
+      createdAt: "2026-08-23T00:00:00.000Z",
+      updatedAt: "2026-08-23T00:00:00.000Z",
+      relatedSession: {
+        direction: "outbound",
+        sessionId: "target-session",
+        titleSnapshot: "Target",
+        roleSnapshot: "executor",
+      },
+    }],
+    originSessionDetails: [{ sessionId: "target-session", status: "found", taskTitle: "Target" }],
+  });
+
+  try {
+    const highlights = new Map<string, TestHighlight>();
+    Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
+    Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
+    assert.doesNotMatch(mounted.container.textContent ?? "", /hidden-needle/);
+
+    await act(async () => {
+      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
+        key: "f",
+        ctrlKey: true,
+        bubbles: true,
+      }));
+    });
+    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
+    assert.ok(input);
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      mounted.dom.window.HTMLInputElement.prototype,
+      "value",
+    )?.set;
+    assert.ok(setInputValue);
+    await act(async () => {
+      setInputValue.call(input, "hidden-needle");
+      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
+      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
+      input.dispatchEvent(propertyChange);
+    });
+
+    assert.match(mounted.container.textContent ?? "", /hidden-needle/);
+    assert.equal(mounted.container.querySelector(".related-session-message-preview"), null);
+    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "hidden-needle");
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {

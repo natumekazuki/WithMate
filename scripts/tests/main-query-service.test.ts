@@ -53,6 +53,11 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
   const fullSessionRequests: string[] = [];
   const service = new MainQueryService({
     getSessionSummaries: () => sourceSessions.map((session) => createSessionSummary(session)),
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getRelatedSessionSummaries: (sessionIds) => sessionIds.flatMap((sessionId) => {
+      const session = sourceSessions.find((candidate) => candidate.id === sessionId);
+      return session ? [{ sessionId, taskTitle: session.taskTitle }] : [];
+    }),
     getSession: (sessionId) => {
       fullSessionRequests.push(sessionId);
       return sourceSessions.find((session) => session.id === sessionId) ?? null;
@@ -87,6 +92,12 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
       calls.push(`terminal:${workspacePath}`);
     },
   });
+
+  assert.deepEqual(await service.listRelatedSessionSummaries(["session-2", "missing"]), [{
+    sessionId: "session-2",
+    taskTitle: "task",
+  }]);
+  assert.deepEqual(fullSessionRequests, []);
 
   assert.equal((await service.listSessionSummaries()).length, 2);
   const session = await service.getSession("session-1");

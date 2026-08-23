@@ -22,7 +22,7 @@ export function appendTurnExecutionsToMessageList(
   ));
   const outboundTurns = executions
     .filter((execution) => execution.state === "accepted")
-    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.executionId.localeCompare(right.executionId));
+    .sort((left, right) => left.acceptanceSequence - right.acceptanceSequence);
   const mergedProjection = mergeOutboundTurns(projection, outboundTurns);
   const runningInsertIndex = projectedRunningExecutions.length > 0
     ? mergedProjection.sources.findIndex((source) => (
@@ -111,6 +111,10 @@ function mergeOutboundTurns(
         merged.sources[insertionIndex]?.kind !== "turn-execution"
         || existing?.state !== "accepted"
         || existing.sourceMessageSequence > execution.sourceMessageSequence
+        || (
+          existing.sourceMessageSequence === execution.sourceMessageSequence
+          && existing.acceptanceSequence > execution.acceptanceSequence
+        )
       ) break;
       insertionIndex += 1;
     }

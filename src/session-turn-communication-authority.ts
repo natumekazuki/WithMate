@@ -6,6 +6,10 @@ export type SessionTurnCommunicationPrincipal = SessionRoleBinding & {
   sessionId: string;
 };
 
+export type SessionTurnAuthoritySession = SessionTurnCommunicationPrincipal & {
+  title: string;
+};
+
 export function canSendSessionTurn(
   actor: SessionTurnCommunicationPrincipal,
   target: SessionTurnCommunicationPrincipal,

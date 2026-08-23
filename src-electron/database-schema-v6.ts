@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
+const SESSION_EXECUTION_ORIGIN_MIGRATION_SETTING_KEY = "session_execution_origins_v6_migrated_at";
 
 export const V6_SCHEMA_STATUS = "foundation";
 
@@ -2738,7 +2739,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   db.exec(CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL);
   db.exec(CREATE_V6_SESSION_TURN_PUBLIC_CONTEXT_TABLE_SQL);
   upgradeSessionExecutionOriginSchema(db);
-  backfillSessionExecutionOrigins(db);
+  migrateSessionExecutionOriginsOnce(db);
   if (!hasValidSessionExecutionOriginSchema(db)) {
     throw new Error("Session execution origin schema is invalid.");
   }
@@ -2864,8 +2865,21 @@ function hasValidSessionExecutionOriginSchema(db: DatabaseSync, requireMessageAn
     && sql.includes("source_session_id <> target_session_id");
 }
 
-function backfillSessionExecutionOrigins(db: DatabaseSync): void {
+function migrateSessionExecutionOriginsOnce(db: DatabaseSync): void {
   if (!tableExists(db, "session_executions_v6") || !tableExists(db, "session_execution_origins_v6")) return;
+  const marker = db.prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
+    .get(SESSION_EXECUTION_ORIGIN_MIGRATION_SETTING_KEY);
+  if (marker) return;
+  if (tableExists(db, "session_terminal_failure_notification_deliveries_v6")) {
+    db.exec(`
+      DELETE FROM session_execution_origins_v6
+      WHERE execution_id IN (
+        SELECT notification_execution_id
+        FROM session_terminal_failure_notification_deliveries_v6
+        WHERE notification_execution_id IS NOT NULL
+      )
+    `);
+  }
   db.exec(`
     INSERT OR IGNORE INTO session_execution_origins_v6 (
       execution_id, execution_sequence, source_session_id, target_session_id,
@@ -2899,9 +2913,19 @@ function backfillSessionExecutionOrigins(db: DatabaseSync): void {
     INNER JOIN sessions_v6 AS target ON target.id = execution.session_id
     INNER JOIN session_role_bindings_v6 AS binding ON binding.session_id = target.id
     WHERE json_type(execution.request_json, '$.initiator.sessionId') = 'text'
+      AND json_extract(execution.request_json, '$.initiator.kind') = 'session'
       AND json_type(execution.request_json, '$.turn.userMessage') = 'text'
       AND trim(json_extract(execution.request_json, '$.initiator.sessionId')) <> execution.session_id
+      AND NOT EXISTS (
+        SELECT 1
+        FROM session_terminal_failure_notification_deliveries_v6 AS delivery
+        WHERE delivery.notification_execution_id = execution.id
+      )
   `);
+  db.prepare(`
+    INSERT OR IGNORE INTO app_settings (setting_key, setting_value, updated_at)
+    VALUES (?, '1', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  `).run(SESSION_EXECUTION_ORIGIN_MIGRATION_SETTING_KEY);
 }
 
 function upgradeSessionExecutionOriginSchema(db: DatabaseSync): void {

@@ -30,7 +30,12 @@ function queuedTurn(executionId: string, queuePosition: number, userMessage: str
   };
 }
 
-function outboundTurn(executionId: string, sourceMessageSequence: number, userMessage: string): SessionOutboundTurn {
+function outboundTurn(
+  executionId: string,
+  sourceMessageSequence: number,
+  userMessage: string,
+  acceptanceSequence = sourceMessageSequence + 1,
+): SessionOutboundTurn {
   return {
     executionId,
     sessionId: "target-session",
@@ -40,6 +45,7 @@ function outboundTurn(executionId: string, sourceMessageSequence: number, userMe
     state: "accepted",
     queuePosition: null,
     canCancel: false,
+    acceptanceSequence,
     sourceMessageSequence,
     createdAt: `2026-08-16T00:00:0${sourceMessageSequence + 1}.000Z`,
     updatedAt: `2026-08-16T00:00:0${sourceMessageSequence + 1}.000Z`,
@@ -376,4 +382,21 @@ test("ORCH-OUTBOUND-ORDER-01: outbound Turnはacceptance時のsource message位�
     "future turn",
   ]);
   assert.equal(projection.turnExecutions[1]?.executionId, "execution-outbound");
+});
+
+test("ORCH-OUTBOUND-ORDER-02: 同一anchor・同一時刻でもcanonical acceptance sequence順を維持する", () => {
+  const base = buildMessageListProjection([
+    { role: "user", text: "before" },
+    { role: "assistant", text: "after" },
+  ], [], "session-1");
+  const first = outboundTurn("z-first", 0, "first", 10);
+  const second = { ...outboundTurn("a-second", 0, "second", 11), createdAt: first.createdAt, updatedAt: first.updatedAt };
+
+  const projection = appendTurnExecutionsToMessageList(base, [second, first], "idle");
+
+  assert.deepEqual(projection.messages.map((message) => message.text), ["before", "first", "second", "after"]);
+  assert.deepEqual(
+    projection.turnExecutions.filter(Boolean).map((execution) => execution?.executionId),
+    ["z-first", "a-second"],
+  );
 });

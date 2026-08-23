@@ -97,6 +97,12 @@ const defaultCommunicationCrudService = {
   async rename() { throw new Error("unused"); },
 };
 
+function getDefaultTurnAuthoritySession(sessionId: string) {
+  return sessionId === "session-actor"
+    ? communicationSession(sessionId, "overall-coordinator", sessionId, null, 0)
+    : communicationSession(sessionId, "executor", "session-actor", "session-actor", 1);
+}
+
 function executeBound(
   service: SessionExternalApplicationService,
   operation: Parameters<SessionExternalApplicationService["execute"]>[0],
@@ -163,6 +169,7 @@ test("SESSION-CRUD-SCHEMA-01: session CRUDを専用serviceへdispatchしstable e
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() { throw new Error("unused"); },
       async run() { throw new Error("unused"); },
@@ -477,6 +484,7 @@ test("APPLIED-ID-01: final response envelope超過でもmutationのeffectとreso
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() {},
       async run() { return oversizedExecution; },
@@ -947,6 +955,7 @@ test("Session application service persists catalog revision with the turn and re
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() {},
       async run(input) {
@@ -1141,6 +1150,7 @@ test("RL-01: applied turn.run reports an oversized inline result with applied ef
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() {},
       async run() {
@@ -1175,6 +1185,7 @@ test("TN-PROJ-06: turn.run/enqueue/get/listは同じterminal notification projec
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     projectTerminalFailureNotification: () => projectedNotification,
     executionService: {
       beginShutdown() {},
@@ -1237,6 +1248,13 @@ test("I-01: canonical replayはcatalog revision更新後もstale validationよ�
 test("ID-02/ID-04: actorとtargetを分離しfingerprintをstable actor identityへ結び付ける", async () => {
   const mutations: Array<{ operation: "run" | "enqueue"; input: any }> = [];
   let snapshotRevision = 0;
+  let publicGetCalls = 0;
+  const getTurnAuthoritySession = (sessionId: string) => {
+    if (sessionId === "session-b") return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
+    if (sessionId === "session-c") return communicationSession(sessionId, "executor", "session-b", "session-b", 1);
+    if (sessionId === "session-d") return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
+    return null;
+  };
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator: async (actorSessionId) => {
       snapshotRevision += 1;
@@ -1251,14 +1269,12 @@ test("ID-02/ID-04: actorとtargetを分離しfingerprintをstable actor identity
       };
     },
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    getTurnAuthoritySession,
     crudService: {
       ...defaultCommunicationCrudService,
-      async get(sessionId: string) {
-        if (sessionId === "session-b") return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
-        if (sessionId === "session-c") return communicationSession(sessionId, "executor", "session-b", "session-b", 1);
-        if (sessionId === "session-d") return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
-        if (sessionId === "missing-session") throw new SessionCrudError("SESSION_NOT_FOUND", "missing");
-        throw new SessionCrudError("SESSION_NOT_FOUND", "missing");
+      async get() {
+        publicGetCalls += 1;
+        throw new Error("authority判定でpublic Session detailを取得してはいけない");
       },
     },
     executionService: {
@@ -1324,6 +1340,7 @@ test("ID-02/ID-04: actorとtargetを分離しfingerprintをstable actor identity
   assert.equal("error" in missingTarget && missingTarget.error.code, "INVALID_INPUT");
   assert.equal("error" in missingCanonicalTarget && missingCanonicalTarget.error.code, "SESSION_NOT_FOUND");
   assert.equal(mutations.length, beforeInvalid);
+  assert.equal(publicGetCalls, 0);
 });
 
 test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexecutionを作成しない", async () => {
@@ -1332,6 +1349,7 @@ test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexe
     resolveTurnInitiator: async () => null,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() {},
       async run() { runInvoked = true; return execution; },
@@ -1352,6 +1370,7 @@ test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexe
 test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsource snapshotをactorと分離して保存する", async () => {
   const mutations: any[] = [];
   const resolvedSessions: string[] = [];
+  const authoritySessions: string[] = [];
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator: async (sessionId) => ({
       kind: "session",
@@ -1363,6 +1382,16 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
       },
     }),
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    getTurnAuthoritySession(sessionId) {
+      authoritySessions.push(sessionId);
+      if (sessionId === "actor-session") {
+        return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
+      }
+      if (sessionId === "source-session") {
+        return communicationSession(sessionId, "executor", "actor-session", "actor-session", 1);
+      }
+      return null;
+    },
     crudService: {
       async get(sessionId: string) {
         resolvedSessions.push(sessionId);
@@ -1408,7 +1437,8 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.sessionId, "source-session");
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.character.name,
     "Character source-session");
-  assert.deepEqual(resolvedSessions, ["actor-session", "source-session", "source-session", "target-session"]);
+  assert.deepEqual(authoritySessions, ["actor-session", "source-session"]);
+  assert.deepEqual(resolvedSessions, ["source-session", "target-session"]);
 
   const beforeRejected = mutations.length;
   const same = await executeBound(service, "turn.run", {
@@ -1492,6 +1522,7 @@ test("ER-01: 副作用前のSession domain errorをstable codeとnot_appliedへ�
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() {},
       async run() {
@@ -1581,6 +1612,7 @@ test("EXT-INTERACTION-11/EXT-OBSERVATION-12: turn.run waitはCopilotでも最初
     resolveTurnInitiator,
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
     executionService: {
       beginShutdown() {},
       async run() {

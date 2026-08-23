@@ -211,6 +211,27 @@ test("ORCH-AUTH-02: CLIとMCPのHTTP transportはshared application authorityへ
       character: { characterId: "character-actor", name: "Actor", iconFilePath: "" },
     }),
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    getTurnAuthoritySession(sessionId) {
+      return sessionId === "session-actor"
+        ? {
+          sessionId,
+          title: "Actor",
+          sessionRole: "overall-coordinator",
+          roleContractRevision: 1,
+          rootSessionId: sessionId,
+          parentSessionId: null,
+          delegationDepth: 0,
+        }
+        : {
+          sessionId,
+          title: "Other root",
+          sessionRole: "overall-coordinator",
+          roleContractRevision: 1,
+          rootSessionId: sessionId,
+          parentSessionId: null,
+          delegationDepth: 0,
+        };
+    },
     crudService: {
       async get(sessionId: string) {
         if (sessionId === "session-actor") {
@@ -486,6 +507,27 @@ test("APPLIED-ID-01: HTTP境界のfinal envelope超過でもmutationのeffectと
       },
     }),
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    getTurnAuthoritySession(sessionId) {
+      return sessionId === "session-actor"
+        ? {
+          sessionId,
+          title: "Actor",
+          sessionRole: "overall-coordinator",
+          roleContractRevision: 1,
+          rootSessionId: sessionId,
+          parentSessionId: null,
+          delegationDepth: 0,
+        }
+        : {
+          sessionId,
+          title: "Target",
+          sessionRole: "executor",
+          roleContractRevision: 1,
+          rootSessionId: "session-actor",
+          parentSessionId: "session-actor",
+          delegationDepth: 1,
+        };
+    },
     isProviderEnabled: () => true,
     executionService: {
       beginShutdown() {},

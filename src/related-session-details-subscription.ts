@@ -1,42 +1,68 @@
 import type { SessionSummaryInvalidation } from "./session-state.js";
+import type { RelatedSessionDetails } from "./related-session-details.js";
 import type { WithMateWindowApi } from "./withmate-window-api.js";
 
-export type RelatedSessionDetails = {
-  sessionId: string;
-  taskTitle: string;
-};
+type RelatedSessionDetailsApi = Pick<
+  WithMateWindowApi,
+  "listRelatedSessionSummaries" | "subscribeSessionInvalidation"
+>;
 
-type RelatedSessionDetailsApi = Pick<WithMateWindowApi, "getSession" | "subscribeSessionInvalidation">;
+type RelatedSessionDetailsUpdater = (
+  update: (current: RelatedSessionDetails[]) => RelatedSessionDetails[],
+) => void;
 
 export function startRelatedSessionDetailsSubscription(input: {
   api: RelatedSessionDetailsApi | null;
   sessionIds: readonly string[];
-  applyDetails: (details: RelatedSessionDetails[]) => void;
+  applyDetails: RelatedSessionDetailsUpdater;
   onError?: (error: unknown) => void;
 }): () => void {
   const sessionIds = [...new Set(input.sessionIds.filter(Boolean))];
-  input.applyDetails([]);
-  if (!input.api || sessionIds.length === 0) return () => undefined;
+  const targetIds = new Set(sessionIds);
+  input.applyDetails((current) => {
+    const currentById = new Map(current.map((details) => [details.sessionId, details]));
+    return sessionIds.map((sessionId) => currentById.get(sessionId) ?? { sessionId, status: "loading" });
+  });
+  if (sessionIds.length === 0) return () => undefined;
+  if (!input.api) {
+    input.applyDetails((current) => current.map((details): RelatedSessionDetails => (
+      details.status === "found" || (details.status === "error" && details.taskTitle)
+        ? { sessionId: details.sessionId, status: "error", taskTitle: details.taskTitle }
+        : { sessionId: details.sessionId, status: "error" }
+    )));
+    return () => undefined;
+  }
+  const api = input.api;
 
   let active = true;
   let refreshRevision = 0;
-  const targetIds = new Set(sessionIds);
   const refresh = async () => {
     const revision = ++refreshRevision;
     try {
-      const sessions = await Promise.all(sessionIds.map((sessionId) => input.api!.getSession(sessionId)));
+      const summaries = await api.listRelatedSessionSummaries(sessionIds);
       if (!active || revision !== refreshRevision) return;
-      input.applyDetails(sessions.flatMap((session) => session
-        ? [{ sessionId: session.id, taskTitle: session.taskTitle }]
-        : []));
+      const summariesById = new Map(summaries.map((summary) => [summary.sessionId, summary]));
+      input.applyDetails(() => sessionIds.map((sessionId): RelatedSessionDetails => {
+        const summary = summariesById.get(sessionId);
+        return summary
+          ? { sessionId, status: "found", taskTitle: summary.taskTitle }
+          : { sessionId, status: "missing" };
+      }));
     } catch (error) {
-      if (active && revision === refreshRevision) input.onError?.(error);
+      if (active && revision === refreshRevision) {
+        input.applyDetails((current) => current.map((details): RelatedSessionDetails => (
+          details.status === "found" || (details.status === "error" && details.taskTitle)
+            ? { sessionId: details.sessionId, status: "error", taskTitle: details.taskTitle }
+            : { sessionId: details.sessionId, status: "error" }
+        )));
+        input.onError?.(error);
+      }
     }
   };
   const shouldRefresh = (payload: SessionSummaryInvalidation) => (
     payload.scope === "all" || payload.sessionIds.some((sessionId) => targetIds.has(sessionId))
   );
-  const unsubscribe = input.api.subscribeSessionInvalidation((payload) => {
+  const unsubscribe = api.subscribeSessionInvalidation((payload) => {
     if (active && shouldRefresh(payload)) void refresh();
   });
   void refresh();

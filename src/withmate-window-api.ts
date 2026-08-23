@@ -33,6 +33,7 @@ import type {
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
+import type { RelatedSessionSummary } from "./related-session-details.js";
 import type {
   CreatePromptTemplateInput,
   PromptTemplate,
@@ -179,6 +180,7 @@ export type WithMateWindowCatalogApi = {
 
 export type WithMateWindowSessionApi = {
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
+  listRelatedSessionSummaries(sessionIds: readonly string[]): Promise<RelatedSessionSummary[]>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;

@@ -125,6 +125,7 @@ import {
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
+import type { RelatedSessionSummary } from "../src/related-session-details.js";
 import type {
   CancelSessionExecutionRequest,
   CancelSessionExecutionResult,
@@ -246,6 +247,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
@@ -366,6 +368,7 @@ export type MainIpcRegistrationDeps = {
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listRelatedSessionSummaries(sessionIds: readonly string[]): Awaitable<RelatedSessionSummary[]>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
@@ -672,6 +675,7 @@ type MainIpcSessionQueryDeps = Pick<
   | "getFilePreviewWindowResource"
   | "isFilePreviewTokenWindow"
   | "listSessionSummaryPage"
+  | "listRelatedSessionSummaries"
   | "listSessionCharacterUsage"
   | "listCompanionSessionSummaries"
   | "listSessionAuditLogs"
@@ -1409,6 +1413,12 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     (_event, request: SessionSummaryPageRequest | null | undefined) =>
       deps.listSessionSummaryPage(parseSessionSummaryPageRequest(request)),
   );
+  ipcMain.handle(WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL, (_event, sessionIds: unknown) => {
+    if (!Array.isArray(sessionIds) || sessionIds.some((sessionId) => typeof sessionId !== "string")) {
+      throw new Error("関連Sessionの指定が正しくありません。");
+    }
+    return deps.listRelatedSessionSummaries(sessionIds);
+  });
   ipcMain.handle(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL, () => deps.listSessionCharacterUsage());
   ipcMain.handle(WITHMATE_LIST_COMPANION_SESSION_SUMMARIES_CHANNEL, () => deps.listCompanionSessionSummaries());
   ipcMain.handle(WITHMATE_LIST_SESSION_AUDIT_LOGS_CHANNEL, (_event, sessionId: string) => deps.listSessionAuditLogs(sessionId));

@@ -21,12 +21,14 @@ import {
   cloneSessions,
 } from "../src/app-state.js";
 import { getProviderAppSettings, resolveProviderSkillRootPath, type AppSettings } from "../src/provider-settings-state.js";
+import type { RelatedSessionSummary } from "../src/related-session-details.js";
 import { extractComposerAttachmentReferenceCandidates } from "../src/path-reference.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 
 type MainQueryServiceDeps = {
   getSessionSummaries(): Awaitable<SessionSummary[]>;
   getSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  getRelatedSessionSummaries(sessionIds: readonly string[]): Awaitable<RelatedSessionSummary[]>;
   getSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   getSession(sessionId: string): Awaitable<Session | null>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Awaitable<MessageArtifact | null>;
@@ -78,6 +80,10 @@ export class MainQueryService {
       nextCursor: page.nextCursor,
       hasMore: page.hasMore,
     };
+  }
+
+  async listRelatedSessionSummaries(sessionIds: readonly string[]): Promise<RelatedSessionSummary[]> {
+    return (await this.deps.getRelatedSessionSummaries(sessionIds)).map((summary) => ({ ...summary }));
   }
 
   async listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {

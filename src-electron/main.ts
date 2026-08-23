@@ -1279,6 +1279,10 @@ async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null
   return requireMainQueryService().listSessionSummaryPage(request);
 }
 
+async function listRelatedSessionSummaries(sessionIds: readonly string[]) {
+  return requireMainQueryService().listRelatedSessionSummaries(sessionIds);
+}
+
 async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
   return requireMainQueryService().listSessionCharacterUsage();
 }
@@ -1632,6 +1636,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               },
               sessionQuery: {
                 listSessionSummaryPage: (request) => listSessionSummaryPage(request),
+                listRelatedSessionSummaries: (sessionIds) => listRelatedSessionSummaries(sessionIds),
                 listSessionCharacterUsage: () => listSessionCharacterUsage(),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
@@ -1942,6 +1947,7 @@ function requireMainQueryService(): MainQueryService {
         }
         return storage.listHomeSessionSummaryPage(request);
       },
+      getRelatedSessionSummaries: (sessionIds) => requireSessionStorageV6().listRelatedSessionSummaries(sessionIds),
       getSessionCharacterUsage: () => {
         const storage = requireSessionStorage();
         if (!storage.listSessionCharacterUsage) {
@@ -3268,6 +3274,7 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
     sessionExternalApplicationService = new SessionExternalApplicationService({
       executionService: requireSessionExecutionService(),
       crudService: requireSessionCrudService(),
+      getTurnAuthoritySession: (sessionId) => requireSessionStorageV6().getSessionTurnAuthority(sessionId),
       fileService: requireSessionFileService(),
       interactionService: requireSessionInteractionService(),
       coordinationService: requireCoordinationEventService(),

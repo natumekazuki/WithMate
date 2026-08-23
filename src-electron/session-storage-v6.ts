@@ -19,11 +19,13 @@ import {
   type SessionSummaryPageRequest,
   type SessionSummary,
 } from "../src/session-state.js";
+import type { RelatedSessionSummary } from "../src/related-session-details.js";
 import {
   requireSessionRoleBinding,
   sameSessionRoleBinding,
   type SessionRoleBinding,
 } from "../src/session-role-binding.js";
+import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
@@ -102,6 +104,21 @@ type SessionIdRow = {
 
 type SessionCharacterUsageRow = {
   character_id: string | null;
+};
+
+type RelatedSessionSummaryRow = {
+  session_id: string;
+  task_title: string;
+};
+
+type SessionTurnAuthorityRow = {
+  session_id: string;
+  title: string;
+  session_role: string;
+  role_contract_revision: number;
+  root_session_id: string;
+  parent_session_id: string | null;
+  delegation_depth: number;
 };
 
 type SessionV6SummaryBaseRow = Omit<SessionV6Row, "character_snapshot_json">;
@@ -508,6 +525,41 @@ export class SessionStorageV6 {
       ORDER BY last_active_at DESC, id DESC
     `).all() as SessionV6SummaryRow[];
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummaryProjection(row)));
+  }
+
+  listRelatedSessionSummaries(sessionIds: readonly string[]): RelatedSessionSummary[] {
+    const normalizedIds = [...new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean))];
+    if (normalizedIds.length === 0) return [];
+    const rows = this.db.prepare(`
+      SELECT s.id AS session_id, s.title AS task_title
+      FROM json_each(?) AS requested
+      INNER JOIN sessions_v6 AS s ON s.id = requested.value
+      ORDER BY requested.key ASC
+    `).all(JSON.stringify(normalizedIds)) as RelatedSessionSummaryRow[];
+    return rows.map((row) => ({ sessionId: row.session_id, taskTitle: row.task_title }));
+  }
+
+  getSessionTurnAuthority(sessionId: string): SessionTurnAuthoritySession | null {
+    const row = this.db.prepare(`
+      SELECT s.id AS session_id, s.title,
+             b.session_role, b.role_contract_revision, b.root_session_id,
+             b.parent_session_id, b.delegation_depth
+      FROM sessions_v6 AS s
+      INNER JOIN session_role_bindings_v6 AS b ON b.session_id = s.id
+      WHERE s.id = ?
+    `).get(sessionId.trim()) as SessionTurnAuthorityRow | undefined;
+    if (!row) return null;
+    return {
+      sessionId: row.session_id,
+      title: row.title,
+      ...requireSessionRoleBinding(row.session_id, {
+        sessionRole: row.session_role,
+        roleContractRevision: row.role_contract_revision,
+        rootSessionId: row.root_session_id,
+        parentSessionId: row.parent_session_id,
+        delegationDepth: row.delegation_depth,
+      }),
+    };
   }
 
   listHomeSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {

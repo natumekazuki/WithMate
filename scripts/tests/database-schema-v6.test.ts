@@ -357,6 +357,20 @@ describe("database-schema-v6", () => {
       );
 
       ensureV6Schema(db);
+      db.prepare(`
+        INSERT INTO session_executions_v6 (
+          id, session_id, operation, state, request_json, created_at, updated_at
+        ) VALUES (?, ?, 'turn.enqueue', 'queued', ?, ?, ?)
+      `).run(
+        "post-migration-cross-session",
+        "target-session",
+        JSON.stringify({
+          initiator: { kind: "session", sessionId: "source-session" },
+          turn: { userMessage: "must not be runtime-backfilled" },
+        }),
+        "2026-08-23T00:00:02.000Z",
+        "2026-08-23T00:00:02.000Z",
+      );
       ensureV6Schema(db);
 
       const origins = db.prepare(`
@@ -374,6 +388,75 @@ describe("database-schema-v6", () => {
         source_message_seq_anchor: 2,
         user_message: "legacy request",
       }]);
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM app_settings WHERE setting_key = 'session_execution_origins_v6_migrated_at'").get() as { count: number }).count,
+        1,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("ORCH-OUTBOUND-MIGRATE-02: terminal failure通知executionをAgent-originへ変換しない", () => {
+    const db = createV6Schema();
+    try {
+      const insertSession = db.prepare(`
+        INSERT INTO sessions_v6 (
+          id, title, state, provider_id, catalog_revision, model_id,
+          approval_mode, created_at, updated_at, last_active_at
+        ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
+      `);
+      insertSession.run("source-session", "Source", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z");
+      insertSession.run("target-session", "Target", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z", "2026-08-23T00:00:00.000Z");
+      const insertExecution = db.prepare(`
+        INSERT INTO session_executions_v6 (
+          id, session_id, operation, state, request_json, created_at, updated_at
+        ) VALUES (?, ?, 'turn.enqueue', ?, ?, ?, ?)
+      `);
+      insertExecution.run(
+        "source-execution",
+        "source-session",
+        "failed",
+        JSON.stringify({ initiator: { kind: "user" }, turn: { userMessage: "failed" } }),
+        "2026-08-23T00:00:01.000Z",
+        "2026-08-23T00:00:01.000Z",
+      );
+      insertExecution.run(
+        "notification-execution",
+        "target-session",
+        "queued",
+        JSON.stringify({
+          initiator: { kind: "session", sessionId: "source-session" },
+          turn: { userMessage: "terminal failure notification" },
+        }),
+        "2026-08-23T00:00:02.000Z",
+        "2026-08-23T00:00:02.000Z",
+      );
+      db.prepare(`
+        INSERT INTO session_terminal_failure_notification_deliveries_v6 (
+          id, source_execution_id, source_session_id, terminal_state, target_session_id,
+          contract_version, state, enqueue_idempotency_key, notification_execution_id,
+          attempt_count, next_attempt_at, deadline_at, created_at, updated_at
+        ) VALUES (?, ?, ?, 'failed', ?, 1, 'enqueued', ?, ?, 1, ?, ?, ?, ?)
+      `).run(
+        "delivery-1",
+        "source-execution",
+        "source-session",
+        "target-session",
+        "notification-key",
+        "notification-execution",
+        "2026-08-23T00:00:03.000Z",
+        "2026-08-24T00:00:00.000Z",
+        "2026-08-23T00:00:02.000Z",
+        "2026-08-23T00:00:02.000Z",
+      );
+
+      ensureV6Schema(db);
+
+      assert.equal(
+        (db.prepare("SELECT COUNT(*) AS count FROM session_execution_origins_v6").get() as { count: number }).count,
+        0,
+      );
     } finally {
       db.close();
     }

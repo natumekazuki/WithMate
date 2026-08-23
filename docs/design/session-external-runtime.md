@@ -150,7 +150,7 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 ### Session間Turn authorityと送信元projection
 
-Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。許可する関係は次のとおりとする。
+Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。authority入力はSQLiteからSession ID、title、canonical Role tupleだけを取得する専用queryで解決し、公開用Session CRUDやworkspaceのGit branch取得を経由しない。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。許可する関係は次のとおりとする。
 
 | actor Role | 許可するtarget |
 | --- | --- |
@@ -161,9 +161,9 @@ Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したact
 
 異なるroot、孫executor、executorの兄弟または別branch、存在しないtargetはexecution、queue、Coordination Eventを作る前に拒否する。canonical replayはcurrent Role bindingとtargetの再検証より先に解決し、既存executionの再送結果をcurrent authorityの変化で置き換えない。GUI送信はtrusted user invocationとして同じexecution ownerを使うが、このAgent間authorityの対象にはしない。
 
-cross-Session Turnのacceptanceでは、target側executionを正本としたまま`session_execution_origins_v6`へsource Session ID、canonical target Session ID、operation、target titleとRoleのsnapshot、送信本文、source Session message sequence anchor、acceptance時刻を同じtransactionで保存する。source queryは`(source_session_id, execution_sequence)` indexを使い、`request_json`を走査しない。既存executionの移行時だけ`request_json`から補完する。
+cross-Session Turnのacceptanceでは、target側executionを正本としたまま`session_execution_origins_v6`へsource Session ID、canonical target Session ID、operation、target titleとRoleのsnapshot、送信本文、source Session message sequence anchor、canonical execution sequence、acceptance時刻を同じtransactionで保存する。source queryは`(source_session_id, execution_sequence)` indexを使い、`request_json`を走査しない。既存executionの補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionに限定して、terminal failure notification executionを除外する。
 
-source SessionWindowはorigin rowから外向きの関連Sessionメッセージをmessage sequence anchorの位置へ投影し、source側のchat messageを複製しない。targetのrename後も保存snapshotを履歴表示に使い、遷移先はcanonical target Session IDから現在値を解決する。Session invalidationで現在値を再取得し、target削除後もorigin rowを残して履歴表示を維持したままopen操作だけを無効にする。execution state変更はtargetとsourceの両SessionWindowへ再取得通知を送る。
+source SessionWindowはorigin rowから外向きの関連Sessionメッセージをmessage sequence anchorの位置へcanonical execution sequence順で投影し、source側のchat messageを複製しない。targetのrename後も保存snapshotを履歴表示に使い、遷移先はcanonical target Session IDから現在値を解決する。現在値はIDとtitleだけを返すbatch summary queryで取得し、初回、missing、query errorをID単位で区別してrefresh中は直前値を維持する。target削除後もorigin rowを残して履歴表示を維持したままopen操作だけを無効にする。execution state変更はtargetとsourceの両SessionWindowへ再取得通知を送る。
 
 Coordination Eventはこの通信経路の監査・可視化境界であり、Turnのtransport、delivery、source projectionを所有しない。Coordination Eventの有無でexecution acceptanceまたはorigin保存を変えない。
 

@@ -31,6 +31,7 @@ export type SessionOutboundTurn = SessionTurnExecutionProjectionBase & {
   state: "accepted";
   queuePosition: null;
   canCancel: false;
+  acceptanceSequence: number;
   sourceMessageSequence: number;
   relatedSession: {
     direction: "outbound";
