@@ -417,8 +417,7 @@ export class SessionExternalApplicationService {
         "TERMINAL_NOTIFICATION_SAME_SESSION",
       );
     }
-    await this.deps.crudService.get(input.sessionId);
-    await this.deps.crudService.get(notification.targetSessionId);
+    this.requireSessionTurnAuthority(input.sessionId, notification.targetSessionId);
     const sourceSession = await this.requireTurnInitiator(input.sessionId);
     return {
       terminalFailureNotification: {
@@ -448,6 +447,22 @@ export class SessionExternalApplicationService {
     targetSessionId: string,
     userMessage: string,
   ): Promise<{ origin?: import("../src/session-execution.js").SessionExecutionOriginSnapshot }> {
+    const { actor, target } = this.requireSessionTurnAuthority(actorSessionId, targetSessionId);
+    if (actor.sessionId === target.sessionId) return {};
+    return {
+      origin: {
+        sourceSessionId: actor.sessionId,
+        targetSessionTitle: target.title,
+        targetSessionRole: target.sessionRole,
+        userMessage,
+      },
+    };
+  }
+
+  private requireSessionTurnAuthority(
+    actorSessionId: string,
+    targetSessionId: string,
+  ): { actor: SessionTurnAuthoritySession; target: SessionTurnAuthoritySession } {
     const actor = this.deps.getTurnAuthoritySession(actorSessionId);
     if (!actor) {
       throw new SessionCrudError(
@@ -484,15 +499,7 @@ export class SessionExternalApplicationService {
         "SESSION_TURN_FORBIDDEN",
       );
     }
-    if (actor.sessionId === target.sessionId) return {};
-    return {
-      origin: {
-        sourceSessionId: actor.sessionId,
-        targetSessionTitle: target.title,
-        targetSessionRole: target.sessionRole,
-        userMessage,
-      },
-    };
+    return { actor, target };
   }
 
   private list(input: SessionRuntimeListInput): { items: SessionRuntimePublicExecution[]; nextCursor?: string } {

@@ -32,6 +32,7 @@ async function createFixture(options: {
   exhaustionWriteFailures?: number;
   queueRetryDelayMs?: number;
   shutdownGraceMs?: number;
+  onExecutionChanged?: (executionId: string) => void;
   onExecutionTerminal?: (executionId: string, reason: "execution_canceled" | "execution_terminal", occurredAt: string) => void;
   normalizeRequest?: (request: unknown) => unknown;
   onCancelRunningTurn?: (input: {
@@ -140,6 +141,7 @@ async function createFixture(options: {
     },
     queueRetryDelayMs: options.queueRetryDelayMs,
     shutdownGraceMs: options.shutdownGraceMs,
+    onExecutionChanged: options.onExecutionChanged,
     onExecutionTerminal: options.onExecutionTerminal,
   });
 
@@ -887,6 +889,38 @@ describe("SessionExecutionService", () => {
       assert.equal(fixture.storage.get(second.id)?.state, "running");
       fixture.dispatches.get(second.id)?.resolve({ state: "completed", result: null });
       await fixture.service.waitForTerminal("session-1", second.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXECUTION-OBSERVER-01: changed observer例外後もimmediate executionをdispatchする", async () => {
+    const fixture = await createFixture({
+      onExecutionChanged: () => { throw new Error("observer failed"); },
+    });
+    try {
+      const running = await fixture.service.run(createInput(1));
+      await waitFor(() => fixture.dispatches.has(running.id));
+      assert.equal(fixture.storage.get(running.id)?.state, "running");
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      assert.equal((await fixture.service.waitForTerminal("session-1", running.id)).state, "completed");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXECUTION-OBSERVER-01: changed observer例外後もqueue admissionとdrainを継続する", async () => {
+    const fixture = await createFixture({
+      onExecutionChanged: () => { throw new Error("observer failed"); },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(1));
+      await waitFor(() => fixture.dispatches.has(queued.id));
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      assert.equal((await fixture.service.waitForTerminal("session-1", queued.id)).state, "completed");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

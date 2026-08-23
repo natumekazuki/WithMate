@@ -171,9 +171,11 @@ GUI scheduleはtrusted user invocationの同一Session enqueueであり、Agent 
 
 ### Terminal failure notification
 
-`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。sourceとtargetが同一、targetが不存在または非対応kind、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
+`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。通知Turnのactorは失敗した主target Sessionであり、そのSessionから通知先への関係もAgent間Turnと同じcanonical Role / hierarchy authorityで検証する。sourceとtargetが同一、targetが不存在または非対応kind、authority違反、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
 
 新規source executionには、通知先とsource SessionのCharacter ID、表示名、icon参照のcanonical snapshotを保存する。GUI由来Turn、設定のないexecution、legacy executionへ通知設定を推測しない。sourceが`failed`または`interrupted`へterminal commitした後だけdeliveryを起動し、`completed`と`canceled`は`not_triggered`として投影する。notification executionは保存済みsource snapshotをSession initiatorとして使い、通知設定を持たない。
+
+execution stateのWindow通知とobserver callbackはcommit後のbest-effort signalである。破棄済みrendererへの送信やobserver例外はWindow単位で隔離し、commit済みexecutionのprovider dispatch、queue admission、FIFO drain、terminal commitを失敗させない。
 
 deliveryはsource execution ID、terminal state、target Session ID、契約versionからstable identityとenqueue idempotency keyを導出する。`pending`をdurableにclaimしてtransaction外で既存`turn.enqueue` ownerを呼ぶため、専用provider経路や専用queueは持たない。enqueue成功後のresponse loss、settle前crash、再起動retryは同じkeyを使い、canonical notification executionへ収束する。claim取得後からsettlementまでの未処理例外はclaim解放へ収束させる。claim解放にも失敗した場合は、同一process内にclaim解放intentを保持し、timerから保存済みclaim tokenを再確認して解放する。settlementが実際にはcommit済みなら、deliveryのcurrent stateを読み直して解放intentを破棄する。
 

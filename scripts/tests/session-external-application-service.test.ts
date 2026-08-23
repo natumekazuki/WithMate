@@ -1370,7 +1370,6 @@ test("ID-03: actor Sessionのcharacter snapshotを解決できない場合はexe
 test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsource snapshotをactorと分離して保存する", async () => {
   const mutations: any[] = [];
   const resolvedSessions: string[] = [];
-  const authoritySessions: string[] = [];
   const service = new SessionExternalApplicationService({
     resolveTurnInitiator: async (sessionId) => ({
       kind: "session",
@@ -1383,12 +1382,20 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
     }),
     currentModelCatalog: () => ({ revision: 4, providers: [] }),
     getTurnAuthoritySession(sessionId) {
-      authoritySessions.push(sessionId);
       if (sessionId === "actor-session") {
         return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
       }
       if (sessionId === "source-session") {
-        return communicationSession(sessionId, "executor", "actor-session", "actor-session", 1);
+        return communicationSession(sessionId, "task-coordinator", "actor-session", "actor-session", 1);
+      }
+      if (sessionId === "target-session") {
+        return communicationSession(sessionId, "executor", "actor-session", "source-session", 2);
+      }
+      if (sessionId === "other-target") {
+        return communicationSession(sessionId, "task-coordinator", "actor-session", "actor-session", 1);
+      }
+      if (sessionId === "cross-root-target") {
+        return communicationSession(sessionId, "standalone", sessionId, null, 0);
       }
       return null;
     },
@@ -1402,7 +1409,7 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
           return communicationSession(sessionId, "overall-coordinator", sessionId, null, 0);
         }
         if (sessionId === "source-session") {
-          return communicationSession(sessionId, "executor", "actor-session", "actor-session", 1);
+          return communicationSession(sessionId, "task-coordinator", "actor-session", "actor-session", 1);
         }
         return communicationSession(sessionId, "standalone", sessionId, null, 0);
       },
@@ -1437,8 +1444,7 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.sessionId, "source-session");
   assert.equal(mutations[0].request.terminalFailureNotification.sourceSession.character.name,
     "Character source-session");
-  assert.deepEqual(authoritySessions, ["actor-session", "source-session"]);
-  assert.deepEqual(resolvedSessions, ["source-session", "target-session"]);
+  assert.deepEqual(resolvedSessions, []);
 
   const beforeRejected = mutations.length;
   const same = await executeBound(service, "turn.run", {
@@ -1451,8 +1457,14 @@ test("TN-AUTH-01/TN-SNAPSHOT-02: explicit targetを副作用前に検証しsourc
     idempotencyKey: "missing-target-key",
     terminalFailureNotification: { targetSessionId: "missing-session" },
   }, actor);
+  const crossRoot = await executeBound(service, "turn.run", {
+    ...configured,
+    idempotencyKey: "cross-root-target-key",
+    terminalFailureNotification: { targetSessionId: "cross-root-target" },
+  }, actor);
   assert.equal("error" in same && same.error.code, "TERMINAL_NOTIFICATION_SAME_SESSION");
   assert.equal("error" in missing && missing.error.code, "SESSION_NOT_FOUND");
+  assert.equal("error" in crossRoot && crossRoot.error.code, "SESSION_TURN_FORBIDDEN");
   assert.equal(mutations.length, beforeRejected);
 
   await executeBound(service, "turn.run", {

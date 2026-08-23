@@ -585,7 +585,12 @@ export class SessionExecutionService {
   }
 
   private notifyChanged(executionId: string): void {
-    this.deps.onExecutionChanged?.(executionId);
+    try {
+      this.deps.onExecutionChanged?.(executionId);
+    } catch {
+      // The execution state is already committed. Projection observers are best-effort
+      // and must not block provider dispatch or durable queue progress.
+    }
   }
 
   private notifyTerminal(
