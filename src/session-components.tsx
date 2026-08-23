@@ -3111,9 +3111,7 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const messageCharacter = outboundTurn
-              ? { name: "↗", iconPath: "" }
-              : turnInitiator ?? (isAssistant ? character : null);
+            const messageCharacter = turnInitiator ?? (isAssistant ? character : null);
             const isExternalOrigin = turnInitiator !== null;
             const displayedRole = outboundTurn
               ? "session-origin session-outbound"
@@ -3123,11 +3121,16 @@ export function SessionMessageColumn({
             const relatedSessionId = sessionInitiator?.sessionId
               ?? outboundTurn?.relatedSession.sessionId
               ?? null;
-            const currentOriginSession = sessionInitiator
+            const currentRelatedSession = sessionInitiator
               ? originSessionDetails.find((details) => details.sessionId === sessionInitiator.sessionId) ?? null
               : outboundTurn
                 ? originSessionDetails.find((details) => details.sessionId === outboundTurn.relatedSession.sessionId) ?? null
               : null;
+            const relatedSessionMessageLabel = outboundTurn
+              ? `${outboundTurn.relatedSession.titleSnapshot}へ送ったメッセージ`
+              : sessionInitiator
+                ? `${sessionInitiator.character.name}から届いたメッセージ`
+                : undefined;
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactHasSnapshotRisk =
@@ -3169,11 +3172,14 @@ export function SessionMessageColumn({
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
                 }`}
+                aria-label={relatedSessionMessageLabel}
               >
-                {messageCharacter ? (
+                {messageCharacter || relatedSessionId ? (
                   <div className="message-avatar-stack">
-                    <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
-                    {artifact ? (
+                    {messageCharacter ? (
+                      <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
+                    ) : null}
+                    {artifact && messageCharacter ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
@@ -3199,7 +3205,7 @@ export function SessionMessageColumn({
                         aria-expanded={originDetailsExpanded}
                         aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
                         aria-label={outboundTurn
-                          ? `${outboundTurn.relatedSession.titleSnapshot}のSession情報を${originDetailsExpanded ? "閉じる" : "開く"}`
+                          ? `${outboundTurn.relatedSession.titleSnapshot}への送信先Session情報を${originDetailsExpanded ? "閉じる" : "開く"}`
                           : originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
                         title="Session情報"
                       >
@@ -3208,10 +3214,11 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                {messageCharacter ? (
+                {messageCharacter || outboundTurn ? (
                   <div className="message-character-name">
                     {outboundTurn ? (
                       <>
+                        <span aria-hidden="true">→</span>
                         <span>{outboundTurn.relatedSession.titleSnapshot}</span>
                         <span className="related-session-role">{outboundTurn.relatedSession.roleSnapshot}</span>
                       </>
@@ -3253,15 +3260,17 @@ export function SessionMessageColumn({
                     <section
                       id={`origin-session-panel-${turnExecution?.executionId}`}
                       className="origin-session-details"
-                      aria-label={outboundTurn ? `${outboundTurn.relatedSession.titleSnapshot}のSession情報` : "呼出元Session情報"}
+                      aria-label={outboundTurn
+                        ? `${outboundTurn.relatedSession.titleSnapshot}への送信先Session情報`
+                        : "呼出元Session情報"}
                     >
                       <dl>
                         <div>
                           <dt>Session ID</dt>
                           <dd><code>{relatedSessionId}</code></dd>
                         </div>
-                        {currentOriginSession?.status === "found"
-                        || (currentOriginSession?.status === "error" && currentOriginSession.taskTitle) ? (
+                        {currentRelatedSession?.status === "found"
+                        || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle) ? (
                           <div>
                             <dt>タイトル</dt>
                             <dd>
@@ -3270,18 +3279,18 @@ export function SessionMessageColumn({
                                   className="origin-session-link"
                                   type="button"
                                   onClick={() => onOpenOriginSession(relatedSessionId)}
-                                  aria-label={currentOriginSession.status === "error"
-                                    ? `${currentOriginSession.taskTitle}を別Windowで開く（最新情報の取得に失敗）`
-                                    : `${currentOriginSession.taskTitle}を別Windowで開く`}
+                                  aria-label={currentRelatedSession.status === "error"
+                                    ? `${currentRelatedSession.taskTitle}を別Windowで開く（最新情報の取得に失敗）`
+                                    : `${currentRelatedSession.taskTitle}を別Windowで開く`}
                                 >
-                                  <span>{currentOriginSession.taskTitle}</span>
+                                  <span>{currentRelatedSession.taskTitle}</span>
                                   <span aria-hidden="true">↗</span>
                                 </button>
-                              ) : currentOriginSession.taskTitle}
+                              ) : currentRelatedSession.taskTitle}
                             </dd>
                           </div>
                         ) : null}
-                        {outboundTurn && currentOriginSession?.status === "missing" ? (
+                        {outboundTurn && currentRelatedSession?.status === "missing" ? (
                           <div>
                             <dt>タイトル</dt>
                             <dd>
@@ -3296,9 +3305,9 @@ export function SessionMessageColumn({
                             </dd>
                           </div>
                         ) : null}
-                        {outboundTurn && (!currentOriginSession
-                          || currentOriginSession.status === "loading"
-                          || (currentOriginSession.status === "error" && !currentOriginSession.taskTitle)) ? (
+                        {outboundTurn && (!currentRelatedSession
+                          || currentRelatedSession.status === "loading"
+                          || (currentRelatedSession.status === "error" && !currentRelatedSession.taskTitle)) ? (
                           <div>
                             <dt>タイトル</dt>
                             <dd>
@@ -3306,7 +3315,7 @@ export function SessionMessageColumn({
                                 className="origin-session-link"
                                 type="button"
                                 disabled
-                                aria-label={!currentOriginSession || currentOriginSession.status === "loading"
+                                aria-label={!currentRelatedSession || currentRelatedSession.status === "loading"
                                   ? `${outboundTurn.relatedSession.titleSnapshot}の存在を確認中のため開けません`
                                   : `${outboundTurn.relatedSession.titleSnapshot}の情報取得に失敗したため開けません`}
                               >

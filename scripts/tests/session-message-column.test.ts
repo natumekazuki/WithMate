@@ -282,6 +282,7 @@ async function mountSessionMessageColumn(options: {
   messageGroups?: SessionMessageColumnProps["messageGroups"];
   turnExecutions?: SessionMessageColumnProps["turnExecutions"];
   originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
+  onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
@@ -447,6 +448,7 @@ async function mountSessionMessageColumn(options: {
           messageGroups: callbacks.messageGroups ?? options.messageGroups,
           turnExecutions: options.turnExecutions,
           originSessionDetails: options.originSessionDetails,
+          onOpenOriginSession: options.onOpenOriginSession,
           expandedArtifacts,
           messageListRef,
           isRunning: options.isRunning ?? false,
@@ -1957,6 +1959,7 @@ test("ID-03: Session initiatorは右側originとしてsnapshot名とavatar fallb
   });
 
   assert.match(html, /class="message-row session-origin/);
+  assert.match(html, /aria-label="呼出元から届いたメッセージ"/);
   assert.match(html, /class="message-character-name">呼出元/);
   assert.match(html, /class="message-card session-origin/);
   assert.match(html, /avatar-fallback">呼/);
@@ -2097,12 +2100,15 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは既存origin pri
     turnExecutions: [baseExecution],
   });
   assert.match(rendered, /class="message-row session-origin session-outbound/);
+  assert.match(rendered, /aria-label="Target Snapshotへ送ったメッセージ"/);
   assert.match(rendered, /class="message-card session-origin session-outbound/);
+  assert.match(rendered, /message-character-name"><span aria-hidden="true">→<\/span><span>Target Snapshot/);
   assert.match(rendered, /Target Snapshot/);
   assert.match(rendered, /related-session-role">executor/);
+  assert.doesNotMatch(rendered, /avatar-fallback">↗/);
   assert.match(rendered, /data-message-body="true"/);
   assert.match(rendered, /FULL-END/);
-  assert.match(rendered, /aria-label="Target SnapshotのSession情報を開く"/);
+  assert.match(rendered, /aria-label="Target Snapshotへの送信先Session情報を開く"/);
   assert.doesNotMatch(rendered, /related-session-message-preview/);
 
   const expanded = renderSessionMessageColumn({
@@ -2113,8 +2119,58 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは既存origin pri
     onOpenOriginSession() {},
   });
   assert.match(expanded, /FULL-END/);
-  assert.match(expanded, /aria-label="Target SnapshotのSession情報を閉じる"/);
+  assert.match(expanded, /aria-label="Target Snapshotへの送信先Session情報を閉じる"/);
+  assert.match(expanded, /aria-label="Target Snapshotへの送信先Session情報"/);
   assert.match(expanded, /aria-label="Current Targetを別Windowで開く"/);
+});
+
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの詳細からcanonical targetを開く", async () => {
+  const openedSessionIds: string[] = [];
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [{
+      executionId: "execution-open-target",
+      sessionId: "canonical-target",
+      clientRequestId: null,
+      userMessage: "delegated",
+      initiator: null,
+      state: "accepted",
+      queuePosition: null,
+      canCancel: false,
+      acceptanceSequence: 1,
+      sourceMessageSequence: 0,
+      createdAt: "2026-08-23T00:00:00.000Z",
+      updatedAt: "2026-08-23T00:00:00.000Z",
+      relatedSession: {
+        direction: "outbound",
+        sessionId: "canonical-target",
+        titleSnapshot: "Target Snapshot",
+        roleSnapshot: "executor",
+      },
+    }],
+    originSessionDetails: [{
+      sessionId: "canonical-target",
+      status: "found",
+      taskTitle: "Current Target",
+    }],
+    onOpenOriginSession(sessionId) {
+      openedSessionIds.push(sessionId);
+    },
+  });
+
+  try {
+    const openButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button[aria-label='Current Targetを別Windowで開く']",
+    );
+    assert.ok(openButton);
+    await act(async () => {
+      openButton.click();
+    });
+    assert.deepEqual(openedSessionIds, ["canonical-target"]);
+  } finally {
+    await mounted.cleanup();
+  }
 });
 
 test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけを無効化する", () => {
