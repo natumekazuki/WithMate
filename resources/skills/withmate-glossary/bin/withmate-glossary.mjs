@@ -20317,7 +20317,7 @@ async function callGlossaryRuntime(input, deps) {
 		});
 		dispatched = true;
 		if (isGlossaryRuntimeResult(response.value)) return response.value;
-		return createGlossaryTransportError("WithMate runtime returned a non-glossary response.", isWriteOperation(input.operation) && response.status >= 500 ? "unknown" : "none");
+		return createGlossaryTransportError("WithMate runtime returned a non-glossary response.", isWriteOperation(input.operation) ? "unknown" : "none");
 	} catch (error) {
 		const wasDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
 		return createGlossaryTransportError("WithMate glossary runtime request failed.", isWriteOperation(input.operation) && wasDispatched ? "unknown" : "none");
