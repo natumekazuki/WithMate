@@ -31,6 +31,7 @@ import type {
   MarkdownLinkContextMenuRequest,
   MarkdownLinkContextMenuResult,
 } from "./markdown-link-context-menu.js";
+import { getSessionFileObjectCopyFeedbackTone } from "./file-explorer/session-file-object-copy-contract.js";
 
 export type MessageViewMode = "preview" | "source";
 
@@ -41,6 +42,7 @@ type MessageRichTextProps = {
   displayMode?: MessageViewMode;
   onOpenPath?: (target: string) => void;
   resolveImageSource?: (target: string) => Promise<string | null>;
+  markdownLinkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
 };
 
 type MarkdownRenderMode = "light" | "full";
@@ -351,6 +353,7 @@ export async function handleMarkdownLinkContextMenu(
   event: MarkdownLinkContextMenuEvent,
   target: string,
   showContextMenu?: ShowMarkdownLinkContextMenu,
+  fileContext?: MarkdownLinkContextMenuRequest["fileContext"],
 ): Promise<MarkdownLinkContextMenuResult | null> {
   if (!target || target.startsWith("#") || hasUnsupportedUrlScheme(target)) {
     return null;
@@ -369,7 +372,7 @@ export async function handleMarkdownLinkContextMenu(
 
   event.preventDefault();
   try {
-    return await showMenu({ target, point });
+    return await showMenu({ target, point, ...(fileContext ? { fileContext } : {}) });
   } catch (error) {
     return {
       status: "failed",
@@ -731,6 +734,7 @@ function createMarkdownComponents(
     markdown?: string;
     onCodeBlockCopyResult?: (feedback: MessageCopyFeedback) => void;
     onLinkContextMenuResult?: (result: MarkdownLinkContextMenuResult) => void;
+    linkFileContext?: MarkdownLinkContextMenuRequest["fileContext"];
     resolveImageSource?: (target: string) => Promise<string | null>;
   },
 ): Components {
@@ -771,7 +775,7 @@ function createMarkdownComponents(
         handleMarkdownLinkClick(event, target, onOpenPath);
       };
       const handleContextMenu = (event: MouseEvent<HTMLAnchorElement>) => {
-        void handleMarkdownLinkContextMenu(event, target).then((result) => {
+        void handleMarkdownLinkContextMenu(event, target, undefined, options?.linkFileContext).then((result) => {
           if (result && result.status !== "dismissed") {
             options?.onLinkContextMenuResult?.(result);
           }
@@ -805,6 +809,7 @@ function MessageMarkdownPreview({
   forceFullRender = false,
   onOpenPath,
   resolveImageSource,
+  markdownLinkFileContext,
 }: MessageRichTextProps) {
   const reactId = useId();
   const footnotePrefix = useMemo(() => `message-footnote-${reactId.replace(/[^a-zA-Z0-9_-]/g, "")}-`, [reactId]);
@@ -818,8 +823,13 @@ function MessageMarkdownPreview({
   const renderMode = resolveMessageMarkdownRenderMode(forceFullRender, text, renderState, shouldDefer);
   const isFullRender = renderMode === "full";
   const handleLinkContextMenuResult = useCallback((result: MarkdownLinkContextMenuResult) => {
-    setCopyFeedback(result.status === "copied"
+    setCopyFeedback(result.status === "link-copied"
       ? { message: "リンクをコピーしました。", tone: "success" }
+      : result.status === "file-copy"
+        ? {
+            message: result.result.message,
+            tone: getSessionFileObjectCopyFeedbackTone(result.result),
+          }
       : result.status === "failed"
         ? { message: result.message, tone: "error" }
         : null);
@@ -833,9 +843,18 @@ function MessageMarkdownPreview({
       markdown: text,
       onCodeBlockCopyResult: handleCodeBlockCopyResult,
       onLinkContextMenuResult: handleLinkContextMenuResult,
+      linkFileContext: markdownLinkFileContext,
       resolveImageSource,
     }),
-    [handleCodeBlockCopyResult, handleLinkContextMenuResult, isFullRender, onOpenPath, resolveImageSource, text],
+    [
+      handleCodeBlockCopyResult,
+      handleLinkContextMenuResult,
+      isFullRender,
+      markdownLinkFileContext,
+      onOpenPath,
+      resolveImageSource,
+      text,
+    ],
   );
   const rehypePlugins = useMemo<PluggableList>(
     () => (isFullRender ? [rehypeKatex, createFootnoteLabelIdPlugin(footnoteLabelId)] : []),

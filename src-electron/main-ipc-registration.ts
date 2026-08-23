@@ -115,6 +115,12 @@ import type {
   FileRootGitHistoryRepositoriesRequest,
   FileRootGitHistoryRepositoriesResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "../src/file-explorer/session-file-object-copy-contract.js";
 import {
   areSessionFileResourcesEqual,
   isSessionFileRootResource,
@@ -188,6 +194,8 @@ import {
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
@@ -420,6 +428,14 @@ export type MainIpcRegistrationDeps = {
     event: IpcSenderEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(
+    event: IpcSenderEvent,
+    request: SessionFileObjectCopyRequest,
+  ): Awaitable<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    event: IpcSenderEvent,
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Awaitable<SessionFileObjectCopyContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcSenderEvent,
     request: MarkdownLinkContextMenuRequest,
@@ -615,6 +631,7 @@ type MainIpcSessionQueryDeps = Pick<
   MainIpcRegistrationDeps,
   | "resolveEventWindow"
   | "resolveSessionWindow"
+  | "resolveCompanionReviewWindow"
   | "isFilePreviewWindow"
   | "getFilePreviewWindowResource"
   | "isFilePreviewTokenWindow"
@@ -651,6 +668,8 @@ type MainIpcSessionQueryDeps = Pick<
   | "getSessionFilePreviewWindowPayload"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
+  | "copySessionFileObject"
+  | "showSessionFileObjectCopyContextMenu"
   | "showMarkdownLinkContextMenu"
   | "listFileRootChanges"
   | "getFileRootDiff"
@@ -883,6 +902,7 @@ async function assertSessionFileLinkSender(
     MainIpcRegistrationDeps,
     | "resolveEventWindow"
     | "resolveSessionWindow"
+    | "resolveCompanionReviewWindow"
     | "getSessionFileExplorerOwnerSessionId"
     | "getFilePreviewWindowResource"
   >,
@@ -890,6 +910,9 @@ async function assertSessionFileLinkSender(
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
   const window = deps.resolveEventWindow(event);
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
+    return;
+  }
+  if (ownerSessionId && window && deps.resolveCompanionReviewWindow(ownerSessionId) === window) {
     return;
   }
   const currentResource = window
@@ -1015,11 +1038,74 @@ function parseSessionFilePreviewImageActionRequest(
   };
 }
 
+function hasOnlyObjectKeys(candidate: Record<string, unknown>, allowedKeys: readonly string[]): boolean {
+  const allowed = new Set(allowedKeys);
+  return Object.keys(candidate).every((key) => allowed.has(key));
+}
+
+function assertStrictSessionFileResourceRequest(input: unknown): asserts input is SessionFileResourceRequest {
+  assertValidSessionFileResourceRequest(input);
+  const candidate = input as unknown as Record<string, unknown>;
+  const allowedKeys = Object.hasOwn(candidate, "absolutePath")
+    ? ["sessionId", "absolutePath"]
+    : ["sessionId", "rootId", "relativePath"];
+  if (!hasOnlyObjectKeys(candidate, allowedKeys)) {
+    throw new TypeError("File copy resource is invalid.");
+  }
+}
+
+function parseSessionFileObjectCopyRequest(input: unknown): SessionFileObjectCopyRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File copy request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, ["resource"])) {
+    throw new TypeError("File copy request is invalid.");
+  }
+  assertStrictSessionFileResourceRequest(candidate.resource);
+  return { resource: candidate.resource };
+}
+
+function parseSessionFileObjectCopyContextMenuRequest(
+  input: unknown,
+): SessionFileObjectCopyContextMenuRequest {
+  if (!input || typeof input !== "object") {
+    throw new TypeError("File copy context menu request is invalid.");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!hasOnlyObjectKeys(candidate, ["resource", "point"])) {
+    throw new TypeError("File copy context menu request is invalid.");
+  }
+  assertStrictSessionFileResourceRequest(candidate.resource);
+  const point = candidate.point;
+  if (
+    !point
+    || typeof point !== "object"
+    || !hasOnlyObjectKeys(point as Record<string, unknown>, ["x", "y"])
+    || !Number.isSafeInteger((point as Record<string, unknown>).x)
+    || ((point as Record<string, unknown>).x as number) < 0
+    || !Number.isSafeInteger((point as Record<string, unknown>).y)
+    || ((point as Record<string, unknown>).y as number) < 0
+  ) {
+    throw new TypeError("File copy context menu request is invalid.");
+  }
+  return {
+    resource: candidate.resource,
+    point: {
+      x: (point as Record<string, unknown>).x as number,
+      y: (point as Record<string, unknown>).y as number,
+    },
+  };
+}
+
 function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContextMenuRequest {
   if (!input || typeof input !== "object") {
     throw new TypeError("Markdown link context menu request is invalid.");
   }
   const candidate = input as Partial<MarkdownLinkContextMenuRequest>;
+  if (!hasOnlyObjectKeys(input as Record<string, unknown>, ["target", "point", "fileContext"])) {
+    throw new TypeError("Markdown link context menu request is invalid.");
+  }
   const point = candidate.point;
   if (
     typeof candidate.target !== "string"
@@ -1033,9 +1119,36 @@ function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContex
   ) {
     throw new TypeError("Markdown link context menu request is invalid.");
   }
+  let fileContext: MarkdownLinkContextMenuRequest["fileContext"];
+  if (candidate.fileContext !== undefined) {
+    if (!candidate.fileContext || typeof candidate.fileContext !== "object") {
+      throw new TypeError("Markdown link file context is invalid.");
+    }
+    const rawFileContext = candidate.fileContext as unknown as Record<string, unknown>;
+    if (
+      !hasOnlyObjectKeys(rawFileContext, ["sessionId", "baseResource"])
+      || typeof rawFileContext.sessionId !== "string"
+      || !rawFileContext.sessionId
+    ) {
+      throw new TypeError("Markdown link file context is invalid.");
+    }
+    if (rawFileContext.baseResource !== undefined) {
+      assertStrictSessionFileResourceRequest(rawFileContext.baseResource);
+      if (rawFileContext.baseResource.sessionId !== rawFileContext.sessionId) {
+        throw new TypeError("Markdown link file context is invalid.");
+      }
+    }
+    fileContext = {
+      sessionId: rawFileContext.sessionId,
+      ...(rawFileContext.baseResource
+        ? { baseResource: rawFileContext.baseResource as SessionFileResourceRequest }
+        : {}),
+    };
+  }
   return {
     target: candidate.target,
     point: { x: point.x, y: point.y },
+    ...(fileContext ? { fileContext } : {}),
   };
 }
 
@@ -1546,10 +1659,28 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.showSessionFilePreviewImageContextMenu(event, request);
   });
-  ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, (event, input: unknown) => {
+  ipcMain.handle(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileObjectCopyRequest(input);
+    await assertSessionFileResourceSender(event, request.resource, deps);
+    return deps.copySessionFileObject(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
+    const request = parseSessionFileObjectCopyContextMenuRequest(input);
+    await assertSessionFileResourceSender(event, request.resource, deps);
+    return deps.showSessionFileObjectCopyContextMenu(event, request);
+  });
+  ipcMain.handle(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
     const request = parseMarkdownLinkContextMenuRequest(input);
     if (!deps.resolveEventWindow(event)) {
       throw new TypeError("Markdown link context menu is only available from a WithMate window.");
+    }
+    if (request.fileContext) {
+      await assertSessionFileLinkSender(
+        event,
+        request.fileContext.sessionId,
+        request.fileContext.baseResource,
+        deps,
+      );
     }
     return deps.showMarkdownLinkContextMenu(event, request);
   });

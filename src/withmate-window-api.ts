@@ -118,6 +118,12 @@ import type {
   FileRootGitHistoryRepositoriesRequest,
   FileRootGitHistoryRepositoriesResult,
 } from "./file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "./file-explorer/session-file-object-copy-contract.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -152,6 +158,7 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
+  isSessionFileObjectCopyAvailable(): boolean;
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
@@ -168,6 +175,10 @@ export type WithMateWindowSessionApi = {
   showSessionFilePreviewImageContextMenu(
     request: SessionFilePreviewImageActionRequest,
   ): Promise<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(request: SessionFileObjectCopyRequest): Promise<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Promise<SessionFileObjectCopyContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult>;
   listFileRootGitHistoryRepositories(

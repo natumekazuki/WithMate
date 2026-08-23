@@ -17,10 +17,18 @@ type PreviewApi = NonNullable<React.ComponentProps<typeof SessionFilePreview>["a
 
 const DEFAULT_IMAGE_COPY_API: Pick<
   PreviewApi,
+  | "isSessionFileObjectCopyAvailable"
+  | "copySessionFileObject"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
   | "openSessionFilePreviewWindow"
 > = {
+  isSessionFileObjectCopyAvailable() {
+    return false;
+  },
+  async copySessionFileObject() {
+    return { status: "copied", message: "File copied." };
+  },
   async copySessionFilePreviewImage() {
     return { status: "copied" };
   },
@@ -377,6 +385,74 @@ test("File Preview はheaderを維持し本文だけをinspectionとcontent読�
     assert.equal(preview.getAttribute("aria-busy"), null);
     assert.equal(preview.querySelector("[role='status']"), null);
     assert.match(preview.textContent ?? "", /loaded preview/);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("File Preview はWindowsだけCopy Fileを表示しCopy Imageと別contractで結果を表示する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const copyRequests: SessionFileResourceRequest[] = [];
+  const harness = createPreviewApi(async () => IMAGE_DESCRIPTOR);
+  const api: PreviewApi = {
+    ...harness.api,
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+    async copySessionFileObject(request) {
+      copyRequests.push(request.resource);
+      return { status: "effect-unknown", message: "File copy status is unknown." };
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, IMAGE_DESCRIPTOR);
+    await waitFor(() => Array.from(container.querySelectorAll("button"))
+      .some((button) => button.textContent === "Copy Image"));
+    const buttons = Array.from(container.querySelectorAll<HTMLButtonElement>("button"));
+    assert.ok(buttons.some((button) => button.textContent === "Copy Image"));
+    const copyFile = buttons.find((button) => button.textContent === "Copy File");
+    assert.ok(copyFile);
+    await act(async () => {
+      copyFile.click();
+      await Promise.resolve();
+    });
+    assert.deepEqual(copyRequests, [IMAGE_DESCRIPTOR]);
+    assert.equal(
+      container.querySelector(".session-file-preview-feedback")?.textContent,
+      "File copy status is unknown.",
+    );
+
+    const unavailableApi: PreviewApi = {
+      ...api,
+      isSessionFileObjectCopyAvailable() {
+        return false;
+      },
+    };
+    await act(async () => {
+      root?.render(React.createElement(SessionFilePreview, {
+        api: unavailableApi,
+        request: IMAGE_DESCRIPTOR,
+        onClose() {},
+        onCopyText() {},
+        onQuoteText() {},
+      }));
+    });
+    assert.equal(Array.from(container.querySelectorAll("button"))
+      .some((button) => button.textContent === "Copy File"), false);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

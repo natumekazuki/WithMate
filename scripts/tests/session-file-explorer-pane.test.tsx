@@ -42,6 +42,16 @@ function fileEntry(name: string): SessionDirectoryEntry {
   };
 }
 
+function directoryEntry(name: string): SessionDirectoryEntry {
+  return {
+    name,
+    relativePath: name,
+    kind: "directory",
+    byteLength: 0,
+    modifiedAt: "2026-08-02T00:00:00.000Z",
+  };
+}
+
 test("SessionFileExplorerPane は directory load を明示展開と現行 request identity に限定する", async () => {
   const previousActEnvironment = (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean })
     .IS_REACT_ACT_ENVIRONMENT;
@@ -107,8 +117,16 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
   const { SessionFileExplorerPane } = await import("../../src/file-explorer/SessionFileExplorerPane.js");
 
   const directoryRequests: Array<Deferred<SessionDirectoryEntry[]>> = [];
+  const copyMenuRequests: unknown[] = [];
   let directoryCalls = 0;
   const api = {
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+    async showSessionFileObjectCopyContextMenu(request: unknown) {
+      copyMenuRequests.push(request);
+      return { status: "effect-unknown" as const, message: "File copy status is unknown." };
+    },
     async listSessionFileRoots() {
       return [{ id: "workspace", kind: "workspace" as const, label: "Workspace", displayPath: "C:\\workspace" }];
     },
@@ -175,20 +193,44 @@ test("SessionFileExplorerPane は directory load を明示展開と現行 reques
     assert.equal(directoryCalls, 2);
 
     await act(async () => {
-      directoryRequests[1]?.resolve([fileEntry("new.txt")]);
+      directoryRequests[1]?.resolve([fileEntry("new.txt"), directoryEntry("folder")]);
       await directoryRequests[1]?.promise;
     });
     await waitFor(() => dom.window.document.body.textContent?.includes("new.txt") ?? false);
-    const fileRow = dom.window.document.querySelector<HTMLButtonElement>(".session-file-tree-row");
+    const rows = Array.from(dom.window.document.querySelectorAll<HTMLButtonElement>(".session-file-tree-row"));
+    const fileRow = rows.find((row) => row.textContent?.includes("new.txt"));
+    const directoryRow = rows.find((row) => row.textContent?.includes("folder"));
     assert.ok(fileRow);
+    assert.ok(directoryRow);
     await act(async () => {
       fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true }));
       fileRow.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, ctrlKey: true }));
+      directoryRow.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 12,
+        clientY: 18,
+      }));
+      fileRow.dispatchEvent(new dom.window.MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX: 24,
+        clientY: 48,
+      }));
+      await Promise.resolve();
     });
     assert.deepEqual(openedFiles, [
       { relativePath: "new.txt", openInWindow: false },
       { relativePath: "new.txt", openInWindow: true },
     ]);
+    assert.deepEqual(copyMenuRequests, [{
+      resource: { sessionId: "session-1", rootId: "workspace", relativePath: "new.txt" },
+      point: { x: 24, y: 48 },
+    }]);
+    assert.equal(
+      dom.window.document.querySelector(".session-file-tree-feedback")?.textContent,
+      "File copy status is unknown.",
+    );
 
     await act(async () => {
       directoryRequests[0]?.resolve([fileEntry("old.txt")]);

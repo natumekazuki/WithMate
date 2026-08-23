@@ -94,6 +94,12 @@ import type {
   FileRootGitHistoryRepositoriesRequest,
   FileRootGitHistoryRepositoriesResult,
 } from "../src/file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "../src/file-explorer/session-file-object-copy-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
 import type {
   CreateSessionRequest,
@@ -174,6 +180,14 @@ export type MainIpcWindowDepsArgs = {
     event: IpcMainInvokeEvent,
     request: SessionFilePreviewImageActionRequest,
   ): Awaitable<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(
+    event: IpcMainInvokeEvent,
+    request: SessionFileObjectCopyRequest,
+  ): Awaitable<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    event: IpcMainInvokeEvent,
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Awaitable<SessionFileObjectCopyContextMenuResult>;
   showMarkdownLinkContextMenu(
     event: IpcMainInvokeEvent,
     request: MarkdownLinkContextMenuRequest,
@@ -452,6 +466,8 @@ export function createMainIpcRegistrationDeps(
     openSessionFilesTerminal: args.window.openSessionFilesTerminal,
     copySessionFilePreviewImage: args.window.copySessionFilePreviewImage,
     showSessionFilePreviewImageContextMenu: args.window.showSessionFilePreviewImageContextMenu,
+    copySessionFileObject: args.window.copySessionFileObject,
+    showSessionFileObjectCopyContextMenu: args.window.showSessionFileObjectCopyContextMenu,
     showMarkdownLinkContextMenu: args.window.showMarkdownLinkContextMenu,
     openPathTarget: args.window.openPathTarget,
     openAppLogFolder: args.window.openAppLogFolder,

@@ -243,6 +243,8 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     args: ["session-1"],
   });
   const fileRequest = { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" };
+  assert.equal(api.isSessionFileObjectCopyAvailable(), true);
+  assert.equal(createWithMateWindowApi(ipcRenderer as never, "linux").isSessionFileObjectCopyAvailable(), false);
   assert.deepEqual(await api.listSessionFileRoots("session-1"), {
     channel: "withmate:list-session-file-roots",
     args: ["session-1"],
@@ -285,6 +287,16 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   assert.deepEqual(await api.showSessionFilePreviewImageContextMenu(imageActionRequest), {
     channel: "withmate:show-session-file-preview-image-context-menu",
     args: [imageActionRequest],
+  });
+  const fileCopyRequest = { resource: fileRequest };
+  assert.deepEqual(await api.copySessionFileObject(fileCopyRequest), {
+    channel: "withmate:copy-session-file-object",
+    args: [fileCopyRequest],
+  });
+  const fileCopyContextMenuRequest = { ...fileCopyRequest, point: { x: 40, y: 60 } };
+  assert.deepEqual(await api.showSessionFileObjectCopyContextMenu(fileCopyContextMenuRequest), {
+    channel: "withmate:show-session-file-object-copy-context-menu",
+    args: [fileCopyContextMenuRequest],
   });
   const markdownLinkRequest = {
     target: "docs/review-brief%20final.md",
@@ -376,6 +388,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
     "copySessionFilePreviewImage",
+    "copySessionFileObject",
     "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
@@ -481,6 +494,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewCompanionComposerInput",
     "previewComposerInput",
     "inspectSessionFile",
+    "isSessionFileObjectCopyAvailable",
     "listSessionDirectory",
     "listSessionFileRoots",
     "readSessionFileChunk",
@@ -498,6 +512,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "setMateAvatar",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
+    "showSessionFileObjectCopyContextMenu",
     "showMarkdownLinkContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",

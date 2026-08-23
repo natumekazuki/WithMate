@@ -89,6 +89,8 @@ type FilePreviewApi = Pick<
   | "openPath"
   | "copySessionFilePreviewImage"
   | "showSessionFilePreviewImageContextMenu"
+  | "isSessionFileObjectCopyAvailable"
+  | "copySessionFileObject"
 >;
 
 type SessionFilePreviewProps = {
@@ -557,6 +559,11 @@ export function SessionFilePreview({
   diffAvailabilityMessage = "",
   chatNotice = "",
 }: SessionFilePreviewProps) {
+  const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
+  const markdownLinkFileContext = useMemo(() => ({
+    sessionId: request.sessionId,
+    baseResource: request,
+  }), [request]);
   const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
   const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
@@ -1040,6 +1047,23 @@ export function SessionFilePreview({
     }
   }, [api, request]);
 
+  const copyCurrentFile = useCallback(async () => {
+    if (!api || !fileObjectCopyAvailable) {
+      return;
+    }
+    const revision = loadRevisionRef.current;
+    try {
+      const result = await api.copySessionFileObject({ resource: request });
+      if (loadRevisionRef.current === revision) {
+        setFeedback(result.message);
+      }
+    } catch {
+      if (loadRevisionRef.current === revision) {
+        setFeedback("File could not be copied.");
+      }
+    }
+  }, [api, fileObjectCopyAvailable, request]);
+
   const copyPreviewImage = useCallback(async () => {
     if (!api || !imageRef.current || !imageScrollRef.current) {
       return;
@@ -1285,6 +1309,9 @@ export function SessionFilePreview({
                   : "Working Tree Diff"}
             </button>
           )) : null}
+          {fileObjectCopyAvailable ? (
+            <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
+          ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
             <button
               type="button"
@@ -1371,6 +1398,7 @@ export function SessionFilePreview({
               className="session-file-markdown"
               onOpenPath={handleOpenMarkdownPath}
               resolveImageSource={resolveMarkdownImageSource}
+              markdownLinkFileContext={markdownLinkFileContext}
             />
           </SelectionTextActionSurface>
         ) : (

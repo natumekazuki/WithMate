@@ -756,6 +756,33 @@ test("SessionFileExplorerService は認可した path と異なる実体の hand
   }
 });
 
+test("SessionFileExplorerService はfile operation中のpath置換をidentity不一致として返す", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-operation-identity-"));
+  const workspacePath = path.join(basePath, "workspace");
+  const targetPath = path.join(workspacePath, "target.txt");
+  const archivedPath = path.join(workspacePath, "archived.txt");
+  await mkdir(workspacePath, { recursive: true });
+  await writeFile(targetPath, "original");
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+  });
+  try {
+    const result = await service.withAuthorizedFilePath(
+      { sessionId: "session-1", rootId: "workspace", relativePath: "target.txt" },
+      async (authorizedPath) => {
+        assert.equal(authorizedPath, await realpath(targetPath));
+        await rename(targetPath, archivedPath);
+        await writeFile(targetPath, "replacement");
+        return "operation-started";
+      },
+    );
+    assert.deepEqual(result, { result: "operation-started", targetStillCurrent: false });
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
 test("SessionFileExplorerService は認可した directory と異なる実体の一覧を返さない", async () => {
   const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-directory-handle-auth-"));
   const workspacePath = path.join(basePath, "workspace");

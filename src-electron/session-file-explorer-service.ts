@@ -117,6 +117,11 @@ export type SessionFileExplorerServiceDeps = {
   openResolvedPath?(targetPath: string, reveal: boolean): Promise<OpenPathResult>;
 };
 
+export type AuthorizedSessionFileOperationResult<T> = {
+  result: T;
+  targetStillCurrent: boolean;
+};
+
 export type ResolvedSessionFileRoot = SessionFileRoot & { absolutePath: string };
 
 type ResolvedTargetCandidate = {
@@ -611,6 +616,26 @@ export class SessionFileExplorerService {
       // Electron can hand the OS only a path here; preserving edits to the original file
       // intentionally accepts the path re-resolution boundary documented in ADR 013.
       return await this.deps.openResolvedPath(opened.targetRealPath, request.reveal === true);
+    } finally {
+      await opened.handle.close();
+    }
+  }
+
+  async withAuthorizedFilePath<T>(
+    request: SessionFileResourceRequest,
+    operation: (targetRealPath: string) => Promise<T>,
+  ): Promise<AuthorizedSessionFileOperationResult<T>> {
+    const opened = await this.openLocalFile(request);
+    try {
+      const result = await operation(opened.targetRealPath);
+      let targetStillCurrent = false;
+      try {
+        const confirmedTargetRealPath = await this.confirmOpenedTarget(opened.candidate, opened.stats);
+        targetStillCurrent = pathKey(confirmedTargetRealPath) === pathKey(opened.targetRealPath);
+      } catch {
+        targetStillCurrent = false;
+      }
+      return { result, targetStillCurrent };
     } finally {
       await opened.handle.close();
     }
