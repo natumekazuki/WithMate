@@ -294,8 +294,8 @@ Electron デスクトップアプリとして、`Home Window` / `Character Edito
 - 中央 live Git Diff は Split を既定表示とし、Inline へ切り替えられる。両表示は同じ unified patch と検索modelを投影し、Split でも表示rowをvirtualizeする
 - work surface は外側 card を持たず、padding / gap を抑えて message viewport を優先する
 - message list は条件付き follow mode で動かす
-  - cross-Session Turnの送信元では、既存のSession-origin message primitiveを外向きにも一般化し、target Session名とRoleのacceptance snapshot、本文previewを表示する
-  - 外向きmessageはacceptance時のsource message sequence位置へcanonical execution sequence順でmergeし、展開時だけ全文とSession詳細を表示する。本文検索の現在matchがpreview外にある場合は自動展開する
+  - cross-Session Turnの送信元では、既存のSession-origin message primitiveを外向きにも一般化し、target Session名とRoleのacceptance snapshot、通常messageと同じrich text本文を表示する。この経路専用のpreviewや折り畳みを追加しない
+  - 外向きmessageはacceptance時のsource message sequence位置へcanonical execution sequence順でmergeする。Session詳細の展開は本文表示と分離する
   - canonical target Session IDはIDとtitleだけのbatch summary queryでSession invalidation時にも再解決して別Windowを開く。初回取得と取得失敗を削除扱いにせず、refresh中は直前値を維持し、missingが確定したtargetだけ履歴を残してopen操作をdisabledにする
   - 外向きであることは既存token、icon、shape、alignmentで示し、専用chat layoutや「送信しました」の常設説明を追加しない
   - user の scroll intent と末尾移動は一つの follow owner が決定し、virtual row の再計測は visible anchor の補正だけを担当する

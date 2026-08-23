@@ -1229,6 +1229,7 @@ test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示�
     expandedArtifacts: { "session-1-0": true },
   });
 
+  assert.match(html, /aria-label="Details を閉じる"/);
   assert.match(html, /artifact-panel-session-1-0/);
   assert.match(html, /src\/App\.tsx/);
   assert.match(html, /Open Diff/);
@@ -2069,7 +2070,7 @@ test("ID-03: initiatorなしのlegacy executionだけを外部として表示す
   assert.doesNotMatch(html, /Turnをキャンセル/);
 });
 
-test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージはtarget snapshotとpreviewを表示して全文を展開する", () => {
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは既存origin primitiveでtarget snapshotと全文を表示する", () => {
   const fullMessage = `${"preview ".repeat(40)}FULL-END`;
   const baseExecution = {
     executionId: "execution-outbound",
@@ -2091,30 +2092,35 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージはtarget snapshot�
       roleSnapshot: "executor" as const,
     },
   };
-  const collapsed = renderSessionMessageColumn({
+  const rendered = renderSessionMessageColumn({
     messages: [{ role: "user", text: fullMessage }],
     turnExecutions: [baseExecution],
   });
-  assert.match(collapsed, /Target Snapshot/);
-  assert.match(collapsed, /related-session-role">executor/);
-  assert.match(collapsed, /aria-label="Target Snapshotへのメッセージ全文を開く"/);
-  assert.doesNotMatch(collapsed, /FULL-END/);
+  assert.match(rendered, /class="message-row session-origin session-outbound/);
+  assert.match(rendered, /class="message-card session-origin session-outbound/);
+  assert.match(rendered, /Target Snapshot/);
+  assert.match(rendered, /related-session-role">executor/);
+  assert.match(rendered, /data-message-body="true"/);
+  assert.match(rendered, /FULL-END/);
+  assert.match(rendered, /aria-label="Target SnapshotのSession情報を開く"/);
+  assert.doesNotMatch(rendered, /related-session-message-preview/);
 
   const expanded = renderSessionMessageColumn({
     messages: [{ role: "user", text: fullMessage }],
-    expandedArtifacts: { "session-1-0-related-session": true },
+    expandedArtifacts: { "session-1-0-origin-session": true },
     turnExecutions: [baseExecution],
     originSessionDetails: [{ sessionId: "target-session", status: "found", taskTitle: "Current Target" }],
     onOpenOriginSession() {},
   });
   assert.match(expanded, /FULL-END/);
+  assert.match(expanded, /aria-label="Target SnapshotのSession情報を閉じる"/);
   assert.match(expanded, /aria-label="Current Targetを別Windowで開く"/);
 });
 
 test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけを無効化する", () => {
   const html = renderSessionMessageColumn({
     messages: [{ role: "user", text: "delegated" }],
-    expandedArtifacts: { "session-1-0-related-session": true },
+    expandedArtifacts: { "session-1-0-origin-session": true },
     turnExecutions: [{
       executionId: "execution-deleted-target",
       sessionId: "deleted-target",
@@ -2165,7 +2171,7 @@ test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示し�
   };
   const loading = renderSessionMessageColumn({
     messages: [{ role: "user", text: "delegated" }],
-    expandedArtifacts: { "session-1-0-related-session": true },
+    expandedArtifacts: { "session-1-0-origin-session": true },
     turnExecutions: [execution],
     originSessionDetails: [{ sessionId: "target-session", status: "loading" }],
   });
@@ -2174,84 +2180,12 @@ test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示し�
 
   const error = renderSessionMessageColumn({
     messages: [{ role: "user", text: "delegated" }],
-    expandedArtifacts: { "session-1-0-related-session": true },
+    expandedArtifacts: { "session-1-0-origin-session": true },
     turnExecutions: [execution],
     originSessionDetails: [{ sessionId: "target-session", status: "error" }],
   });
   assert.match(error, /Target Snapshotの情報取得に失敗したため開けません/);
   assert.doesNotMatch(error, /削除済み/);
-});
-
-test("ORCH-OUTBOUND-FIND-01: preview外の現在matchを含む外向きMessageを自動展開する", async () => {
-  class TestHighlight {
-    readonly ranges: Range[] = [];
-    constructor(...ranges: Range[]) {
-      assert.equal(ranges.length, 0);
-    }
-    add(range: Range) {
-      this.ranges.push(range);
-      return this;
-    }
-  }
-  const fullMessage = `${"preview ".repeat(40)}hidden-needle`;
-  const mounted = await mountSessionMessageColumn({
-    messages: [{ role: "user", text: fullMessage }],
-    turnExecutions: [{
-      executionId: "execution-find-outbound",
-      sessionId: "target-session",
-      clientRequestId: null,
-      userMessage: fullMessage,
-      initiator: null,
-      state: "accepted",
-      queuePosition: null,
-      canCancel: false,
-      acceptanceSequence: 1,
-      sourceMessageSequence: 0,
-      createdAt: "2026-08-23T00:00:00.000Z",
-      updatedAt: "2026-08-23T00:00:00.000Z",
-      relatedSession: {
-        direction: "outbound",
-        sessionId: "target-session",
-        titleSnapshot: "Target",
-        roleSnapshot: "executor",
-      },
-    }],
-    originSessionDetails: [{ sessionId: "target-session", status: "found", taskTitle: "Target" }],
-  });
-
-  try {
-    const highlights = new Map<string, TestHighlight>();
-    Object.defineProperty(mounted.dom.window, "CSS", { configurable: true, value: { highlights } });
-    Object.defineProperty(mounted.dom.window, "Highlight", { configurable: true, value: TestHighlight });
-    assert.doesNotMatch(mounted.container.textContent ?? "", /hidden-needle/);
-
-    await act(async () => {
-      mounted.dom.window.dispatchEvent(new mounted.dom.window.KeyboardEvent("keydown", {
-        key: "f",
-        ctrlKey: true,
-        bubbles: true,
-      }));
-    });
-    const input = mounted.container.querySelector<HTMLInputElement>("input[aria-label='Find in current content']");
-    assert.ok(input);
-    const setInputValue = Object.getOwnPropertyDescriptor(
-      mounted.dom.window.HTMLInputElement.prototype,
-      "value",
-    )?.set;
-    assert.ok(setInputValue);
-    await act(async () => {
-      setInputValue.call(input, "hidden-needle");
-      const propertyChange = new mounted.dom.window.Event("propertychange", { bubbles: true });
-      Object.defineProperty(propertyChange, "propertyName", { value: "value" });
-      input.dispatchEvent(propertyChange);
-    });
-
-    assert.match(mounted.container.textContent ?? "", /hidden-needle/);
-    assert.equal(mounted.container.querySelector(".related-session-message-preview"), null);
-    assert.equal(highlights.get("withmate-find-current")?.ranges[0]?.toString(), "hidden-needle");
-  } finally {
-    await mounted.cleanup();
-  }
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {

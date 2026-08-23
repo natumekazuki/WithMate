@@ -2241,13 +2241,6 @@ export type SessionMessageColumnProps = {
 
 export type SessionOriginDetails = RelatedSessionDetails;
 
-const RELATED_SESSION_MESSAGE_PREVIEW_LENGTH = 240;
-
-function relatedSessionMessagePreview(message: string): string {
-  if (message.length <= RELATED_SESSION_MESSAGE_PREVIEW_LENGTH) return message;
-  return `${message.slice(0, RELATED_SESSION_MESSAGE_PREVIEW_LENGTH).trimEnd()}…`;
-}
-
 function getNonBlankSelectionText(selection: Selection): string | null {
   const text = selection.toString();
   return text.trim() ? text : null;
@@ -3118,22 +3111,18 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const messageCharacter = turnInitiator ?? (isAssistant ? character : null);
+            const messageCharacter = outboundTurn
+              ? { name: "↗", iconPath: "" }
+              : turnInitiator ?? (isAssistant ? character : null);
             const isExternalOrigin = turnInitiator !== null;
             const displayedRole = outboundTurn
               ? "session-origin session-outbound"
               : isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
-            const originDetailsKey = `${artifactKey}-${outboundTurn ? "related-session" : "origin-session"}`;
-            const currentFindMatch = messageFindMatches[activeCurrentFindMatch] ?? null;
-            const findExpandsOutboundMessage = Boolean(
-              outboundTurn
-              && findOpen
-              && hasFindQuery
-              && currentFindMatch?.kind === "message"
-              && currentFindMatch.messageIndex === absoluteIndex,
-            );
-            const originDetailsExpanded = (expandedArtifacts[originDetailsKey] ?? false)
-              || findExpandsOutboundMessage;
+            const originDetailsKey = `${artifactKey}-origin-session`;
+            const originDetailsExpanded = expandedArtifacts[originDetailsKey] ?? false;
+            const relatedSessionId = sessionInitiator?.sessionId
+              ?? outboundTurn?.relatedSession.sessionId
+              ?? null;
             const currentOriginSession = sessionInitiator
               ? originSessionDetails.find((details) => details.sessionId === sessionInitiator.sessionId) ?? null
               : outboundTurn
@@ -3181,13 +3170,9 @@ export function SessionMessageColumn({
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
                 }`}
               >
-                {messageCharacter || outboundTurn ? (
+                {messageCharacter ? (
                   <div className="message-avatar-stack">
-                    {messageCharacter ? (
-                      <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
-                    ) : (
-                      <span className="related-session-avatar" aria-hidden="true">↗</span>
-                    )}
+                    <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
                     {artifact ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
@@ -3206,7 +3191,7 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    {sessionInitiator || outboundTurn ? (
+                    {relatedSessionId ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
@@ -3214,7 +3199,7 @@ export function SessionMessageColumn({
                         aria-expanded={originDetailsExpanded}
                         aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
                         aria-label={outboundTurn
-                          ? `${outboundTurn.relatedSession.titleSnapshot}へのメッセージ全文とSession情報を${originDetailsExpanded ? "閉じる" : "開く"}`
+                          ? `${outboundTurn.relatedSession.titleSnapshot}のSession情報を${originDetailsExpanded ? "閉じる" : "開く"}`
                           : originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
                         title="Session情報"
                       >
@@ -3223,7 +3208,7 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                {messageCharacter || outboundTurn ? (
+                {messageCharacter ? (
                   <div className="message-character-name">
                     {outboundTurn ? (
                       <>
@@ -3252,32 +3237,19 @@ export function SessionMessageColumn({
                       {artifactExpanded ? "−" : "i"}
                     </button>
                   ) : null}
-                  {outboundTurn && !originDetailsExpanded ? (
-                    <button
-                      className="related-session-message-preview"
-                      type="button"
-                      onClick={() => onToggleArtifact(originDetailsKey)}
-                      aria-expanded="false"
-                      aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
-                      aria-label={`${outboundTurn.relatedSession.titleSnapshot}へのメッセージ全文を開く`}
-                    >
-                      {relatedSessionMessagePreview(message.text)}
-                    </button>
-                  ) : (
-                    <div
-                      data-message-body="true"
-                      data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                    >
-                      <MessageRichText
-                        text={message.text}
-                        forceFullRender={findOpen && hasFindQuery}
-                        displayMode={messageViewMode}
-                        onOpenPath={onOpenPath}
-                      />
-                    </div>
-                  )}
+                  <div
+                    data-message-body="true"
+                    data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
+                  >
+                    <MessageRichText
+                      text={message.text}
+                      forceFullRender={findOpen && hasFindQuery}
+                      displayMode={messageViewMode}
+                      onOpenPath={onOpenPath}
+                    />
+                  </div>
 
-                  {(sessionInitiator || outboundTurn) && originDetailsExpanded ? (
+                  {relatedSessionId && originDetailsExpanded ? (
                     <section
                       id={`origin-session-panel-${turnExecution?.executionId}`}
                       className="origin-session-details"
@@ -3286,7 +3258,7 @@ export function SessionMessageColumn({
                       <dl>
                         <div>
                           <dt>Session ID</dt>
-                          <dd><code>{outboundTurn?.relatedSession.sessionId ?? sessionInitiator?.sessionId}</code></dd>
+                          <dd><code>{relatedSessionId}</code></dd>
                         </div>
                         {currentOriginSession?.status === "found"
                         || (currentOriginSession?.status === "error" && currentOriginSession.taskTitle) ? (
@@ -3297,7 +3269,7 @@ export function SessionMessageColumn({
                                 <button
                                   className="origin-session-link"
                                   type="button"
-                                  onClick={() => onOpenOriginSession(outboundTurn?.relatedSession.sessionId ?? sessionInitiator!.sessionId)}
+                                  onClick={() => onOpenOriginSession(relatedSessionId)}
                                   aria-label={currentOriginSession.status === "error"
                                     ? `${currentOriginSession.taskTitle}を別Windowで開く（最新情報の取得に失敗）`
                                     : `${currentOriginSession.taskTitle}を別Windowで開く`}
