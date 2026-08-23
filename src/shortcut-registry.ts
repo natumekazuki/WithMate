@@ -11,7 +11,6 @@ import {
   type ShortcutAccelerator,
   type ShortcutPlatform,
 } from "./keyboard-shortcut-state.js";
-import { getWithMateApi } from "./renderer-withmate-api.js";
 
 export type ShortcutCommandKind = "standard" | "withmate";
 export type ShortcutAssignment = "existing" | "new";
@@ -30,8 +29,6 @@ export const SHORTCUT_COMMAND_IDS = {
   filePreviewSelectAll: "session.file-preview.select-all",
   composerSubmit: "session.composer.submit",
 } as const;
-
-export const MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND = "renderer.session-message-collapse-shortcut";
 
 export type ShortcutCommandId = typeof SHORTCUT_COMMAND_IDS[keyof typeof SHORTCUT_COMMAND_IDS];
 
@@ -516,127 +513,6 @@ function matchesAccelerator(event: KeyboardEvent, accelerator: ShortcutAccelerat
     && event.altKey === expected.altKey;
 }
 
-function shouldReportMessageCollapseShortcut(event: KeyboardEvent): boolean {
-  const normalizedKey = event.key.toLowerCase();
-  return event.code === "KeyM"
-    || normalizedKey === "m"
-    || event.key === "Control"
-    || event.key === "Shift"
-    || event.key === "Meta";
-}
-
-function describeShortcutTarget(target: EventTarget | null): Record<string, string | null> | null {
-  if (!target || typeof target !== "object") {
-    return null;
-  }
-
-  const candidate = target as {
-    nodeName?: unknown;
-    id?: unknown;
-    getAttribute?: (name: string) => string | null;
-  };
-  return {
-    nodeName: typeof candidate.nodeName === "string" ? candidate.nodeName : null,
-    id: typeof candidate.id === "string" && candidate.id.length > 0 ? candidate.id : null,
-    shortcutScope: typeof candidate.getAttribute === "function"
-      ? candidate.getAttribute("data-shortcut-scope")
-      : null,
-  };
-}
-
-function describeShortcutWindowState(): Record<string, unknown> {
-  if (typeof document === "undefined") {
-    return {
-      documentHasFocus: null,
-      visibilityState: null,
-      activeElement: null,
-    };
-  }
-
-  return {
-    documentHasFocus: typeof document.hasFocus === "function" ? document.hasFocus() : null,
-    visibilityState: document.visibilityState,
-    activeElement: describeShortcutTarget(document.activeElement),
-  };
-}
-
-function describeShortcutEvent(event: KeyboardEvent): Record<string, unknown> {
-  return {
-    eventType: event.type,
-    key: event.key,
-    code: event.code,
-    ctrlKey: event.ctrlKey,
-    metaKey: event.metaKey,
-    shiftKey: event.shiftKey,
-    altKey: event.altKey,
-    repeat: event.repeat,
-    isComposing: event.isComposing,
-    defaultPrevented: event.defaultPrevented,
-    target: describeShortcutTarget(event.target),
-    ...describeShortcutWindowState(),
-  };
-}
-
-function reportMessageCollapseShortcutDiagnostic(
-  phase: string,
-  details: Record<string, unknown>,
-  event?: KeyboardEvent,
-): void {
-  if (event && !shouldReportMessageCollapseShortcut(event)) {
-    return;
-  }
-
-  const data = {
-    phase,
-    ...(event ? describeShortcutEvent(event) : {}),
-    ...details,
-  };
-  const api = getWithMateApi();
-  if (!api) {
-    return;
-  }
-
-  try {
-    api.reportRendererLog({
-      level: "info",
-      kind: MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
-      message: `Session message collapse shortcut diagnostic: ${phase}`,
-      url: typeof window === "undefined" ? undefined : window.location.href,
-      data,
-    });
-  } catch {
-    // Diagnostics must never change shortcut behavior.
-  }
-}
-
-function describeMessageCollapseEntry(
-  entry: ShortcutEntry | undefined,
-  event: KeyboardEvent,
-  platform: ShortcutPlatform,
-  settings: KeyboardShortcutSettings,
-  activeScopes: ReadonlySet<string>,
-  handlers: ReadonlyMap<string, ShortcutHandler>,
-): Record<string, unknown> | null {
-  if (!entry) {
-    return null;
-  }
-
-  return {
-    id: entry.id,
-    scope: entry.scope,
-    activeScope: activeScopes.has(entry.scope),
-    handlerRegistered: handlers.has(entry.id),
-    acceleratorMatches: matchesAccelerator(event, resolveShortcutAcceleratorForEntry(entry, platform, settings)),
-    repeatAllowed: !event.repeat || entry.allowRepeat,
-    editingTarget: isEditingTarget(event.target),
-    allowInEditingTarget: entry.allowInEditingTarget,
-    editingTargetScope: entry.editingTargetScope ?? null,
-    editingTargetScopeMatches: entry.editingTargetScope
-      ? isWithinEditingTargetScope(event.target, entry.editingTargetScope)
-      : null,
-  };
-}
-
 type ShortcutDispatcherOptions = Readonly<{
   eventTarget: Window;
   platform?: ShortcutPlatform;
@@ -656,34 +532,6 @@ export class ShortcutDispatcher {
 
   private readonly onKeyDown = (event: KeyboardEvent): void => {
     this.dispatch(event);
-  };
-
-  private readonly onKeyUp = (event: KeyboardEvent): void => {
-    if (!shouldReportMessageCollapseShortcut(event)) {
-      return;
-    }
-    reportMessageCollapseShortcutDiagnostic("keyup", {}, event);
-  };
-
-  private readonly onWindowFocus = (): void => {
-    reportMessageCollapseShortcutDiagnostic("window-focus", {
-      eventType: "focus",
-      ...describeShortcutWindowState(),
-    });
-  };
-
-  private readonly onWindowBlur = (): void => {
-    reportMessageCollapseShortcutDiagnostic("window-blur", {
-      eventType: "blur",
-      ...describeShortcutWindowState(),
-    });
-  };
-
-  private readonly onVisibilityChange = (): void => {
-    reportMessageCollapseShortcutDiagnostic("visibility-change", {
-      eventType: "visibilitychange",
-      ...describeShortcutWindowState(),
-    });
   };
 
   constructor(options: ShortcutDispatcherOptions) {
@@ -752,19 +600,8 @@ export class ShortcutDispatcher {
   }
 
   dispatch(event: KeyboardEvent): boolean {
-    const shouldReportDiagnostic = shouldReportMessageCollapseShortcut(event);
-    if (shouldReportDiagnostic) {
-      reportMessageCollapseShortcutDiagnostic("received", {
-        activeScopes: Array.from(this.activeScopes),
-        registeredHandlers: Array.from(this.handlers.keys()),
-      }, event);
-    }
-
     const blockedReason = getBlockedKeyboardEventReason(event);
     if (blockedReason) {
-      if (shouldReportDiagnostic) {
-        reportMessageCollapseShortcutDiagnostic("blocked", { reason: blockedReason }, event);
-      }
       return false;
     }
 
@@ -784,28 +621,9 @@ export class ShortcutDispatcher {
       return matchesAccelerator(event, resolveShortcutAcceleratorForEntry(entry, this.platform, this.settings));
     });
     if (candidates.length === 0) {
-      if (shouldReportDiagnostic) {
-        reportMessageCollapseShortcutDiagnostic("no-match", {
-          activeScopes: Array.from(this.activeScopes),
-          registeredHandlers: Array.from(this.handlers.keys()),
-          messageCollapseCommand: describeMessageCollapseEntry(
-            this.entries.find((entry) => entry.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse),
-            event,
-            this.platform,
-            this.settings,
-            this.activeScopes,
-            this.handlers,
-          ),
-        }, event);
-      }
       return false;
     }
     if (candidates.length > 1) {
-      if (shouldReportDiagnostic) {
-        reportMessageCollapseShortcutDiagnostic("collision", {
-          commandIds: candidates.map((entry) => entry.id),
-        }, event);
-      }
       throw new ShortcutRegistryError(
         `Multiple active shortcut commands match ${event.key}: ${candidates.map((entry) => entry.id).join(", ")}`,
       );
@@ -819,45 +637,13 @@ export class ShortcutDispatcher {
     if (!handler) {
       return false;
     }
-    if (shouldReportDiagnostic) {
-      reportMessageCollapseShortcutDiagnostic("matched", {
-        commandId: command.id,
-        scope: command.scope,
-      }, event);
-    }
 
     let handled: boolean | void;
-    try {
-      handled = handler({ command, event, platform: this.platform });
-    } catch (error) {
-      if (shouldReportDiagnostic) {
-        reportMessageCollapseShortcutDiagnostic("handler-threw", {
-          commandId: command.id,
-          error: error instanceof Error ? {
-            name: error.name,
-            message: error.message,
-          } : String(error),
-        }, event);
-      }
-      throw error;
-    }
+    handled = handler({ command, event, platform: this.platform });
     if (handled === false) {
-      if (shouldReportDiagnostic) {
-        reportMessageCollapseShortcutDiagnostic("handler-rejected", {
-          commandId: command.id,
-          handlerResult: false,
-        }, event);
-      }
       return false;
     }
     event.preventDefault();
-    if (shouldReportDiagnostic) {
-      reportMessageCollapseShortcutDiagnostic("handled", {
-        commandId: command.id,
-        handlerResult: handled ?? "void",
-        defaultPreventedAfterHandler: event.defaultPrevented,
-      }, event);
-    }
     return true;
   }
 
@@ -898,16 +684,7 @@ export class ShortcutDispatcher {
       return;
     }
     this.eventTarget.addEventListener("keydown", this.onKeyDown);
-    this.eventTarget.addEventListener("keyup", this.onKeyUp);
-    this.eventTarget.addEventListener("focus", this.onWindowFocus);
-    this.eventTarget.addEventListener("blur", this.onWindowBlur);
-    this.eventTarget.document?.addEventListener("visibilitychange", this.onVisibilityChange);
     this.listening = true;
-    reportMessageCollapseShortcutDiagnostic("listener-started", {
-      activeScopes: Array.from(this.activeScopes),
-      registeredHandlers: Array.from(this.handlers.keys()),
-      ...describeShortcutWindowState(),
-    });
   }
 
   private stop(): void {
@@ -915,10 +692,6 @@ export class ShortcutDispatcher {
       return;
     }
     this.eventTarget.removeEventListener("keydown", this.onKeyDown);
-    this.eventTarget.removeEventListener("keyup", this.onKeyUp);
-    this.eventTarget.removeEventListener("focus", this.onWindowFocus);
-    this.eventTarget.removeEventListener("blur", this.onWindowBlur);
-    this.eventTarget.document?.removeEventListener("visibilitychange", this.onVisibilityChange);
     this.listening = false;
   }
 }

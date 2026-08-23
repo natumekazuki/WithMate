@@ -18,7 +18,6 @@ import {
   screen,
   shell,
   Tray,
-  type Input as ElectronInput,
   type NativeImage,
 } from "electron";
 
@@ -760,41 +759,6 @@ function attachWindowLogHandlers(window: BrowserWindow): void {
     data: {
       title: readWindowTitle(window),
     },
-  });
-
-  window.webContents.on("before-input-event", (_event, input: ElectronInput) => {
-    const normalizedKey = input.key.toLowerCase();
-    if (!(
-      input.code === "KeyM"
-      || normalizedKey === "m"
-      || input.key === "Control"
-      || input.key === "Shift"
-      || input.key === "Meta"
-    )) {
-      return;
-    }
-
-    writeAppLog({
-      level: "info",
-      kind: "main.session-message-collapse-input",
-      process: "main",
-      message: `Session message collapse input: ${input.type}`,
-      windowId: window.id,
-      data: {
-        inputType: input.type,
-        key: input.key,
-        code: input.code,
-        control: input.control,
-        shift: input.shift,
-        meta: input.meta,
-        alt: input.alt,
-        isAutoRepeat: input.isAutoRepeat,
-        isComposing: input.isComposing,
-        modifiers: input.modifiers,
-        windowFocused: window.isFocused(),
-        url: readWindowUrl(window),
-      },
-    });
   });
 
   window.on("closed", () => {

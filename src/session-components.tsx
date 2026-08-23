@@ -65,7 +65,6 @@ import {
 } from "./file-explorer/rendered-text-search.js";
 import {
   appendShortcutLabel,
-  MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
   SHORTCUT_COMMAND_IDS,
   useShortcutCommandHandler,
   useShortcutScope,
@@ -2692,24 +2691,6 @@ export function SessionMessageColumn({
       const targetCount = messageCollapseTargets.length;
       const callbackAvailable = Boolean(onToggleAllMessageCollapse);
       const accepted = targetCount > 0 && callbackAvailable;
-      try {
-        getWithMateApi()?.reportRendererLog({
-          level: "info",
-          kind: MESSAGE_COLLAPSE_SHORTCUT_DIAGNOSTIC_KIND,
-          message: "Session message collapse shortcut handler evaluated",
-          url: typeof window === "undefined" ? undefined : window.location.href,
-          data: {
-            phase: "component-handler",
-            sessionId,
-            isContentActive,
-            targetCount,
-            callbackAvailable,
-            accepted,
-          },
-        });
-      } catch {
-        // Diagnostics must never change shortcut behavior.
-      }
       if (!accepted || !onToggleAllMessageCollapse) {
         return false;
       }
