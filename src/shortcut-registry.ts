@@ -49,6 +49,7 @@ export type ShortcutEntry = Readonly<{
   editingTargetScope?: string;
   allowRepeat: boolean;
   showInHelp: boolean;
+  customizable: boolean;
   assignment: ShortcutAssignment;
 }>;
 
@@ -89,6 +90,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
@@ -104,6 +106,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
@@ -119,6 +122,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: true,
     assignment: "new",
   },
   {
@@ -134,6 +138,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
@@ -149,6 +154,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowInEditingTarget: true,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
@@ -164,6 +170,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     allowInEditingTarget: false,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
   },
   {
@@ -180,6 +187,7 @@ export const SHORTCUT_ENTRIES: readonly ShortcutEntry[] = [
     editingTargetScope: "composer",
     allowRepeat: false,
     showInHelp: true,
+    customizable: true,
     // This is an existing WithMate assignment retained for compatibility. New
     // WithMate assignments are validated against Ctrl/Cmd+Shift+A-Z below.
     assignment: "existing",
@@ -293,7 +301,9 @@ function resolveShortcutAcceleratorForEntry(
   platform: ShortcutPlatform,
   settings: KeyboardShortcutSettings,
 ): ShortcutAccelerator {
-  return settings.overrides[entry.id]?.[platform] ?? entry.accelerators[platform];
+  return entry.customizable
+    ? settings.overrides[entry.id]?.[platform] ?? entry.accelerators[platform]
+    : entry.accelerators[platform];
 }
 
 export function validateShortcutSettings(
@@ -331,7 +341,10 @@ export function updateShortcutBinding(
   platform: ShortcutPlatform,
   accelerator: ShortcutAccelerator | null,
 ): KeyboardShortcutSettings {
-  getShortcutEntry(commandId);
+  const entry = getShortcutEntry(commandId);
+  if (!entry.customizable) {
+    throw new ShortcutRegistryError(`Shortcut is fixed and cannot be customized: ${commandId}`);
+  }
   const nextSettings = updateKeyboardShortcutBinding(settings, commandId, platform, accelerator);
   validateShortcutSettings(SHORTCUT_ENTRIES, nextSettings);
   return nextSettings;

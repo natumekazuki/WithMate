@@ -32,6 +32,7 @@ function createEntry(overrides: Partial<ShortcutEntry> = {}): ShortcutEntry {
     allowInEditingTarget: false,
     allowRepeat: false,
     showInHelp: true,
+    customizable: false,
     assignment: "existing",
     ...overrides,
   };
@@ -219,6 +220,16 @@ describe("shortcut projection", () => {
     );
 
     assert.equal(getShortcutLabel(SHORTCUT_COMMAND_IDS.messageToggleCollapse, "windows", settings), "Ctrl+Shift+X");
+    assert.equal(
+      getShortcutLabel(SHORTCUT_COMMAND_IDS.messageFind, "windows", {
+        overrides: {
+          [SHORTCUT_COMMAND_IDS.messageFind]: {
+            windows: { key: "g", ctrlKey: true },
+          },
+        },
+      }),
+      "Ctrl+F",
+    );
     const helpItem = getShortcutHelpProjection("windows", settings)
       .flatMap((group) => group.items)
       .find((item) => item.id === SHORTCUT_COMMAND_IDS.messageToggleCollapse);
@@ -230,6 +241,15 @@ describe("shortcut projection", () => {
         SHORTCUT_COMMAND_IDS.messageToggleCollapse,
         "windows",
         { key: "Enter", ctrlKey: true },
+      ),
+      ShortcutRegistryError,
+    );
+    assert.throws(
+      () => updateShortcutBinding(
+        settings,
+        SHORTCUT_COMMAND_IDS.messageFind,
+        "windows",
+        { key: "g", ctrlKey: true },
       ),
       ShortcutRegistryError,
     );

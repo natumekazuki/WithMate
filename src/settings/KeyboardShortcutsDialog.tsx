@@ -6,6 +6,7 @@ import {
   DEFAULT_KEYBOARD_SHORTCUT_SETTINGS,
   detectShortcutPlatform,
   getShortcutHelpProjection,
+  getShortcutEntry,
   ShortcutRegistryError,
   updateShortcutBinding,
   type KeyboardShortcutSettings,
@@ -137,7 +138,7 @@ export function KeyboardShortcutsDialog({
                     <dt>{item.label}</dt>
                     <dd>
                       <span>{item.acceleratorLabel}</span>
-                      {isEditable ? (
+                      {isEditable && getShortcutEntry(item.id).customizable ? (
                         <span className="settings-keyboard-shortcut-actions">
                           <button
                             className="launch-toggle compact"

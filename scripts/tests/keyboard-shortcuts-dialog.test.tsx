@@ -142,6 +142,16 @@ test("Keyboard shortcuts dialogはChangeで押下した組み合わせを設定�
       .find((button) => button.textContent?.trim() === "Change");
     assert.ok(changeButton);
 
+    const sendRow = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
+      .find((candidate) => candidate.textContent?.includes("Send message"));
+    assert.ok(sendRow);
+    assert.ok(Array.from(sendRow.querySelectorAll("button")).some((button) => button.textContent?.trim() === "Change"));
+
+    const browserShortcutRow = Array.from(container.querySelectorAll<HTMLElement>(".settings-keyboard-shortcut-row"))
+      .find((candidate) => candidate.textContent?.includes("Find messages"));
+    assert.ok(browserShortcutRow);
+    assert.equal(browserShortcutRow.querySelector("button"), null);
+
     act(() => {
       changeButton.click();
     });
