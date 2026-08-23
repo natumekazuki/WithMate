@@ -41,10 +41,18 @@ export type SessionOutboundTurn = SessionTurnExecutionProjectionBase & {
   };
 };
 
+export type SessionReceivedTurn = SessionTurnExecutionProjectionBase & {
+  state: "received";
+  queuePosition: null;
+  canCancel: false;
+  targetMessageSequence: number;
+};
+
 export type SessionTurnExecutionProjection =
   | SessionRunningTurn
   | SessionQueuedTurn
   | SessionTerminalTurn
+  | SessionReceivedTurn
   | SessionOutboundTurn;
 
 export type SessionExecutionChangedEvent =

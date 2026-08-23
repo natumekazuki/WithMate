@@ -6,6 +6,7 @@ import { appendTurnExecutionsToMessageList } from "../../src/session-queued-turn
 import type {
   SessionOutboundTurn,
   SessionQueuedTurn,
+  SessionReceivedTurn,
   SessionRunningTurn,
 } from "../../src/session-turn-execution.js";
 import {
@@ -68,6 +69,34 @@ function runningTurn(executionId: string, userMessage: string): SessionRunningTu
     state: "running",
     queuePosition: null,
     canCancel: false,
+    createdAt: "2026-08-16T00:00:00.000Z",
+    updatedAt: "2026-08-16T00:00:00.000Z",
+  };
+}
+
+function receivedTurn(
+  executionId: string,
+  targetMessageSequence: number,
+  userMessage: string,
+): SessionReceivedTurn {
+  return {
+    executionId,
+    sessionId: "session-1",
+    clientRequestId: null,
+    userMessage,
+    initiator: {
+      kind: "session",
+      sessionId: "source-session",
+      character: {
+        characterId: "source-character",
+        name: "Source Agent",
+        iconFilePath: "",
+      },
+    },
+    state: "received",
+    queuePosition: null,
+    canCancel: false,
+    targetMessageSequence,
     createdAt: "2026-08-16T00:00:00.000Z",
     updatedAt: "2026-08-16T00:00:00.000Z",
   };
@@ -362,6 +391,30 @@ test("live responseがSession hydrationより先着しても昇格userの直下�
     "二つ目の応答",
     "その次",
   ]);
+});
+
+test("ORCH-INBOUND-HISTORY-01: 完了後のSession initiatorをcanonical target message位置へ結び直す", () => {
+  const base = buildMessageListProjection(
+    [
+      { role: "user", text: "同じ本文" },
+      { role: "assistant", text: "途中の応答" },
+      { role: "user", text: "同じ本文" },
+    ],
+    [],
+    "session-1",
+  );
+
+  const projection = appendTurnExecutionsToMessageList(
+    base,
+    [receivedTurn("execution-received", 2, "同じ本文")],
+    "idle",
+  );
+
+  assert.equal(projection.messages.length, 3);
+  assert.equal(projection.turnExecutions[0], null);
+  assert.equal(projection.turnExecutions[2]?.executionId, "execution-received");
+  assert.equal(projection.keys[2], "turn-execution-execution-received");
+  assert.equal(projection.sources[2]?.kind, "session");
 });
 
 test("ORCH-OUTBOUND-ORDER-01: outbound Turnはacceptance時のsource message位置へmergeする", () => {

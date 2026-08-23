@@ -3111,10 +3111,11 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const messageCharacter = turnInitiator ?? (isAssistant ? character : null);
+            const isAgentMessage = isAssistant || outboundTurn !== null;
+            const messageCharacter = outboundTurn ? character : turnInitiator ?? (isAssistant ? character : null);
             const isExternalOrigin = turnInitiator !== null;
             const displayedRole = outboundTurn
-              ? "session-origin session-outbound"
+              ? "assistant session-outbound"
               : isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
             const originDetailsKey = `${artifactKey}-origin-session`;
             const originDetailsExpanded = expandedArtifacts[originDetailsKey] ?? false;
@@ -3127,7 +3128,7 @@ export function SessionMessageColumn({
                 ? originSessionDetails.find((details) => details.sessionId === outboundTurn.relatedSession.sessionId) ?? null
               : null;
             const relatedSessionMessageLabel = outboundTurn
-              ? `${outboundTurn.relatedSession.titleSnapshot}へ送ったメッセージ`
+              ? `${character.name}が${outboundTurn.relatedSession.titleSnapshot}へ送ったメッセージ`
               : sessionInitiator
                 ? `${sessionInitiator.character.name}から届いたメッセージ`
                 : undefined;
@@ -3143,7 +3144,7 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
-            const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
+            const canUseMessageTextActions = isAgentMessage && (onCopyMessageText || onQuoteMessageText);
 
             return (
               <div
@@ -3218,15 +3219,21 @@ export function SessionMessageColumn({
                   <div className="message-character-name">
                     {outboundTurn ? (
                       <>
-                        <span aria-hidden="true">→</span>
-                        <span>{outboundTurn.relatedSession.titleSnapshot}</span>
-                        <span className="related-session-role">{outboundTurn.relatedSession.roleSnapshot}</span>
+                        <span>{messageCharacter?.name}</span>
+                        <span
+                          className="related-session-route"
+                          aria-label={`${outboundTurn.relatedSession.titleSnapshot}へ送信`}
+                        >
+                          <span aria-hidden="true">→</span>
+                          <span>{outboundTurn.relatedSession.titleSnapshot}</span>
+                          <span className="related-session-role">{outboundTurn.relatedSession.roleSnapshot}</span>
+                        </span>
                       </>
                     ) : messageCharacter?.name}
                   </div>
                 ) : null}
                 <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
-                  {artifact && !isAssistant ? (
+                  {artifact && !isAgentMessage ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
                       type="button"

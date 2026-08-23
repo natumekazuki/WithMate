@@ -156,6 +156,84 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  it("ORCH-INBOUND-HISTORY-01: 完了したSession起点executionをcanonical target message位置と組で復元する", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue({
+        ...enqueueInput(1),
+        sessionId: "session-2",
+        request: {
+          initiator: {
+            kind: "session",
+            sessionId: "session-1",
+            character: {
+              characterId: "source-character",
+              name: "Source Agent",
+              iconFilePath: "",
+            },
+          },
+          turn: { userMessage: "received request" },
+        },
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2",
+          targetSessionRole: "standalone",
+          userMessage: "received request",
+        },
+      });
+      fixture.storage.admitNextQueued("session-2", CREATED_AT);
+
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare(`
+          INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
+          VALUES ('session-2', 3, 'user', '{"text":"received request"}', ?)
+        `).run(CREATED_AT);
+        const turn = db.prepare(`
+          INSERT INTO session_turns_v6 (
+            session_id, phase, user_message_seq, started_at, updated_at
+          ) VALUES ('session-2', 'running', 3, ?, ?)
+        `).run(CREATED_AT, CREATED_AT);
+        db.prepare(`
+          INSERT INTO session_turn_public_context_v6 (
+            turn_id, session_id, execution_id, effective_turn_json,
+            attachments_json, created_at, updated_at
+          ) VALUES (?, 'session-2', 'execution-1', '{}', '[]', ?, ?)
+        `).run(turn.lastInsertRowid, CREATED_AT, CREATED_AT);
+      } finally {
+        db.close();
+      }
+
+      fixture.storage.completeRunning({
+        executionId: "execution-1",
+        state: "completed",
+        result: { assistantText: "done" },
+        errorCode: "",
+        reason: "",
+        completedAt: CREATED_AT,
+        expiresAt: EXPIRES_AT,
+      });
+
+      const inbound = fixture.storage.listSessionInboundExecutions("session-2");
+      assert.equal(inbound.length, 1);
+      assert.equal(inbound[0]?.targetMessageSequence, 3);
+      assert.equal(inbound[0]?.execution.id, "execution-1");
+      assert.deepEqual((inbound[0]?.execution.request as { initiator?: unknown }).initiator, {
+        kind: "session",
+        sessionId: "session-1",
+        character: {
+          characterId: "source-character",
+          name: "Source Agent",
+          iconFilePath: "",
+        },
+      });
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("ID-03: restart loadとqueuedからrunningへの遷移でinitiator tupleを維持する", async () => {
     const fixture = await createFixture();
     const initiator = {

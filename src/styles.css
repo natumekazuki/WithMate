@@ -6695,9 +6695,19 @@ button:disabled {
 
 .message-row.session-outbound > .message-character-name {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.related-session-route {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .related-session-role {

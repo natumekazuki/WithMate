@@ -61,6 +61,11 @@ export type SessionOutboundExecutionRecord = {
   createdAt: string;
 };
 
+export type SessionInboundExecutionRecord = {
+  execution: SessionExecutionStorageRecord;
+  targetMessageSequence: number;
+};
+
 export type SessionExecutionTurnResult = {
   assistantText: string;
 };

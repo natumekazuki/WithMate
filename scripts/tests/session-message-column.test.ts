@@ -2073,7 +2073,41 @@ test("ID-03: initiatorなしのlegacy executionだけを外部として表示す
   assert.doesNotMatch(html, /Turnをキャンセル/);
 });
 
-test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは既存origin primitiveでtarget snapshotと全文を表示する", () => {
+test("ORCH-INBOUND-HISTORY-01: 完了後の別Session発言も送信元Agentのorigin primitiveで表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "完了済みの別Session発言" }],
+    turnExecutions: [{
+      executionId: "execution-received",
+      sessionId: "session-target",
+      clientRequestId: null,
+      userMessage: "完了済みの別Session発言",
+      initiator: {
+        kind: "session",
+        sessionId: "session-actor",
+        character: {
+          characterId: "character-actor",
+          name: "送信元Agent",
+          iconFilePath: "",
+        },
+      },
+      state: "received",
+      queuePosition: null,
+      canCancel: false,
+      targetMessageSequence: 0,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:01.000Z",
+    }],
+  });
+
+  assert.match(html, /class="message-row session-origin/);
+  assert.match(html, /aria-label="送信元Agentから届いたメッセージ"/);
+  assert.match(html, /class="message-character-name">送信元Agent/);
+  assert.match(html, /avatar-fallback">送/);
+  assert.match(html, /class="message-card session-origin/);
+  assert.match(html, /完了済みの別Session発言/);
+});
+
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは送信元Agent responseを主体にtarget方向と全文を表示する", () => {
   const fullMessage = `${"preview ".repeat(40)}FULL-END`;
   const baseExecution = {
     executionId: "execution-outbound",
@@ -2099,10 +2133,13 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは既存origin pri
     messages: [{ role: "user", text: fullMessage }],
     turnExecutions: [baseExecution],
   });
-  assert.match(rendered, /class="message-row session-origin session-outbound/);
-  assert.match(rendered, /aria-label="Target Snapshotへ送ったメッセージ"/);
-  assert.match(rendered, /class="message-card session-origin session-outbound/);
-  assert.match(rendered, /message-character-name"><span aria-hidden="true">→<\/span><span>Target Snapshot/);
+  assert.match(rendered, /class="message-row assistant session-outbound/);
+  assert.match(rendered, /aria-label="Test CharacterがTarget Snapshotへ送ったメッセージ"/);
+  assert.match(rendered, /class="message-card assistant session-outbound/);
+  assert.match(rendered, /avatar-fallback">T/);
+  assert.match(rendered, /message-character-name"><span>Test Character<\/span><span class="related-session-route"/);
+  assert.match(rendered, /aria-label="Target Snapshotへ送信"/);
+  assert.match(rendered, /<span aria-hidden="true">→<\/span><span>Target Snapshot/);
   assert.match(rendered, /Target Snapshot/);
   assert.match(rendered, /related-session-role">executor/);
   assert.doesNotMatch(rendered, /avatar-fallback">↗/);

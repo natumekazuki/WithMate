@@ -2,6 +2,7 @@ import {
   type SessionExecution,
   type SessionExecutionOriginSnapshot,
   type SessionExecutionOperation,
+  type SessionInboundExecutionRecord,
   type SessionOutboundExecutionRecord,
   type SessionExecutionStorageRecord,
 } from "../src/session-execution.js";
@@ -48,6 +49,7 @@ export type SessionExecutionServiceDeps = {
     | "interruptRunningForShutdown"
     | "listSessionExecutions"
     | "listSessionExecutionProjectionRecords"
+    | "listSessionInboundExecutions"
     | "listSessionOutboundExecutions"
     | "listSessionExecutionsPage"
     | "iterateSessionExecutionsPage"
@@ -239,6 +241,11 @@ export class SessionExecutionService {
   listOutboundRecords(sessionId: string): SessionOutboundExecutionRecord[] {
     this.requirePersistenceAvailable();
     return this.deps.storage.listSessionOutboundExecutions(sessionId);
+  }
+
+  listInboundRecords(sessionId: string): SessionInboundExecutionRecord[] {
+    this.requirePersistenceAvailable();
+    return this.deps.storage.listSessionInboundExecutions(sessionId);
   }
 
   listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {

@@ -4,6 +4,7 @@ import {
   SESSION_EXECUTION_QUEUE_LIMIT,
   type SessionExecutionMutationOperation,
   type SessionExecutionOriginSnapshot,
+  type SessionInboundExecutionRecord,
   type SessionExecutionOperation,
   type SessionOutboundExecutionRecord,
   type SessionExecutionState,
@@ -383,6 +384,28 @@ export class SessionExecutionStorageV6 {
       targetSessionRole: row.target_session_role_snapshot,
       userMessage: row.user_message,
       createdAt: row.accepted_at,
+    }));
+  }
+
+  listSessionInboundExecutions(targetSessionId: string): SessionInboundExecutionRecord[] {
+    const rows = this.db.prepare(`
+      SELECT execution.*, turn.user_message_seq AS target_message_sequence
+      FROM session_turn_public_context_v6 AS context
+      INNER JOIN session_executions_v6 AS execution
+        ON execution.id = context.execution_id
+        AND execution.session_id = context.session_id
+      INNER JOIN session_turns_v6 AS turn
+        ON turn.id = context.turn_id
+        AND turn.session_id = context.session_id
+      WHERE context.session_id = ?
+        AND execution.state IN ('completed', 'failed', 'canceled', 'interrupted')
+        AND turn.user_message_seq IS NOT NULL
+        AND json_extract(execution.request_json, '$.initiator.kind') = 'session'
+      ORDER BY turn.user_message_seq ASC, execution.sequence ASC
+    `).all(targetSessionId) as Array<SessionExecutionRow & { target_message_sequence: number }>;
+    return rows.map((row) => ({
+      execution: parseExecution(row),
+      targetMessageSequence: row.target_message_sequence,
     }));
   }
 

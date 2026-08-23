@@ -23,7 +23,13 @@ export function appendTurnExecutionsToMessageList(
   const outboundTurns = executions
     .filter((execution) => execution.state === "accepted")
     .sort((left, right) => left.acceptanceSequence - right.acceptanceSequence);
-  const mergedProjection = mergeOutboundTurns(projection, outboundTurns);
+  const receivedTurns = executions
+    .filter((execution) => execution.state === "received")
+    .sort((left, right) => left.targetMessageSequence - right.targetMessageSequence);
+  const mergedProjection = mergeOutboundTurns(
+    bindReceivedTurns(projection, receivedTurns),
+    outboundTurns,
+  );
   const runningInsertIndex = projectedRunningExecutions.length > 0
     ? mergedProjection.sources.findIndex((source) => (
         source.kind === "live-assistant" && source.sessionId === runningExecution?.sessionId
@@ -90,7 +96,7 @@ export function appendTurnExecutionsToMessageList(
 }
 
 function mergeOutboundTurns(
-  projection: MessageListProjection,
+  projection: SessionTurnMessageProjection,
   outboundTurns: Extract<SessionTurnExecutionProjection, { state: "accepted" }>[],
 ): SessionTurnMessageProjection {
   const merged: SessionTurnMessageProjection = {
@@ -98,7 +104,7 @@ function mergeOutboundTurns(
     sources: [...projection.sources],
     keys: [...projection.keys],
     groups: [...projection.groups],
-    turnExecutions: projection.messages.map(() => null),
+    turnExecutions: [...projection.turnExecutions],
   };
   for (const execution of outboundTurns) {
     const anchorIndex = merged.sources.findLastIndex((source) => (
@@ -125,4 +131,26 @@ function mergeOutboundTurns(
     merged.turnExecutions.splice(insertionIndex, 0, execution);
   }
   return merged;
+}
+
+function bindReceivedTurns(
+  projection: MessageListProjection,
+  receivedTurns: Extract<SessionTurnExecutionProjection, { state: "received" }>[],
+): SessionTurnMessageProjection {
+  const bound: SessionTurnMessageProjection = {
+    messages: [...projection.messages],
+    sources: [...projection.sources],
+    keys: [...projection.keys],
+    groups: [...projection.groups],
+    turnExecutions: projection.messages.map(() => null),
+  };
+  for (const execution of receivedTurns) {
+    const messageIndex = bound.sources.findIndex((source) => (
+      source.kind === "session" && source.messageIndex === execution.targetMessageSequence
+    ));
+    if (messageIndex < 0) continue;
+    bound.turnExecutions[messageIndex] = execution;
+    bound.keys[messageIndex] = `turn-execution-${execution.executionId}`;
+  }
+  return bound;
 }
