@@ -21,6 +21,7 @@ import {
   findLatestLiveCommandStep,
   resolveAvailableContextPaneTabs,
   shouldIncludeGlossaryContextPane,
+  isGlossarySearchRevisionCurrent,
 } from "../../src/session-ui-projection.js";
 
 function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">): LiveBackgroundTask {
@@ -31,6 +32,12 @@ function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBack
 }
 
 describe("session-ui-projection", () => {
+  it("Glossary検索結果は初回・追加取得ともcurrent projection revisionだけを採用する", () => {
+    assert.equal(isGlossarySearchRevisionCurrent("revision-a", "revision-a"), true);
+    assert.equal(isGlossarySearchRevisionCurrent("revision-b", "revision-a"), false);
+    assert.equal(isGlossarySearchRevisionCurrent("revision-a", null), false);
+  });
+
   it("latest command helpers は末尾の command_execution を拾う", () => {
     const liveSteps: LiveRunStep[] = [
       {

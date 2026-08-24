@@ -27,6 +27,8 @@ import type {
 } from "./character-context-application-service.js";
 import {
   createWithMateMemoryRuntimeChallenge,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
@@ -817,9 +819,11 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const fileOperationRequestTimeoutMs = options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
   let activeRequests = 0;
+  let activeAgentExtensionRequests = 0;
 
   const server = createServer(async (request, response) => {
     let admitted = false;
+    let admittedAgentExtension = false;
     try {
       if (!isLoopbackRemoteAddress(request.socket.remoteAddress)) {
         writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Memory API only accepts loopback requests."));
@@ -933,6 +937,61 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         return;
       }
 
+      if (pathname === WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH) {
+        if (request.method !== "POST" || !acceptsJsonRequest(request)) {
+          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Agent runtime extension exchange requires JSON POST."));
+          return;
+        }
+        const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
+        const expectedRuntimeInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+        if (
+          typeof nonce !== "string"
+          || typeof expectedRuntimeInstanceId !== "string"
+          || expectedRuntimeInstanceId !== runtimeInstanceId
+        ) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime identity challenge is invalid."));
+          return;
+        }
+        if (activeAgentExtensionRequests >= 1) {
+          writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Agent runtime extension exchange has an in-flight request."));
+          return;
+        }
+        activeAgentExtensionRequests += 1;
+        admittedAgentExtension = true;
+        request.setTimeout(requestTimeoutMs);
+        response.setTimeout(requestTimeoutMs);
+        response.writeEarlyHints({
+          link: `<${WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH}>; rel=preconnect`,
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
+            apiSecret,
+            runtimeInstanceId,
+            nonce,
+          ),
+        });
+        const payload = parseRuntimeExchangePayload(
+          await readJsonBody(request, WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES),
+        );
+        if (!payload || !authenticateRuntimeExchange(payload, apiSecret, operatorApiSecret, mcpApiSecret)) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime extension exchange is not authorized."));
+          return;
+        }
+        const extensionResponse = await options.routeAgentRuntimeExtension?.({
+          method: payload.operation.method,
+          path: payload.operation.path,
+          body: payload.operation.body,
+          transport: payload.adapter,
+          bindingReference: payload.bindingReference,
+          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+        }) ?? null;
+        if (!extensionResponse) {
+          writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Agent runtime extension route was not found."));
+          return;
+        }
+        writeJson(response, extensionResponse.status, extensionResponse.value);
+        return;
+      }
+
       const authenticationError = authenticateInternalApiRequest(request, apiSecret);
       if (authenticationError) {
         writeJson(response, 401, authenticationError);
@@ -1003,6 +1062,9 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
     } finally {
       if (admitted) {
         activeRequests -= 1;
+      }
+      if (admittedAgentExtension) {
+        activeAgentExtensionRequests -= 1;
       }
     }
   });

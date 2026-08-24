@@ -21,6 +21,7 @@ import type {
   WithMateMemoryRuntimeOperation,
   WithMateMemoryRuntimeResponse,
 } from "../withmate-memory-runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src/memory-v6/memory-runtime-exchange.js";
 
 const CLI_ENV = {
   WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
@@ -171,6 +172,35 @@ describe("withmate-glossary CLI contract", () => {
     if (!result.ok) {
       assert.equal(result.code, "GLOSSARY_TRANSPORT_ERROR");
       assert.equal(result.effect, "unknown");
+      assert.equal(result.retryable, false);
+    }
+  });
+
+  it("Glossary専用exchangeを使い、body拒否はapplication未到達のeffect noneにする", async () => {
+    let exchangePath = "";
+    const result = await callGlossaryRuntime({
+      operation: "create_batch",
+      path: GLOSSARY_RUNTIME_OPERATION_PATHS.create_batch,
+      body: {
+        schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+        selector: { kind: "primary" },
+        mode: "explicit",
+        entries: [{ term: "Runtime", definition: "definition" }],
+      },
+    }, {
+      adapter: "cli",
+      env: CLI_ENV,
+      runtimeCall: async (_connection, _operation, options) => {
+        exchangePath = options.exchangePath ?? "";
+        return { ok: false, status: 413, value: { error: { code: "MEMORY_REQUEST_TOO_LARGE" } } };
+      },
+    });
+
+    assert.equal(exchangePath, WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH);
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      assert.equal(result.code, "GLOSSARY_LIMIT_EXCEEDED");
+      assert.equal(result.effect, "none");
       assert.equal(result.retryable, false);
     }
   });

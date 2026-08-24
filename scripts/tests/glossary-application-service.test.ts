@@ -12,7 +12,7 @@ import {
   serializeGlossaryDocument,
   type ResolvedGlossaryCheckout,
 } from "../../src-electron/glossary-application-service.js";
-import { normalizeGlossaryLookup, type GlossaryEntry } from "../../src/glossary-contract.js";
+import { GLOSSARY_LIMITS, normalizeGlossaryLookup, type GlossaryEntry } from "../../src/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -58,6 +58,48 @@ describe("GLOSSARY-SOURCE-OF-TRUTH parser and projection", () => {
     assert.deepEqual(snapshot.entries.map((entry) => entry.term), ["Session Runtime", "Agent Binding"]);
     assert.equal(snapshot.entries[0].definition, "**not markdown**\n<script>alert(1)</script>");
     assert.match(snapshot.revision, /^[a-f0-9]{64}$/);
+  });
+
+  it("2MB超過がstatで確定したfileは内容を読み進めずbounded invalid projectionにする", async () => {
+    const { root, target } = await createRepository();
+    await mkdir(path.join(root, ".withmate"), { recursive: true });
+    await writeFile(
+      path.join(root, ".withmate", "glossary.yaml"),
+      Buffer.alloc(GLOSSARY_LIMITS.maxFileBytes + 1, 0x61),
+    );
+    let contentReadCount = 0;
+    const service = new GlossaryApplicationService({
+      readFileHandle: async () => {
+        contentReadCount += 1;
+        throw new Error("oversized files must not be read");
+      },
+    });
+
+    const snapshot = await service.read(target);
+
+    assert.equal(snapshot.status, "invalid");
+    assert.equal(contentReadCount, 0);
+    assert.match(snapshot.revision ?? "", /^[a-f0-9]{64}$/);
+    if (snapshot.status === "invalid") {
+      assert.equal(snapshot.issues[0]?.code, "LIMIT_EXCEEDED");
+    }
+  });
+
+  it("read中にfileがgrowしてもopened sizeだけをread上限にし、snapshotを採用しない", async () => {
+    const { root, target } = await createRepository();
+    const raw = await writeGlossary(root, [{ term: "Runtime", aliases: [], definition: "before" }]);
+    const glossaryPath = path.join(root, ".withmate", "glossary.yaml");
+    let observedReadLimit = -1;
+    const service = new GlossaryApplicationService({
+      readFileHandle: async (_handle, maxBytes) => {
+        observedReadLimit = maxBytes;
+        await writeFile(glossaryPath, Buffer.alloc(GLOSSARY_LIMITS.maxFileBytes + 1024, 0x62));
+        return { raw, oversized: false };
+      },
+    });
+
+    await assert.rejects(() => service.read(target), /changed during read/);
+    assert.equal(observedReadLimit, Buffer.byteLength(raw, "utf8"));
   });
 
   it("invalid YAML、unsupported schema、unknown fieldを区別する", () => {

@@ -6,6 +6,7 @@ import {
   type GlossaryRuntimeEnvelope,
 } from "../src/glossary-contract.js";
 import type { GlossaryRuntimeOperation } from "../src/glossary-operation-schema.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../src/memory-v6/memory-runtime-exchange.js";
 import {
   callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
@@ -25,7 +26,7 @@ export type GlossaryRuntimeClientDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal; bindingReference?: string },
+    options: { signal: AbortSignal; bindingReference?: string; exchangePath?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   requestTimeoutMs?: number;
 };
@@ -59,6 +60,17 @@ function createGlossaryBindingRequiredError(): GlossaryRuntimeEnvelope<GlossaryO
     ok: false,
     code: "GLOSSARY_SESSION_BINDING_REQUIRED",
     message: "Glossary operations require the active WithMate provider Session runtime binding.",
+    effect: "none",
+    retryable: false,
+  };
+}
+
+function createGlossaryRequestTooLargeError(): GlossaryRuntimeEnvelope<GlossaryOperationError> {
+  return {
+    schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+    ok: false,
+    code: "GLOSSARY_LIMIT_EXCEEDED",
+    message: "Glossary runtime request body is too large.",
     effect: "none",
     retryable: false,
   };
@@ -108,10 +120,14 @@ export async function callGlossaryRuntime(input: {
     }, {
       signal: abortController.signal,
       bindingReference,
+      exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
     });
     dispatched = true;
     if (isGlossaryRuntimeResult(response.value)) {
       return response.value;
+    }
+    if (response.status === 413) {
+      return createGlossaryRequestTooLargeError();
     }
     return createGlossaryTransportError(
       "WithMate runtime returned a non-glossary response.",

@@ -20021,6 +20021,16 @@ var StdioServerTransport = class {
 		});
 	}
 };
+//#endregion
+//#region src/memory-v6/memory-runtime-exchange.ts
+var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
+var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
+var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
+var WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH = "/v1/agent-runtime-extension-exchange";
+var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
+function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) {
+	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
+}
 var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6.current.json";
 function buildWithMateMemoryDiscoveryGenerationFileName(adapter, runtimeInstanceId) {
 	return `memory-v6-${adapter}.${createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex")}.json`;
@@ -20064,16 +20074,6 @@ function createMemoryErrorResponse(error) {
 		schemaVersion: MEMORY_V6_SCHEMA_VERSION,
 		error
 	};
-}
-//#endregion
-//#region src/memory-v6/memory-runtime-exchange.ts
-var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
-var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
-var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
-var WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH = "/v1/exchange";
-var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
-function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) {
-	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
 }
 //#endregion
 //#region src/agent-runtime/agent-runtime-binding-contract.ts
@@ -20161,7 +20161,7 @@ async function discoverWithMateMemoryApi(options) {
 }
 async function callWithMateMemoryRuntime(connection, operation, options) {
 	const nonce = randomBytes(16).toString("base64url");
-	const exchangeUrl = new URL(WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
+	const exchangeUrl = new URL(options.exchangePath ?? "/v1/exchange", connection.api.baseUrl);
 	return new Promise((resolve, reject) => {
 		let dispatched = false;
 		let identityVerified = false;
@@ -20280,6 +20280,16 @@ function createGlossaryBindingRequiredError() {
 		retryable: false
 	};
 }
+function createGlossaryRequestTooLargeError() {
+	return {
+		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+		ok: false,
+		code: "GLOSSARY_LIMIT_EXCEEDED",
+		message: "Glossary runtime request body is too large.",
+		effect: "none",
+		retryable: false
+	};
+}
 function isWriteOperation(operation) {
 	return operation === "create" || operation === "create_batch" || operation === "update" || operation === "delete";
 }
@@ -20313,10 +20323,12 @@ async function callGlossaryRuntime(input, deps) {
 			body: input.body
 		}, {
 			signal: abortController.signal,
-			bindingReference
+			bindingReference,
+			exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH
 		});
 		dispatched = true;
 		if (isGlossaryRuntimeResult(response.value)) return response.value;
+		if (response.status === 413) return createGlossaryRequestTooLargeError();
 		return createGlossaryTransportError("WithMate runtime returned a non-glossary response.", isWriteOperation(input.operation) ? "unknown" : "none");
 	} catch (error) {
 		const wasDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;

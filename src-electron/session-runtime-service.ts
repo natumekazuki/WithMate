@@ -123,6 +123,12 @@ export type SessionRuntimeServiceDeps = {
     session: Session;
     provider: ModelCatalogProvider;
   }): Awaitable<ProviderAgentRuntimeBindingProjection | null>;
+  beginProviderAgentRuntimeTurn?(input: {
+    session: Session;
+    provider: ModelCatalogProvider;
+    binding: ProviderAgentRuntimeBindingProjection | null;
+  }): Awaitable<unknown>;
+  endProviderAgentRuntimeTurn?(handle: unknown): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -1200,7 +1206,15 @@ export class SessionRuntimeService {
       );
     };
 
+    let providerAgentRuntimeTurnHandle: unknown;
     try {
+      providerAgentRuntimeTurnHandle = await Promise.resolve(
+        this.deps.beginProviderAgentRuntimeTurn?.({
+          session: activeRunningSession,
+          provider,
+          binding: agentRuntimeBinding,
+        }),
+      );
       let result: RunSessionTurnResult | null = null;
       let didInternalRetry = false;
       while (true) {
@@ -1632,6 +1646,9 @@ export class SessionRuntimeService {
       runInBackgroundMacrotask("Detached terminal audit processing failed", completeFailedAudit);
       return storedFailedSession;
     } finally {
+      if (providerAgentRuntimeTurnHandle !== undefined) {
+        this.deps.endProviderAgentRuntimeTurn?.(providerAgentRuntimeTurnHandle);
+      }
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
       }

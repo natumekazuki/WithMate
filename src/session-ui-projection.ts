@@ -513,3 +513,10 @@ export function buildContextPaneProjection({
     tasksToneClassName,
   };
 }
+
+export function isGlossarySearchRevisionCurrent(
+  resultRevision: string | null,
+  projectionRevision: string | null | undefined,
+): boolean {
+  return resultRevision !== null && resultRevision === projectionRevision;
+}

@@ -104,6 +104,7 @@ export type GlossaryApplicationServiceDeps = {
   renamePath?: (oldPath: string, newPath: string) => Promise<void>;
   watchPath?: GlossaryWatchPath;
   watchDebounceMs?: number;
+  readFileHandle?: (handle: FileHandle, maxBytes: number) => Promise<{ raw: string; oversized: boolean }>;
 };
 
 class GlossaryServiceFailure extends Error {
@@ -210,19 +211,37 @@ function rawRevision(raw: string): string {
   return createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
-async function hashFileHandle(handle: FileHandle): Promise<string> {
-  const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(64 * 1024);
+async function readFileHandleBounded(
+  handle: FileHandle,
+  maxBytes: number,
+): Promise<{ raw: string; oversized: boolean }> {
+  const chunks: Buffer[] = [];
+  const buffer = Buffer.allocUnsafe(Math.min(64 * 1024, Math.max(1, maxBytes)));
   let position = 0;
-  while (true) {
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+  while (position < maxBytes) {
+    const remaining = maxBytes - position;
+    const { bytesRead } = await handle.read(buffer, 0, Math.min(buffer.length, remaining), position);
     if (bytesRead === 0) {
       break;
     }
-    hash.update(buffer.subarray(0, bytesRead));
+    chunks.push(Buffer.from(buffer.subarray(0, bytesRead)));
     position += bytesRead;
   }
-  return hash.digest("hex");
+  return {
+    raw: Buffer.concat(chunks, position).toString("utf8"),
+    oversized: false,
+  };
+}
+
+function oversizedRevision(stats: Stats): string {
+  return rawRevision(JSON.stringify([
+    "oversized-v1",
+    stats.dev.toString(),
+    stats.ino.toString(),
+    stats.size,
+    stats.mtimeMs,
+    stats.ctimeMs,
+  ]));
 }
 
 function exactEntryEqual(left: GlossaryEntry, right: GlossaryEntry): boolean {
@@ -553,6 +572,7 @@ export class GlossaryApplicationService {
   readonly #renamePath: (oldPath: string, newPath: string) => Promise<void>;
   readonly #watchPath: GlossaryWatchPath;
   readonly #watchDebounceMs: number;
+  readonly #readFileHandle: NonNullable<GlossaryApplicationServiceDeps["readFileHandle"]>;
   readonly #mutationTails = new Map<string, Promise<void>>();
 
   constructor(deps: GlossaryApplicationServiceDeps = {}) {
@@ -573,6 +593,7 @@ export class GlossaryApplicationService {
       listener,
     ));
     this.#watchDebounceMs = deps.watchDebounceMs ?? 60;
+    this.#readFileHandle = deps.readFileHandle ?? readFileHandleBounded;
   }
 
   async resolvePrimaryCheckout(workspacePath: string): Promise<ResolvedGlossaryCheckout> {
@@ -1031,9 +1052,12 @@ export class GlossaryApplicationService {
       if (!sameIdentity(identityFromStats(pathStats), identityFromStats(openedStats))) {
         fail("GLOSSARY_TARGET_CHANGED", "glossary.yaml changed before read.");
       }
-      const isOversized = openedStats.size > GLOSSARY_LIMITS.maxFileBytes;
-      const raw = isOversized ? "" : await handle.readFile({ encoding: "utf8" });
-      const oversizedRevision = isOversized ? await hashFileHandle(handle) : null;
+      const initiallyOversized = openedStats.size > GLOSSARY_LIMITS.maxFileBytes;
+      const content = initiallyOversized
+        ? { raw: "", oversized: true }
+        : await this.#readFileHandle(handle, openedStats.size);
+      const isOversized = initiallyOversized || content.oversized;
+      const raw = content.raw;
       const confirmedStats = await handle.stat();
       const confirmedPathStats = await lstat(glossaryPath);
       if (
@@ -1048,7 +1072,7 @@ export class GlossaryApplicationService {
         return {
           status: "invalid",
           relativePath: GLOSSARY_RELATIVE_PATH,
-          revision: oversizedRevision!,
+          revision: oversizedRevision(openedStats),
           issues: [{ path: "$", code: "LIMIT_EXCEEDED", message: "Glossary file is too large." }],
           raw,
           fileIdentity: identityFromStats(openedStats),

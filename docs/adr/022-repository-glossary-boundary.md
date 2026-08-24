@@ -15,12 +15,15 @@ Accepted
 - 各Git checkout rootの`.withmate/glossary.yaml`だけを用語集内容の永続正本とする。schema v1のentryは`term`、省略可能な`aliases`、plain textの`definition`で構成し、YAML順を保持する。
 - 正規化値、検索順位、revision、annotation range、hover previewはread-time projectionとする。WithMate DB、Memory、Session data、provider prompt、managed Skillへ用語集内容を保存または自動注入しない。
 - schema parse、file全体の正規化後一意性、lookup、検索、revision、mutation、checkout再検証は`GlossaryApplicationService`をcanonical ownerとする。readは`.withmate`やfileを作成しない。
+- file readはopened statのsizeを上限とする固定長readとし、2 MiBを超えるfileの本文は読まない。上限超過時のrevisionはfile identity、size、時刻から導出するbounded fingerprintとし、valid fileだけraw content hashをrevisionにする。read中のsize、identity、mtime変更はcurrent snapshotとして採用しない。
 
 ### `GLOSSARY-CHECKOUT-AUTHORITY`
 
 - actor Sessionのruntime bindingが所有するprimary `workspacePath`から、Git rootとfilesystem identityをbinding generationごとに固定する。inventoryはこの1件だけを返し、additional directory、別worktree、後から列挙したworktreeを含めない。
 - `{ kind: "primary" }`とgeneration-boundなopaque `checkoutId`は同じtargetを指す。Session終了、binding失効、generation更新で`checkoutId`を無効にする。path、branch、repository名は表示専用である。
 - MCP、CLI、renderer IPCはcaller提供のSession IDやpathをauthorityへ使わず、同じruntime binding、operation schema、application service、result contractへ収束する。
+- proactive createはactive provider Session turnのprocess-local lease内だけで許可する。最初のrequestとSettings上限をleaseへ予約し、完全に同じrequestのretryだけを同じ予約へ収束させる。異なる2回目のrequestはapplication mutation前に拒否する。binding generationはturn leaseとして扱わない。
+- Glossary MCPとCLIはagent runtime extension専用exchangeを使う。専用exchangeはGlossary operationだけをdispatchし、最大requestから導出した34 MiBのbody上限と同時実行数1を持つ。body上限による413はapplication dispatch前の`effect: none`とし、既存Memory exchangeの256 KiB上限を変更しない。
 
 ### `GLOSSARY-ATOMIC-MUTATION`
 
@@ -42,6 +45,7 @@ Accepted
 - main processのglossary application boundaryがcheckout watcherと再読込を所有する。filesystem eventは再読込の契機に限り、rendererへpathやraw eventを渡さない。rendererは`valid`、`missing`、`invalid`、`unsupported`、`watch-error`とrevisionを持つbounded projectionだけを受け取る。
 - binding registryのgeneration変更通知はmain processのprojection serviceが購読し、filesystem eventがなくても旧deliveryを無効化してwatchの張り直しとcurrent scopeの再読込を行う。Session Windowの差し替え中もcurrent windowへ一つのwatch購読が成立するまでlifecycleをreconcileする。
 - 既存Session right paneのtab ownerへGlossary面を追加する。検索、flat list、詳細、checkoutの短い表示だけを提供し、CRUDとfile初期化UIは置かない。invalid化、削除、binding generation変更ではstale entryとannotationを表示しない。Glossary tabはvalidかつentryがある場合、またはinvalid、unsupported、watch-errorで利用者が対処できる情報がある場合だけ表示し、未読込、missing、validかつ0件では表示しない。
+- 検索結果は初回と追加取得のどちらもcurrent projectionのrevisionと一致する場合だけ表示へ採用する。外部更新との競合でrevisionが一致しない結果はstale errorとして表示せず破棄する。
 - hoverまたはfocusのtooltipはviewport内に収め、最大360×240px、非interactive、非scrollableとする。clickまたはaccepted keyboard activationだけがright paneを表示してcanonical detailを選ぶ。
 
 ### `GLOSSARY-PLAIN-TEXT-DEFINITION`

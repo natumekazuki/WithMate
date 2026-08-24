@@ -82,6 +82,7 @@ import {
   buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
+  isGlossarySearchRevisionCurrent,
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
   shouldIncludeGlossaryContextPane,
@@ -1506,7 +1507,10 @@ export default function AgentSessionWindowApp() {
         setGlossarySearchEntries([]);
         setGlossarySearchTotal(0);
         setGlossarySearchError(result.message);
-      } else {
+      } else if (isGlossarySearchRevisionCurrent(
+        result.revision,
+        sessionGlossaryProjection.state.revision,
+      )) {
         setGlossarySearchEntries(result.entries);
         setGlossarySearchTotal(result.total);
       }
@@ -1580,7 +1584,10 @@ export default function AgentSessionWindowApp() {
       }
       if (!result.ok) {
         setGlossarySearchError(result.message);
-      } else if (result.revision === sessionGlossaryProjection?.state.revision) {
+      } else if (isGlossarySearchRevisionCurrent(
+        result.revision,
+        sessionGlossaryProjection?.state.revision,
+      )) {
         setGlossarySearchEntries((current) => [...current, ...result.entries]);
         setGlossarySearchTotal(result.total);
       }

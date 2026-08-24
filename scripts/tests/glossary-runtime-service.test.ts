@@ -20,6 +20,7 @@ import {
 } from "../../src/glossary-operation-schema.js";
 import { GLOSSARY_RUNTIME_SCHEMA_VERSION } from "../../src/glossary-contract.js";
 import { callWithMateMemoryRuntime } from "../withmate-memory-runtime-client.js";
+import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../../src/memory-v6/memory-runtime-exchange.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -171,7 +172,8 @@ describe("Glossary runtime mutation policy", () => {
 
   it("proactive createはSettings値が欠落・不正ならfallbackせず拒否する", async () => {
     const root = await createRepository();
-    const { call } = await createRuntime(root, { proactiveLimit: null });
+    const { actor, call, runtime } = await createRuntime(root, { proactiveLimit: null });
+    const turn = runtime.beginProviderTurn(actor.id, actor.providerId);
     const response = await call("create", {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" },
@@ -181,6 +183,62 @@ describe("Glossary runtime mutation policy", () => {
     assert.equal(response?.status, 400);
     assert.equal((response?.value as { code: string }).code, "GLOSSARY_INVALID_REQUEST");
     await assert.rejects(() => readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8"));
+    runtime.endProviderTurn(turn);
+  });
+
+  it("同じturnでは完全同一retryだけを許し、複数proactive callでSettings上限を迂回させない", async () => {
+    const root = await createRepository();
+    const { actor, call, runtime } = await createRuntime(root, { proactiveLimit: 2 });
+    const turn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    const firstBody = {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" as const },
+      mode: "proactive" as const,
+      entry: { term: "Runtime", definition: "plain text" },
+    };
+
+    const first = await call("create", firstBody);
+    const retry = await call("create", firstBody);
+    const second = await call("create", {
+      ...firstBody,
+      entry: { term: "Projection", definition: "second call" },
+    });
+
+    assert.equal((first?.value as { outcome: string }).outcome, "applied");
+    assert.equal((retry?.value as { outcome: string }).outcome, "converged");
+    assert.equal(second?.status, 400);
+    assert.equal((second?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
+    const stored = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
+    assert.match(stored, /Runtime/);
+    assert.doesNotMatch(stored, /Projection/);
+
+    runtime.endProviderTurn(turn);
+    const nextTurn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    const next = await call("create", {
+      ...firstBody,
+      entry: { term: "Projection", definition: "next turn" },
+    });
+    assert.equal((next?.value as { outcome: string }).outcome, "applied");
+    runtime.endProviderTurn(nextTurn);
+
+    const rejectedTurn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    const oversizedFirst = await call("create_batch", {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" },
+      mode: "proactive",
+      entries: [
+        { term: "One", definition: "one" },
+        { term: "Two", definition: "two" },
+        { term: "Three", definition: "three" },
+      ],
+    });
+    const smallerSecond = await call("create", {
+      ...firstBody,
+      entry: { term: "Smaller", definition: "must remain rejected" },
+    });
+    assert.equal((oversizedFirst?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
+    assert.equal((smallerSecond?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
+    runtime.endProviderTurn(rejectedTurn);
   });
 });
 
@@ -215,12 +273,20 @@ describe("Glossary authenticated runtime exchange", () => {
       const mcp = await callWithMateMemoryRuntime(
         { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
         operation,
-        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
       );
       const cli = await callWithMateMemoryRuntime(
         { api, credential: { adapter: "cli", adapterSecret: "operator-secret" } },
         operation,
-        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
       );
       assert.equal(mcp.status, 200);
       assert.deepEqual(cli.value, mcp.value);
@@ -234,6 +300,40 @@ describe("Glossary authenticated runtime exchange", () => {
         body: JSON.stringify(operation.body),
       });
       assert.equal(direct.status, 404);
+
+      const largeBatchOperation = {
+        method: "POST" as const,
+        path: GLOSSARY_RUNTIME_OPERATION_PATHS.create_batch,
+        body: {
+          schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+          selector: { kind: "primary" as const },
+          mode: "explicit" as const,
+          entries: Array.from({ length: 6 }, (_, index) => ({
+            term: `Large ${index}`,
+            definition: `${index}${"x".repeat(45_000)}`,
+          })),
+        },
+      };
+      const genericExchange = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        largeBatchOperation,
+        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
+      );
+      assert.equal(genericExchange.status, 413);
+
+      const extensionExchange = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        largeBatchOperation,
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      );
+      assert.equal(extensionExchange.status, 200);
+      assert.equal((extensionExchange.value as { outcome: string }).outcome, "applied");
+      const stored = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
+      assert.match(stored, /Large 5/);
     } finally {
       await server.stop();
     }

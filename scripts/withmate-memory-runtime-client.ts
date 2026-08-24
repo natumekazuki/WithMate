@@ -292,10 +292,10 @@ export async function discoverWithMateMemoryApi(
 export async function callWithMateMemoryRuntime(
   connection: WithMateMemoryRuntimeConnection,
   operation: WithMateMemoryRuntimeOperation,
-  options: { signal: AbortSignal; bindingReference?: string },
+  options: { signal: AbortSignal; bindingReference?: string; exchangePath?: string },
 ): Promise<WithMateMemoryRuntimeResponse> {
   const nonce = randomBytes(16).toString("base64url");
-  const exchangeUrl = new URL(WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
+  const exchangeUrl = new URL(options.exchangePath ?? WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
 
   return new Promise<WithMateMemoryRuntimeResponse>((resolve, reject) => {
     let dispatched = false;

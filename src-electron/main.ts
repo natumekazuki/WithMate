@@ -2646,6 +2646,11 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       resetProviderSessionThread,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
         issueProviderAgentRuntimeBinding(session, provider.id),
+      beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
+        ? glossaryRuntimeService.beginProviderTurn(session.id, provider.id)
+        : undefined,
+      endProviderAgentRuntimeTurn: (handle) =>
+        glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2858,6 +2863,11 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       getProviderCodingAdapter,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
         issueProviderAgentRuntimeBinding(session, provider.id),
+      beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
+        ? glossaryRuntimeService.beginProviderTurn(session.id, provider.id)
+        : undefined,
+      endProviderAgentRuntimeTurn: (handle) =>
+        glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,

@@ -2574,6 +2574,8 @@ describe("SessionRuntimeService", () => {
     let notificationCount = 0;
     let timingResolutionCount = 0;
     let currentDateCount = 0;
+    const runtimeTurnHandles: object[] = [];
+    const endedRuntimeTurnHandles: unknown[] = [];
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
@@ -2641,6 +2643,15 @@ describe("SessionRuntimeService", () => {
           expiresAt: null,
         };
       },
+      beginProviderAgentRuntimeTurn({ binding }) {
+        assert.equal(binding?.executionGeneration, "generation-1");
+        const handle = {};
+        runtimeTurnHandles.push(handle);
+        return handle;
+      },
+      endProviderAgentRuntimeTurn(handle) {
+        endedRuntimeTurnHandles.push(handle);
+      },
       getSessionMemory(current) {
         return createSessionMemory(current.id);
       },
@@ -2701,6 +2712,8 @@ describe("SessionRuntimeService", () => {
     assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
     assert.deepEqual(seenBindingGenerations, ["generation-1", "generation-1"]);
     assert.equal(bindingGeneration, 1);
+    assert.equal(runtimeTurnHandles.length, 1);
+    assert.deepEqual(endedRuntimeTurnHandles, runtimeTurnHandles);
     assert.deepEqual(reset, [{ providerId: "codex", sessionId: session.id }]);
     assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 3);

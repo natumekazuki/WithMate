@@ -27,6 +27,10 @@ import type {
   AgentRuntimeExtensionRequest,
   AgentRuntimeExtensionResponse,
 } from "./memory-v6-http-server.js";
+import {
+  GlossaryProactiveTurnCoordinator,
+  type GlossaryProactiveTurnHandle,
+} from "./glossary-proactive-turn.js";
 
 type BindingRegistry = {
   resolve(
@@ -147,12 +151,25 @@ export class GlossaryRuntimeService {
   readonly #bindingRegistry: BindingRegistry;
   readonly #resolveActorSession: GlossaryRuntimeServiceDeps["resolveActorSession"];
   readonly #getProactiveCreateLimit: GlossaryRuntimeServiceDeps["getProactiveCreateLimit"];
+  readonly #proactiveTurns = new GlossaryProactiveTurnCoordinator();
 
   constructor(deps: GlossaryRuntimeServiceDeps) {
     this.#applicationService = deps.applicationService;
     this.#bindingRegistry = deps.bindingRegistry;
     this.#resolveActorSession = deps.resolveActorSession;
     this.#getProactiveCreateLimit = deps.getProactiveCreateLimit;
+  }
+
+  beginProviderTurn(actorSessionId: string, providerId: string): GlossaryProactiveTurnHandle {
+    return this.#proactiveTurns.begin({
+      actorSessionId,
+      providerId,
+      proactiveCreateLimit: this.#getProactiveCreateLimit(),
+    });
+  }
+
+  endProviderTurn(handle: GlossaryProactiveTurnHandle): void {
+    this.#proactiveTurns.end(handle);
   }
 
   async route(request: AgentRuntimeExtensionRequest): Promise<AgentRuntimeExtensionResponse | null> {
@@ -222,18 +239,30 @@ export class GlossaryRuntimeService {
       }
       case "create": {
         const input = glossaryOperationRequestSchemas.create.parse(request.body);
+        const proactiveAdmission = input.mode === "proactive"
+          ? this.#admitProactiveCreate(binding, "create", input.entry, 1)
+          : null;
+        if (proactiveAdmission && !proactiveAdmission.ok) {
+          return this.#respond(proactiveAdmission.error);
+        }
         return this.#respond(runtimeEnvelope(await this.#applicationService.create(target, {
           mode: input.mode,
           entry: input.entry,
-          proactiveCreateLimit: this.#getProactiveCreateLimit(),
+          proactiveCreateLimit: proactiveAdmission?.proactiveCreateLimit,
         }, guard)));
       }
       case "create_batch": {
         const input = glossaryOperationRequestSchemas.create_batch.parse(request.body);
+        const proactiveAdmission = input.mode === "proactive"
+          ? this.#admitProactiveCreate(binding, "create_batch", input.entries, input.entries.length)
+          : null;
+        if (proactiveAdmission && !proactiveAdmission.ok) {
+          return this.#respond(proactiveAdmission.error);
+        }
         return this.#respond(runtimeEnvelope(await this.#applicationService.createBatch(target, {
           mode: input.mode,
           entries: input.entries,
-          proactiveCreateLimit: this.#getProactiveCreateLimit(),
+          proactiveCreateLimit: proactiveAdmission?.proactiveCreateLimit,
         }, guard)));
       }
       case "update": {
@@ -254,6 +283,43 @@ export class GlossaryRuntimeService {
       case "validate":
         return this.#respond(runtimeEnvelope(await this.#applicationService.validate(target)));
     }
+  }
+
+  #admitProactiveCreate(
+    binding: ResolvedAgentRuntimeBinding,
+    operation: "create" | "create_batch",
+    entries: unknown,
+    entryCount: number,
+  ):
+    | { ok: true; proactiveCreateLimit: number }
+    | { ok: false; error: GlossaryRuntimeEnvelope<GlossaryOperationError> } {
+    const requestFingerprint = createHash("sha256")
+      .update(JSON.stringify([operation, entries]), "utf8")
+      .digest("hex");
+    const admission = this.#proactiveTurns.admit({
+      actorSessionId: binding.actorSessionId,
+      providerId: binding.providerId,
+      requestFingerprint,
+      entryCount,
+    });
+    if (admission.ok) {
+      return { ok: true, proactiveCreateLimit: admission.proactiveCreateLimit };
+    }
+    if (admission.reason === "invalid-limit") {
+      return { ok: false, error: runtimeError("GLOSSARY_INVALID_REQUEST", "A valid proactive create limit is required.") };
+    }
+    if (admission.reason === "inactive") {
+      return { ok: false, error: runtimeError(
+        "GLOSSARY_SESSION_BINDING_INVALID",
+        "Proactive create requires the active provider Session turn.",
+      ) };
+    }
+    return { ok: false, error: runtimeError(
+      "GLOSSARY_LIMIT_EXCEEDED",
+      admission.reason === "second-request"
+        ? "Only one proactive create request is allowed per provider Session turn."
+        : "Proactive create exceeds the current provider Session turn limit.",
+    ) };
   }
 
   async #authorize(
