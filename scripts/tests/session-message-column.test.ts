@@ -2003,6 +2003,8 @@ test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトル�
   assert.match(html, /aria-label="呼出元Session情報を閉じる"/);
   assert.match(html, /aria-expanded="true"/);
   assert.match(html, /aria-label="呼出元Session情報"/);
+  assert.match(html, /class="related-session-route"[^>]*aria-label="保存済み呼出元の現在の呼出元Sessionを別Windowで開く"/);
+  assert.match(html, /<span aria-hidden="true">@<\/span><span class="related-session-character">保存済み呼出元<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">現在の呼出元Session/);
   assert.match(html, /現在の呼出元Session/);
   assert.match(html, /aria-label="現在の呼出元Sessionを別Windowで開く"/);
   assert.match(html, /actor-session/);
@@ -2137,11 +2139,11 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは送信元Agent r
   assert.match(rendered, /aria-label="Test CharacterがTarget Snapshotへ送ったメッセージ"/);
   assert.match(rendered, /class="message-card assistant session-outbound/);
   assert.match(rendered, /avatar-fallback">T/);
-  assert.match(rendered, /message-character-name"><span>Test Character<\/span><span class="related-session-route"/);
-  assert.match(rendered, /aria-label="Target Snapshotへ送信"/);
-  assert.match(rendered, /<span aria-hidden="true">→<\/span><span>Target Snapshot/);
+  assert.match(rendered, /class="message-character-name">Test Character/);
+  assert.match(rendered, /class="related-session-route"[^>]*disabled=""[^>]*aria-label="Test CharacterのTarget Snapshotは現在開けません"/);
+  assert.match(rendered, /<span aria-hidden="true">@<\/span><span class="related-session-character">Test Character<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">Target Snapshot/);
   assert.match(rendered, /Target Snapshot/);
-  assert.match(rendered, /related-session-role">executor/);
+  assert.doesNotMatch(rendered, /related-session-role|>executor</);
   assert.doesNotMatch(rendered, /avatar-fallback">↗/);
   assert.match(rendered, /data-message-body="true"/);
   assert.match(rendered, /FULL-END/);
@@ -2161,7 +2163,7 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは送信元Agent r
   assert.match(expanded, /aria-label="Current Targetを別Windowで開く"/);
 });
 
-test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの詳細からcanonical targetを開く", async () => {
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの@行と詳細からcanonical targetを開く", async () => {
   const openedSessionIds: string[] = [];
   const mounted = await mountSessionMessageColumn({
     messages: [{ role: "user", text: "delegated" }],
@@ -2197,14 +2199,25 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの詳細からcano
   });
 
   try {
+    const routeButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button.related-session-route",
+    );
+    assert.ok(routeButton);
+    assert.equal(routeButton.textContent, "@Test Character·Current Target");
+    assert.equal(routeButton.getAttribute("aria-label"), "Test CharacterのCurrent Targetを別Windowで開く");
+    await act(async () => {
+      routeButton.click();
+    });
+    assert.deepEqual(openedSessionIds, ["canonical-target"]);
+
     const openButton = mounted.container.querySelector<HTMLButtonElement>(
-      "button[aria-label='Current Targetを別Windowで開く']",
+      "button.origin-session-link[aria-label='Current Targetを別Windowで開く']",
     );
     assert.ok(openButton);
     await act(async () => {
       openButton.click();
     });
-    assert.deepEqual(openedSessionIds, ["canonical-target"]);
+    assert.deepEqual(openedSessionIds, ["canonical-target", "canonical-target"]);
   } finally {
     await mounted.cleanup();
   }

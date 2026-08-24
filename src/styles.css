@@ -6693,27 +6693,54 @@ button:disabled {
   text-align: right;
 }
 
-.message-row.session-outbound > .message-character-name {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
 .related-session-route {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  justify-self: start;
+  gap: 5px;
   min-width: 0;
-  color: var(--muted);
-  font-weight: 600;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--orange);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
 }
 
-.related-session-role {
-  color: var(--orange);
-  font-size: 0.72rem;
+.related-session-route:hover .related-session-title {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.related-session-route:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.related-session-route:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.related-session-route:disabled .related-session-title {
+  text-decoration: none;
+}
+
+.related-session-character {
   font-weight: 700;
+}
+
+.related-session-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .message-row.user {
@@ -6846,6 +6873,10 @@ button:disabled {
   border-color: color-mix(in srgb, var(--character-sub) 22%, rgba(203, 213, 225, 0.18));
   background: color-mix(in srgb, var(--character-sub-soft) 42%, rgba(15, 19, 26, 0.98));
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 82%, transparent);
+}
+
+.session-page .message-card.assistant.session-outbound {
+  box-shadow: inset -4px 0 0 color-mix(in srgb, var(--character-sub) 82%, transparent);
 }
 
 .message-card.assistant.accent {

@@ -3127,6 +3127,18 @@ export function SessionMessageColumn({
               : outboundTurn
                 ? originSessionDetails.find((details) => details.sessionId === outboundTurn.relatedSession.sessionId) ?? null
               : null;
+            const currentRelatedSessionTitle = currentRelatedSession?.status === "found"
+              || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle)
+              ? currentRelatedSession.taskTitle
+              : null;
+            const relatedSessionTitle = currentRelatedSessionTitle
+              ?? outboundTurn?.relatedSession.titleSnapshot
+              ?? relatedSessionId;
+            const canOpenRelatedSession = !!(
+              relatedSessionId
+              && currentRelatedSessionTitle
+              && onOpenOriginSession
+            );
             const relatedSessionMessageLabel = outboundTurn
               ? `${character.name}が${outboundTurn.relatedSession.titleSnapshot}へ送ったメッセージ`
               : sessionInitiator
@@ -3216,23 +3228,29 @@ export function SessionMessageColumn({
                   </div>
                 ) : null}
                 {messageCharacter || outboundTurn ? (
-                  <div className="message-character-name">
-                    {outboundTurn ? (
-                      <>
-                        <span>{messageCharacter?.name}</span>
-                        <span
-                          className="related-session-route"
-                          aria-label={`${outboundTurn.relatedSession.titleSnapshot}へ送信`}
-                        >
-                          <span aria-hidden="true">→</span>
-                          <span>{outboundTurn.relatedSession.titleSnapshot}</span>
-                          <span className="related-session-role">{outboundTurn.relatedSession.roleSnapshot}</span>
-                        </span>
-                      </>
-                    ) : messageCharacter?.name}
-                  </div>
+                  <div className="message-character-name">{messageCharacter?.name}</div>
                 ) : null}
                 <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
+                  {relatedSessionId && relatedSessionTitle && messageCharacter ? (
+                    <button
+                      className="related-session-route"
+                      type="button"
+                      onClick={() => {
+                        if (relatedSessionId && currentRelatedSessionTitle && onOpenOriginSession) {
+                          onOpenOriginSession(relatedSessionId);
+                        }
+                      }}
+                      disabled={!canOpenRelatedSession}
+                      aria-label={canOpenRelatedSession
+                        ? `${messageCharacter.name}の${relatedSessionTitle}を別Windowで開く`
+                        : `${messageCharacter.name}の${relatedSessionTitle}は現在開けません`}
+                    >
+                      <span aria-hidden="true">@</span>
+                      <span className="related-session-character">{messageCharacter.name}</span>
+                      <span aria-hidden="true">·</span>
+                      <span className="related-session-title">{relatedSessionTitle}</span>
+                    </button>
+                  ) : null}
                   {artifact && !isAgentMessage ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
