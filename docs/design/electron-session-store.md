@@ -159,6 +159,7 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
   - legacy executionからのorigin補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionへ限定する。terminal failure notification executionは補完対象にしない
 - `work_items_v6` / `work_item_idempotency_v6`
   - Session間委譲のstable identity、immutable binding、state revision、strict terminal result、mutation replayを正規化して保存する
+  - mutation replay recordは`expires_at`を持ち、24時間後に起動時・定期maintenanceまたは次のmutationで削除する
   - active Work Itemまたはresultを持つWork Itemが参照するSessionの削除はstorage triggerで拒否する
 - `work_item_execution_associations_v6`
   - 一つのWork Itemと複数の`turn.run | turn.enqueue` executionを別identityのまま関連付ける

@@ -182,6 +182,7 @@ export class SessionExecutionService {
         createdAt,
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
         origin: input.origin,
+        workItemId: input.workItemId,
       });
       if (!started.replayed) {
         this.notifyChanged(started.execution.id);
@@ -210,6 +211,7 @@ export class SessionExecutionService {
         createdAt,
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
         origin: input.origin,
+        workItemId: input.workItemId,
       });
     });
     if (!queued.replayed) {

@@ -80,6 +80,7 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_work_items_target_sequence",
   "idx_v6_work_items_parent",
   "idx_v6_work_item_idempotency_item",
+  "idx_v6_work_item_idempotency_expiry",
   "idx_v6_work_item_execution_item",
   "idx_v6_session_turns_id_session",
   "idx_v6_session_turn_public_context_execution",
@@ -219,6 +220,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "request_fingerprint",
     "work_item_id",
     "created_at",
+    "expires_at",
   ],
   work_item_execution_associations_v6: ["execution_id", "work_item_id", "created_at"],
   session_execution_public_progress_v6: [
@@ -1507,11 +1509,14 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     request_fingerprint TEXT NOT NULL,
     work_item_id TEXT NOT NULL,
     created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
     PRIMARY KEY (operation, principal_session_id, idempotency_key),
     FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id) ON DELETE CASCADE
   );
   CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_item
     ON work_item_idempotency_v6(work_item_id);
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_expiry
+    ON work_item_idempotency_v6(expires_at);
 
   CREATE TABLE IF NOT EXISTS work_item_execution_associations_v6 (
     execution_id TEXT PRIMARY KEY,
@@ -2782,6 +2787,20 @@ function ensureSessionCrudIdempotencyPrincipalScope(db: DatabaseSync): void {
   `);
 }
 
+function ensureWorkItemIdempotencyExpiry(db: DatabaseSync): void {
+  if (!tableExists(db, "work_item_idempotency_v6")) return;
+  const columns = tableColumnNames(db, "work_item_idempotency_v6");
+  if (!columns.has("expires_at")) {
+    db.exec(`
+      ALTER TABLE work_item_idempotency_v6
+      ADD COLUMN expires_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z';
+      UPDATE work_item_idempotency_v6
+      SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+24 hours')
+      WHERE strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+24 hours') IS NOT NULL;
+    `);
+  }
+}
+
 export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
   for (const tableName of FORBIDDEN_V6_TABLES) {
     db.exec(`DROP TABLE IF EXISTS ${tableName};`);
@@ -2799,6 +2818,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     throw new Error("Coordination event schema is invalid.");
   }
   ensureSessionCrudIdempotencyPrincipalScope(db);
+  ensureWorkItemIdempotencyExpiry(db);
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL

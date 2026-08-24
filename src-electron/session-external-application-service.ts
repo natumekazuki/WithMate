@@ -891,6 +891,7 @@ function fingerprintMutation(
     sessionId: input.sessionId,
     catalogRevision: input.catalogRevision,
     turn: input.turn,
+    workItemId: input.workItemId ?? null,
     terminalFailureNotification: input.terminalFailureNotification ?? null,
   }), "utf8").digest("hex");
 }

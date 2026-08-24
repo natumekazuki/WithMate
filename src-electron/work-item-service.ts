@@ -6,6 +6,7 @@ import {
   type SessionTurnAuthoritySession,
 } from "../src/session-turn-communication-authority.js";
 import {
+  WORK_ITEM_IDEMPOTENCY_RETENTION_MS,
   isWorkItemActive,
   type WorkItem,
   type WorkItemBinding,
@@ -88,7 +89,7 @@ export class WorkItemService {
   constructor(private readonly deps: {
     storage: Pick<
       WorkItemStorageV6,
-      "create" | "get" | "listPage" | "mutate" | "resolveIdempotency"
+      "cleanupExpiredIdempotency" | "create" | "get" | "listPage" | "mutate" | "resolveIdempotency"
     >;
     getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
     createWorkItemId(): string;
@@ -96,12 +97,14 @@ export class WorkItemService {
   }) {}
 
   create(input: WorkItemCreateInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+    const createdAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       "work.create",
       binding.actorSessionId,
       input.idempotencyKey,
       fingerprint,
+      createdAt,
     );
     if (replay) return replay;
 
@@ -120,10 +123,13 @@ export class WorkItemService {
     }
     const target = this.requireSession(input.targetSessionId);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
-    if (!canSendSessionTurn(
-      { sessionId: actor.sessionId, ...actorBinding },
-      { sessionId: target.sessionId, ...targetBinding },
-    )) {
+    if (
+      targetBinding.parentSessionId !== actor.sessionId
+      || !canSendSessionTurn(
+        { sessionId: actor.sessionId, ...actorBinding },
+        { sessionId: target.sessionId, ...targetBinding },
+      )
+    ) {
       throw new WorkItemAuthorityError("The actor Session cannot delegate to the target Session.", {
         actorSessionId: actor.sessionId,
         targetSessionId: target.sessionId,
@@ -151,7 +157,6 @@ export class WorkItemService {
       authority: input.authority,
       sourceIdentity: { ...input.sourceIdentity },
     };
-    const createdAt = this.deps.currentTimestamp();
     return this.deps.storage.create({
       id: this.deps.createWorkItemId(),
       binding: bindingRecord,
@@ -159,6 +164,7 @@ export class WorkItemService {
       idempotencyKey: input.idempotencyKey,
       requestFingerprint: fingerprint,
       createdAt,
+      expiresAt: resolveIdempotencyExpiresAt(createdAt),
     });
   }
 
@@ -183,12 +189,14 @@ export class WorkItemService {
   }
 
   cancel(input: WorkItemCancelInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+    const updatedAt = this.deps.currentTimestamp();
     const fingerprint = fingerprintMutation(input, binding.actorSessionId);
     const replay = this.deps.storage.resolveIdempotency(
       "work.cancel",
       binding.actorSessionId,
       input.idempotencyKey,
       fingerprint,
+      updatedAt,
     );
     if (replay) return replay;
     const item = this.requireVisibleItem(input.workItemId, binding, false);
@@ -207,7 +215,8 @@ export class WorkItemService {
       expectedRevision: input.expectedRevision,
       state: "canceled",
       result: null,
-      updatedAt: this.deps.currentTimestamp(),
+      updatedAt,
+      expiresAt: resolveIdempotencyExpiresAt(updatedAt),
     });
   }
 
@@ -260,6 +269,10 @@ export class WorkItemService {
     return item;
   }
 
+  cleanupExpiredIdempotency(): number {
+    return this.deps.storage.cleanupExpiredIdempotency(this.deps.currentTimestamp());
+  }
+
   private targetMutation(
     operation: "work.transition" | "work.result",
     input: WorkItemTransitionInput | WorkItemResultInput,
@@ -274,6 +287,7 @@ export class WorkItemService {
       binding.actorSessionId,
       input.idempotencyKey,
       fingerprint,
+      updatedAt,
     );
     if (replay) return replay;
     const item = this.requireVisibleItem(input.workItemId, binding, false);
@@ -293,6 +307,7 @@ export class WorkItemService {
       state,
       result,
       updatedAt,
+      expiresAt: resolveIdempotencyExpiresAt(updatedAt),
     });
   }
 
@@ -324,6 +339,10 @@ export class WorkItemService {
     if (!session) throw new WorkItemAuthorityError("The required Session was not found.", { sessionId });
     return session;
   }
+}
+
+function resolveIdempotencyExpiresAt(createdAt: string): string {
+  return new Date(Date.parse(createdAt) + WORK_ITEM_IDEMPOTENCY_RETENTION_MS).toISOString();
 }
 
 function fingerprintMutation(input: unknown, actorSessionId: string): string {

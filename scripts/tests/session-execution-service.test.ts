@@ -147,6 +147,7 @@ async function createFixture(options: {
 
   return {
     directory,
+    dbPath,
     storage,
     service,
     dispatches,
@@ -246,6 +247,49 @@ describe("SessionExecutionService", () => {
         userMessage: "message-2",
         createdAt: "2026-08-10T00:00:04.000Z",
       }]);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("WORK-EXEC-05: runとenqueueは検証済みWork Item associationをexecutionと同時保存する", async () => {
+    const fixture = await createFixture();
+    const db = new DatabaseSync(fixture.dbPath);
+    try {
+      db.prepare(`
+        INSERT INTO work_items_v6 (
+          id, contract_revision, root_session_id, creator_session_id, target_session_id,
+          parent_work_item_id, goal, scope, completion_criteria, authority,
+          source_identity_json, state, revision, created_at, updated_at
+        ) VALUES (?, 1, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
+      `).run(
+        "work-forwarded",
+        "session-1",
+        "session-1",
+        "session-2",
+        "goal",
+        "scope",
+        "done",
+        "local",
+        JSON.stringify({ workspace: null, repository: null, branch: null, base: null, head: null }),
+        CREATED_AT,
+        CREATED_AT,
+      );
+    } finally {
+      db.close();
+    }
+    try {
+      const running = await fixture.service.run({
+        ...createInput(1),
+        workItemId: "work-forwarded",
+      });
+      const queued = await fixture.service.enqueue({
+        ...createInput(2, "session-2"),
+        workItemId: "work-forwarded",
+      });
+      assert.equal(fixture.storage.getExecutionWorkItemId(running.id), "work-forwarded");
+      assert.equal(fixture.storage.getExecutionWorkItemId(queued.id), "work-forwarded");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

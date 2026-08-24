@@ -88,7 +88,9 @@ export class WorkItemStorageV6 {
     principalSessionId: string,
     idempotencyKey: string,
     requestFingerprint: string,
+    observedAt: string,
   ): WorkItem | null {
+    this.cleanupExpiredIdempotency(observedAt);
     const row = this.db.prepare(`
       SELECT request_fingerprint, work_item_id
       FROM work_item_idempotency_v6
@@ -110,6 +112,7 @@ export class WorkItemStorageV6 {
     idempotencyKey: string;
     requestFingerprint: string;
     createdAt: string;
+    expiresAt: string;
   }): WorkItem {
     return this.transaction(() => {
       const replay = this.resolveIdempotency(
@@ -117,6 +120,7 @@ export class WorkItemStorageV6 {
         input.principalSessionId,
         input.idempotencyKey,
         input.requestFingerprint,
+        input.createdAt,
       );
       if (replay) return replay;
       this.db.prepare(`
@@ -146,6 +150,7 @@ export class WorkItemStorageV6 {
         input.requestFingerprint,
         input.id,
         input.createdAt,
+        input.expiresAt,
       );
       return this.getRequired(input.id);
     });
@@ -161,6 +166,7 @@ export class WorkItemStorageV6 {
     state: WorkItemState;
     result: WorkItemResult | null;
     updatedAt: string;
+    expiresAt: string;
   }): WorkItem {
     if (
       (input.operation === "work.result" && (!isWorkItemResultState(input.state) || input.result?.outcome !== input.state))
@@ -181,6 +187,7 @@ export class WorkItemStorageV6 {
         input.principalSessionId,
         input.idempotencyKey,
         input.requestFingerprint,
+        input.updatedAt,
       );
       if (replay) return replay;
       const current = this.getRequired(input.workItemId);
@@ -213,6 +220,7 @@ export class WorkItemStorageV6 {
         input.requestFingerprint,
         input.workItemId,
         input.updatedAt,
+        input.expiresAt,
       );
       return this.getRequired(input.workItemId);
     });
@@ -268,6 +276,14 @@ export class WorkItemStorageV6 {
     return row?.work_item_id ?? null;
   }
 
+  cleanupExpiredIdempotency(expiredBeforeOrAt: string): number {
+    const result = this.db.prepare(`
+      DELETE FROM work_item_idempotency_v6
+      WHERE expires_at <= ?
+    `).run(expiredBeforeOrAt);
+    return Number(result.changes);
+  }
+
   close(): void {
     this.db.close();
   }
@@ -285,12 +301,14 @@ export class WorkItemStorageV6 {
     requestFingerprint: string,
     workItemId: string,
     createdAt: string,
+    expiresAt: string,
   ): void {
     this.db.prepare(`
       INSERT INTO work_item_idempotency_v6 (
-        operation, principal_session_id, idempotency_key, request_fingerprint, work_item_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
-    `).run(operation, principalSessionId, idempotencyKey, requestFingerprint, workItemId, createdAt);
+        operation, principal_session_id, idempotency_key, request_fingerprint,
+        work_item_id, created_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(operation, principalSessionId, idempotencyKey, requestFingerprint, workItemId, createdAt, expiresAt);
   }
 
   private transaction<T>(run: () => T): T {

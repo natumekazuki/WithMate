@@ -55,7 +55,7 @@ A Work Item is the stable identity of one delegation. It is separate from a Sess
 
 The target Session owns `pending` to `in_progress` or `waiting` transitions, resumption, and terminal result reporting. The creator owns cancellation while the Work Item is nonterminal. Every mutation requires the current `expectedRevision` and an idempotency key. Terminal states are `completed`, `partially_completed`, `failed`, and `canceled`; they cannot resume. A terminal result is submitted explicitly with its matching outcome and is not copied from an execution's assistant text or raw log.
 
-Pass an optional `workItemId` to `turn.run` or `turn.enqueue` to associate an execution. The target, root, active state, and actor authority are checked before the execution or queue entry is created. An execution becoming completed, failed, canceled, or interrupted does not implicitly complete the Work Item. Reconcile a response loss by reading the canonical Work Item and replaying only the unchanged mutation with the same idempotency key.
+Pass an optional `workItemId` to `turn.run` or `turn.enqueue` to associate an execution. The target, root, active state, and actor authority are checked before the execution or queue entry is created. The association is part of the Turn idempotency fingerprint, so changing only `workItemId` while reusing a key conflicts. An execution becoming completed, failed, canceled, or interrupted does not implicitly complete the Work Item. Reconcile a response loss by reading the canonical Work Item and replaying only the unchanged mutation with the same idempotency key.
 
 ## Coordination events
 

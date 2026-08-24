@@ -54,7 +54,7 @@ withmate-session work create --json '{"targetSessionId":"TARGET_SESSION_ID","goa
 withmate-session work transition --json '{"workItemId":"WORK_ITEM_ID","state":"in_progress","expectedRevision":1,"idempotencyKey":"work-start-001"}'
 ```
 
-`turn run`または`turn enqueue`のtop-levelへ任意の`workItemId`を指定すると、root、target、active state、actor authorityをexecution作成前に検証し、関連付けを保存する。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent `expectedRevision`とidempotency keyを要求する。
+`turn run`または`turn enqueue`のtop-levelへ任意の`workItemId`を指定すると、root、target、active state、actor authorityをexecution作成前に検証し、関連付けを保存する。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent `expectedRevision`とidempotency keyを要求する。
 
 `turn options`は対象Sessionのproviderに応じた候補を返す。Codex Turnは`provider: "codex"`と`codexSandboxMode`、Copilot Turnは`provider: "copilot"`と`customAgentName`を指定する。provider固有fieldを混在させない。
 

@@ -26,6 +26,7 @@ import { WORK_ITEM_TRANSITIONS } from "../../src/work-item.js";
 
 const NOW = "2026-08-24T12:00:00.000Z";
 const EXPIRES = "2026-08-25T12:00:00.000Z";
+const AFTER_EXPIRES = "2026-08-25T12:00:00.001Z";
 
 function binding(actorSessionId: string): ResolvedAgentRuntimeBinding {
   return {
@@ -55,6 +56,7 @@ describe("Work Item contract", () => {
   let storage: WorkItemStorageV6;
   let service: WorkItemService;
   let nextId: number;
+  let currentNow: string;
 
   function makeService(targetStorage: WorkItemStorageV6): WorkItemService {
     return new WorkItemService({
@@ -82,7 +84,7 @@ describe("Work Item contract", () => {
         }
       },
       createWorkItemId: () => `work-${nextId++}`,
-      currentTimestamp: () => NOW,
+      currentTimestamp: () => currentNow,
     });
   }
 
@@ -98,7 +100,7 @@ describe("Work Item contract", () => {
           created_at, updated_at, last_active_at
         ) VALUES (?, ?, 'active', 'codex', 1, 'gpt-5', 'on-request', ?, ?, ?)
       `);
-      for (const id of ["root", "task", "executor", "sibling", "standalone", "other-root"]) {
+      for (const id of ["root", "task", "task-sibling", "executor", "sibling", "standalone", "other-root"]) {
         insertSession.run(id, id, NOW, NOW, NOW);
       }
       const insertRole = db.prepare(`
@@ -108,6 +110,7 @@ describe("Work Item contract", () => {
       `);
       insertRole.run("root", "overall-coordinator", "root", null, 0);
       insertRole.run("task", "task-coordinator", "root", "root", 1);
+      insertRole.run("task-sibling", "task-coordinator", "root", "root", 1);
       insertRole.run("executor", "executor", "root", "task", 2);
       insertRole.run("sibling", "executor", "root", "root", 1);
       insertRole.run("standalone", "standalone", "standalone", null, 0);
@@ -117,6 +120,7 @@ describe("Work Item contract", () => {
     }
     storage = new WorkItemStorageV6(dbPath);
     nextId = 1;
+    currentNow = NOW;
     service = makeService(storage);
   });
 
@@ -163,8 +167,50 @@ describe("Work Item contract", () => {
     assert.deepEqual(replayed, created);
   });
 
+  it("WORK-IDEM-07: 24時間経過後はledgerを削除して同じkeyを新しい要求へ再利用できる", () => {
+    const first = createRootWork("expiring-key");
+    currentNow = AFTER_EXPIRES;
+    const second = service.create({
+      targetSessionId: "task",
+      goal: "New delegation after retention",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+      sourceIdentity,
+      idempotencyKey: "expiring-key",
+    }, binding("root"));
+    assert.notEqual(second.id, first.id);
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      assert.equal((db.prepare(`
+        SELECT COUNT(*) AS count FROM work_item_idempotency_v6
+        WHERE principal_session_id = 'root' AND idempotency_key = 'expiring-key'
+      `).get() as { count: number }).count, 1);
+    } finally {
+      db.close();
+    }
+  });
+
   it("WORK-AUTH-02: coordinatorとactive parentだけが直属targetへ委譲できる", () => {
     const parent = createRootWork();
+    assert.throws(() => service.create({
+      targetSessionId: "root",
+      goal: "upward communication is not delegation",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "none",
+      sourceIdentity,
+      idempotencyKey: "task-to-root",
+    }, binding("task")), WorkItemAuthorityError);
+    assert.throws(() => service.create({
+      targetSessionId: "task-sibling",
+      goal: "sibling communication is not delegation",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "none",
+      sourceIdentity,
+      idempotencyKey: "task-to-sibling",
+    }, binding("task")), WorkItemAuthorityError);
     assert.throws(() => service.create({
       targetSessionId: "standalone",
       goal: "cross root",
@@ -468,13 +514,34 @@ describe("Work Item contract", () => {
       `);
       ensureV6Schema(db);
       ensureV6Schema(db);
-      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 6);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 7);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-existing'").get() as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE id = ?").get(item.id) as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND name = 'trg_v6_work_items_protect_session_delete'").get() as { count: number }).count, 1);
     } finally {
       db.close();
     }
+  });
+
+  it("WORK-MIGRATE-06/WORK-IDEM-07: expiry列のない既存ledgerを保持して24時間expiryを補完する", () => {
+    const item = createRootWork("legacy-ledger");
+    storage.close();
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec("DROP INDEX IF EXISTS idx_v6_work_item_idempotency_expiry");
+      db.exec("ALTER TABLE work_item_idempotency_v6 DROP COLUMN expires_at");
+      ensureV6Schema(db);
+      const row = db.prepare(`
+        SELECT work_item_id, expires_at FROM work_item_idempotency_v6
+        WHERE operation = 'work.create' AND principal_session_id = 'root' AND idempotency_key = 'legacy-ledger'
+      `).get() as { work_item_id: string; expires_at: string };
+      assert.equal(row.work_item_id, item.id);
+      assert.equal(row.expires_at, EXPIRES);
+    } finally {
+      db.close();
+    }
+    storage = new WorkItemStorageV6(dbPath);
+    service = makeService(storage);
   });
 
   it("WORK-RESULT-04: raw contractはunknown fieldとresult size超過を副作用前に拒否する", () => {

@@ -3335,6 +3335,7 @@ function requireWorkItemService(): WorkItemService {
       createWorkItemId: () => `work-${crypto.randomUUID()}`,
       currentTimestamp: () => new Date().toISOString(),
     });
+    workItemService.cleanupExpiredIdempotency();
   }
   return workItemService;
 }
@@ -3982,8 +3983,9 @@ function startSessionExecutionMaintenance(): void {
   sessionExecutionMaintenanceTimer = setInterval(() => {
     try {
       sessionExecutionService?.cleanupExpiredIdempotency();
+      workItemService?.cleanupExpiredIdempotency();
     } catch (error) {
-      console.warn("Session execution maintenance failed", error);
+      console.warn("Session runtime maintenance failed", error);
     }
   }, SESSION_EXECUTION_MAINTENANCE_INTERVAL_MS);
   sessionExecutionMaintenanceTimer.unref?.();

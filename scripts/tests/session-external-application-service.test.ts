@@ -15,6 +15,7 @@ import { SessionCrudError } from "../../src-electron/session-crud-service.js";
 import { SessionFileServiceError } from "../../src-electron/session-file-service.js";
 import { SessionTurnValidationError } from "../../src-electron/session-turn-validation-error.js";
 import { CoordinationEventPublicationError } from "../../src-electron/coordination-event-service.js";
+import { SessionExecutionIdempotencyConflictError } from "../../src-electron/session-execution-storage-v6.js";
 
 const execution: SessionExecution = {
   id: "execution-1",
@@ -1783,4 +1784,41 @@ test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影�
   assert.equal((enqueue as any).result.workItemId, "work-1");
   assert.equal((get as any).result.workItemId, "work-1");
   assert.equal((list as any).result.items[0].workItemId, "work-1");
+});
+
+test("WORK-EXEC-05: 同じTurn keyでWork Item associationを変更するとconflictになる", async () => {
+  let canonicalFingerprint: string | null = null;
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      create() { throw new Error("unused"); }, get() { throw new Error("unused"); }, list() { return []; },
+      transition() { throw new Error("unused"); }, reportResult() { throw new Error("unused"); }, cancel() { throw new Error("unused"); },
+      requireExecutionAssociation() { return {} as never; },
+    },
+    getExecutionWorkItemId: () => "work-a",
+    executionService: {
+      beginShutdown() {},
+      resolveReplay(operation, input) {
+        if (canonicalFingerprint === null) return null;
+        if (canonicalFingerprint !== input.requestFingerprint) {
+          throw new SessionExecutionIdempotencyConflictError(operation, input.idempotencyKey);
+        }
+        return execution;
+      },
+      async run(input) { canonicalFingerprint = input.requestFingerprint; return execution; },
+      async enqueue() { throw new Error("unused"); }, get() { return execution; }, getRecord() { return { ...execution, request: {} }; },
+      listPage() { return []; }, async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+  });
+  const first = await executeBound(service, "turn.run", { ...mutationInput, workItemId: "work-a" });
+  const second = await executeBound(service, "turn.run", { ...mutationInput, workItemId: "work-b" });
+  assert.ok("result" in first);
+  assert.ok("error" in second);
+  if ("error" in second) assert.equal(second.error.code, "IDEMPOTENCY_CONFLICT");
 });
