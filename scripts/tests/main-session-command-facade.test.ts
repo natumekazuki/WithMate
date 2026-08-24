@@ -1457,7 +1457,7 @@ test("TN-DELIVERY-04: trusted notification replayはcurrent target設定の再�
   assert.equal(targetResolutionCount, 0);
 });
 
-test("MainSessionCommandFacade はuser/session/legacyのactive executionをFIFO順で公開する", () => {
+test("MainSessionCommandFacade はactive executionとsource側outbound projectionを公開する", () => {
   const records = [
     {
       id: "gui-running",
@@ -1525,6 +1525,51 @@ test("MainSessionCommandFacade はuser/session/legacyのactive executionをFIFO�
       async enqueue() { throw new Error("unused"); },
       getRecord() { throw new Error("unused"); },
       listRecords() { return records; },
+      listInboundRecords() {
+        return [{
+          execution: {
+            sequence: 4,
+            id: "inbound-completed",
+            sessionId: "s-1",
+            operation: "turn.run",
+            state: "completed",
+            request: {
+              initiator: {
+                kind: "session",
+                sessionId: "actor-c",
+                character: {
+                  characterId: "character-c",
+                  name: "Character C",
+                  iconFilePath: "C:/characters/c.png",
+                },
+              },
+              catalogRevision: 4,
+              turn: { provider: "codex", userMessage: "completed inbound request" },
+            },
+            result: { assistantText: "done" },
+            errorCode: "",
+            reason: "",
+            createdAt: "2026-08-16T00:00:01.500Z",
+            admittedAt: "2026-08-16T00:00:01.500Z",
+            completedAt: "2026-08-16T00:00:01.750Z",
+            updatedAt: "2026-08-16T00:00:01.750Z",
+          },
+          targetMessageSequence: 4,
+        }];
+      },
+      listOutboundRecords() {
+        return [{
+          sequence: 5,
+          executionId: "outbound-1",
+          targetSessionId: "s-2",
+          sourceMessageSequence: 0,
+          operation: "turn.enqueue",
+          targetSessionTitle: "Target snapshot",
+          targetSessionRole: "executor",
+          userMessage: "outbound request",
+          createdAt: "2026-08-16T00:00:02.000Z",
+        }];
+      },
       async cancel() { throw new Error("unused"); },
     }) as never,
     getProviderQuotaTelemetry: () => null,
@@ -1591,6 +1636,47 @@ test("MainSessionCommandFacade はuser/session/legacyのactive executionをFIFO�
       canCancel: true,
       createdAt: "2026-08-16T00:00:01.000Z",
       updatedAt: "2026-08-16T00:00:01.000Z",
+    },
+    {
+      executionId: "inbound-completed",
+      sessionId: "s-1",
+      clientRequestId: null,
+      userMessage: "completed inbound request",
+      initiator: {
+        kind: "session",
+        sessionId: "actor-c",
+        character: {
+          characterId: "character-c",
+          name: "Character C",
+          iconFilePath: "C:/characters/c.png",
+        },
+      },
+      state: "received",
+      queuePosition: null,
+      canCancel: false,
+      targetMessageSequence: 4,
+      createdAt: "2026-08-16T00:00:01.500Z",
+      updatedAt: "2026-08-16T00:00:01.750Z",
+    },
+    {
+      executionId: "outbound-1",
+      sessionId: "s-2",
+      clientRequestId: null,
+      userMessage: "outbound request",
+      initiator: null,
+      state: "accepted",
+      queuePosition: null,
+      canCancel: false,
+      acceptanceSequence: 5,
+      sourceMessageSequence: 0,
+      createdAt: "2026-08-16T00:00:02.000Z",
+      updatedAt: "2026-08-16T00:00:02.000Z",
+      relatedSession: {
+        direction: "outbound",
+        sessionId: "s-2",
+        titleSnapshot: "Target snapshot",
+        roleSnapshot: "executor",
+      },
     },
   ]);
 });
@@ -1773,7 +1859,8 @@ test("schedule attachmentはordinary enqueue validationでcurrent additional-dir
   const executionService = {
     resolveReplay: () => null,
     listRecords: () => records,
-    async enqueue(input: { sessionId: string; request: unknown }) {
+    async enqueue(input: { sessionId: string; request: unknown; origin?: unknown }) {
+      assert.equal(input.origin, undefined);
       const request = input.request as {
         initiator: { kind: "user" };
         turn: { userMessage: string; clientRequestId: string };

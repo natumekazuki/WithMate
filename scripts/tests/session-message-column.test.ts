@@ -280,6 +280,9 @@ async function mountSessionMessageColumn(options: {
   component?: ComponentType<SessionMessageColumnProps>;
   isRunning?: boolean;
   messageGroups?: SessionMessageColumnProps["messageGroups"];
+  turnExecutions?: SessionMessageColumnProps["turnExecutions"];
+  originSessionDetails?: SessionMessageColumnProps["originSessionDetails"];
+  onOpenOriginSession?: SessionMessageColumnProps["onOpenOriginSession"];
   pendingMessageGroupId?: string | null;
   pendingMessageText?: string;
   messageViewMode?: SessionMessageColumnProps["messageViewMode"];
@@ -296,7 +299,6 @@ async function mountSessionMessageColumn(options: {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", { pretendToBeVisual: true });
   const container = dom.window.document.getElementById("root") as HTMLElement;
   const messageListRef = createRef<HTMLDivElement>();
-  const root = createRoot(container);
   const originalGetBoundingClientRect = dom.window.HTMLElement.prototype.getBoundingClientRect;
   const originalAttachEvent = (dom.window.HTMLElement.prototype as unknown as { attachEvent?: () => void }).attachEvent;
   const originalDetachEvent = (dom.window.HTMLElement.prototype as unknown as { detachEvent?: () => void }).detachEvent;
@@ -420,6 +422,7 @@ async function mountSessionMessageColumn(options: {
   Object.defineProperty(globalThis, "Event", { configurable: true, value: dom.window.Event });
   Object.defineProperty(globalThis, "MouseEvent", { configurable: true, value: dom.window.MouseEvent });
   Object.defineProperty(globalThis, "navigator", { configurable: true, value: dom.window.navigator });
+  const root = createRoot(container);
 
   const MessageColumn = options.component ?? SessionMessageColumn;
   const character = createCharacterProfile();
@@ -443,6 +446,9 @@ async function mountSessionMessageColumn(options: {
           character,
           messages: callbacks.messages ?? options.messages,
           messageGroups: callbacks.messageGroups ?? options.messageGroups,
+          turnExecutions: options.turnExecutions,
+          originSessionDetails: options.originSessionDetails,
+          onOpenOriginSession: options.onOpenOriginSession,
           expandedArtifacts,
           messageListRef,
           isRunning: options.isRunning ?? false,
@@ -1225,6 +1231,7 @@ test("SessionMessageColumn は artifact 展開と diff 起動に必要な表示�
     expandedArtifacts: { "session-1-0": true },
   });
 
+  assert.match(html, /aria-label="Details を閉じる"/);
   assert.match(html, /artifact-panel-session-1-0/);
   assert.match(html, /src\/App\.tsx/);
   assert.match(html, /Open Diff/);
@@ -1508,7 +1515,7 @@ test("SessionMessageColumn は選択範囲にだけ response action toolbar を�
     assert.equal(container.querySelector(".message-response-actions"), null);
     await clearSelection();
   } finally {
-    mounted.cleanup();
+    await mounted.cleanup();
   }
 });
 
@@ -1952,6 +1959,7 @@ test("ID-03: Session initiatorは右側originとしてsnapshot名とavatar fallb
   });
 
   assert.match(html, /class="message-row session-origin/);
+  assert.match(html, /aria-label="呼出元から届いたメッセージ"/);
   assert.match(html, /class="message-character-name">呼出元/);
   assert.match(html, /class="message-card session-origin/);
   assert.match(html, /avatar-fallback">呼/);
@@ -1960,7 +1968,7 @@ test("ID-03: Session initiatorは右側originとしてsnapshot名とavatar fallb
   assert.doesNotMatch(html, />CLI<|>MCP</);
 });
 
-test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトルリンクだけを展開する", () => {
+test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトルだけを展開する", () => {
   const html = renderSessionMessageColumn({
     messages: [{ role: "user", text: "別Sessionからの依頼" }],
     expandedArtifacts: { "session-1-0-origin-session": true },
@@ -1986,6 +1994,7 @@ test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトル�
     }],
     originSessionDetails: [{
       sessionId: "actor-session",
+      status: "found",
       taskTitle: "現在の呼出元Session",
     }],
     onOpenOriginSession() {},
@@ -1994,8 +2003,11 @@ test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトル�
   assert.match(html, /aria-label="呼出元Session情報を閉じる"/);
   assert.match(html, /aria-expanded="true"/);
   assert.match(html, /aria-label="呼出元Session情報"/);
+  assert.match(html, /class="related-session-route"[^>]*aria-label="保存済み呼出元の現在の呼出元Sessionを別Windowで開く"/);
+  assert.match(html, /<button class="related-session-route"[^>]*><span class="related-session-title">現在の呼出元Session<\/span><\/button>/);
+  assert.doesNotMatch(html, /related-session-character">保存済み呼出元|<span aria-hidden="true">@<\/span>/);
   assert.match(html, /現在の呼出元Session/);
-  assert.match(html, /aria-label="現在の呼出元Sessionを別Windowで開く"/);
+  assert.doesNotMatch(html, /class="origin-session-link"/);
   assert.match(html, /actor-session/);
   assert.doesNotMatch(html, /Character ID|character-snapshot|Workspace|Branch|Provider \/ Model|>呼出元Session</);
 });
@@ -2062,6 +2074,219 @@ test("ID-03: initiatorなしのlegacy executionだけを外部として表示す
   assert.match(html, /class="message-row session-origin/);
   assert.match(html, /class="message-character-name">外部/);
   assert.doesNotMatch(html, /Turnをキャンセル/);
+});
+
+test("ORCH-INBOUND-HISTORY-01: 完了後の別Session発言も送信元Agentのorigin primitiveで表示する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "完了済みの別Session発言" }],
+    turnExecutions: [{
+      executionId: "execution-received",
+      sessionId: "session-target",
+      clientRequestId: null,
+      userMessage: "完了済みの別Session発言",
+      initiator: {
+        kind: "session",
+        sessionId: "session-actor",
+        character: {
+          characterId: "character-actor",
+          name: "送信元Agent",
+          iconFilePath: "",
+        },
+      },
+      state: "received",
+      queuePosition: null,
+      canCancel: false,
+      targetMessageSequence: 0,
+      createdAt: "2026-08-16T00:00:00.000Z",
+      updatedAt: "2026-08-16T00:00:01.000Z",
+    }],
+  });
+
+  assert.match(html, /class="message-row session-origin/);
+  assert.match(html, /aria-label="送信元Agentから届いたメッセージ"/);
+  assert.match(html, /class="message-character-name">送信元Agent/);
+  assert.match(html, /avatar-fallback">送/);
+  assert.match(html, /class="message-card session-origin/);
+  assert.match(html, /完了済みの別Session発言/);
+});
+
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは送信元Agent responseを主体にtarget方向と全文を表示する", () => {
+  const fullMessage = `${"preview ".repeat(40)}FULL-END`;
+  const baseExecution = {
+    executionId: "execution-outbound",
+    sessionId: "target-session",
+    clientRequestId: null,
+    userMessage: fullMessage,
+    initiator: null,
+    state: "accepted" as const,
+    queuePosition: null,
+    canCancel: false as const,
+    acceptanceSequence: 1,
+    sourceMessageSequence: 0,
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
+    relatedSession: {
+      direction: "outbound" as const,
+      sessionId: "target-session",
+      titleSnapshot: "Target Snapshot",
+      roleSnapshot: "executor" as const,
+    },
+  };
+  const rendered = renderSessionMessageColumn({
+    messages: [{ role: "user", text: fullMessage }],
+    turnExecutions: [baseExecution],
+  });
+  assert.match(rendered, /class="message-row assistant session-outbound/);
+  assert.match(rendered, /aria-label="Test CharacterがTarget Snapshotへ送ったメッセージ"/);
+  assert.match(rendered, /class="message-card assistant session-outbound/);
+  assert.match(rendered, /avatar-fallback">T/);
+  assert.match(rendered, /class="message-character-name">Test Character/);
+  assert.match(rendered, /class="related-session-route"[^>]*disabled=""[^>]*aria-label="Test CharacterのTarget Snapshotの存在を確認中のため開けません"/);
+  assert.match(rendered, /<span aria-hidden="true">@<\/span><span class="related-session-character">Test Character<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">Target Snapshot/);
+  assert.match(rendered, /Target Snapshot/);
+  assert.doesNotMatch(rendered, /related-session-role|>executor</);
+  assert.doesNotMatch(rendered, /avatar-fallback">↗/);
+  assert.match(rendered, /data-message-body="true"/);
+  assert.match(rendered, /FULL-END/);
+  assert.match(rendered, /aria-label="Target Snapshotへの送信先Session情報を開く"/);
+  assert.doesNotMatch(rendered, /related-session-message-preview/);
+
+  const expanded = renderSessionMessageColumn({
+    messages: [{ role: "user", text: fullMessage }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [baseExecution],
+    originSessionDetails: [{ sessionId: "target-session", status: "found", taskTitle: "Current Target" }],
+    onOpenOriginSession() {},
+  });
+  assert.match(expanded, /FULL-END/);
+  assert.match(expanded, /aria-label="Target Snapshotへの送信先Session情報を閉じる"/);
+  assert.match(expanded, /aria-label="Target Snapshotへの送信先Session情報"/);
+  assert.match(expanded, /<dt>タイトル<\/dt><dd>Current Target<\/dd>/);
+  assert.doesNotMatch(expanded, /class="origin-session-link"/);
+});
+
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの@行だけからcanonical targetを開く", async () => {
+  const openedSessionIds: string[] = [];
+  const mounted = await mountSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [{
+      executionId: "execution-open-target",
+      sessionId: "canonical-target",
+      clientRequestId: null,
+      userMessage: "delegated",
+      initiator: null,
+      state: "accepted",
+      queuePosition: null,
+      canCancel: false,
+      acceptanceSequence: 1,
+      sourceMessageSequence: 0,
+      createdAt: "2026-08-23T00:00:00.000Z",
+      updatedAt: "2026-08-23T00:00:00.000Z",
+      relatedSession: {
+        direction: "outbound",
+        sessionId: "canonical-target",
+        titleSnapshot: "Target Snapshot",
+        roleSnapshot: "executor",
+      },
+    }],
+    originSessionDetails: [{
+      sessionId: "canonical-target",
+      status: "found",
+      taskTitle: "Current Target",
+    }],
+    onOpenOriginSession(sessionId) {
+      openedSessionIds.push(sessionId);
+    },
+  });
+
+  try {
+    const routeButton = mounted.container.querySelector<HTMLButtonElement>(
+      "button.related-session-route",
+    );
+    assert.ok(routeButton);
+    assert.equal(routeButton.textContent, "@Test Character·Current Target");
+    assert.equal(routeButton.getAttribute("aria-label"), "Test CharacterのCurrent Targetを別Windowで開く");
+    await act(async () => {
+      routeButton.click();
+    });
+    assert.deepEqual(openedSessionIds, ["canonical-target"]);
+
+    assert.equal(mounted.container.querySelector("button.origin-session-link"), null);
+  } finally {
+    await mounted.cleanup();
+  }
+});
+
+test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけを無効化する", () => {
+  const html = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [{
+      executionId: "execution-deleted-target",
+      sessionId: "deleted-target",
+      clientRequestId: null,
+      userMessage: "delegated",
+      initiator: null,
+      state: "accepted",
+      queuePosition: null,
+      canCancel: false,
+      acceptanceSequence: 1,
+      sourceMessageSequence: 0,
+      createdAt: "2026-08-23T00:00:00.000Z",
+      updatedAt: "2026-08-23T00:00:00.000Z",
+      relatedSession: {
+        direction: "outbound",
+        sessionId: "deleted-target",
+        titleSnapshot: "Deleted Target",
+        roleSnapshot: "task-coordinator",
+      },
+    }],
+    originSessionDetails: [{ sessionId: "deleted-target", status: "missing" }],
+    onOpenOriginSession() {},
+  });
+  assert.match(html, /Deleted Target/);
+  assert.match(html, /disabled="" aria-label="Test CharacterのDeleted Targetは削除済みのため開けません"/);
+});
+
+test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示しない", () => {
+  const execution = {
+    executionId: "execution-target-state",
+    sessionId: "target-session",
+    clientRequestId: null,
+    userMessage: "delegated",
+    initiator: null,
+    state: "accepted" as const,
+    queuePosition: null,
+    canCancel: false as const,
+    acceptanceSequence: 1,
+    sourceMessageSequence: 0,
+    createdAt: "2026-08-23T00:00:00.000Z",
+    updatedAt: "2026-08-23T00:00:00.000Z",
+    relatedSession: {
+      direction: "outbound" as const,
+      sessionId: "target-session",
+      titleSnapshot: "Target Snapshot",
+      roleSnapshot: "executor" as const,
+    },
+  };
+  const loading = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [execution],
+    originSessionDetails: [{ sessionId: "target-session", status: "loading" }],
+  });
+  assert.match(loading, /Test CharacterのTarget Snapshotの存在を確認中のため開けません/);
+  assert.doesNotMatch(loading, /削除済み/);
+
+  const error = renderSessionMessageColumn({
+    messages: [{ role: "user", text: "delegated" }],
+    expandedArtifacts: { "session-1-0-origin-session": true },
+    turnExecutions: [execution],
+    originSessionDetails: [{ sessionId: "target-session", status: "error" }],
+  });
+  assert.match(error, /Test CharacterのTarget Snapshotの情報取得に失敗したため開けません/);
+  assert.doesNotMatch(error, /削除済み/);
 });
 
 test("SessionActionDockCompactRow は通常時に preview/source と jump を表示し Send と下書きを表示しない", () => {

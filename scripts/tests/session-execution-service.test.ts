@@ -32,6 +32,7 @@ async function createFixture(options: {
   exhaustionWriteFailures?: number;
   queueRetryDelayMs?: number;
   shutdownGraceMs?: number;
+  onExecutionChanged?: (executionId: string) => void;
   onExecutionTerminal?: (executionId: string, reason: "execution_canceled" | "execution_terminal", occurredAt: string) => void;
   normalizeRequest?: (request: unknown) => unknown;
   onCancelRunningTurn?: (input: {
@@ -140,6 +141,7 @@ async function createFixture(options: {
     },
     queueRetryDelayMs: options.queueRetryDelayMs,
     shutdownGraceMs: options.shutdownGraceMs,
+    onExecutionChanged: options.onExecutionChanged,
     onExecutionTerminal: options.onExecutionTerminal,
   });
 
@@ -190,6 +192,60 @@ describe("SessionExecutionService", () => {
           identity: { canonicalRelativePath: "brief.md" },
         }],
       });
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("ORCH-OUTBOUND-01: runとenqueueはacceptanceと同じstorage境界へorigin snapshotを渡す", async () => {
+    const fixture = await createFixture();
+    try {
+      const running = await fixture.service.run({
+        ...createInput(1),
+        origin: {
+          sourceSessionId: "session-2",
+          targetSessionTitle: "Session 1 snapshot",
+          targetSessionRole: "executor" as const,
+          userMessage: "message-1",
+        },
+      });
+      assert.deepEqual(fixture.storage.listSessionOutboundExecutions("session-2"), [{
+        sequence: 1,
+        executionId: running.id,
+        targetSessionId: "session-1",
+        sourceMessageSequence: -1,
+        operation: "turn.run",
+        targetSessionTitle: "Session 1 snapshot",
+        targetSessionRole: "executor",
+        userMessage: "message-1",
+        createdAt: "2026-08-10T00:00:01.000Z",
+      }]);
+
+      const runningTerminal = fixture.service.waitForTerminal("session-1", running.id);
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      await runningTerminal;
+
+      const queued = await fixture.service.enqueue({
+        ...createInput(2, "session-2"),
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2 snapshot",
+          targetSessionRole: "executor" as const,
+          userMessage: "message-2",
+        },
+      });
+      assert.deepEqual(fixture.storage.listSessionOutboundExecutions("session-1"), [{
+        sequence: 2,
+        executionId: queued.id,
+        targetSessionId: "session-2",
+        sourceMessageSequence: -1,
+        operation: "turn.enqueue",
+        targetSessionTitle: "Session 2 snapshot",
+        targetSessionRole: "executor",
+        userMessage: "message-2",
+        createdAt: "2026-08-10T00:00:04.000Z",
+      }]);
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
@@ -833,6 +889,38 @@ describe("SessionExecutionService", () => {
       assert.equal(fixture.storage.get(second.id)?.state, "running");
       fixture.dispatches.get(second.id)?.resolve({ state: "completed", result: null });
       await fixture.service.waitForTerminal("session-1", second.id);
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXECUTION-OBSERVER-01: changed observer例外後もimmediate executionをdispatchする", async () => {
+    const fixture = await createFixture({
+      onExecutionChanged: () => { throw new Error("observer failed"); },
+    });
+    try {
+      const running = await fixture.service.run(createInput(1));
+      await waitFor(() => fixture.dispatches.has(running.id));
+      assert.equal(fixture.storage.get(running.id)?.state, "running");
+      fixture.dispatches.get(running.id)?.resolve({ state: "completed", result: null });
+      assert.equal((await fixture.service.waitForTerminal("session-1", running.id)).state, "completed");
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("EXECUTION-OBSERVER-01: changed observer例外後もqueue admissionとdrainを継続する", async () => {
+    const fixture = await createFixture({
+      onExecutionChanged: () => { throw new Error("observer failed"); },
+    });
+    try {
+      const queued = await fixture.service.enqueue(createInput(1));
+      await waitFor(() => fixture.dispatches.has(queued.id));
+      assert.equal(fixture.storage.get(queued.id)?.state, "running");
+      fixture.dispatches.get(queued.id)?.resolve({ state: "completed", result: null });
+      assert.equal((await fixture.service.waitForTerminal("session-1", queued.id)).state, "completed");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });

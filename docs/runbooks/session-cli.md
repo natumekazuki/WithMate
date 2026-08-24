@@ -49,6 +49,17 @@ withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EX
 
 `turn options`は対象Sessionのproviderに応じた候補を返す。Codex Turnは`provider: "codex"`と`codexSandboxMode`、Copilot Turnは`provider: "copilot"`と`customAgentName`を指定する。provider固有fieldを混在させない。
 
+Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対して次の送信matrixを適用する。
+
+| actor Role | 許可するtarget |
+| --- | --- |
+| `standalone` | actor自身のみ |
+| `overall-coordinator` | actor自身、直属の`task-coordinator`、直属の`executor` |
+| `task-coordinator` | actor自身、直属の`executor`、rootの`overall-coordinator`、同じrootかつ同じ親の兄弟`task-coordinator` |
+| `executor` | actor自身、直属の親（`overall-coordinator`または`task-coordinator`） |
+
+異なるroot、`overall-coordinator`から孫executor、`executor`から兄弟または別branch、存在しないtargetはexecutionまたはqueue作成前に拒否される。requestへactor Role、root、parent、depthを指定してもauthorityには使われない。GUIからユーザーが直接送信するTurnは別のtrusted invocation境界であり、このAgent間matrixを適用しない。`runtime catalog`の`sessionTurnCommunicationContractRevision`で対応する通信契約revisionを確認する。
+
 ```powershell
 withmate-session turn run --json '{"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-codex-001","responseMode":"deferred","turn":{"provider":"codex","userMessage":"確認して","model":"gpt-5.4","reasoningEffort":"high","approvalMode":"on-request","codexSandboxMode":"workspace-write"}}'
 withmate-session turn enqueue --json '{"sessionId":"SESSION_ID","catalogRevision":1,"idempotencyKey":"run-copilot-001","turn":{"provider":"copilot","userMessage":"確認して","model":"claude-sonnet","reasoningEffort":"high","approvalMode":"on-request","customAgentName":""}}'
@@ -146,10 +157,10 @@ MCP clientにはこのcommandをserver commandとして登録する。公開tool
 
 `user_decision_required`はCLI/MCP/HTTPからresolveできない。Coordination Windowのtrusted GUIでstable option IDを選択するか、自由回答を入力する。保存内容へsecret、raw log、stack trace、大きなdiff、provider response、chain-of-thought、個人環境path、binding参照を含めない。
 
-回答はEventを作成したSessionの通常Turnへ、Agentが反映済みとしてconsumeするまで繰り返し渡される。回答を実作業へ反映した後にだけ、次のようにconsumeする。
+回答はEventを作成したSessionの通常Turnへ、Agentが反映済みとしてconsumeするまで繰り返し渡される。回答を実作業へ反映した後にだけ、投影された`resolutionSequence`を`expectedResolutionSequence`へ指定してconsumeする。
 
 ```powershell
-withmate-session coordination event consume --json '{"eventId":"EVENT_ID","idempotencyKey":"consume-20260822-001"}'
+withmate-session coordination event consume --json '{"eventId":"EVENT_ID","expectedResolutionSequence":42,"idempotencyKey":"consume-20260822-001"}'
 ```
 
 回答を確認しただけの場合、Turnが失敗した場合、またはまだ作業へ反映していない場合はconsumeしない。同じconsumeのresponseを失った場合は、同一inputと同一keyを再送する。

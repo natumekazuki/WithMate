@@ -363,6 +363,7 @@ describe("WithMate Session MCP contract", () => {
           value: createSessionRuntimeResult("runtime.catalog", {
             revision: 7,
             sessionRoleContractRevision: 1,
+            sessionTurnCommunicationContractRevision: 1,
             supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
             allowedChildSessionRoles: {
               standalone: [],
@@ -393,6 +394,7 @@ describe("WithMate Session MCP contract", () => {
       assert.deepEqual((result.structuredContent as any).result, {
         revision: 7,
         sessionRoleContractRevision: 1,
+        sessionTurnCommunicationContractRevision: 1,
         supportedSessionRoles: ["standalone", "overall-coordinator", "task-coordinator", "executor"],
         allowedChildSessionRoles: {
           standalone: [],

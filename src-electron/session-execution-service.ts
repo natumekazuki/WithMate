@@ -1,6 +1,9 @@
 import {
   type SessionExecution,
+  type SessionExecutionOriginSnapshot,
   type SessionExecutionOperation,
+  type SessionInboundExecutionRecord,
+  type SessionOutboundExecutionRecord,
   type SessionExecutionStorageRecord,
 } from "../src/session-execution.js";
 import {
@@ -21,6 +24,7 @@ export type CreateSessionExecutionInput = {
   request: unknown;
   idempotencyKey: string;
   requestFingerprint: string;
+  origin?: SessionExecutionOriginSnapshot;
 };
 
 export type CancelSessionExecutionInput = {
@@ -45,6 +49,8 @@ export type SessionExecutionServiceDeps = {
     | "interruptRunningForShutdown"
     | "listSessionExecutions"
     | "listSessionExecutionProjectionRecords"
+    | "listSessionInboundExecutions"
+    | "listSessionOutboundExecutions"
     | "listSessionExecutionsPage"
     | "iterateSessionExecutionsPage"
     | "listQueuedSessionIds"
@@ -174,6 +180,7 @@ export class SessionExecutionService {
         requestFingerprint: input.requestFingerprint,
         createdAt,
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
+        origin: input.origin,
       });
       if (!started.replayed) {
         this.notifyChanged(started.execution.id);
@@ -201,6 +208,7 @@ export class SessionExecutionService {
         requestFingerprint: input.requestFingerprint,
         createdAt,
         expiresAt: this.deps.resolveIdempotencyExpiresAt(createdAt),
+        origin: input.origin,
       });
     });
     if (!queued.replayed) {
@@ -228,6 +236,16 @@ export class SessionExecutionService {
   listRecords(sessionId: string): SessionExecutionStorageRecord[] {
     this.requirePersistenceAvailable();
     return this.deps.storage.listSessionExecutionProjectionRecords(sessionId);
+  }
+
+  listOutboundRecords(sessionId: string): SessionOutboundExecutionRecord[] {
+    this.requirePersistenceAvailable();
+    return this.deps.storage.listSessionOutboundExecutions(sessionId);
+  }
+
+  listInboundRecords(sessionId: string): SessionInboundExecutionRecord[] {
+    this.requirePersistenceAvailable();
+    return this.deps.storage.listSessionInboundExecutions(sessionId);
   }
 
   listPage(sessionId: string, afterSequence: number | null, limit: number): Iterable<SessionExecutionStorageRecord> {
@@ -574,7 +592,12 @@ export class SessionExecutionService {
   }
 
   private notifyChanged(executionId: string): void {
-    this.deps.onExecutionChanged?.(executionId);
+    try {
+      this.deps.onExecutionChanged?.(executionId);
+    } catch {
+      // The execution state is already committed. Projection observers are best-effort
+      // and must not block provider dispatch or durable queue progress.
+    }
   }
 
   private notifyTerminal(

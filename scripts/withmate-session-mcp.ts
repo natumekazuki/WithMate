@@ -502,6 +502,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
     sessionRoleContractRevision: z.literal(1),
+    sessionTurnCommunicationContractRevision: z.literal(1),
     supportedSessionRoles: z.array(sessionRoleSchema),
     allowedChildSessionRoles: z.object({
       standalone: z.array(z.enum(["task-coordinator", "executor"])),

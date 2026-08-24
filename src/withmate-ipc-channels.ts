@@ -9,6 +9,7 @@ export const WITHMATE_OPEN_DIFF_WINDOW_CHANNEL = "withmate:open-diff-window";
 export const WITHMATE_OPEN_COMPANION_REVIEW_WINDOW_CHANNEL = "withmate:open-companion-review-window";
 export const WITHMATE_OPEN_COMPANION_MERGE_WINDOW_CHANNEL = "withmate:open-companion-merge-window";
 export const WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL = "withmate:list-session-summary-page";
+export const WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL = "withmate:list-related-session-summaries";
 export const WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL = "withmate:list-session-character-usage";
 export const WITHMATE_GET_SESSION_CHANNEL = "withmate:get-session";
 export const WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL = "withmate:validate-session-workspace";

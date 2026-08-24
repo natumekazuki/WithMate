@@ -389,6 +389,28 @@ test("Session runtime validator rejects unknown fields and enqueue response mode
     }),
     SessionRuntimeValidationError,
   );
+  for (const [field, value] of [
+    ["sessionRole", "overall-coordinator"],
+    ["rootSessionId", "spoofed-root"],
+    ["parentSessionId", "spoofed-parent"],
+    ["delegationDepth", 0],
+  ] as const) {
+    assert.throws(
+      () => parseSessionRuntimeRequestEnvelope({
+        schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+        operation: "turn.run",
+        input: {
+          sessionId: "session-1",
+          catalogRevision: 4,
+          idempotencyKey: `spoof-${field}`,
+          responseMode: "deferred",
+          turn,
+          [field]: value,
+        },
+      }),
+      (error) => error instanceof SessionRuntimeValidationError && error.details.field === `input.${field}`,
+    );
+  }
 });
 
 test("TN-AUTH-01/TN-PROJ-06: run/enqueueは同じstrict通知inputとpublic state projectionを使う", () => {

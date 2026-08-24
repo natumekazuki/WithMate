@@ -148,11 +148,34 @@ Sessionごとのqueueは、待機中のqueued executionを最大10件まで保�
 
 `turn.run`と`turn.enqueue`は別operationとしてidempotency scopeを分ける。同じkeyを使って一方を他方へ変更しても、既存executionへ合流させない。
 
+### Session間Turn authorityと送信元projection
+
+Agent起点の`turn.run`と`turn.enqueue`は、runtime bindingで確定したactor Sessionと、保存済みRole bindingから解決したtarget Sessionの関係をshared application serviceで検証する。authority入力はSQLiteからSession ID、title、canonical Role tupleだけを取得する専用queryで解決し、公開用Session CRUDやworkspaceのGit branch取得を経由しない。request bodyからRole、root、parent、depthを受け取らず、CLI、MCP、raw HTTPで別の判定を持たない。許可する関係は次のとおりとする。
+
+| actor Role | 許可するtarget |
+| --- | --- |
+| `standalone` | actor自身 |
+| `overall-coordinator` | actor自身、直属の`task-coordinator`、直属の`executor` |
+| `task-coordinator` | actor自身、直属の`executor`、rootの`overall-coordinator`、同じrootかつ同じ親の兄弟`task-coordinator` |
+| `executor` | actor自身、直属の`overall-coordinator`または`task-coordinator` |
+
+異なるroot、孫executor、executorの兄弟または別branch、存在しないtargetはexecution、queue、Coordination Eventを作る前に拒否する。canonical replayはcurrent Role bindingとtargetの再検証より先に解決し、既存executionの再送結果をcurrent authorityの変化で置き換えない。GUI送信はtrusted user invocationとして同じexecution ownerを使うが、このAgent間authorityの対象にはしない。
+
+cross-Session Turnのacceptanceでは、target側executionを正本としたまま`session_execution_origins_v6`へsource Session ID、canonical target Session ID、operation、target titleとRoleのsnapshot、送信本文、source Session message sequence anchor、canonical execution sequence、acceptance時刻を同じtransactionで保存する。source queryは`(source_session_id, execution_sequence)` indexを使い、`request_json`を走査しない。既存executionの補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionに限定して、terminal failure notification executionを除外する。
+
+source SessionWindowはorigin rowから外向きの関連Sessionメッセージをmessage sequence anchorの位置へcanonical execution sequence順で投影し、source側のchat messageを複製しない。targetのrename後も保存snapshotを履歴表示に使い、遷移先はcanonical target Session IDから現在値を解決する。現在値はIDとtitleだけを返すbatch summary queryで取得し、初回、missing、query errorをID単位で区別してrefresh中は直前値を維持する。target削除後もorigin rowを残して履歴表示を維持したままopen操作だけを無効にする。execution state変更はtargetとsourceの両SessionWindowへ再取得通知を送る。
+
+Coordination Eventはこの通信経路の監査・可視化境界であり、Turnのtransport、delivery、source projectionを所有しない。Coordination Eventの有無でexecution acceptanceまたはorigin保存を変えない。
+
+GUI scheduleはtrusted user invocationの同一Session enqueueであり、Agent actorや別Session targetを持たない。schedule fireからoriginを推測して外向きprojectionを作らない。
+
 ### Terminal failure notification
 
-`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。sourceとtargetが同一、targetが不存在または非対応kind、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
+`turn.run`と`turn.enqueue`はoptionalな`terminalFailureNotification: { targetSessionId }`を受け付ける。対象は明示した一つの通常Sessionに限り、actor、caller、parent、source Sessionから補完しない。通知Turnのactorは失敗した主target Sessionであり、そのSessionから通知先への関係もAgent間Turnと同じcanonical Role / hierarchy authorityで検証する。sourceとtargetが同一、targetが不存在または非対応kind、authority違反、source SessionのCharacter snapshotを解決できない場合は、source executionとidempotency effectを作る前に拒否する。通知先はTurn fingerprintへ含め、canonical replayはcurrent target設定とCharacterの再解決より先に判定する。
 
 新規source executionには、通知先とsource SessionのCharacter ID、表示名、icon参照のcanonical snapshotを保存する。GUI由来Turn、設定のないexecution、legacy executionへ通知設定を推測しない。sourceが`failed`または`interrupted`へterminal commitした後だけdeliveryを起動し、`completed`と`canceled`は`not_triggered`として投影する。notification executionは保存済みsource snapshotをSession initiatorとして使い、通知設定を持たない。
+
+execution stateのWindow通知とobserver callbackはcommit後のbest-effort signalである。破棄済みrendererへの送信やobserver例外はWindow単位で隔離し、commit済みexecutionのprovider dispatch、queue admission、FIFO drain、terminal commitを失敗させない。
 
 deliveryはsource execution ID、terminal state、target Session ID、契約versionからstable identityとenqueue idempotency keyを導出する。`pending`をdurableにclaimしてtransaction外で既存`turn.enqueue` ownerを呼ぶため、専用provider経路や専用queueは持たない。enqueue成功後のresponse loss、settle前crash、再起動retryは同じkeyを使い、canonical notification executionへ収束する。claim取得後からsettlementまでの未処理例外はclaim解放へ収束させる。claim解放にも失敗した場合は、同一process内にclaim解放intentを保持し、timerから保存済みclaim tokenを再確認して解放する。settlementが実際にはcommit済みなら、deliveryのcurrent stateを読み直して解放intentを破棄する。
 
@@ -581,6 +604,7 @@ provider実行がterminalの`failed`へ到達した場合、operationの受付�
 - `CONTENT_TOO_LARGE`
 - `SESSION_NOT_FOUND`
 - `SESSION_KIND_UNSUPPORTED`
+- `SESSION_TURN_FORBIDDEN`
 - `SESSION_BUSY`
 - `QUEUE_FULL`
 - `EXECUTION_NOT_FOUND`

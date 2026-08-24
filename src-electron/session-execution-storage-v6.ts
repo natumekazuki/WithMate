@@ -3,7 +3,10 @@ import type { DatabaseSync } from "node:sqlite";
 import {
   SESSION_EXECUTION_QUEUE_LIMIT,
   type SessionExecutionMutationOperation,
+  type SessionExecutionOriginSnapshot,
+  type SessionInboundExecutionRecord,
   type SessionExecutionOperation,
+  type SessionOutboundExecutionRecord,
   type SessionExecutionState,
   type SessionExecutionStorageRecord,
 } from "../src/session-execution.js";
@@ -39,6 +42,7 @@ export type EnqueueSessionExecutionInput = {
   requestFingerprint: string;
   createdAt: string;
   expiresAt: string;
+  origin?: SessionExecutionOriginSnapshot;
 };
 
 export type EnqueueSessionExecutionResult = {
@@ -143,6 +147,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
         input.createdAt,
       );
+      this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
           operation,
@@ -205,6 +210,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
         input.createdAt,
       );
+      this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
           operation,
@@ -347,6 +353,69 @@ export class SessionExecutionStorageV6 {
       ORDER BY sequence ASC
     `).all(sessionId, sessionId) as SessionExecutionRow[];
     return rows.map(parseExecution);
+  }
+
+  listSessionOutboundExecutions(sourceSessionId: string): SessionOutboundExecutionRecord[] {
+    const rows = this.db.prepare(`
+      SELECT execution_sequence, execution_id, target_session_id, operation,
+             target_session_title_snapshot, target_session_role_snapshot,
+             source_message_seq_anchor, user_message, accepted_at
+      FROM session_execution_origins_v6
+      WHERE source_session_id = ?
+      ORDER BY execution_sequence ASC
+    `).all(sourceSessionId) as Array<{
+      execution_sequence: number;
+      execution_id: string;
+      target_session_id: string;
+      operation: SessionExecutionOperation;
+      target_session_title_snapshot: string;
+      target_session_role_snapshot: SessionOutboundExecutionRecord["targetSessionRole"];
+      source_message_seq_anchor: number;
+      user_message: string;
+      accepted_at: string;
+    }>;
+    return rows.map((row) => ({
+      sequence: row.execution_sequence,
+      executionId: row.execution_id,
+      targetSessionId: row.target_session_id,
+      sourceMessageSequence: row.source_message_seq_anchor,
+      operation: row.operation,
+      targetSessionTitle: row.target_session_title_snapshot,
+      targetSessionRole: row.target_session_role_snapshot,
+      userMessage: row.user_message,
+      createdAt: row.accepted_at,
+    }));
+  }
+
+  listSessionInboundExecutions(targetSessionId: string): SessionInboundExecutionRecord[] {
+    const rows = this.db.prepare(`
+      SELECT execution.*, turn.user_message_seq AS target_message_sequence
+      FROM session_turn_public_context_v6 AS context
+      INNER JOIN session_executions_v6 AS execution
+        ON execution.id = context.execution_id
+        AND execution.session_id = context.session_id
+      INNER JOIN session_turns_v6 AS turn
+        ON turn.id = context.turn_id
+        AND turn.session_id = context.session_id
+      WHERE context.session_id = ?
+        AND execution.state IN ('completed', 'failed', 'canceled', 'interrupted')
+        AND turn.user_message_seq IS NOT NULL
+        AND json_extract(execution.request_json, '$.initiator.kind') = 'session'
+      ORDER BY turn.user_message_seq ASC, execution.sequence ASC
+    `).all(targetSessionId) as Array<SessionExecutionRow & { target_message_sequence: number }>;
+    return rows.map((row) => ({
+      execution: parseExecution(row),
+      targetMessageSequence: row.target_message_sequence,
+    }));
+  }
+
+  getExecutionOriginSourceSessionId(executionId: string): string | null {
+    const row = this.db.prepare(`
+      SELECT source_session_id
+      FROM session_execution_origins_v6
+      WHERE execution_id = ?
+    `).get(executionId) as { source_session_id: string } | undefined;
+    return row?.source_session_id ?? null;
   }
 
   admitNextQueued(sessionId: string, admittedAt: string): SessionExecutionStorageRecord | null {
@@ -629,6 +698,40 @@ export class SessionExecutionStorageV6 {
         expires_at
       ) VALUES (?, ?, ?, ?, ?, ?)
     `).run(operation, idempotencyKey, requestFingerprint, executionId, createdAt, expiresAt);
+  }
+
+  private insertOriginSnapshot(
+    executionId: string,
+    targetSessionId: string,
+    origin: SessionExecutionOriginSnapshot | undefined,
+    acceptedAt: string,
+  ): void {
+    if (!origin || origin.sourceSessionId === targetSessionId) return;
+    this.db.prepare(`
+      INSERT INTO session_execution_origins_v6 (
+        execution_id, execution_sequence, source_session_id, target_session_id,
+        operation, target_session_title_snapshot, target_session_role_snapshot,
+        source_message_seq_anchor, user_message, accepted_at
+      )
+      SELECT id, sequence, ?, session_id, operation, ?, ?,
+        COALESCE((
+          SELECT MAX(message.seq)
+          FROM session_messages_v6 AS message
+          WHERE message.session_id = ?
+        ), -1),
+        ?, ?
+      FROM session_executions_v6
+      WHERE id = ? AND session_id = ?
+    `).run(
+      origin.sourceSessionId,
+      origin.targetSessionTitle,
+      origin.targetSessionRole,
+      origin.sourceSessionId,
+      origin.userMessage,
+      acceptedAt,
+      executionId,
+      targetSessionId,
+    );
   }
 
   private updateIdempotencyExpiry(executionId: string, expiresAt: string): void {

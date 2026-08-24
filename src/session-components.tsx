@@ -33,6 +33,7 @@ import type { ApprovalMode } from "./approval-mode.js";
 import type { ChatWindowModeKind } from "./chat/chat-window-mode.js";
 import type { ChatLayoutPriority } from "./chat/chat-layout-preference.js";
 import type { SessionQueuedTurn, SessionTurnExecutionProjection } from "./session-turn-execution.js";
+import type { RelatedSessionDetails } from "./related-session-details.js";
 import type { CodexSandboxMode } from "./codex-sandbox-mode.js";
 import {
   contextPaneTabLabel,
@@ -2238,10 +2239,7 @@ export type SessionMessageColumnProps = {
   messageViewMode?: MessageViewMode;
 };
 
-export type SessionOriginDetails = {
-  sessionId: string;
-  taskTitle: string;
-};
+export type SessionOriginDetails = RelatedSessionDetails;
 
 function getNonBlankSelectionText(selection: Selection): string | null {
   const text = selection.toString();
@@ -3085,10 +3083,13 @@ export function SessionMessageColumn({
             const messageGroup = messageGroups?.[absoluteIndex] ?? null;
             const turnExecution = turnExecutions?.[absoluteIndex] ?? null;
             const queuedTurn = turnExecution?.state === "queued" ? turnExecution : null;
+            const outboundTurn = turnExecution?.state === "accepted" ? turnExecution : null;
             const sessionInitiator = turnExecution?.initiator?.kind === "session"
               ? turnExecution.initiator
               : null;
-            const turnInitiator = sessionInitiator
+            const turnInitiator = outboundTurn
+              ? null
+              : sessionInitiator
               ? {
                 name: sessionInitiator.character.name,
                 iconPath: sessionInitiator.character.iconFilePath,
@@ -3110,16 +3111,48 @@ export function SessionMessageColumn({
             const artifactKey = messageKey;
             const artifactExpanded = expandedArtifacts[artifactKey] ?? false;
             const isAssistant = message.role === "assistant";
-            const messageCharacter = turnInitiator ?? (isAssistant ? character : null);
+            const isAgentMessage = isAssistant || outboundTurn !== null;
+            const messageCharacter = outboundTurn ? character : turnInitiator ?? (isAssistant ? character : null);
             const isExternalOrigin = turnInitiator !== null;
-            const displayedRole = isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
+            const displayedRole = outboundTurn
+              ? "assistant session-outbound"
+              : isExternalOrigin ? "session-origin" : isAssistant ? "assistant" : message.role;
             const originDetailsKey = `${artifactKey}-origin-session`;
-            const originDetailsExpanded = originDetailsKey
-              ? expandedArtifacts[originDetailsKey] ?? false
-              : false;
-            const currentOriginSession = sessionInitiator
+            const originDetailsExpanded = expandedArtifacts[originDetailsKey] ?? false;
+            const relatedSessionId = sessionInitiator?.sessionId
+              ?? outboundTurn?.relatedSession.sessionId
+              ?? null;
+            const currentRelatedSession = sessionInitiator
               ? originSessionDetails.find((details) => details.sessionId === sessionInitiator.sessionId) ?? null
+              : outboundTurn
+                ? originSessionDetails.find((details) => details.sessionId === outboundTurn.relatedSession.sessionId) ?? null
               : null;
+            const currentRelatedSessionTitle = currentRelatedSession?.status === "found"
+              || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle)
+              ? currentRelatedSession.taskTitle
+              : null;
+            const relatedSessionTitle = currentRelatedSessionTitle
+              ?? outboundTurn?.relatedSession.titleSnapshot
+              ?? relatedSessionId;
+            const canOpenRelatedSession = !!(
+              relatedSessionId
+              && currentRelatedSessionTitle
+              && onOpenOriginSession
+            );
+            const relatedSessionRouteLabel = canOpenRelatedSession
+              ? `${messageCharacter?.name}の${relatedSessionTitle}を別Windowで開く`
+              : outboundTurn && currentRelatedSession?.status === "missing"
+                ? `${messageCharacter?.name}の${relatedSessionTitle}は削除済みのため開けません`
+                : outboundTurn && (!currentRelatedSession || currentRelatedSession.status === "loading")
+                  ? `${messageCharacter?.name}の${relatedSessionTitle}の存在を確認中のため開けません`
+                  : outboundTurn && currentRelatedSession?.status === "error"
+                    ? `${messageCharacter?.name}の${relatedSessionTitle}の情報取得に失敗したため開けません`
+                    : `${messageCharacter?.name}の${relatedSessionTitle}は現在開けません`;
+            const relatedSessionMessageLabel = outboundTurn
+              ? `${character.name}が${outboundTurn.relatedSession.titleSnapshot}へ送ったメッセージ`
+              : sessionInitiator
+                ? `${sessionInitiator.character.name}から届いたメッセージ`
+                : undefined;
             const artifact = loadedArtifactDetails[artifactKey] ?? message.artifact;
             const artifactLoading = loadingArtifactDetails[artifactKey] ?? false;
             const artifactHasSnapshotRisk =
@@ -3132,7 +3165,7 @@ export function SessionMessageColumn({
                 details: undefined,
               })) ??
               [];
-            const canUseMessageTextActions = isAssistant && (onCopyMessageText || onQuoteMessageText);
+            const canUseMessageTextActions = isAgentMessage && (onCopyMessageText || onQuoteMessageText);
 
             return (
               <div
@@ -3161,11 +3194,14 @@ export function SessionMessageColumn({
                 }${isMessageGroupStart ? " auxiliary-message-group-start" : ""}${
                   shouldCloseMessageGroup ? " auxiliary-message-group-end" : ""
                 }`}
+                aria-label={relatedSessionMessageLabel}
               >
-                {messageCharacter ? (
+                {messageCharacter || relatedSessionId ? (
                   <div className="message-avatar-stack">
-                    <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
-                    {artifact ? (
+                    {messageCharacter ? (
+                      <CharacterAvatar character={messageCharacter} size="small" className="message-avatar" />
+                    ) : null}
+                    {artifact && messageCharacter ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
@@ -3183,14 +3219,16 @@ export function SessionMessageColumn({
                         {artifactExpanded ? "−" : "i"}
                       </button>
                     ) : null}
-                    {sessionInitiator ? (
+                    {relatedSessionId ? (
                       <button
                         className="artifact-toggle artifact-toggle-icon"
                         type="button"
                         onClick={() => onToggleArtifact(originDetailsKey)}
                         aria-expanded={originDetailsExpanded}
                         aria-controls={`origin-session-panel-${turnExecution?.executionId}`}
-                        aria-label={originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
+                        aria-label={outboundTurn
+                          ? `${outboundTurn.relatedSession.titleSnapshot}への送信先Session情報を${originDetailsExpanded ? "閉じる" : "開く"}`
+                          : originDetailsExpanded ? "呼出元Session情報を閉じる" : "呼出元Session情報を開く"}
                         title="Session情報"
                       >
                         {originDetailsExpanded ? "−" : "i"}
@@ -3198,11 +3236,33 @@ export function SessionMessageColumn({
                     ) : null}
                   </div>
                 ) : null}
-                {messageCharacter ? (
-                  <div className="message-character-name">{messageCharacter.name}</div>
+                {messageCharacter || outboundTurn ? (
+                  <div className="message-character-name">{messageCharacter?.name}</div>
                 ) : null}
                 <div className={`message-card ${displayedRole}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}`}>
-                  {artifact && !isAssistant ? (
+                  {relatedSessionId && relatedSessionTitle && messageCharacter ? (
+                    <button
+                      className="related-session-route"
+                      type="button"
+                      onClick={() => {
+                        if (relatedSessionId && currentRelatedSessionTitle && onOpenOriginSession) {
+                          onOpenOriginSession(relatedSessionId);
+                        }
+                      }}
+                      disabled={!canOpenRelatedSession}
+                      aria-label={relatedSessionRouteLabel}
+                    >
+                      {outboundTurn ? (
+                        <>
+                          <span aria-hidden="true">@</span>
+                          <span className="related-session-character">{messageCharacter.name}</span>
+                          <span aria-hidden="true">·</span>
+                        </>
+                      ) : null}
+                      <span className="related-session-title">{relatedSessionTitle}</span>
+                    </button>
+                  ) : null}
+                  {artifact && !isAgentMessage ? (
                     <button
                       className="artifact-toggle artifact-toggle-icon"
                       type="button"
@@ -3232,33 +3292,38 @@ export function SessionMessageColumn({
                     />
                   </div>
 
-                  {sessionInitiator && originDetailsExpanded ? (
+                  {relatedSessionId && originDetailsExpanded ? (
                     <section
                       id={`origin-session-panel-${turnExecution?.executionId}`}
                       className="origin-session-details"
-                      aria-label="呼出元Session情報"
+                      aria-label={outboundTurn
+                        ? `${outboundTurn.relatedSession.titleSnapshot}への送信先Session情報`
+                        : "呼出元Session情報"}
                     >
                       <dl>
                         <div>
                           <dt>Session ID</dt>
-                          <dd><code>{sessionInitiator.sessionId}</code></dd>
+                          <dd><code>{relatedSessionId}</code></dd>
                         </div>
-                        {currentOriginSession ? (
+                        {currentRelatedSession?.status === "found"
+                        || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle) ? (
                           <div>
                             <dt>タイトル</dt>
-                            <dd>
-                              {onOpenOriginSession ? (
-                                <button
-                                  className="origin-session-link"
-                                  type="button"
-                                  onClick={() => onOpenOriginSession(sessionInitiator.sessionId)}
-                                  aria-label={`${currentOriginSession.taskTitle}を別Windowで開く`}
-                                >
-                                  <span>{currentOriginSession.taskTitle}</span>
-                                  <span aria-hidden="true">↗</span>
-                                </button>
-                              ) : currentOriginSession.taskTitle}
-                            </dd>
+                            <dd>{currentRelatedSession.taskTitle}</dd>
+                          </div>
+                        ) : null}
+                        {outboundTurn && currentRelatedSession?.status === "missing" ? (
+                          <div>
+                            <dt>タイトル</dt>
+                            <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
+                          </div>
+                        ) : null}
+                        {outboundTurn && (!currentRelatedSession
+                          || currentRelatedSession.status === "loading"
+                          || (currentRelatedSession.status === "error" && !currentRelatedSession.taskTitle)) ? (
+                          <div>
+                            <dt>タイトル</dt>
+                            <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
                           </div>
                         ) : null}
                       </dl>

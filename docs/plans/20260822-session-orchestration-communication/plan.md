@@ -86,9 +86,8 @@ Session AがSession BへTurnを受理させた場合、Session AのSessionWindow
 - 通常のchat messageを複製せず、既存のSession-origin受信メッセージのprimitiveを一般化した関連Sessionメッセージとして表示する。
 - 外向きであることは、既存token、icon、shape、alignment、state affordanceなどのデザイン差で表す。「送信しました」「委譲を開始しました」のような常設説明文は追加しない。
 - 先頭にtarget Session名とRoleを表示する。
-- その下には送信メッセージの先頭previewだけを表示する。
-- メッセージ本体をクリックすると全文を展開する。
-- 詳細を展開するとtarget Sessionの情報と、target SessionWindowを開く操作を表示する。操作感は既存の受信メッセージ詳細と揃える。
+- 本文は通常のchat messageと同じrich text表示を使う。このslice固有のpreviewや折り畳みを追加しない。
+- 詳細を展開するとtarget Sessionの情報と、target SessionWindowを開く操作を表示する。本文表示とは独立させ、操作感は既存の受信メッセージ詳細と揃える。
 - screen reader向けaccessible nameでは、target Sessionと操作内容を判別できるようにする。視覚上の説明文を省くことと、アクセシブルな識別情報を省くことを混同しない。
 
 外向き表示の正本はtarget側で受理されたexecutionとする。source側へ別のmessage recordを二重保存しない。execution acceptance時に、履歴表示に必要なtarget Session名とRoleのsnapshotを保持し、詳細画面の遷移先はcanonicalなtarget Session IDで解決する。target Sessionが現存する場合は現在のSessionWindowを開き、削除済みなどで解決できない場合は履歴表示を残したままopen操作を無効化する。
@@ -161,7 +160,7 @@ communication authorityとCoordination Event APIの統合後、work item、結�
 - CLI、MCP、raw HTTPが同じ判定へ到達するcontract test
 - rejectionがexecution作成やqueue mutationより前であること
 - source／target双方のprojectionと再起動後の復元
-- related Session message componentのpreview、全文展開、詳細、SessionWindow遷移
+- related Session message componentの通常本文表示、詳細、SessionWindow遷移
 - target rename／delete時のsnapshot表示とopen可否
 - GUIから任意Sessionへ介入できること
 - TypeScript typecheckと関連test
@@ -181,7 +180,7 @@ communication authorityとCoordination Event APIの統合後、work item、結�
 - Agent起点Turnの許可・拒否matrixがすべての外部入口で一致する
 - 異rootと非許可関係へのTurnが副作用前に拒否される
 - 許可された外向きTurnが送信元と送信先のSessionWindowで一貫して確認できる
-- 送信元表示が説明文に依存せず、target Session、Role、preview、全文、詳細、遷移を提供する
+- 送信元表示が説明文に依存せず、target Session、Role、通常本文、詳細、遷移を提供する
 - GUI上のユーザーが任意のSessionへ介入できる
 - Coordination Eventが監査境界に留まり、実行指示の正本になっていない
 - source、executable contract、必要なADRまたは設計文書が同じ最終契約を示す

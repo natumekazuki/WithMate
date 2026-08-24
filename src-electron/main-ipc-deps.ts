@@ -23,6 +23,7 @@ import type {
   SessionSummary,
 } from "../src/app-state.js";
 import type { AppDatabaseDiagnostics } from "../src/app-database-diagnostics-state.js";
+import type { RelatedSessionSummary } from "../src/related-session-details.js";
 import type {
   CoordinationEvent,
   CoordinationEventCancelInput,
@@ -240,6 +241,7 @@ export type MainIpcPromptTemplateDepsArgs = {
 
 export type MainIpcSessionQueryDepsArgs = {
   listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listRelatedSessionSummaries(sessionIds: readonly string[]): Awaitable<RelatedSessionSummary[]>;
   listSessionCharacterUsage(): Awaitable<SessionCharacterUsage[]>;
   listCompanionSessionSummaries(): Awaitable<CompanionSessionSummary[]>;
   listSessionAuditLogs(sessionId: string): Awaitable<AuditLogEntry[]>;
@@ -519,6 +521,7 @@ export function createMainIpcRegistrationDeps(
     updatePromptTemplate: args.promptTemplates.updatePromptTemplate,
     deletePromptTemplate: args.promptTemplates.deletePromptTemplate,
     listSessionSummaryPage: args.sessionQuery.listSessionSummaryPage,
+    listRelatedSessionSummaries: args.sessionQuery.listRelatedSessionSummaries,
     listSessionCharacterUsage: args.sessionQuery.listSessionCharacterUsage,
     listCompanionSessionSummaries: args.sessionQuery.listCompanionSessionSummaries,
     listSessionAuditLogs: args.sessionQuery.listSessionAuditLogs,

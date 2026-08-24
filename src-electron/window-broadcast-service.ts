@@ -125,8 +125,13 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
 
   private broadcastTo(windows: TWindow[], channel: string, payload: unknown): void {
     for (const window of windows) {
-      if (!window.isDestroyed()) {
-        window.webContents.send(channel, payload);
+      try {
+        if (!window.isDestroyed()) {
+          window.webContents.send(channel, payload);
+        }
+      } catch {
+        // A renderer can disappear between lookup and send. Broadcasts are invalidation
+        // signals, so one unavailable Window must not block the remaining recipients.
       }
     }
   }

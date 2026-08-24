@@ -36,8 +36,10 @@ SQLite-backed store により window 間整合と再起動後の復元を両立�
 - Homeのsession一覧は `listSessionSummaryPage()` をstorage query ownerへ送り、recent / pinned / openをboundedに取得する。検索もstorage側で行い、Homeへ全summary配列を返さない
 - session summary の変更通知は `scope: "ids"` または `scope: "all"` のinvalidationを `WindowBroadcastService` からHome / Session windowへ配信する。IDは最大256件で、超過時に切り捨てず `all` へ切り替える
 - Session windowはinvalidationを受けた対象だけ `getSession()` で再 hydrateし、Homeは現在のquery generationで古いresponseを失効させて、読み込み済みpage数をboundedに再取得する
+- Session windowが関連Sessionの遷移可否を解決するときは、IDとtitleだけを返すbatch summary queryを使い、関連Sessionのmessageをhydrateしない。初回、missing、query errorを区別し、refresh中は直前のtitleを維持する
 - session CRUD と bulk write path は `SessionPersistenceService` に集約する
 - turn 実行は `SessionRuntimeService`、window lifecycle hook は `SessionWindowBridge` が担う
+- Agent起点のcross-Session Turnはtarget側executionを正本とし、送信元projection用のorigin snapshotだけを同じtransactionへ保存する
 - Session / Project / Character Memory の session 起点補助は `SessionMemorySupportService` が担う
 - Session Memory / Character Reflection の background orchestration は `MemoryOrchestrationService` が担う
 - persistent store の初期化 / close / recreate は `PersistentStoreLifecycleService` が担う
@@ -150,6 +152,11 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
   - `Session Memory v1`
 - `audit_logs`
   - turn 実行と background task の監査ログ
+- `session_execution_origins_v6`
+  - cross-Session executionのsource Session ID、canonical target Session ID、target titleとRoleのacceptance snapshot、source message sequence anchor、canonical execution sequence
+  - source Sessionからは`(source_session_id, execution_sequence)` indexで取得し、`request_json`をquery ownerにしない
+  - target Sessionの外部キーを持たず、target削除後も履歴を維持する。source Session削除時はcascadeする
+  - legacy executionからのorigin補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionへ限定する。terminal failure notification executionは補完対象にしない
 - `project_scopes` / `project_memory_entries`
   - project 単位の durable knowledge
 - `character_scopes` / `character_memory_entries`
@@ -170,6 +177,7 @@ table 詳細と JSON カラム一覧は `docs/design/database-schema.md` を参�
 ### Session Renderer
 
 - 初回 `getSession()` と軽量 invalidation 通知受信時の再 hydrate
+- 関連Session IDのbatch summary取得と、ID単位のloading / found / missing / error状態の維持
 - title / approval / model / reasoning depth の更新
 - turn 実行と cancel
 - audit log / observability 表示

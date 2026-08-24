@@ -62,6 +62,17 @@ Store only summary, facts, assumptions, impact, and recommendation within the pu
 
 Every application operation requires the valid runtime binding issued by WithMate for the current provider execution. `session.self` returns only that binding's actor Session ID and does not accept a caller-supplied Session ID. All other Session-scoped operations keep an explicit target, including cross-Session handoff; the actor is never used as an implicit target.
 
+`turn.run` and `turn.enqueue` use the following canonical Role and hierarchy matrix. The runtime derives the actor from its binding and reads both actor and target bindings; request fields cannot override the relationship.
+
+| Actor Role | Allowed target |
+| --- | --- |
+| `standalone` | Self only |
+| `overall-coordinator` | Self, a direct `task-coordinator` child, or a direct `executor` child |
+| `task-coordinator` | Self, a direct `executor` child, the root `overall-coordinator`, or a sibling `task-coordinator` with the same root and parent |
+| `executor` | Self or its direct parent (`overall-coordinator` or `task-coordinator`) |
+
+Cross-root Turns, overall-coordinator-to-grandchild Turns, executor-to-sibling or other-branch Turns, nonexistent targets, and caller-supplied Role or hierarchy claims are rejected before execution or queue acceptance. Trusted GUI messages are a separate user-invocation boundary and are not restricted by this Agent matrix. `runtime.catalog.sessionTurnCommunicationContractRevision` identifies this Turn communication contract.
+
 ## Turn lifecycle
 
 Resolve the provider and catalog revision through `runtime.catalog`, then create or select a Session and call `turn.options`. Codex Turns use Codex-specific sandbox options; Copilot Turns use Copilot-specific custom-agent options. Do not mix provider-specific fields or fall back to Session defaults.

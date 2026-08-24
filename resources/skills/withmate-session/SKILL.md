@@ -16,6 +16,8 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 - Use `session.self` to resolve the current provider actor Session from its runtime binding. Do not infer it from prompts, workspace paths, parent relationships, or user-provided IDs.
 - Every Session application operation requires the valid runtime binding issued by WithMate for the current provider execution. Do not treat CLI or MCP transport credentials as actor authority, and do not retry a binding rejection through an unbound terminal.
 - Require an explicit target `sessionId` for every other Session-scoped operation. `session.self` does not authorize an implicit target or replace explicit cross-Session selection.
+- Before `turn.run` or `turn.enqueue`, use the canonical bindings returned by `session.self` and `session.get` to select an allowed target. A standalone actor may target only itself. An overall coordinator may target itself or a direct task coordinator or executor child. A task coordinator may target itself, a direct executor child, its root overall coordinator, or a sibling task coordinator with the same root and parent. An executor may target only itself or its direct parent.
+- Do not send a Turn across roots, from an overall coordinator to a grandchild executor, or from an executor to a sibling or another branch. Do not send actor Role, root, parent, or depth in the request; WithMate derives them from runtime and canonical Role bindings and rejects unauthorized Turns before acceptance.
 - Confirm the target Session's workspace identity with `session.get` before changing source or adopting results.
 - Derive permission for Session creation, Turn execution, approval, elicitation, cancellation, overwrite, and other external effects from the user's instruction. This Skill does not grant additional authority.
 - Treat another Session's output as an adoption candidate. Validate its source changes and executable contracts in the calling task before accepting them.
@@ -23,7 +25,7 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 ## Follow the discovery workflow
 
 1. Confirm that the Session MCP tools are exposed by the current host. If CLI fallback was explicitly permitted, run `withmate-session status` when runtime availability or identity is uncertain.
-2. Call `runtime.catalog`; select only a returned provider and retain its `catalogRevision`.
+2. Call `runtime.catalog`; select only a returned provider, retain its `catalogRevision`, and require the supported `sessionTurnCommunicationContractRevision` before cross-Session Turn selection.
 3. Create a Session only with an explicit title, provider, catalog revision, workspace selection, and caller-owned idempotency key.
 4. Call `turn.options` for the target Session. Construct a provider-specific Turn tuple only from that result.
 5. Choose `turn.run` for immediate admission or `turn.enqueue` for the persistent FIFO. Never convert one to the other after a busy or queue error.

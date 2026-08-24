@@ -6693,6 +6693,56 @@ button:disabled {
   text-align: right;
 }
 
+.related-session-route {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--orange);
+  font: inherit;
+  font-size: 0.78rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.related-session-route:hover .related-session-title {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.related-session-route:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.related-session-route:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+
+.related-session-route:disabled .related-session-title {
+  text-decoration: none;
+}
+
+.related-session-character {
+  font-weight: 700;
+}
+
+.related-session-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .message-row.user {
   grid-template-columns: minmax(0, 1fr);
   justify-items: stretch;
@@ -6825,6 +6875,10 @@ button:disabled {
   box-shadow: inset 4px 0 0 color-mix(in srgb, var(--character-sub) 82%, transparent);
 }
 
+.session-page .message-card.assistant.session-outbound {
+  box-shadow: inset -4px 0 0 color-mix(in srgb, var(--character-sub) 82%, transparent);
+}
+
 .message-card.assistant.accent {
   background: linear-gradient(145deg, rgba(226, 232, 240, 0.2), rgba(255, 255, 255, 0.98));
   border-color: rgba(148, 163, 184, 0.34);
@@ -6886,37 +6940,6 @@ button:disabled {
 .origin-session-details dd {
   color: var(--ink);
   overflow-wrap: anywhere;
-}
-
-.origin-session-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--orange);
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.origin-session-link > span:first-child {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.origin-session-link:hover {
-  color: var(--teal);
-}
-
-.origin-session-link:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 3px;
-  border-radius: 2px;
 }
 
 .queued-turn-status {

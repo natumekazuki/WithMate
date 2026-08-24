@@ -1328,6 +1328,24 @@ describe("SessionStorageV6", () => {
         /ID数以上/,
       );
       assert.deepEqual(storage.listSessionCharacterUsage().map(({ characterId }) => characterId), ["char-b", "char-a"]);
+      assert.deepEqual(storage.listRelatedSessionSummaries(["same-a", "missing", "same-a"]), [{
+        sessionId: "same-a",
+        taskTitle: "100% literal",
+      }]);
+      assert.deepEqual(Object.keys(storage.listRelatedSessionSummaries(["same-a"])[0] ?? {}).sort(), [
+        "sessionId",
+        "taskTitle",
+      ]);
+      assert.deepEqual(storage.getSessionTurnAuthority("same-a"), {
+        sessionId: "same-a",
+        title: "100% literal",
+        sessionRole: "standalone",
+        roleContractRevision: 1,
+        rootSessionId: "same-a",
+        parentSessionId: null,
+        delegationDepth: 0,
+      });
+      assert.equal(storage.getSessionTurnAuthority("missing"), null);
     } finally {
       storage?.close();
       await removeDirectoryWithRetry(tempDirectory);

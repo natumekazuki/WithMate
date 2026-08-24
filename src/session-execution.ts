@@ -42,6 +42,30 @@ export type SessionExecutionStorageRecord = SessionExecution & {
   request: unknown;
 };
 
+export type SessionExecutionOriginSnapshot = {
+  sourceSessionId: string;
+  targetSessionTitle: string;
+  targetSessionRole: import("./session-role-binding.js").SessionRole;
+  userMessage: string;
+};
+
+export type SessionOutboundExecutionRecord = {
+  sequence: number;
+  executionId: string;
+  targetSessionId: string;
+  sourceMessageSequence: number;
+  operation: SessionExecutionOperation;
+  targetSessionTitle: string;
+  targetSessionRole: import("./session-role-binding.js").SessionRole;
+  userMessage: string;
+  createdAt: string;
+};
+
+export type SessionInboundExecutionRecord = {
+  execution: SessionExecutionStorageRecord;
+  targetMessageSequence: number;
+};
+
 export type SessionExecutionTurnResult = {
   assistantText: string;
 };

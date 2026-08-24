@@ -4,7 +4,9 @@ import test from "node:test";
 import { buildMessageListProjection } from "../../src/auxiliary-session-message-projection.js";
 import { appendTurnExecutionsToMessageList } from "../../src/session-queued-turn-projection.js";
 import type {
+  SessionOutboundTurn,
   SessionQueuedTurn,
+  SessionReceivedTurn,
   SessionRunningTurn,
 } from "../../src/session-turn-execution.js";
 import {
@@ -29,6 +31,34 @@ function queuedTurn(executionId: string, queuePosition: number, userMessage: str
   };
 }
 
+function outboundTurn(
+  executionId: string,
+  sourceMessageSequence: number,
+  userMessage: string,
+  acceptanceSequence = sourceMessageSequence + 1,
+): SessionOutboundTurn {
+  return {
+    executionId,
+    sessionId: "target-session",
+    clientRequestId: null,
+    userMessage,
+    initiator: null,
+    state: "accepted",
+    queuePosition: null,
+    canCancel: false,
+    acceptanceSequence,
+    sourceMessageSequence,
+    createdAt: `2026-08-16T00:00:0${sourceMessageSequence + 1}.000Z`,
+    updatedAt: `2026-08-16T00:00:0${sourceMessageSequence + 1}.000Z`,
+    relatedSession: {
+      direction: "outbound",
+      sessionId: "target-session",
+      titleSnapshot: "Target",
+      roleSnapshot: "executor",
+    },
+  };
+}
+
 function runningTurn(executionId: string, userMessage: string): SessionRunningTurn {
   return {
     executionId,
@@ -39,6 +69,34 @@ function runningTurn(executionId: string, userMessage: string): SessionRunningTu
     state: "running",
     queuePosition: null,
     canCancel: false,
+    createdAt: "2026-08-16T00:00:00.000Z",
+    updatedAt: "2026-08-16T00:00:00.000Z",
+  };
+}
+
+function receivedTurn(
+  executionId: string,
+  targetMessageSequence: number,
+  userMessage: string,
+): SessionReceivedTurn {
+  return {
+    executionId,
+    sessionId: "session-1",
+    clientRequestId: null,
+    userMessage,
+    initiator: {
+      kind: "session",
+      sessionId: "source-session",
+      character: {
+        characterId: "source-character",
+        name: "Source Agent",
+        iconFilePath: "",
+      },
+    },
+    state: "received",
+    queuePosition: null,
+    canCancel: false,
+    targetMessageSequence,
     createdAt: "2026-08-16T00:00:00.000Z",
     updatedAt: "2026-08-16T00:00:00.000Z",
   };
@@ -333,4 +391,65 @@ test("live responseがSession hydrationより先着しても昇格userの直下�
     "二つ目の応答",
     "その次",
   ]);
+});
+
+test("ORCH-INBOUND-HISTORY-01: 完了後のSession initiatorをcanonical target message位置へ結び直す", () => {
+  const base = buildMessageListProjection(
+    [
+      { role: "user", text: "同じ本文" },
+      { role: "assistant", text: "途中の応答" },
+      { role: "user", text: "同じ本文" },
+    ],
+    [],
+    "session-1",
+  );
+
+  const projection = appendTurnExecutionsToMessageList(
+    base,
+    [receivedTurn("execution-received", 2, "同じ本文")],
+    "idle",
+  );
+
+  assert.equal(projection.messages.length, 3);
+  assert.equal(projection.turnExecutions[0], null);
+  assert.equal(projection.turnExecutions[2]?.executionId, "execution-received");
+  assert.equal(projection.keys[2], "turn-execution-execution-received");
+  assert.equal(projection.sources[2]?.kind, "session");
+});
+
+test("ORCH-OUTBOUND-ORDER-01: outbound Turnはacceptance時のsource message位置へmergeする", () => {
+  const base = buildMessageListProjection([
+    { role: "user", text: "before" },
+    { role: "assistant", text: "later response" },
+    { role: "user", text: "future turn" },
+  ], [], "session-1");
+
+  const projection = appendTurnExecutionsToMessageList(base, [
+    outboundTurn("execution-outbound", 0, "delegated during first turn"),
+  ], "idle");
+
+  assert.deepEqual(projection.messages.map((message) => message.text), [
+    "before",
+    "delegated during first turn",
+    "later response",
+    "future turn",
+  ]);
+  assert.equal(projection.turnExecutions[1]?.executionId, "execution-outbound");
+});
+
+test("ORCH-OUTBOUND-ORDER-02: 同一anchor・同一時刻でもcanonical acceptance sequence順を維持する", () => {
+  const base = buildMessageListProjection([
+    { role: "user", text: "before" },
+    { role: "assistant", text: "after" },
+  ], [], "session-1");
+  const first = outboundTurn("z-first", 0, "first", 10);
+  const second = { ...outboundTurn("a-second", 0, "second", 11), createdAt: first.createdAt, updatedAt: first.updatedAt };
+
+  const projection = appendTurnExecutionsToMessageList(base, [second, first], "idle");
+
+  assert.deepEqual(projection.messages.map((message) => message.text), ["before", "first", "second", "after"]);
+  assert.deepEqual(
+    projection.turnExecutions.filter(Boolean).map((execution) => execution?.executionId),
+    ["z-first", "a-second"],
+  );
 });

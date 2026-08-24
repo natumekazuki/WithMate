@@ -38,6 +38,8 @@ import { DEFAULT_CHARACTER_SESSION_COPY, type CharacterProfile } from "./charact
 import type { CompanionSessionSummary } from "./companion-state.js";
 import { startCompanionSessionSummariesSubscription } from "./companion-session-summary-subscription.js";
 import { startOpenCompanionReviewWindowIdsSubscription } from "./open-companion-review-window-subscription.js";
+import { startRelatedSessionDetailsSubscription } from "./related-session-details-subscription.js";
+import type { RelatedSessionDetails } from "./related-session-details.js";
 import { startAppSettingsSubscription } from "./app-settings-subscription.js";
 import {
   createDefaultAppSettings,
@@ -495,10 +497,18 @@ export default function AgentSessionWindowApp() {
   const desktopRuntime = isDesktopRuntime();
   const withmateApi = getWithMateApi();
   const [sessions, setSessionsBase] = useState<Session[]>([]);
-  const originSessionDetails = useMemo(() => sessions.map((session) => ({
-    sessionId: session.id,
-    taskTitle: session.taskTitle,
-  })), [sessions]);
+  const [relatedSessionDetails, setRelatedSessionDetails] = useState<RelatedSessionDetails[]>([]);
+  const originSessionDetails = useMemo(() => {
+    const details = new Map(relatedSessionDetails.map((session) => [session.sessionId, session]));
+    for (const session of sessions) {
+      details.set(session.id, {
+        sessionId: session.id,
+        status: "found",
+        taskTitle: session.taskTitle,
+      });
+    }
+    return [...details.values()];
+  }, [relatedSessionDetails, sessions]);
   const sessionMutationRevisionRef = useRef(new StateMutationRevision());
   const sessionProjectionRevisionRef = useRef(new StateMutationRevision());
   const setAuthoritativeSessions = useCallback((update: SetStateAction<Session[]>) => {
@@ -1017,6 +1027,16 @@ export default function AgentSessionWindowApp() {
       unsubscribe();
     };
   }, [selectedSession?.id, withmateApi]);
+  const relatedSessionIds = useMemo(() => [...new Set(sessionTurnExecutions.flatMap((execution) => {
+    if (execution.state === "accepted") return [execution.relatedSession.sessionId];
+    return execution.initiator?.kind === "session" ? [execution.initiator.sessionId] : [];
+  }))], [sessionTurnExecutions]);
+  useEffect(() => startRelatedSessionDetailsSubscription({
+    api: withmateApi,
+    sessionIds: relatedSessionIds,
+    applyDetails: setRelatedSessionDetails,
+    onError: (error) => console.error(error),
+  }), [relatedSessionIds, withmateApi]);
   const displayedSession = useMainAuxiliaryRuntimeSession(selectedSession, activeAuxiliarySession);
   const isAuxiliaryMode = activeAuxiliarySession?.status === "active";
   const selectedCompanionGroupMonitorEntries = useMemo(

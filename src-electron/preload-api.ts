@@ -120,6 +120,7 @@ import {
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
   WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL,
   WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_SESSION_TURN_EXECUTIONS_CHANNEL,
   WITHMATE_LIST_COORDINATION_EVENTS_CHANNEL,
@@ -356,6 +357,9 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
   return {
     listSessionSummaryPage(request) {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL, request ?? null);
+    },
+    listRelatedSessionSummaries(sessionIds) {
+      return ipcRenderer.invoke(WITHMATE_LIST_RELATED_SESSION_SUMMARIES_CHANNEL, sessionIds);
     },
     listSessionCharacterUsage() {
       return ipcRenderer.invoke(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL);

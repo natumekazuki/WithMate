@@ -44,6 +44,10 @@ async function createFixture(): Promise<{
     `);
     insertSession.run("session-1", "Session 1", CREATED_AT, CREATED_AT, CREATED_AT);
     insertSession.run("session-2", "Session 2", CREATED_AT, CREATED_AT, CREATED_AT);
+    db.prepare(`
+      INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
+      VALUES ('session-1', 0, 'user', '{"text":"source"}', ?)
+    `).run(CREATED_AT);
     insertStandaloneRoleBindingsForSessions(db);
   } finally {
     db.close();
@@ -68,6 +72,168 @@ function enqueueInput(index: number) {
 }
 
 describe("SessionExecutionStorageV6", () => {
+  it("ORCH-OUTBOUND-01: origin snapshotをacceptanceと同時保存しtarget削除後もsource queryから復元する", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue({
+        ...enqueueInput(1),
+        sessionId: "session-2",
+        request: { turn: { userMessage: "delegate this" } },
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2",
+          targetSessionRole: "standalone",
+          userMessage: "delegate this",
+        },
+      });
+      assert.deepEqual(fixture.storage.listSessionOutboundExecutions("session-1"), [{
+        sequence: 1,
+        executionId: "execution-1",
+        targetSessionId: "session-2",
+        sourceMessageSequence: 0,
+        operation: "turn.enqueue",
+        targetSessionTitle: "Session 2",
+        targetSessionRole: "standalone",
+        userMessage: "delegate this",
+        createdAt: "2026-08-10T00:00:01.000Z",
+      }]);
+      assert.equal(fixture.storage.enqueue({
+        ...enqueueInput(1),
+        sessionId: "session-2",
+        request: { turn: { userMessage: "delegate this" } },
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2",
+          targetSessionRole: "standalone",
+          userMessage: "delegate this",
+        },
+      }).replayed, true);
+      fixture.storage.enqueue({
+        ...enqueueInput(2),
+        sessionId: "session-2",
+        request: { turn: { userMessage: "delegate next" } },
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2",
+          targetSessionRole: "standalone",
+          userMessage: "delegate next",
+        },
+      });
+      assert.deepEqual(
+        fixture.storage.listSessionOutboundExecutions("session-1").map((record) => record.executionId),
+        ["execution-1", "execution-2"],
+      );
+
+      const renameDb = new DatabaseSync(fixture.dbPath);
+      try {
+        renameDb.prepare("UPDATE sessions_v6 SET title = ? WHERE id = ?").run("Renamed target", "session-2");
+      } finally {
+        renameDb.close();
+      }
+      assert.equal(fixture.storage.listSessionOutboundExecutions("session-1")[0]?.targetSessionTitle, "Session 2");
+
+      fixture.storage.close();
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-2");
+        db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-2");
+      } finally {
+        db.close();
+      }
+      const restarted = new SessionExecutionStorageV6(fixture.dbPath);
+      try {
+        assert.equal(restarted.get("execution-1"), null);
+        assert.deepEqual(
+          restarted.listSessionOutboundExecutions("session-1").map((record) => record.targetSessionTitle),
+          ["Session 2", "Session 2"],
+        );
+      } finally {
+        restarted.close();
+      }
+    } finally {
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
+  it("ORCH-INBOUND-HISTORY-01: 完了したSession起点executionをcanonical target message位置と組で復元する", async () => {
+    const fixture = await createFixture();
+    try {
+      fixture.storage.enqueue({
+        ...enqueueInput(1),
+        sessionId: "session-2",
+        request: {
+          initiator: {
+            kind: "session",
+            sessionId: "session-1",
+            character: {
+              characterId: "source-character",
+              name: "Source Agent",
+              iconFilePath: "",
+            },
+          },
+          turn: { userMessage: "received request" },
+        },
+        origin: {
+          sourceSessionId: "session-1",
+          targetSessionTitle: "Session 2",
+          targetSessionRole: "standalone",
+          userMessage: "received request",
+        },
+      });
+      fixture.storage.admitNextQueued("session-2", CREATED_AT);
+
+      const db = new DatabaseSync(fixture.dbPath);
+      try {
+        db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare(`
+          INSERT INTO session_messages_v6 (session_id, seq, role, body, created_at)
+          VALUES ('session-2', 3, 'user', '{"text":"received request"}', ?)
+        `).run(CREATED_AT);
+        const turn = db.prepare(`
+          INSERT INTO session_turns_v6 (
+            session_id, phase, user_message_seq, started_at, updated_at
+          ) VALUES ('session-2', 'running', 3, ?, ?)
+        `).run(CREATED_AT, CREATED_AT);
+        db.prepare(`
+          INSERT INTO session_turn_public_context_v6 (
+            turn_id, session_id, execution_id, effective_turn_json,
+            attachments_json, created_at, updated_at
+          ) VALUES (?, 'session-2', 'execution-1', '{}', '[]', ?, ?)
+        `).run(turn.lastInsertRowid, CREATED_AT, CREATED_AT);
+      } finally {
+        db.close();
+      }
+
+      fixture.storage.completeRunning({
+        executionId: "execution-1",
+        state: "completed",
+        result: { assistantText: "done" },
+        errorCode: "",
+        reason: "",
+        completedAt: CREATED_AT,
+        expiresAt: EXPIRES_AT,
+      });
+
+      const inbound = fixture.storage.listSessionInboundExecutions("session-2");
+      assert.equal(inbound.length, 1);
+      assert.equal(inbound[0]?.targetMessageSequence, 3);
+      assert.equal(inbound[0]?.execution.id, "execution-1");
+      assert.deepEqual((inbound[0]?.execution.request as { initiator?: unknown }).initiator, {
+        kind: "session",
+        sessionId: "session-1",
+        character: {
+          characterId: "source-character",
+          name: "Source Agent",
+          iconFilePath: "",
+        },
+      });
+    } finally {
+      fixture.storage.close();
+      await rm(fixture.directory, { recursive: true, force: true });
+    }
+  });
+
   it("ID-03: restart loadとqueuedからrunningへの遷移でinitiator tupleを維持する", async () => {
     const fixture = await createFixture();
     const initiator = {

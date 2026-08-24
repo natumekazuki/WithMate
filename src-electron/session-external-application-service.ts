@@ -59,7 +59,13 @@ import {
   SESSION_ROLE_CONTRACT_REVISION,
   SESSION_ROLE_MAX_DELEGATION_DEPTH,
   SESSION_ROLE_VALUES,
+  requireSessionRoleBinding,
 } from "../src/session-role-binding.js";
+import {
+  SESSION_TURN_COMMUNICATION_CONTRACT_REVISION,
+  canSendSessionTurn,
+  type SessionTurnAuthoritySession,
+} from "../src/session-turn-communication-authority.js";
 import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
 import {
   SessionInteractionContinuationUnavailableError,
@@ -127,6 +133,7 @@ export type SessionExternalApplicationServiceDeps = {
     description: string;
   }>>;
   resolveTurnInitiator(actorSessionId: string): Promise<Extract<TurnInitiator, { kind: "session" }> | null>;
+  getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
   projectTerminalFailureNotification?(
     execution: SessionExecution,
     request: unknown,
@@ -296,6 +303,7 @@ export class SessionExternalApplicationService {
     }
     const execution = replay ?? await this.deps.executionService.run({
       ...mutation,
+      ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
@@ -386,6 +394,7 @@ export class SessionExternalApplicationService {
     }
     const execution = replay ?? await this.deps.executionService.enqueue({
       ...mutation,
+      ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
         catalogRevision: input.catalogRevision,
@@ -408,8 +417,7 @@ export class SessionExternalApplicationService {
         "TERMINAL_NOTIFICATION_SAME_SESSION",
       );
     }
-    await this.deps.crudService.get(input.sessionId);
-    await this.deps.crudService.get(notification.targetSessionId);
+    this.requireSessionTurnAuthority(input.sessionId, notification.targetSessionId);
     const sourceSession = await this.requireTurnInitiator(input.sessionId);
     return {
       terminalFailureNotification: {
@@ -432,6 +440,66 @@ export class SessionExternalApplicationService {
       );
     }
     return initiator;
+  }
+
+  private async resolveTurnAcceptance(
+    actorSessionId: string,
+    targetSessionId: string,
+    userMessage: string,
+  ): Promise<{ origin?: import("../src/session-execution.js").SessionExecutionOriginSnapshot }> {
+    const { actor, target } = this.requireSessionTurnAuthority(actorSessionId, targetSessionId);
+    if (actor.sessionId === target.sessionId) return {};
+    return {
+      origin: {
+        sourceSessionId: actor.sessionId,
+        targetSessionTitle: target.title,
+        targetSessionRole: target.sessionRole,
+        userMessage,
+      },
+    };
+  }
+
+  private requireSessionTurnAuthority(
+    actorSessionId: string,
+    targetSessionId: string,
+  ): { actor: SessionTurnAuthoritySession; target: SessionTurnAuthoritySession } {
+    const actor = this.deps.getTurnAuthoritySession(actorSessionId);
+    if (!actor) {
+      throw new SessionCrudError(
+        "SESSION_NOT_FOUND",
+        "The requested Session was not found.",
+        false,
+        { sessionId: actorSessionId },
+      );
+    }
+    const target = actorSessionId === targetSessionId
+      ? actor
+      : this.deps.getTurnAuthoritySession(targetSessionId);
+    if (!target) {
+      throw new SessionCrudError(
+        "SESSION_NOT_FOUND",
+        "The requested Session was not found.",
+        false,
+        { sessionId: targetSessionId },
+      );
+    }
+    const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
+    const targetBinding = requireSessionRoleBinding(target.sessionId, target);
+    if (!canSendSessionTurn(
+      { sessionId: actor.sessionId, ...actorBinding },
+      { sessionId: target.sessionId, ...targetBinding },
+    )) {
+      throw new SessionRuntimeValidationError(
+        "The actor Session is not allowed to send a Turn to the target Session.",
+        {
+          actorSessionId: actor.sessionId,
+          targetSessionId: target.sessionId,
+          communicationContractRevision: SESSION_TURN_COMMUNICATION_CONTRACT_REVISION,
+        },
+        "SESSION_TURN_FORBIDDEN",
+      );
+    }
+    return { actor, target };
   }
 
   private list(input: SessionRuntimeListInput): { items: SessionRuntimePublicExecution[]; nextCursor?: string } {
@@ -645,6 +713,7 @@ function projectRuntimeCatalog(
       executor: [...SESSION_ROLE_CHILDREN.executor],
     },
     maxDelegationDepth: SESSION_ROLE_MAX_DELEGATION_DEPTH,
+    sessionTurnCommunicationContractRevision: SESSION_TURN_COMMUNICATION_CONTRACT_REVISION,
     coordinationEvents: {
       kinds: COORDINATION_EVENT_KINDS,
       states: COORDINATION_EVENT_STATES,

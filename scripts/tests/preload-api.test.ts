@@ -173,6 +173,10 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:list-session-summary-page",
     args: [{ scope: "recent", limit: 25 }],
   });
+  assert.deepEqual(await api.listRelatedSessionSummaries(["session-1", "session-2"]), {
+    channel: "withmate:list-related-session-summaries",
+    args: [["session-1", "session-2"]],
+  });
   assert.deepEqual(await api.listSessionCharacterUsage(), {
     channel: "withmate:list-session-character-usage",
     args: [],
@@ -428,6 +432,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionCustomAgents",
     "listSessionSkills",
     "listSessionCharacterUsage",
+    "listRelatedSessionSummaries",
     "listSessionSummaryPage",
     "listFileRootChanges",
     "listWorkspaceCustomAgents",
@@ -558,6 +563,7 @@ test("preload type surface は destructive storage maintenance API を Settings 
     "createSession",
     "deleteSession",
     "listSessionCharacterUsage",
+    "listRelatedSessionSummaries",
     "listSessionSummaryPage",
   ] satisfies Array<keyof WithMateWindowSessionApi>;
 

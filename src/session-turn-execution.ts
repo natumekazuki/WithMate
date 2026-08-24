@@ -27,7 +27,33 @@ export type SessionTerminalTurn = SessionTurnExecutionProjectionBase & {
   canCancel: false;
 };
 
-export type SessionTurnExecutionProjection = SessionRunningTurn | SessionQueuedTurn | SessionTerminalTurn;
+export type SessionOutboundTurn = SessionTurnExecutionProjectionBase & {
+  state: "accepted";
+  queuePosition: null;
+  canCancel: false;
+  acceptanceSequence: number;
+  sourceMessageSequence: number;
+  relatedSession: {
+    direction: "outbound";
+    sessionId: string;
+    titleSnapshot: string;
+    roleSnapshot: import("./session-role-binding.js").SessionRole;
+  };
+};
+
+export type SessionReceivedTurn = SessionTurnExecutionProjectionBase & {
+  state: "received";
+  queuePosition: null;
+  canCancel: false;
+  targetMessageSequence: number;
+};
+
+export type SessionTurnExecutionProjection =
+  | SessionRunningTurn
+  | SessionQueuedTurn
+  | SessionTerminalTurn
+  | SessionReceivedTurn
+  | SessionOutboundTurn;
 
 export type SessionExecutionChangedEvent =
   | {

@@ -42,3 +42,19 @@ test("WindowBroadcastService は open Session ID の上限超過を all にす�
   service.broadcastOpenSessionWindowIds(Array.from({ length: 101 }, (_, index) => `session-${index}`));
   assert.deepEqual(home.sent[0]?.payload, { scope: "all" });
 });
+
+test("WindowBroadcastService は一つのWindow送信失敗を他Windowへ波及させない", () => {
+  const failed = createWindow(false);
+  failed.window.webContents.send = () => { throw new Error("renderer disposed"); };
+  const available = createWindow(false);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [failed.window, available.window],
+    getHomeWindows: () => [failed.window, available.window],
+    getSessionWindows: () => [],
+    getSessionWindow: () => null,
+  });
+
+  service.broadcastPromptTemplates([]);
+
+  assert.deepEqual(available.sent.map((entry) => entry.channel), ["withmate:prompt-templates-changed"]);
+});
