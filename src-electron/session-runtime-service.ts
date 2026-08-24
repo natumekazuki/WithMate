@@ -127,7 +127,10 @@ export type SessionRuntimeServiceDeps = {
     session: Session;
     provider: ModelCatalogProvider;
     binding: ProviderAgentRuntimeBindingProjection | null;
-  }): Awaitable<unknown>;
+  }): Awaitable<{
+    handle: unknown;
+    binding: ProviderAgentRuntimeBindingProjection | null;
+  } | undefined>;
   endProviderAgentRuntimeTurn?(handle: unknown): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
@@ -1208,13 +1211,17 @@ export class SessionRuntimeService {
 
     let providerAgentRuntimeTurnHandle: unknown;
     try {
-      providerAgentRuntimeTurnHandle = await Promise.resolve(
+      const providerAgentRuntimeTurn = await Promise.resolve(
         this.deps.beginProviderAgentRuntimeTurn?.({
           session: activeRunningSession,
           provider,
           binding: agentRuntimeBinding,
         }),
       );
+      providerAgentRuntimeTurnHandle = providerAgentRuntimeTurn?.handle;
+      if (providerAgentRuntimeTurn) {
+        agentRuntimeBinding = providerAgentRuntimeTurn.binding;
+      }
       let result: RunSessionTurnResult | null = null;
       let didInternalRetry = false;
       while (true) {

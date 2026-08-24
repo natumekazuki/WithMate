@@ -58,13 +58,19 @@ async function createRuntime(root: string, options: { proactiveLimit?: number | 
     resolveActorSession: (sessionId) => sessionId === actor.id ? actor : null,
     getProactiveCreateLimit: () => options.proactiveLimit,
   });
-  const call = (operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS, body: unknown, reference = binding.bindingReference) =>
+  const call = (
+    operation: keyof typeof GLOSSARY_RUNTIME_OPERATION_PATHS,
+    body: unknown,
+    reference = binding.bindingReference,
+    turnCapability?: string,
+  ) =>
     runtime.route({
       method: "POST",
       path: GLOSSARY_RUNTIME_OPERATION_PATHS[operation],
       body,
       transport: "mcp",
       bindingReference: reference,
+      turnCapability,
     });
   return { actor, applicationService, binding, call, registry, runtime, target };
 }
@@ -172,24 +178,24 @@ describe("Glossary runtime mutation policy", () => {
 
   it("proactive createはSettings値が欠落・不正ならfallbackせず拒否する", async () => {
     const root = await createRepository();
-    const { actor, call, runtime } = await createRuntime(root, { proactiveLimit: null });
-    const turn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: null });
+    const turn = runtime.beginProviderTurn(actor.id, binding);
     const response = await call("create", {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" },
       mode: "proactive",
       entry: { term: "Runtime", definition: "plain text" },
-    });
+    }, binding.bindingReference, turn.binding.turnCapability);
     assert.equal(response?.status, 400);
     assert.equal((response?.value as { code: string }).code, "GLOSSARY_INVALID_REQUEST");
     await assert.rejects(() => readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8"));
-    runtime.endProviderTurn(turn);
+    runtime.endProviderTurn(turn.handle);
   });
 
   it("同じturnでは完全同一retryだけを許し、複数proactive callでSettings上限を迂回させない", async () => {
     const root = await createRepository();
-    const { actor, call, runtime } = await createRuntime(root, { proactiveLimit: 2 });
-    const turn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: 2 });
+    const turn = runtime.beginProviderTurn(actor.id, binding);
     const firstBody = {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" as const },
@@ -197,12 +203,12 @@ describe("Glossary runtime mutation policy", () => {
       entry: { term: "Runtime", definition: "plain text" },
     };
 
-    const first = await call("create", firstBody);
-    const retry = await call("create", firstBody);
+    const first = await call("create", firstBody, binding.bindingReference, turn.binding.turnCapability);
+    const retry = await call("create", firstBody, binding.bindingReference, turn.binding.turnCapability);
     const second = await call("create", {
       ...firstBody,
       entry: { term: "Projection", definition: "second call" },
-    });
+    }, binding.bindingReference, turn.binding.turnCapability);
 
     assert.equal((first?.value as { outcome: string }).outcome, "applied");
     assert.equal((retry?.value as { outcome: string }).outcome, "converged");
@@ -212,16 +218,16 @@ describe("Glossary runtime mutation policy", () => {
     assert.match(stored, /Runtime/);
     assert.doesNotMatch(stored, /Projection/);
 
-    runtime.endProviderTurn(turn);
-    const nextTurn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    runtime.endProviderTurn(turn.handle);
+    const nextTurn = runtime.beginProviderTurn(actor.id, binding);
     const next = await call("create", {
       ...firstBody,
       entry: { term: "Projection", definition: "next turn" },
-    });
+    }, binding.bindingReference, nextTurn.binding.turnCapability);
     assert.equal((next?.value as { outcome: string }).outcome, "applied");
-    runtime.endProviderTurn(nextTurn);
+    runtime.endProviderTurn(nextTurn.handle);
 
-    const rejectedTurn = runtime.beginProviderTurn(actor.id, actor.providerId);
+    const rejectedTurn = runtime.beginProviderTurn(actor.id, binding);
     const oversizedFirst = await call("create_batch", {
       schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
       selector: { kind: "primary" },
@@ -231,21 +237,49 @@ describe("Glossary runtime mutation policy", () => {
         { term: "Two", definition: "two" },
         { term: "Three", definition: "three" },
       ],
-    });
+    }, binding.bindingReference, rejectedTurn.binding.turnCapability);
     const smallerSecond = await call("create", {
       ...firstBody,
       entry: { term: "Smaller", definition: "must remain rejected" },
-    });
+    }, binding.bindingReference, rejectedTurn.binding.turnCapability);
     assert.equal((oversizedFirst?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
     assert.equal((smallerSecond?.value as { code: string }).code, "GLOSSARY_LIMIT_EXCEEDED");
-    runtime.endProviderTurn(rejectedTurn);
+    runtime.endProviderTurn(rejectedTurn.handle);
+  });
+
+  it("前turnの遅延proactive requestを次turnのquotaへ誤帰属させない", async () => {
+    const root = await createRepository();
+    const { actor, binding, call, runtime } = await createRuntime(root, { proactiveLimit: 1 });
+    const firstTurn = runtime.beginProviderTurn(actor.id, binding);
+    runtime.endProviderTurn(firstTurn.handle);
+    const nextTurn = runtime.beginProviderTurn(actor.id, binding);
+    const body = {
+      schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+      selector: { kind: "primary" as const },
+      mode: "proactive" as const,
+      entry: { term: "Late", definition: "must not apply" },
+    };
+
+    const late = await call("create", body, binding.bindingReference, firstTurn.binding.turnCapability);
+    const current = await call("create", {
+      ...body,
+      entry: { term: "Current", definition: "current turn" },
+    }, binding.bindingReference, nextTurn.binding.turnCapability);
+
+    assert.equal(late?.status, 401);
+    assert.equal((late?.value as { code: string }).code, "GLOSSARY_SESSION_BINDING_INVALID");
+    assert.equal((current?.value as { outcome: string }).outcome, "applied");
+    const stored = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
+    assert.doesNotMatch(stored, /Late/);
+    assert.match(stored, /Current/);
+    runtime.endProviderTurn(nextTurn.handle);
   });
 });
 
 describe("Glossary authenticated runtime exchange", () => {
   it("MCPとCLI adapterを同じschema・authority・application serviceへdispatchし、direct HTTPは公開しない", async () => {
     const root = await createRepository();
-    const { actor, binding, registry, runtime } = await createRuntime(root);
+    const { actor, binding, registry, runtime } = await createRuntime(root, { proactiveLimit: 1 });
     const server = createMemoryV6HttpServer({
       service: {} as MemoryV6Service,
       apiSecret: "api-secret",
@@ -297,6 +331,30 @@ describe("Glossary authenticated runtime exchange", () => {
         { signal: new AbortController().signal, bindingReference: binding.bindingReference },
       );
       assert.equal(genericSmallExchange.status, 404);
+
+      const providerTurn = runtime.beginProviderTurn(actor.id, binding);
+      const proactive = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        {
+          method: "POST",
+          path: GLOSSARY_RUNTIME_OPERATION_PATHS.create,
+          body: {
+            schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+            selector: { kind: "primary" },
+            mode: "proactive",
+            entry: { term: "Turn scoped", definition: "authenticated capability" },
+          },
+        },
+        {
+          signal: new AbortController().signal,
+          bindingReference: binding.bindingReference,
+          turnCapability: providerTurn.binding.turnCapability,
+          exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+        },
+      );
+      runtime.endProviderTurn(providerTurn.handle);
+      assert.equal(proactive.status, 200);
+      assert.equal((proactive.value as { outcome: string }).outcome, "applied");
 
       const direct = await fetch(`${baseUrl}${GLOSSARY_RUNTIME_OPERATION_PATHS.list}`, {
         method: "POST",

@@ -5,6 +5,7 @@ import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-bi
 import {
   PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+  WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
   buildProviderAgentRuntimeBindingCacheKey,
   buildProviderAgentRuntimeBindingEnv,
   createProviderAgentRuntimeBindingRedactor,
@@ -256,7 +257,7 @@ describe("AgentRuntimeBindingRegistry", () => {
   });
 });
 
-it("provider envはopaque referenceだけを投影しcache keyやglobal envへsecretを混ぜない", () => {
+it("provider envはbindingとturn capabilityを投影しcache keyやglobal envへsecretを混ぜない", () => {
   const registry = new AgentRuntimeBindingRegistry();
   const projection = registry.issueOrReuse({
     actorSessionId: "session-a",
@@ -264,28 +265,37 @@ it("provider envはopaque referenceだけを投影しcache keyやglobal envへse
     operationGrants: ["character.context.get"],
   });
   const before = process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV];
+  const turnProjection = { ...projection, turnCapability: "turn-capability-current" };
   const env = mergeDefinedProviderEnv(
     {
       PATH: "bin",
       [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: "stale",
       WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "stale",
+      [WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]: "stale-turn",
       EMPTY: undefined,
     },
-    buildProviderAgentRuntimeBindingEnv(projection),
+    buildProviderAgentRuntimeBindingEnv(turnProjection),
   );
 
   assert.equal(env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], projection.bindingReference);
   assert.equal(env.WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED, "1");
+  assert.equal(env[WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV], turnProjection.turnCapability);
   assert.equal(env.PATH, "bin");
   assert.equal("EMPTY" in env, false);
   assert.equal(process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], before);
-  assert.doesNotMatch(buildProviderAgentRuntimeBindingCacheKey(projection), new RegExp(projection.bindingReference));
+  const cacheKey = buildProviderAgentRuntimeBindingCacheKey(turnProjection);
+  assert.doesNotMatch(cacheKey, new RegExp(projection.bindingReference));
+  assert.doesNotMatch(cacheKey, new RegExp(turnProjection.turnCapability));
+  assert.notEqual(
+    cacheKey,
+    buildProviderAgentRuntimeBindingCacheKey({ ...turnProjection, turnCapability: "turn-capability-next" }),
+  );
   assert.equal(getProviderAgentRuntimeBindingCapability("codex").transport, "env");
   assert.equal(getProviderAgentRuntimeBindingCapability("copilot").transport, "env");
   assert.equal(getProviderAgentRuntimeBindingCapability("unknown").transport, "unsupported");
 });
 
-it("provider projection redactorは現在のreferenceだけをnested key/valueから非破壊で除去する", () => {
+it("provider projection redactorは現在のreferenceとturn capabilityをnested key/valueから非破壊で除去する", () => {
   const projection = {
     bindingId: "binding-a",
     bindingReference: "opaque-reference-current",
@@ -293,12 +303,14 @@ it("provider projection redactorは現在のreferenceだけをnested key/value�
     executionGeneration: "generation-a",
     transport: "env" as const,
     expiresAt: null,
+    turnCapability: "turn-capability-current",
   };
   const redactor = createProviderAgentRuntimeBindingRedactor(projection);
   const input = {
     [`prefix-${projection.bindingReference}`]: [
       `before ${projection.bindingReference} after`,
       { nested: projection.bindingReference },
+      projection.turnCapability,
     ],
     otherGeneration: "opaque-reference-other",
     partial: "opaque-reference",
@@ -311,6 +323,7 @@ it("provider projection redactorは現在のreferenceだけをnested key/value�
     [`prefix-${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER}`]: [
       `before ${PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER} after`,
       { nested: PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER },
+      PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
     ],
     otherGeneration: "opaque-reference-other",
     partial: "opaque-reference",

@@ -2647,7 +2647,7 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
         issueProviderAgentRuntimeBinding(session, provider.id),
       beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
-        ? glossaryRuntimeService.beginProviderTurn(session.id, provider.id)
+        ? glossaryRuntimeService.beginProviderTurn(session.id, binding)
         : undefined,
       endProviderAgentRuntimeTurn: (handle) =>
         glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
@@ -2864,7 +2864,7 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
         issueProviderAgentRuntimeBinding(session, provider.id),
       beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
-        ? glossaryRuntimeService.beginProviderTurn(session.id, provider.id)
+        ? glossaryRuntimeService.beginProviderTurn(session.id, binding)
         : undefined,
       endProviderAgentRuntimeTurn: (handle) =>
         glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),

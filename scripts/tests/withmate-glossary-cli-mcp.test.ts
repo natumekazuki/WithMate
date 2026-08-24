@@ -30,6 +30,7 @@ const CLI_ENV = {
   WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-reference",
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
+  WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-capability",
 };
 
 const MCP_ENV = {
@@ -178,6 +179,7 @@ describe("withmate-glossary CLI contract", () => {
 
   it("Glossary専用exchangeを使い、body拒否はapplication未到達のeffect noneにする", async () => {
     let exchangePath = "";
+    let turnCapability = "";
     const result = await callGlossaryRuntime({
       operation: "create_batch",
       path: GLOSSARY_RUNTIME_OPERATION_PATHS.create_batch,
@@ -192,11 +194,13 @@ describe("withmate-glossary CLI contract", () => {
       env: CLI_ENV,
       runtimeCall: async (_connection, _operation, options) => {
         exchangePath = options.exchangePath ?? "";
+        turnCapability = options.turnCapability ?? "";
         return { ok: false, status: 413, value: { error: { code: "MEMORY_REQUEST_TOO_LARGE" } } };
       },
     });
 
     assert.equal(exchangePath, WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH);
+    assert.equal(turnCapability, CLI_ENV.WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY);
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.equal(result.code, "GLOSSARY_LIMIT_EXCEEDED");

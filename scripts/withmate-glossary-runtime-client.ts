@@ -11,6 +11,7 @@ import {
   callWithMateMemoryRuntime,
   discoverWithMateMemoryApi,
   resolveAgentRuntimeBindingReference,
+  resolveAgentRuntimeTurnCapability,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
@@ -26,7 +27,12 @@ export type GlossaryRuntimeClientDeps = {
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
     operation: WithMateMemoryRuntimeOperation,
-    options: { signal: AbortSignal; bindingReference?: string; exchangePath?: string },
+    options: {
+      signal: AbortSignal;
+      bindingReference?: string;
+      turnCapability?: string;
+      exchangePath?: string;
+    },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   requestTimeoutMs?: number;
 };
@@ -89,8 +95,10 @@ export async function callGlossaryRuntime(input: {
   body: unknown;
 }, deps: GlossaryRuntimeClientDeps): Promise<GlossaryRuntimeEnvelope<object>> {
   let bindingReference: string | undefined;
+  let turnCapability: string | undefined;
   try {
     bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+    turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
   } catch {
     return createGlossaryBindingRequiredError();
   }
@@ -120,6 +128,7 @@ export async function callGlossaryRuntime(input: {
     }, {
       signal: abortController.signal,
       bindingReference,
+      turnCapability,
       exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
     });
     dispatched = true;

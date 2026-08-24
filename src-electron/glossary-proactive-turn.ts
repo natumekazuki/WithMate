@@ -1,6 +1,9 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
+
 export type GlossaryProactiveTurnHandle = Readonly<{
   actorSessionId: string;
   providerId: string;
+  capability: string;
 }>;
 
 type ProactiveTurnState = {
@@ -10,6 +13,15 @@ type ProactiveTurnState = {
 
 function turnKey(actorSessionId: string, providerId: string): string {
   return `${actorSessionId}\0${providerId}`;
+}
+
+function equalCapability(actual: string | null | undefined, expected: string): boolean {
+  if (!actual) {
+    return false;
+  }
+  const actualBytes = Buffer.from(actual, "utf8");
+  const expectedBytes = Buffer.from(expected, "utf8");
+  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 export class GlossaryProactiveTurnCoordinator {
@@ -28,6 +40,7 @@ export class GlossaryProactiveTurnCoordinator {
     const handle = Object.freeze({
       actorSessionId: input.actorSessionId,
       providerId: input.providerId,
+      capability: randomBytes(32).toString("base64url"),
     });
     this.#activeByActor.set(key, handle);
     this.#stateByHandle.set(handle, {
@@ -48,12 +61,13 @@ export class GlossaryProactiveTurnCoordinator {
   admit(input: {
     actorSessionId: string;
     providerId: string;
+    turnCapability: string | null | undefined;
     requestFingerprint: string;
     entryCount: number;
   }): { ok: true; proactiveCreateLimit: number } | { ok: false; reason: "inactive" | "invalid-limit" | "limit-exceeded" | "second-request" } {
     const handle = this.#activeByActor.get(turnKey(input.actorSessionId, input.providerId));
     const state = handle ? this.#stateByHandle.get(handle) : null;
-    if (!state) {
+    if (!state || !handle || !equalCapability(input.turnCapability, handle.capability)) {
       return { ok: false, reason: "inactive" };
     }
     if (state.requestFingerprint === null) {

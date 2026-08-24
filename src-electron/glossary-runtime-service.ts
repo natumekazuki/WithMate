@@ -14,7 +14,10 @@ import {
   glossaryRuntimeOperationByPath,
   type GlossaryRuntimeOperation,
 } from "../src/glossary-operation-schema.js";
-import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
+import type {
+  ProviderAgentRuntimeBindingProjection,
+  ResolvedAgentRuntimeBinding,
+} from "./agent-runtime-binding.js";
 import {
   areResolvedGlossaryCheckoutsEqual,
   GlossaryApplicationService,
@@ -160,12 +163,22 @@ export class GlossaryRuntimeService {
     this.#getProactiveCreateLimit = deps.getProactiveCreateLimit;
   }
 
-  beginProviderTurn(actorSessionId: string, providerId: string): GlossaryProactiveTurnHandle {
-    return this.#proactiveTurns.begin({
+  beginProviderTurn(
+    actorSessionId: string,
+    binding: ProviderAgentRuntimeBindingProjection,
+  ): {
+    handle: GlossaryProactiveTurnHandle;
+    binding: ProviderAgentRuntimeBindingProjection;
+  } {
+    const handle = this.#proactiveTurns.begin({
       actorSessionId,
-      providerId,
+      providerId: binding.providerId,
       proactiveCreateLimit: this.#getProactiveCreateLimit(),
     });
+    return {
+      handle,
+      binding: { ...binding, turnCapability: handle.capability },
+    };
   }
 
   endProviderTurn(handle: GlossaryProactiveTurnHandle): void {
@@ -240,7 +253,7 @@ export class GlossaryRuntimeService {
       case "create": {
         const input = glossaryOperationRequestSchemas.create.parse(request.body);
         const proactiveAdmission = input.mode === "proactive"
-          ? this.#admitProactiveCreate(binding, "create", input.entry, 1)
+          ? this.#admitProactiveCreate(binding, request.turnCapability, "create", input.entry, 1)
           : null;
         if (proactiveAdmission && !proactiveAdmission.ok) {
           return this.#respond(proactiveAdmission.error);
@@ -254,7 +267,7 @@ export class GlossaryRuntimeService {
       case "create_batch": {
         const input = glossaryOperationRequestSchemas.create_batch.parse(request.body);
         const proactiveAdmission = input.mode === "proactive"
-          ? this.#admitProactiveCreate(binding, "create_batch", input.entries, input.entries.length)
+          ? this.#admitProactiveCreate(binding, request.turnCapability, "create_batch", input.entries, input.entries.length)
           : null;
         if (proactiveAdmission && !proactiveAdmission.ok) {
           return this.#respond(proactiveAdmission.error);
@@ -287,6 +300,7 @@ export class GlossaryRuntimeService {
 
   #admitProactiveCreate(
     binding: ResolvedAgentRuntimeBinding,
+    turnCapability: string | null | undefined,
     operation: "create" | "create_batch",
     entries: unknown,
     entryCount: number,
@@ -299,6 +313,7 @@ export class GlossaryRuntimeService {
     const admission = this.#proactiveTurns.admit({
       actorSessionId: binding.actorSessionId,
       providerId: binding.providerId,
+      turnCapability,
       requestFingerprint,
       entryCount,
     });

@@ -24,6 +24,7 @@ export type ProviderAgentRuntimeBindingProjection = {
   executionGeneration: string;
   transport: "env" | "unsupported";
   expiresAt: string | null;
+  turnCapability?: string;
 };
 
 export type ResolvedAgentRuntimeBinding = Omit<

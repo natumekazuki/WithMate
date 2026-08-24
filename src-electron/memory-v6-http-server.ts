@@ -71,6 +71,7 @@ export type AgentRuntimeExtensionRequest = {
   body: unknown;
   transport: CharacterContextTransport;
   bindingReference?: string;
+  turnCapability?: string;
   fallbackFrom?: "mcp";
 };
 
@@ -540,6 +541,7 @@ type RuntimeExchangePayload = {
   adapter: CharacterContextTransport;
   adapterSecret: string;
   bindingReference?: string;
+  turnCapability?: string;
   operation: {
     method: "GET" | "POST";
     path: string;
@@ -560,6 +562,7 @@ function parseRuntimeExchangePayload(value: unknown): RuntimeExchangePayload | n
     || (payload.adapter !== "cli" && payload.adapter !== "mcp")
     || typeof payload.adapterSecret !== "string"
     || (payload.bindingReference !== undefined && typeof payload.bindingReference !== "string")
+    || (payload.turnCapability !== undefined && typeof payload.turnCapability !== "string")
     || !operation
     || (operation.method !== "GET" && operation.method !== "POST")
     || typeof operation.path !== "string"
@@ -970,6 +973,7 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           body: payload.operation.body,
           transport: payload.adapter,
           bindingReference: payload.bindingReference,
+          turnCapability: payload.turnCapability,
           ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
         }) ?? null;
         if (!extensionResponse) {

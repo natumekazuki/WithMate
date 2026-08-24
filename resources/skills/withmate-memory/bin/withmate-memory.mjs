@@ -1567,6 +1567,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				adapter: connection.credential.adapter,
 				adapterSecret: connection.credential.adapterSecret,
 				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
+				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
 				operation
 			}));
 		});

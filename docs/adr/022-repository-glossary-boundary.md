@@ -22,7 +22,7 @@ Accepted
 - actor Sessionのruntime bindingが所有するprimary `workspacePath`から、Git rootとfilesystem identityをbinding generationごとに固定する。inventoryはこの1件だけを返し、additional directory、別worktree、後から列挙したworktreeを含めない。
 - `{ kind: "primary" }`とgeneration-boundなopaque `checkoutId`は同じtargetを指す。Session終了、binding失効、generation更新で`checkoutId`を無効にする。path、branch、repository名は表示専用である。
 - MCP、CLI、renderer IPCはcaller提供のSession IDやpathをauthorityへ使わず、同じruntime binding、operation schema、application service、result contractへ収束する。
-- proactive createはactive provider Session turnのprocess-local lease内だけで許可する。最初のrequestとSettings上限をleaseへ予約し、完全に同じrequestのretryだけを同じ予約へ収束させる。異なる2回目のrequestはapplication mutation前に拒否する。binding generationはturn leaseとして扱わない。
+- proactive createはactive provider Session turnのprocess-local leaseと、そのleaseで発行したturn capabilityが一致する場合だけ許可する。最初のrequestとSettings上限をleaseへ予約し、完全に同じrequestのretryだけを同じ予約へ収束させる。異なる2回目、および前turnのcapabilityを持つ遅延requestはapplication mutation前に拒否する。binding generationはturn leaseとして扱わない。
 - Glossary MCPとCLIはagent runtime extension専用exchangeを使う。専用exchangeはGlossary operationだけをdispatchし、最大requestから導出した34 MiBのbody上限と同時実行数1を持つ。body上限による413はapplication dispatch前の`effect: none`とし、既存Memory exchangeの256 KiB上限を変更しない。
 
 ### `GLOSSARY-ATOMIC-MUTATION`

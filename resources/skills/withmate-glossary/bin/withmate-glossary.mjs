@@ -20237,6 +20237,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				adapter: connection.credential.adapter,
 				adapterSecret: connection.credential.adapterSecret,
 				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
+				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
 				operation
 			}));
 		});
@@ -20254,6 +20255,9 @@ function resolveAgentRuntimeBindingReference(env = process.env) {
 	const reference = env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]?.trim();
 	if (!reference && env["WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED"]?.trim() === "1") throw usageError("WithMate provider execution requires its runtime binding reference.");
 	return reference || void 0;
+}
+function resolveAgentRuntimeTurnCapability(env = process.env) {
+	return env["WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY"]?.trim() || void 0;
 }
 //#endregion
 //#region scripts/withmate-glossary-runtime-client.ts
@@ -20295,8 +20299,10 @@ function isWriteOperation(operation) {
 }
 async function callGlossaryRuntime(input, deps) {
 	let bindingReference;
+	let turnCapability;
 	try {
 		bindingReference = resolveAgentRuntimeBindingReference(deps.env);
+		turnCapability = resolveAgentRuntimeTurnCapability(deps.env);
 	} catch {
 		return createGlossaryBindingRequiredError();
 	}
@@ -20324,6 +20330,7 @@ async function callGlossaryRuntime(input, deps) {
 		}, {
 			signal: abortController.signal,
 			bindingReference,
+			turnCapability,
 			exchangePath: WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH
 		});
 		dispatched = true;
