@@ -54,7 +54,11 @@ const GLOSSARY_ANNOTATION_EXCLUDED_TAGS = new Set(["a", "code", "pre", "script",
 function hasExcludedGlossaryProjectionClass(node: HastNode): boolean {
   const className = node.properties?.className;
   const classes = Array.isArray(className) ? className : typeof className === "string" ? className.split(/\s+/u) : [];
-  return classes.includes("katex") || classes.includes("message-mermaid");
+  return classes.includes("katex")
+    || classes.includes("math")
+    || classes.includes("math-inline")
+    || classes.includes("math-display")
+    || classes.includes("message-mermaid");
 }
 
 function createGlossaryAnnotationPlugin(

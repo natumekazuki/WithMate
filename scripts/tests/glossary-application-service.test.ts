@@ -33,7 +33,12 @@ async function writeGlossary(root: string, entries: readonly GlossaryEntry[]): P
 }
 
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, {
+    recursive: true,
+    force: true,
+    maxRetries: 5,
+    retryDelay: 50,
+  })));
 });
 
 describe("GLOSSARY-SOURCE-OF-TRUTH parser and projection", () => {
@@ -540,6 +545,7 @@ describe("Glossary external update projection", () => {
     const watchers: FakeWatcher[] = [];
     const service = new GlossaryApplicationService({
       watchDebounceMs: 0,
+      watchRetryMs: 0,
       watchPath: (targetPath, listener) => {
         const errorListeners: Array<(error: Error) => void> = [];
         const watcher: FakeWatcher = {
@@ -608,5 +614,64 @@ describe("Glossary external update projection", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(states, ["watch-error"]);
     dispose();
+  });
+
+  it("root watcher failure後も購読を張り直してmissingから復旧する", async () => {
+    const { root, target } = await createRepository();
+    type FakeWatcher = {
+      path: string;
+      closed: boolean;
+      change: (filename: string | null) => void;
+      error: (error: Error) => void;
+    };
+    const watchers: FakeWatcher[] = [];
+    const service = new GlossaryApplicationService({
+      watchDebounceMs: 0,
+      watchRetryMs: 0,
+      watchPath: (targetPath, listener) => {
+        const errorListeners: Array<(error: Error) => void> = [];
+        const watcher: FakeWatcher = {
+          path: targetPath,
+          closed: false,
+          change: (filename) => listener("rename", filename),
+          error: (error) => errorListeners.forEach((errorListener) => errorListener(error)),
+        };
+        watchers.push(watcher);
+        return {
+          close: () => {
+            watcher.closed = true;
+          },
+          on: (_event, errorListener) => {
+            errorListeners.push(errorListener as (error: Error) => void);
+            return undefined as never;
+          },
+        };
+      },
+    });
+    const states: string[] = [];
+    const dispose = service.subscribe(target, (state) => states.push(state.status));
+    const waitUntil = async (predicate: () => boolean) => {
+      for (let attempt = 0; attempt < 100 && !predicate(); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(predicate(), true);
+    };
+
+    const initialRootWatcher = watchers.find((watcher) => watcher.path === root);
+    assert.ok(initialRootWatcher);
+    initialRootWatcher.error(new Error("root watch failed"));
+    await waitUntil(() => watchers.filter((watcher) => watcher.path === root).length >= 2);
+
+    await writeGlossary(root, [{ term: "Recovered", aliases: [], definition: "valid again" }]);
+    const recoveredRootWatcher = [...watchers]
+      .reverse()
+      .find((watcher) => watcher.path === root && !watcher.closed);
+    assert.ok(recoveredRootWatcher);
+    recoveredRootWatcher.change(".withmate");
+    await waitUntil(() => states.at(-1) === "valid");
+
+    assert.equal(states[0], "watch-error");
+    dispose();
+    assert.equal(watchers.every((watcher) => watcher.closed), true);
   });
 });

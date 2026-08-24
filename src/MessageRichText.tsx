@@ -886,7 +886,7 @@ function MessageMarkdownPreview({
     () => (
       isFullRender
         ? [remarkFrontmatter, remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
-        : [remarkFrontmatter, remarkHtmlLineBreaks]
+        : [remarkFrontmatter, [remarkMath, { singleDollarTextMath: false }], remarkHtmlLineBreaks]
     ),
     [isFullRender],
   );

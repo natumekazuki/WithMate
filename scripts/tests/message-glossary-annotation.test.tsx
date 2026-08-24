@@ -99,6 +99,53 @@ test("MessageRichTextはMarkdown parse後の通常textだけを注釈し本文�
   }
 });
 
+test("MessageRichTextはlight renderから数式projectionを注釈対象にしない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "https://example.test/",
+  });
+  const restore = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        text: "$$Runtime$$\n\nRuntime",
+        glossaryAnnotationMatcher: matcher,
+        glossaryAnnotationScopeKey: "message-math",
+        onActivateGlossaryEntry: () => undefined,
+      }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "light");
+    assert.deepEqual(
+      Array.from(container.querySelectorAll<HTMLElement>(".glossary-annotation"), (element) => element.textContent),
+      ["Runtime"],
+    );
+
+    await act(async () => {
+      await new Promise<void>((resolve) => dom.window.requestAnimationFrame(() => {
+        dom.window.requestAnimationFrame(() => resolve());
+      }));
+    });
+
+    assert.equal(container.querySelector("[data-markdown-render-mode]")?.getAttribute("data-markdown-render-mode"), "full");
+    assert.deepEqual(
+      Array.from(container.querySelectorAll<HTMLElement>(".glossary-annotation"), (element) => element.textContent),
+      ["Runtime"],
+    );
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restore();
+    dom.window.close();
+  }
+});
+
 test("MessageRichTextはmessage単位のroving focus、tooltip、canonical activationを提供する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,

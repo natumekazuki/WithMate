@@ -104,6 +104,7 @@ export type GlossaryApplicationServiceDeps = {
   renamePath?: (oldPath: string, newPath: string) => Promise<void>;
   watchPath?: GlossaryWatchPath;
   watchDebounceMs?: number;
+  watchRetryMs?: number;
   readFileHandle?: (handle: FileHandle, maxBytes: number) => Promise<{ raw: string; oversized: boolean }>;
 };
 
@@ -572,6 +573,7 @@ export class GlossaryApplicationService {
   readonly #renamePath: (oldPath: string, newPath: string) => Promise<void>;
   readonly #watchPath: GlossaryWatchPath;
   readonly #watchDebounceMs: number;
+  readonly #watchRetryMs: number;
   readonly #readFileHandle: NonNullable<GlossaryApplicationServiceDeps["readFileHandle"]>;
   readonly #mutationTails = new Map<string, Promise<void>>();
 
@@ -593,6 +595,7 @@ export class GlossaryApplicationService {
       listener,
     ));
     this.#watchDebounceMs = deps.watchDebounceMs ?? 60;
+    this.#watchRetryMs = deps.watchRetryMs ?? 1_000;
     this.#readFileHandle = deps.readFileHandle ?? readFileHandleBounded;
   }
 
@@ -650,6 +653,7 @@ export class GlossaryApplicationService {
   ): () => void {
     let disposed = false;
     let reloadTimer: NodeJS.Timeout | null = null;
+    let recoveryTimer: NodeJS.Timeout | null = null;
     let rootWatcher: GlossaryWatchHandle | null = null;
     let directoryWatcher: GlossaryWatchHandle | null = null;
 
@@ -670,6 +674,11 @@ export class GlossaryApplicationService {
       directoryWatcher = null;
     };
 
+    const closeRootWatcher = () => {
+      rootWatcher?.close();
+      rootWatcher = null;
+    };
+
     const attachErrorHandler = (watcher: GlossaryWatchHandle, onError: (error: unknown) => void) => {
       watcher.on("error", onError);
     };
@@ -686,10 +695,35 @@ export class GlossaryApplicationService {
           scheduleReload();
         }
       });
-      attachErrorHandler(directoryWatcher, (error) => {
+      const armedWatcher = directoryWatcher;
+      attachErrorHandler(armedWatcher, (error) => {
+        if (directoryWatcher !== armedWatcher) {
+          return;
+        }
         emitWatchError(error);
         closeDirectoryWatcher();
-        scheduleReload();
+        scheduleRecovery();
+      });
+    };
+
+    const armRootWatcher = () => {
+      if (rootWatcher || disposed) {
+        return;
+      }
+      const armedWatcher = this.#watchPath(target.rootPath, (_eventType, filename) => {
+        const name = filename?.toString();
+        if (!name || name === ".withmate") {
+          scheduleReload();
+        }
+      });
+      rootWatcher = armedWatcher;
+      attachErrorHandler(armedWatcher, (error) => {
+        if (rootWatcher !== armedWatcher) {
+          return;
+        }
+        emitWatchError(error);
+        closeRootWatcher();
+        scheduleRecovery();
       });
     };
 
@@ -698,10 +732,12 @@ export class GlossaryApplicationService {
         return;
       }
       try {
+        armRootWatcher();
         await armDirectoryWatcher();
         listener(await this.read(target));
       } catch (error) {
         emitWatchError(error);
+        scheduleRecovery();
       }
     };
 
@@ -715,21 +751,22 @@ export class GlossaryApplicationService {
       }, this.#watchDebounceMs);
     };
 
+    const scheduleRecovery = () => {
+      if (disposed || recoveryTimer) {
+        return;
+      }
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = null;
+        void reload();
+      }, this.#watchRetryMs);
+    };
+
     try {
-      rootWatcher = this.#watchPath(target.rootPath, (_eventType, filename) => {
-        const name = filename?.toString();
-        if (!name || name === ".withmate") {
-          scheduleReload();
-        }
-      });
-      attachErrorHandler(rootWatcher, (error) => {
-        emitWatchError(error);
-        rootWatcher?.close();
-        rootWatcher = null;
-      });
+      armRootWatcher();
       void armDirectoryWatcher().catch(emitWatchError);
     } catch (error) {
       queueMicrotask(() => emitWatchError(error));
+      scheduleRecovery();
     }
 
     return () => {
@@ -737,9 +774,11 @@ export class GlossaryApplicationService {
       if (reloadTimer) {
         clearTimeout(reloadTimer);
       }
+      if (recoveryTimer) {
+        clearTimeout(recoveryTimer);
+      }
       closeDirectoryWatcher();
-      rootWatcher?.close();
-      rootWatcher = null;
+      closeRootWatcher();
     };
   }
 
