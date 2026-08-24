@@ -25,6 +25,7 @@ export type CreateSessionExecutionInput = {
   idempotencyKey: string;
   requestFingerprint: string;
   origin?: SessionExecutionOriginSnapshot;
+  workItemId?: string;
 };
 
 export type CancelSessionExecutionInput = {

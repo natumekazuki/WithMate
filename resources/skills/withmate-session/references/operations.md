@@ -35,11 +35,12 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 25 operations:
+The CLI and MCP expose the same 31 operations:
 
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
+- Work Item: `work.create`, `work.list`, `work.get`, `work.transition`, `work.result`, `work.cancel`
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`
@@ -47,6 +48,14 @@ The CLI and MCP expose the same 25 operations:
 
 CLI dotted names use spaces, and `read_text` / `write_text` use `read-text` / `write-text`.
 Coordination commands use `coordination event <verb>`.
+
+## Work Items
+
+A Work Item is the stable identity of one delegation. It is separate from a Session, message, or execution. Creation binds its root, creator, target, optional parent Work Item, goal, scope, completion criteria, authority, and source identity. Only an `overall-coordinator` or `task-coordinator` may create one for an authorized direct delegation target, and creation requires an idempotency key.
+
+The target Session owns `pending` to `in_progress` or `waiting` transitions, resumption, and terminal result reporting. The creator owns cancellation while the Work Item is nonterminal. Every mutation requires the current `expectedRevision` and an idempotency key. Terminal states are `completed`, `partially_completed`, `failed`, and `canceled`; they cannot resume. A terminal result is submitted explicitly with its matching outcome and is not copied from an execution's assistant text or raw log.
+
+Pass an optional `workItemId` to `turn.run` or `turn.enqueue` to associate an execution. The target, root, active state, and actor authority are checked before the execution or queue entry is created. An execution becoming completed, failed, canceled, or interrupted does not implicitly complete the Work Item. Reconcile a response loss by reading the canonical Work Item and replaying only the unchanged mutation with the same idempotency key.
 
 ## Coordination events
 
@@ -85,7 +94,7 @@ A wait timeout and MCP or CLI disconnect affect delivery only. They do not cance
 
 ## Idempotency and reconciliation
 
-Effect-bearing operations are Session create and rename, Session file write, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
+Effect-bearing operations are Session create and rename, Session file write, Work Item create, transition, result, and cancel, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.
@@ -122,6 +131,7 @@ Limits use UTF-8 byte counts. Oversized content fails instead of truncating. The
 Handle at least these public codes by code rather than message text:
 
 - Identity and lookup: `SESSION_NOT_FOUND`, `EXECUTION_NOT_FOUND`, `INTERACTION_NOT_FOUND`
+- Work Item: `WORK_ITEM_NOT_FOUND`, `WORK_ITEM_FORBIDDEN`, `WORK_ITEM_EXECUTION_FORBIDDEN`, `WORK_ITEM_PARENT_INVALID`, `WORK_ITEM_STATE_CONFLICT`, `WORK_ITEM_REVISION_CONFLICT`
 - State and capacity: `SESSION_BUSY`, `QUEUE_FULL`, `EXECUTION_STATE_CONFLICT`
 - Retry and selection: `IDEMPOTENCY_CONFLICT`, `CATALOG_REVISION_STALE`, `RUNTIME_UNAVAILABLE`
 - Validation and size: `INVALID_INPUT`, `LIMIT_EXCEEDED`, `CONTENT_TOO_LARGE`, `FILE_NOT_FOUND`

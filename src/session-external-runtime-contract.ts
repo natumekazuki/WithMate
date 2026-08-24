@@ -37,6 +37,20 @@ import {
 } from "./session-role-binding.js";
 import { SESSION_TURN_COMMUNICATION_CONTRACT_REVISION } from "./session-turn-communication-authority.js";
 import {
+  WORK_ITEM_CONTRACT_REVISION,
+  WORK_ITEM_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_MAX_LIST_LIMIT,
+  WORK_ITEM_MAX_RESULT_BYTES,
+  WORK_ITEM_MAX_RESULT_ITEMS,
+  WORK_ITEM_MAX_TEXT_LENGTH,
+  WORK_ITEM_STATES,
+  type WorkItem,
+  type WorkItemResult,
+  type WorkItemResultState,
+  type WorkItemSourceIdentity,
+  type WorkItemState,
+} from "./work-item.js";
+import {
   SESSION_TRANSCRIPT_FOLDER_DEFAULT_MAX_BYTES,
   SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
   SESSION_TRANSCRIPT_INLINE_DEFAULT_MAX_BYTES,
@@ -69,6 +83,12 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "session.files.list",
   "session.files.read_text",
   "session.files.write_text",
+  "work.create",
+  "work.list",
+  "work.get",
+  "work.transition",
+  "work.result",
+  "work.cancel",
   "turn.options",
   "turn.run",
   "turn.enqueue",
@@ -106,6 +126,14 @@ export type SessionRuntimeCatalogResult = {
     scopes: readonly ["self", "subtree"];
     defaultListLimit: typeof COORDINATION_EVENT_DEFAULT_LIST_LIMIT;
     maxListLimit: typeof COORDINATION_EVENT_MAX_LIST_LIMIT;
+  };
+  workItems: {
+    contractRevision: typeof WORK_ITEM_CONTRACT_REVISION;
+    states: typeof WORK_ITEM_STATES;
+    mutations: readonly ["create", "transition", "result", "cancel"];
+    defaultListLimit: typeof WORK_ITEM_DEFAULT_LIST_LIMIT;
+    maxListLimit: typeof WORK_ITEM_MAX_LIST_LIMIT;
+    maxResultBytes: typeof WORK_ITEM_MAX_RESULT_BYTES;
   };
   providers: Array<{
     id: string;
@@ -204,6 +232,44 @@ export type SessionRuntimeFileWriteTextInput = SessionRuntimeSessionInput & {
 };
 export type SessionRuntimeFileWriteTextResult = {
   file: SessionRuntimeFileReference;
+};
+
+export type SessionRuntimeWorkItemCreateInput = {
+  targetSessionId: string;
+  parentWorkItemId?: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemInput = { workItemId: string };
+export type SessionRuntimeWorkItemListInput = {
+  creatorSessionId?: string;
+  targetSessionId?: string;
+  state?: WorkItemState;
+  limit: number;
+  cursor?: string;
+};
+export type SessionRuntimeWorkItemListResult = { items: WorkItem[]; nextCursor?: string };
+export type SessionRuntimeWorkItemTransitionInput = {
+  workItemId: string;
+  state: "in_progress" | "waiting";
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemResultInput = {
+  workItemId: string;
+  state: WorkItemResultState;
+  expectedRevision: number;
+  result: Omit<WorkItemResult, "outcome" | "reportingSessionId" | "reportedAt">;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemCancelInput = {
+  workItemId: string;
+  expectedRevision: number;
+  idempotencyKey: string;
 };
 
 type SessionRuntimeTurnRequestBase = {
@@ -314,6 +380,7 @@ export type SessionRuntimePublicInteraction =
   | SessionRuntimeExpiredInteraction;
 
 export type SessionRuntimePublicExecution = Omit<SessionExecution, "result"> & {
+  workItemId: string | null;
   result: { assistantText: string } | null;
   effectiveTurn: SessionRuntimeEffectiveTurn | null;
   attachments: SessionRuntimeTurnAttachment[];
@@ -373,6 +440,12 @@ export type SessionRuntimeResultByOperation = {
   "session.files.list": SessionRuntimeFileListResult;
   "session.files.read_text": SessionRuntimeFileReadTextResult;
   "session.files.write_text": SessionRuntimeFileWriteTextResult;
+  "work.create": WorkItem;
+  "work.list": SessionRuntimeWorkItemListResult;
+  "work.get": WorkItem;
+  "work.transition": WorkItem;
+  "work.result": WorkItem;
+  "work.cancel": WorkItem;
   "turn.options": SessionRuntimeTurnOptionsResult;
   "turn.run": SessionRuntimePublicExecution;
   "turn.enqueue": SessionRuntimePublicExecution;
@@ -399,6 +472,7 @@ export type SessionRuntimeRunInput = {
   waitTimeoutMs?: number;
   turn: SessionRuntimeTurnRequest;
   terminalFailureNotification?: SessionRuntimeTerminalFailureNotificationInput;
+  workItemId?: string;
 };
 
 export type SessionRuntimeEnqueueInput = Omit<SessionRuntimeRunInput, "responseMode" | "waitTimeoutMs">;
@@ -509,6 +583,12 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "session.files.write_text") {
     return parseSessionFileWriteTextInput(value);
   }
+  if (operation === "work.create") return parseWorkItemCreateInput(value);
+  if (operation === "work.list") return parseWorkItemListInput(value);
+  if (operation === "work.get") return parseWorkItemInput(value);
+  if (operation === "work.transition") return parseWorkItemTransitionInput(value);
+  if (operation === "work.result") return parseWorkItemResultInput(value);
+  if (operation === "work.cancel") return parseWorkItemCancelInput(value);
   if (operation === "turn.options") {
     return parseSessionInput(value);
   }
@@ -763,6 +843,141 @@ function parseSessionFileWriteTextInput(value: unknown): SessionRuntimeFileWrite
   };
 }
 
+function parseWorkItemCreateInput(value: unknown): SessionRuntimeWorkItemCreateInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, [
+    "targetSessionId", "parentWorkItemId", "goal", "scope", "completionCriteria",
+    "authority", "sourceIdentity", "idempotencyKey",
+  ], "input");
+  const source = requireObject(record.sourceIdentity, "sourceIdentity");
+  assertKeys(source, ["workspace", "repository", "branch", "base", "head"], "sourceIdentity");
+  return {
+    targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
+    ...(record.parentWorkItemId === undefined
+      ? {}
+      : { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") }),
+    goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+    scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+    completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+    authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+    sourceIdentity: {
+      workspace: requireNullableBoundedString(source.workspace, "sourceIdentity.workspace"),
+      repository: requireNullableBoundedString(source.repository, "sourceIdentity.repository"),
+      branch: requireNullableBoundedString(source.branch, "sourceIdentity.branch"),
+      base: requireNullableBoundedString(source.base, "sourceIdentity.base"),
+      head: requireNullableBoundedString(source.head, "sourceIdentity.head"),
+    },
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemInput(value: unknown): SessionRuntimeWorkItemInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId"], "input");
+  return { workItemId: requireNonEmptyString(record.workItemId, "workItemId") };
+}
+
+function parseWorkItemListInput(value: unknown): SessionRuntimeWorkItemListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["creatorSessionId", "targetSessionId", "state", "limit", "cursor"], "input");
+  return {
+    ...(record.creatorSessionId === undefined ? {} : { creatorSessionId: requireNonEmptyString(record.creatorSessionId, "creatorSessionId") }),
+    ...(record.targetSessionId === undefined ? {} : { targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId") }),
+    ...(record.state === undefined ? {} : { state: requireEnum(record.state, WORK_ITEM_STATES, "state") }),
+    limit: record.limit === undefined
+      ? WORK_ITEM_DEFAULT_LIST_LIMIT
+      : requireInteger(record.limit, "limit", 1, WORK_ITEM_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function parseWorkItemTransitionInput(value: unknown): SessionRuntimeWorkItemTransitionInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId", "state", "expectedRevision", "idempotencyKey"], "input");
+  return {
+    workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+    state: requireEnum(record.state, ["in_progress", "waiting"] as const, "state"),
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemResultInput(value: unknown): SessionRuntimeWorkItemResultInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId", "state", "expectedRevision", "result", "idempotencyKey"], "input");
+  const state = requireEnum(record.state, ["completed", "partially_completed", "failed"] as const, "state");
+  const result = requireObject(record.result, "result");
+  assertKeys(result, [
+    "summary", "changes", "verificationResults", "findings", "unverifiedItems", "remainingWork",
+  ], "result");
+  const parsedResult = {
+    summary: requireBoundedString(result.summary, "result.summary", WORK_ITEM_MAX_TEXT_LENGTH),
+    changes: parseWorkItemStringList(result.changes, "result.changes"),
+    verificationResults: parseWorkItemVerificationResults(result.verificationResults),
+    findings: parseWorkItemStringList(result.findings, "result.findings"),
+    unverifiedItems: parseWorkItemStringList(result.unverifiedItems, "result.unverifiedItems"),
+    remainingWork: parseWorkItemStringList(result.remainingWork, "result.remainingWork"),
+  };
+  const canonicalResult = {
+    outcome: state,
+    ...parsedResult,
+    reportingSessionId: "",
+    reportedAt: "",
+  };
+  const actualBytes = Buffer.byteLength(JSON.stringify(canonicalResult), "utf8");
+  if (actualBytes > WORK_ITEM_MAX_RESULT_BYTES) {
+    throw new SessionRuntimeValidationError(
+      "Work Item result exceeds the byte limit.",
+      { field: "result", actualBytes, maxBytes: WORK_ITEM_MAX_RESULT_BYTES },
+      "CONTENT_TOO_LARGE",
+    );
+  }
+  return {
+    workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+    state,
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+    result: parsedResult,
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemCancelInput(value: unknown): SessionRuntimeWorkItemCancelInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId", "expectedRevision", "idempotencyKey"], "input");
+  return {
+    workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemStringList(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.length > WORK_ITEM_MAX_RESULT_ITEMS) {
+    throw invalid(field, `${field} must contain at most ${WORK_ITEM_MAX_RESULT_ITEMS} items.`, "LIMIT_EXCEEDED");
+  }
+  return value.map((item, index) => requireBoundedString(item, `${field}[${index}]`, WORK_ITEM_MAX_TEXT_LENGTH));
+}
+
+function parseWorkItemVerificationResults(value: unknown): WorkItemResult["verificationResults"] {
+  if (!Array.isArray(value) || value.length > WORK_ITEM_MAX_RESULT_ITEMS) {
+    throw invalid("result.verificationResults", `result.verificationResults must contain at most ${WORK_ITEM_MAX_RESULT_ITEMS} items.`, "LIMIT_EXCEEDED");
+  }
+  return value.map((item, index) => {
+    const record = requireObject(item, `result.verificationResults[${index}]`);
+    assertKeys(record, ["name", "status", "details"], `result.verificationResults[${index}]`);
+    return {
+      name: requireBoundedString(record.name, `result.verificationResults[${index}].name`, WORK_ITEM_MAX_TEXT_LENGTH),
+      status: requireEnum(record.status, ["passed", "failed", "not_run"] as const, `result.verificationResults[${index}].status`),
+      details: requireBoundedString(record.details, `result.verificationResults[${index}].details`, WORK_ITEM_MAX_TEXT_LENGTH),
+    };
+  });
+}
+
+function requireNullableBoundedString(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  return requireBoundedString(value, field, WORK_ITEM_MAX_TEXT_LENGTH);
+}
+
 export function createSessionRuntimeResult<O extends SessionRuntimeOperation>(
   operation: O,
   result: SessionRuntimeResultByOperation[O],
@@ -800,6 +1015,7 @@ export function projectSessionExecution(
       updatedAt: string;
     } | null;
     terminalFailureNotification?: SessionRuntimeTerminalFailureNotificationProjection | null;
+    workItemId?: string | null;
   } = {},
 ): SessionRuntimePublicExecution {
   try {
@@ -816,6 +1032,7 @@ export function projectSessionExecution(
       admittedAt: execution.admittedAt,
       completedAt: execution.completedAt,
       updatedAt: execution.updatedAt,
+      workItemId: observation.workItemId ?? null,
       effectiveTurn: turn?.effectiveTurn ?? null,
       attachments: turn?.attachments ?? [],
       pendingInteraction: observation.pendingInteraction
@@ -947,6 +1164,7 @@ function parseTurnRunInput(value: unknown): SessionRuntimeRunInput {
     "waitTimeoutMs",
     "turn",
     "terminalFailureNotification",
+    "workItemId",
   ], "input");
   const responseMode = requireEnum(record.responseMode, ["wait", "deferred"] as const, "responseMode");
   if (responseMode === "deferred" && record.waitTimeoutMs !== undefined) {
@@ -969,6 +1187,7 @@ function parseTurnEnqueueInput(value: unknown): SessionRuntimeEnqueueInput {
     "idempotencyKey",
     "turn",
     "terminalFailureNotification",
+    "workItemId",
   ], "input");
   return parseTurnMutationBase(record);
 }
@@ -982,6 +1201,9 @@ function parseTurnMutationBase(record: Record<string, unknown>): SessionRuntimeE
     ...(record.terminalFailureNotification === undefined
       ? {}
       : { terminalFailureNotification: parseTerminalFailureNotificationInput(record.terminalFailureNotification) }),
+    ...(record.workItemId === undefined
+      ? {}
+      : { workItemId: requireNonEmptyString(record.workItemId, "workItemId") }),
   };
 }
 

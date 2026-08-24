@@ -52,6 +52,12 @@ import {
   type SessionRuntimeTurnOptionsResult,
   type SessionRuntimeTerminalFailureNotificationProjection,
   type SessionRuntimeTranscriptExportInput,
+  type SessionRuntimeWorkItemCancelInput,
+  type SessionRuntimeWorkItemCreateInput,
+  type SessionRuntimeWorkItemInput,
+  type SessionRuntimeWorkItemListInput,
+  type SessionRuntimeWorkItemResultInput,
+  type SessionRuntimeWorkItemTransitionInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
@@ -66,6 +72,13 @@ import {
   canSendSessionTurn,
   type SessionTurnAuthoritySession,
 } from "../src/session-turn-communication-authority.js";
+import {
+  WORK_ITEM_CONTRACT_REVISION,
+  WORK_ITEM_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_MAX_LIST_LIMIT,
+  WORK_ITEM_MAX_RESULT_BYTES,
+  WORK_ITEM_STATES,
+} from "../src/work-item.js";
 import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
 import {
   SessionInteractionContinuationUnavailableError,
@@ -106,6 +119,19 @@ import {
   TERMINAL_FAILURE_NOTIFICATION_CONTRACT_VERSION,
   type SessionExecutionTerminalFailureNotification,
 } from "./session-execution-turn-request.js";
+import {
+  WorkItemAuthorityError,
+  WorkItemExecutionAssociationError,
+  WorkItemParentError,
+  type WorkItemService,
+} from "./work-item-service.js";
+import {
+  WorkItemIdempotencyConflictError,
+  WorkItemNotFoundError,
+  WorkItemRevisionConflictError,
+  WorkItemResultTooLargeError,
+  WorkItemStateConflictError,
+} from "./work-item-storage-v6.js";
 
 export type SessionExternalApplicationServiceDeps = {
   executionService: Pick<
@@ -138,6 +164,11 @@ export type SessionExternalApplicationServiceDeps = {
     execution: SessionExecution,
     request: unknown,
   ): SessionRuntimeTerminalFailureNotificationProjection | null;
+  workItemService?: Pick<
+    WorkItemService,
+    "create" | "get" | "list" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
+  >;
+  getExecutionWorkItemId?(executionId: string): string | null;
 };
 
 export type SessionExternalApplicationResponse = SessionRuntimeResultEnvelope | SessionRuntimeError;
@@ -229,6 +260,24 @@ export class SessionExternalApplicationService {
     if (operation === "session.files.write_text") {
       return this.requireFileService().writeText(input as SessionRuntimeFileWriteTextInput);
     }
+    if (operation === "work.create") {
+      return this.requireWorkItemService().create(input as SessionRuntimeWorkItemCreateInput, agentRuntimeBinding);
+    }
+    if (operation === "work.get") {
+      return this.requireWorkItemService().get((input as SessionRuntimeWorkItemInput).workItemId, agentRuntimeBinding);
+    }
+    if (operation === "work.list") {
+      return this.listWorkItems(input as SessionRuntimeWorkItemListInput, agentRuntimeBinding);
+    }
+    if (operation === "work.transition") {
+      return this.requireWorkItemService().transition(input as SessionRuntimeWorkItemTransitionInput, agentRuntimeBinding);
+    }
+    if (operation === "work.result") {
+      return this.requireWorkItemService().reportResult(input as SessionRuntimeWorkItemResultInput, agentRuntimeBinding);
+    }
+    if (operation === "work.cancel") {
+      return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding);
+    }
     if (operation === "turn.options") {
       return this.turnOptions((input as SessionRuntimeSessionInput).sessionId);
     }
@@ -303,6 +352,7 @@ export class SessionExternalApplicationService {
     }
     const execution = replay ?? await this.deps.executionService.run({
       ...mutation,
+      ...this.resolveWorkItemAssociation(input, agentRuntimeBinding),
       ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
@@ -394,6 +444,7 @@ export class SessionExternalApplicationService {
     }
     const execution = replay ?? await this.deps.executionService.enqueue({
       ...mutation,
+      ...this.resolveWorkItemAssociation(input, agentRuntimeBinding),
       ...await this.resolveTurnAcceptance(agentRuntimeBinding.actorSessionId, input.sessionId, input.turn.userMessage),
       request: {
         initiator: await this.requireTurnInitiator(agentRuntimeBinding.actorSessionId),
@@ -549,6 +600,7 @@ export class SessionExternalApplicationService {
         record,
         "request" in record ? record.request : undefined,
       ) ?? null,
+      workItemId: this.deps.getExecutionWorkItemId?.(executionId) ?? null,
     });
   }
 
@@ -572,6 +624,40 @@ export class SessionExternalApplicationService {
         ? { nextCursor: encodeInteractionCursor(input, items[items.length - 1]!.sequence) }
         : {}),
     };
+  }
+
+  private listWorkItems(
+    input: SessionRuntimeWorkItemListInput,
+    binding: ResolvedAgentRuntimeBinding,
+  ) {
+    const cursor = input.cursor ? decodeWorkItemCursor(input, input.cursor) : null;
+    const items = this.requireWorkItemService().list({
+      ...(input.creatorSessionId === undefined ? {} : { creatorSessionId: input.creatorSessionId }),
+      ...(input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
+      ...(input.state === undefined ? {} : { state: input.state }),
+      limit: input.limit + 1,
+      afterSequence: cursor,
+    }, binding);
+    const page = items.slice(0, input.limit);
+    return {
+      items: page,
+      ...(items.length > input.limit && page.length > 0
+        ? { nextCursor: encodeWorkItemCursor(input, page[page.length - 1]!.sequence) }
+        : {}),
+    };
+  }
+
+  private resolveWorkItemAssociation(
+    input: SessionRuntimeEnqueueInput,
+    binding: ResolvedAgentRuntimeBinding,
+  ): { workItemId?: string } {
+    if (!input.workItemId) return {};
+    this.requireWorkItemService().requireExecutionAssociation(
+      input.workItemId,
+      binding.actorSessionId,
+      input.sessionId,
+    );
+    return { workItemId: input.workItemId };
   }
 
   private async respondToInteraction(
@@ -692,6 +778,13 @@ export class SessionExternalApplicationService {
     return this.deps.coordinationService;
   }
 
+  private requireWorkItemService(): NonNullable<SessionExternalApplicationServiceDeps["workItemService"]> {
+    if (!this.deps.workItemService) {
+      throw new SessionRuntimeValidationError("Work Item operations are unavailable.", {}, "RUNTIME_UNAVAILABLE");
+    }
+    return this.deps.workItemService;
+  }
+
   private isProviderSupported(providerId: string): boolean {
     return this.deps.isProviderSupported?.(providerId) ?? (providerId === "codex" || providerId === "copilot");
   }
@@ -720,6 +813,14 @@ function projectRuntimeCatalog(
       scopes: ["self", "subtree"],
       defaultListLimit: COORDINATION_EVENT_DEFAULT_LIST_LIMIT,
       maxListLimit: COORDINATION_EVENT_MAX_LIST_LIMIT,
+    },
+    workItems: {
+      contractRevision: WORK_ITEM_CONTRACT_REVISION,
+      states: WORK_ITEM_STATES,
+      mutations: ["create", "transition", "result", "cancel"],
+      defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT,
+      maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
+      maxResultBytes: WORK_ITEM_MAX_RESULT_BYTES,
     },
     providers: snapshot.providers
       .filter((provider) => isProviderSupported(provider.id) && isProviderEnabled(provider.id))
@@ -878,6 +979,35 @@ function encodeInteractionCursor(input: SessionRuntimeInteractionListInput, afte
   }), "utf8").toString("base64url");
 }
 
+function encodeWorkItemCursor(input: SessionRuntimeWorkItemListInput, afterSequence: number): string {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    operation: "work.list",
+    creatorSessionId: input.creatorSessionId ?? null,
+    targetSessionId: input.targetSessionId ?? null,
+    state: input.state ?? null,
+    afterSequence,
+  }), "utf8").toString("base64url");
+}
+
+function decodeWorkItemCursor(input: SessionRuntimeWorkItemListInput, cursor: string): number {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (
+      value.version !== 1
+      || value.operation !== "work.list"
+      || value.creatorSessionId !== (input.creatorSessionId ?? null)
+      || value.targetSessionId !== (input.targetSessionId ?? null)
+      || value.state !== (input.state ?? null)
+      || !Number.isSafeInteger(value.afterSequence)
+      || (value.afterSequence as number) < 1
+    ) throw new Error("invalid cursor");
+    return value.afterSequence as number;
+  } catch {
+    throw new SessionRuntimeValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
+}
+
 function decodeInteractionCursor(input: SessionRuntimeInteractionListInput, cursor: string): number {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
@@ -923,6 +1053,10 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "turn.run"
         || operation === "turn.enqueue"
         || operation === "turn.cancel"
+        || operation === "work.create"
+        || operation === "work.transition"
+        || operation === "work.result"
+        || operation === "work.cancel"
         || operation === "interaction.respond"
         || operation === "coordination.event.create"
         || operation === "coordination.event.resolve"
@@ -986,6 +1120,29 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
   if (error instanceof CoordinationEventIdempotencyConflictError) {
     return createSessionRuntimeError({ code: error.code, message: error.message });
   }
+  if (error instanceof WorkItemNotFoundError) {
+    return createSessionRuntimeError({ code: error.code, message: "The Work Item was not found." });
+  }
+  if (
+    error instanceof WorkItemAuthorityError
+    || error instanceof WorkItemParentError
+    || error instanceof WorkItemExecutionAssociationError
+  ) {
+    return createSessionRuntimeError({ code: error.code, message: error.message, details: error instanceof WorkItemAuthorityError ? error.details : {} });
+  }
+  if (error instanceof WorkItemRevisionConflictError || error instanceof WorkItemStateConflictError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
+  }
+  if (error instanceof WorkItemIdempotencyConflictError) {
+    return createSessionRuntimeError({ code: error.code, message: "The idempotency key was reused with different input." });
+  }
+  if (error instanceof WorkItemResultTooLargeError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      details: { actualBytes: error.actualBytes, maxBytes: WORK_ITEM_MAX_RESULT_BYTES },
+    });
+  }
   if (error instanceof SessionExecutionQueueFullError) {
     return createSessionRuntimeError({ code: "QUEUE_FULL", message: "The Session execution queue is full." });
   }
@@ -1040,6 +1197,10 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "turn.run"
     || operation === "turn.enqueue"
     || operation === "turn.cancel"
+    || operation === "work.create"
+    || operation === "work.transition"
+    || operation === "work.result"
+    || operation === "work.cancel"
     || operation === "interaction.respond"
     || operation === "coordination.event.create"
     || operation === "coordination.event.resolve"

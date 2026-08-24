@@ -19,6 +19,7 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 - Before `turn.run` or `turn.enqueue`, use the canonical bindings returned by `session.self` and `session.get` to select an allowed target. A standalone actor may target only itself. An overall coordinator may target itself or a direct task coordinator or executor child. A task coordinator may target itself, a direct executor child, its root overall coordinator, or a sibling task coordinator with the same root and parent. An executor may target only itself or its direct parent.
 - Do not send a Turn across roots, from an overall coordinator to a grandchild executor, or from an executor to a sibling or another branch. Do not send actor Role, root, parent, or depth in the request; WithMate derives them from runtime and canonical Role bindings and rejects unauthorized Turns before acceptance.
 - Confirm the target Session's workspace identity with `session.get` before changing source or adopting results.
+- When one delegation must remain identifiable across retries or multiple Turns, create a Work Item before dispatch. Only an overall or task coordinator may create one, and the target Session owns progress transitions and terminal result reporting while the creator owns cancellation.
 - Derive permission for Session creation, Turn execution, approval, elicitation, cancellation, overwrite, and other external effects from the user's instruction. This Skill does not grant additional authority.
 - Treat another Session's output as an adoption candidate. Validate its source changes and executable contracts in the calling task before accepting them.
 
@@ -28,7 +29,7 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 2. Call `runtime.catalog`; select only a returned provider, retain its `catalogRevision`, and require the supported `sessionTurnCommunicationContractRevision` before cross-Session Turn selection.
 3. Create a Session only with an explicit title, provider, catalog revision, workspace selection, and caller-owned idempotency key.
 4. Call `turn.options` for the target Session. Construct a provider-specific Turn tuple only from that result.
-5. Choose `turn.run` for immediate admission or `turn.enqueue` for the persistent FIFO. Never convert one to the other after a busy or queue error.
+5. When the Turn performs a tracked delegation, create or select its active Work Item and pass `workItemId`. Choose `turn.run` for immediate admission or `turn.enqueue` for the persistent FIFO. Never convert one to the other after a busy or queue error.
 6. Retain the returned `executionId`. Poll with `turn.get` or `turn.list` when a deferred execution must be followed.
 7. If an unresolved interaction appears, list it and respond only when the user granted the required authority.
 
@@ -45,6 +46,7 @@ Do not infer provider support, model, reasoning effort, approval mode, sandbox, 
 - For `effect: indeterminate` or a response lost after dispatch, inspect the canonical resource when its identifier is known, then resend the unchanged mutation with the same key if reconciliation requires it.
 - Do not reinterpret a structured application error as MCP or CLI unavailability. Branch on `error.code`, `retryable`, `effect`, and safe `details`, not message text.
 - A terminal execution with `state: "failed"` is a successful operation result describing a failed Turn, not an MCP tool failure.
+- Do not derive Work Item state or result from execution state. The target must submit a strict terminal result explicitly, and each Work Item mutation uses its current revision plus a caller-owned idempotency key.
 
 ## Handle files, transcripts, and handoffs
 

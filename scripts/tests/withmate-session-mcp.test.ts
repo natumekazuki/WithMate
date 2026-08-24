@@ -54,6 +54,7 @@ const publicExecution = {
   pendingInteraction: null,
   partialOutput: null,
   terminalFailureNotification: null,
+  workItemId: null,
 };
 const publicSession = {
   sessionId: "s1",
@@ -97,6 +98,25 @@ const publicCoordinationEvent = {
   actions: [],
   createdAt: "2026-08-21T00:00:00.000Z",
 };
+const publicWorkItem = {
+  id: "work-1",
+  sequence: 1,
+  contractRevision: 1 as const,
+  rootSessionId: "root-1",
+  creatorSessionId: "session-1",
+  targetSessionId: "session-2",
+  parentWorkItemId: null,
+  goal: "goal",
+  scope: "scope",
+  completionCriteria: "done",
+  authority: "local",
+  sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+  state: "pending" as const,
+  revision: 1,
+  result: null,
+  createdAt: "2026-08-24T00:00:00.000Z",
+  updatedAt: "2026-08-24T00:00:00.000Z",
+};
 
 async function withClient<T>(
   server: ReturnType<typeof createWithMateSessionMcpServer>,
@@ -119,7 +139,7 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("25 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("31 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /scope or policy decision/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Use user_decision_required/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /free-text response to your blocker/);
@@ -224,6 +244,68 @@ describe("WithMate Session MCP contract", () => {
       maxBytes: 1024 * 1024,
       replace: false,
       idempotencyKey: "write-1",
+    });
+  });
+
+  it("WORK-ADAPTER-01: Work Item mutationをstrict schemaでshared operationへdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        const result = envelope.operation === "work.result"
+          ? {
+            ...publicWorkItem,
+            state: "completed" as const,
+            revision: 3,
+            result: {
+              outcome: "completed" as const,
+              summary: "done",
+              changes: [],
+              verificationResults: [],
+              findings: [],
+              unverifiedItems: [],
+              remainingWork: [],
+              reportingSessionId: "session-2",
+              reportedAt: "2026-08-24T00:01:00.000Z",
+            },
+          }
+          : publicWorkItem;
+        return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, result as never) };
+      },
+    }), async (client) => {
+      const created = await client.callTool({
+        name: "work.create",
+        arguments: {
+          targetSessionId: "session-2",
+          goal: "goal",
+          scope: "scope",
+          completionCriteria: "done",
+          authority: "local",
+          sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+          idempotencyKey: "work-create",
+        },
+      });
+      assert.equal(created.isError, undefined);
+      const result = await client.callTool({
+        name: "work.result",
+        arguments: {
+          workItemId: "work-1",
+          state: "completed",
+          expectedRevision: 2,
+          result: {
+            summary: "done",
+            changes: [],
+            verificationResults: [],
+            findings: [],
+            unverifiedItems: [],
+            remainingWork: [],
+          },
+          idempotencyKey: "work-result",
+        },
+      });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(requests.map((request) => request.operation), ["work.create", "work.result"]);
     });
   });
 
@@ -379,6 +461,14 @@ describe("WithMate Session MCP contract", () => {
               defaultListLimit: 50,
               maxListLimit: 100,
             },
+            workItems: {
+              contractRevision: 1,
+              states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
+              mutations: ["create", "transition", "result", "cancel"],
+              defaultListLimit: 50,
+              maxListLimit: 200,
+              maxResultBytes: 262144,
+            },
             providers: [],
           }),
         };
@@ -409,6 +499,14 @@ describe("WithMate Session MCP contract", () => {
           scopes: ["self", "subtree"],
           defaultListLimit: 50,
           maxListLimit: 100,
+        },
+        workItems: {
+          contractRevision: 1,
+          states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
+          mutations: ["create", "transition", "result", "cancel"],
+          defaultListLimit: 50,
+          maxListLimit: 200,
+          maxResultBytes: 262144,
         },
         providers: [],
       });

@@ -650,6 +650,14 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         defaultListLimit: 50,
         maxListLimit: 100,
       },
+      workItems: {
+        contractRevision: 1,
+        states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
+        mutations: ["create", "transition", "result", "cancel"],
+        defaultListLimit: 50,
+        maxListLimit: 200,
+        maxResultBytes: 262144,
+      },
       providers: [{
         id: "codex",
         label: "Codex",
@@ -1709,4 +1717,70 @@ test("EXT-INTERACTION-11: interaction.respond waitは回答後の次のpending i
   if (!("result" in response)) return;
   assert.equal(response.result.interaction.state, "answered");
   assert.equal(response.result.execution.pendingInteraction?.interactionId, "interaction-2");
+});
+
+test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影する", async () => {
+  const accepted: string[] = [];
+  const record = {
+    ...execution,
+    sessionId: "session-target",
+    sequence: 1,
+    request: { turn: mutationInput.turn },
+  };
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      create() { throw new Error("unused"); },
+      get() { throw new Error("unused"); },
+      list() { return []; },
+      transition() { throw new Error("unused"); },
+      reportResult() { throw new Error("unused"); },
+      cancel() { throw new Error("unused"); },
+      requireExecutionAssociation(workItemId) {
+        accepted.push(workItemId);
+        return {} as never;
+      },
+    },
+    getExecutionWorkItemId: () => "work-1",
+    executionService: {
+      beginShutdown() {},
+      async run() { return { ...execution, sessionId: "session-target" }; },
+      async enqueue() { return { ...execution, sessionId: "session-target", operation: "turn.enqueue" }; },
+      resolveReplay() { return null; },
+      get() { return record; },
+      getRecord() { return record; },
+      listPage() { return [record]; },
+      async cancel() { return execution; },
+      async waitForTerminal() { return execution; },
+    },
+  });
+  const base = {
+    ...mutationInput,
+    sessionId: "session-target",
+    workItemId: "work-1",
+  };
+  const run = await executeBound(service, "turn.run", base);
+  const enqueue = await executeBound(service, "turn.enqueue", {
+    sessionId: base.sessionId,
+    catalogRevision: base.catalogRevision,
+    idempotencyKey: "enqueue-work",
+    turn: base.turn,
+    workItemId: base.workItemId,
+  });
+  const get = await executeBound(service, "turn.get", {
+    sessionId: "session-target",
+    executionId: execution.id,
+  });
+  const list = await executeBound(service, "turn.list", { sessionId: "session-target", limit: 10 });
+  assert.deepEqual(accepted, ["work-1", "work-1"]);
+  assert.equal((run as any).result.workItemId, "work-1");
+  assert.equal((enqueue as any).result.workItemId, "work-1");
+  assert.equal((get as any).result.workItemId, "work-1");
+  assert.equal((list as any).result.items[0].workItemId, "work-1");
 });

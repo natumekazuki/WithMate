@@ -43,6 +43,7 @@ export type EnqueueSessionExecutionInput = {
   createdAt: string;
   expiresAt: string;
   origin?: SessionExecutionOriginSnapshot;
+  workItemId?: string;
 };
 
 export type EnqueueSessionExecutionResult = {
@@ -148,6 +149,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
       );
       this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
+      this.insertWorkItemAssociation(input.id, input.workItemId, input.createdAt);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
           operation,
@@ -211,6 +213,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
       );
       this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
+      this.insertWorkItemAssociation(input.id, input.workItemId, input.createdAt);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
           operation,
@@ -416,6 +419,15 @@ export class SessionExecutionStorageV6 {
       WHERE execution_id = ?
     `).get(executionId) as { source_session_id: string } | undefined;
     return row?.source_session_id ?? null;
+  }
+
+  getExecutionWorkItemId(executionId: string): string | null {
+    const row = this.db.prepare(`
+      SELECT work_item_id
+      FROM work_item_execution_associations_v6
+      WHERE execution_id = ?
+    `).get(executionId) as { work_item_id: string } | undefined;
+    return row?.work_item_id ?? null;
   }
 
   admitNextQueued(sessionId: string, admittedAt: string): SessionExecutionStorageRecord | null {
@@ -732,6 +744,18 @@ export class SessionExecutionStorageV6 {
       executionId,
       targetSessionId,
     );
+  }
+
+  private insertWorkItemAssociation(
+    executionId: string,
+    workItemId: string | undefined,
+    createdAt: string,
+  ): void {
+    if (!workItemId) return;
+    this.db.prepare(`
+      INSERT INTO work_item_execution_associations_v6 (execution_id, work_item_id, created_at)
+      VALUES (?, ?, ?)
+    `).run(executionId, workItemId, createdAt);
   }
 
   private updateIdempotencyExpiry(executionId: string, expiresAt: string): void {
