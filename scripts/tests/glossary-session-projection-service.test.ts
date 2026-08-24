@@ -11,8 +11,13 @@ import {
   serializeGlossaryDocument,
   type ResolvedGlossaryCheckout,
 } from "../../src-electron/glossary-application-service.js";
+import { AgentRuntimeBindingRegistry } from "../../src-electron/agent-runtime-binding.js";
 import { GlossarySessionProjectionService } from "../../src-electron/glossary-session-projection-service.js";
-import type { GlossaryProjectionState, GlossarySnapshot } from "../../src/glossary-contract.js";
+import type {
+  GlossaryProjectionState,
+  GlossarySnapshot,
+  SessionGlossaryProjection,
+} from "../../src/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -62,6 +67,7 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       applicationService,
       getSession: (sessionId) => sessionId === session.id ? session : null,
       getBindingGeneration: () => generation,
+      subscribeBindingChanges: () => () => undefined,
     });
 
     const projection = await service.load(session.id);
@@ -92,6 +98,7 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       applicationService: new GlossaryApplicationService(),
       getSession: () => session,
       getBindingGeneration: () => null,
+      subscribeBindingChanges: () => () => undefined,
     });
     assert.equal((await service.load(session.id)).state.status, "valid");
 
@@ -146,6 +153,7 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       applicationService: new DelayedProjectionService(),
       getSession: () => session,
       getBindingGeneration: () => "generation-1",
+      subscribeBindingChanges: () => () => undefined,
     });
     const projections: string[] = [];
     const dispose = await service.subscribe(session.id, (projection) => {
@@ -237,6 +245,7 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       applicationService: new RearmingProjectionService(),
       getSession: () => session,
       getBindingGeneration: () => "generation-1",
+      subscribeBindingChanges: () => () => undefined,
     });
     const dispose = await service.subscribe(session.id, () => undefined);
     const staleState: GlossaryProjectionState = {
@@ -261,6 +270,79 @@ describe("GLOSSARY-CHECKOUT-AUTHORITY renderer projection", () => {
       repositoryA.target.rootPath,
       repositoryC.target.rootPath,
     ]);
+    dispose();
+    assert.equal(subscriptions.every((subscription) => subscription.closed), true);
+  });
+
+  it("binding generation変更だけでwatchを張り直し、current scopeを再読込する", async () => {
+    const { root, target } = await createRepository();
+    await mkdir(path.join(root, ".withmate"));
+    await writeFile(path.join(root, ".withmate", "glossary.yaml"), serializeGlossaryDocument([
+      { term: "Current", aliases: [], definition: "current definition" },
+    ]), "utf8");
+    const session = {
+      id: "session-binding-change",
+      provider: "codex",
+      workspacePath: root,
+      workspaceLabel: "projection-repo",
+      branch: "main",
+    };
+    const bindingRegistry = new AgentRuntimeBindingRegistry();
+    const firstBinding = bindingRegistry.issueOrReuse({
+      actorSessionId: session.id,
+      providerId: session.provider,
+      authoritySnapshot: { revision: "first" },
+      operationGrants: ["glossary.read"],
+    });
+    const subscriptions: Array<{ closed: boolean }> = [];
+    class BindingProjectionService extends GlossaryApplicationService {
+      override async resolvePrimaryCheckout(): Promise<ResolvedGlossaryCheckout> {
+        return target;
+      }
+
+      override async describeCheckout() {
+        return { repositoryName: "repository", branch: "main", pathLabel: "repository" };
+      }
+
+      override subscribe(): () => void {
+        const subscription = { closed: false };
+        subscriptions.push(subscription);
+        return () => {
+          subscription.closed = true;
+        };
+      }
+    }
+    const service = new GlossarySessionProjectionService({
+      applicationService: new BindingProjectionService(),
+      getSession: () => session,
+      getBindingGeneration: (sessionId, providerId) =>
+        bindingRegistry.getExecutionGeneration(sessionId, providerId),
+      subscribeBindingChanges: (listener) => bindingRegistry.subscribeChanges((change) => {
+        listener({ sessionId: change.actorSessionId, providerId: change.providerId });
+      }),
+    });
+    const projections: SessionGlossaryProjection[] = [];
+    const dispose = await service.subscribe(session.id, (projection) => {
+      projections.push(projection);
+    });
+    const before = await service.load(session.id);
+
+    const replacement = bindingRegistry.issueOrReuse({
+      actorSessionId: session.id,
+      providerId: session.provider,
+      authoritySnapshot: { revision: "second" },
+      operationGrants: ["glossary.read"],
+    });
+    for (let attempt = 0; attempt < 20 && projections.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    assert.equal(subscriptions.length, 2);
+    assert.equal(subscriptions[0]?.closed, true);
+    assert.equal(projections.length, 1);
+    assert.notEqual(replacement.executionGeneration, firstBinding.executionGeneration);
+    assert.notEqual(projections[0]?.scopeRevision, before.scopeRevision);
+    assert.equal(projections[0]?.state.status, "valid");
     dispose();
     assert.equal(subscriptions.every((subscription) => subscription.closed), true);
   });

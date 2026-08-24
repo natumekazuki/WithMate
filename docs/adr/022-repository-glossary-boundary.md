@@ -25,6 +25,7 @@ Accepted
 ### `GLOSSARY-ATOMIC-MUTATION`
 
 - mutationは同一directoryの排他的temporary fileへ完全なYAMLを書き、flushとclose後にbinding、Git root、directory、target identity、expected revisionを再検証してから`fs.rename`で置換する。targetを先に削除しない。
+- 同じcheckout identityへのmutationはapplication service内で直列化し、mutable read、plan、guard、commit直前検証、rename、read-back、temporary file cleanupを一つの排他区間に置く。create、create-batch、update、deleteは同じqueueを共有し、read、search、外部editorはqueueへ入れない。
 - `effect: applied`はrename後のidentity-bound read-backがschemaと要求postconditionへ完全一致した場合だけ返す。操作前のraw hashとidentityを安全に確認できた場合は`none`、一意に分類できない場合は`unknown`とする。`unknown`を自動retryしない。
 - response loss retryは永続ledgerを作らず、create、batch、update、deleteごとの完全なpostcondition tupleで`converged`を判定する。`converged`は現在値の一致であり、その試行がwriteしたことの監査証明ではない。
 
@@ -39,7 +40,8 @@ Accepted
 ### `GLOSSARY-READ-ONLY-UI`
 
 - main processのglossary application boundaryがcheckout watcherと再読込を所有する。filesystem eventは再読込の契機に限り、rendererへpathやraw eventを渡さない。rendererは`valid`、`missing`、`invalid`、`unsupported`、`watch-error`とrevisionを持つbounded projectionだけを受け取る。
-- 既存Session right paneのtab ownerへGlossary面を追加する。検索、flat list、詳細、checkoutの短い表示だけを提供し、CRUDとfile初期化UIは置かない。invalid化、削除、binding generation変更ではstale entryとannotationを表示しない。
+- binding registryのgeneration変更通知はmain processのprojection serviceが購読し、filesystem eventがなくても旧deliveryを無効化してwatchの張り直しとcurrent scopeの再読込を行う。Session Windowの差し替え中もcurrent windowへ一つのwatch購読が成立するまでlifecycleをreconcileする。
+- 既存Session right paneのtab ownerへGlossary面を追加する。検索、flat list、詳細、checkoutの短い表示だけを提供し、CRUDとfile初期化UIは置かない。invalid化、削除、binding generation変更ではstale entryとannotationを表示しない。Glossary tabはvalidかつentryがある場合、またはinvalid、unsupported、watch-errorで利用者が対処できる情報がある場合だけ表示し、未読込、missing、validかつ0件では表示しない。
 - hoverまたはfocusのtooltipはviewport内に収め、最大360×240px、非interactive、非scrollableとする。clickまたはaccepted keyboard activationだけがright paneを表示してcanonical detailを選ぶ。
 
 ### `GLOSSARY-PLAIN-TEXT-DEFINITION`
@@ -57,7 +59,7 @@ Accepted
 
 - source、schema、atomic mutation: `src/glossary-contract.ts`、`src-electron/glossary-application-service.ts`、`scripts/tests/glossary-application-service.test.ts`
 - runtime authority、MCP、CLI: `src-electron/glossary-runtime-service.ts`、`src/glossary-operation-schema.ts`、`scripts/tests/glossary-runtime-service.test.ts`、`scripts/tests/withmate-glossary-cli-mcp.test.ts`
-- external update、renderer projection: `src-electron/glossary-session-projection-service.ts`、`scripts/tests/glossary-session-projection-service.test.ts`、`scripts/tests/session-glossary-pane.test.tsx`
+- external update、renderer projection: `src-electron/glossary-session-projection-service.ts`、`src-electron/session-glossary-window-subscription.ts`、`scripts/tests/glossary-session-projection-service.test.ts`、`scripts/tests/session-glossary-window-subscription.test.ts`、`scripts/tests/session-glossary-pane.test.tsx`
 - annotation、keyboard、tooltip: `src/glossary/glossary-annotation-projection.ts`、`src/glossary/MessageGlossaryAnnotations.tsx`、`scripts/tests/glossary-annotation-projection.test.ts`、`scripts/tests/message-glossary-annotation.test.tsx`
 - managed distribution: `src-electron/managed-memory-skill-service.ts`の`ManagedSkillDistributionService`、`scripts/tests/managed-memory-skill-service.test.ts`、`scripts/tests/managed-glossary-skill-service.test.ts`
 

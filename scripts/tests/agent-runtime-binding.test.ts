@@ -168,6 +168,92 @@ describe("AgentRuntimeBindingRegistry", () => {
     assert.equal(projection.bindingReference, "");
     assert.equal(registry.getActiveBindingCount(), 0);
   });
+
+  it("binding state transitionをgeneration tupleだけで通知し、reuseでは通知しない", () => {
+    const registry = new AgentRuntimeBindingRegistry();
+    const changes: Array<{
+      actorSessionId: string;
+      providerId: string;
+      previousExecutionGeneration: string | null;
+      executionGeneration: string | null;
+    }> = [];
+    const unsubscribe = registry.subscribeChanges((change) => {
+      changes.push(change);
+    });
+    registry.subscribeChanges(() => {
+      throw new Error("projection listener failed");
+    });
+
+    const first = registry.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      authoritySnapshot: { workspace: "first" },
+      operationGrants: ["glossary.read"],
+    });
+    const reused = registry.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      authoritySnapshot: { workspace: "first" },
+      operationGrants: ["glossary.read"],
+    });
+    const replacement = registry.issueOrReuse({
+      actorSessionId: "session-a",
+      providerId: "codex",
+      authoritySnapshot: { workspace: "second" },
+      operationGrants: ["glossary.read"],
+    });
+    registry.revokeSession("session-a");
+    unsubscribe();
+
+    assert.equal(reused.executionGeneration, first.executionGeneration);
+    assert.deepEqual(changes, [
+      {
+        actorSessionId: "session-a",
+        providerId: "codex",
+        previousExecutionGeneration: null,
+        executionGeneration: first.executionGeneration,
+      },
+      {
+        actorSessionId: "session-a",
+        providerId: "codex",
+        previousExecutionGeneration: first.executionGeneration,
+        executionGeneration: replacement.executionGeneration,
+      },
+      {
+        actorSessionId: "session-a",
+        providerId: "codex",
+        previousExecutionGeneration: replacement.executionGeneration,
+        executionGeneration: null,
+      },
+    ]);
+  });
+
+  it("観測されたexpiryをgenerationからnullへの変更として通知する", () => {
+    const registry = new AgentRuntimeBindingRegistry();
+    const changes: Array<{ previousExecutionGeneration: string | null; executionGeneration: string | null }> = [];
+    registry.subscribeChanges((change) => {
+      changes.push(change);
+    });
+    const binding = registry.issueOrReuse({
+      actorSessionId: "session-expiry",
+      providerId: "codex",
+      operationGrants: ["glossary.read"],
+      now: new Date("2026-08-24T00:00:00.000Z"),
+      expiresAt: "2026-08-24T00:01:00.000Z",
+    });
+
+    assert.equal(
+      registry.getExecutionGeneration("session-expiry", "codex", new Date("2026-08-24T00:01:00.000Z")),
+      null,
+    );
+    assert.deepEqual(changes.map(({ previousExecutionGeneration, executionGeneration }) => ({
+      previousExecutionGeneration,
+      executionGeneration,
+    })), [
+      { previousExecutionGeneration: null, executionGeneration: binding.executionGeneration },
+      { previousExecutionGeneration: binding.executionGeneration, executionGeneration: null },
+    ]);
+  });
 });
 
 it("provider envはopaque referenceだけを投影しcache keyやglobal envへsecretを混ぜない", () => {

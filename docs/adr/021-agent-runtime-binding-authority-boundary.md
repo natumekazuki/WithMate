@@ -35,6 +35,7 @@ Codex SDKとGitHub Copilot SDKのstdio runtimeはいずれもclient作成時にc
 - managed WithMate MCP/CLI runtime clientは、同一HTTP接続上のidentity challengeを検証した後、exchange requestのJSON envelopeへenvironmentのreferenceを格納する。challenge前のrequest、通常operation body、MCP transport session IDはactor identityに使用しない。
 - managed MCPでbinding-required markerがあるのにreferenceが欠落した場合は、runtime operationをdispatchせず、non-retryableなauthority/usage rejectionを返す。transport availability failureへ変換しない。
 - Session削除、provider execution generationの再生成、app shutdownでbindingを失効させる。same generation内ではresponse loss後のidempotent read-backに同じbindingを利用できる。
+- registryはbinding generationの実際のstate transitionをSession/provider tupleごとに通知する。新規発行は`null`からgeneration、置換は旧generationから新generation、失効と観測済みexpiryはgenerationから`null`とし、same generationのreuseでは通知しない。通知へopaque reference、authority snapshot、grantを含めず、listener failureでauthority mutationを失敗扱いにしない。
 - opaque reference、runtime secret、binding hash、operation grant detailはprompt、UI、通常log、public errorへ投影しない。provider outputから作るlive state、監査raw item、metadata、artifact、public errorは、boundingや永続化より前に現在のbinding referenceの完全一致を固定markerへ置換する。providerへ送るuser input、logical prompt、transport payload、provider control identifierはこのprojection redactionの対象にしない。
 
 ## Consequences

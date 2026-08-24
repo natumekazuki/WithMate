@@ -8,6 +8,7 @@ import type {
   SessionContextTelemetry,
 } from "./app-state.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
+import type { SessionGlossaryProjection } from "./glossary-contract.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
 
 export type ContextPaneTabKey = "latest-command" | "messages" | "glossary" | "reasoning" | "tasks" | "companion-group";
@@ -410,6 +411,18 @@ export function resolveAvailableContextPaneTabs({
 
     return true;
   });
+}
+
+export function shouldIncludeGlossaryContextPane(
+  projection: SessionGlossaryProjection | null,
+): boolean {
+  if (!projection || projection.state.status === "missing") {
+    return false;
+  }
+  if (projection.state.status === "valid") {
+    return projection.state.entries.length > 0;
+  }
+  return true;
 }
 
 export function cycleContextPaneTab(

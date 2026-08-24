@@ -84,6 +84,7 @@ import {
   buildSessionContextTelemetryProjection,
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
+  shouldIncludeGlossaryContextPane,
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import {
@@ -2268,16 +2269,23 @@ export default function AgentSessionWindowApp() {
   const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
   const hasReasoningCapability =
     availableReasoningEfforts.length > 0 || Boolean(selectedSession?.reasoningEffort);
+  const includeGlossaryContextPane = shouldIncludeGlossaryContextPane(sessionGlossaryProjection);
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
       includeMessages: true,
-      includeGlossary: true,
+      includeGlossary: includeGlossaryContextPane,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
     }),
-    [hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [
+      hasLiveRunReasoningText,
+      hasReasoningCapability,
+      isCopilotSession,
+      selectedCompanionGroupMonitorEntries.length,
+      includeGlossaryContextPane,
+    ],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -4350,7 +4358,7 @@ export default function AgentSessionWindowApp() {
         activeContextPaneTab,
         availableContextPaneTabs,
         contextPaneProjection,
-        glossaryPaneProps: {
+        glossaryPaneProps: includeGlossaryContextPane ? {
           projection: sessionGlossaryProjection,
           searchQuery: glossarySearchQuery,
           searchEntries: glossarySearchEntries,
@@ -4362,7 +4370,7 @@ export default function AgentSessionWindowApp() {
           onLoadMoreSearchResults: handleLoadMoreGlossarySearchResults,
           onSelectTerm: setSelectedGlossaryTerm,
           onBackToList: () => setSelectedGlossaryTerm(null),
-        },
+        } : undefined,
         glossaryAnnotationMatcher,
         onActivateGlossaryEntry: handleActivateGlossaryEntry,
         selectedBackgroundTasks,

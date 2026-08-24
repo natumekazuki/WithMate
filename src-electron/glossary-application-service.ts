@@ -553,6 +553,7 @@ export class GlossaryApplicationService {
   readonly #renamePath: (oldPath: string, newPath: string) => Promise<void>;
   readonly #watchPath: GlossaryWatchPath;
   readonly #watchDebounceMs: number;
+  readonly #mutationTails = new Map<string, Promise<void>>();
 
   constructor(deps: GlossaryApplicationServiceDeps = {}) {
     this.#runGit = deps.runGit ?? (async (cwd, args) => {
@@ -801,7 +802,7 @@ export class GlossaryApplicationService {
     request: GlossaryCreateRequest,
     guard?: GlossaryMutationGuard,
   ): Promise<GlossaryOperationResult<GlossaryMutationResult>> {
-    return safeOperation(async () => {
+    return safeOperation(() => this.#withMutationLock(target, async () => {
       this.#validateCreateMode(request.mode, 1, request.proactiveCreateLimit);
       const [entry] = assertValidEntries([request.entry]);
       const previous = await this.#readMutable(target);
@@ -823,7 +824,7 @@ export class GlossaryApplicationService {
           && Boolean(findEntryByCanonicalTerm(snapshot.entries, entry.term))
           && exactEntryEqual(findEntryByCanonicalTerm(snapshot.entries, entry.term)!.entry, entry),
       });
-    });
+    }));
   }
 
   async createBatch(
@@ -831,7 +832,7 @@ export class GlossaryApplicationService {
     request: GlossaryCreateBatchRequest,
     guard?: GlossaryMutationGuard,
   ): Promise<GlossaryOperationResult<GlossaryMutationResult>> {
-    return safeOperation(async () => {
+    return safeOperation(() => this.#withMutationLock(target, async () => {
       if (!Array.isArray(request.entries) || request.entries.length < 1) {
         fail("GLOSSARY_INVALID_REQUEST", "create-batch requires at least one entry.");
       }
@@ -872,7 +873,7 @@ export class GlossaryApplicationService {
           return matches.every(Boolean);
         },
       });
-    });
+    }));
   }
 
   async update(
@@ -880,7 +881,7 @@ export class GlossaryApplicationService {
     request: GlossaryUpdateRequest,
     guard?: GlossaryMutationGuard,
   ): Promise<GlossaryOperationResult<GlossaryMutationResult>> {
-    return safeOperation(async () => {
+    return safeOperation(() => this.#withMutationLock(target, async () => {
       this.#validateExpectedRevision(request.expectedRevision);
       const normalizedTarget = normalizeGlossaryLookup(request.targetTerm);
       if (!normalizedTarget) {
@@ -916,7 +917,7 @@ export class GlossaryApplicationService {
         isConverged: (snapshot) => snapshot.status === "valid"
           && this.#isUpdateConverged(snapshot, normalizedTarget, replacement),
       });
-    });
+    }));
   }
 
   async delete(
@@ -924,7 +925,7 @@ export class GlossaryApplicationService {
     request: GlossaryDeleteRequest,
     guard?: GlossaryMutationGuard,
   ): Promise<GlossaryOperationResult<GlossaryMutationResult>> {
-    return safeOperation(async () => {
+    return safeOperation(() => this.#withMutationLock(target, async () => {
       this.#validateExpectedRevision(request.expectedRevision);
       const normalizedTarget = normalizeGlossaryLookup(request.targetTerm);
       if (!normalizedTarget) {
@@ -957,7 +958,38 @@ export class GlossaryApplicationService {
         isConverged: (snapshot) => snapshot.status === "valid"
           && this.#isDeleteConverged(snapshot, normalizedTarget),
       });
+    }));
+  }
+
+  async #withMutationLock<T>(
+    target: ResolvedGlossaryCheckout,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const normalizedRootPath = process.platform === "win32"
+      ? target.rootRealPath.toLocaleLowerCase("en-US")
+      : target.rootRealPath;
+    const key = [
+      normalizedRootPath,
+      target.rootIdentity.device.toString(),
+      target.rootIdentity.inode.toString(),
+    ].join("\0");
+    const previous = this.#mutationTails.get(key) ?? Promise.resolve();
+    let release: () => void = () => undefined;
+    const turn = new Promise<void>((resolve) => {
+      release = resolve;
     });
+    const tail = previous.catch(() => undefined).then(() => turn);
+    this.#mutationTails.set(key, tail);
+
+    await previous.catch(() => undefined);
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.#mutationTails.get(key) === tail) {
+        this.#mutationTails.delete(key);
+      }
+    }
   }
 
   async #readUsable(target: ResolvedGlossaryCheckout): Promise<MissingRead | ValidRead> {

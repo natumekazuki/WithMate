@@ -7,6 +7,7 @@ import type {
   LiveRunStep,
   ProviderQuotaTelemetry,
 } from "../../src/app-state.js";
+import type { GlossaryProjectionState, SessionGlossaryProjection } from "../../src/glossary-contract.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -19,6 +20,7 @@ import {
   findLatestAuditCommandOperation,
   findLatestLiveCommandStep,
   resolveAvailableContextPaneTabs,
+  shouldIncludeGlossaryContextPane,
 } from "../../src/session-ui-projection.js";
 
 function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">): LiveBackgroundTask {
@@ -529,5 +531,54 @@ describe("session-ui-projection", () => {
       includeGlossary: true,
     }), ["latest-command", "messages", "glossary"]);
     assert.equal(contextPaneTabLabel("glossary"), "Glossary");
+  });
+
+  it("Glossary tabは内容または対処可能な状態がある時だけ表示する", () => {
+    const projection = (state: GlossaryProjectionState): SessionGlossaryProjection => ({
+      sessionId: "session-1",
+      scopeRevision: "scope-1",
+      sequence: 1,
+      checkout: { repositoryName: "repository", branch: "main", pathLabel: "repository" },
+      state,
+    });
+    const issue = { path: "$", code: "INVALID_YAML", message: "invalid" };
+
+    assert.equal(shouldIncludeGlossaryContextPane(null), false);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "missing",
+      relativePath: ".withmate/glossary.yaml",
+      revision: null,
+    })), false);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "valid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "empty",
+      entries: [],
+    })), false);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "valid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "populated",
+      entries: [{ term: "Runtime", aliases: [], definition: "definition" }],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "invalid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "invalid",
+      issues: [issue],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "unsupported",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "unsupported",
+      schemaVersion: 2,
+      issues: [issue],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "watch-error",
+      relativePath: ".withmate/glossary.yaml",
+      revision: null,
+      message: "watch failed",
+    })), true);
   });
 });

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -112,6 +112,84 @@ describe("GLOSSARY-ATOMIC-MUTATION file service", () => {
     assert.equal(created.effect, "applied");
     const raw = await readFile(path.join(root, ".withmate", "glossary.yaml"), "utf8");
     assert.doesNotMatch(raw, /revision|normalized|preview/);
+  });
+
+  it("同一checkoutへの並行createを直列化し、両方のentryを保持する", async () => {
+    const { target } = await createRepository();
+    let beforeRenameCount = 0;
+    let markSecondRenameReached: (() => void) | null = null;
+    const secondRenameReached = new Promise<void>((resolve) => {
+      markSecondRenameReached = resolve;
+    });
+    const service = new GlossaryApplicationService({
+      beforeRename: async () => {
+        beforeRenameCount += 1;
+        if (beforeRenameCount === 1) {
+          await Promise.race([
+            secondRenameReached,
+            new Promise<void>((resolve) => setTimeout(resolve, 50)),
+          ]);
+        } else {
+          markSecondRenameReached?.();
+        }
+      },
+    });
+
+    const [first, second] = await Promise.all([
+      service.create(target, {
+        mode: "explicit",
+        entry: { term: "First", definition: "first definition" },
+      }),
+      service.create(target, {
+        mode: "explicit",
+        entry: { term: "Second", definition: "second definition" },
+      }),
+    ]);
+    const snapshot = await service.read(target);
+
+    assert.equal(first.ok && first.outcome, "applied");
+    assert.equal(second.ok && second.outcome, "applied");
+    assert.equal(snapshot.status, "valid");
+    if (snapshot.status !== "valid") return;
+    assert.deepEqual(snapshot.entries.map((entry) => entry.term), ["First", "Second"]);
+  });
+
+  it("mutation failure後にcheckout queueを解放して後続操作を進める", async () => {
+    const { target } = await createRepository();
+    let renameCount = 0;
+    const service = new GlossaryApplicationService({
+      renamePath: async (oldPath, newPath) => {
+        renameCount += 1;
+        if (renameCount === 1) {
+          throw new Error("injected rename failure");
+        }
+        await rename(oldPath, newPath);
+      },
+    });
+    const failed = await service.create(target, {
+      mode: "explicit",
+      entry: { term: "Failed", definition: "not applied" },
+    });
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    const applied = await Promise.race([
+      service.create(target, {
+        mode: "explicit",
+        entry: { term: "Applied", definition: "applied after failure" },
+      }),
+      new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error("checkout mutation queue was not released")), 1_000);
+      }),
+    ]).finally(() => {
+      if (timeout) clearTimeout(timeout);
+    });
+
+    assert.equal(failed.ok, false);
+    if (!failed.ok) assert.equal(failed.effect, "none");
+    assert.equal(applied.ok && applied.outcome, "applied");
+    const snapshot = await service.read(target);
+    assert.equal(snapshot.status, "valid");
+    if (snapshot.status !== "valid") return;
+    assert.deepEqual(snapshot.entries.map((entry) => entry.term), ["Applied"]);
   });
 
   it("同じcreate retryはconvergedし、同じtermの別内容はconflictにする", async () => {

@@ -28,6 +28,9 @@ export type GlossarySessionProjectionServiceDeps = {
   applicationService: GlossaryApplicationService;
   getSession: (sessionId: string) => GlossaryProjectionSession | null;
   getBindingGeneration: (sessionId: string, providerId: string) => string | null;
+  subscribeBindingChanges: (
+    listener: (change: { sessionId: string; providerId: string }) => void,
+  ) => () => void;
 };
 
 type ResolvedProjectionScope = {
@@ -86,12 +89,14 @@ export class GlossarySessionProjectionService {
   readonly #applicationService: GlossaryApplicationService;
   readonly #getSession: GlossarySessionProjectionServiceDeps["getSession"];
   readonly #getBindingGeneration: GlossarySessionProjectionServiceDeps["getBindingGeneration"];
+  readonly #subscribeBindingChanges: GlossarySessionProjectionServiceDeps["subscribeBindingChanges"];
   readonly #sequenceBySession = new Map<string, number>();
 
   constructor(deps: GlossarySessionProjectionServiceDeps) {
     this.#applicationService = deps.applicationService;
     this.#getSession = deps.getSession;
     this.#getBindingGeneration = deps.getBindingGeneration;
+    this.#subscribeBindingChanges = deps.subscribeBindingChanges;
   }
 
   async load(sessionId: string): Promise<SessionGlossaryProjection> {
@@ -226,11 +231,42 @@ export class GlossarySessionProjectionService {
       unsubscribe = nextUnsubscribe;
     };
 
+    const unsubscribeBindingChanges = this.#subscribeBindingChanges((change) => {
+      const session = this.#getSession(sessionId);
+      if (
+        disposed
+        || !session
+        || change.sessionId !== session.id
+        || change.providerId !== session.provider
+      ) {
+        return;
+      }
+      const currentDeliveryGeneration = ++deliveryGeneration;
+      void (async () => {
+        try {
+          await arm();
+          if (disposed || currentDeliveryGeneration !== deliveryGeneration) {
+            return;
+          }
+          const projection = await this.load(sessionId);
+          if (!disposed && currentDeliveryGeneration === deliveryGeneration) {
+            listener(projection);
+          }
+        } catch (error) {
+          const currentSession = this.#getSession(sessionId);
+          if (!disposed && currentSession && currentDeliveryGeneration === deliveryGeneration) {
+            listener(this.#unavailableProjection(sessionId, currentSession, error));
+          }
+        }
+      })();
+    });
+
     await arm();
     return () => {
       disposed = true;
       armGeneration += 1;
       deliveryGeneration += 1;
+      unsubscribeBindingChanges();
       unsubscribe?.();
       unsubscribe = null;
     };
