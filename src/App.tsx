@@ -1495,6 +1495,8 @@ export default function AgentSessionWindowApp() {
 
     setIsGlossarySearchLoading(true);
     setGlossarySearchError("");
+    setGlossarySearchEntries([]);
+    setGlossarySearchTotal(0);
     void withmateApi.searchSessionGlossary(selectedSession.id, {
       query,
       offset: 0,

@@ -291,6 +291,13 @@ describe("Glossary authenticated runtime exchange", () => {
       assert.equal(mcp.status, 200);
       assert.deepEqual(cli.value, mcp.value);
 
+      const genericSmallExchange = await callWithMateMemoryRuntime(
+        { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
+        operation,
+        { signal: new AbortController().signal, bindingReference: binding.bindingReference },
+      );
+      assert.equal(genericSmallExchange.status, 404);
+
       const direct = await fetch(`${baseUrl}${GLOSSARY_RUNTIME_OPERATION_PATHS.list}`, {
         method: "POST",
         headers: {

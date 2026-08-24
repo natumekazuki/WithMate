@@ -887,18 +887,6 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           writeJson(response, 200, { ok: true, runtimeInstanceId });
           return;
         }
-        const extensionResponse = await options.routeAgentRuntimeExtension?.({
-          method: payload.operation.method,
-          path: payload.operation.path,
-          body: payload.operation.body,
-          transport: payload.adapter,
-          bindingReference: payload.bindingReference,
-          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
-        }) ?? null;
-        if (extensionResponse) {
-          writeJson(response, extensionResponse.status, extensionResponse.value);
-          return;
-        }
         const route = routeByPath.get(operationUrl.pathname);
         if (!route) {
           writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Memory API route was not found."));
