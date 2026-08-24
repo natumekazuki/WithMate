@@ -119,7 +119,6 @@ export function SessionGlossaryPane({
             <input
               type="search"
               value={searchQuery}
-              placeholder="用語を検索"
               onChange={(event) => onSearchQueryChange(event.target.value)}
             />
           </label>

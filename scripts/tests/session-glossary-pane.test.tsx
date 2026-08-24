@@ -44,7 +44,8 @@ test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示�
   const html = renderToStaticMarkup(
     <SessionGlossaryPane {...baseProps} projection={validProjection} />,
   );
-  assert.match(html, /用語を検索/);
+  assert.match(html, /<span class="sr-only">用語集を検索<\/span>/);
+  assert.doesNotMatch(html, /placeholder=/);
   assert.match(html, /Runtime/);
   assert.doesNotMatch(html, />RT</);
   assert.doesNotMatch(html, /1 \/ 1 terms/);
