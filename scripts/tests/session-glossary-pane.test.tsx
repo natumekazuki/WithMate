@@ -40,14 +40,14 @@ const baseProps = {
   onBackToList() {},
 };
 
-test("SessionGlossaryPaneは既存right pane用のread-only一覧と検索を表示する", () => {
+test("SessionGlossaryPaneは一覧を用語と検索へ絞りread-onlyで表示する", () => {
   const html = renderToStaticMarkup(
     <SessionGlossaryPane {...baseProps} projection={validProjection} />,
   );
-  assert.match(html, /Repository Glossary/);
-  assert.match(html, /用語、alias、説明を検索/);
+  assert.match(html, /用語を検索/);
   assert.match(html, /Runtime/);
-  assert.match(html, /RT/);
+  assert.doesNotMatch(html, />RT</);
+  assert.doesNotMatch(html, /1 \/ 1 terms/);
   assert.doesNotMatch(html, /作成|編集|削除|初期化/);
 });
 
@@ -57,8 +57,29 @@ test("SessionGlossaryPaneはdefinitionをMarkdownやHTMLとして解釈せず完
   );
   assert.match(html, /&lt;strong&gt;plain&lt;\/strong&gt; \*\*not markdown\*\*/);
   assert.doesNotMatch(html, /<strong>plain<\/strong>/);
-  assert.match(html, /Aliases: RT/);
-  assert.match(html, /一覧へ戻る/);
+  assert.match(html, />RT</);
+  assert.doesNotMatch(html, /Aliases:/);
+  assert.match(html, /aria-label="用語一覧へ戻る"/);
+});
+
+test("SessionGlossaryPaneはmissingを説明文やfile pathなしの短い状態として表示する", () => {
+  const html = renderToStaticMarkup(
+    <SessionGlossaryPane
+      {...baseProps}
+      projection={{
+        ...validProjection,
+        sequence: 2,
+        state: {
+          status: "missing",
+          relativePath: ".withmate/glossary.yaml",
+          revision: null,
+        },
+      }}
+    />,
+  );
+  assert.match(html, />用語集なし</);
+  assert.doesNotMatch(html, /\.withmate\/glossary\.yaml/);
+  assert.doesNotMatch(html, /作成されると/);
 });
 
 test("SessionGlossaryPaneはinvalid時にlast valid entriesを表示しない", () => {

@@ -4,6 +4,7 @@ import type {
   GlossaryEntry,
   SessionGlossaryProjection,
 } from "../glossary-contract.js";
+import { BackNavigationButton } from "../back-navigation-button.js";
 
 export type SessionGlossaryPaneProps = {
   projection: SessionGlossaryProjection | null;
@@ -19,12 +20,11 @@ export type SessionGlossaryPaneProps = {
   onBackToList: () => void;
 };
 
-function stateMessage(projection: SessionGlossaryProjection): { title: string; detail: string } | null {
+function stateMessage(projection: SessionGlossaryProjection): { title: string; detail?: string } | null {
   switch (projection.state.status) {
     case "missing":
       return {
-        title: "用語集ファイルがありません",
-        detail: ".withmate/glossary.yaml が作成されると、ここへ用語が表示されます。",
+        title: "用語集なし",
       };
     case "invalid":
       return {
@@ -33,8 +33,8 @@ function stateMessage(projection: SessionGlossaryProjection): { title: string; d
       };
     case "unsupported":
       return {
-        title: "未対応のschemaです",
-        detail: `schemaVersion ${String(projection.state.schemaVersion ?? "unknown")} はこのWithMateで開けません。`,
+        title: "未対応の形式",
+        detail: `schemaVersion ${String(projection.state.schemaVersion ?? "unknown")}`,
       };
     case "watch-error":
       return {
@@ -76,32 +76,38 @@ export function SessionGlossaryPane({
   }, [selectedEntry]);
 
   if (!projection) {
-    return <p className="glossary-pane-status">用語集を読み込んでいます…</p>;
+    return (
+      <div className="glossary-pane-loading" role="status" aria-label="用語集を読み込み中">
+        <span className="glossary-pane-spinner" aria-hidden="true" />
+      </div>
+    );
   }
 
   const unavailable = stateMessage(projection);
+  const checkoutLabel = projection.checkout.branch
+    || projection.checkout.pathLabel
+    || projection.checkout.repositoryName;
+  const checkoutTitle = [
+    projection.checkout.repositoryName,
+    projection.checkout.branch,
+    projection.checkout.pathLabel,
+  ].filter(Boolean).join(" / ");
   return (
     <section className="glossary-pane" aria-label="Repository Glossary">
-      <header className="glossary-pane-checkout">
-        <strong>{projection.checkout.repositoryName}</strong>
-        <span>{projection.checkout.branch}</span>
-        <small>{projection.checkout.pathLabel}</small>
-      </header>
+      <p className="glossary-pane-checkout" title={checkoutTitle}>{checkoutLabel}</p>
 
       {unavailable ? (
-        <div className={`glossary-pane-status ${projection.state.status}`} role={projection.state.status === "invalid" ? "alert" : undefined}>
+        <div className={`glossary-pane-status ${projection.state.status}`} role={projection.state.status === "invalid" ? "alert" : "status"}>
           <strong>{unavailable.title}</strong>
-          <p>{unavailable.detail}</p>
+          {unavailable.detail ? <p>{unavailable.detail}</p> : null}
         </div>
       ) : selectedEntry ? (
         <article className="glossary-entry-detail">
-          <button className="glossary-back-button" type="button" onClick={onBackToList}>
-            ← 一覧へ戻る
-          </button>
+          <BackNavigationButton label="用語一覧へ戻る" onBack={onBackToList} />
           <header>
             <h3>{selectedEntry.term}</h3>
             {selectedEntry.aliases.length > 0 ? (
-              <p className="glossary-entry-aliases">Aliases: {selectedEntry.aliases.join(", ")}</p>
+              <p className="glossary-entry-aliases">{selectedEntry.aliases.join(" · ")}</p>
             ) : null}
           </header>
           <p className="glossary-entry-definition">{selectedEntry.definition}</p>
@@ -113,7 +119,7 @@ export function SessionGlossaryPane({
             <input
               type="search"
               value={searchQuery}
-              placeholder="用語、alias、説明を検索"
+              placeholder="用語を検索"
               onChange={(event) => onSearchQueryChange(event.target.value)}
             />
           </label>
@@ -130,21 +136,23 @@ export function SessionGlossaryPane({
                   onSelectTerm(entry.term);
                 }}
               >
-                <strong>{entry.term}</strong>
-                {entry.aliases.length > 0 ? <span>{entry.aliases.join(", ")}</span> : null}
+                <span className="glossary-entry-term">{entry.term}</span>
               </button>
             ))}
             {!searchLoading && visibleEntries.length === 0 ? (
-              <p className="glossary-pane-status">一致する用語はありません。</p>
+              <p className="glossary-list-empty">{searchQuery.trim() ? "該当なし" : "用語なし"}</p>
             ) : null}
-            {searchLoading ? <p className="glossary-pane-status">検索しています…</p> : null}
+            {searchLoading ? (
+              <div className="glossary-search-loading" role="status" aria-label="検索中">
+                <span className="glossary-pane-spinner" aria-hidden="true" />
+              </div>
+            ) : null}
             {visibleEntries.length < visibleTotal && !searchLoading ? (
               <button className="glossary-load-more" type="button" onClick={onLoadMoreSearchResults}>
-                さらに読み込む
+                さらに表示
               </button>
             ) : null}
           </div>
-          <p className="glossary-list-count">{visibleEntries.length} / {visibleTotal} terms</p>
         </div>
       )}
     </section>

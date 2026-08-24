@@ -44,7 +44,7 @@ Accepted
 
 - main processのglossary application boundaryがcheckout watcherと再読込を所有する。filesystem eventは再読込の契機に限り、rendererへpathやraw eventを渡さない。rendererは`valid`、`missing`、`invalid`、`unsupported`、`watch-error`とrevisionを持つbounded projectionだけを受け取る。
 - binding registryのgeneration変更通知はmain processのprojection serviceが購読し、filesystem eventがなくても旧deliveryを無効化してwatchの張り直しとcurrent scopeの再読込を行う。Session Windowの差し替え中もcurrent windowへ一つのwatch購読が成立するまでlifecycleをreconcileする。
-- 既存Session right paneのtab ownerへGlossary面を追加する。検索、flat list、詳細、checkoutの短い表示だけを提供し、CRUDとfile初期化UIは置かない。invalid化、削除、binding generation変更ではstale entryとannotationを表示しない。Glossary tabは用語集の存在と件数にかかわらず表示し、未読込、missing、validかつ0件を含むcurrent stateを同じ面へ投影する。
+- 既存Session right paneのtab ownerへGlossary面を追加する。検索、flat list、詳細、checkoutの短い表示だけを既存のtokenとprimitiveで提供し、CRUDとfile初期化UIは置かない。常設する説明文、重複するmetadata、一覧のaliasと件数は表示せず、missingと空は短いstate labelだけで示す。invalid化、削除、binding generation変更ではstale entryとannotationを表示しない。Glossary tabは用語集の存在と件数にかかわらず表示し、未読込、missing、validかつ0件を含むcurrent stateを同じ面へ投影する。
 - 検索結果は初回と追加取得のどちらもcurrent projectionのrevisionと一致する場合だけ表示へ採用する。projection revisionが変わった時点で旧検索結果を消し、外部更新との競合でrevisionが一致しない結果はstale errorとして表示せず破棄する。
 - hoverまたはfocusのtooltipはviewport内に収め、最大360×240px、非interactive、非scrollableとする。clickまたはaccepted keyboard activationだけがright paneを表示してcanonical detailを選ぶ。
 
