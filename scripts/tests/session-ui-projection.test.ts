@@ -540,7 +540,7 @@ describe("session-ui-projection", () => {
     assert.equal(contextPaneTabLabel("glossary"), "Glossary");
   });
 
-  it("Glossary tabは内容または対処可能な状態がある時だけ表示する", () => {
+  it("Glossary tabはloading・missing・空を含む全状態で安定して表示する", () => {
     const projection = (state: GlossaryProjectionState): SessionGlossaryProjection => ({
       sessionId: "session-1",
       scopeRevision: "scope-1",
@@ -550,18 +550,18 @@ describe("session-ui-projection", () => {
     });
     const issue = { path: "$", code: "INVALID_YAML", message: "invalid" };
 
-    assert.equal(shouldIncludeGlossaryContextPane(null), false);
+    assert.equal(shouldIncludeGlossaryContextPane(null), true);
     assert.equal(shouldIncludeGlossaryContextPane(projection({
       status: "missing",
       relativePath: ".withmate/glossary.yaml",
       revision: null,
-    })), false);
+    })), true);
     assert.equal(shouldIncludeGlossaryContextPane(projection({
       status: "valid",
       relativePath: ".withmate/glossary.yaml",
       revision: "empty",
       entries: [],
-    })), false);
+    })), true);
     assert.equal(shouldIncludeGlossaryContextPane(projection({
       status: "valid",
       relativePath: ".withmate/glossary.yaml",

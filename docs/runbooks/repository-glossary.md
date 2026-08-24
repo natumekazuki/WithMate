@@ -24,6 +24,7 @@ readだけでは`.withmate`や`glossary.yaml`を作成しない。初期fileはS
 - hoverまたはkeyboard focusで短い説明を表示する。click、Enter、Spaceで既存right paneのGlossary詳細を開く。
 - 1 messageにつきTab stopは1件だけである。左右矢印、Home、Endでmessage内のannotationを移動し、Escapeでtooltipを閉じる。
 - right paneは検索、一覧、詳細のread-only UIであり、作成、編集、削除、file初期化は行わない。
+- Glossary tabはfileの有無やentry件数にかかわらず表示し、missing、空、invalid、unsupported、watch errorを同じ面で区別する。
 
 fileがinvalid、unsupported、missingになった場合はannotationを無効にする。message本文はそのまま表示し、fileがvalidへ復旧すると再投影する。
 

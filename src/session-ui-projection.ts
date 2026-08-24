@@ -414,14 +414,8 @@ export function resolveAvailableContextPaneTabs({
 }
 
 export function shouldIncludeGlossaryContextPane(
-  projection: SessionGlossaryProjection | null,
+  _projection: SessionGlossaryProjection | null,
 ): boolean {
-  if (!projection || projection.state.status === "missing") {
-    return false;
-  }
-  if (projection.state.status === "valid") {
-    return projection.state.entries.length > 0;
-  }
   return true;
 }
 

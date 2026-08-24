@@ -1,0 +1,106 @@
+schemaVersion: 1
+entries:
+  - term: Repository Glossary
+    aliases:
+      - Glossary
+      - 用語集
+    definition: >-
+      Git checkoutごとの.withmate/glossary.yamlを正本として、Session messageの注釈とright paneへリポジトリ固有の用語説明を投影する機能。
+  - term: Session
+    aliases:
+      - セッション
+    definition: >-
+      workspace、provider、会話履歴、実行状態をひとまとまりとして扱うWithMateの作業単位。
+  - term: Session Window
+    aliases:
+      - セッションウィンドウ
+    definition: >-
+      Sessionのmessage、composer、実行状況、files、right paneを表示するElectron window。
+  - term: Provider Session
+    definition: >-
+      CodexやGitHub Copilotなどのproviderが、WithMateのSession内で応答とtool実行を行う実行コンテキスト。
+  - term: Actor Session
+    aliases:
+      - 実行主体Session
+    definition: >-
+      runtime bindingによって、Session scoped operationの呼び出し主体として解決されたWithMate Session。
+  - term: Runtime binding
+    aliases:
+      - binding
+      - Agent runtime binding
+    definition: >-
+      Provider Sessionをactor Session、operation grant、generationへ結び付ける、推測不能な参照を使った実行時の認可境界。
+  - term: Projection
+    aliases:
+      - 投影
+    definition: >-
+      正本やruntime stateから表示、検索、注釈などの用途別に導出され、正本としては保存されない値。
+  - term: Right pane
+    aliases:
+      - 右ペイン
+      - Context rail
+    definition: >-
+      Session Window右側でMessages、Glossary、実行情報などをtab切り替えで表示する既存の補助領域。
+  - term: Git root
+    aliases:
+      - GitRoot
+    definition: >-
+      git rev-parse --show-toplevelで解決されるcheckoutの最上位directory。Repository Glossaryの正本pathはここを基準にする。
+  - term: Worktree
+    aliases:
+      - Working tree
+    definition: >-
+      同じGit repositoryから独立したbranchやcommitをcheckoutして作業できるdirectory。用語集はworktreeごとに分離される。
+  - term: Checkout
+    aliases:
+      - チェックアウト
+    definition: >-
+      特定のGit repositoryとfilesystem identityに結び付いた作業directory。Glossary operationのauthority対象になる。
+  - term: Primary checkout
+    aliases:
+      - Primary target
+    definition: >-
+      SessionのworkspacePathから解決され、そのruntime bindingで唯一Repository Glossaryのreadとmutationを許可されたcheckout。
+  - term: MCP
+    aliases:
+      - Model Context Protocol
+    definition: >-
+      ProviderがtoolとしてWithMateのapplication serviceを呼び出すために使うprotocol。GlossaryではCLIと同じoperation schemaを共有する。
+  - term: CLI
+    aliases:
+      - Command line interface
+    definition: >-
+      Provider SessionからGlossary operationを実行するcommand-line adapter。MCPと同じruntime bindingとapplication serviceを使う。
+  - term: Managed Skill
+    aliases:
+      - 配布Skill
+    definition: >-
+      WithMateがversion、digest、collision、provider別配置を管理してprovider runtimeへ配布するSkill bundle。
+  - term: Proactive create
+    aliases:
+      - 自発登録
+    definition: >-
+      Agentが会話中に見つけた用語を、Settingsのturn上限とturn capabilityに従って自律的にGlossaryへ追加するcreate mode。
+  - term: Revision
+    aliases:
+      - リビジョン
+    definition: >-
+      読み取ったglossary.yamlの現在内容を識別するhash。updateとdeleteは外部変更の上書きを避けるためexpectedRevisionとして要求する。
+  - term: Effect certainty
+    aliases:
+      - Effect
+    definition: >-
+      Mutation結果をapplied、none、unknownとして区別し、実際に要求状態へ到達したか、未適用か、確定不能かを表す契約。
+  - term: Annotation
+    aliases:
+      - 注釈
+    definition: >-
+      MessageRichTextのMarkdown parse後に得た通常text nodeへ、current valid glossaryからrender時に付ける読み取り専用の用語表示。
+  - term: Canonical entry
+    aliases:
+      - Canonical term
+    definition: >-
+      Aliasを含むlookupが最終的に解決する正式なGlossary entry。annotation activationではこのtermの詳細をright paneへ開く。
+  - term: MessageRichText
+    definition: >-
+      Session messageとMarkdown file previewで共有するrich text renderer。Glossary annotationはSession messageのPreviewだけに適用する。
