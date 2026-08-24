@@ -3252,9 +3252,13 @@ export function SessionMessageColumn({
                       disabled={!canOpenRelatedSession}
                       aria-label={relatedSessionRouteLabel}
                     >
-                      {outboundTurn ? <span aria-hidden="true">@</span> : null}
-                      <span className="related-session-character">{messageCharacter.name}</span>
-                      <span aria-hidden="true">·</span>
+                      {outboundTurn ? (
+                        <>
+                          <span aria-hidden="true">@</span>
+                          <span className="related-session-character">{messageCharacter.name}</span>
+                          <span aria-hidden="true">·</span>
+                        </>
+                      ) : null}
                       <span className="related-session-title">{relatedSessionTitle}</span>
                     </button>
                   ) : null}

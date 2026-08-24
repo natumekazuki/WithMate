@@ -2004,8 +2004,8 @@ test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトル�
   assert.match(html, /aria-expanded="true"/);
   assert.match(html, /aria-label="呼出元Session情報"/);
   assert.match(html, /class="related-session-route"[^>]*aria-label="保存済み呼出元の現在の呼出元Sessionを別Windowで開く"/);
-  assert.match(html, /<span class="related-session-character">保存済み呼出元<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">現在の呼出元Session/);
-  assert.doesNotMatch(html, /<span aria-hidden="true">@<\/span><span class="related-session-character">保存済み呼出元/);
+  assert.match(html, /<button class="related-session-route"[^>]*><span class="related-session-title">現在の呼出元Session<\/span><\/button>/);
+  assert.doesNotMatch(html, /related-session-character">保存済み呼出元|<span aria-hidden="true">@<\/span>/);
   assert.match(html, /現在の呼出元Session/);
   assert.doesNotMatch(html, /class="origin-session-link"/);
   assert.match(html, /actor-session/);
