@@ -6942,43 +6942,6 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
-.origin-session-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--orange);
-  font: inherit;
-  text-align: left;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-  cursor: pointer;
-}
-
-.origin-session-link > span:first-child {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-.origin-session-link:hover {
-  color: var(--teal);
-}
-
-.origin-session-link:focus-visible {
-  outline: 2px solid currentColor;
-  outline-offset: 3px;
-  border-radius: 2px;
-}
-
-.origin-session-link:disabled {
-  color: var(--muted);
-  text-decoration: none;
-  cursor: default;
-}
-
 .queued-turn-status {
   display: flex;
   align-items: center;

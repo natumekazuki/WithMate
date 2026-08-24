@@ -3139,6 +3139,15 @@ export function SessionMessageColumn({
               && currentRelatedSessionTitle
               && onOpenOriginSession
             );
+            const relatedSessionRouteLabel = canOpenRelatedSession
+              ? `${messageCharacter?.name}の${relatedSessionTitle}を別Windowで開く`
+              : outboundTurn && currentRelatedSession?.status === "missing"
+                ? `${messageCharacter?.name}の${relatedSessionTitle}は削除済みのため開けません`
+                : outboundTurn && (!currentRelatedSession || currentRelatedSession.status === "loading")
+                  ? `${messageCharacter?.name}の${relatedSessionTitle}の存在を確認中のため開けません`
+                  : outboundTurn && currentRelatedSession?.status === "error"
+                    ? `${messageCharacter?.name}の${relatedSessionTitle}の情報取得に失敗したため開けません`
+                    : `${messageCharacter?.name}の${relatedSessionTitle}は現在開けません`;
             const relatedSessionMessageLabel = outboundTurn
               ? `${character.name}が${outboundTurn.relatedSession.titleSnapshot}へ送ったメッセージ`
               : sessionInitiator
@@ -3241,11 +3250,9 @@ export function SessionMessageColumn({
                         }
                       }}
                       disabled={!canOpenRelatedSession}
-                      aria-label={canOpenRelatedSession
-                        ? `${messageCharacter.name}の${relatedSessionTitle}を別Windowで開く`
-                        : `${messageCharacter.name}の${relatedSessionTitle}は現在開けません`}
+                      aria-label={relatedSessionRouteLabel}
                     >
-                      <span aria-hidden="true">@</span>
+                      {outboundTurn ? <span aria-hidden="true">@</span> : null}
                       <span className="related-session-character">{messageCharacter.name}</span>
                       <span aria-hidden="true">·</span>
                       <span className="related-session-title">{relatedSessionTitle}</span>
@@ -3298,36 +3305,13 @@ export function SessionMessageColumn({
                         || (currentRelatedSession?.status === "error" && currentRelatedSession.taskTitle) ? (
                           <div>
                             <dt>タイトル</dt>
-                            <dd>
-                              {onOpenOriginSession ? (
-                                <button
-                                  className="origin-session-link"
-                                  type="button"
-                                  onClick={() => onOpenOriginSession(relatedSessionId)}
-                                  aria-label={currentRelatedSession.status === "error"
-                                    ? `${currentRelatedSession.taskTitle}を別Windowで開く（最新情報の取得に失敗）`
-                                    : `${currentRelatedSession.taskTitle}を別Windowで開く`}
-                                >
-                                  <span>{currentRelatedSession.taskTitle}</span>
-                                  <span aria-hidden="true">↗</span>
-                                </button>
-                              ) : currentRelatedSession.taskTitle}
-                            </dd>
+                            <dd>{currentRelatedSession.taskTitle}</dd>
                           </div>
                         ) : null}
                         {outboundTurn && currentRelatedSession?.status === "missing" ? (
                           <div>
                             <dt>タイトル</dt>
-                            <dd>
-                              <button
-                                className="origin-session-link"
-                                type="button"
-                                disabled
-                                aria-label={`${outboundTurn.relatedSession.titleSnapshot}は削除済みのため開けません`}
-                              >
-                                <span>{outboundTurn.relatedSession.titleSnapshot}</span>
-                              </button>
-                            </dd>
+                            <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
                           </div>
                         ) : null}
                         {outboundTurn && (!currentRelatedSession
@@ -3335,18 +3319,7 @@ export function SessionMessageColumn({
                           || (currentRelatedSession.status === "error" && !currentRelatedSession.taskTitle)) ? (
                           <div>
                             <dt>タイトル</dt>
-                            <dd>
-                              <button
-                                className="origin-session-link"
-                                type="button"
-                                disabled
-                                aria-label={!currentRelatedSession || currentRelatedSession.status === "loading"
-                                  ? `${outboundTurn.relatedSession.titleSnapshot}の存在を確認中のため開けません`
-                                  : `${outboundTurn.relatedSession.titleSnapshot}の情報取得に失敗したため開けません`}
-                              >
-                                <span>{outboundTurn.relatedSession.titleSnapshot}</span>
-                              </button>
-                            </dd>
+                            <dd>{outboundTurn.relatedSession.titleSnapshot}</dd>
                           </div>
                         ) : null}
                       </dl>

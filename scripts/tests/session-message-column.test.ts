@@ -1968,7 +1968,7 @@ test("ID-03: Session initiatorは右側originとしてsnapshot名とavatar fallb
   assert.doesNotMatch(html, />CLI<|>MCP</);
 });
 
-test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトルリンクだけを展開する", () => {
+test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトルだけを展開する", () => {
   const html = renderSessionMessageColumn({
     messages: [{ role: "user", text: "別Sessionからの依頼" }],
     expandedArtifacts: { "session-1-0-origin-session": true },
@@ -2004,9 +2004,10 @@ test("ID-05: 呼出元Session情報は保存Session IDと現在のタイトル�
   assert.match(html, /aria-expanded="true"/);
   assert.match(html, /aria-label="呼出元Session情報"/);
   assert.match(html, /class="related-session-route"[^>]*aria-label="保存済み呼出元の現在の呼出元Sessionを別Windowで開く"/);
-  assert.match(html, /<span aria-hidden="true">@<\/span><span class="related-session-character">保存済み呼出元<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">現在の呼出元Session/);
+  assert.match(html, /<span class="related-session-character">保存済み呼出元<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">現在の呼出元Session/);
+  assert.doesNotMatch(html, /<span aria-hidden="true">@<\/span><span class="related-session-character">保存済み呼出元/);
   assert.match(html, /現在の呼出元Session/);
-  assert.match(html, /aria-label="現在の呼出元Sessionを別Windowで開く"/);
+  assert.doesNotMatch(html, /class="origin-session-link"/);
   assert.match(html, /actor-session/);
   assert.doesNotMatch(html, /Character ID|character-snapshot|Workspace|Branch|Provider \/ Model|>呼出元Session</);
 });
@@ -2140,7 +2141,7 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは送信元Agent r
   assert.match(rendered, /class="message-card assistant session-outbound/);
   assert.match(rendered, /avatar-fallback">T/);
   assert.match(rendered, /class="message-character-name">Test Character/);
-  assert.match(rendered, /class="related-session-route"[^>]*disabled=""[^>]*aria-label="Test CharacterのTarget Snapshotは現在開けません"/);
+  assert.match(rendered, /class="related-session-route"[^>]*disabled=""[^>]*aria-label="Test CharacterのTarget Snapshotの存在を確認中のため開けません"/);
   assert.match(rendered, /<span aria-hidden="true">@<\/span><span class="related-session-character">Test Character<\/span><span aria-hidden="true">·<\/span><span class="related-session-title">Target Snapshot/);
   assert.match(rendered, /Target Snapshot/);
   assert.doesNotMatch(rendered, /related-session-role|>executor</);
@@ -2160,10 +2161,11 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージは送信元Agent r
   assert.match(expanded, /FULL-END/);
   assert.match(expanded, /aria-label="Target Snapshotへの送信先Session情報を閉じる"/);
   assert.match(expanded, /aria-label="Target Snapshotへの送信先Session情報"/);
-  assert.match(expanded, /aria-label="Current Targetを別Windowで開く"/);
+  assert.match(expanded, /<dt>タイトル<\/dt><dd>Current Target<\/dd>/);
+  assert.doesNotMatch(expanded, /class="origin-session-link"/);
 });
 
-test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの@行と詳細からcanonical targetを開く", async () => {
+test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの@行だけからcanonical targetを開く", async () => {
   const openedSessionIds: string[] = [];
   const mounted = await mountSessionMessageColumn({
     messages: [{ role: "user", text: "delegated" }],
@@ -2210,14 +2212,7 @@ test("ORCH-OUTBOUND-01: 外向き関連Sessionメッセージの@行と詳細か
     });
     assert.deepEqual(openedSessionIds, ["canonical-target"]);
 
-    const openButton = mounted.container.querySelector<HTMLButtonElement>(
-      "button.origin-session-link[aria-label='Current Targetを別Windowで開く']",
-    );
-    assert.ok(openButton);
-    await act(async () => {
-      openButton.click();
-    });
-    assert.deepEqual(openedSessionIds, ["canonical-target", "canonical-target"]);
+    assert.equal(mounted.container.querySelector("button.origin-session-link"), null);
   } finally {
     await mounted.cleanup();
   }
@@ -2251,7 +2246,7 @@ test("ORCH-OUTBOUND-01: target削除後もsnapshotを表示しopen操作だけ�
     onOpenOriginSession() {},
   });
   assert.match(html, /Deleted Target/);
-  assert.match(html, /disabled="" aria-label="Deleted Targetは削除済みのため開けません"/);
+  assert.match(html, /disabled="" aria-label="Test CharacterのDeleted Targetは削除済みのため開けません"/);
 });
 
 test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示しない", () => {
@@ -2281,7 +2276,7 @@ test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示し�
     turnExecutions: [execution],
     originSessionDetails: [{ sessionId: "target-session", status: "loading" }],
   });
-  assert.match(loading, /Target Snapshotの存在を確認中のため開けません/);
+  assert.match(loading, /Test CharacterのTarget Snapshotの存在を確認中のため開けません/);
   assert.doesNotMatch(loading, /削除済み/);
 
   const error = renderSessionMessageColumn({
@@ -2290,7 +2285,7 @@ test("ORCH-OUTBOUND-STATE-01: targetのloading/errorを削除済みと表示し�
     turnExecutions: [execution],
     originSessionDetails: [{ sessionId: "target-session", status: "error" }],
   });
-  assert.match(error, /Target Snapshotの情報取得に失敗したため開けません/);
+  assert.match(error, /Test CharacterのTarget Snapshotの情報取得に失敗したため開けません/);
   assert.doesNotMatch(error, /削除済み/);
 });
 
