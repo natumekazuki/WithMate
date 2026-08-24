@@ -12,7 +12,12 @@ import {
   serializeGlossaryDocument,
   type ResolvedGlossaryCheckout,
 } from "../../src-electron/glossary-application-service.js";
-import { GLOSSARY_LIMITS, normalizeGlossaryLookup, type GlossaryEntry } from "../../src/glossary-contract.js";
+import {
+  GLOSSARY_LIMITS,
+  normalizeGlossaryLookup,
+  type GlossaryEntry,
+  type GlossaryProjectionState,
+} from "../../src/glossary-contract.js";
 
 const execFileAsync = promisify(execFile);
 const temporaryDirectories: string[] = [];
@@ -614,6 +619,50 @@ describe("Glossary external update projection", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     assert.deepEqual(states, ["watch-error"]);
     dispose();
+  });
+
+  it("初回directory watcher失敗を通知し外部eventなしで自動回復する", async () => {
+    const { root, target } = await createRepository();
+    await writeGlossary(root, [{ term: "Recovered", aliases: [], definition: "current value" }]);
+    let directoryAttempts = 0;
+    const watchers: Array<{ path: string; closed: boolean }> = [];
+    const service = new GlossaryApplicationService({
+      watchRetryMs: 10,
+      watchPath: (targetPath) => {
+        if (targetPath === path.join(root, ".withmate")) {
+          directoryAttempts += 1;
+          if (directoryAttempts === 1) {
+            throw new Error("initial directory watch failed");
+          }
+        }
+        const watcher = { path: targetPath, closed: false };
+        watchers.push(watcher);
+        return {
+          close: () => {
+            watcher.closed = true;
+          },
+          on: () => undefined as never,
+        };
+      },
+    });
+    const states: GlossaryProjectionState[] = [];
+    const dispose = service.subscribe(target, (state) => states.push(state));
+    const waitUntil = async (predicate: () => boolean) => {
+      for (let attempt = 0; attempt < 100 && !predicate(); attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(predicate(), true);
+    };
+
+    await waitUntil(() => states.some((state) => state.status === "watch-error"));
+    await waitUntil(() => states.some((state) => state.status === "valid"));
+
+    assert.ok(directoryAttempts >= 2);
+    const recovered = states.findLast((state) => state.status === "valid");
+    assert.ok(recovered && recovered.status === "valid");
+    assert.deepEqual(recovered.entries.map((entry) => entry.term), ["Recovered"]);
+    dispose();
+    assert.equal(watchers.every((watcher) => watcher.closed), true);
   });
 
   it("root watcher failure後も購読を張り直してmissingから復旧する", async () => {

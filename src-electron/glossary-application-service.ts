@@ -763,7 +763,10 @@ export class GlossaryApplicationService {
 
     try {
       armRootWatcher();
-      void armDirectoryWatcher().catch(emitWatchError);
+      void armDirectoryWatcher().catch((error) => {
+        emitWatchError(error);
+        scheduleRecovery();
+      });
     } catch (error) {
       queueMicrotask(() => emitWatchError(error));
       scheduleRecovery();
