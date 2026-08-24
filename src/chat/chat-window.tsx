@@ -267,6 +267,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
   const onOpenPath = useStableOptionalCallback(props.onOpenPath);
   const onCopyMessageText = useStableOptionalCallback(props.onCopyMessageText);
   const onQuoteMessageText = useStableOptionalCallback(props.onQuoteMessageText);
+  const onActivateGlossaryEntry = useStableOptionalCallback(props.onActivateGlossaryEntry);
 
   return (
     <MemoizedSessionMessageColumn
@@ -281,6 +282,7 @@ export function StableSessionMessageColumn(props: SessionMessageColumnProps) {
       getChangedFilesEmptyText={props.getChangedFilesEmptyText}
       onCopyMessageText={onCopyMessageText}
       onQuoteMessageText={onQuoteMessageText}
+      onActivateGlossaryEntry={onActivateGlossaryEntry}
     />
   );
 }

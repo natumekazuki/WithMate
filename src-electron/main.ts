@@ -208,8 +208,10 @@ import { SessionLaunchSelectionService } from "./session-launch-selection-servic
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import {
-  ManagedMemorySkillService,
+  ManagedSkillDistributionService,
+  type ManagedSkillBundleDescriptor,
   type ManagedMemorySkillSyncResult,
+  WITHMATE_GLOSSARY_SKILL_NAME,
   WITHMATE_MEMORY_SKILL_NAME,
 } from "./managed-memory-skill-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
@@ -251,8 +253,17 @@ import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
 import {
+  GlossaryApplicationService,
+  projectGlossaryCheckoutAuthority,
+} from "./glossary-application-service.js";
+import { GlossaryRuntimeService } from "./glossary-runtime-service.js";
+import { GlossarySessionProjectionService } from "./glossary-session-projection-service.js";
+import { SessionGlossaryWindowSubscriptionCoordinator } from "./session-glossary-window-subscription.js";
+import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-schema.js";
+import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
@@ -301,6 +312,9 @@ const bundledCharacterAuthoringSkillPath = app.isPackaged
 const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
+const bundledGlossarySkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_GLOSSARY_SKILL_NAME);
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
@@ -343,7 +357,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
-let managedMemorySkillService: ManagedMemorySkillService | null = null;
+let managedSkillDistributionService: ManagedSkillDistributionService | null = null;
 let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
@@ -403,6 +417,23 @@ let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
+const glossaryApplicationService = new GlossaryApplicationService();
+const glossarySessionProjectionService = new GlossarySessionProjectionService({
+  applicationService: glossaryApplicationService,
+  getSession,
+  getBindingGeneration: (sessionId, providerId) =>
+    agentRuntimeBindingRegistry.getExecutionGeneration(sessionId, providerId),
+  subscribeBindingChanges: (listener) => agentRuntimeBindingRegistry.subscribeChanges((change) => {
+    listener({ sessionId: change.actorSessionId, providerId: change.providerId });
+  }),
+});
+const glossaryWindowSubscriptionCoordinator = new SessionGlossaryWindowSubscriptionCoordinator<BrowserWindow>({
+  getWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+  subscribe: (sessionId, listener) => glossarySessionProjectionService.subscribe(sessionId, listener),
+  deliver: (window, projection) => {
+    window.webContents.send(WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT, projection);
+  },
+});
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -574,6 +605,72 @@ function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null
   return createMemoryV6ReviewService().forgetEntry(entryId, reason);
 }
 
+async function resolveAgentRuntimeActorSession(sessionId: string) {
+  const session = getSession(sessionId);
+  if (session) {
+    return {
+      id: session.id,
+      providerId: session.provider,
+      characterId: session.characterId,
+      workspacePath: session.workspacePath,
+    };
+  }
+  if (!auxiliarySessionStorage) {
+    return null;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+  return auxiliary
+    ? {
+        id: auxiliary.id,
+        providerId: auxiliary.provider,
+        characterId: auxiliary.characterId,
+        workspacePath: auxiliary.workspacePath,
+      }
+    : null;
+}
+
+function getGlossaryProactiveCreateLimit(): number | null {
+  return requireAppSettingsStorage().getSettings().glossaryProactiveCreateLimit;
+}
+
+async function ensureSessionGlossarySubscription(sessionId: string): Promise<void> {
+  await glossaryWindowSubscriptionCoordinator.ensure(sessionId);
+}
+
+const glossaryRuntimeService = new GlossaryRuntimeService({
+  applicationService: glossaryApplicationService,
+  bindingRegistry: agentRuntimeBindingRegistry,
+  resolveActorSession: resolveAgentRuntimeActorSession,
+  getProactiveCreateLimit: getGlossaryProactiveCreateLimit,
+});
+
+async function issueProviderAgentRuntimeBinding(
+  session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
+  providerId: string,
+) {
+  let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
+  try {
+    glossaryAuthority = projectGlossaryCheckoutAuthority(
+      await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath),
+    );
+  } catch {
+    // Non-Git workspaces keep Memory grants but do not receive glossary authority.
+  }
+  return agentRuntimeBindingRegistry.issueOrReuse({
+    actorSessionId: session.id,
+    providerId,
+    authoritySnapshot: {
+      characterId: session.characterId,
+      sessionKind: session.sessionKind,
+      ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
+    },
+    operationGrants: [
+      ...getMemoryV6AgentRuntimeOperations(),
+      ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
+    ],
+  });
+}
+
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
   if (memoryV6RuntimeApi) {
     return;
@@ -593,19 +690,8 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
       agentRuntimeBindingRegistry,
-      resolveActorSession: async (sessionId) => {
-        const session = getSession(sessionId);
-        if (session) {
-          return { id: session.id, providerId: session.provider, characterId: session.characterId };
-        }
-        if (!auxiliarySessionStorage) {
-          return null;
-        }
-        const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
-        return auxiliary
-          ? { id: auxiliary.id, providerId: auxiliary.provider, characterId: auxiliary.characterId }
-          : null;
-      },
+      resolveActorSession: resolveAgentRuntimeActorSession,
+      routeAgentRuntimeExtension: (request) => glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -659,10 +745,11 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
 
 async function syncManagedMemorySkillBestEffort(): Promise<void> {
   try {
-    const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
-    managedMemorySkillSyncResults = results;
-    const failed = results.filter((result) => result.status === "failed");
-    const collisions = results.filter((result) => result.status === "skipped-collision");
+    const distribution = requireManagedSkillDistributionService();
+    const memoryResults = await distribution.syncConfiguredProviderSkills(MANAGED_MEMORY_SKILL_BUNDLE);
+    managedMemorySkillSyncResults = memoryResults;
+    const failed = memoryResults.filter((result) => result.status === "failed");
+    const collisions = memoryResults.filter((result) => result.status === "skipped-collision");
     for (const result of failed) {
       recordMemoryV6DiagnosticError(
         "memory-v6.skill.sync.provider-failed",
@@ -675,7 +762,7 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       process: "main",
       message: "Memory V6 managed skill sync completed",
       data: {
-        results,
+        results: memoryResults,
       },
     });
   } catch (error) {
@@ -688,6 +775,31 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       kind: "memory-v6.skill.sync.failed",
       process: "main",
       message: "Memory V6 managed skill sync failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+
+  try {
+    const results = await requireManagedSkillDistributionService().syncConfiguredProviderSkills(
+      MANAGED_GLOSSARY_SKILL_BUNDLE,
+    );
+    const failed = results.filter((result) => result.status === "failed");
+    const collisions = results.filter((result) => result.status === "skipped-collision");
+    writeAppLog({
+      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
+      kind: "glossary.skill.sync.completed",
+      process: "main",
+      message: "Glossary managed skill sync completed",
+      data: {
+        results,
+      },
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "glossary.skill.sync.failed",
+      process: "main",
+      message: "Glossary managed skill sync failed",
       error: appLogService.errorToLogError(error),
     });
   }
@@ -1532,6 +1644,11 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
+                getSessionGlossaryProjection: (sessionId) =>
+                  glossarySessionProjectionService.load(sessionId),
+                searchSessionGlossary: (sessionId, request) =>
+                  glossarySessionProjectionService.search(sessionId, request),
+                ensureSessionGlossarySubscription,
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
@@ -2090,18 +2207,31 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   return characterAuthoringService;
 }
 
-function requireManagedMemorySkillService(): ManagedMemorySkillService {
-  if (!managedMemorySkillService) {
-    managedMemorySkillService = new ManagedMemorySkillService({
-      bundledSkillPath: bundledMemorySkillPath,
+const MANAGED_MEMORY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
+  skillName: WITHMATE_MEMORY_SKILL_NAME,
+  bundledSkillPath: bundledMemorySkillPath,
+  documentationRelativePaths: ["SKILL.md", "reference"],
+};
+
+const MANAGED_GLOSSARY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
+  skillName: WITHMATE_GLOSSARY_SKILL_NAME,
+  bundledSkillPath: bundledGlossarySkillPath,
+  documentationRelativePaths: ["SKILL.md", "agents"],
+};
+
+function requireManagedSkillDistributionService(): ManagedSkillDistributionService {
+  if (!managedSkillDistributionService) {
+    managedSkillDistributionService = new ManagedSkillDistributionService({
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getAppVersion: () => app.getVersion(),
       isPackagedApp: () => app.isPackaged,
-      shouldSyncSkillMarkdownOnly: () => requireMemoryCliShimService().isPathShimUsable(),
+      shouldSyncDocumentationOnly: (bundle) => bundle.skillName === WITHMATE_MEMORY_SKILL_NAME
+        ? requireMemoryCliShimService().isPathShimUsable()
+        : false,
     });
   }
 
-  return managedMemorySkillService;
+  return managedSkillDistributionService;
 }
 
 function requireMemoryCliShimService(): MemoryCliShimService {
@@ -2515,15 +2645,12 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getProviderCodingAdapter,
       resetProviderSessionThread,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
-        agentRuntimeBindingRegistry.issueOrReuse({
-          actorSessionId: session.id,
-          providerId: provider.id,
-          authoritySnapshot: {
-            characterId: session.characterId,
-            sessionKind: session.sessionKind,
-          },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
-        }),
+        issueProviderAgentRuntimeBinding(session, provider.id),
+      beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
+        ? glossaryRuntimeService.beginProviderTurn(session.id, binding)
+        : undefined,
+      endProviderAgentRuntimeTurn: (handle) =>
+        glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2735,15 +2862,12 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       resolveProviderCatalog,
       getProviderCodingAdapter,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
-        agentRuntimeBindingRegistry.issueOrReuse({
-          actorSessionId: session.id,
-          providerId: provider.id,
-          authoritySnapshot: {
-            characterId: session.characterId,
-            sessionKind: "auxiliary",
-          },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
-        }),
+        issueProviderAgentRuntimeBinding(session, provider.id),
+      beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
+        ? glossaryRuntimeService.beginProviderTurn(session.id, binding)
+        : undefined,
+      endProviderAgentRuntimeTurn: (handle) =>
+        glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
@@ -3214,7 +3338,7 @@ function closePersistentStores(): void {
   characterStorage = null;
   characterService = null;
   characterAuthoringService = null;
-  managedMemorySkillService = null;
+  managedSkillDistributionService = null;
   memoryCliShimService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;

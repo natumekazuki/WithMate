@@ -6,6 +6,7 @@ import {
   addMateMemoryGenerationPriorityDraft,
   removeMateMemoryGenerationPriorityDraft,
   updateAutoCollapseActionDockOnSend,
+  updateGlossaryProactiveCreateLimitDraft,
   updateCodingProviderEnabledDraft,
   updateCodingProviderInstructionRelativePathDraft,
   updateCodingProviderSkillRelativePathDraft,
@@ -120,6 +121,12 @@ export function handleChangeMemoryFileQuotaMegabytes(input: SettingsDraftActionI
   value: string;
 }): void {
   input.setSettingsDraft((current) => updateMemoryFileQuotaMegabytesDraft(current, input.value));
+}
+
+export function handleChangeGlossaryProactiveCreateLimit(input: SettingsDraftActionInput & {
+  value: string;
+}): void {
+  input.setSettingsDraft((current) => updateGlossaryProactiveCreateLimitDraft(current, input.value));
 }
 
 export function handleChangeUserMicrocopySlot(input: SettingsDraftActionInput & {

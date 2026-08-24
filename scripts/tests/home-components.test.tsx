@@ -79,6 +79,7 @@ describe("HomeSettingsContent", () => {
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
+    onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -109,6 +110,19 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
     assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
     assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+  });
+
+  it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
+    const document = new JSDOM(renderSettings()).window.document;
+    const label = Array.from(document.querySelectorAll("label"))
+      .find((candidate) => candidate.textContent?.includes("Glossary proactive create limit"));
+    const input = label?.querySelector("input");
+
+    assert.equal(input?.type, "number");
+    assert.equal(input?.min, "0");
+    assert.equal(input?.max, "100");
+    assert.equal(input?.value, "5");
+    assert.ok(label?.textContent?.includes("明示的な作成依頼には影響しない"));
   });
 
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {

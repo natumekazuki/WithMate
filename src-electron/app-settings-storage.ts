@@ -26,6 +26,8 @@ const SESSION_LAYOUT_PRIORITY_KEY = "session_layout_priority";
 const LEGACY_SESSION_RIGHT_PANE_VISIBLE_KEY = "session_right_pane_visible";
 const KEYBOARD_SHORTCUTS_KEY = "keyboard_shortcuts_json";
 const MEMORY_FILE_QUOTA_BYTES_KEY = "memory_file_quota_bytes";
+const GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY = "glossary_proactive_create_limit";
+const GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY = "glossary_proactive_create_limit_initialized";
 const CODING_PROVIDER_SETTINGS_KEY = "coding_provider_settings_json";
 const MEMORY_EXTRACTION_PROVIDER_SETTINGS_KEY = "memory_extraction_provider_settings_json";
 const MATE_MEMORY_GENERATION_SETTINGS_KEY = "mate_memory_generation_settings_json";
@@ -161,6 +163,29 @@ export class AppSettingsStorage {
         ON CONFLICT(setting_key) DO NOTHING
       `)
       .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(DEFAULT_APP_SETTINGS.memoryFileQuotaBytes), updatedAt);
+    const glossaryLimitInitialized = this.db
+      .prepare("SELECT 1 FROM app_settings WHERE setting_key = ?")
+      .get(GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY);
+    if (!glossaryLimitInitialized) {
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO NOTHING
+        `)
+        .run(
+          GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY,
+          String(DEFAULT_APP_SETTINGS.glossaryProactiveCreateLimit),
+          updatedAt,
+        );
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO NOTHING
+        `)
+        .run(GLOSSARY_PROACTIVE_CREATE_LIMIT_INITIALIZED_KEY, "true", updatedAt);
+    }
     this.db
       .prepare(`
         INSERT INTO app_settings (setting_key, setting_value, updated_at)
@@ -212,6 +237,7 @@ export class AppSettingsStorage {
       .all() as AppSettingRow[];
 
     const settings = createDefaultAppSettings();
+    let glossaryProactiveCreateLimitFound = false;
     for (const row of rows) {
       if (row.setting_key === MEMORY_GENERATION_ENABLED_KEY) {
         settings.memoryGenerationEnabled = row.setting_value === "true";
@@ -269,6 +295,16 @@ export class AppSettingsStorage {
         settings.memoryFileQuotaBytes = Number(row.setting_value);
         continue;
       }
+      if (row.setting_key === GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY) {
+        glossaryProactiveCreateLimitFound = true;
+        settings.glossaryProactiveCreateLimit = /^\d+$/.test(row.setting_value)
+          ? Number(row.setting_value)
+          : null;
+        continue;
+      }
+    }
+    if (!glossaryProactiveCreateLimitFound) {
+      settings.glossaryProactiveCreateLimit = null;
     }
 
     const providerSettingsJson = rows.find((row) => row.setting_key === CODING_PROVIDER_SETTINGS_KEY)?.setting_value;
@@ -429,6 +465,21 @@ export class AppSettingsStorage {
             updated_at = excluded.updated_at
         `)
         .run(MEMORY_FILE_QUOTA_BYTES_KEY, String(normalized.memoryFileQuotaBytes), updatedAt);
+      this.db
+        .prepare(`
+          INSERT INTO app_settings (setting_key, setting_value, updated_at)
+          VALUES (?, ?, ?)
+          ON CONFLICT(setting_key) DO UPDATE SET
+            setting_value = excluded.setting_value,
+            updated_at = excluded.updated_at
+        `)
+        .run(
+          GLOSSARY_PROACTIVE_CREATE_LIMIT_KEY,
+          normalized.glossaryProactiveCreateLimit === null
+            ? ""
+            : String(normalized.glossaryProactiveCreateLimit),
+          updatedAt,
+        );
       this.db
         .prepare(`
           INSERT INTO app_settings (setting_key, setting_value, updated_at)

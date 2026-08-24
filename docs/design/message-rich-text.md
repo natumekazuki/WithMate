@@ -42,6 +42,13 @@ Session message と Markdown file preview に同じ rich text renderer を使い
 - Markdown file preview は Preview を既定とし、Source は file preview 側が切り替える
 - YAML frontmatter at the start of a document is rendered in Preview as a two-column metadata table when it is a non-empty top-level scalar mapping. The left column is the YAML key and the right column is its scalar value; complex values, multiline scalars, parse failures, and empty frontmatter fall back to a YAML code-like block that preserves its `---` delimiters and line breaks. Long values wrap within the preview surface. Unclosed frontmatter and thematic breaks outside the document-start frontmatter remain ordinary Markdown; Source always keeps the original Markdown.
 
+## Repository Glossary Annotation
+
+- Session messageのPreviewだけが、current valid glossaryからannotationをrender時に導出する。file previewとSource表示へは適用しない。
+- raw Markdownを再解釈せず、Markdown parse後の通常text nodeをrehype段階で置換する。link、URL、inline code、code block、数式projectionは対象外とする。
+- annotation wrapperは元の表示文字列だけを保持する。tooltipはmessage DOM外へportalし、selection、copy、rendered message findのtextを変えない。
+- matcher、Unicode offset、hard limit、keyboard、tooltip、activationの契約はADR 022と`src/glossary/`以下を正本とする。
+
 ## Safety
 
 - user-provided SVG や未 sanitization の HTML へ `dangerouslySetInnerHTML` を使わない。Mermaid は strict mode で生成した projection に限り、既存の専用 renderer 境界で挿入する

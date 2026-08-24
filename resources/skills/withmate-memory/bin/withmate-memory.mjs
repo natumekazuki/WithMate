@@ -1357,7 +1357,6 @@ function validateCharacterMemoryForgetRequest(value) {
 var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
 var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
 var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
-var WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH = "/v1/exchange";
 var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
 function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) {
 	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
@@ -1492,7 +1491,7 @@ async function discoverWithMateMemoryApi(options) {
 }
 async function callWithMateMemoryRuntime(connection, operation, options) {
 	const nonce = randomBytes(16).toString("base64url");
-	const exchangeUrl = new URL(WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
+	const exchangeUrl = new URL(options.exchangePath ?? "/v1/exchange", connection.api.baseUrl);
 	return new Promise((resolve, reject) => {
 		let dispatched = false;
 		let identityVerified = false;
@@ -1568,6 +1567,7 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				adapter: connection.credential.adapter,
 				adapterSecret: connection.credential.adapterSecret,
 				...options.bindingReference ? { bindingReference: options.bindingReference } : {},
+				...options.turnCapability ? { turnCapability: options.turnCapability } : {},
 				operation
 			}));
 		});

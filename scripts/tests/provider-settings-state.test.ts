@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   createDefaultAppSettings,
+  DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT,
   DEFAULT_BACKGROUND_TIMEOUT_SECONDS,
   DEFAULT_MATE_MEMORY_GENERATION_TRIGGER_INTERVAL_MINUTES,
   DEFAULT_MEMORY_EXTRACTION_OUTPUT_TOKENS_THRESHOLD,
@@ -32,6 +33,16 @@ describe("provider-settings-state", () => {
     assert.equal(settings.sessionTurnNotificationEnabled, true);
     assert.equal(settings.sessionTurnNotificationResponsePreviewEnabled, false);
     assert.equal(settings.memoryFileQuotaBytes, MEMORY_FILE_QUOTA_DEFAULT_BYTES);
+    assert.equal(settings.glossaryProactiveCreateLimit, DEFAULT_GLOSSARY_PROACTIVE_CREATE_LIMIT);
+  });
+
+  it("glossary proactive create limitは0から100の整数だけを保持し、欠落・不正値をfallbackしない", () => {
+    assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 0 }).glossaryProactiveCreateLimit, 0);
+    assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 100 }).glossaryProactiveCreateLimit, 100);
+    assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 5.5 }).glossaryProactiveCreateLimit, null);
+    assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: 101 }).glossaryProactiveCreateLimit, null);
+    assert.equal(normalizeAppSettings({ glossaryProactiveCreateLimit: "5" }).glossaryProactiveCreateLimit, null);
+    assert.equal(normalizeAppSettings({}).glossaryProactiveCreateLimit, null);
   });
 
   it("memory extraction threshold は normalize で 1000000 に clamp する", () => {

@@ -10,6 +10,7 @@ import {
 import type { CharacterProfile } from "../../src/app-state.js";
 import type { SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
+import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 const noop = () => {};
 
@@ -428,6 +429,22 @@ test("buildAgentSessionChatWindowProps は central preview 中に message shortc
 
   assert.equal(chatProps.messageColumnProps.isContentActive, true);
   assert.equal(previewProps.messageColumnProps.isContentActive, false);
+});
+
+test("buildAgentSessionChatWindowProps はglossary annotation projectionとactivationをmessage ownerへ渡す", () => {
+  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
+    term: "Runtime",
+    aliases: [],
+    definition: "Runtime definition",
+  }], "revision-1");
+  const onActivateGlossaryEntry = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry,
+  }));
+
+  assert.equal(props.messageColumnProps.glossaryAnnotationMatcher, glossaryAnnotationMatcher);
+  assert.equal(props.messageColumnProps.onActivateGlossaryEntry, onActivateGlossaryEntry);
 });
 
 test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {

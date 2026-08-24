@@ -140,6 +140,15 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
       listOpenCompanionReviewWindowIds: () => [],
       getSession: () => null,
+      getSessionGlossaryProjection: (sessionId) => ({
+        sessionId,
+        scopeRevision: "scope",
+        sequence: 1,
+        checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+        state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+      }),
+      searchSessionGlossary: () => ({ ok: true, revision: null, entries: [], total: 0, offset: 0, pageSize: 50 }),
+      ensureSessionGlossarySubscription: () => {},
       getSessionMessageArtifact: () => null,
       getDiffPreview: () => null,
       async previewComposerInput() {

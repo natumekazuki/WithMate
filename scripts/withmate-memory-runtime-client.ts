@@ -33,6 +33,7 @@ import {
 import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+  WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 
 export type WithMateMemoryApiConnection = {
@@ -292,10 +293,15 @@ export async function discoverWithMateMemoryApi(
 export async function callWithMateMemoryRuntime(
   connection: WithMateMemoryRuntimeConnection,
   operation: WithMateMemoryRuntimeOperation,
-  options: { signal: AbortSignal; bindingReference?: string },
+  options: {
+    signal: AbortSignal;
+    bindingReference?: string;
+    turnCapability?: string;
+    exchangePath?: string;
+  },
 ): Promise<WithMateMemoryRuntimeResponse> {
   const nonce = randomBytes(16).toString("base64url");
-  const exchangeUrl = new URL(WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
+  const exchangeUrl = new URL(options.exchangePath ?? WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH, connection.api.baseUrl);
 
   return new Promise<WithMateMemoryRuntimeResponse>((resolve, reject) => {
     let dispatched = false;
@@ -379,6 +385,7 @@ export async function callWithMateMemoryRuntime(
         adapter: connection.credential.adapter,
         adapterSecret: connection.credential.adapterSecret,
         ...(options.bindingReference ? { bindingReference: options.bindingReference } : {}),
+        ...(options.turnCapability ? { turnCapability: options.turnCapability } : {}),
         operation,
       }));
     });
@@ -401,6 +408,13 @@ export function resolveAgentRuntimeBindingReference(
     throw usageError("WithMate provider execution requires its runtime binding reference.");
   }
   return reference || undefined;
+}
+
+export function resolveAgentRuntimeTurnCapability(
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const capability = env[WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]?.trim();
+  return capability || undefined;
 }
 
 export async function verifyRuntimeIdentity(

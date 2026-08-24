@@ -108,6 +108,10 @@
       {
         "from": "build/cli/withmate-memory.cmd",
         "to": "withmate-memory.cmd"
+      },
+      {
+        "from": "build/cli/withmate-glossary.cmd",
+        "to": "withmate-glossary.cmd"
       }
     ],
     "win": {

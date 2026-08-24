@@ -20,6 +20,7 @@ import type {
 } from "./app-state.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageRichText, type MessageViewMode } from "./MessageRichText.js";
+import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import {
   approvalModeLabel,
   CharacterAvatar,
@@ -74,6 +75,10 @@ import type {
   MessageJumpRequest,
   MessageNavigatorEntry,
 } from "./session-message-collapse.js";
+import {
+  SessionGlossaryPane,
+  type SessionGlossaryPaneProps,
+} from "./glossary/SessionGlossaryPane.js";
 
 function displayApprovalValue(value: string): string {
   return approvalModeLabel(value);
@@ -1642,6 +1647,7 @@ export type SessionContextPaneProps = {
   latestCommandEmptyText?: string;
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
   messageNavigatorCharacter?: CharacterProfile;
+  glossaryPaneProps?: SessionGlossaryPaneProps;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onJumpToMessage?: (key: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
@@ -1762,6 +1768,7 @@ export function SessionContextPane({
   latestCommandEmptyText = "",
   messageNavigatorEntries = [],
   messageNavigatorCharacter,
+  glossaryPaneProps,
   onCycleContextPaneTab,
   onJumpToMessage,
   onOpenCompanionReview,
@@ -1772,6 +1779,12 @@ export function SessionContextPane({
   const taskEntries = backgroundTasks ?? [];
   const availableTabCount = availableContextPaneTabs.length;
   const canCycleContextPaneTab = availableTabCount > 1;
+  const glossaryContentSignature = [
+    glossaryPaneProps?.projection?.scopeRevision ?? "",
+    glossaryPaneProps?.projection?.state.revision ?? "",
+    glossaryPaneProps?.searchQuery ?? "",
+    glossaryPaneProps?.selectedTerm ?? "",
+  ].join("|");
   const contentScrollKey = useMemo(() => {
     switch (activeContextPaneTab) {
       case "latest-command":
@@ -1798,6 +1811,8 @@ export function SessionContextPane({
         return messageNavigatorEntries
           .map((entry) => `${entry.key}:${entry.preview}:${entry.isCollapsed ? "collapsed" : "expanded"}`)
           .join("|");
+      case "glossary":
+        return glossaryContentSignature;
       default:
         return "";
     }
@@ -1808,6 +1823,7 @@ export function SessionContextPane({
     liveRunReasoningText,
     runningDetailsEntries,
     isSelectedSessionRunning,
+    glossaryContentSignature,
     messageNavigatorEntries,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
@@ -1901,7 +1917,9 @@ export function SessionContextPane({
       return;
     }
 
-    contentNode.scrollTop = activeContextPaneTab === "companion-group" || activeContextPaneTab === "messages"
+    contentNode.scrollTop = activeContextPaneTab === "companion-group"
+      || activeContextPaneTab === "messages"
+      || activeContextPaneTab === "glossary"
       ? 0
       : contentNode.scrollHeight;
   }, [contentScrollKey]);
@@ -2142,6 +2160,10 @@ export function SessionContextPane({
               )
             ) : null}
 
+            {activeContextPaneTab === "glossary" && glossaryPaneProps ? (
+              <SessionGlossaryPane {...glossaryPaneProps} />
+            ) : null}
+
             {activeContextPaneTab === "companion-group" ? (
               companionGroupMonitorEntries.length > 0 ? (
                 <div className="command-monitor-confirmed-list">
@@ -2329,6 +2351,8 @@ export type SessionMessageColumnProps = {
   onQuoteMessageText?: (text: string) => void;
   isContentActive?: boolean;
   messageViewMode?: MessageViewMode;
+  glossaryAnnotationMatcher?: GlossaryAnnotationMatcher;
+  onActivateGlossaryEntry?: (canonicalTerm: string) => void;
 };
 
 function getNonBlankSelectionText(selection: Selection): string | null {
@@ -2647,6 +2671,8 @@ export function SessionMessageColumn({
   onQuoteMessageText,
   isContentActive = true,
   messageViewMode = "preview",
+  glossaryAnnotationMatcher,
+  onActivateGlossaryEntry,
 }: SessionMessageColumnProps) {
   const selectionActionOverlay = useContext(SelectionActionOverlayContext);
   const [openArtifactFolds, setOpenArtifactFolds] = useState<Record<string, boolean>>({});
@@ -3175,6 +3201,9 @@ export function SessionMessageColumn({
               displayMode={messageViewMode}
               onOpenPath={onOpenPath}
               markdownLinkFileContext={markdownLinkFileContext}
+              glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+              glossaryAnnotationScopeKey={`${sessionId}:pending:${pendingMessageGroupId ?? "main"}`}
+              onActivateGlossaryEntry={onActivateGlossaryEntry}
             />
           </div>
         ) : null}
@@ -3341,6 +3370,9 @@ export function SessionMessageColumn({
                         displayMode={messageViewMode}
                         onOpenPath={onOpenPath}
                         markdownLinkFileContext={markdownLinkFileContext}
+                        glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                        glossaryAnnotationScopeKey={messageKey}
+                        onActivateGlossaryEntry={onActivateGlossaryEntry}
                       />
                     ) : (
                       <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>

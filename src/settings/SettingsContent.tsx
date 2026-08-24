@@ -1,4 +1,8 @@
 import type { AppSettings } from "../app-state.js";
+import {
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
+} from "../provider-settings-state.js";
 import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
@@ -14,6 +18,8 @@ import {
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP,
+  SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
@@ -54,6 +60,7 @@ export type HomeSettingsContentProps = {
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
+  onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -116,6 +123,7 @@ export function HomeSettingsContent({
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeMemoryFileQuotaMegabytes,
+  onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
@@ -398,6 +406,27 @@ export function HomeSettingsContent({
                   Export Models
                 </button>
               </div>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
+              <strong>Repository Glossary</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
+                <div className="settings-inline-input-row">
+                  <input
+                    type="number"
+                    min={GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN}
+                    max={GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX}
+                    step={1}
+                    value={settingsDraft.glossaryProactiveCreateLimit ?? ""}
+                    onChange={(event) => onChangeGlossaryProactiveCreateLimit(event.target.value)}
+                  />
+                  <span className="settings-inline-unit">terms</span>
+                </div>
+                <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
+              </label>
             </div>
           </section>
 

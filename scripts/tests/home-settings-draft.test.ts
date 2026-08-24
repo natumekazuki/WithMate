@@ -30,6 +30,7 @@ import {
   updateMemoryExtractionTimeoutSeconds,
   updateMemoryExtractionTimeoutSecondsDraft,
   updateMemoryFileQuotaMegabytesDraft,
+  updateGlossaryProactiveCreateLimitDraft,
   updateMemoryGenerationEnabled,
   updateSessionTurnNotificationEnabled,
   updateSessionTurnNotificationResponsePreviewEnabled,
@@ -308,6 +309,14 @@ describe("home-settings-draft", () => {
     const next = updateMemoryFileQuotaMegabytesDraft(draft, "2048");
 
     assert.equal(next.memoryFileQuotaBytes, 2048 * 1024 * 1024);
+  });
+
+  it("glossary proactive create limitは0から100へ収め、空入力を無効値として保持する", () => {
+    const draft = createDefaultAppSettings();
+
+    assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "0").glossaryProactiveCreateLimit, 0);
+    assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "101").glossaryProactiveCreateLimit, 100);
+    assert.equal(updateGlossaryProactiveCreateLimitDraft(draft, "").glossaryProactiveCreateLimit, null);
   });
 
   it("microcopy slot draft は編集中の末尾改行を保持する", () => {

@@ -2574,6 +2574,9 @@ describe("SessionRuntimeService", () => {
     let notificationCount = 0;
     let timingResolutionCount = 0;
     let currentDateCount = 0;
+    const runtimeTurnHandles: object[] = [];
+    const endedRuntimeTurnHandles: unknown[] = [];
+    const seenTurnCapabilities: Array<string | undefined> = [];
 
     const adapter: ProviderCodingAdapter = {
       composePrompt(input) {
@@ -2595,6 +2598,7 @@ describe("SessionRuntimeService", () => {
         attempt += 1;
         seenThreadIds.push(input.session.threadId);
         seenBindingGenerations.push(input.agentRuntimeBinding?.executionGeneration);
+        seenTurnCapabilities.push(input.agentRuntimeBinding?.turnCapability);
         timingContexts.push(input.conversationTimingContext);
         if (attempt === 1) {
           throw new ProviderTurnError("thread not found", createPartialResult({ threadId: "thread-stale" }), false);
@@ -2640,6 +2644,18 @@ describe("SessionRuntimeService", () => {
           transport: "env",
           expiresAt: null,
         };
+      },
+      beginProviderAgentRuntimeTurn({ binding }) {
+        assert.equal(binding?.executionGeneration, "generation-1");
+        const handle = {};
+        runtimeTurnHandles.push(handle);
+        return {
+          handle,
+          binding: binding ? { ...binding, turnCapability: "turn-capability-a" } : null,
+        };
+      },
+      endProviderAgentRuntimeTurn(handle) {
+        endedRuntimeTurnHandles.push(handle);
       },
       getSessionMemory(current) {
         return createSessionMemory(current.id);
@@ -2700,7 +2716,10 @@ describe("SessionRuntimeService", () => {
     assert.equal(result.messages.filter((message) => message.role === "assistant").length, 1);
     assert.deepEqual(seenThreadIds, ["thread-stale", ""]);
     assert.deepEqual(seenBindingGenerations, ["generation-1", "generation-1"]);
+    assert.deepEqual(seenTurnCapabilities, ["turn-capability-a", "turn-capability-a"]);
     assert.equal(bindingGeneration, 1);
+    assert.equal(runtimeTurnHandles.length, 1);
+    assert.deepEqual(endedRuntimeTurnHandles, runtimeTurnHandles);
     assert.deepEqual(reset, [{ providerId: "codex", sessionId: session.id }]);
     assert.deepEqual(invalidated, []);
     assert.equal(storedSessions.length, 3);

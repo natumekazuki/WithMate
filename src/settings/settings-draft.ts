@@ -1,4 +1,6 @@
 import {
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
   MEMORY_FILE_QUOTA_MIN_BYTES,
   getMemoryExtractionProviderSettings,
   getMateMemoryGenerationSettings,
@@ -96,6 +98,23 @@ export function updateMemoryFileQuotaMegabytesDraft(
     ...draft,
     memoryFileQuotaBytes: normalizeMemoryFileQuotaBytes(quotaBytes),
   };
+}
+
+export function updateGlossaryProactiveCreateLimitDraft(
+  draft: AppSettings,
+  rawValue: string,
+): AppSettings {
+  if (!rawValue.trim()) {
+    return { ...draft, glossaryProactiveCreateLimit: null };
+  }
+  const parsed = Number(rawValue);
+  const limit = Number.isInteger(parsed)
+    ? Math.min(
+        GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
+        Math.max(GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN, parsed),
+      )
+    : null;
+  return { ...draft, glossaryProactiveCreateLimit: limit };
 }
 
 export function updateUserMicrocopySlotDraft(

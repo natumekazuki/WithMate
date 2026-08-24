@@ -50,6 +50,9 @@ export type AgentSessionChatProjectionInput = {
   messageJumpRequest?: MessageJumpRequest | null;
   messageNavigatorEntries?: readonly MessageNavigatorEntry[];
   messageNavigatorCharacter?: CharacterProfile;
+  glossaryPaneProps: SessionContextPaneProps["glossaryPaneProps"];
+  glossaryAnnotationMatcher?: SessionMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: SessionMessageColumnProps["onActivateGlossaryEntry"];
   expandedArtifacts: Record<string, boolean>;
   sessionThemeStyle: CSSProperties | undefined;
   sessionDockLayoutRef: RefObject<HTMLDivElement | null>;
@@ -380,6 +383,8 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
       getChangedFilesEmptyText: input.getChangedFilesEmptyText,
       onCopyMessageText: input.onCopyMessageText,
       onQuoteMessageText: input.onQuoteMessageText,
+      glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
+      onActivateGlossaryEntry: input.onActivateGlossaryEntry,
     }),
     composer: composerDockProps.composer,
     compactActionDock: composerDockProps.compactActionDock,
@@ -411,6 +416,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     latestCommandEmptyText: input.latestCommandEmptyText,
     messageNavigatorEntries: input.messageNavigatorEntries,
     messageNavigatorCharacter: input.messageNavigatorCharacter,
+    glossaryPaneProps: input.glossaryPaneProps,
     onJumpToMessage: input.onJumpToMessage,
     onCycleContextPaneTab: input.onCycleContextPaneTab,
     onOpenCompanionReview: input.onOpenCompanionReview,
