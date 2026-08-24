@@ -7455,13 +7455,15 @@ button:disabled {
 }
 
 .glossary-annotation-tooltip-definition {
+  box-sizing: border-box;
   max-height: 190px;
+  padding-bottom: 6px;
   overflow: hidden;
   color: #d7dde7;
   font-size: 0.9rem;
   white-space: pre-wrap;
-  -webkit-mask-image: linear-gradient(to bottom, #000 82%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 82%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.78) 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 10px), rgba(0, 0, 0, 0.78) 100%);
 }
 
 .message-source-text {
