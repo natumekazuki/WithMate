@@ -11,8 +11,8 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
   );
   assert.match(
     stylesSource,
-    /\.composer-setting-field\s*{\s*display:\s*flex;\s*align-items:\s*center;\s*gap:\s*8px;\s*flex:\s*1 1 180px;/,
-    "設定fieldはlabelとselectを横並びにし、利用可能な横幅を使う",
+    /\.composer-setting-field\s*{\s*display:\s*flex;\s*align-items:\s*center;\s*gap:\s*8px;\s*flex:\s*1 1 max-content;/,
+    "設定fieldはlabelとselectを横並びにし、選択肢の内容幅を基準にする",
   );
   assert.match(
     stylesSource,
@@ -21,8 +21,13 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
   );
   assert.match(
     stylesSource,
-    /\.composer-setting-field select\s*{\s*flex:\s*1 1 auto;\s*width:\s*auto;\s*min-width:\s*0;/,
-    "selectはfield内の残り幅を使い、必要に応じて縮小できる",
+    /\.composer-setting-field select\s*{\s*flex:\s*1 1 max-content;\s*width:\s*max-content;\s*min-width:\s*0;/,
+    "selectは最長の選択肢を基準にし、必要に応じて縮小できる",
+  );
+  assert.doesNotMatch(
+    stylesSource,
+    /\.composer-setting-(?:approval|sandbox|model|depth)\s*{\s*flex-basis:/,
+    "設定fieldごとの固定幅を残さない",
   );
   const settingsWrapWidth = Number(
     stylesSource.match(

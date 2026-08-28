@@ -10048,7 +10048,7 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1 1 180px;
+  flex: 1 1 max-content;
   min-width: 0;
 }
 
@@ -10063,22 +10063,6 @@ button:disabled {
   flex: 0 0 auto;
   white-space: nowrap;
   text-transform: uppercase;
-}
-
-.composer-setting-approval {
-  flex-basis: 160px;
-}
-
-.composer-setting-sandbox {
-  flex-basis: 210px;
-}
-
-.composer-setting-model {
-  flex-basis: 220px;
-}
-
-.composer-setting-depth {
-  flex-basis: 110px;
 }
 
 .session-approval-list {
@@ -10101,8 +10085,8 @@ button:disabled {
 }
 
 .composer-setting-field select {
-  flex: 1 1 auto;
-  width: auto;
+  flex: 1 1 max-content;
+  width: max-content;
   min-width: 0;
   max-width: none;
   border: 1px solid rgba(32, 36, 55, 0.08);
