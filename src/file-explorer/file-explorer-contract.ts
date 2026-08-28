@@ -84,7 +84,7 @@ export function areSessionFileResourcesEqual(
     return left.rootId === right.rootId
       && left.repositoryId === right.repositoryId
       && left.commitId === right.commitId
-      && left.relativePath === right.relativePath;
+      && left.relativePath.replaceAll("\\", "/") === right.relativePath.replaceAll("\\", "/");
   }
   return isSessionFileRootResource(left)
     && isSessionFileRootResource(right)

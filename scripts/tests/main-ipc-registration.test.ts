@@ -1044,7 +1044,7 @@ test("File Preview の Git IPC は current root file だけを投影する", asy
   assert.deepEqual(diffRequests, [currentDiff]);
 });
 
-test("commit file preview IPC は owning Session のopenとtokenに結び付いたreadだけを許可する", async () => {
+test("commit file preview IPC はseparator表記が変わるinspect / chunk遷移もcurrent resourceとして認可する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
   const previewWindow = createWindowStub("file:///file-preview.html?token=commit-preview-1");
@@ -1055,7 +1055,18 @@ test("commit file preview IPC は owning Session のopenとtokenに結び付い�
     rootId: "workspace",
     repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
     commitId: "a".repeat(40),
+    relativePath: "src\\current.ts",
+  };
+  const descriptor = {
+    ...resource,
     relativePath: "src/current.ts",
+    name: "current.ts",
+    kind: "text" as const,
+    byteLength: 32,
+    modifiedAt: "2026-08-29T00:00:00.000Z",
+    mimeType: "text/plain",
+    suggestedEncoding: "utf-8" as const,
+    revision: "b".repeat(40),
   };
   const inspectRequests: unknown[] = [];
   const readRequests: unknown[] = [];
@@ -1073,7 +1084,7 @@ test("commit file preview IPC は owning Session のopenとtokenに結び付い�
     },
     inspectSessionFile: async (request: unknown) => {
       inspectRequests.push(request);
-      return null;
+      return descriptor;
     },
     readSessionFileChunk: async (request: unknown) => {
       readRequests.push(request);
@@ -1111,8 +1122,19 @@ test("commit file preview IPC は owning Session のopenとtokenに結び付い�
   );
 
   currentWindow = previewWindow;
-  await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource);
-  const chunkRequest = { ...resource, offset: 0, length: 32, expectedRevision: "b".repeat(40) };
+  const inspected = await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as typeof descriptor;
+  assert.equal(inspected.relativePath, "src/current.ts");
+  const chunkRequest = {
+    resourceKind: inspected.resourceKind,
+    sessionId: inspected.sessionId,
+    rootId: inspected.rootId,
+    repositoryId: inspected.repositoryId,
+    commitId: inspected.commitId,
+    relativePath: inspected.relativePath,
+    offset: 0,
+    length: inspected.byteLength,
+    expectedRevision: inspected.revision,
+  };
   await handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, chunkRequest);
   assert.deepEqual(inspectRequests, [resource]);
   assert.deepEqual(readRequests, [chunkRequest]);
