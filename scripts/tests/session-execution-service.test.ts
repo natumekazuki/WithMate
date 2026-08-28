@@ -257,17 +257,14 @@ describe("SessionExecutionService", () => {
     const fixture = await createFixture();
     const db = new DatabaseSync(fixture.dbPath);
     try {
-      db.prepare(`
+      const insertWorkItem = db.prepare(`
         INSERT INTO work_items_v6 (
           id, contract_revision, root_session_id, creator_session_id, target_session_id,
           parent_work_item_id, goal, scope, completion_criteria, authority,
           source_identity_json, state, revision, created_at, updated_at
         ) VALUES (?, 1, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'pending', 1, ?, ?)
-      `).run(
-        "work-forwarded",
-        "session-1",
-        "session-1",
-        "session-2",
+      `);
+      const commonValues = [
         "goal",
         "scope",
         "done",
@@ -275,6 +272,20 @@ describe("SessionExecutionService", () => {
         JSON.stringify({ workspace: null, repository: null, branch: null, base: null, head: null }),
         CREATED_AT,
         CREATED_AT,
+      ] as const;
+      insertWorkItem.run(
+        "work-run",
+        "session-2",
+        "session-2",
+        "session-1",
+        ...commonValues,
+      );
+      insertWorkItem.run(
+        "work-enqueue",
+        "session-1",
+        "session-1",
+        "session-2",
+        ...commonValues,
       );
     } finally {
       db.close();
@@ -282,14 +293,14 @@ describe("SessionExecutionService", () => {
     try {
       const running = await fixture.service.run({
         ...createInput(1),
-        workItemId: "work-forwarded",
+        workItemId: "work-run",
       });
       const queued = await fixture.service.enqueue({
         ...createInput(2, "session-2"),
-        workItemId: "work-forwarded",
+        workItemId: "work-enqueue",
       });
-      assert.equal(fixture.storage.getExecutionWorkItemId(running.id), "work-forwarded");
-      assert.equal(fixture.storage.getExecutionWorkItemId(queued.id), "work-forwarded");
+      assert.equal(fixture.storage.getExecutionWorkItemId(running.id), "work-run");
+      assert.equal(fixture.storage.getExecutionWorkItemId(queued.id), "work-enqueue");
     } finally {
       fixture.storage.close();
       await rm(fixture.directory, { recursive: true, force: true });
