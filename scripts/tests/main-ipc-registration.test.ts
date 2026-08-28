@@ -1044,6 +1044,109 @@ test("File Preview の Git IPC は current root file だけを投影する", asy
   assert.deepEqual(diffRequests, [currentDiff]);
 });
 
+test("commit file preview IPC はseparator表記が変わるinspect / chunk遷移もcurrent resourceとして認可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=commit-preview-1");
+  let currentWindow = ownerWindow;
+  const resource = {
+    resourceKind: "git-commit-file" as const,
+    sessionId: "aux-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src\\current.ts",
+  };
+  const descriptor = {
+    ...resource,
+    relativePath: "src/current.ts",
+    name: "current.ts",
+    kind: "text" as const,
+    byteLength: 32,
+    modifiedAt: "2026-08-29T00:00:00.000Z",
+    mimeType: "text/plain",
+    suggestedEncoding: "utf-8" as const,
+    revision: "b".repeat(40),
+  };
+  const inspectRequests: unknown[] = [];
+  const readRequests: unknown[] = [];
+  const navigationRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? resource : null
+    ),
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      navigationRequests.push(request);
+      return { status: "opened", targetType: "preview-window", disposition: "created", resource };
+    },
+    inspectSessionFile: async (request: unknown) => {
+      inspectRequests.push(request);
+      return descriptor;
+    },
+    readSessionFileChunk: async (request: unknown) => {
+      readRequests.push(request);
+      return null;
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "resource",
+      resource,
+      view: { kind: "diff", scope: "working-tree" },
+    }) as Promise<unknown>,
+    /do not support working tree diff views/,
+  );
+  assert.deepEqual(navigationRequests, []);
+  const openRequest = { kind: "resource", resource };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, openRequest) as { status: string }).status,
+    "opened",
+  );
+  assert.deepEqual(navigationRequests, [openRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, { resource }) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+
+  currentWindow = previewWindow;
+  const inspected = await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as typeof descriptor;
+  assert.equal(inspected.relativePath, "src/current.ts");
+  const chunkRequest = {
+    resourceKind: inspected.resourceKind,
+    sessionId: inspected.sessionId,
+    rootId: inspected.rootId,
+    repositoryId: inspected.repositoryId,
+    commitId: inspected.commitId,
+    relativePath: inspected.relativePath,
+    offset: 0,
+    length: inspected.byteLength,
+    expectedRevision: inspected.revision,
+  };
+  await handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, chunkRequest);
+  assert.deepEqual(inspectRequests, [resource]);
+  assert.deepEqual(readRequests, [chunkRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, {
+      ...resource,
+      commitId: "c".repeat(40),
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+});
+
 test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");

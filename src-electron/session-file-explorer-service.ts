@@ -11,7 +11,7 @@ import type {
   SessionFileDescriptor,
   SessionFileOpenRequest,
   SessionFileAbsoluteResourceRequest,
-  SessionFileResourceKind,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRootResourceRequest,
   SessionFilePreviewTargetResolution,
@@ -20,12 +20,12 @@ import type {
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
+  detectSessionFileResourceKind,
   detectSessionFileEncoding,
-  isLikelyBinarySessionFile,
-  isUtf16SessionFile,
 } from "../src/file-explorer/file-content-detection.js";
 import type { OpenPathResult } from "../src/withmate-window-types.js";
 import {
@@ -231,52 +231,6 @@ function makeFileRevision(stats: Stats): string {
   return `${stats.dev}:${stats.ino}:${stats.size}:${stats.mtimeMs}:${stats.ctimeMs}`;
 }
 
-function detectResourceKind(filePath: string, bytes: Uint8Array): { kind: SessionFileResourceKind; mimeType: string } {
-  const extension = path.extname(filePath).toLocaleLowerCase("en-US");
-  const isMarkdown = extension === ".md" || extension === ".markdown";
-  const imageTypes: Record<string, string> = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".ico": "image/x-icon",
-    ".avif": "image/avif",
-  };
-  const headerText = new TextDecoder("utf-8").decode(bytes.subarray(0, Math.min(bytes.length, 1024))).trimStart();
-  const detectedImageMime =
-    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
-      ? "image/png"
-      : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-        ? "image/jpeg"
-        : headerText.startsWith("GIF87a") || headerText.startsWith("GIF89a")
-          ? "image/gif"
-          : headerText.startsWith("RIFF") && headerText.slice(8, 12) === "WEBP"
-            ? "image/webp"
-            : bytes[0] === 0x42 && bytes[1] === 0x4d
-              ? "image/bmp"
-              : null;
-  if (extension === ".svg" || /^<\?xml[\s\S]*?<svg\b/i.test(headerText) || /^<svg\b/i.test(headerText)) {
-    return { kind: "svg", mimeType: "image/svg+xml" };
-  }
-  if (detectedImageMime || imageTypes[extension]) {
-    return { kind: "image", mimeType: detectedImageMime ?? imageTypes[extension] };
-  }
-  if (isUtf16SessionFile(bytes)) {
-    return isMarkdown
-      ? { kind: "markdown", mimeType: "text/markdown" }
-      : { kind: "text", mimeType: "text/plain" };
-  }
-  if (isLikelyBinarySessionFile(bytes)) {
-    return { kind: "binary", mimeType: "application/octet-stream" };
-  }
-  if (isMarkdown) {
-    return { kind: "markdown", mimeType: "text/markdown" };
-  }
-  return { kind: "text", mimeType: "text/plain" };
-}
-
 export class SessionFileExplorerService {
   constructor(private readonly deps: SessionFileExplorerServiceDeps) {}
 
@@ -322,11 +276,28 @@ export class SessionFileExplorerService {
   async resolvePreviewTarget(
     sessionId: string,
     target: string,
-    baseResource?: SessionFileResourceRequest,
+    baseResource?: SessionFilePreviewResourceRequest,
   ): Promise<SessionFilePreviewTargetResolution> {
     const context = await this.deps.getSessionContext(sessionId);
     if (!context) {
       return { type: "failed", targetPath: target, message: "Session が見つからないよ。" };
+    }
+
+    try {
+      const externalTarget = resolveOpenPathTarget(target, { baseDirectory: context.workspacePath });
+      if (externalTarget.type === "external-url") {
+        return externalTarget;
+      }
+    } catch {
+      // Local target failures are reported after applying the appropriate preview base.
+    }
+
+    if (baseResource && isSessionFileGitCommitResource(baseResource)) {
+      return {
+        type: "not-previewable",
+        targetPath: target,
+        message: "Relative links from a Git commit file preview are not available.",
+      };
     }
 
     let baseDirectory = context.workspacePath;
@@ -652,7 +623,7 @@ export class SessionFileExplorerService {
         throw new Error("inspection 中に file が変更されたよ。再読み込みしてね。");
       }
       const inspectedBytes = inspection.subarray(0, bytesRead);
-      const resource = detectResourceKind(targetRealPath, inspectedBytes);
+      const resource = detectSessionFileResourceKind(targetRealPath, inspectedBytes);
       return {
         ...request,
         name: path.basename(targetRealPath),

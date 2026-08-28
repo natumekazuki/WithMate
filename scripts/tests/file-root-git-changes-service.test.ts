@@ -243,6 +243,95 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
     if (binaryDiff.status === "ok") {
       assert.match(binaryDiff.patch, /Binary files .* differ/);
       assert.doesNotMatch(binaryDiff.patch, /GIT binary patch/);
+      assert.deepEqual(binaryDiff.previewResource, {
+        resourceKind: "git-commit-file",
+        sessionId: "session-1",
+        repositoryId: repository.repositoryId,
+        rootId: repository.rootId,
+        commitId: binaryCommit.id,
+        relativePath: "binary.bin",
+      });
+      let blobReadAttempts = 0;
+      let allowBlobInspection = false;
+      const metadataOnlyService = new FileRootGitChangesService({
+        resolveRootContext: async () => ({ rootPath: repositoryPath }),
+        resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+        runGit: async (workspacePath, args, options) => {
+          if (args.some((arg, index) => arg === "cat-file" && args[index + 1] === "blob")) {
+            blobReadAttempts += 1;
+            if (!allowBlobInspection) {
+              throw new Error("Blob contents must not be read during preview Window admission.");
+            }
+            assert.equal(options.captureStdoutBytes, 8 * 1024);
+          }
+          return runGitForTest(workspacePath, args, {
+            env: options.env,
+            executablePath: options.executablePath,
+            stdin: options.stdin,
+            signal: options.signal,
+          });
+        },
+      });
+      assert.deepEqual(
+        await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource!),
+        { name: "binary.bin" },
+      );
+      assert.equal(blobReadAttempts, 0);
+      await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));
+      allowBlobInspection = true;
+      const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource!);
+      assert.equal(blobReadAttempts, 1);
+      assert.equal(descriptor.revision.length, binaryCommit.id.length);
+      assert.equal(descriptor.kind, "binary");
+      assert.equal(descriptor.byteLength, 5);
+      const chunk = await service.readHistoryFileChunk({
+        ...binaryDiff.previewResource!,
+        offset: 0,
+        length: descriptor.byteLength,
+        expectedRevision: descriptor.revision,
+      });
+      assert.deepEqual([...new Uint8Array(chunk.data)], [0, 1, 2, 3, 255]);
+    }
+
+    await unlink(path.join(repositoryPath, "binary.bin"));
+    assert.equal((await runGitForTest(repositoryPath, ["add", "--all", "binary.bin"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "delete binary",
+    ])).exitCode, 0);
+    const deletedCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    const deletedDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: deletedCommitId,
+      relativePath: "binary.bin",
+    });
+    assert.equal(deletedDiff.status, "ok");
+    if (deletedDiff.status === "ok") {
+      assert.equal(deletedDiff.previewResource, null);
+    }
+    assert.equal((await runGitForTest(repositoryPath, [
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${binaryCommit.id},vendor/example`,
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "add gitlink",
+    ])).exitCode, 0);
+    const gitlinkCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    const gitlinkDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: gitlinkCommitId,
+      relativePath: "vendor/example",
+    });
+    assert.equal(gitlinkDiff.status, "ok");
+    if (gitlinkDiff.status === "ok") {
+      assert.equal(gitlinkDiff.previewResource, null);
     }
 
     const renameCommit = page.page.entries.find((entry) => entry.subject === "rename");

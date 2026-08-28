@@ -287,6 +287,59 @@ test("AuxWindowService は file preview entry load 失敗時に registry と win
   assert.equal(service.getFilePreviewPayload("preview-1")?.windowTitle, "File Preview");
 });
 
+test("AuxWindowService は commit file preview を repository・commit・path 単位で再利用する", async () => {
+  const stubs: ReturnType<typeof createWindowStub>[] = [];
+  let tokenSequence = 0;
+  const service = new AuxWindowService({
+    createWindow() {
+      const stub = createWindowStub();
+      stubs.push(stub);
+      return stub.window;
+    },
+    async loadHomeEntry() {},
+    async loadDiffEntry() {},
+    async loadFilePreviewEntry() {},
+    async loadChatEntry() {},
+    async loadCompanionMergeReviewEntry() {},
+    async loadCharacterEditorEntry() {},
+    onCompanionReviewWindowsChanged() {},
+    generateDiffToken() {
+      tokenSequence += 1;
+      return `commit-preview-${tokenSequence}`;
+    },
+  });
+  const resource = {
+    resourceKind: "git-commit-file" as const,
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src/file.ts",
+  };
+  const first = await service.openFilePreviewWindow({
+    resource,
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+  const reused = await service.openFilePreviewWindow({
+    resource: { ...resource },
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+  const otherCommit = await service.openFilePreviewWindow({
+    resource: { ...resource, commitId: "b".repeat(40) },
+    ownerSessionId: "session-1",
+    windowTitle: "src/file.ts",
+  });
+
+  assert.equal(first.disposition, "created");
+  assert.equal(reused.disposition, "focused");
+  assert.equal(reused.window, first.window);
+  assert.equal(otherCommit.disposition, "created");
+  assert.notEqual(otherCommit.window, first.window);
+  assert.equal(stubs.length, 2);
+});
+
 test("AuxWindowService は absolute file preview を path 単位で再利用し close 後に破棄する", async () => {
   const stubs: ReturnType<typeof createWindowStub>[] = [];
   const createdOptions: Array<Record<string, unknown>> = [];

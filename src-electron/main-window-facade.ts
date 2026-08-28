@@ -3,7 +3,7 @@ import type { BrowserWindow } from "electron";
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type {
   SessionFilePreviewWindowPayload,
-  SessionFileResourceRequest,
+  SessionFilePreviewResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { AuxWindowService } from "./aux-window-service.js";
 import type { SessionWindowBridge } from "./session-window-bridge.js";
@@ -69,7 +69,7 @@ export class MainWindowFacade {
   getFilePreviewWindowResource(
     window: BrowserWindow,
     sessionId: string,
-  ): SessionFileResourceRequest | null {
+  ): SessionFilePreviewResourceRequest | null {
     return this.deps.getAuxWindowService().getFilePreviewWindowResource(window, sessionId);
   }
 

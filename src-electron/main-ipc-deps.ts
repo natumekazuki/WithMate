@@ -79,6 +79,7 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -158,7 +159,7 @@ export type MainIpcWindowDepsArgs = {
   openCharacterEditorWindow(characterId?: string | null): Promise<BrowserWindow>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<BrowserWindow>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
-  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<BrowserWindow>;
   openCompanionMergeWindow(sessionId: string): Promise<BrowserWindow>;
@@ -295,7 +296,7 @@ export type MainIpcSessionQueryDepsArgs = {
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
-  inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
+  inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
   openSessionFilePreviewWindow(

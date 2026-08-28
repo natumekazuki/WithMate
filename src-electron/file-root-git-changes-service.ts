@@ -33,7 +33,15 @@ import type {
   FileRootGitHistoryRefKind,
   FileRootGitHistoryRepositoriesRequest,
   FileRootGitHistoryRepositoriesResult,
+  SessionFileChunkRequest,
+  SessionFileChunkResult,
+  SessionFileDescriptor,
+  SessionFileGitCommitResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
+import {
+  detectSessionFileEncoding,
+  detectSessionFileResourceKind,
+} from "../src/file-explorer/file-content-detection.js";
 
 export type FileRootGitContext = {
   rootPath: string;
@@ -70,6 +78,7 @@ type WorkspaceGitProcessOptions = {
   env: NodeJS.ProcessEnv;
   stdin?: Buffer;
   signal?: AbortSignal;
+  captureStdoutBytes?: number;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
 };
@@ -92,6 +101,8 @@ const HISTORY_PAGE_SIZE = 100;
 const MAX_HISTORY_LIST_STDOUT_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_DETAIL_STDOUT_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_DIFF_STDOUT_BYTES = 8 * 1024 * 1024;
+const MAX_HISTORY_FILE_BLOB_BYTES = 64 * 1024 * 1024;
+const HISTORY_FILE_INSPECTION_BYTES = 8 * 1024;
 const MAX_HISTORY_STDERR_BYTES = 64 * 1024;
 const HISTORY_LOG_FORMAT = "%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P%x00%D%x00%x01";
 let defaultGitExecutablePath: Promise<string> | null = null;
@@ -407,6 +418,7 @@ function runGitProcess(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
+    let capturedStdoutBytes = 0;
     let stderrBytes = 0;
     let processError: Error | null = null;
     let outputLimitError: Error | null = null;
@@ -425,7 +437,14 @@ function runGitProcess(
       child.kill();
     };
     childStdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
+      const remainingCaptureBytes = options.captureStdoutBytes === undefined
+        ? chunk.length
+        : Math.max(0, options.captureStdoutBytes - capturedStdoutBytes);
+      if (remainingCaptureBytes > 0) {
+        const capturedChunk = chunk.subarray(0, remainingCaptureBytes);
+        stdoutChunks.push(capturedChunk);
+        capturedStdoutBytes += capturedChunk.length;
+      }
       stdoutBytes += chunk.length;
       if (options.maxStdoutBytes !== undefined && stdoutBytes > options.maxStdoutBytes) {
         outputLimitError = new Error("Git stdout exceeded the configured resource limit.");
@@ -775,6 +794,12 @@ type WorkspaceGitOperation = {
   signal: AbortSignal;
 };
 
+type HistoryFileBlobEntry = {
+  mode: string;
+  objectId: string;
+  byteLength: number;
+};
+
 type DirectoryLease = {
   fileHandle: FileHandle;
   fileName: string;
@@ -983,7 +1008,7 @@ export class FileRootGitChangesService {
     signal?: AbortSignal,
     indexFilePath?: string,
     safeDirectoryPaths: string[] = [],
-    limits?: { maxStdoutBytes?: number; maxStderrBytes?: number },
+    limits?: { captureStdoutBytes?: number; maxStdoutBytes?: number; maxStderrBytes?: number },
   ): Promise<{ exitCode: number; stdout: Buffer; stderr: string }> {
     throwIfAborted(signal);
     const executablePath = await this.#getGitExecutablePath();
@@ -1002,6 +1027,9 @@ export class FileRootGitChangesService {
     if (limits?.maxStdoutBytes !== undefined) {
       options.maxStdoutBytes = limits.maxStdoutBytes;
     }
+    if (limits?.captureStdoutBytes !== undefined) {
+      options.captureStdoutBytes = limits.captureStdoutBytes;
+    }
     if (limits?.maxStderrBytes !== undefined) {
       options.maxStderrBytes = limits.maxStderrBytes;
     }
@@ -1016,7 +1044,9 @@ export class FileRootGitChangesService {
     if (limits?.maxStderrBytes !== undefined && Buffer.byteLength(result.stderr, "utf8") > limits.maxStderrBytes) {
       throw new Error("Git stderr exceeded the configured resource limit.");
     }
-    return result;
+    return limits?.captureStdoutBytes !== undefined && result.stdout.length > limits.captureStdoutBytes
+      ? { ...result, stdout: result.stdout.subarray(0, limits.captureStdoutBytes) }
+      : result;
   }
 
   async #readWorkTreeConfigArgs(operation: WorkspaceGitOperation): Promise<string[]> {
@@ -1160,7 +1190,7 @@ export class FileRootGitChangesService {
     operation: WorkspaceGitOperation,
     args: string[],
     stdin?: Buffer,
-    limits?: { maxStdoutBytes?: number; maxStderrBytes?: number },
+    limits?: { captureStdoutBytes?: number; maxStdoutBytes?: number; maxStderrBytes?: number },
   ): Promise<{ exitCode: number; stdout: Buffer; stderr: string }> {
     await this.#assertOperationIdentity(operation);
     let result: GitCommandResult;
@@ -2024,6 +2054,247 @@ export class FileRootGitChangesService {
     return commit?.id === normalizedCommitId ? commit : null;
   }
 
+  async #readHistoryFileBlobEntry(
+    operation: WorkspaceGitOperation,
+    commitId: string,
+    relativePath: string,
+  ): Promise<HistoryFileBlobEntry | null> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "ls-tree",
+      "-z",
+      "-l",
+      "--full-tree",
+      commitId,
+      "--",
+      `:(top,literal)${relativePath}`,
+    ], undefined, {
+      maxStdoutBytes: MAX_HISTORY_DETAIL_STDOUT_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || "Git commit file metadata could not be read.");
+    }
+    const records = result.stdout.toString("utf8").split("\0").filter(Boolean);
+    if (records.length !== 1) {
+      return null;
+    }
+    const separatorIndex = records[0]!.indexOf("\t");
+    if (separatorIndex < 0 || records[0]!.slice(separatorIndex + 1) !== relativePath) {
+      return null;
+    }
+    const [mode, objectType, objectId, byteLengthText] = records[0]!
+      .slice(0, separatorIndex)
+      .trim()
+      .split(/\s+/u);
+    const byteLength = Number(byteLengthText);
+    if (
+      objectType !== "blob"
+      || !mode
+      || !objectId
+      || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(objectId)
+      || !Number.isSafeInteger(byteLength)
+      || byteLength < 0
+      || byteLength > MAX_HISTORY_FILE_BLOB_BYTES
+    ) {
+      return null;
+    }
+    return { mode, objectId, byteLength };
+  }
+
+  async #readHistoryFileBlob(
+    operation: WorkspaceGitOperation,
+    entry: HistoryFileBlobEntry,
+  ): Promise<Buffer> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "cat-file",
+      "blob",
+      entry.objectId,
+    ], undefined, {
+      maxStdoutBytes: MAX_HISTORY_FILE_BLOB_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0 || result.stdout.length !== entry.byteLength) {
+      throw new Error(result.stderr || "Git commit file contents could not be read.");
+    }
+    return result.stdout;
+  }
+
+  async #readHistoryFileBlobPrefix(
+    operation: WorkspaceGitOperation,
+    entry: HistoryFileBlobEntry,
+  ): Promise<Buffer> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "cat-file",
+      "blob",
+      entry.objectId,
+    ], undefined, {
+      captureStdoutBytes: HISTORY_FILE_INSPECTION_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || "Git commit file contents could not be inspected.");
+    }
+    return result.stdout;
+  }
+
+  async #resolveHistoryFile(
+    operation: WorkspaceGitOperation,
+    request: SessionFileGitCommitResourceRequest,
+  ): Promise<{
+    commit: FileRootGitHistoryCommit;
+    entry: HistoryFileBlobEntry;
+    relativePath: string;
+  }> {
+    const relativePath = normalizeGitRelativePath(request.relativePath);
+    const commit = await this.#readHistoryCommit(operation, request.commitId);
+    if (!commit) {
+      throw new Error("The selected commit could not be found.");
+    }
+    const entry = await this.#readHistoryFileBlobEntry(operation, commit.id, relativePath);
+    if (!entry) {
+      throw new Error("The selected file is not previewable at this commit.");
+    }
+    return { commit, entry, relativePath };
+  }
+
+  async #inspectHistoryFileRequest(
+    request: SessionFileGitCommitResourceRequest,
+    signal: AbortSignal,
+  ): Promise<SessionFileDescriptor> {
+    const pendingCleanupError = await this.#cleanupPendingResources();
+    if (pendingCleanupError) {
+      throw pendingCleanupError;
+    }
+    const operation = await this.#resolveHistoryOperation(request, signal);
+    if (!("workspacePath" in operation)) {
+      throw new Error(operation.message);
+    }
+    try {
+      const { commit, entry, relativePath } = await this.#resolveHistoryFile(operation, request);
+      const inspectedBytes = await this.#readHistoryFileBlobPrefix(operation, entry);
+      const resource = detectSessionFileResourceKind(relativePath, inspectedBytes);
+      return {
+        ...request,
+        commitId: commit.id,
+        relativePath,
+        name: path.posix.basename(relativePath),
+        kind: resource.kind,
+        byteLength: entry.byteLength,
+        modifiedAt: commit.authoredAt,
+        mimeType: resource.mimeType,
+        suggestedEncoding: detectSessionFileEncoding(inspectedBytes),
+        revision: entry.objectId,
+      };
+    } finally {
+      const cleanupError = await this.#closeOperation(operation);
+      if (cleanupError) {
+        throw cleanupError;
+      }
+    }
+  }
+
+  async inspectHistoryFile(request: SessionFileGitCommitResourceRequest): Promise<SessionFileDescriptor> {
+    normalizeHistoryObjectId(request.commitId);
+    normalizeGitRelativePath(request.relativePath);
+    return runWorkspaceGitOperationWithAdmission(
+      `${request.sessionId}:${request.repositoryId}:history:file:inspect:${request.commitId}:${request.relativePath}`,
+      this.#operationTimeoutMs,
+      (signal) => this.#inspectHistoryFileRequest(request, signal),
+    );
+  }
+
+  async #resolveHistoryFilePreviewRequest(
+    request: SessionFileGitCommitResourceRequest,
+    signal: AbortSignal,
+  ): Promise<{ name: string }> {
+    const pendingCleanupError = await this.#cleanupPendingResources();
+    if (pendingCleanupError) {
+      throw pendingCleanupError;
+    }
+    const operation = await this.#resolveHistoryOperation(request, signal);
+    if (!("workspacePath" in operation)) {
+      throw new Error(operation.message);
+    }
+    try {
+      const { relativePath } = await this.#resolveHistoryFile(operation, request);
+      return { name: path.posix.basename(relativePath) };
+    } finally {
+      const cleanupError = await this.#closeOperation(operation);
+      if (cleanupError) {
+        throw cleanupError;
+      }
+    }
+  }
+
+  async resolveHistoryFilePreview(
+    request: SessionFileGitCommitResourceRequest,
+  ): Promise<{ name: string }> {
+    normalizeHistoryObjectId(request.commitId);
+    normalizeGitRelativePath(request.relativePath);
+    return runWorkspaceGitOperationWithAdmission(
+      `${request.sessionId}:${request.repositoryId}:history:file:open:${request.commitId}:${request.relativePath}`,
+      this.#operationTimeoutMs,
+      (signal) => this.#resolveHistoryFilePreviewRequest(request, signal),
+    );
+  }
+
+  async #readHistoryFileChunkRequest(
+    request: SessionFileChunkRequest & SessionFileGitCommitResourceRequest,
+    signal: AbortSignal,
+  ): Promise<SessionFileChunkResult> {
+    const pendingCleanupError = await this.#cleanupPendingResources();
+    if (pendingCleanupError) {
+      throw pendingCleanupError;
+    }
+    const operation = await this.#resolveHistoryOperation(request, signal);
+    if (!("workspacePath" in operation)) {
+      throw new Error(operation.message);
+    }
+    try {
+      const { entry } = await this.#resolveHistoryFile(operation, request);
+      if (entry.objectId !== request.expectedRevision) {
+        throw new Error("The Git commit file revision is no longer available.");
+      }
+      const bytes = await this.#readHistoryFileBlob(operation, entry);
+      const end = request.offset + Math.min(
+        request.length,
+        Math.max(0, entry.byteLength - request.offset),
+      );
+      const chunk = Uint8Array.from(bytes.subarray(request.offset, end));
+      return {
+        data: chunk.buffer,
+        offset: request.offset,
+        nextOffset: end,
+        totalBytes: entry.byteLength,
+        done: end >= entry.byteLength,
+        revision: entry.objectId,
+      };
+    } finally {
+      const cleanupError = await this.#closeOperation(operation);
+      if (cleanupError) {
+        throw cleanupError;
+      }
+    }
+  }
+
+  async readHistoryFileChunk(
+    request: SessionFileChunkRequest & SessionFileGitCommitResourceRequest,
+  ): Promise<SessionFileChunkResult> {
+    normalizeHistoryObjectId(request.commitId);
+    normalizeGitRelativePath(request.relativePath);
+    if (!Number.isSafeInteger(request.offset) || request.offset < 0) {
+      throw new Error("Git commit file chunk offset is invalid.");
+    }
+    if (!Number.isSafeInteger(request.length) || request.length < 1 || request.length > MAX_HISTORY_FILE_BLOB_BYTES) {
+      throw new Error(`Git commit file chunk length must be between 1 and ${MAX_HISTORY_FILE_BLOB_BYTES} bytes.`);
+    }
+    return runWorkspaceGitOperationWithAdmission(
+      `${request.sessionId}:${request.repositoryId}:history:file:read:${request.commitId}:${request.relativePath}`,
+      this.#operationTimeoutMs,
+      (signal) => this.#readHistoryFileChunkRequest(request, signal),
+    );
+  }
+
   async #listHistoryCommitsInOperation(
     operation: WorkspaceGitOperation,
     request: FileRootGitHistoryCommitsRequest,
@@ -2262,9 +2533,29 @@ export class FileRootGitChangesService {
             response = { status: "failed", message: result.stderr || "Git commit diff could not be read." };
           } else {
             const patch = result.stdout.toString("utf8");
-            response = patch
-              ? { status: "ok", commitId: commit.id, relativePath, patch }
-              : { status: "not-changed", message: "Git returned an empty diff for this commit." };
+            if (patch) {
+              const previewEntry = relativePath
+                ? await this.#readHistoryFileBlobEntry(operation, commit.id, relativePath)
+                : null;
+              response = {
+                status: "ok",
+                commitId: commit.id,
+                relativePath,
+                patch,
+                previewResource: relativePath && previewEntry
+                  ? {
+                      resourceKind: "git-commit-file",
+                      sessionId: request.sessionId,
+                      rootId: request.rootId,
+                      repositoryId: request.repositoryId,
+                      commitId: commit.id,
+                      relativePath,
+                    }
+                  : null,
+              };
+            } else {
+              response = { status: "not-changed", message: "Git returned an empty diff for this commit." };
+            }
           }
         }
       }

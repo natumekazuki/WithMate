@@ -166,6 +166,7 @@ import type {
   FileRootFileDiffRequest,
   FileRootGitDiffScope,
   FileRootGitHistoryDiffRequest,
+  SessionFileGitCommitResourceRequest,
   SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
 import {
@@ -558,6 +559,7 @@ export default function AgentSessionWindowApp() {
     request: FileRootGitHistoryDiffRequest;
     generation: number;
     patch: string;
+    previewResource: SessionFileGitCommitResourceRequest | null;
   } | null>(null);
   const [fileRootGitHistoryDiffPendingPreview, setFileRootGitHistoryDiffPendingPreview] = useState<{
     request: FileRootGitHistoryDiffRequest;
@@ -1208,7 +1210,12 @@ export default function AgentSessionWindowApp() {
       if (result.status !== "ok") {
         return result.message;
       }
-      setFileRootGitHistoryDiffPreview({ request, generation: revision, patch: result.patch });
+      setFileRootGitHistoryDiffPreview({
+        request,
+        generation: revision,
+        patch: result.patch,
+        previewResource: result.previewResource,
+      });
       setFileRootGitHistoryDiffPendingPreview(null);
       return null;
     }).catch((error) => (
@@ -1238,7 +1245,12 @@ export default function AgentSessionWindowApp() {
       if (result.status !== "ok") {
         return result.message;
       }
-      setFileRootGitHistoryDiffPreview({ request: preview.request, generation: revision, patch: result.patch });
+      setFileRootGitHistoryDiffPreview({
+        request: preview.request,
+        generation: revision,
+        patch: result.patch,
+        previewResource: result.previewResource,
+      });
       return null;
     } catch (error) {
       return fileRootGitHistoryDiffRequestRevisionRef.current === revision
@@ -1250,6 +1262,19 @@ export default function AgentSessionWindowApp() {
       }
     }
   }, [activeRunSessionId, fileRootGitHistoryDiffPreview, withmateApi]);
+  const handleOpenFileRootGitHistoryPreview = useCallback(async (
+    resource: SessionFileGitCommitResourceRequest,
+  ): Promise<string | null> => {
+    if (!withmateApi || resource.sessionId !== activeRunSessionId) {
+      return "Git history file preview is not available for this session.";
+    }
+    try {
+      const result = await withmateApi.openSessionFilePreviewWindow({ kind: "resource", resource });
+      return result.status === "opened" ? null : result.message;
+    } catch (error) {
+      return error instanceof Error ? error.message : "The Git history file preview could not be opened.";
+    }
+  }, [activeRunSessionId, withmateApi]);
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
@@ -4221,6 +4246,9 @@ export default function AgentSessionWindowApp() {
       backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
       onCopyText={handleCopyMessageText}
       onQuoteText={handleQuoteMessageText}
+      onOpenPreview={fileRootGitHistoryDiffPreview.previewResource
+        ? () => handleOpenFileRootGitHistoryPreview(fileRootGitHistoryDiffPreview.previewResource!)
+        : undefined}
       onReload={handleReloadFileRootGitHistoryDiff}
       reloadPending={fileRootGitHistoryDiffLoading}
       chatNotice={previewChatNotice}

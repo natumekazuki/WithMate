@@ -8,6 +8,7 @@ import type {
 } from "../src/file-explorer/session-file-object-copy-contract.js";
 import type {
   SessionFilePreviewTargetResolution,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import { isSessionFileRootResource } from "../src/file-explorer/file-explorer-contract.js";
@@ -20,7 +21,7 @@ type SessionFileAuthorizationBoundary = {
   resolvePreviewTarget(
     sessionId: string,
     target: string,
-    baseResource?: SessionFileResourceRequest,
+    baseResource?: SessionFilePreviewResourceRequest,
   ): Promise<SessionFilePreviewTargetResolution>;
   withAuthorizedFilePath<T>(
     request: SessionFileResourceRequest,

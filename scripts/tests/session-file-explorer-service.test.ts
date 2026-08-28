@@ -85,6 +85,27 @@ test("SessionFileExplorerService は preview link を最も具体的な認可 ro
       type: "external-url",
       target: "https://example.com/file.md",
     });
+    const commitResource = {
+      resourceKind: "git-commit-file" as const,
+      sessionId: "session-1",
+      rootId: "workspace",
+      repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+      commitId: "a".repeat(40),
+      relativePath: "README.md",
+    };
+    assert.deepEqual(await service.resolvePreviewTarget(
+      "session-1",
+      "https://example.com/from-commit",
+      commitResource,
+    ), {
+      type: "external-url",
+      target: "https://example.com/from-commit",
+    });
+    assert.deepEqual(await service.resolvePreviewTarget("session-1", "./next.md", commitResource), {
+      type: "not-previewable",
+      targetPath: "./next.md",
+      message: "Relative links from a Git commit file preview are not available.",
+    });
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }

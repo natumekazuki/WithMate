@@ -18,13 +18,14 @@ import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
   SessionFileDescriptor,
-  SessionFileResourceRequest,
+  SessionFilePreviewResourceRequest,
   SessionFileRoot,
   FileRootGitDiffScope,
 } from "./file-explorer-contract.js";
 import {
   getSessionFileResourceDisplayPath,
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "./file-explorer-contract.js";
 import {
@@ -95,7 +96,7 @@ type FilePreviewApi = Pick<
 
 type SessionFilePreviewProps = {
   api: FilePreviewApi | null;
-  request: SessionFileResourceRequest;
+  request: SessionFilePreviewResourceRequest;
   backNavigation?: {
     label: string;
     onBack: () => void;
@@ -198,9 +199,18 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
-  const resource = isSessionFileAbsoluteResource(descriptor)
+  const resource: SessionFilePreviewResourceRequest = isSessionFileAbsoluteResource(descriptor)
     ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
-    : {
+    : isSessionFileGitCommitResource(descriptor)
+      ? {
+          resourceKind: "git-commit-file",
+          sessionId: descriptor.sessionId,
+          rootId: descriptor.rootId,
+          repositoryId: descriptor.repositoryId,
+          commitId: descriptor.commitId,
+          relativePath: descriptor.relativePath,
+        }
+      : {
         sessionId: descriptor.sessionId,
         rootId: descriptor.rootId,
         relativePath: descriptor.relativePath,
@@ -209,7 +219,9 @@ async function readWholeResource(
     const result = await api.readSessionFileChunk({
       ...resource,
       offset,
-      length: Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
+      length: isSessionFileGitCommitResource(resource)
+        ? descriptor.byteLength - offset
+        : Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
       expectedRevision: descriptor.revision,
     });
     if (!isCurrent()) {
@@ -560,10 +572,13 @@ export function SessionFilePreview({
   chatNotice = "",
 }: SessionFilePreviewProps) {
   const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
-  const markdownLinkFileContext = useMemo(() => ({
-    sessionId: request.sessionId,
-    baseResource: request,
-  }), [request]);
+  const currentFileActionsAvailable = !isSessionFileGitCommitResource(request);
+  const markdownLinkFileContext = useMemo(() => isSessionFileGitCommitResource(request)
+    ? undefined
+    : {
+        sessionId: request.sessionId,
+        baseResource: request,
+      }, [request]);
   const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
   const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
@@ -1240,6 +1255,7 @@ export function SessionFilePreview({
         ) : null}
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
+          {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (
@@ -1309,7 +1325,7 @@ export function SessionFilePreview({
                   : "Working Tree Diff"}
             </button>
           )) : null}
-          {fileObjectCopyAvailable ? (
+          {currentFileActionsAvailable && fileObjectCopyAvailable ? (
             <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
           ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
@@ -1322,8 +1338,12 @@ export function SessionFilePreview({
             </button>
           ) : null}
           <button type="button" onClick={() => setReloadRevision((current) => current + 1)}>Reload</button>
-          <button type="button" onClick={() => void openCurrentFile()}>Open</button>
-          <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+          {currentFileActionsAvailable ? (
+            <>
+              <button type="button" onClick={() => void openCurrentFile()}>Open</button>
+              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+            </>
+          ) : null}
         </div>
       </header>
 
@@ -1356,7 +1376,9 @@ export function SessionFilePreview({
       {loadState.status === "large-warning" ? (
         <div className="session-file-preview-large-warning">
           <strong>Large file: {formatFileByteLength(loadState.descriptor.byteLength)}</strong>
-          <p>The file can still be opened. It is read in chunks and replaces the previous preview.</p>
+          <p>{isSessionFileGitCommitResource(request)
+            ? "The file can still be opened. Loading materializes the selected commit blob in memory and replaces the previous preview."
+            : "The file can still be opened. It is read in chunks and replaces the previous preview."}</p>
           <button type="button" onClick={() => void loadDescriptor(loadState.descriptor, loadRevisionRef.current)}>Load anyway</button>
         </div>
       ) : null}
@@ -1370,8 +1392,12 @@ export function SessionFilePreview({
             <div><dt>Size</dt><dd>{formatFileByteLength(descriptor.byteLength)}</dd></div>
             <div><dt>Modified</dt><dd>{descriptor.modifiedAt}</dd></div>
           </dl>
-          <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
-          <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+          {currentFileActionsAvailable ? (
+            <>
+              <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
+              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+            </>
+          ) : null}
         </div>
       ) : null}
 

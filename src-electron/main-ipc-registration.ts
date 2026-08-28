@@ -100,6 +100,7 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
@@ -129,6 +130,7 @@ import type {
 } from "../src/glossary-contract.js";
 import {
   areSessionFileResourcesEqual,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -336,7 +338,7 @@ export type MainIpcRegistrationDeps = {
   openCharacterEditorWindow(characterId?: string | null): Promise<void>;
   openDiffWindow(diffPreview: DiffPreviewPayload): Promise<void>;
   isFilePreviewWindow(window: BrowserWindow, sessionId: string): boolean;
-  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFileResourceRequest | null;
+  getFilePreviewWindowResource(window: BrowserWindow, sessionId: string): SessionFilePreviewResourceRequest | null;
   isFilePreviewTokenWindow(window: BrowserWindow, token: string): boolean;
   openCompanionReviewWindow(sessionId: string): Promise<void>;
   openCompanionMergeWindow(sessionId: string): Promise<void>;
@@ -427,7 +429,7 @@ export type MainIpcRegistrationDeps = {
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
-  inspectSessionFile(request: SessionFileResourceRequest): Awaitable<SessionFileDescriptor>;
+  inspectSessionFile(request: SessionFilePreviewResourceRequest): Awaitable<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Awaitable<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Awaitable<OpenPathResult>;
   openSessionFilePreviewWindow(
@@ -861,7 +863,7 @@ async function assertSessionFileExplorerSender(
     | "getSessionFileExplorerOwnerSessionId"
     | "getFilePreviewWindowResource"
   >,
-): Promise<SessionFileResourceRequest | null> {
+): Promise<SessionFilePreviewResourceRequest | null> {
   const ownerSessionId = await deps.getSessionFileExplorerOwnerSessionId(sessionId);
   const window = deps.resolveEventWindow(event);
   if (ownerSessionId && window && deps.resolveSessionWindow(ownerSessionId) === window) {
@@ -894,7 +896,7 @@ async function assertOwningSessionFileExplorerSender(
 
 async function assertSessionFileResourceSender(
   event: IpcMainInvokeEvent,
-  resource: SessionFileResourceRequest,
+  resource: SessionFilePreviewResourceRequest,
   deps: Pick<
     MainIpcRegistrationDeps,
     | "resolveEventWindow"
@@ -925,7 +927,7 @@ async function assertSessionFileResourceSender(
 async function assertSessionFileLinkSender(
   event: IpcMainInvokeEvent,
   sessionId: string,
-  baseResource: SessionFileResourceRequest | undefined,
+  baseResource: SessionFilePreviewResourceRequest | undefined,
   deps: Pick<
     MainIpcRegistrationDeps,
     | "resolveEventWindow"
@@ -956,10 +958,10 @@ async function assertSessionFileLinkSender(
   throw new Error("File Preview navigation must use the current Preview resource as its base.");
 }
 
-function assertValidSessionFileResourceRequest(
+function assertValidSessionFilePreviewResourceRequest(
   input: unknown,
   expectedSessionId?: string,
-): asserts input is SessionFileResourceRequest {
+): asserts input is SessionFilePreviewResourceRequest {
   if (!input || typeof input !== "object") {
     throw new TypeError("File preview resource is invalid.");
   }
@@ -969,6 +971,26 @@ function assertValidSessionFileResourceRequest(
     || !candidate.sessionId
     || (expectedSessionId !== undefined && candidate.sessionId !== expectedSessionId)
   ) {
+    throw new TypeError("File preview resource is invalid.");
+  }
+  if (candidate.resourceKind === "git-commit-file") {
+    if (
+      Object.hasOwn(candidate, "absolutePath")
+      || typeof candidate.rootId !== "string"
+      || !candidate.rootId
+      || typeof candidate.repositoryId !== "string"
+      || !/^git:[0-9a-f]{24}$/u.test(candidate.repositoryId)
+      || typeof candidate.commitId !== "string"
+      || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(candidate.commitId)
+      || typeof candidate.relativePath !== "string"
+      || !candidate.relativePath
+    ) {
+      throw new TypeError("File preview resource is invalid.");
+    }
+    assertValidGitHistoryRelativePath(candidate.relativePath);
+    return;
+  }
+  if (candidate.resourceKind !== undefined) {
     throw new TypeError("File preview resource is invalid.");
   }
   const hasAbsolutePath = Object.hasOwn(candidate, "absolutePath");
@@ -1071,6 +1093,13 @@ function hasOnlyObjectKeys(candidate: Record<string, unknown>, allowedKeys: read
   return Object.keys(candidate).every((key) => allowed.has(key));
 }
 
+function assertValidSessionFileResourceRequest(input: unknown): asserts input is SessionFileResourceRequest {
+  assertValidSessionFilePreviewResourceRequest(input);
+  if (isSessionFileGitCommitResource(input)) {
+    throw new TypeError("Working tree file resource is invalid.");
+  }
+}
+
 function assertStrictSessionFileResourceRequest(input: unknown): asserts input is SessionFileResourceRequest {
   assertValidSessionFileResourceRequest(input);
   const candidate = input as unknown as Record<string, unknown>;
@@ -1161,7 +1190,7 @@ function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContex
       throw new TypeError("Markdown link file context is invalid.");
     }
     if (rawFileContext.baseResource !== undefined) {
-      assertStrictSessionFileResourceRequest(rawFileContext.baseResource);
+      assertValidSessionFilePreviewResourceRequest(rawFileContext.baseResource);
       if (rawFileContext.baseResource.sessionId !== rawFileContext.sessionId) {
         throw new TypeError("Markdown link file context is invalid.");
       }
@@ -1169,7 +1198,7 @@ function parseMarkdownLinkContextMenuRequest(input: unknown): MarkdownLinkContex
     fileContext = {
       sessionId: rawFileContext.sessionId,
       ...(rawFileContext.baseResource
-        ? { baseResource: rawFileContext.baseResource as SessionFileResourceRequest }
+        ? { baseResource: rawFileContext.baseResource as SessionFilePreviewResourceRequest }
         : {}),
     };
   }
@@ -1635,13 +1664,13 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
     await assertOwningSessionFileExplorerSender(event, request.sessionId, deps);
     return deps.listSessionDirectory(request);
   });
-  ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFileResourceRequest) => {
-    assertValidSessionFileResourceRequest(request);
+  ipcMain.handle(WITHMATE_INSPECT_SESSION_FILE_CHANNEL, async (event, request: SessionFilePreviewResourceRequest) => {
+    assertValidSessionFilePreviewResourceRequest(request);
     await assertSessionFileResourceSender(event, request, deps);
     return deps.inspectSessionFile(request);
   });
   ipcMain.handle(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL, async (event, request: SessionFileChunkRequest) => {
-    assertValidSessionFileResourceRequest(request);
+    assertValidSessionFilePreviewResourceRequest(request);
     await assertSessionFileResourceSender(event, request, deps);
     return deps.readSessionFileChunk(request);
   });
@@ -1657,9 +1686,9 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
         throw new TypeError("File preview navigation request is invalid.");
       }
       if (request.kind === "resource") {
-        assertValidSessionFileResourceRequest(request.resource);
-        if (!isSessionFileRootResource(request.resource)) {
-          throw new TypeError("Direct file preview resources must be root-scoped.");
+        assertValidSessionFilePreviewResourceRequest(request.resource);
+        if (!isSessionFileRootResource(request.resource) && !isSessionFileGitCommitResource(request.resource)) {
+          throw new TypeError("Direct file preview resources must be root-scoped or commit-scoped.");
         }
         if (
           request.view !== undefined
@@ -1675,13 +1704,16 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
         ) {
           throw new TypeError("File preview window view is invalid.");
         }
+        if (isSessionFileGitCommitResource(request.resource) && request.view?.kind === "diff") {
+          throw new TypeError("Git commit preview resources do not support working tree diff views.");
+        }
         await assertOwningSessionFileExplorerSender(event, request.resource.sessionId, deps);
       } else {
         if (typeof request.sessionId !== "string" || !request.sessionId || typeof request.target !== "string") {
           throw new TypeError("File preview navigation request is invalid.");
         }
         if (request.baseResource !== undefined) {
-          assertValidSessionFileResourceRequest(request.baseResource, request.sessionId);
+          assertValidSessionFilePreviewResourceRequest(request.baseResource, request.sessionId);
         }
         await assertSessionFileLinkSender(event, request.sessionId, request.baseResource, deps);
       }

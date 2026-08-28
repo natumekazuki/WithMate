@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { SessionDiffPreview, SessionFilePreview } from "../../src/file-explorer/SessionFilePreview.js";
 import type {
   SessionFileDescriptor,
+  SessionFileGitCommitResourceRequest,
   SessionFileResourceRequest,
 } from "../../src/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
@@ -533,6 +534,115 @@ test("Markdown preview の local file link は current resource を基準に det
       target: "./next.md",
       baseResource: request,
     }]);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("commit file preview は通常previewを再利用しworking tree操作を表示しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileGitCommitResourceRequest = {
+    resourceKind: "git-commit-file",
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src/current.ts",
+  };
+  const api: PreviewApi = {
+    ...createTextPreviewApi(request, "current.ts", "const version = 'commit';\n", "b".repeat(40)),
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("const version = 'commit';") === true);
+    assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /current\.tsCommit aaaaaaa/);
+    const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
+    assert.equal(labels.includes("Open"), false);
+    assert.equal(labels.includes("Show in Explorer"), false);
+    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Reload"), true);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+test("binary commit file preview はmetadata内にもworking tree操作を表示しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileGitCommitResourceRequest = {
+    resourceKind: "git-commit-file",
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "assets/archive.bin",
+  };
+  const descriptor: SessionFileDescriptor = {
+    ...request,
+    name: "archive.bin",
+    kind: "binary",
+    byteLength: 4,
+    modifiedAt: "2026-08-28T00:00:00.000Z",
+    mimeType: "application/octet-stream",
+    suggestedEncoding: "utf-8",
+    revision: "b".repeat(40),
+  };
+  const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [];
+    },
+    async inspectSessionFile() {
+      return descriptor;
+    },
+    async readSessionFileChunk() {
+      assert.fail("Binary metadata preview must not read file contents.");
+    },
+    async openSessionFile() {
+      assert.fail("Commit resources must not invoke working tree open.");
+    },
+    async openPath(target) {
+      return { status: "opened", targetType: "local-path", target };
+    },
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
+    const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
+    assert.equal(labels.includes("Open"), false);
+    assert.equal(labels.includes("Open in default app"), false);
+    assert.equal(labels.includes("Show in Explorer"), false);
+    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Reload"), true);
   } finally {
     if (root) {
       await act(async () => root?.unmount());
