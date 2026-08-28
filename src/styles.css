@@ -4534,6 +4534,7 @@ button:disabled {
 
 .prompt-template-picker-item {
   display: grid;
+  align-items: center;
   gap: 4px;
   min-height: 52px;
   border: 1px solid rgba(148, 163, 184, 0.18);
