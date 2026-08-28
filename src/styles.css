@@ -10045,7 +10045,8 @@ button:disabled {
 }
 
 .composer-setting-field {
-  display: grid;
+  display: flex;
+  align-items: center;
   gap: 8px;
   flex: 0 1 180px;
   min-width: 0;
@@ -10059,6 +10060,8 @@ button:disabled {
 }
 
 .composer-setting-field span {
+  flex: 0 0 auto;
+  white-space: nowrap;
   text-transform: uppercase;
 }
 
@@ -10098,7 +10101,8 @@ button:disabled {
 }
 
 .composer-setting-field select {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   max-width: none;
   border: 1px solid rgba(32, 36, 55, 0.08);

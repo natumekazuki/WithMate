@@ -2,12 +2,27 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Session composer は通常幅で設定群を一行に保ち、狭幅で Send とともに折り返す", async () => {
+test("Session composer は設定field内を一行にし、通常幅で設定群を保ち、狭幅で折り返す", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
     stylesSource,
     /\.session-action-dock\s*{[\s\S]*?container:\s*session-action-dock\s*\/\s*inline-size;/,
+  );
+  assert.match(
+    stylesSource,
+    /\.composer-setting-field\s*{\s*display:\s*flex;\s*align-items:\s*center;\s*gap:\s*8px;/,
+    "設定fieldはlabelとselectを同じ行に配置する",
+  );
+  assert.match(
+    stylesSource,
+    /\.composer-setting-field span\s*{\s*flex:\s*0 0 auto;\s*white-space:\s*nowrap;\s*text-transform:\s*uppercase;/,
+    "設定labelは折り返さない",
+  );
+  assert.match(
+    stylesSource,
+    /\.composer-setting-field select\s*{\s*flex:\s*1 1 auto;\s*width:\s*auto;\s*min-width:\s*0;/,
+    "selectはfield内の残り幅を使い、必要に応じて縮小できる",
   );
   const settingsWrapWidth = Number(
     stylesSource.match(
