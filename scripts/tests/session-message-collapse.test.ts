@@ -86,6 +86,35 @@ test("tail append と auxiliary insertion は key/source identityが同じmessag
   assert.equal(reconciled.has("auxiliary-aux-1-0"), false);
 });
 
+test("collapse preview は不変なtargetを再利用し、本文変更では古いpreviewを使わない", () => {
+  const initialTargets = buildMessageCollapseTargets(
+    [message("assistant", "# first")],
+    [sessionSource(0)],
+    ["old-key"],
+  );
+  const cachedTargets = [{ ...initialTargets[0]!, preview: "cached first" }];
+
+  const appendedTargets = buildMessageCollapseTargets(
+    [message("assistant", "# first"), message("user", "second")],
+    [sessionSource(0), sessionSource(1)],
+    ["new-key", "second-key"],
+    cachedTargets,
+  );
+  assert.deepEqual(
+    { key: appendedTargets[0]?.key, preview: appendedTargets[0]?.preview },
+    { key: "new-key", preview: "cached first" },
+  );
+  assert.equal(appendedTargets[1]?.preview, "second");
+
+  const changedTargets = buildMessageCollapseTargets(
+    [message("assistant", "# changed")],
+    [sessionSource(0)],
+    ["new-key"],
+    cachedTargets,
+  );
+  assert.equal(changedTargets[0]?.preview, "changed");
+});
+
 test("同じkeyのsource/role/body変更、消えたkey、Session切り替えではstateを無効化できる", () => {
   const target = buildMessageCollapseTargets(
     [message("assistant", "before")],

@@ -210,6 +210,7 @@ import {
   toggleAllMessageCollapseState,
   toggleMessageCollapseState,
   type MessageCollapseState,
+  type MessageCollapseTarget,
   type MessageJumpRequest,
 } from "./session-message-collapse.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
@@ -592,6 +593,7 @@ export default function AgentSessionWindowApp() {
     sessionId: null,
     entries: new Map(),
   });
+  const messageCollapseTargetsRef = useRef<readonly MessageCollapseTarget[]>([]);
   const [messageJumpRequest, setMessageJumpRequest] = useState<MessageJumpRequest | null>(null);
   const messageJumpRequestIdRef = useRef(0);
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
@@ -1808,9 +1810,17 @@ export default function AgentSessionWindowApp() {
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
   const messageCollapseTargets = useMemo(
-    () => buildMessageCollapseTargets(messageListMessages, messageListSources, messageListKeys),
+    () => buildMessageCollapseTargets(
+      messageListMessages,
+      messageListSources,
+      messageListKeys,
+      messageCollapseTargetsRef.current,
+    ),
     [messageListKeys, messageListMessages, messageListSources],
   );
+  useLayoutEffect(() => {
+    messageCollapseTargetsRef.current = messageCollapseTargets;
+  }, [messageCollapseTargets]);
   const reconciledMessageCollapseState = useMemo(
     () => messageCollapseWindowState.sessionId === selectedSessionId
       ? reconcileMessageCollapseState(messageCollapseWindowState.entries, messageCollapseTargets)
