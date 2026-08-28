@@ -104,6 +104,7 @@ import {
   SessionExecutionIdempotencyConflictError,
   SessionExecutionQueueFullError,
   SessionExecutionStateConflictError,
+  SessionExecutionWorkItemAssociationError,
 } from "./session-execution-storage-v6.js";
 import { SessionCrudError, type SessionCrudService } from "./session-crud-service.js";
 import { SessionFileServiceError, type SessionFileService } from "./session-file-service.js";
@@ -1152,6 +1153,9 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
   }
   if (error instanceof SessionExecutionIdempotencyConflictError) {
     return createSessionRuntimeError({ code: "IDEMPOTENCY_CONFLICT", message: "The idempotency key was reused with different input." });
+  }
+  if (error instanceof SessionExecutionWorkItemAssociationError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message });
   }
   if (error instanceof SessionExecutionNotFoundError || error instanceof SessionExecutionOwnerMismatchError) {
     return createSessionRuntimeError({ code: "EXECUTION_NOT_FOUND", message: "The Session execution was not found." });

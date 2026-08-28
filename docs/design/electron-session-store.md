@@ -163,7 +163,7 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
   - active Work Itemまたはresultを持つWork Itemが参照するSessionの削除はstorage triggerで拒否する
 - `work_item_execution_associations_v6`
   - 一つのWork Itemと複数の`turn.run | turn.enqueue` executionを別identityのまま関連付ける
-  - associationはexecution作成と同じtransactionで保存し、executionのterminal stateからWork Item stateを更新しない
+  - associationはexecution作成transaction内でWork Itemのtarget一致とactive stateを再検証して保存し、executionのterminal stateからWork Item stateを更新しない
 - `project_scopes` / `project_memory_entries`
   - project 単位の durable knowledge
 - `character_scopes` / `character_memory_entries`

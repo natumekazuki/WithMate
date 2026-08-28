@@ -81,6 +81,15 @@ export class SessionExecutionIdempotencyConflictError extends Error {
   }
 }
 
+export class SessionExecutionWorkItemAssociationError extends Error {
+  readonly code = "WORK_ITEM_EXECUTION_FORBIDDEN";
+
+  constructor(readonly workItemId: string, readonly targetSessionId: string) {
+    super(`Work Item is not an active target for the Session execution: ${workItemId} (${targetSessionId})`);
+    this.name = "SessionExecutionWorkItemAssociationError";
+  }
+}
+
 export class SessionExecutionBusyError extends Error {
   readonly code = "SESSION_BUSY";
 
@@ -149,7 +158,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
       );
       this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
-      this.insertWorkItemAssociation(input.id, input.workItemId, input.createdAt);
+      this.insertWorkItemAssociation(input.id, input.workItemId, input.sessionId, input.createdAt);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
           operation,
@@ -213,7 +222,7 @@ export class SessionExecutionStorageV6 {
         input.createdAt,
       );
       this.insertOriginSnapshot(input.id, input.sessionId, input.origin, input.createdAt);
-      this.insertWorkItemAssociation(input.id, input.workItemId, input.createdAt);
+      this.insertWorkItemAssociation(input.id, input.workItemId, input.sessionId, input.createdAt);
       this.db.prepare(`
         INSERT INTO session_execution_idempotency_v6 (
           operation,
@@ -749,13 +758,21 @@ export class SessionExecutionStorageV6 {
   private insertWorkItemAssociation(
     executionId: string,
     workItemId: string | undefined,
+    targetSessionId: string,
     createdAt: string,
   ): void {
     if (!workItemId) return;
-    this.db.prepare(`
+    const result = this.db.prepare(`
       INSERT INTO work_item_execution_associations_v6 (execution_id, work_item_id, created_at)
-      VALUES (?, ?, ?)
-    `).run(executionId, workItemId, createdAt);
+      SELECT ?, id, ?
+      FROM work_items_v6
+      WHERE id = ?
+        AND target_session_id = ?
+        AND state IN ('pending', 'in_progress', 'waiting')
+    `).run(executionId, createdAt, workItemId, targetSessionId);
+    if (result.changes !== 1) {
+      throw new SessionExecutionWorkItemAssociationError(workItemId, targetSessionId);
+    }
   }
 
   private updateIdempotencyExpiry(executionId: string, expiresAt: string): void {

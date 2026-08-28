@@ -442,6 +442,23 @@ describe("Work Item contract", () => {
     assert.equal(service.transition(mutation, binding("task")).state, "in_progress");
   });
 
+  it("WORK-RESULT-04: DB CHECKはterminal stateとresult outcomeの不一致を拒否する", () => {
+    const item = createRootWork();
+    const db = new DatabaseSync(dbPath);
+    try {
+      assert.throws(() => db.prepare(`
+        UPDATE work_items_v6
+        SET state = 'completed', result_json = ?
+        WHERE id = ?
+      `).run(JSON.stringify({ outcome: "failed" }), item.id), /CHECK constraint failed/);
+      assert.deepEqual({ ...db.prepare(`
+        SELECT state, result_json FROM work_items_v6 WHERE id = ?
+      `).get(item.id) }, { state: "pending", result_json: null });
+    } finally {
+      db.close();
+    }
+  });
+
   it("WORK-EXEC-05: active target associationをexecutionと同時保存しterminal/mismatchを拒否する", () => {
     const item = createRootWork();
     assert.equal(service.requireExecutionAssociation(item.id, "root", "task").id, item.id);
@@ -480,6 +497,35 @@ describe("Work Item contract", () => {
       () => service.requireExecutionAssociation(item.id, "root", "task"),
       WorkItemExecutionAssociationError,
     );
+    const staleValidationStorage = new SessionExecutionStorageV6(dbPath);
+    try {
+      assert.throws(() => staleValidationStorage.enqueue({
+        id: "execution-after-terminal",
+        sessionId: "task",
+        request: { turn: { userMessage: "stale validation" } },
+        idempotencyKey: "execution-after-terminal-key",
+        requestFingerprint: "execution-after-terminal-fingerprint",
+        createdAt: NOW,
+        expiresAt: EXPIRES,
+        workItemId: item.id,
+      }), /Work Item.*active target/);
+      assert.equal(staleValidationStorage.get("execution-after-terminal"), null);
+
+      const mismatchedItem = createRootWork("create-target-mismatch");
+      assert.throws(() => staleValidationStorage.startImmediate({
+        id: "execution-target-mismatch",
+        sessionId: "executor",
+        request: { turn: { userMessage: "wrong target" } },
+        idempotencyKey: "execution-target-mismatch-key",
+        requestFingerprint: "execution-target-mismatch-fingerprint",
+        createdAt: NOW,
+        expiresAt: EXPIRES,
+        workItemId: mismatchedItem.id,
+      }), /Work Item.*active target/);
+      assert.equal(staleValidationStorage.get("execution-target-mismatch"), null);
+    } finally {
+      staleValidationStorage.close();
+    }
     createRootWork("delete-protection");
     const db = new DatabaseSync(dbPath);
     try {

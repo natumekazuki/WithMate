@@ -29,6 +29,7 @@ import {
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_TURNS_TABLE_SQL,
+  CREATE_V6_WORK_ITEM_TABLES_SQL,
   REQUIRED_V6_TABLES,
   V6_SCHEMA_STATUS,
   cleanupForbiddenV6Tables,
@@ -1130,6 +1131,25 @@ describe("database-schema-v6", () => {
       `);
       missingAffectStateCheckDb.close();
 
+      const missingWorkItemOutcomeCheckDir = join(dirPath, "missing-work-item-outcome-check");
+      mkdirSync(missingWorkItemOutcomeCheckDir);
+      const missingWorkItemOutcomeCheckPath = join(
+        missingWorkItemOutcomeCheckDir,
+        APP_DATABASE_V6_FILENAME,
+      );
+      const missingWorkItemOutcomeCheckDb = createV6Schema(missingWorkItemOutcomeCheckPath);
+      const workItemsSql = tableSql(missingWorkItemOutcomeCheckDb, "work_items_v6");
+      missingWorkItemOutcomeCheckDb.exec(`
+        PRAGMA foreign_keys = OFF;
+        DROP TABLE work_item_execution_associations_v6;
+        DROP TABLE work_item_idempotency_v6;
+        DROP TRIGGER trg_v6_work_items_protect_session_delete;
+        DROP TABLE work_items_v6;
+        ${workItemsSql.replace("THEN json_extract(result_json, '$.outcome') IS state", "THEN 1")};
+        ${CREATE_V6_WORK_ITEM_TABLES_SQL}
+      `);
+      missingWorkItemOutcomeCheckDb.close();
+
       assert.equal(isValidV6Database(validDbPath), true);
       assert.equal(readV6DatabaseUserVersion(validDbPath), APP_DATABASE_V6_SCHEMA_VERSION);
       assert.equal(isValidV6Database(wrongNameDbPath), false);
@@ -1141,6 +1161,7 @@ describe("database-schema-v6", () => {
       assert.equal(isValidV6Database(missingAffectProvenancePath), false);
       assert.equal(isValidV6Database(wrongAffectProvenanceDeletePath), false);
       assert.equal(isValidV6Database(missingAffectStateCheckPath), false);
+      assert.equal(isValidV6Database(missingWorkItemOutcomeCheckPath), false);
     } finally {
       rmSync(dirPath, { recursive: true, force: true });
     }

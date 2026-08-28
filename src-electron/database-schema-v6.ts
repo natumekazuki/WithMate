@@ -833,7 +833,8 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && workItemsSql.includes("'partially_completed'")
     && workItemsSql.includes("length(CAST(result_json AS BLOB)) <= 262144")
     && workItemsSql.includes("creator_session_id <> target_session_id")
-    && workItemsSql.includes("state IN ('completed', 'partially_completed', 'failed') AND result_json IS NOT NULL")
+    && workItemsSql.includes("state IN ('completed', 'partially_completed', 'failed')")
+    && workItemsSql.includes("json_extract(result_json, '$.outcome') IS state")
     && workItemIdempotencySql.includes("operation IN ('work.create', 'work.transition', 'work.result', 'work.cancel')")
     && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
     && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
@@ -1488,7 +1489,15 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
     CHECK (creator_session_id <> target_session_id),
     CHECK (
-      (state IN ('completed', 'partially_completed', 'failed') AND result_json IS NOT NULL)
+      (
+        state IN ('completed', 'partially_completed', 'failed')
+        AND result_json IS NOT NULL
+        AND CASE
+          WHEN json_valid(result_json)
+          THEN json_extract(result_json, '$.outcome') IS state
+          ELSE 0
+        END
+      )
       OR (state NOT IN ('completed', 'partially_completed', 'failed') AND result_json IS NULL)
     )
   );
