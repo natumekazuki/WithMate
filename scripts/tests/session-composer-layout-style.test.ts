@@ -29,6 +29,11 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
     /\.composer-setting-(?:approval|sandbox|model|depth)\s*{\s*flex-basis:/,
     "設定fieldごとの固定幅を残さない",
   );
+  assert.match(
+    stylesSource,
+    /\.composer-control-row > \.session-send-button\s*{\s*align-self:\s*center;/,
+    "Send buttonは設定rowの中央に揃える",
+  );
   const settingsWrapWidth = Number(
     stylesSource.match(
       /@container session-action-dock \(max-width:\s*(?<width>\d+)px\)\s*{\s*\.composer-settings > \.composer-setting-field\s*{\s*flex-basis:\s*calc\(50% - 7px\);/,

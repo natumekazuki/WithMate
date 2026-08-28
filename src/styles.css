@@ -10003,7 +10003,7 @@ button:disabled {
 }
 
 .composer-control-row > .session-send-button {
-  align-self: end;
+  align-self: center;
   padding: 12px 22px;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
