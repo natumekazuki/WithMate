@@ -9986,7 +9986,7 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr);
 }
 
-@container session-action-dock (max-width: 920px) {
+@container session-action-dock (max-width: 850px) {
   .composer-settings > .composer-setting-field {
     flex-basis: calc(50% - 7px);
   }

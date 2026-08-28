@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Session composer は Action Dock 実幅で Send を設定群の下へ移す", async () => {
+test("Session composer は通常幅で設定群を一行に保ち、狭幅で Send とともに折り返す", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
 
   assert.match(
@@ -22,5 +22,5 @@ test("Session composer は Action Dock 実幅で Send を設定群の下へ移�
 
   assert.ok(Number.isFinite(settingsWrapWidth));
   assert.ok(Number.isFinite(controlStackWidth));
-  assert.ok(settingsWrapWidth > controlStackWidth, "設定群を先に折り返してから Send を次段へ移す");
+  assert.ok(settingsWrapWidth <= controlStackWidth, "通常幅では設定群を Send より先に折り返さない");
 });
