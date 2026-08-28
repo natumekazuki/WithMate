@@ -11,6 +11,7 @@ import type {
   SessionFileDescriptor,
   SessionFileOpenRequest,
   SessionFileAbsoluteResourceRequest,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRootResourceRequest,
   SessionFilePreviewTargetResolution,
@@ -19,6 +20,7 @@ import type {
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
@@ -274,11 +276,28 @@ export class SessionFileExplorerService {
   async resolvePreviewTarget(
     sessionId: string,
     target: string,
-    baseResource?: SessionFileResourceRequest,
+    baseResource?: SessionFilePreviewResourceRequest,
   ): Promise<SessionFilePreviewTargetResolution> {
     const context = await this.deps.getSessionContext(sessionId);
     if (!context) {
       return { type: "failed", targetPath: target, message: "Session が見つからないよ。" };
+    }
+
+    try {
+      const externalTarget = resolveOpenPathTarget(target, { baseDirectory: context.workspacePath });
+      if (externalTarget.type === "external-url") {
+        return externalTarget;
+      }
+    } catch {
+      // Local target failures are reported after applying the appropriate preview base.
+    }
+
+    if (baseResource && isSessionFileGitCommitResource(baseResource)) {
+      return {
+        type: "not-previewable",
+        targetPath: target,
+        message: "Relative links from a Git commit file preview are not available.",
+      };
     }
 
     let baseDirectory = context.workspacePath;

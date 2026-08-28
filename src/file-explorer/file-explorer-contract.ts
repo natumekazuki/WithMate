@@ -42,34 +42,37 @@ export type SessionFileGitCommitResourceRequest = {
 
 export type SessionFileResourceRequest =
   | SessionFileRootResourceRequest
-  | SessionFileAbsoluteResourceRequest
+  | SessionFileAbsoluteResourceRequest;
+
+export type SessionFilePreviewResourceRequest =
+  | SessionFileResourceRequest
   | SessionFileGitCommitResourceRequest;
 
 export function isSessionFileAbsoluteResource(
-  resource: SessionFileResourceRequest,
+  resource: SessionFilePreviewResourceRequest,
 ): resource is SessionFileAbsoluteResourceRequest {
   return "absolutePath" in resource;
 }
 
 export function isSessionFileGitCommitResource(
-  resource: SessionFileResourceRequest,
+  resource: SessionFilePreviewResourceRequest,
 ): resource is SessionFileGitCommitResourceRequest {
   return "resourceKind" in resource && resource.resourceKind === "git-commit-file";
 }
 
 export function isSessionFileRootResource(
-  resource: SessionFileResourceRequest,
+  resource: SessionFilePreviewResourceRequest,
 ): resource is SessionFileRootResourceRequest {
   return "rootId" in resource && !isSessionFileGitCommitResource(resource);
 }
 
-export function getSessionFileResourceDisplayPath(resource: SessionFileResourceRequest): string {
+export function getSessionFileResourceDisplayPath(resource: SessionFilePreviewResourceRequest): string {
   return isSessionFileAbsoluteResource(resource) ? resource.absolutePath : resource.relativePath;
 }
 
 export function areSessionFileResourcesEqual(
-  left: SessionFileResourceRequest,
-  right: SessionFileResourceRequest,
+  left: SessionFilePreviewResourceRequest,
+  right: SessionFilePreviewResourceRequest,
 ): boolean {
   if (left.sessionId !== right.sessionId) {
     return false;
@@ -96,22 +99,36 @@ export type SessionFilePreviewWindowOpenRequest =
       view?: SessionFilePreviewWindowView;
     }
   | {
+      kind: "resource";
+      resource: SessionFileGitCommitResourceRequest;
+      view?: { kind: "preview" };
+    }
+  | {
       kind: "link";
       sessionId: string;
       target: string;
-      baseResource?: SessionFileResourceRequest;
+      baseResource?: SessionFilePreviewResourceRequest;
     };
 
 export type SessionFilePreviewWindowView =
   | { kind: "preview" }
   | { kind: "diff"; scope: FileRootGitDiffScope };
 
-export type SessionFilePreviewWindowPayload = {
-  resource: SessionFileResourceRequest;
+type SessionFilePreviewWindowPayloadBase = {
   ownerSessionId: string;
   windowTitle: string;
-  view?: SessionFilePreviewWindowView;
 };
+
+export type SessionFilePreviewWindowPayload = SessionFilePreviewWindowPayloadBase & (
+  | {
+      resource: SessionFileResourceRequest;
+      view?: SessionFilePreviewWindowView;
+    }
+  | {
+      resource: SessionFileGitCommitResourceRequest;
+      view?: { kind: "preview" };
+    }
+);
 
 export const FILE_PREVIEW_WINDOW_TITLE_FALLBACK = "File Preview";
 
@@ -123,12 +140,19 @@ export function resolveSessionFilePreviewWindowTitle(fileName: string | null | u
     : FILE_PREVIEW_WINDOW_TITLE_FALLBACK;
 }
 
+export function resolveSessionFileGitCommitPreviewWindowTitle(
+  fileName: string | null | undefined,
+  commitId: string,
+): string {
+  return `${resolveSessionFilePreviewWindowTitle(fileName)} · ${commitId.slice(0, 7)}`;
+}
+
 export type SessionFilePreviewWindowOpenResult =
   | {
       status: "opened";
       targetType: "preview-window";
       disposition: "created" | "focused";
-      resource: SessionFileResourceRequest;
+      resource: SessionFilePreviewResourceRequest;
     }
   | {
       status: "opened";
@@ -176,7 +200,7 @@ export type SessionFileOpenRequest = SessionFileResourceRequest & {
   reveal?: boolean;
 };
 
-export type SessionFileDescriptor = SessionFileResourceRequest & {
+export type SessionFileDescriptor = SessionFilePreviewResourceRequest & {
   name: string;
   kind: SessionFileResourceKind;
   byteLength: number;
@@ -186,7 +210,7 @@ export type SessionFileDescriptor = SessionFileResourceRequest & {
   revision: string;
 };
 
-export type SessionFileChunkRequest = SessionFileResourceRequest & {
+export type SessionFileChunkRequest = SessionFilePreviewResourceRequest & {
   offset: number;
   length: number;
   expectedRevision: string;

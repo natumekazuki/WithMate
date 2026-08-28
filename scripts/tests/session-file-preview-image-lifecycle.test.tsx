@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { SessionDiffPreview, SessionFilePreview } from "../../src/file-explorer/SessionFilePreview.js";
 import type {
   SessionFileDescriptor,
+  SessionFileGitCommitResourceRequest,
   SessionFileResourceRequest,
 } from "../../src/file-explorer/file-explorer-contract.js";
 import { STRUCTURED_TEXT_PREVIEW_MAX_BYTES } from "../../src/file-explorer/structured-text-preview.js";
@@ -549,7 +550,7 @@ test("commit file preview は通常previewを再利用しworking tree操作を�
   });
   const restoreGlobals = installDomGlobals(dom);
   const restoreElementSize = installElementSize(dom);
-  const request: SessionFileResourceRequest = {
+  const request: SessionFileGitCommitResourceRequest = {
     resourceKind: "git-commit-file",
     sessionId: "session-1",
     rootId: "workspace",
@@ -569,6 +570,7 @@ test("commit file preview は通常previewを再利用しworking tree操作を�
     assert.ok(container);
     root = await renderPreview(api, container, request);
     await waitFor(() => container.textContent?.includes("const version = 'commit';") === true);
+    assert.match(container.querySelector(".session-file-preview-title")?.textContent ?? "", /current\.tsCommit aaaaaaa/);
     const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
     assert.equal(labels.includes("Open"), false);
     assert.equal(labels.includes("Show in Explorer"), false);
@@ -590,7 +592,7 @@ test("binary commit file preview はmetadata内にもworking tree操作を表示
     url: "http://localhost/",
   });
   const restoreGlobals = installDomGlobals(dom);
-  const request: SessionFileResourceRequest = {
+  const request: SessionFileGitCommitResourceRequest = {
     resourceKind: "git-commit-file",
     sessionId: "session-1",
     rootId: "workspace",

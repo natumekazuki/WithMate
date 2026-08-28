@@ -18,7 +18,7 @@ import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
   SessionFileDescriptor,
-  SessionFileResourceRequest,
+  SessionFilePreviewResourceRequest,
   SessionFileRoot,
   FileRootGitDiffScope,
 } from "./file-explorer-contract.js";
@@ -96,7 +96,7 @@ type FilePreviewApi = Pick<
 
 type SessionFilePreviewProps = {
   api: FilePreviewApi | null;
-  request: SessionFileResourceRequest;
+  request: SessionFilePreviewResourceRequest;
   backNavigation?: {
     label: string;
     onBack: () => void;
@@ -199,7 +199,7 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
-  const resource: SessionFileResourceRequest = isSessionFileAbsoluteResource(descriptor)
+  const resource: SessionFilePreviewResourceRequest = isSessionFileAbsoluteResource(descriptor)
     ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
     : isSessionFileGitCommitResource(descriptor)
       ? {
@@ -1255,6 +1255,7 @@ export function SessionFilePreview({
         ) : null}
         <div className="session-file-preview-title">
           <strong>{descriptor?.name ?? getSessionFileResourceDisplayPath(request).split(/[\\/]/).at(-1)}</strong>
+          {isSessionFileGitCommitResource(request) ? <span>Commit {request.commitId.slice(0, 7)}</span> : null}
         </div>
         <div className="session-file-preview-actions">
           {descriptor && (previewKind === "text" || previewKind === "markdown") ? (

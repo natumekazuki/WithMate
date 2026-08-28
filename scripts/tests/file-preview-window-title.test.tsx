@@ -11,6 +11,7 @@ import FilePreviewApp from "../../src/FilePreviewApp.js";
 import {
   buildFileRootDiffPreviewWindowRequest,
   FILE_PREVIEW_WINDOW_TITLE_FALLBACK,
+  resolveSessionFileGitCommitPreviewWindowTitle,
   resolveSessionFilePreviewWindowTitle,
   type SessionFileDescriptor,
 } from "../../src/file-explorer/file-explorer-contract.js";
@@ -22,6 +23,13 @@ test("resolveSessionFilePreviewWindowTitle は basename だけを返し不正な
   assert.equal(resolveSessionFilePreviewWindowTitle(""), FILE_PREVIEW_WINDOW_TITLE_FALLBACK);
   assert.equal(resolveSessionFilePreviewWindowTitle(".."), FILE_PREVIEW_WINDOW_TITLE_FALLBACK);
   assert.equal(resolveSessionFilePreviewWindowTitle("unsafe\nname.md"), FILE_PREVIEW_WINDOW_TITLE_FALLBACK);
+});
+
+test("commit file previewのwindow titleは短縮commit hashを含む", () => {
+  assert.equal(
+    resolveSessionFileGitCommitPreviewWindowTitle("src/notes.md", "abcdef0123456789abcdef0123456789abcdef01"),
+    "notes.md · abcdef0",
+  );
 });
 
 test("FilePreviewApp は payload hydrate 後も document title を対象ファイル名に同期する", async () => {

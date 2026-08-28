@@ -1,7 +1,7 @@
 import type { DiffPreviewPayload } from "../src/session-state.js";
 import type {
   SessionFilePreviewWindowPayload,
-  SessionFileResourceRequest,
+  SessionFilePreviewResourceRequest,
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
@@ -108,7 +108,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   getFilePreviewWindowResource(
     window: TWindow,
     sessionId: string,
-  ): SessionFileResourceRequest | null {
+  ): SessionFilePreviewResourceRequest | null {
     for (const [token, candidate] of this.filePreviewWindows.entries()) {
       if (
         candidate === window
@@ -459,7 +459,7 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
     }
   }
 
-  private makeFilePreviewResourceKey(resource: SessionFileResourceRequest): string {
+  private makeFilePreviewResourceKey(resource: SessionFilePreviewResourceRequest): string {
     if (isSessionFileAbsoluteResource(resource)) {
       return JSON.stringify([
         resource.sessionId,

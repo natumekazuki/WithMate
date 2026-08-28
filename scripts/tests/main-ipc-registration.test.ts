@@ -1082,12 +1082,29 @@ test("commit file preview IPC は owning Session のopenとtokenに結び付い�
   });
   registerMainIpcHandlers(ipcMain, deps);
 
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "resource",
+      resource,
+      view: { kind: "diff", scope: "working-tree" },
+    }) as Promise<unknown>,
+    /do not support working tree diff views/,
+  );
+  assert.deepEqual(navigationRequests, []);
   const openRequest = { kind: "resource", resource };
   assert.equal(
     (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, openRequest) as { status: string }).status,
     "opened",
   );
   assert.deepEqual(navigationRequests, [openRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, { resource }) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
   await assert.rejects(
     () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
     /current Preview resource/,

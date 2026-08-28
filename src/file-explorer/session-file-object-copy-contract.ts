@@ -1,4 +1,7 @@
-import type { SessionFileResourceRequest } from "./file-explorer-contract.js";
+import type {
+  SessionFilePreviewResourceRequest,
+  SessionFileResourceRequest,
+} from "./file-explorer-contract.js";
 
 export type SessionFileObjectCopyResult =
   | { status: "copied"; message: string }
@@ -13,7 +16,7 @@ export type SessionFileObjectCopyRequest = {
 export type SessionFileObjectCopyLinkRequest = {
   sessionId: string;
   target: string;
-  baseResource?: SessionFileResourceRequest;
+  baseResource?: SessionFilePreviewResourceRequest;
 };
 
 export type SessionFileObjectCopyPoint = {

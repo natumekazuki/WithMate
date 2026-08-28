@@ -80,6 +80,7 @@ import type {
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileGitCommitResource,
+  resolveSessionFileGitCommitPreviewWindowTitle,
   resolveSessionFilePreviewWindowTitle,
 } from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
@@ -4199,14 +4200,6 @@ async function openSessionFilePreviewWindow(
   const explorer = createSessionFileExplorerService();
   let resource = request.kind === "resource" ? request.resource : null;
   if (request.kind === "link") {
-    if (request.baseResource && isSessionFileGitCommitResource(request.baseResource)) {
-      return {
-        status: "not-previewable",
-        targetType: "local-path",
-        target: request.target,
-        message: "Links from a Git commit file preview are not available.",
-      };
-    }
     const resolution = await explorer.resolvePreviewTarget(
       request.sessionId,
       request.target,
@@ -4264,7 +4257,9 @@ async function openSessionFilePreviewWindow(
     const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
       resource,
       ownerSessionId,
-      windowTitle: resolveSessionFilePreviewWindowTitle(fileName),
+      windowTitle: isSessionFileGitCommitResource(resource)
+        ? resolveSessionFileGitCommitPreviewWindowTitle(fileName, resource.commitId)
+        : resolveSessionFilePreviewWindowTitle(fileName),
       view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
     });
     return { status: "opened", targetType: "preview-window", disposition, resource };
