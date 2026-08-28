@@ -9987,7 +9987,7 @@ button:disabled {
   grid-template-columns: minmax(0, 1fr);
 }
 
-@container session-action-dock (max-width: 920px) {
+@container session-action-dock (max-width: 850px) {
   .composer-settings > .composer-setting-field {
     flex-basis: calc(50% - 7px);
   }
@@ -10004,7 +10004,7 @@ button:disabled {
 }
 
 .composer-control-row > .session-send-button {
-  align-self: end;
+  align-self: center;
   padding: 12px 22px;
   background: rgba(255, 255, 255, 0.16);
   color: var(--ink);
@@ -10046,9 +10046,10 @@ button:disabled {
 }
 
 .composer-setting-field {
-  display: grid;
+  display: flex;
+  align-items: center;
   gap: 8px;
-  flex: 0 1 180px;
+  flex: 1 1 max-content;
   min-width: 0;
 }
 
@@ -10060,23 +10061,9 @@ button:disabled {
 }
 
 .composer-setting-field span {
+  flex: 0 0 auto;
+  white-space: nowrap;
   text-transform: uppercase;
-}
-
-.composer-setting-approval {
-  flex-basis: 160px;
-}
-
-.composer-setting-sandbox {
-  flex-basis: 210px;
-}
-
-.composer-setting-model {
-  flex-basis: 220px;
-}
-
-.composer-setting-depth {
-  flex-basis: 110px;
 }
 
 .session-approval-list {
@@ -10099,7 +10086,8 @@ button:disabled {
 }
 
 .composer-setting-field select {
-  width: 100%;
+  flex: 1 1 max-content;
+  width: max-content;
   min-width: 0;
   max-width: none;
   border: 1px solid rgba(32, 36, 55, 0.08);
