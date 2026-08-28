@@ -68,6 +68,19 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     sessionId: "session-1", relativePath: "brief.md", content: "brief", replace: false,
     idempotencyKey: "write-key",
   },
+  "work.create": {
+    targetSessionId: "session-1", goal: "goal", scope: "scope", completionCriteria: "done",
+    authority: "local", sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+    idempotencyKey: "work-create-key",
+  },
+  "work.list": {},
+  "work.get": { workItemId: "work-1" },
+  "work.transition": { workItemId: "work-1", state: "in_progress", expectedRevision: 1, idempotencyKey: "work-transition-key" },
+  "work.result": {
+    workItemId: "work-1", state: "completed", expectedRevision: 2, idempotencyKey: "work-result-key",
+    result: { summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
+  },
+  "work.cancel": { workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-cancel-key" },
   "turn.options": { sessionId: "session-1" },
   "turn.run": {
     sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",

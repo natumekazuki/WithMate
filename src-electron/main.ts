@@ -155,6 +155,8 @@ import {
 } from "./session-execution-turn-request.js";
 import { cancelSessionRun } from "./session-run-cancellation.js";
 import { SessionExternalApplicationService } from "./session-external-application-service.js";
+import { WorkItemStorageV6 } from "./work-item-storage-v6.js";
+import { WorkItemService } from "./work-item-service.js";
 import { SessionCrudService } from "./session-crud-service.js";
 import { SessionFileService } from "./session-file-service.js";
 import { resolveCurrentGitBranch } from "./session-workspace-git.js";
@@ -456,6 +458,8 @@ let sessionTranscriptService: SessionTranscriptService | null = null;
 let sessionCrudService: SessionCrudService | null = null;
 let sessionFileService: SessionFileService | null = null;
 let sessionExternalApplicationService: SessionExternalApplicationService | null = null;
+let workItemStorage: WorkItemStorageV6 | null = null;
+let workItemService: WorkItemService | null = null;
 let sessionExternalRuntime: SessionExternalRuntimeHandle | null = null;
 let sessionExternalRuntimeShuttingDown = false;
 const activeSessionExecutionIds = new Map<string, string>();
@@ -3311,12 +3315,29 @@ function requireSessionExternalApplicationService(): SessionExternalApplicationS
         } : null;
       },
       projectTerminalFailureNotification: projectExecutionTerminalFailureNotification,
+      workItemService: requireWorkItemService(),
+      getExecutionWorkItemId: (executionId: string) => requireSessionExecutionStorage().getExecutionWorkItemId(executionId),
     });
     if (sessionExternalRuntimeShuttingDown) {
       sessionExternalApplicationService.beginShutdown();
     }
   }
   return sessionExternalApplicationService;
+}
+
+function requireWorkItemService(): WorkItemService {
+  if (!workItemService) {
+    if (!dbPath) throw new Error("DB path が初期化されていないよ。");
+    workItemStorage = new WorkItemStorageV6(dbPath);
+    workItemService = new WorkItemService({
+      storage: workItemStorage,
+      getTurnAuthoritySession: (sessionId) => requireSessionStorageV6().getSessionTurnAuthority(sessionId),
+      createWorkItemId: () => `work-${crypto.randomUUID()}`,
+      currentTimestamp: () => new Date().toISOString(),
+    });
+    workItemService.cleanupExpiredIdempotency();
+  }
+  return workItemService;
 }
 
 function requireSessionFileService(): SessionFileService {
@@ -3962,8 +3983,9 @@ function startSessionExecutionMaintenance(): void {
   sessionExecutionMaintenanceTimer = setInterval(() => {
     try {
       sessionExecutionService?.cleanupExpiredIdempotency();
+      workItemService?.cleanupExpiredIdempotency();
     } catch (error) {
-      console.warn("Session execution maintenance failed", error);
+      console.warn("Session runtime maintenance failed", error);
     }
   }, SESSION_EXECUTION_MAINTENANCE_INTERVAL_MS);
   sessionExecutionMaintenanceTimer.unref?.();
@@ -4076,6 +4098,7 @@ function closeSessionExecutionRuntime(): void {
   sessionScheduleStorage = null;
   sessionScheduleService = null;
   sessionExecutionStorage?.close();
+  workItemStorage?.close();
   sessionInteractionStorage?.close();
   coordinationEventInvalidationPublisher?.dispose();
   coordinationEventStorage?.close();
@@ -4083,6 +4106,8 @@ function closeSessionExecutionRuntime(): void {
   sessionTranscriptStorage?.close();
   sessionExecutionStorage = null;
   sessionExecutionService = null;
+  workItemStorage = null;
+  workItemService = null;
   sessionInteractionStorage = null;
   sessionInteractionService = null;
   coordinationEventInvalidationPublisher = null;

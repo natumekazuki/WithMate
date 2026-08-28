@@ -157,6 +157,13 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
   - source Sessionからは`(source_session_id, execution_sequence)` indexで取得し、`request_json`をquery ownerにしない
   - target Sessionの外部キーを持たず、target削除後も履歴を維持する。source Session削除時はcascadeする
   - legacy executionからのorigin補完はschema遷移後の一回だけ実行し、Session initiatorを持つAgent-origin executionへ限定する。terminal failure notification executionは補完対象にしない
+- `work_items_v6` / `work_item_idempotency_v6`
+  - Session間委譲のstable identity、immutable binding、state revision、strict terminal result、mutation replayを正規化して保存する
+  - mutation replay recordは`expires_at`を持ち、24時間後に起動時・定期maintenanceまたは次のmutationで削除する
+  - active Work Itemまたはresultを持つWork Itemが参照するSessionの削除はstorage triggerで拒否する
+- `work_item_execution_associations_v6`
+  - 一つのWork Itemと複数の`turn.run | turn.enqueue` executionを別identityのまま関連付ける
+  - associationはexecution作成transaction内でWork Itemのtarget一致とactive stateを再検証して保存し、executionのterminal stateからWork Item stateを更新しない
 - `project_scopes` / `project_memory_entries`
   - project 単位の durable knowledge
 - `character_scopes` / `character_memory_entries`

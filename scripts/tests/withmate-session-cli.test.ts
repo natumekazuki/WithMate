@@ -397,6 +397,39 @@ describe("withmate-session CLI", () => {
     }]);
   });
 
+  test("WORK-ADAPTER-01: work resultはshared strict inputへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = {
+      workItemId: "work-1",
+      state: "completed",
+      expectedRevision: 2,
+      result: {
+        summary: "done",
+        changes: [],
+        verificationResults: [],
+        findings: [],
+        unverifiedItems: [],
+        remainingWork: [],
+      },
+      idempotencyKey: "work-result-key",
+    };
+    const exitCode = await runWithMateSessionCli(["work", "result", "--json", JSON.stringify(input)], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: createSessionRuntimeResult("work.result", {} as never) };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{
+      schemaVersion: "withmate-session-request-v2",
+      operation: "work.result",
+      input,
+    }]);
+  });
+
   test("COORD-RESOLVE-SURFACE-01: agentはCLIでも回答optionなしでblockerを解決できる", async () => {
     const stdout = capture();
     const requests: unknown[] = [];

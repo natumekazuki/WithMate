@@ -1,7 +1,7 @@
 # Database Schema
 
 - 作成日: 2026-03-27
-- 更新日: 2026-06-24
+- 更新日: 2026-08-24
 - 対象: WithMate の current 保存構造
 
 ## Goal
@@ -79,11 +79,12 @@ future design だけで未実装のものは、最後に別枠で注記する。
   - `src-electron/database-schema-v4.ts`
 - V6 foundation schema source:
   - `src-electron/database-schema-v6.ts`
-  - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `session_turns_v6` / `session_turn_provider_outputs_v6` / `memory_*_v6` table を固定する
+  - `withmate-v6.db`、`PRAGMA user_version = 6`、V6専用 `project_scopes_v6` / `sessions_v6` / `session_messages_v6` / `session_turns_v6` / `session_turn_provider_outputs_v6` / `work_items_v6` / `work_item_idempotency_v6` / `work_item_execution_associations_v6` / `memory_*_v6` table を固定する
   - V6継続tableのDDLもこのファイルが所有し、legacy schema fileからimportしない
   - V6 release migrationでは必要な継続データだけをV6 DBへ自動移行し、旧 DB はV6 runtimeの正本として開かない
   - Character file storage rootは現行`<userData>/characters/<character-id>/`を継続し、V6用の別rootへ分けない
   - `isValidV6Database()` は forbidden legacy table、主要column / index / FK / CHECK、`PRAGMA foreign_key_check` を確認する
+  - Work ItemはimmutableなSession bindingと状態revisionを`work_items_v6`、24時間expiry付きmutation replayを`work_item_idempotency_v6`、executionとの別identity associationを`work_item_execution_associations_v6`へ保存する。result terminal tupleと256 KiB上限はDB CHECKでも保持する
   - `isValidV6DatabaseShallow()` は boot diagnostics 用に filename、`user_version`、required / forbidden table だけを確認する
   - `src-electron/app-database-v6-bootstrap.ts` は `<userData>/withmate-v6.db` の fresh 作成と既存 V6 DB の検証だけを行う。fresh作成は一時directory内でtransaction実行し、deep validation後にfinal pathへ既存file非上書きでpublishする。既存 invalid V6 DB は上書きしない
   - `src-electron/app-database-path.ts` は起動時に V4/V3/V2/V1 から最終的に `withmate-v6.db` を作成または選択する。V3以下は既存 migration でV4へ到達した後、V4→V6 release migrationを実行する

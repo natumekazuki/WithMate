@@ -15,10 +15,19 @@ import {
   SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES,
 } from "../src/session-transcript.js";
 import {
+  WORK_ITEM_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_MAX_LIST_LIMIT,
+  WORK_ITEM_MAX_RESULT_BYTES,
+  WORK_ITEM_MAX_RESULT_ITEMS,
+  WORK_ITEM_MAX_TEXT_LENGTH,
+  WORK_ITEM_STATES,
+} from "../src/work-item.js";
+import {
   SESSION_RUNTIME_DEFAULT_LIST_LIMIT,
   SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_LIST_LIMIT,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SESSION_RUNTIME_MAX_TURN_ATTACHMENTS,
   SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS,
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
@@ -78,6 +87,7 @@ const mutationBaseShape = {
   terminalFailureNotification: z.object({
     targetSessionId: nonEmptyStringSchema,
   }).strict().optional(),
+  workItemId: nonEmptyStringSchema.optional(),
 };
 const runInputSchema = z.object({
   ...mutationBaseShape,
@@ -185,6 +195,62 @@ const sessionFileWriteTextInputSchema = z.object({
     });
   }
 });
+const workItemSourceIdentitySchema = z.object({
+  workspace: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable(),
+  repository: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable(),
+  branch: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable(),
+  base: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable(),
+  head: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH).nullable(),
+}).strict();
+const workItemCreateInputSchema = z.object({
+  targetSessionId: nonEmptyStringSchema,
+  parentWorkItemId: nonEmptyStringSchema.optional(),
+  goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  scope: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  completionCriteria: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  authority: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  sourceIdentity: workItemSourceIdentitySchema,
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const workItemInputSchema = z.object({ workItemId: nonEmptyStringSchema }).strict();
+const workItemListInputSchema = z.object({
+  creatorSessionId: nonEmptyStringSchema.optional(),
+  targetSessionId: nonEmptyStringSchema.optional(),
+  state: z.enum(WORK_ITEM_STATES).optional(),
+  limit: z.number().int().min(1).max(WORK_ITEM_MAX_LIST_LIMIT).default(WORK_ITEM_DEFAULT_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const workItemTransitionInputSchema = z.object({
+  workItemId: nonEmptyStringSchema,
+  state: z.enum(["in_progress", "waiting"]),
+  expectedRevision: z.number().int().min(1),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const workItemStringListSchema = z.array(nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)).max(WORK_ITEM_MAX_RESULT_ITEMS);
+const workItemResultBodySchema = z.object({
+  summary: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  changes: workItemStringListSchema,
+  verificationResults: z.array(z.object({
+    name: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+    status: z.enum(["passed", "failed", "not_run"]),
+    details: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  }).strict()).max(WORK_ITEM_MAX_RESULT_ITEMS),
+  findings: workItemStringListSchema,
+  unverifiedItems: workItemStringListSchema,
+  remainingWork: workItemStringListSchema,
+}).strict();
+const workItemResultInputSchema = z.object({
+  workItemId: nonEmptyStringSchema,
+  state: z.enum(["completed", "partially_completed", "failed"]),
+  expectedRevision: z.number().int().min(1),
+  result: workItemResultBodySchema,
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const workItemCancelInputSchema = z.object({
+  workItemId: nonEmptyStringSchema,
+  expectedRevision: z.number().int().min(1),
+  idempotencyKey: nonEmptyStringSchema,
+}).strict();
 const coordinationPayloadSchema = z.object({
   summary: z.string().trim().min(1).max(240),
   facts: z.array(z.string().trim().min(1).max(500)).max(8).optional(),
@@ -362,6 +428,7 @@ function createExecutionSchema(operation: z.ZodType<"turn.run" | "turn.enqueue">
       errorCode: z.string().nullable(),
       updatedAt: z.string(),
     }).strict().nullable(),
+    workItemId: z.string().nullable(),
   }).strict();
 }
 const elicitationFieldBase = {
@@ -498,6 +565,44 @@ const coordinationEventSchema = coordinationSummarySchema.extend({
   options: z.array(coordinationOptionSchema),
   actions: z.array(coordinationActionSchema),
 }).strict();
+const workItemResultSchema = workItemResultBodySchema.extend({
+  outcome: z.enum(["completed", "partially_completed", "failed"]),
+  reportingSessionId: z.string(),
+  reportedAt: z.string(),
+}).strict();
+const workItemIdentityShape = {
+  id: z.string(),
+  sequence: z.number().int().positive(),
+  contractRevision: z.literal(1),
+  rootSessionId: z.string(),
+  creatorSessionId: z.string(),
+  targetSessionId: z.string(),
+  parentWorkItemId: z.string().nullable(),
+  goal: z.string(),
+  scope: z.string(),
+  completionCriteria: z.string(),
+  authority: z.string(),
+  sourceIdentity: workItemSourceIdentitySchema,
+  revision: z.number().int().positive(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+};
+const activeWorkItemSchema = z.object({
+  ...workItemIdentityShape,
+  state: z.enum(["pending", "in_progress", "waiting"]),
+  result: z.null(),
+}).strict();
+const canceledWorkItemSchema = z.object({
+  ...workItemIdentityShape,
+  state: z.literal("canceled"),
+  result: z.null(),
+}).strict();
+const resultWorkItemSchema = z.union([
+  z.object({ ...workItemIdentityShape, state: z.literal("completed"), result: workItemResultSchema.extend({ outcome: z.literal("completed") }).strict() }).strict(),
+  z.object({ ...workItemIdentityShape, state: z.literal("partially_completed"), result: workItemResultSchema.extend({ outcome: z.literal("partially_completed") }).strict() }).strict(),
+  z.object({ ...workItemIdentityShape, state: z.literal("failed"), result: workItemResultSchema.extend({ outcome: z.literal("failed") }).strict() }).strict(),
+]);
+const workItemSchema = z.union([activeWorkItemSchema, canceledWorkItemSchema, resultWorkItemSchema]);
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
@@ -518,6 +623,15 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       defaultListLimit: z.literal(COORDINATION_EVENT_DEFAULT_LIST_LIMIT),
       maxListLimit: z.literal(COORDINATION_EVENT_MAX_LIST_LIMIT),
     }).strict(),
+    workItems: z.object({
+      contractRevision: z.literal(1),
+      states: z.tuple(WORK_ITEM_STATES.map((state) => z.literal(state)) as [z.ZodLiteral<(typeof WORK_ITEM_STATES)[number]>, ...z.ZodLiteral<(typeof WORK_ITEM_STATES)[number]>[]]),
+      mutations: z.tuple([z.literal("create"), z.literal("transition"), z.literal("result"), z.literal("cancel")]),
+      defaultListLimit: z.literal(WORK_ITEM_DEFAULT_LIST_LIMIT),
+      maxListLimit: z.literal(WORK_ITEM_MAX_LIST_LIMIT),
+      maxListResponseBytes: z.literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
+      maxResultBytes: z.literal(WORK_ITEM_MAX_RESULT_BYTES),
+    }).strict(),
     providers: z.array(z.object({
       id: z.string(),
       label: z.string(),
@@ -534,6 +648,12 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "session.files.list": z.object({ items: z.array(fileReferenceSchema), nextCursor: z.string().optional() }).strict(),
   "session.files.read_text": z.object({ file: fileReferenceSchema, content: z.string() }).strict(),
   "session.files.write_text": z.object({ file: fileReferenceSchema }).strict(),
+  "work.create": workItemSchema,
+  "work.list": z.object({ items: z.array(workItemSchema), nextCursor: z.string().optional() }).strict(),
+  "work.get": workItemSchema,
+  "work.transition": workItemSchema,
+  "work.result": resultWorkItemSchema,
+  "work.cancel": canceledWorkItemSchema,
   "turn.options": turnOptionsSchema,
   "turn.run": runExecutionSchema,
   "turn.enqueue": enqueueExecutionSchema,
@@ -578,6 +698,8 @@ export const SESSION_MCP_SERVER_INSTRUCTIONS = [
   "Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
   "Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
   "A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
+  "Use a Work Item to track one delegated assignment across multiple executions; do not treat an execution as the Work Item identity.",
+  "Only the target Session reports Work Item progress and results, and only the creator cancels an active Work Item.",
   "Coordination events are public records separate from the normal response; do not change the normal response format when recording one.",
   "Record a coordination event for a scope or policy decision, an ancestor or user decision request, a blocker opening or clearing, a major work milestone, or a correction.",
   "Use user_decision_required for user confirmation, selection, or free text; use blocker only for an external condition that prevents your work, and resolve your blocker after work can resume.",
@@ -596,6 +718,12 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "session.files.list", title: "List Session files", description: "List UTF-8-capable files in one SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.read_text", title: "Read Session text file", description: "Read one bounded UTF-8 text file from a SessionFolder.", readOnly: true, destructive: false },
   { name: "session.files.write_text", title: "Write Session text file", description: "Atomically write one bounded UTF-8 text file to a SessionFolder.", readOnly: false, destructive: true },
+  { name: "work.create", title: "Create Work Item", description: "Create one stable delegated assignment for an authorized target Session.", readOnly: false, destructive: false },
+  { name: "work.list", title: "List Work Items", description: "List visible Work Items with bounded keyset pagination.", readOnly: true, destructive: false },
+  { name: "work.get", title: "Get Work Item", description: "Read one visible Work Item.", readOnly: true, destructive: false },
+  { name: "work.transition", title: "Transition Work Item", description: "Start, wait, or resume a Work Item assigned to the bound Session.", readOnly: false, destructive: false },
+  { name: "work.result", title: "Report Work Item result", description: "Atomically report a strict result and terminal Work Item state.", readOnly: false, destructive: false },
+  { name: "work.cancel", title: "Cancel Work Item", description: "Cancel an active Work Item created by the bound Session.", readOnly: false, destructive: true },
   { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: true },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: true },
@@ -628,6 +756,8 @@ function isMutation(operation: SessionRuntimeOperation, input?: unknown): boolea
   return operation === "session.create" || operation === "session.rename"
     || operation === "session.files.write_text"
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
+    || operation === "work.create" || operation === "work.transition"
+    || operation === "work.result" || operation === "work.cancel"
     || operation === "interaction.respond"
     || operation === "coordination.event.create" || operation === "coordination.event.resolve"
     || operation === "coordination.event.consume"
@@ -781,6 +911,30 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     inputSchema: sessionFileWriteTextInputSchema,
     outputSchema: createOutputSchema("session.files.write_text"),
   }, async (input) => executeOperation("session.files.write_text", input, deps));
+  server.registerTool("work.create", {
+    ...definitions.get("work.create")!, annotations: annotations(definitions.get("work.create")!),
+    inputSchema: workItemCreateInputSchema, outputSchema: createOutputSchema("work.create"),
+  }, async (input) => executeOperation("work.create", input, deps));
+  server.registerTool("work.list", {
+    ...definitions.get("work.list")!, annotations: annotations(definitions.get("work.list")!),
+    inputSchema: workItemListInputSchema, outputSchema: createOutputSchema("work.list"),
+  }, async (input) => executeOperation("work.list", input, deps));
+  server.registerTool("work.get", {
+    ...definitions.get("work.get")!, annotations: annotations(definitions.get("work.get")!),
+    inputSchema: workItemInputSchema, outputSchema: createOutputSchema("work.get"),
+  }, async (input) => executeOperation("work.get", input, deps));
+  server.registerTool("work.transition", {
+    ...definitions.get("work.transition")!, annotations: annotations(definitions.get("work.transition")!),
+    inputSchema: workItemTransitionInputSchema, outputSchema: createOutputSchema("work.transition"),
+  }, async (input) => executeOperation("work.transition", input, deps));
+  server.registerTool("work.result", {
+    ...definitions.get("work.result")!, annotations: annotations(definitions.get("work.result")!),
+    inputSchema: workItemResultInputSchema, outputSchema: createOutputSchema("work.result"),
+  }, async (input) => executeOperation("work.result", input, deps));
+  server.registerTool("work.cancel", {
+    ...definitions.get("work.cancel")!, annotations: annotations(definitions.get("work.cancel")!),
+    inputSchema: workItemCancelInputSchema, outputSchema: createOutputSchema("work.cancel"),
+  }, async (input) => executeOperation("work.cancel", input, deps));
   server.registerTool("turn.options", {
     ...definitions.get("turn.options")!,
     annotations: annotations(definitions.get("turn.options")!),

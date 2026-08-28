@@ -23,6 +23,9 @@ export const REQUIRED_V6_TABLES = [
   "session_turn_interims_v6",
   "session_turn_provider_outputs_v6",
   "session_execution_origins_v6",
+  "work_items_v6",
+  "work_item_idempotency_v6",
+  "work_item_execution_associations_v6",
   "session_execution_public_progress_v6",
   "session_turn_public_context_v6",
   "session_interactions_v6",
@@ -72,6 +75,13 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_session_turn_provider_outputs_turn_kind_seq",
   "idx_v6_session_execution_public_progress_updated",
   "idx_v6_session_execution_origins_source_sequence",
+  "idx_v6_work_items_root_sequence",
+  "idx_v6_work_items_creator_sequence",
+  "idx_v6_work_items_target_sequence",
+  "idx_v6_work_items_parent",
+  "idx_v6_work_item_idempotency_item",
+  "idx_v6_work_item_idempotency_expiry",
+  "idx_v6_work_item_execution_item",
   "idx_v6_session_turns_id_session",
   "idx_v6_session_turn_public_context_execution",
   "idx_v6_session_interactions_execution_sequence",
@@ -184,6 +194,35 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "user_message",
     "accepted_at",
   ],
+  work_items_v6: [
+    "sequence",
+    "id",
+    "contract_revision",
+    "root_session_id",
+    "creator_session_id",
+    "target_session_id",
+    "parent_work_item_id",
+    "goal",
+    "scope",
+    "completion_criteria",
+    "authority",
+    "source_identity_json",
+    "state",
+    "revision",
+    "result_json",
+    "created_at",
+    "updated_at",
+  ],
+  work_item_idempotency_v6: [
+    "operation",
+    "principal_session_id",
+    "idempotency_key",
+    "request_fingerprint",
+    "work_item_id",
+    "created_at",
+    "expires_at",
+  ],
+  work_item_execution_associations_v6: ["execution_id", "work_item_id", "created_at"],
   session_execution_public_progress_v6: [
     "execution_id",
     "assistant_text",
@@ -745,6 +784,13 @@ function tableSql(db: DatabaseSync, tableName: string): string {
   return typeof row?.sql === "string" ? row.sql : "";
 }
 
+function schemaObjectSql(db: DatabaseSync, type: "table" | "trigger", name: string): string {
+  const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type = ? AND name = ?").get(type, name) as
+    | { sql?: unknown }
+    | undefined;
+  return typeof row?.sql === "string" ? row.sql : "";
+}
+
 function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionsSql = tableSql(db, "sessions_v6");
   const sessionRoleBindingsSql = tableSql(db, "session_role_bindings_v6");
@@ -753,6 +799,9 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionTurnInterimsSql = tableSql(db, "session_turn_interims_v6");
   const sessionTurnProviderOutputsSql = tableSql(db, "session_turn_provider_outputs_v6");
   const sessionExecutionPublicProgressSql = tableSql(db, "session_execution_public_progress_v6");
+  const workItemsSql = tableSql(db, "work_items_v6");
+  const workItemIdempotencySql = tableSql(db, "work_item_idempotency_v6");
+  const workItemDeleteTriggerSql = schemaObjectSql(db, "trigger", "trg_v6_work_items_protect_session_delete");
   const sessionTurnPublicContextSql = tableSql(db, "session_turn_public_context_v6");
   const sessionInteractionsSql = tableSql(db, "session_interactions_v6");
   const sessionInteractionIdempotencySql = tableSql(db, "session_interaction_idempotency_v6");
@@ -780,6 +829,14 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && sessionTurnProviderOutputsSql.includes("json_valid(payload_json)")
     && sessionTurnProviderOutputsSql.includes("kind IN")
     && sessionExecutionPublicProgressSql.includes("truncated IN (0, 1)")
+    && workItemsSql.includes("contract_revision = 1")
+    && workItemsSql.includes("'partially_completed'")
+    && workItemsSql.includes("length(CAST(result_json AS BLOB)) <= 262144")
+    && workItemsSql.includes("creator_session_id <> target_session_id")
+    && workItemsSql.includes("state IN ('completed', 'partially_completed', 'failed')")
+    && workItemsSql.includes("json_extract(result_json, '$.outcome') IS state")
+    && workItemIdempotencySql.includes("operation IN ('work.create', 'work.transition', 'work.result', 'work.cancel')")
+    && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
     && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
     && sessionTurnPublicContextSql.includes("json_type(attachments_json) = 'array'")
     && sessionInteractionsSql.includes("state IN ('pending', 'answered', 'expired')")
@@ -1402,6 +1459,98 @@ export const CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL = `
 
   CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_session_executions_id_session
     ON session_executions_v6(id, session_id);
+`;
+
+export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
+  CREATE TABLE IF NOT EXISTS work_items_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    contract_revision INTEGER NOT NULL CHECK (contract_revision = 1),
+    root_session_id TEXT NOT NULL,
+    creator_session_id TEXT NOT NULL,
+    target_session_id TEXT NOT NULL,
+    parent_work_item_id TEXT,
+    goal TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    completion_criteria TEXT NOT NULL,
+    authority TEXT NOT NULL,
+    source_identity_json TEXT NOT NULL CHECK (json_valid(source_identity_json)),
+    state TEXT NOT NULL CHECK (state IN (
+      'pending', 'in_progress', 'waiting', 'completed',
+      'partially_completed', 'failed', 'canceled'
+    )),
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    result_json TEXT CHECK (
+      result_json IS NULL
+      OR (json_valid(result_json) AND length(CAST(result_json AS BLOB)) <= 262144)
+    ),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
+    CHECK (creator_session_id <> target_session_id),
+    CHECK (
+      (
+        state IN ('completed', 'partially_completed', 'failed')
+        AND result_json IS NOT NULL
+        AND CASE
+          WHEN json_valid(result_json)
+          THEN json_extract(result_json, '$.outcome') IS state
+          ELSE 0
+        END
+      )
+      OR (state NOT IN ('completed', 'partially_completed', 'failed') AND result_json IS NULL)
+    )
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_v6_work_items_root_sequence
+    ON work_items_v6(root_session_id, sequence ASC);
+  CREATE INDEX IF NOT EXISTS idx_v6_work_items_creator_sequence
+    ON work_items_v6(creator_session_id, sequence ASC);
+  CREATE INDEX IF NOT EXISTS idx_v6_work_items_target_sequence
+    ON work_items_v6(target_session_id, sequence ASC);
+  CREATE INDEX IF NOT EXISTS idx_v6_work_items_parent
+    ON work_items_v6(parent_work_item_id);
+
+  CREATE TABLE IF NOT EXISTS work_item_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation IN ('work.create', 'work.transition', 'work.result', 'work.cancel')),
+    principal_session_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    work_item_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, principal_session_id, idempotency_key),
+    FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id) ON DELETE CASCADE
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_item
+    ON work_item_idempotency_v6(work_item_id);
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_idempotency_expiry
+    ON work_item_idempotency_v6(expires_at);
+
+  CREATE TABLE IF NOT EXISTS work_item_execution_associations_v6 (
+    execution_id TEXT PRIMARY KEY,
+    work_item_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (execution_id) REFERENCES session_executions_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_execution_item
+    ON work_item_execution_associations_v6(work_item_id, execution_id);
+
+  CREATE TRIGGER IF NOT EXISTS trg_v6_work_items_protect_session_delete
+  BEFORE DELETE ON sessions_v6
+  WHEN EXISTS (
+    SELECT 1 FROM work_items_v6
+    WHERE (
+      root_session_id = OLD.id
+      OR creator_session_id = OLD.id
+      OR target_session_id = OLD.id
+    )
+      AND (state IN ('pending', 'in_progress', 'waiting') OR result_json IS NOT NULL)
+  )
+  BEGIN
+    SELECT RAISE(ABORT, 'WORK_ITEM_SESSION_PROTECTED');
+  END;
 `;
 
 export const CREATE_V6_SESSION_EXECUTION_ORIGINS_TABLE_SQL = `
@@ -2302,6 +2451,7 @@ export const CREATE_V6_SCHEMA_SQL = [
   CREATE_V6_SESSION_TURN_INTERIMS_TABLE_SQL,
   CREATE_V6_SESSION_TURN_PROVIDER_OUTPUTS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTIONS_TABLE_SQL,
+  CREATE_V6_WORK_ITEM_TABLES_SQL,
   CREATE_V6_SESSION_EXECUTION_ORIGINS_TABLE_SQL,
   CREATE_V6_SESSION_EXECUTION_IDEMPOTENCY_TABLE_SQL,
   CREATE_V6_SESSION_SCHEDULES_TABLE_SQL,
@@ -2646,6 +2796,20 @@ function ensureSessionCrudIdempotencyPrincipalScope(db: DatabaseSync): void {
   `);
 }
 
+function ensureWorkItemIdempotencyExpiry(db: DatabaseSync): void {
+  if (!tableExists(db, "work_item_idempotency_v6")) return;
+  const columns = tableColumnNames(db, "work_item_idempotency_v6");
+  if (!columns.has("expires_at")) {
+    db.exec(`
+      ALTER TABLE work_item_idempotency_v6
+      ADD COLUMN expires_at TEXT NOT NULL DEFAULT '1970-01-01T00:00:00.000Z';
+      UPDATE work_item_idempotency_v6
+      SET expires_at = strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+24 hours')
+      WHERE strftime('%Y-%m-%dT%H:%M:%fZ', created_at, '+24 hours') IS NOT NULL;
+    `);
+  }
+}
+
 export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
   for (const tableName of FORBIDDEN_V6_TABLES) {
     db.exec(`DROP TABLE IF EXISTS ${tableName};`);
@@ -2663,6 +2827,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     throw new Error("Coordination event schema is invalid.");
   }
   ensureSessionCrudIdempotencyPrincipalScope(db);
+  ensureWorkItemIdempotencyExpiry(db);
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -2859,6 +3024,10 @@ function hasValidSessionExecutionOriginSchema(db: DatabaseSync, requireMessageAn
     && hasUniqueIndexForColumns(db, "session_execution_origins_v6", ["execution_sequence"])
     && hasIndexForColumns(db, "session_execution_origins_v6", ["source_session_id", "execution_sequence"])
     && hasForeignKey(db, "session_execution_origins_v6", "source_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_items_v6", "parent_work_item_id", "work_items_v6", "id")
+    && hasForeignKey(db, "work_item_idempotency_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_item_execution_associations_v6", "execution_id", "session_executions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_item_execution_associations_v6", "work_item_id", "work_items_v6", "id")
     && sql.includes("operation in ('turn.run', 'turn.enqueue')")
     && sql.includes("target_session_role_snapshot in ('standalone', 'overall-coordinator', 'task-coordinator', 'executor')")
     && (!requireMessageAnchor || sql.includes("source_message_seq_anchor >= -1"))

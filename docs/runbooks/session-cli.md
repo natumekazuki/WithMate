@@ -47,6 +47,15 @@ withmate-session turn get --json '{"sessionId":"SESSION_ID","executionId":"EXECU
 withmate-session turn cancel --json '{"sessionId":"SESSION_ID","executionId":"EXECUTION_ID","idempotencyKey":"CANCEL_KEY"}'
 ```
 
+一つの委譲を複数Turnまたは再依頼にまたがって追跡する場合は、先にWork Itemを作成する。Work ItemはSessionやexecutionとは別のidentityであり、`overall-coordinator`または`task-coordinator`だけが既存の通信authorityで送信可能な直属targetへ作成できる。
+
+```powershell
+withmate-session work create --json '{"targetSessionId":"TARGET_SESSION_ID","goal":"実装を完了する","scope":"対象moduleのみ","completionCriteria":"targeted testが成功する","authority":"対象Worktree内の変更と検証","sourceIdentity":{"workspace":null,"repository":null,"branch":null,"base":null,"head":null},"idempotencyKey":"work-create-001"}'
+withmate-session work transition --json '{"workItemId":"WORK_ITEM_ID","state":"in_progress","expectedRevision":1,"idempotencyKey":"work-start-001"}'
+```
+
+`turn run`または`turn enqueue`のtop-levelへ任意の`workItemId`を指定すると、root、target、active state、actor authorityをexecution作成前に検証し、関連付けを保存する。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent `expectedRevision`とidempotency keyを要求する。
+
 `turn options`は対象Sessionのproviderに応じた候補を返す。Codex Turnは`provider: "codex"`と`codexSandboxMode`、Copilot Turnは`provider: "copilot"`と`customAgentName`を指定する。provider固有fieldを混在させない。
 
 Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対して次の送信matrixを適用する。

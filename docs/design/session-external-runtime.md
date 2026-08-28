@@ -546,6 +546,12 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `session.files.list` | `session files list` |
 | `session.files.read_text` | `session files read-text` |
 | `session.files.write_text` | `session files write-text` |
+| `work.create` | `work create` |
+| `work.list` | `work list` |
+| `work.get` | `work get` |
+| `work.transition` | `work transition` |
+| `work.result` | `work result` |
+| `work.cancel` | `work cancel` |
 | `coordination.event.create` | `coordination event create` |
 | `coordination.event.list` | `coordination event list` |
 | `coordination.event.get` | `coordination event get` |
@@ -555,6 +561,18 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `coordination.event.correct` | `coordination event correct` |
 
 `/v1/status`、challenge、認証exchangeを除くSession runtime application operationは、provider実行へ発行されたvalidなruntime bindingを必須とする。bindingの欠落、空白、不正、失効、または`session.runtime.invoke` grant不足ではapplication handlerを呼ぶ前に拒否する。`session.self`はbindingからactor Session IDだけを返す。他のoperationは対象Session IDの明示入力を維持し、actorまたは`session.self`の結果を暗黙のtargetとして再利用しない。
+
+## Work Item contract
+
+Work Itemは一つのSession間委譲を表し、executionとは別のserver生成IDを持つ。root、creator、target、任意のparent、goal、scope、completion criteria、authority、source identityは作成後に変更しない。Role binding revision 1へWork Item IDを追加せず、Work ItemからSessionを参照する。
+
+作成はruntime bindingで確定した`overall-coordinator | task-coordinator`に限り、既存のSession間Turn authorityで送信可能かつ`parentSessionId`がactor Sessionと一致する直属targetだけを受け付ける。root overall coordinatorや兄弟task coordinatorへの通信許可を委譲authorityへ流用しない。parentは同じrootでactor Sessionがtargetとなっているactive Work Itemに限定する。target Sessionは`pending -> in_progress -> waiting -> in_progress`の進行操作とterminal result報告を行い、creator Sessionはactive Work Itemを取消せる。全mutationはexpected revisionとprincipal Session単位のidempotency keyを要求する。canonical replayはcurrent Session bindingの再検証より先に返し、recordは24時間後にcleanupする。
+
+`completed | partially_completed | failed`は同名のresult outcomeとstrict result envelopeを同じtransactionで保存し、DB CHECKでもstateとoutcomeの一致を保持する。`canceled`はresultを持たず、terminal stateから再開しない。resultはsummary、changes、verification results、findings、unverified items、remaining work、reporting Session、timestampを区別し、256 KiBを上限とする。
+
+`turn.run | turn.enqueue`はoptionalな`workItemId`を受け付ける。新規executionの作成前にactor、root、target、active stateを検証し、execution保存transaction内でもtargetとactive stateを再検証してassociationを同時保存する。`workItemId | null`はTurnのidempotency fingerprintへ含め、同じkeyでassociation先だけを変更した要求はconflictにする。`turn.run | turn.enqueue | turn.get | turn.list`は`workItemId | null`を同じpublic projectionで返す。executionのterminal stateはWork Itemを暗黙に遷移させない。
+
+`work.list`はruntime actorのrootを固定し、creator、target、stateの明示filterとsequence keyset cursorをstorage queryへ渡す。cursorはroot、actor Session、root全体またはactor関連だけを示すvisibility、明示filterへ束縛し、scopeが異なる再利用を`INVALID_CURSOR`で拒否する。overall coordinatorは同じrootを参照でき、それ以外のRoleは自分がcreatorまたはtargetのWork Itemだけを参照する。一覧はWork Itemをstorage iteratorから逐次hydrateし、8 MiBのpublic response上限へ達する前にpageを打ち切って`nextCursor`を返す。Work Item mutationはCoordination Eventを必須副作用にせず、Coordination Event schemaも変更しない。
 
 Coordination Eventは通常responseと分離したdedicated historyである。本文とactionをv6 databaseの専用tableへ保存し、stateを初期kindとaction履歴から投影する。actorとRole tupleはruntime bindingから解決し、authorityはcurrent `session_role_bindings_v6`を参照する。CLI、MCP、raw HTTPは七つのshared operationとstrict validatorを共有する。mutationはprincipal Session単位のidempotency keyを必須とし、commit後のpublication failureは`effect: applied`とevent IDを返す。
 
