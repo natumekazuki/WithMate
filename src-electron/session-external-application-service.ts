@@ -56,6 +56,7 @@ import {
   type SessionRuntimeWorkItemCreateInput,
   type SessionRuntimeWorkItemInput,
   type SessionRuntimeWorkItemListInput,
+  type SessionRuntimeWorkItemListResult,
   type SessionRuntimeWorkItemResultInput,
   type SessionRuntimeWorkItemTransitionInput,
 } from "../src/session-external-runtime-contract.js";
@@ -124,6 +125,7 @@ import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
   WorkItemParentError,
+  type WorkItemListScope,
   type WorkItemService,
 } from "./work-item-service.js";
 import {
@@ -167,7 +169,7 @@ export type SessionExternalApplicationServiceDeps = {
   ): SessionRuntimeTerminalFailureNotificationProjection | null;
   workItemService?: Pick<
     WorkItemService,
-    "create" | "get" | "list" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
+    "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
 };
@@ -630,22 +632,49 @@ export class SessionExternalApplicationService {
   private listWorkItems(
     input: SessionRuntimeWorkItemListInput,
     binding: ResolvedAgentRuntimeBinding,
-  ) {
-    const cursor = input.cursor ? decodeWorkItemCursor(input, input.cursor) : null;
-    const items = this.requireWorkItemService().list({
+  ): SessionRuntimeWorkItemListResult {
+    const service = this.requireWorkItemService();
+    const scope = service.resolveListScope(binding);
+    const cursor = input.cursor ? decodeWorkItemCursor(input, scope, input.cursor) : null;
+    const iterator = service.iterateList({
       ...(input.creatorSessionId === undefined ? {} : { creatorSessionId: input.creatorSessionId }),
       ...(input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
       ...(input.state === undefined ? {} : { state: input.state }),
       limit: input.limit + 1,
       afterSequence: cursor,
-    }, binding);
-    const page = items.slice(0, input.limit);
-    return {
-      items: page,
-      ...(items.length > input.limit && page.length > 0
-        ? { nextCursor: encodeWorkItemCursor(input, page[page.length - 1]!.sequence) }
-        : {}),
-    };
+    }, scope)[Symbol.iterator]();
+    const result: SessionRuntimeWorkItemListResult = { items: [] };
+    try {
+      let current = iterator.next();
+      while (!current.done) {
+        const item = current.value;
+        const next = iterator.next();
+        const hasMore = !next.done;
+        const candidate: SessionRuntimeWorkItemListResult = {
+          items: [...result.items, item],
+          ...(hasMore ? { nextCursor: encodeWorkItemCursor(input, scope, item.sequence) } : {}),
+        };
+        if (
+          Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("work.list", candidate)), "utf8")
+          > SESSION_RUNTIME_MAX_RESPONSE_BYTES
+        ) {
+          const lastItem = result.items[result.items.length - 1];
+          if (!lastItem) throw new SessionRuntimeProjectionLimitError("result.items");
+          result.nextCursor = encodeWorkItemCursor(input, scope, lastItem.sequence);
+          break;
+        }
+        result.items.push(item);
+        if (!hasMore) break;
+        if (result.items.length >= input.limit) {
+          result.nextCursor = candidate.nextCursor;
+          break;
+        }
+        current = next;
+      }
+    } finally {
+      iterator.return?.();
+    }
+    return result;
   }
 
   private resolveWorkItemAssociation(
@@ -821,6 +850,7 @@ function projectRuntimeCatalog(
       mutations: ["create", "transition", "result", "cancel"],
       defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT,
       maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
+      maxListResponseBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES,
       maxResultBytes: WORK_ITEM_MAX_RESULT_BYTES,
     },
     providers: snapshot.providers
@@ -981,10 +1011,17 @@ function encodeInteractionCursor(input: SessionRuntimeInteractionListInput, afte
   }), "utf8").toString("base64url");
 }
 
-function encodeWorkItemCursor(input: SessionRuntimeWorkItemListInput, afterSequence: number): string {
+function encodeWorkItemCursor(
+  input: SessionRuntimeWorkItemListInput,
+  scope: WorkItemListScope,
+  afterSequence: number,
+): string {
   return Buffer.from(JSON.stringify({
-    version: 1,
+    version: 2,
     operation: "work.list",
+    rootSessionId: scope.rootSessionId,
+    actorSessionId: scope.actorSessionId,
+    visibility: scope.visibility,
     creatorSessionId: input.creatorSessionId ?? null,
     targetSessionId: input.targetSessionId ?? null,
     state: input.state ?? null,
@@ -992,12 +1029,19 @@ function encodeWorkItemCursor(input: SessionRuntimeWorkItemListInput, afterSeque
   }), "utf8").toString("base64url");
 }
 
-function decodeWorkItemCursor(input: SessionRuntimeWorkItemListInput, cursor: string): number {
+function decodeWorkItemCursor(
+  input: SessionRuntimeWorkItemListInput,
+  scope: WorkItemListScope,
+  cursor: string,
+): number {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
     if (
-      value.version !== 1
+      value.version !== 2
       || value.operation !== "work.list"
+      || value.rootSessionId !== scope.rootSessionId
+      || value.actorSessionId !== scope.actorSessionId
+      || value.visibility !== scope.visibility
       || value.creatorSessionId !== (input.creatorSessionId ?? null)
       || value.targetSessionId !== (input.targetSessionId ?? null)
       || value.state !== (input.state ?? null)

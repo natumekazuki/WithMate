@@ -27,6 +27,7 @@ import {
   SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_FILE_TEXT_BYTES,
   SESSION_RUNTIME_MAX_LIST_LIMIT,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SESSION_RUNTIME_MAX_TURN_ATTACHMENTS,
   SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS,
   SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
@@ -628,6 +629,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       mutations: z.tuple([z.literal("create"), z.literal("transition"), z.literal("result"), z.literal("cancel")]),
       defaultListLimit: z.literal(WORK_ITEM_DEFAULT_LIST_LIMIT),
       maxListLimit: z.literal(WORK_ITEM_MAX_LIST_LIMIT),
+      maxListResponseBytes: z.literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
       maxResultBytes: z.literal(WORK_ITEM_MAX_RESULT_BYTES),
     }).strict(),
     providers: z.array(z.object({

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { ModelCatalogSnapshot } from "../../src/model-catalog.js";
 import type { SessionExecution } from "../../src/session-execution.js";
 import type { SessionInteraction } from "../../src/session-interaction.js";
+import type { WorkItem } from "../../src/work-item.js";
 import {
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SessionRuntimeProjectionLimitError,
@@ -657,6 +658,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         mutations: ["create", "transition", "result", "cancel"],
         defaultListLimit: 50,
         maxListLimit: 200,
+        maxListResponseBytes: 8388608,
         maxResultBytes: 262144,
       },
       providers: [{
@@ -1739,7 +1741,8 @@ test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影�
     workItemService: {
       create() { throw new Error("unused"); },
       get() { throw new Error("unused"); },
-      list() { return []; },
+      resolveListScope() { throw new Error("unused"); },
+      iterateList() { return []; },
       transition() { throw new Error("unused"); },
       reportResult() { throw new Error("unused"); },
       cancel() { throw new Error("unused"); },
@@ -1797,7 +1800,8 @@ test("WORK-EXEC-05: 同じTurn keyでWork Item associationを変更するとconf
     isProviderSupported: () => true,
     discoverSessionCustomAgents: async () => [],
     workItemService: {
-      create() { throw new Error("unused"); }, get() { throw new Error("unused"); }, list() { return []; },
+      create() { throw new Error("unused"); }, get() { throw new Error("unused"); },
+      resolveListScope() { throw new Error("unused"); }, iterateList() { return []; },
       transition() { throw new Error("unused"); }, reportResult() { throw new Error("unused"); }, cancel() { throw new Error("unused"); },
       requireExecutionAssociation() { return {} as never; },
     },
@@ -1821,4 +1825,126 @@ test("WORK-EXEC-05: 同じTurn keyでWork Item associationを変更するとconf
   assert.ok("result" in first);
   assert.ok("error" in second);
   if ("error" in second) assert.equal(second.error.code, "IDEMPOTENCY_CONFLICT");
+});
+
+function createWorkListService(openList: (input: {
+  afterSequence: number | null;
+  limit: number;
+}, binding: ResolvedAgentRuntimeBinding) => {
+  scope: { rootSessionId: string; actorSessionId: string; visibility: "root" | "actor" };
+  items: Iterable<WorkItem>;
+}) {
+  return new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      create() { throw new Error("unused"); }, get() { throw new Error("unused"); },
+      resolveListScope(binding) {
+        return openList({ afterSequence: null, limit: 0 }, binding).scope;
+      },
+      iterateList(input, scope) {
+        return openList(input, { ...actorBinding, actorSessionId: scope.actorSessionId }).items;
+      },
+      transition() { throw new Error("unused"); }, reportResult() { throw new Error("unused"); },
+      cancel() { throw new Error("unused"); }, requireExecutionAssociation() { throw new Error("unused"); },
+    } as never,
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; }, getRecord() { return { ...execution, request: {} }; },
+      listPage() { return []; }, async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+  });
+}
+
+function workItem(sequence: number, largeResult = false): WorkItem {
+  return {
+    id: `work-${sequence}`,
+    sequence,
+    contractRevision: 1,
+    rootSessionId: "root-a",
+    creatorSessionId: "creator",
+    targetSessionId: "target",
+    parentWorkItemId: null,
+    goal: "goal",
+    scope: "scope",
+    completionCriteria: "done",
+    authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+    state: "completed",
+    revision: 2,
+    result: {
+      outcome: "completed",
+      summary: "completed",
+      changes: largeResult ? Array.from({ length: 15 }, () => "x".repeat(16_000)) : [],
+      verificationResults: [],
+      findings: [],
+      unverifiedItems: [],
+      remainingWork: [],
+      reportingSessionId: "target",
+      reportedAt: "2026-08-24T00:00:00.000Z",
+    },
+    createdAt: "2026-08-24T00:00:00.000Z",
+    updatedAt: "2026-08-24T00:01:00.000Z",
+  };
+}
+
+test("WORK-LIST-08: cursorをroot・actor・visibility scopeへ束縛する", async () => {
+  let iterations = 0;
+  const items = [workItem(1), workItem(2)];
+  const service = createWorkListService((input, binding) => ({
+    scope: {
+      rootSessionId: binding.actorSessionId === "actor-other-root" ? "root-b" : "root-a",
+      actorSessionId: binding.actorSessionId,
+      visibility: "actor",
+    },
+    items: (function* () {
+      for (const item of items.filter((candidate) => candidate.sequence > (input.afterSequence ?? 0)).slice(0, input.limit)) {
+        iterations += 1;
+        yield item;
+      }
+    })(),
+  }));
+  const bindingFor = (actorSessionId: string): ResolvedAgentRuntimeBinding => ({ ...actorBinding, actorSessionId });
+  const first = await executeBound(service, "work.list", { limit: 1 }, bindingFor("actor-a"));
+  assert.ok("result" in first && first.result.nextCursor);
+  if (!("result" in first) || !first.result.nextCursor) return;
+  const sameActor = await executeBound(service, "work.list", { limit: 1, cursor: first.result.nextCursor }, bindingFor("actor-a"));
+  assert.deepEqual("result" in sameActor ? sameActor.result.items.map((item) => item.id) : [], ["work-2"]);
+  const otherActor = await executeBound(service, "work.list", { limit: 1, cursor: first.result.nextCursor }, bindingFor("actor-b"));
+  const otherRoot = await executeBound(service, "work.list", { limit: 1, cursor: first.result.nextCursor }, bindingFor("actor-other-root"));
+  assert.equal("error" in otherActor && otherActor.error.code, "INVALID_CURSOR");
+  assert.equal("error" in otherRoot && otherRoot.error.code, "INVALID_CURSOR");
+  assert.equal(iterations, 3);
+});
+
+test("WORK-LIST-09: result付き一覧をresponse byte上限でpage分割し欠落なく継続する", async () => {
+  const allItems = Array.from({ length: 50 }, (_, index) => workItem(index + 1, true));
+  let iterations = 0;
+  const service = createWorkListService((input, binding) => ({
+    scope: { rootSessionId: "root-a", actorSessionId: binding.actorSessionId, visibility: "root" },
+    items: (function* () {
+      for (const item of allItems.filter((candidate) => candidate.sequence > (input.afterSequence ?? 0)).slice(0, input.limit)) {
+        iterations += 1;
+        yield item;
+      }
+    })(),
+  }));
+  const listedIds: string[] = [];
+  let cursor: string | undefined;
+  do {
+    const response = await executeBound(service, "work.list", { limit: 50, ...(cursor ? { cursor } : {}) });
+    assert.ok("result" in response);
+    if (!("result" in response)) return;
+    assert.ok(Buffer.byteLength(JSON.stringify(response), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+    listedIds.push(...response.result.items.map((item) => item.id));
+    cursor = response.result.nextCursor;
+  } while (cursor);
+  assert.deepEqual(listedIds, allItems.map((item) => item.id));
+  assert.equal(new Set(listedIds).size, allItems.length);
+  assert.ok(iterations <= allItems.length + 2);
 });

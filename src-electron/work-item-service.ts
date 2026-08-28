@@ -61,6 +61,12 @@ export type WorkItemListInput = {
   afterSequence: number | null;
 };
 
+export type WorkItemListScope = Readonly<{
+  rootSessionId: string;
+  actorSessionId: string;
+  visibility: "root" | "actor";
+}>;
+
 export class WorkItemAuthorityError extends Error {
   readonly code = "WORK_ITEM_FORBIDDEN";
   constructor(message: string, readonly details: Record<string, string | number | boolean> = {}) {
@@ -89,7 +95,7 @@ export class WorkItemService {
   constructor(private readonly deps: {
     storage: Pick<
       WorkItemStorageV6,
-      "cleanupExpiredIdempotency" | "create" | "get" | "listPage" | "mutate" | "resolveIdempotency"
+      "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
     >;
     getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
     createWorkItemId(): string;
@@ -225,12 +231,24 @@ export class WorkItemService {
   }
 
   list(input: WorkItemListInput, binding: ResolvedAgentRuntimeBinding): WorkItem[] {
+    return Array.from(this.iterateList(input, this.resolveListScope(binding)));
+  }
+
+  resolveListScope(binding: ResolvedAgentRuntimeBinding): WorkItemListScope {
     const actor = this.requireSession(binding.actorSessionId);
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
-    return this.deps.storage.listPage({
+    return {
       rootSessionId: actorBinding.rootSessionId,
-      visibleSessionId: actor.sessionId,
-      canSeeRoot: actorBinding.sessionRole === "overall-coordinator",
+      actorSessionId: actor.sessionId,
+      visibility: actorBinding.sessionRole === "overall-coordinator" ? "root" : "actor",
+    };
+  }
+
+  iterateList(input: WorkItemListInput, scope: WorkItemListScope): Iterable<WorkItem> {
+    return this.deps.storage.iteratePage({
+      rootSessionId: scope.rootSessionId,
+      visibleSessionId: scope.actorSessionId,
+      canSeeRoot: scope.visibility === "root",
       ...(input.creatorSessionId === undefined ? {} : { creatorSessionId: input.creatorSessionId }),
       ...(input.targetSessionId === undefined ? {} : { targetSessionId: input.targetSessionId }),
       ...(input.state === undefined ? {} : { state: input.state }),

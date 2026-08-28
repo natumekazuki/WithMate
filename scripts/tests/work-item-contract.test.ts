@@ -282,6 +282,16 @@ describe("Work Item contract", () => {
       sourceIdentity,
       idempotencyKey: "list-sibling",
     }, binding("root"));
+    assert.deepEqual(service.resolveListScope(binding("root")), {
+      rootSessionId: "root",
+      actorSessionId: "root",
+      visibility: "root",
+    });
+    assert.deepEqual(service.resolveListScope(binding("task")), {
+      rootSessionId: "root",
+      actorSessionId: "task",
+      visibility: "actor",
+    });
     assert.deepEqual(service.list({ limit: 10, afterSequence: null }, binding("task")).map((item) => item.id), [assigned.id]);
     const firstPage = service.list({ limit: 1, afterSequence: null }, binding("root"));
     assert.deepEqual(firstPage.map((item) => item.id), [assigned.id]);

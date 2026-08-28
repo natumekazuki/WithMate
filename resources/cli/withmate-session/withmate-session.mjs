@@ -235,6 +235,7 @@ var SESSION_RUNTIME_REQUEST_SCHEMA_VERSION = "withmate-session-request-v2";
 var SESSION_RUNTIME_RESULT_SCHEMA_VERSION = "withmate-session-result-v2";
 var SESSION_RUNTIME_ERROR_SCHEMA_VERSION = "withmate-session-error-v2";
 var SESSION_RUNTIME_MAX_BODY_BYTES = 8 * 1024 * 1024;
+var SESSION_RUNTIME_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_DEFAULT_FILE_TEXT_BYTES = 1024 * 1024;
 var SESSION_RUNTIME_MAX_FILE_TEXT_BYTES = 8 * 1024 * 1024;
 var SESSION_RUNTIME_MAX_WAIT_TIMEOUT_MS = 3e5;
@@ -22071,6 +22072,7 @@ var resultSchemas = {
 			]),
 			defaultListLimit: literal(50),
 			maxListLimit: literal(200),
+			maxListResponseBytes: literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
 			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES)
 		}).strict(),
 		providers: array(object({

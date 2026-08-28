@@ -241,6 +241,19 @@ export class WorkItemStorageV6 {
     afterSequence: number | null;
     limit: number;
   }): WorkItem[] {
+    return Array.from(this.iteratePage(input));
+  }
+
+  *iteratePage(input: {
+    rootSessionId: string;
+    visibleSessionId: string;
+    canSeeRoot: boolean;
+    creatorSessionId?: string;
+    targetSessionId?: string;
+    state?: WorkItemState;
+    afterSequence: number | null;
+    limit: number;
+  }): IterableIterator<WorkItem> {
     const clauses = ["root_session_id = ?", "sequence > ?"];
     const parameters: Array<string | number> = [input.rootSessionId, input.afterSequence ?? 0];
     if (!input.canSeeRoot) {
@@ -265,8 +278,10 @@ export class WorkItemStorageV6 {
       WHERE ${clauses.join(" AND ")}
       ORDER BY sequence ASC
       LIMIT ?
-    `).all(...parameters) as WorkItemRow[];
-    return rows.map(parseWorkItem);
+    `).iterate(...parameters) as IterableIterator<WorkItemRow>;
+    for (const row of rows) {
+      yield parseWorkItem(row);
+    }
   }
 
   getExecutionWorkItemId(executionId: string): string | null {

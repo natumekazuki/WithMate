@@ -133,6 +133,7 @@ export type SessionRuntimeCatalogResult = {
     mutations: readonly ["create", "transition", "result", "cancel"];
     defaultListLimit: typeof WORK_ITEM_DEFAULT_LIST_LIMIT;
     maxListLimit: typeof WORK_ITEM_MAX_LIST_LIMIT;
+    maxListResponseBytes: typeof SESSION_RUNTIME_MAX_RESPONSE_BYTES;
     maxResultBytes: typeof WORK_ITEM_MAX_RESULT_BYTES;
   };
   providers: Array<{
