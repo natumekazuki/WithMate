@@ -129,6 +129,7 @@ import type {
 } from "../src/glossary-contract.js";
 import {
   areSessionFileResourcesEqual,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { DiscoveredCustomAgent, DiscoveredSkill } from "../src/runtime-state.js";
@@ -971,6 +972,26 @@ function assertValidSessionFileResourceRequest(
   ) {
     throw new TypeError("File preview resource is invalid.");
   }
+  if (candidate.resourceKind === "git-commit-file") {
+    if (
+      Object.hasOwn(candidate, "absolutePath")
+      || typeof candidate.rootId !== "string"
+      || !candidate.rootId
+      || typeof candidate.repositoryId !== "string"
+      || !/^git:[0-9a-f]{24}$/u.test(candidate.repositoryId)
+      || typeof candidate.commitId !== "string"
+      || !/^[0-9a-f]{40}$|^[0-9a-f]{64}$/u.test(candidate.commitId)
+      || typeof candidate.relativePath !== "string"
+      || !candidate.relativePath
+    ) {
+      throw new TypeError("File preview resource is invalid.");
+    }
+    assertValidGitHistoryRelativePath(candidate.relativePath);
+    return;
+  }
+  if (candidate.resourceKind !== undefined) {
+    throw new TypeError("File preview resource is invalid.");
+  }
   const hasAbsolutePath = Object.hasOwn(candidate, "absolutePath");
   const hasRootFields = Object.hasOwn(candidate, "rootId") || Object.hasOwn(candidate, "relativePath");
   if (
@@ -1647,6 +1668,9 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   });
   ipcMain.handle(WITHMATE_OPEN_SESSION_FILE_CHANNEL, async (event, request: SessionFileOpenRequest) => {
     assertValidSessionFileResourceRequest(request);
+    if (isSessionFileGitCommitResource(request)) {
+      throw new TypeError("Git commit preview resources cannot be opened as working tree files.");
+    }
     await assertSessionFileResourceSender(event, request, deps);
     return deps.openSessionFile(request);
   });
@@ -1658,8 +1682,8 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
       }
       if (request.kind === "resource") {
         assertValidSessionFileResourceRequest(request.resource);
-        if (!isSessionFileRootResource(request.resource)) {
-          throw new TypeError("Direct file preview resources must be root-scoped.");
+        if (!isSessionFileRootResource(request.resource) && !isSessionFileGitCommitResource(request.resource)) {
+          throw new TypeError("Direct file preview resources must be root-scoped or commit-scoped.");
         }
         if (
           request.view !== undefined
@@ -1707,11 +1731,17 @@ function registerSessionQueryHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpc
   });
   ipcMain.handle(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL, async (event, input: unknown) => {
     const request = parseSessionFileObjectCopyRequest(input);
+    if (isSessionFileGitCommitResource(request.resource)) {
+      throw new TypeError("Git commit preview resources cannot be copied as working tree files.");
+    }
     await assertSessionFileResourceSender(event, request.resource, deps);
     return deps.copySessionFileObject(event, request);
   });
   ipcMain.handle(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL, async (event, input: unknown) => {
     const request = parseSessionFileObjectCopyContextMenuRequest(input);
+    if (isSessionFileGitCommitResource(request.resource)) {
+      throw new TypeError("Git commit preview resources do not have a working tree context menu.");
+    }
     await assertSessionFileResourceSender(event, request.resource, deps);
     return deps.showSessionFileObjectCopyContextMenu(event, request);
   });

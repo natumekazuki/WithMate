@@ -78,7 +78,10 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
-import { resolveSessionFilePreviewWindowTitle } from "../src/file-explorer/file-explorer-contract.js";
+import {
+  isSessionFileGitCommitResource,
+  resolveSessionFilePreviewWindowTitle,
+} from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -1652,8 +1655,12 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
-                inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
-                readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
+                inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
+                  ? createFileRootGitChangesService().inspectHistoryFile(request)
+                  : createSessionFileExplorerService().inspectFile(request),
+                readSessionFileChunk: (request) => isSessionFileGitCommitResource(request)
+                  ? createFileRootGitChangesService().readHistoryFileChunk(request)
+                  : createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
                 openSessionFilePreviewWindow,
                 getSessionFilePreviewWindowPayload: (token) =>
@@ -4192,6 +4199,14 @@ async function openSessionFilePreviewWindow(
   const explorer = createSessionFileExplorerService();
   let resource = request.kind === "resource" ? request.resource : null;
   if (request.kind === "link") {
+    if (request.baseResource && isSessionFileGitCommitResource(request.baseResource)) {
+      return {
+        status: "not-previewable",
+        targetType: "local-path",
+        target: request.target,
+        message: "Links from a Git commit file preview are not available.",
+      };
+    }
     const resolution = await explorer.resolvePreviewTarget(
       request.sessionId,
       request.target,
@@ -4239,7 +4254,9 @@ async function openSessionFilePreviewWindow(
     };
   }
   try {
-    const descriptor = await explorer.inspectFile(resource);
+    const descriptor = isSessionFileGitCommitResource(resource)
+      ? await createFileRootGitChangesService().inspectHistoryFile(resource)
+      : await explorer.inspectFile(resource);
     const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
     if (!ownerSessionId) {
       throw new Error("The owning Session could not be resolved.");

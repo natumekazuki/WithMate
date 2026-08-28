@@ -25,6 +25,7 @@ import type {
 import {
   getSessionFileResourceDisplayPath,
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   isSessionFileRootResource,
 } from "./file-explorer-contract.js";
 import {
@@ -198,9 +199,18 @@ async function readWholeResource(
   onProgress?: (loadedBytes: number) => void,
 ): Promise<Uint8Array> {
   let offset = 0;
-  const resource = isSessionFileAbsoluteResource(descriptor)
+  const resource: SessionFileResourceRequest = isSessionFileAbsoluteResource(descriptor)
     ? { sessionId: descriptor.sessionId, absolutePath: descriptor.absolutePath }
-    : {
+    : isSessionFileGitCommitResource(descriptor)
+      ? {
+          resourceKind: "git-commit-file",
+          sessionId: descriptor.sessionId,
+          rootId: descriptor.rootId,
+          repositoryId: descriptor.repositoryId,
+          commitId: descriptor.commitId,
+          relativePath: descriptor.relativePath,
+        }
+      : {
         sessionId: descriptor.sessionId,
         rootId: descriptor.rootId,
         relativePath: descriptor.relativePath,
@@ -209,7 +219,9 @@ async function readWholeResource(
     const result = await api.readSessionFileChunk({
       ...resource,
       offset,
-      length: Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
+      length: isSessionFileGitCommitResource(resource)
+        ? descriptor.byteLength - offset
+        : Math.min(SESSION_FILE_READ_CHUNK_BYTES, descriptor.byteLength - offset),
       expectedRevision: descriptor.revision,
     });
     if (!isCurrent()) {
@@ -560,10 +572,13 @@ export function SessionFilePreview({
   chatNotice = "",
 }: SessionFilePreviewProps) {
   const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
-  const markdownLinkFileContext = useMemo(() => ({
-    sessionId: request.sessionId,
-    baseResource: request,
-  }), [request]);
+  const currentFileActionsAvailable = !isSessionFileGitCommitResource(request);
+  const markdownLinkFileContext = useMemo(() => isSessionFileGitCommitResource(request)
+    ? undefined
+    : {
+        sessionId: request.sessionId,
+        baseResource: request,
+      }, [request]);
   const keyboardShortcuts = useShortcutSettings();
   const loadRevisionRef = useRef(0);
   const activePreviewAccumulatorRef = useRef<PreviewByteAccumulator | null>(null);
@@ -1309,7 +1324,7 @@ export function SessionFilePreview({
                   : "Working Tree Diff"}
             </button>
           )) : null}
-          {fileObjectCopyAvailable ? (
+          {currentFileActionsAvailable && fileObjectCopyAvailable ? (
             <button type="button" onClick={() => void copyCurrentFile()}>Copy File</button>
           ) : null}
           {previewKind === "text" || previewKind === "markdown" ? (
@@ -1322,8 +1337,12 @@ export function SessionFilePreview({
             </button>
           ) : null}
           <button type="button" onClick={() => setReloadRevision((current) => current + 1)}>Reload</button>
-          <button type="button" onClick={() => void openCurrentFile()}>Open</button>
-          <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+          {currentFileActionsAvailable ? (
+            <>
+              <button type="button" onClick={() => void openCurrentFile()}>Open</button>
+              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+            </>
+          ) : null}
         </div>
       </header>
 

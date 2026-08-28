@@ -5,6 +5,7 @@ import type {
 } from "../src/file-explorer/file-explorer-contract.js";
 import {
   isSessionFileAbsoluteResource,
+  isSessionFileGitCommitResource,
   resolveSessionFilePreviewWindowTitle,
 } from "../src/file-explorer/file-explorer-contract.js";
 import type { ChatEntryMode, HomeEntryMode, WindowLike } from "./window-entry-loader.js";
@@ -459,16 +460,27 @@ export class AuxWindowService<TWindow extends BaseWindowLike> {
   }
 
   private makeFilePreviewResourceKey(resource: SessionFileResourceRequest): string {
-    return isSessionFileAbsoluteResource(resource)
-      ? JSON.stringify([
-          resource.sessionId,
-          "absolute-file",
-          resource.absolutePath,
-        ])
-      : JSON.stringify([
-          resource.sessionId,
-          resource.rootId,
-          resource.relativePath.replaceAll("\\", "/"),
-        ]);
+    if (isSessionFileAbsoluteResource(resource)) {
+      return JSON.stringify([
+        resource.sessionId,
+        "absolute-file",
+        resource.absolutePath,
+      ]);
+    }
+    if (isSessionFileGitCommitResource(resource)) {
+      return JSON.stringify([
+        resource.sessionId,
+        "git-commit-file",
+        resource.rootId,
+        resource.repositoryId,
+        resource.commitId,
+        resource.relativePath.replaceAll("\\", "/"),
+      ]);
+    }
+    return JSON.stringify([
+      resource.sessionId,
+      resource.rootId,
+      resource.relativePath.replaceAll("\\", "/"),
+    ]);
   }
 }

@@ -1,4 +1,58 @@
-import type { SessionFileEncoding } from "./file-explorer-contract.js";
+import type {
+  SessionFileEncoding,
+  SessionFileResourceKind,
+} from "./file-explorer-contract.js";
+
+export function detectSessionFileResourceKind(
+  fileName: string,
+  bytes: Uint8Array,
+): { kind: SessionFileResourceKind; mimeType: string } {
+  const normalizedName = fileName.toLocaleLowerCase("en-US");
+  const dotIndex = normalizedName.lastIndexOf(".");
+  const extension = dotIndex >= 0 ? normalizedName.slice(dotIndex) : "";
+  const isMarkdown = extension === ".md" || extension === ".markdown";
+  const imageTypes: Record<string, string> = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+    ".avif": "image/avif",
+  };
+  const headerText = new TextDecoder("utf-8").decode(bytes.subarray(0, Math.min(bytes.length, 1024))).trimStart();
+  const detectedImageMime =
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
+      ? "image/png"
+      : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+        ? "image/jpeg"
+        : headerText.startsWith("GIF87a") || headerText.startsWith("GIF89a")
+          ? "image/gif"
+          : headerText.startsWith("RIFF") && headerText.slice(8, 12) === "WEBP"
+            ? "image/webp"
+            : bytes[0] === 0x42 && bytes[1] === 0x4d
+              ? "image/bmp"
+              : null;
+  if (extension === ".svg" || /^<\?xml[\s\S]*?<svg\b/i.test(headerText) || /^<svg\b/i.test(headerText)) {
+    return { kind: "svg", mimeType: "image/svg+xml" };
+  }
+  if (detectedImageMime || imageTypes[extension]) {
+    return { kind: "image", mimeType: detectedImageMime ?? imageTypes[extension] };
+  }
+  if (isUtf16SessionFile(bytes)) {
+    return isMarkdown
+      ? { kind: "markdown", mimeType: "text/markdown" }
+      : { kind: "text", mimeType: "text/plain" };
+  }
+  if (isLikelyBinarySessionFile(bytes)) {
+    return { kind: "binary", mimeType: "application/octet-stream" };
+  }
+  if (isMarkdown) {
+    return { kind: "markdown", mimeType: "text/markdown" };
+  }
+  return { kind: "text", mimeType: "text/plain" };
+}
 
 export function isUtf16SessionFile(bytes: Uint8Array): boolean {
   return (

@@ -542,6 +542,48 @@ test("Markdown preview の local file link は current resource を基準に det
   }
 });
 
+test("commit file preview は通常previewを再利用しworking tree操作を表示しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const restoreElementSize = installElementSize(dom);
+  const request: SessionFileResourceRequest = {
+    resourceKind: "git-commit-file",
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src/current.ts",
+  };
+  const api: PreviewApi = {
+    ...createTextPreviewApi(request, "current.ts", "const version = 'commit';\n", "b".repeat(40)),
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.textContent?.includes("const version = 'commit';") === true);
+    const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
+    assert.equal(labels.includes("Open"), false);
+    assert.equal(labels.includes("Show in Explorer"), false);
+    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Reload"), true);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreElementSize();
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("Text preview の選択範囲は Copy と Quote の共通 action を表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,

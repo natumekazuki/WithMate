@@ -31,9 +31,19 @@ export type SessionFileAbsoluteResourceRequest = {
   absolutePath: string;
 };
 
+export type SessionFileGitCommitResourceRequest = {
+  resourceKind: "git-commit-file";
+  sessionId: string;
+  rootId: string;
+  repositoryId: string;
+  commitId: string;
+  relativePath: string;
+};
+
 export type SessionFileResourceRequest =
   | SessionFileRootResourceRequest
-  | SessionFileAbsoluteResourceRequest;
+  | SessionFileAbsoluteResourceRequest
+  | SessionFileGitCommitResourceRequest;
 
 export function isSessionFileAbsoluteResource(
   resource: SessionFileResourceRequest,
@@ -41,10 +51,16 @@ export function isSessionFileAbsoluteResource(
   return "absolutePath" in resource;
 }
 
+export function isSessionFileGitCommitResource(
+  resource: SessionFileResourceRequest,
+): resource is SessionFileGitCommitResourceRequest {
+  return "resourceKind" in resource && resource.resourceKind === "git-commit-file";
+}
+
 export function isSessionFileRootResource(
   resource: SessionFileResourceRequest,
 ): resource is SessionFileRootResourceRequest {
-  return "rootId" in resource;
+  return "rootId" in resource && !isSessionFileGitCommitResource(resource);
 }
 
 export function getSessionFileResourceDisplayPath(resource: SessionFileResourceRequest): string {
@@ -60,6 +76,12 @@ export function areSessionFileResourcesEqual(
   }
   if (isSessionFileAbsoluteResource(left) && isSessionFileAbsoluteResource(right)) {
     return left.absolutePath === right.absolutePath;
+  }
+  if (isSessionFileGitCommitResource(left) && isSessionFileGitCommitResource(right)) {
+    return left.rootId === right.rootId
+      && left.repositoryId === right.repositoryId
+      && left.commitId === right.commitId
+      && left.relativePath === right.relativePath;
   }
   return isSessionFileRootResource(left)
     && isSessionFileRootResource(right)
@@ -298,7 +320,13 @@ export type FileRootGitHistoryDiffRequest = FileRootGitHistoryCommitDetailReques
 };
 
 export type FileRootGitHistoryDiffResult =
-  | { status: "ok"; commitId: string; relativePath: string | null; patch: string }
+  | {
+      status: "ok";
+      commitId: string;
+      relativePath: string | null;
+      patch: string;
+      previewResource: SessionFileGitCommitResourceRequest | null;
+    }
   | {
       status: "commit-not-found" | "not-changed" | "repository-not-found" | "failed";
       message: string;

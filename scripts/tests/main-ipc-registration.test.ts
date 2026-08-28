@@ -1044,6 +1044,70 @@ test("File Preview の Git IPC は current root file だけを投影する", asy
   assert.deepEqual(diffRequests, [currentDiff]);
 });
 
+test("commit file preview IPC は owning Session のopenとtokenに結び付いたreadだけを許可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=commit-preview-1");
+  let currentWindow = ownerWindow;
+  const resource = {
+    resourceKind: "git-commit-file" as const,
+    sessionId: "aux-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src/current.ts",
+  };
+  const inspectRequests: unknown[] = [];
+  const readRequests: unknown[] = [];
+  const navigationRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? resource : null
+    ),
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      navigationRequests.push(request);
+      return { status: "opened", targetType: "preview-window", disposition: "created", resource };
+    },
+    inspectSessionFile: async (request: unknown) => {
+      inspectRequests.push(request);
+      return null;
+    },
+    readSessionFileChunk: async (request: unknown) => {
+      readRequests.push(request);
+      return null;
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const openRequest = { kind: "resource", resource };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, openRequest) as { status: string }).status,
+    "opened",
+  );
+  assert.deepEqual(navigationRequests, [openRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+
+  currentWindow = previewWindow;
+  await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource);
+  const chunkRequest = { ...resource, offset: 0, length: 32, expectedRevision: "b".repeat(40) };
+  await handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, chunkRequest);
+  assert.deepEqual(inspectRequests, [resource]);
+  assert.deepEqual(readRequests, [chunkRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, {
+      ...resource,
+      commitId: "c".repeat(40),
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+});
+
 test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
