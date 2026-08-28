@@ -78,6 +78,7 @@ type WorkspaceGitProcessOptions = {
   env: NodeJS.ProcessEnv;
   stdin?: Buffer;
   signal?: AbortSignal;
+  captureStdoutBytes?: number;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
 };
@@ -101,6 +102,7 @@ const MAX_HISTORY_LIST_STDOUT_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_DETAIL_STDOUT_BYTES = 2 * 1024 * 1024;
 const MAX_HISTORY_DIFF_STDOUT_BYTES = 8 * 1024 * 1024;
 const MAX_HISTORY_FILE_BLOB_BYTES = 64 * 1024 * 1024;
+const HISTORY_FILE_INSPECTION_BYTES = 8 * 1024;
 const MAX_HISTORY_STDERR_BYTES = 64 * 1024;
 const HISTORY_LOG_FORMAT = "%H%x00%h%x00%an%x00%ae%x00%aI%x00%s%x00%P%x00%D%x00%x01";
 let defaultGitExecutablePath: Promise<string> | null = null;
@@ -416,6 +418,7 @@ function runGitProcess(
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let stdoutBytes = 0;
+    let capturedStdoutBytes = 0;
     let stderrBytes = 0;
     let processError: Error | null = null;
     let outputLimitError: Error | null = null;
@@ -434,7 +437,14 @@ function runGitProcess(
       child.kill();
     };
     childStdout.on("data", (chunk: Buffer) => {
-      stdoutChunks.push(chunk);
+      const remainingCaptureBytes = options.captureStdoutBytes === undefined
+        ? chunk.length
+        : Math.max(0, options.captureStdoutBytes - capturedStdoutBytes);
+      if (remainingCaptureBytes > 0) {
+        const capturedChunk = chunk.subarray(0, remainingCaptureBytes);
+        stdoutChunks.push(capturedChunk);
+        capturedStdoutBytes += capturedChunk.length;
+      }
       stdoutBytes += chunk.length;
       if (options.maxStdoutBytes !== undefined && stdoutBytes > options.maxStdoutBytes) {
         outputLimitError = new Error("Git stdout exceeded the configured resource limit.");
@@ -998,7 +1008,7 @@ export class FileRootGitChangesService {
     signal?: AbortSignal,
     indexFilePath?: string,
     safeDirectoryPaths: string[] = [],
-    limits?: { maxStdoutBytes?: number; maxStderrBytes?: number },
+    limits?: { captureStdoutBytes?: number; maxStdoutBytes?: number; maxStderrBytes?: number },
   ): Promise<{ exitCode: number; stdout: Buffer; stderr: string }> {
     throwIfAborted(signal);
     const executablePath = await this.#getGitExecutablePath();
@@ -1017,6 +1027,9 @@ export class FileRootGitChangesService {
     if (limits?.maxStdoutBytes !== undefined) {
       options.maxStdoutBytes = limits.maxStdoutBytes;
     }
+    if (limits?.captureStdoutBytes !== undefined) {
+      options.captureStdoutBytes = limits.captureStdoutBytes;
+    }
     if (limits?.maxStderrBytes !== undefined) {
       options.maxStderrBytes = limits.maxStderrBytes;
     }
@@ -1031,7 +1044,9 @@ export class FileRootGitChangesService {
     if (limits?.maxStderrBytes !== undefined && Buffer.byteLength(result.stderr, "utf8") > limits.maxStderrBytes) {
       throw new Error("Git stderr exceeded the configured resource limit.");
     }
-    return result;
+    return limits?.captureStdoutBytes !== undefined && result.stdout.length > limits.captureStdoutBytes
+      ? { ...result, stdout: result.stdout.subarray(0, limits.captureStdoutBytes) }
+      : result;
   }
 
   async #readWorkTreeConfigArgs(operation: WorkspaceGitOperation): Promise<string[]> {
@@ -1175,7 +1190,7 @@ export class FileRootGitChangesService {
     operation: WorkspaceGitOperation,
     args: string[],
     stdin?: Buffer,
-    limits?: { maxStdoutBytes?: number; maxStderrBytes?: number },
+    limits?: { captureStdoutBytes?: number; maxStdoutBytes?: number; maxStderrBytes?: number },
   ): Promise<{ exitCode: number; stdout: Buffer; stderr: string }> {
     await this.#assertOperationIdentity(operation);
     let result: GitCommandResult;
@@ -2104,6 +2119,24 @@ export class FileRootGitChangesService {
     return result.stdout;
   }
 
+  async #readHistoryFileBlobPrefix(
+    operation: WorkspaceGitOperation,
+    entry: HistoryFileBlobEntry,
+  ): Promise<Buffer> {
+    const result = await this.#runIdentityBoundGit(operation, [
+      "cat-file",
+      "blob",
+      entry.objectId,
+    ], undefined, {
+      captureStdoutBytes: HISTORY_FILE_INSPECTION_BYTES,
+      maxStderrBytes: MAX_HISTORY_STDERR_BYTES,
+    });
+    if (result.exitCode !== 0) {
+      throw new Error(result.stderr || "Git commit file contents could not be inspected.");
+    }
+    return result.stdout;
+  }
+
   async #resolveHistoryFile(
     operation: WorkspaceGitOperation,
     request: SessionFileGitCommitResourceRequest,
@@ -2138,8 +2171,7 @@ export class FileRootGitChangesService {
     }
     try {
       const { commit, entry, relativePath } = await this.#resolveHistoryFile(operation, request);
-      const bytes = await this.#readHistoryFileBlob(operation, entry);
-      const inspectedBytes = bytes.subarray(0, Math.min(bytes.length, 8 * 1024));
+      const inspectedBytes = await this.#readHistoryFileBlobPrefix(operation, entry);
       const resource = detectSessionFileResourceKind(relativePath, inspectedBytes);
       return {
         ...request,
@@ -2168,6 +2200,41 @@ export class FileRootGitChangesService {
       `${request.sessionId}:${request.repositoryId}:history:file:inspect:${request.commitId}:${request.relativePath}`,
       this.#operationTimeoutMs,
       (signal) => this.#inspectHistoryFileRequest(request, signal),
+    );
+  }
+
+  async #resolveHistoryFilePreviewRequest(
+    request: SessionFileGitCommitResourceRequest,
+    signal: AbortSignal,
+  ): Promise<{ name: string }> {
+    const pendingCleanupError = await this.#cleanupPendingResources();
+    if (pendingCleanupError) {
+      throw pendingCleanupError;
+    }
+    const operation = await this.#resolveHistoryOperation(request, signal);
+    if (!("workspacePath" in operation)) {
+      throw new Error(operation.message);
+    }
+    try {
+      const { relativePath } = await this.#resolveHistoryFile(operation, request);
+      return { name: path.posix.basename(relativePath) };
+    } finally {
+      const cleanupError = await this.#closeOperation(operation);
+      if (cleanupError) {
+        throw cleanupError;
+      }
+    }
+  }
+
+  async resolveHistoryFilePreview(
+    request: SessionFileGitCommitResourceRequest,
+  ): Promise<{ name: string }> {
+    normalizeHistoryObjectId(request.commitId);
+    normalizeGitRelativePath(request.relativePath);
+    return runWorkspaceGitOperationWithAdmission(
+      `${request.sessionId}:${request.repositoryId}:history:file:open:${request.commitId}:${request.relativePath}`,
+      this.#operationTimeoutMs,
+      (signal) => this.#resolveHistoryFilePreviewRequest(request, signal),
     );
   }
 

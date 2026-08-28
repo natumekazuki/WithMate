@@ -4254,9 +4254,9 @@ async function openSessionFilePreviewWindow(
     };
   }
   try {
-    const descriptor = isSessionFileGitCommitResource(resource)
-      ? await createFileRootGitChangesService().inspectHistoryFile(resource)
-      : await explorer.inspectFile(resource);
+    const fileName = isSessionFileGitCommitResource(resource)
+      ? (await createFileRootGitChangesService().resolveHistoryFilePreview(resource)).name
+      : (await explorer.inspectFile(resource)).name;
     const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
     if (!ownerSessionId) {
       throw new Error("The owning Session could not be resolved.");
@@ -4264,7 +4264,7 @@ async function openSessionFilePreviewWindow(
     const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
       resource,
       ownerSessionId,
-      windowTitle: resolveSessionFilePreviewWindowTitle(descriptor.name),
+      windowTitle: resolveSessionFilePreviewWindowTitle(fileName),
       view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
     });
     return { status: "opened", targetType: "preview-window", disposition, resource };

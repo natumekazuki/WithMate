@@ -251,8 +251,36 @@ test("FileRootGitChangesService はcanonical repository単位のhistory、root/p
         commitId: binaryCommit.id,
         relativePath: "binary.bin",
       });
+      let blobReadAttempts = 0;
+      let allowBlobInspection = false;
+      const metadataOnlyService = new FileRootGitChangesService({
+        resolveRootContext: async () => ({ rootPath: repositoryPath }),
+        resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+        runGit: async (workspacePath, args, options) => {
+          if (args.some((arg, index) => arg === "cat-file" && args[index + 1] === "blob")) {
+            blobReadAttempts += 1;
+            if (!allowBlobInspection) {
+              throw new Error("Blob contents must not be read during preview Window admission.");
+            }
+            assert.equal(options.captureStdoutBytes, 8 * 1024);
+          }
+          return runGitForTest(workspacePath, args, {
+            env: options.env,
+            executablePath: options.executablePath,
+            stdin: options.stdin,
+            signal: options.signal,
+          });
+        },
+      });
+      assert.deepEqual(
+        await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource!),
+        { name: "binary.bin" },
+      );
+      assert.equal(blobReadAttempts, 0);
       await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));
-      const descriptor = await service.inspectHistoryFile(binaryDiff.previewResource!);
+      allowBlobInspection = true;
+      const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource!);
+      assert.equal(blobReadAttempts, 1);
       assert.equal(descriptor.revision.length, binaryCommit.id.length);
       assert.equal(descriptor.kind, "binary");
       assert.equal(descriptor.byteLength, 5);

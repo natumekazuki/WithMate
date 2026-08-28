@@ -1375,7 +1375,9 @@ export function SessionFilePreview({
       {loadState.status === "large-warning" ? (
         <div className="session-file-preview-large-warning">
           <strong>Large file: {formatFileByteLength(loadState.descriptor.byteLength)}</strong>
-          <p>The file can still be opened. It is read in chunks and replaces the previous preview.</p>
+          <p>{isSessionFileGitCommitResource(request)
+            ? "The file can still be opened. Loading materializes the selected commit blob in memory and replaces the previous preview."
+            : "The file can still be opened. It is read in chunks and replaces the previous preview."}</p>
           <button type="button" onClick={() => void loadDescriptor(loadState.descriptor, loadRevisionRef.current)}>Load anyway</button>
         </div>
       ) : null}
@@ -1389,8 +1391,12 @@ export function SessionFilePreview({
             <div><dt>Size</dt><dd>{formatFileByteLength(descriptor.byteLength)}</dd></div>
             <div><dt>Modified</dt><dd>{descriptor.modifiedAt}</dd></div>
           </dl>
-          <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
-          <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+          {currentFileActionsAvailable ? (
+            <>
+              <button type="button" onClick={() => void openCurrentFile()}>Open in default app</button>
+              <button type="button" onClick={() => void revealCurrentFile()}>Show in Explorer</button>
+            </>
+          ) : null}
         </div>
       ) : null}
 

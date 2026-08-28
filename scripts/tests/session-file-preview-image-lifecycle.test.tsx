@@ -584,6 +584,72 @@ test("commit file preview は通常previewを再利用しworking tree操作を�
   }
 });
 
+test("binary commit file preview はmetadata内にもworking tree操作を表示しない", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const request: SessionFileResourceRequest = {
+    resourceKind: "git-commit-file",
+    sessionId: "session-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "assets/archive.bin",
+  };
+  const descriptor: SessionFileDescriptor = {
+    ...request,
+    name: "archive.bin",
+    kind: "binary",
+    byteLength: 4,
+    modifiedAt: "2026-08-28T00:00:00.000Z",
+    mimeType: "application/octet-stream",
+    suggestedEncoding: "utf-8",
+    revision: "b".repeat(40),
+  };
+  const api: PreviewApi = {
+    ...DEFAULT_IMAGE_COPY_API,
+    async listSessionFileRoots() {
+      return [];
+    },
+    async inspectSessionFile() {
+      return descriptor;
+    },
+    async readSessionFileChunk() {
+      assert.fail("Binary metadata preview must not read file contents.");
+    },
+    async openSessionFile() {
+      assert.fail("Commit resources must not invoke working tree open.");
+    },
+    async openPath(target) {
+      return { status: "opened", targetType: "local-path", target };
+    },
+    isSessionFileObjectCopyAvailable() {
+      return true;
+    },
+  };
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+  try {
+    assert.ok(container);
+    root = await renderPreview(api, container, request);
+    await waitFor(() => container.querySelector(".session-file-preview-metadata") !== null);
+    const labels = Array.from(container.querySelectorAll("button")).map((button) => button.textContent);
+    assert.equal(labels.includes("Open"), false);
+    assert.equal(labels.includes("Open in default app"), false);
+    assert.equal(labels.includes("Show in Explorer"), false);
+    assert.equal(labels.includes("Copy File"), false);
+    assert.equal(labels.includes("Reload"), true);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("Text preview の選択範囲は Copy と Quote の共通 action を表示する", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
     pretendToBeVisual: true,
