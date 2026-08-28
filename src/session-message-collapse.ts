@@ -86,7 +86,11 @@ export function buildMessageCollapseTargets(
   messages: readonly Message[],
   sources: readonly MessageListSource[],
   keys: readonly string[],
+  previousTargets: readonly MessageCollapseTarget[] = [],
 ): MessageCollapseTarget[] {
+  const previousTargetsBySourceIdentity = new Map(
+    previousTargets.map((target) => [target.sourceIdentity, target]),
+  );
   const targets: MessageCollapseTarget[] = [];
   for (let index = 0; index < messages.length; index += 1) {
     const message = messages[index];
@@ -96,13 +100,30 @@ export function buildMessageCollapseTargets(
       continue;
     }
 
+    const sourceIdentity = messageSourceIdentity(source);
+    const previousTarget = previousTargetsBySourceIdentity.get(sourceIdentity);
+    if (
+      previousTarget?.key === key
+      && previousTarget.role === message.role
+      && previousTarget.text === message.text
+      && previousTarget.sourceKind === source.kind
+      && previousTarget.accent === (message.accent === true)
+    ) {
+      targets.push(previousTarget);
+      continue;
+    }
+
     targets.push({
       key,
-      sourceIdentity: messageSourceIdentity(source),
+      sourceIdentity,
       sourceKind: source.kind,
       role: message.role,
       text: message.text,
-      preview: projectMessagePlainText(message.text),
+      preview: previousTarget?.sourceKind === source.kind
+        && previousTarget.role === message.role
+        && previousTarget.text === message.text
+        ? previousTarget.preview
+        : projectMessagePlainText(message.text),
       accent: message.accent === true,
     });
   }
