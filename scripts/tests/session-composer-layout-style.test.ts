@@ -11,8 +11,8 @@ test("Session composer は設定field内を一行にし、通常幅で設定群�
   );
   assert.match(
     stylesSource,
-    /\.composer-setting-field\s*{\s*display:\s*flex;\s*align-items:\s*center;\s*gap:\s*8px;/,
-    "設定fieldはlabelとselectを同じ行に配置する",
+    /\.composer-setting-field\s*{\s*display:\s*flex;\s*align-items:\s*center;\s*gap:\s*8px;\s*flex:\s*1 1 180px;/,
+    "設定fieldはlabelとselectを横並びにし、利用可能な横幅を使う",
   );
   assert.match(
     stylesSource,
