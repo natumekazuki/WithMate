@@ -1213,6 +1213,96 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
   }
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "読込済みのメッセージ画像はlightboxで拡大でき、Escapeまたは背景clickで閉じて元の画像へfocusを戻せる"
+// oracle = { type = "contract", ref = "ユーザー要求: feat-message-image-lightbox引継ぎの確定した仕様" }
+// failure_mode = "lightboxのdialog遷移、倍率操作、閉じる経路、またはfocus復帰が欠け、mouseまたはkeyboard利用者が画像表示から安全に戻れない"
+// scope = "MessageRichTextの画像lightbox interaction境界"
+// lifecycle = "permanent"
+// distinction = "既存の画像load確認とは異なり、portal dialogの表示、倍率遷移、Escapeと背景click、focus復帰を観測する"
+// @end-test-value
+test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背景clickで元の画像へ戻る", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: "![cached](data:image/png;base64,AAAA)",
+      }));
+    });
+
+    const image = container.querySelector<HTMLImageElement>(".message-image");
+    const trigger = container.querySelector<HTMLButtonElement>("button[aria-label='Open image preview: cached']");
+    assert.ok(image);
+    assert.ok(trigger);
+    assert.equal(trigger.disabled, true);
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(trigger.disabled, false);
+
+    trigger.focus();
+    await act(async () => {
+      trigger.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    });
+
+    let dialog = dom.window.document.querySelector<HTMLElement>("[role='dialog'][aria-label='Image preview: cached']");
+    assert.ok(dialog);
+    assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Close image preview");
+    assert.equal(
+      dialog.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent?.trim(),
+      "100%",
+    );
+
+    await act(async () => {
+      dialog?.querySelector<HTMLButtonElement>("button[aria-label='Zoom image in']")?.click();
+    });
+    assert.equal(
+      dialog.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent?.trim(),
+      "110%",
+    );
+
+    await act(async () => {
+      dialog?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+    assert.equal(dom.window.document.querySelector(".message-image-lightbox"), null);
+    assert.equal(dom.window.document.activeElement, trigger);
+
+    await act(async () => {
+      trigger.click();
+    });
+    dialog = dom.window.document.querySelector<HTMLElement>("[role='dialog'][aria-label='Image preview: cached']");
+    assert.ok(dialog);
+    const backdrop = dom.window.document.querySelector<HTMLElement>(".message-image-lightbox");
+    assert.ok(backdrop);
+    await act(async () => {
+      backdrop.click();
+    });
+    assert.equal(dom.window.document.querySelector(".message-image-lightbox"), null);
+    assert.equal(dom.window.document.activeElement, trigger);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
 test("MessageRichText は chat context の相対 Markdown image を環境依存URLとして読み込まない", () => {
   const html = renderToStaticMarkup(
     React.createElement(MessageRichText, { text: "![relative](images/sample.png)" }),

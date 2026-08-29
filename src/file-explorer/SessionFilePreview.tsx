@@ -7,13 +7,13 @@ import {
   useRef,
   useState,
   type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 
 import { MessageRichText } from "../MessageRichText.js";
 import { BackNavigationButton } from "../back-navigation-button.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "../image-viewport.js";
 import { SelectionTextActionSurface } from "../session-components.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 import type {
@@ -29,7 +29,6 @@ import {
   isSessionFileRootResource,
 } from "./file-explorer-contract.js";
 import {
-  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   formatFileByteLength,
@@ -115,14 +114,6 @@ type LoadedFile = {
   bytes: Uint8Array;
 };
 
-type ImagePanSession = {
-  pointerId: number;
-  clientX: number;
-  clientY: number;
-  scrollLeft: number;
-  scrollTop: number;
-};
-
 type FileLoadState =
   | { status: "inspecting" }
   | { status: "large-warning"; descriptor: SessionFileDescriptor }
@@ -147,10 +138,6 @@ type StructuredTextProjectionState =
   };
 
 const MARKDOWN_LOCAL_IMAGE_CONCURRENCY = 4;
-const IMAGE_ZOOM_MIN = 10;
-const IMAGE_ZOOM_MAX = 800;
-const IMAGE_ZOOM_STEP = 10;
-
 const ENCODING_OPTIONS: Array<{ value: SessionFileEncodingSelection; label: string }> = [
   { value: "auto", label: "Auto" },
   { value: "utf-8", label: "UTF-8" },
@@ -594,8 +581,6 @@ export function SessionFilePreview({
   const [structuredTextProjection, setStructuredTextProjection] = useState<StructuredTextProjectionState>({
     status: "idle",
   });
-  const [imageZoom, setImageZoom] = useState<"fit" | number>("fit");
-  const [imageFitZoom, setImageFitZoom] = useState(100);
   const [imageObjectUrl, setImageObjectUrl] = useState("");
   const [roots, setRoots] = useState<SessionFileRoot[]>([]);
   const [feedback, setFeedback] = useState("");
@@ -604,11 +589,7 @@ export function SessionFilePreview({
   const [currentMatch, setCurrentMatch] = useState(0);
   const [reloadRevision, setReloadRevision] = useState(0);
   const markdownSurfaceRef = useRef<HTMLDivElement | null>(null);
-  const imagePanSessionRef = useRef<ImagePanSession | null>(null);
-  const [isImagePanning, setIsImagePanning] = useState(false);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const imageScrollRef = useRef<HTMLDivElement | null>(null);
-  const imageCanvasRef = useRef<HTMLDivElement | null>(null);
+  const imageViewport = useImageViewport(imageObjectUrl);
   const renderedMarkdownIndexRef = useRef<RenderedTextSearchIndex | null>(null);
   const renderedMarkdownMatchesRef = useRef<RenderedTextMatchOffsets>({
     offsets: new Uint32Array(0),
@@ -691,9 +672,6 @@ export function SessionFilePreview({
     setMarkdownMode("preview");
     setStructuredTextMode("formatted");
     setStructuredTextProjection({ status: "idle" });
-    setImageZoom("fit");
-    imagePanSessionRef.current = null;
-    setIsImagePanning(false);
     setImageObjectUrl("");
     setFeedback("");
     setFindOpen(false);
@@ -889,96 +867,10 @@ export function SessionFilePreview({
       setImageObjectUrl("");
       return;
     }
-    setImageZoom("fit");
-    setImageFitZoom(100);
     const objectUrl = URL.createObjectURL(new Blob([copyBytesToArrayBuffer(loaded.bytes)], { type: loaded.descriptor.mimeType }));
     setImageObjectUrl(objectUrl);
     return () => URL.revokeObjectURL(objectUrl);
   }, [loaded]);
-
-  const startImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (
-      event.button !== 0 ||
-      (event.currentTarget.scrollWidth <= event.currentTarget.clientWidth &&
-        event.currentTarget.scrollHeight <= event.currentTarget.clientHeight)
-    ) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    imagePanSessionRef.current = {
-      pointerId: event.pointerId,
-      clientX: event.clientX,
-      clientY: event.clientY,
-      scrollLeft: event.currentTarget.scrollLeft,
-      scrollTop: event.currentTarget.scrollTop,
-    };
-    setIsImagePanning(true);
-  }, []);
-
-  const moveImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const session = imagePanSessionRef.current;
-    if (!session || session.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.currentTarget.scrollLeft = session.scrollLeft - (event.clientX - session.clientX);
-    event.currentTarget.scrollTop = session.scrollTop - (event.clientY - session.clientY);
-  }, []);
-
-  const stopImagePan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (imagePanSessionRef.current?.pointerId !== event.pointerId) {
-      return;
-    }
-    imagePanSessionRef.current = null;
-    setIsImagePanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const handleImagePanCaptureLoss = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (imagePanSessionRef.current?.pointerId === event.pointerId) {
-      imagePanSessionRef.current = null;
-      setIsImagePanning(false);
-    }
-  }, []);
-
-  const updateImageFitZoom = useCallback(() => {
-    const viewport = imageScrollRef.current;
-    const canvas = imageCanvasRef.current;
-    const image = imageRef.current;
-    if (!viewport || !canvas || !image) {
-      return;
-    }
-    const styles = window.getComputedStyle(canvas);
-    const horizontalPadding = (Number.parseFloat(styles.paddingLeft) || 0)
-      + (Number.parseFloat(styles.paddingRight) || 0);
-    const verticalPadding = (Number.parseFloat(styles.paddingTop) || 0)
-      + (Number.parseFloat(styles.paddingBottom) || 0);
-    setImageFitZoom(calculateImageFitZoom(
-      viewport.clientWidth - horizontalPadding,
-      viewport.clientHeight - verticalPadding,
-      image.naturalWidth,
-      image.naturalHeight,
-    ));
-  }, []);
-
-  useLayoutEffect(() => {
-    if (!imageObjectUrl) {
-      return;
-    }
-    updateImageFitZoom();
-    if (typeof ResizeObserver === "undefined" || !imageScrollRef.current) {
-      return;
-    }
-    const observer = new ResizeObserver(updateImageFitZoom);
-    observer.observe(imageScrollRef.current);
-    return () => observer.disconnect();
-  }, [imageObjectUrl, updateImageFitZoom]);
-
-  const effectiveImageZoom = typeof imageZoom === "number" ? imageZoom : imageFitZoom;
-  const imageZoomLabel = `${effectiveImageZoom}%`;
 
   useShortcutScope("file-preview");
   useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.filePreviewFind, () => {
@@ -1080,10 +972,10 @@ export function SessionFilePreview({
   }, [api, fileObjectCopyAvailable, request]);
 
   const copyPreviewImage = useCallback(async () => {
-    if (!api || !imageRef.current || !imageScrollRef.current) {
+    if (!api || !imageViewport.imageRef.current || !imageViewport.viewportRef.current) {
       return;
     }
-    const point = resolveVisibleImageCopyPoint(imageRef.current, imageScrollRef.current);
+    const point = resolveVisibleImageCopyPoint(imageViewport.imageRef.current, imageViewport.viewportRef.current);
     if (!point) {
       setFeedback("The image is not currently visible.");
       return;
@@ -1291,22 +1183,11 @@ export function SessionFilePreview({
           {descriptor && (previewKind === "image" || previewKind === "svg") ? (
             <>
               <button type="button" disabled={!imageObjectUrl} onClick={() => void copyPreviewImage()}>Copy Image</button>
-              <div className="session-file-preview-segmented" role="group" aria-label="Image zoom">
-                <button
-                  type="button"
-                  aria-label="Zoom image out"
-                  disabled={effectiveImageZoom <= IMAGE_ZOOM_MIN}
-                  onClick={() => setImageZoom(Math.max(IMAGE_ZOOM_MIN, effectiveImageZoom - IMAGE_ZOOM_STEP))}
-                >−</button>
-                <button type="button" aria-label="Reset image zoom to 100%" onClick={() => setImageZoom(100)}>{imageZoomLabel}</button>
-                <button
-                  type="button"
-                  aria-label="Zoom image in"
-                  disabled={effectiveImageZoom >= IMAGE_ZOOM_MAX}
-                  onClick={() => setImageZoom(Math.min(IMAGE_ZOOM_MAX, effectiveImageZoom + IMAGE_ZOOM_STEP))}
-                >＋</button>
-                <button type="button" aria-label="Fit image to preview" className={imageZoom === "fit" ? "is-active" : ""} onClick={() => setImageZoom("fit")}>Fit</button>
-              </div>
+              <ImageZoomControls
+                controller={imageViewport}
+                className="session-file-preview-segmented"
+                fitAriaLabel="Fit image to preview"
+              />
             </>
           ) : null}
           {onOpenDiff && diffScopes.length > 0 ? diffScopes.map((scope) => (
@@ -1438,33 +1319,17 @@ export function SessionFilePreview({
         )
       ) : null}
       {loadState.status === "ready" && loaded && descriptor && (previewKind === "image" || previewKind === "svg") ? (
-        <div
-          ref={imageScrollRef}
-          className={`session-file-image-scroll${isImagePanning ? " is-panning" : ""}`}
-          onPointerDown={startImagePan}
-          onPointerMove={moveImagePan}
-          onPointerUp={stopImagePan}
-          onPointerCancel={stopImagePan}
-          onLostPointerCapture={handleImagePanCaptureLoss}
-        >
-          <div
-            ref={imageCanvasRef}
-            className={`session-file-image-canvas${imageZoom === "fit" ? " is-fit" : ""}`}
-          >
-            {imageObjectUrl ? (
-              <img
-                ref={imageRef}
-                className={`session-file-image${imageZoom === "fit" ? " is-fit" : ""}`}
-                src={imageObjectUrl}
-                alt={descriptor.name}
-                draggable={false}
-                onContextMenu={(event) => void showPreviewImageContextMenu(event)}
-                onLoad={updateImageFitZoom}
-                style={imageZoom === "fit" ? undefined : { zoom: imageZoom / 100 }}
-              />
-            ) : null}
-          </div>
-        </div>
+        imageObjectUrl ? (
+          <ImageViewport
+            controller={imageViewport}
+            src={imageObjectUrl}
+            alt={descriptor.name}
+            viewportClassName="session-file-image-scroll"
+            canvasClassName="session-file-image-canvas"
+            imageClassName="session-file-image"
+            onImageContextMenu={(event) => void showPreviewImageContextMenu(event)}
+          />
+        ) : null
       ) : null}
       {previewFeedback.length > 0 ? (
         <p className="session-file-preview-feedback" role="alert">
