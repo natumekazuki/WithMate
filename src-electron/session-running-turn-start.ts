@@ -6,7 +6,7 @@ export type SessionRunningTurnStartInput = {
   expectedMessageCount: number;
   userMessage: Message;
   updatedAt: string;
-  characterRuntimeSnapshot?: CharacterRuntimeSnapshot;
+  characterRuntimeSnapshot?: CharacterRuntimeSnapshot | null;
 };
 
 export type SessionRunningTurnStartResult = {

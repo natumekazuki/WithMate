@@ -897,13 +897,9 @@ export class SessionRuntimeService {
     const shouldResetCharacterAuthoringThread = storedSession.sessionKind === "character-authoring"
       && storedSession.characterRuntimeSnapshot !== null
       && resolvedSession.characterRuntimeSnapshot === null;
-    let session = shouldResetCharacterAuthoringThread
+    const session = shouldResetCharacterAuthoringThread
       ? { ...resolvedSession, threadId: "" }
       : resolvedSession;
-    if (shouldResetCharacterAuthoringThread) {
-      session = await this.deps.upsertSession(session);
-      await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
-    }
     throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
       sessionId,
@@ -993,13 +989,16 @@ export class SessionRuntimeService {
         this.deps.persistRunningTurnStart?.(runningSession, session.messages.length)
         ?? this.deps.upsertSession(runningSession)
       );
+      setupRunningSessionSaved = true;
+      if (shouldResetCharacterAuthoringThread) {
+        await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
+      }
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messages.length,
       });
-      setupRunningSessionSaved = true;
       throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {

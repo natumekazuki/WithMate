@@ -517,12 +517,16 @@ export class SessionStorageV6 {
         throw new Error("対象セッションが見つからないよ。");
       }
 
+      const updatesCharacterSnapshot = input.characterRuntimeSnapshot !== undefined;
       const nextCharacterSnapshot = input.characterRuntimeSnapshot;
-      if (nextCharacterSnapshot) {
-        const currentCharacterId = decodeSessionV6RuntimeState(currentRow).characterId;
+      const currentRuntimeState = decodeSessionV6RuntimeState(currentRow);
+      if (updatesCharacterSnapshot) {
+        if (currentRow.session_kind !== "character-authoring") {
+          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+        }
         if (
-          currentRow.session_kind !== "character-authoring"
-          || nextCharacterSnapshot.characterId !== currentCharacterId
+          nextCharacterSnapshot
+          && nextCharacterSnapshot.characterId !== currentRuntimeState.characterId
         ) {
           throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
         }
@@ -554,21 +558,28 @@ export class SessionStorageV6 {
           characterThemeColors: nextCharacterSnapshot.theme,
         } : {}),
       });
-      const characterSnapshotJson = nextCharacterSnapshot
-        ? stringifyCharacterRuntimeSnapshot(nextCharacterSnapshot)
+      const characterSnapshotJson = updatesCharacterSnapshot
+        ? nextCharacterSnapshot
+          ? stringifyCharacterRuntimeSnapshot(nextCharacterSnapshot)
+          : null
         : currentRow.character_snapshot_json;
+      const clearsProviderThread = updatesCharacterSnapshot && nextCharacterSnapshot === null;
       const updateResult = this.db.prepare(`
         UPDATE sessions_v6
         SET state = 'active',
             runtime_policy_json = ?,
             character_snapshot_json = CASE WHEN ? = 1 THEN ? ELSE character_snapshot_json END,
+            character_id = CASE WHEN ? = 1 THEN NULL ELSE character_id END,
+            thread_id = CASE WHEN ? = 1 THEN '' ELSE thread_id END,
             updated_at = ?,
             last_active_at = ?
         WHERE id = ?
       `).run(
         runtimePolicyJson,
-        nextCharacterSnapshot ? 1 : 0,
+        updatesCharacterSnapshot ? 1 : 0,
         characterSnapshotJson,
+        clearsProviderThread ? 1 : 0,
+        clearsProviderThread ? 1 : 0,
         input.updatedAt,
         input.updatedAt,
         sessionId,
@@ -591,6 +602,8 @@ export class SessionStorageV6 {
         state: "active",
         runtime_policy_json: runtimePolicyJson,
         character_snapshot_json: characterSnapshotJson,
+        character_id: clearsProviderThread ? null : currentRow.character_id,
+        thread_id: clearsProviderThread ? "" : currentRow.thread_id,
         updated_at: input.updatedAt,
         last_active_at: input.updatedAt,
       };

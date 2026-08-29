@@ -25,18 +25,32 @@ function createSession(overrides?: Partial<Session>): Session {
 
 // @test-value v1
 // kind = "invariant"
-// claim = "running turn開始のcanonical storage summaryをfull runtime result、summary cache、broadcastへ反映する"
-// oracle = { type = "contract", ref = "running-turn-start-persistence#5,#8" }
-// failure_mode = "full read-back省略後にstaleなpinやtitleをcacheへ戻すか、rendererへrunning更新を通知しない"
+// claim = "authoring snapshotのnull入力をstorageへ保持して渡し、canonical resultをfull runtime、summary cache、broadcastへ反映する"
+// oracle = { type = "contract", ref = "running-turn-start-persistence#5,#8,#10" }
+// failure_mode = "nullをundefinedへ変換してsnapshot clearを失うか、commit後にstaleなpin、title、snapshotをcacheへ戻す"
 // scope = "SessionPersistenceService.persistRunningTurnStart"
 // lifecycle = "permanent"
-// distinction = "storage atomicityではなくcommit後のcanonical result合成とprojectionを観測する"
+// distinction = "storage atomicityではなく三状態DTOのnull伝播とcommit後のcanonical result合成を観測する"
 // @end-test-value
-it("running turn開始はcanonical summaryをresultとcacheへ反映してbroadcastする", async () => {
+it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反映してbroadcastする", async () => {
+  const oldSnapshot = {
+    characterId: "char-a",
+    name: "Old",
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#111111", sub: "#222222" },
+    definitionMarkdown: "# Old",
+    definitionSha256: "old",
+    definitionByteSize: 5,
+    snapshotAt: "old",
+  };
   const initial = createSession({
     id: "running-start-projection",
     taskTitle: "Stale title",
     isPinned: false,
+    sessionKind: "character-authoring",
+    characterRuntimeSnapshot: oldSnapshot,
+    threadId: "thread-old",
     messages: [{ role: "assistant", text: "existing" }],
   });
   const running = createSession({
@@ -44,6 +58,8 @@ it("running turn開始はcanonical summaryをresultとcacheへ反映してbroadc
     status: "running",
     runState: "running",
     updatedAt: "2026-08-30T00:01:00.000Z",
+    characterRuntimeSnapshot: null,
+    threadId: "",
     messages: [...initial.messages, { role: "user", text: "new prompt" }],
   });
   let cachedSessions = [initial];
@@ -61,6 +77,7 @@ it("running turn開始はcanonical summaryをresultとcacheへ反映してbroadc
     appendStoredRunningTurnStart(input) {
       assert.equal(input.expectedMessageCount, 1);
       assert.deepEqual(input.userMessage, { role: "user", text: "new prompt" });
+      assert.equal(input.characterRuntimeSnapshot, null);
       return {
         summary: {
           ...projectSessionSummary(running),
@@ -87,6 +104,8 @@ it("running turn開始はcanonical summaryをresultとcacheへ反映してbroadc
   assert.equal(genericUpsertCalled, false);
   assert.equal(stored.taskTitle, "Concurrent title");
   assert.equal(stored.isPinned, true);
+  assert.equal(stored.characterRuntimeSnapshot, null);
+  assert.equal(stored.threadId, "");
   assert.deepEqual(stored.messages, running.messages);
   assert.equal(cachedSessions[0]?.taskTitle, "Concurrent title");
   assert.equal(cachedSessions[0]?.isPinned, true);

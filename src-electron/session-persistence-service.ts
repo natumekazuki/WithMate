@@ -375,7 +375,7 @@ export class SessionPersistenceService {
         userMessage,
         updatedAt: nextSession.updatedAt,
         characterRuntimeSnapshot: nextSession.sessionKind === "character-authoring"
-          ? nextSession.characterRuntimeSnapshot ?? undefined
+          ? nextSession.characterRuntimeSnapshot
           : undefined,
       });
       const stored = cloneSessions([{

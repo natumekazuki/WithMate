@@ -74,6 +74,27 @@ function createCharacterRuntimeSnapshot(name: string): CharacterRuntimeSnapshot 
   };
 }
 
+function insertCharacter(dbPath: string, snapshot: CharacterRuntimeSnapshot): void {
+  const characterDb = new DatabaseSync(dbPath);
+  try {
+    characterDb.prepare(`
+      INSERT INTO characters (id, name, description, icon_file_path, theme_main, theme_sub, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      snapshot.characterId,
+      snapshot.name,
+      snapshot.description,
+      snapshot.iconFilePath,
+      snapshot.theme.main,
+      snapshot.theme.sub,
+      "2026-08-30T00:00:00.000Z",
+      "2026-08-30T00:00:00.000Z",
+    );
+  } finally {
+    characterDb.close();
+  }
+}
+
 // @test-value v1
 // kind = "invariant"
 // claim = "running turn開始は既存messageとartifact detailと非所有metadataを維持し、user messageとrunning metadataだけを追加する"
@@ -166,24 +187,7 @@ it("character-authoringのrunning turn開始は最新snapshotと表示metadata�
       theme: { main: "#334455", sub: "#ddeeff" },
       snapshotAt: "2026-08-30T00:01:00.000Z",
     };
-    const characterDb = new DatabaseSync(dbPath);
-    try {
-      characterDb.prepare(`
-        INSERT INTO characters (id, name, description, icon_file_path, theme_main, theme_sub, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        oldSnapshot.characterId,
-        oldSnapshot.name,
-        oldSnapshot.description,
-        oldSnapshot.iconFilePath,
-        oldSnapshot.theme.main,
-        oldSnapshot.theme.sub,
-        "2026-08-30T00:00:00.000Z",
-        "2026-08-30T00:00:00.000Z",
-      );
-    } finally {
-      characterDb.close();
-    }
+    insertCharacter(dbPath, oldSnapshot);
     const initial = storage.insertSession({
       ...createSessionInput("running-authoring", [{ role: "assistant", text: "existing" }]),
       sessionKind: "character-authoring",
@@ -251,6 +255,196 @@ it("character-authoringのrunning turn開始は最新snapshotと表示metadata�
 });
 
 // @test-value v1
+// kind = "regression"
+// claim = "character-authoringのsnapshot clear、provider thread clear、running metadata、user messageは同一transactionで成功またはrollbackする"
+// oracle = { type = "contract", ref = "running-turn-start-persistence#1,#2,#6,#8;docs/design/character-storage.md#Runtime-Snapshot" }
+// failure_mode = "message append失敗時にsnapshotまたはthreadだけをclearするか、成功時に古いsnapshotとthreadを残す"
+// scope = "SessionStorageV6.appendRunningTurnStart"
+// lifecycle = "permanent"
+// distinction = "snapshot値の更新ではなく、有効なsnapshotからnullへ遷移するtransactionのcommitとrollbackをDB read-backで観測する"
+// @end-test-value
+it("character-authoringのsnapshotとthreadをuser messageとatomicにclearして失敗時は戻す", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-running-clear-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+
+  try {
+    const oldSnapshot = createCharacterRuntimeSnapshot("Old");
+    insertCharacter(dbPath, oldSnapshot);
+    const initial = storage.insertSession({
+      ...createSessionInput("running-authoring-clear", [{ role: "assistant", text: "existing" }]),
+      sessionKind: "character-authoring",
+      character: oldSnapshot.name,
+      characterIconPath: oldSnapshot.iconFilePath,
+      characterThemeColors: oldSnapshot.theme,
+      characterRuntimeSnapshot: oldSnapshot,
+      threadId: "thread-old",
+    });
+    const failureDb = new DatabaseSync(dbPath);
+    try {
+      failureDb.exec(`
+        CREATE TRIGGER fail_authoring_clear_message
+        BEFORE INSERT ON session_messages_v6
+        WHEN NEW.session_id = 'running-authoring-clear' AND NEW.seq = 1
+        BEGIN SELECT RAISE(ABORT, 'authoring clear message failed'); END;
+      `);
+    } finally {
+      failureDb.close();
+    }
+
+    assert.throws(() => storage.appendRunningTurnStart({
+      sessionId: initial.id,
+      expectedMessageCount: 1,
+      userMessage: { role: "user", text: "new prompt" },
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      characterRuntimeSnapshot: null,
+    }), /authoring clear message failed/);
+    const rolledBack = storage.getSession(initial.id);
+    assert.deepEqual(rolledBack?.characterRuntimeSnapshot, oldSnapshot);
+    assert.equal(rolledBack?.threadId, "thread-old");
+    assert.equal(rolledBack?.character, oldSnapshot.name);
+    assert.equal(rolledBack?.characterIconPath, oldSnapshot.iconFilePath);
+    assert.deepEqual(rolledBack?.characterThemeColors, oldSnapshot.theme);
+    assert.deepEqual(rolledBack?.messages.map((message) => message.text), ["existing"]);
+    assert.equal(rolledBack?.status, "idle");
+    assert.equal(rolledBack?.runState, "idle");
+
+    const cleanupDb = new DatabaseSync(dbPath);
+    try {
+      cleanupDb.exec("DROP TRIGGER fail_authoring_clear_message;");
+    } finally {
+      cleanupDb.close();
+    }
+    const storedResult = storage.appendRunningTurnStart({
+      sessionId: initial.id,
+      expectedMessageCount: 1,
+      userMessage: { role: "user", text: "new prompt" },
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      characterRuntimeSnapshot: null,
+    });
+
+    assert.equal(storedResult.characterRuntimeSnapshot, null);
+    assert.equal(storedResult.summary.threadId, "");
+    assert.equal(storedResult.summary.character, oldSnapshot.name);
+    assert.equal(storedResult.summary.characterIconPath, oldSnapshot.iconFilePath);
+    assert.deepEqual(storedResult.summary.characterThemeColors, oldSnapshot.theme);
+    const hydrated = storage.getSession(initial.id);
+    assert.equal(hydrated?.characterRuntimeSnapshot, null);
+    assert.equal(hydrated?.threadId, "");
+    assert.equal(hydrated?.character, oldSnapshot.name);
+    assert.deepEqual(hydrated?.messages.map((message) => message.text), ["existing", "new prompt"]);
+    assert.equal(hydrated?.status, "running");
+    assert.equal(hydrated?.runState, "running");
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "snapshot clearを要求したrunning turn開始でmessage sequenceが不一致ならsnapshot、thread、messages、running metadataを変更しない"
+// oracle = { type = "contract", ref = "running-turn-start-persistence#2,#8" }
+// failure_mode = "競合検出より先にsnapshotまたはthreadをclearし、user messageなしのpartial stateを残す"
+// scope = "SessionStorageV6.appendRunningTurnStart"
+// lifecycle = "permanent"
+// distinction = "message INSERT failureではなく、transaction内のsequence precondition failure timingを観測する"
+// @end-test-value
+it("snapshot clearを含むrunning turn開始のsequence conflictはsnapshotとthreadを変更しない", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-running-clear-conflict-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+
+  try {
+    const oldSnapshot = createCharacterRuntimeSnapshot("Old");
+    insertCharacter(dbPath, oldSnapshot);
+    const initial = storage.insertSession({
+      ...createSessionInput("running-authoring-clear-conflict", [{ role: "assistant", text: "existing" }]),
+      sessionKind: "character-authoring",
+      characterRuntimeSnapshot: oldSnapshot,
+      threadId: "thread-old",
+    });
+
+    assert.throws(() => storage.appendRunningTurnStart({
+      sessionId: initial.id,
+      expectedMessageCount: 0,
+      userMessage: { role: "user", text: "new prompt" },
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      characterRuntimeSnapshot: null,
+    }), SessionRunningTurnStartConflictError);
+
+    const afterConflict = storage.getSession(initial.id);
+    assert.deepEqual(afterConflict?.characterRuntimeSnapshot, oldSnapshot);
+    assert.equal(afterConflict?.threadId, "thread-old");
+    assert.deepEqual(afterConflict?.messages.map((message) => message.text), ["existing"]);
+    assert.equal(afterConflict?.status, "idle");
+    assert.equal(afterConflict?.runState, "idle");
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
+// kind = "invariant"
+// claim = "snapshot入力のundefinedは既存値を保持し、snapshot値またはnullを所有できるのはcharacter-authoring Sessionだけである"
+// oracle = { type = "contract", ref = "running-turn-start-persistence#7,#8" }
+// failure_mode = "undefinedをclearとして扱うか、通常Sessionのimmutable snapshotをrunning開始境界から更新またはclearする"
+// scope = "SessionStorageV6.appendRunningTurnStart"
+// lifecycle = "permanent"
+// distinction = "authoringのvalue/null更新ではなく、三状態入力の非所有状態とSession kindによる拒否を観測する"
+// @end-test-value
+it("snapshot入力のundefinedは既存値を保持し、通常Sessionのvalueまたはnull更新を拒否する", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-running-snapshot-ownership-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+
+  try {
+    const oldSnapshot = createCharacterRuntimeSnapshot("Old");
+    const freshSnapshot = createCharacterRuntimeSnapshot("Fresh");
+    insertCharacter(dbPath, oldSnapshot);
+    const authoring = storage.insertSession({
+      ...createSessionInput("running-authoring-undefined", [{ role: "assistant", text: "existing" }]),
+      sessionKind: "character-authoring",
+      characterRuntimeSnapshot: oldSnapshot,
+      threadId: "thread-old",
+    });
+    storage.appendRunningTurnStart({
+      sessionId: authoring.id,
+      expectedMessageCount: 1,
+      userMessage: { role: "user", text: "new prompt" },
+      updatedAt: "2026-08-30T00:01:00.000Z",
+    });
+    const preserved = storage.getSession(authoring.id);
+    assert.deepEqual(preserved?.characterRuntimeSnapshot, oldSnapshot);
+    assert.equal(preserved?.threadId, "thread-old");
+
+    const defaultSession = storage.insertSession({
+      ...createSessionInput("running-default-snapshot", []),
+      characterRuntimeSnapshot: oldSnapshot,
+      threadId: "thread-default",
+    });
+    for (const snapshotInput of [freshSnapshot, null] as const) {
+      assert.throws(() => storage.appendRunningTurnStart({
+        sessionId: defaultSession.id,
+        expectedMessageCount: 0,
+        userMessage: { role: "user", text: "must reject" },
+        updatedAt: "2026-08-30T00:01:00.000Z",
+        characterRuntimeSnapshot: snapshotInput,
+      }), /Character snapshot owner/);
+    }
+    const rejected = storage.getSession(defaultSession.id);
+    assert.deepEqual(rejected?.characterRuntimeSnapshot, oldSnapshot);
+    assert.equal(rejected?.threadId, "thread-default");
+    assert.deepEqual(rejected?.messages, []);
+    assert.equal(rejected?.status, "idle");
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
 // kind = "invariant"
 // claim = "running metadata更新またはuser message追加が失敗するとtransaction全体がrollbackされる"
 // oracle = { type = "contract", ref = "running-turn-start-persistence#1,#2" }
@@ -309,18 +503,19 @@ it("running turn開始はmetadataまたはmessage書き込み失敗時に全体�
 
 // @test-value v1
 // kind = "regression"
-// claim = "running turn開始のmessage write量は既存履歴件数にかかわらずINSERT 1件、DELETE 0件である"
-// oracle = { type = "contract", ref = "running-turn-start-persistence#3,#8" }
-// failure_mode = "長いSessionほど既存messageの削除と再挿入が増え、prompt送信前の同期保存時間が履歴量に比例する"
+// claim = "snapshot clearを含むrunning turn開始のmessage write量は既存履歴件数にかかわらずINSERT 1件、DELETE 0件、UPDATE 0件である"
+// oracle = { type = "contract", ref = "running-turn-start-persistence#3,#4,#8" }
+// failure_mode = "snapshot clearでgeneric upsertへ戻り、長いSessionほど既存messageの削除、再挿入、更新が増える"
 // scope = "SessionStorageV6.appendRunningTurnStart"
 // lifecycle = "permanent"
-// distinction = "時間の固定閾値ではなくDB triggerでshort/long fixtureの実write件数を比較する"
+// distinction = "通常のundefined入力ではなく、問題になったauthoring snapshot clearをDB triggerでshort/long比較する"
 // @end-test-value
-it("running turn開始のmessage write件数はshortとlongの履歴量に比例しない", async () => {
+it("snapshot clearを含むrunning turn開始のmessage write件数はshortとlongの履歴量に比例しない", async () => {
   const observations: Array<{
     historyMessageCount: number;
     insertedMessages: number;
     deletedMessages: number;
+    updatedMessages: number;
     updatedSessions: number;
     durationMs: number;
   }> = [];
@@ -335,14 +530,22 @@ it("running turn開始のmessage write件数はshortとlongの履歴量に比例
         role: index % 2 === 0 ? "user" : "assistant",
         text: "message-" + index,
       }));
-      const session = storage.insertSession(createSessionInput("running-count", messages));
+      const oldSnapshot = createCharacterRuntimeSnapshot("Old");
+      insertCharacter(dbPath, oldSnapshot);
+      const session = storage.insertSession({
+        ...createSessionInput("running-count", messages),
+        sessionKind: "character-authoring",
+        characterRuntimeSnapshot: oldSnapshot,
+        threadId: "thread-old",
+      });
       const metricsDb = new DatabaseSync(dbPath);
       try {
         metricsDb.exec([
-          "CREATE TABLE running_start_write_metrics (inserted_messages INTEGER NOT NULL, deleted_messages INTEGER NOT NULL, updated_sessions INTEGER NOT NULL);",
-          "INSERT INTO running_start_write_metrics VALUES (0, 0, 0);",
+          "CREATE TABLE running_start_write_metrics (inserted_messages INTEGER NOT NULL, deleted_messages INTEGER NOT NULL, updated_messages INTEGER NOT NULL, updated_sessions INTEGER NOT NULL);",
+          "INSERT INTO running_start_write_metrics VALUES (0, 0, 0, 0);",
           "CREATE TRIGGER count_running_message_insert AFTER INSERT ON session_messages_v6 BEGIN UPDATE running_start_write_metrics SET inserted_messages = inserted_messages + 1; END;",
           "CREATE TRIGGER count_running_message_delete AFTER DELETE ON session_messages_v6 BEGIN UPDATE running_start_write_metrics SET deleted_messages = deleted_messages + 1; END;",
+          "CREATE TRIGGER count_running_message_update AFTER UPDATE ON session_messages_v6 BEGIN UPDATE running_start_write_metrics SET updated_messages = updated_messages + 1; END;",
           "CREATE TRIGGER count_running_session_update AFTER UPDATE ON sessions_v6 BEGIN UPDATE running_start_write_metrics SET updated_sessions = updated_sessions + 1; END;",
         ].join("\n"));
 
@@ -352,17 +555,20 @@ it("running turn開始のmessage write件数はshortとlongの履歴量に比例
           expectedMessageCount: historyMessageCount,
           userMessage: { role: "user", text: "new prompt" },
           updatedAt: "2026-08-30T00:01:00.000Z",
+          characterRuntimeSnapshot: null,
         });
         const durationMs = performance.now() - startedAt;
         const counts = metricsDb.prepare("SELECT * FROM running_start_write_metrics").get() as {
           inserted_messages: number;
           deleted_messages: number;
+          updated_messages: number;
           updated_sessions: number;
         };
         observations.push({
           historyMessageCount,
           insertedMessages: counts.inserted_messages,
           deletedMessages: counts.deleted_messages,
+          updatedMessages: counts.updated_messages,
           updatedSessions: counts.updated_sessions,
           durationMs,
         });
@@ -376,8 +582,8 @@ it("running turn開始のmessage write件数はshortとlongの履歴量に比例
   }
 
   assert.deepEqual(observations.map(({ durationMs: _durationMs, ...work }) => work), [
-    { historyMessageCount: 4, insertedMessages: 1, deletedMessages: 0, updatedSessions: 1 },
-    { historyMessageCount: 284, insertedMessages: 1, deletedMessages: 0, updatedSessions: 1 },
+    { historyMessageCount: 4, insertedMessages: 1, deletedMessages: 0, updatedMessages: 0, updatedSessions: 1 },
+    { historyMessageCount: 284, insertedMessages: 1, deletedMessages: 0, updatedMessages: 0, updatedSessions: 1 },
   ]);
   console.info("running turn start fixture comparison", observations);
 });
