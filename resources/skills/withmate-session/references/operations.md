@@ -116,7 +116,7 @@ An MCP application error uses `isError: true` and a versioned error envelope. A 
 
 ## Pagination and limits
 
-List operations use opaque cursors, a default limit of 50, and a maximum of 500. Never parse or synthesize a cursor. Send `nextCursor` back unchanged with the same operation, filter, and sort context.
+Cursor-based Session, Turn, and Interaction lists use a default limit of 50 and a maximum of 500. Work Item lists (`work.list` and `work.aggregation.list`) use a default limit of 50 and a maximum of 200. Never parse or synthesize a cursor. Send `nextCursor` back unchanged with the same operation, filter, and sort context.
 
 Coordination event lists are the exception: default 50, maximum 100. Their cursors are also bound to the principal Session, scope, kind, and state.
 

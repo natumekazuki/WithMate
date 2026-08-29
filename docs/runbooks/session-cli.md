@@ -158,7 +158,7 @@ Session MCPは同じ配布物のstdio commandとして起動する。
 withmate-session mcp-server
 ```
 
-MCP clientにはこのcommandをserver commandとして登録する。公開toolは既存18操作と`coordination.event.create`、`list`、`get`、`resolve`、`consume`、`cancel`、`correct`の計25操作で、入力shapeはMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
+MCP clientにはこのcommandをserver commandとして登録する。公開toolは計35操作で、Work Item集約の`work.aggregation.get`、`work.aggregation.list`、`work.aggregation.decide`、`work.aggregation.retry`を含む。入力shapeと公開toolの完全な一覧はMCPの`tools/list`を正本とする。すべてのapplication toolはvalidなAgent runtime bindingを必要とする。application errorはversioned error envelopeと`isError: true`で返る。terminal `failed` executionはoperation受付済みのresultであり、tool errorではない。
 
 ## Coordination event
 
