@@ -37,7 +37,10 @@ import {
 import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
-import { SessionIdCollisionError } from "./session-storage-errors.js";
+import {
+  SessionIdCollisionError,
+  SessionRunningTurnStartConflictError,
+} from "./session-storage-errors.js";
 import {
   buildSessionSummaryKeysetClause,
   buildSessionSummarySearchClause,
@@ -50,6 +53,7 @@ import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
 } from "./session-turn-terminal-commit.js";
+import type { SessionRunningTurnStartInput } from "./session-running-turn-start.js";
 
 type SessionV6Row = {
   id: string;
@@ -107,6 +111,10 @@ type ExistingMessageArtifactRow = {
 
 type SessionIdRow = {
   id: string;
+};
+
+type SessionMessageSequenceRow = {
+  seq: number;
 };
 
 type SessionCharacterUsageRow = {
@@ -484,6 +492,83 @@ export class SessionStorageV6 {
 
   upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
     return this.storeSession(session, "upsert", terminalCommit);
+  }
+
+  appendRunningTurnStart(input: SessionRunningTurnStartInput): SessionSummary {
+    const sessionId = input.sessionId.trim();
+    if (
+      !sessionId
+      || !Number.isSafeInteger(input.expectedMessageCount)
+      || input.expectedMessageCount < 0
+      || input.userMessage.role !== "user"
+      || !input.userMessage.text.trim()
+      || !input.updatedAt.trim()
+    ) {
+      throw new Error("running turn 開始の保存形式が不正だよ。");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+      if (!currentRow) {
+        throw new Error("対象セッションが見つからないよ。");
+      }
+
+      const tailRow = this.db.prepare(`
+        SELECT seq
+        FROM session_messages_v6
+        WHERE session_id = ?
+        ORDER BY seq DESC
+        LIMIT 1
+      `).get(sessionId) as SessionMessageSequenceRow | undefined;
+      const actualMessageCount = tailRow ? tailRow.seq + 1 : 0;
+      if (actualMessageCount !== input.expectedMessageCount) {
+        throw new SessionRunningTurnStartConflictError(
+          sessionId,
+          input.expectedMessageCount,
+          actualMessageCount,
+        );
+      }
+
+      const runtimePolicyJson = JSON.stringify({
+        ...parseJsonObject(currentRow.runtime_policy_json),
+        appStatus: "running",
+        runState: "running",
+      });
+      const updateResult = this.db.prepare(`
+        UPDATE sessions_v6
+        SET state = 'active',
+            runtime_policy_json = ?,
+            updated_at = ?,
+            last_active_at = ?
+        WHERE id = ?
+      `).run(runtimePolicyJson, input.updatedAt, input.updatedAt, sessionId);
+      if (Number(updateResult.changes) !== 1) {
+        throw new Error("running turn のSession metadataを更新できなかったよ。");
+      }
+
+      this.db.prepare(`
+        INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
+        VALUES (?, ?, 'user', ?, NULL, ?)
+      `).run(
+        sessionId,
+        input.expectedMessageCount,
+        encodeMessage(input.userMessage),
+        input.updatedAt,
+      );
+      const storedSummary = this.rowToSessionSummary({
+        ...currentRow,
+        state: "active",
+        runtime_policy_json: runtimePolicyJson,
+        updated_at: input.updatedAt,
+        last_active_at: input.updatedAt,
+      });
+      this.db.exec("COMMIT");
+      return storedSummary;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   insertSession(session: Session): Session {

@@ -27,6 +27,7 @@ import type {
 import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import type { SessionRunningTurnStartInput } from "./session-running-turn-start.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -49,6 +50,7 @@ export type SessionPersistenceServiceDeps = {
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
+  appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionSummary>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
@@ -341,6 +343,46 @@ export class SessionPersistenceService {
     return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession, terminalCommit));
   }
 
+  async persistRunningTurnStart(
+    nextSession: Session,
+    expectedMessageCount: number,
+  ): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      const currentSession = this.deps.getSession(nextSession.id);
+      if (currentSession) {
+        assertSessionWritable(currentSession);
+      }
+      const userMessage = nextSession.messages[expectedMessageCount];
+      if (
+        nextSession.status !== "running"
+        || nextSession.runState !== "running"
+        || nextSession.messages.length !== expectedMessageCount + 1
+        || !userMessage
+        || userMessage.role !== "user"
+      ) {
+        throw new Error("running turn 開始のSession形式が不正だよ。");
+      }
+      if (!this.deps.appendStoredRunningTurnStart) {
+        throw new Error("running turn 開始のincremental storageが利用できないよ。");
+      }
+
+      const storedSummary = await this.deps.appendStoredRunningTurnStart({
+        sessionId: nextSession.id,
+        expectedMessageCount,
+        userMessage,
+        updatedAt: nextSession.updatedAt,
+      });
+      const stored = cloneSessions([{ ...nextSession, ...storedSummary }])[0];
+      this.runCommittedProjectionBestEffort("running turn", "cache update", () => {
+        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+      });
+      this.runCommittedProjectionBestEffort("running turn", "broadcast", () => {
+        this.deps.broadcastSessions([stored.id]);
+      });
+      return stored;
+    });
+  }
+
   async upsertSessionPreservingPin(nextSession: Session): Promise<Session> {
     return this.enqueueSessionMutation(() => this.upsertSessionPreservingPinNow(nextSession));
   }
@@ -385,8 +427,8 @@ export class SessionPersistenceService {
     const storeDurationMs = Date.now() - storeStartedAt;
     const cacheStartedAt = Date.now();
     if (terminalCommit) {
-      this.runTerminalProjectionBestEffort("dependency sync", () => this.syncStoredSession(stored));
-      this.runTerminalProjectionBestEffort("cache update", () => {
+      this.runCommittedProjectionBestEffort("terminal Session", "dependency sync", () => this.syncStoredSession(stored));
+      this.runCommittedProjectionBestEffort("terminal Session", "cache update", () => {
         this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
       });
     } else {
@@ -396,7 +438,7 @@ export class SessionPersistenceService {
     const cacheDurationMs = Date.now() - cacheStartedAt;
     const broadcastStartedAt = Date.now();
     if (terminalCommit) {
-      this.runTerminalProjectionBestEffort("broadcast", () => this.deps.broadcastSessions([stored.id]));
+      this.runCommittedProjectionBestEffort("terminal Session", "broadcast", () => this.deps.broadcastSessions([stored.id]));
     } else {
       this.deps.broadcastSessions([stored.id]);
     }
@@ -553,11 +595,11 @@ export class SessionPersistenceService {
     this.deps.syncSessionDependencies(stored);
   }
 
-  private runTerminalProjectionBestEffort(label: string, operation: () => void): void {
+  private runCommittedProjectionBestEffort(owner: string, label: string, operation: () => void): void {
     try {
       operation();
     } catch (error) {
-      console.warn(`Committed terminal Session ${label} failed`, error);
+      console.warn(`Committed ${owner} ${label} failed`, error);
     }
   }
 }

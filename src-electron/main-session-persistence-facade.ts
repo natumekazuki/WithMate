@@ -63,6 +63,10 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().upsertSessionPreservingPin(session);
   }
 
+  async persistRunningTurnStart(session: Session, expectedMessageCount: number): Promise<Session> {
+    return this.deps.getSessionPersistenceService().persistRunningTurnStart(session, expectedMessageCount);
+  }
+
   async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {
     return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
   }

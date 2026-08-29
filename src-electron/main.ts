@@ -2647,6 +2647,8 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+      persistRunningTurnStart: (session, expectedMessageCount) =>
+        requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
       upsertTerminalSession: (session, terminalCommit) =>
         requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
@@ -3036,6 +3038,13 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         return operation === "create"
           ? storage.insertSession(session)
           : storage.upsertSession(session);
+      },
+      appendStoredRunningTurnStart: (input) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.appendRunningTurnStart) {
+          throw new Error("running turn 開始のincremental storageが利用できないよ。");
+        }
+        return storage.appendRunningTurnStart(input);
       },
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);

@@ -55,6 +55,7 @@ function logSessionRunStuckInvestigation(
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -988,7 +989,10 @@ export class SessionRuntimeService {
       };
 
       const runningUpsertStartedAt = Date.now();
-      await this.deps.upsertSession(runningSession);
+      runningSession = await (
+        this.deps.persistRunningTurnStart?.(runningSession, session.messages.length)
+        ?? this.deps.upsertSession(runningSession)
+      );
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,
