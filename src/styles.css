@@ -7276,10 +7276,6 @@ button:disabled {
   background: rgba(255, 255, 255, 0.82);
 }
 
-.message-card.has-message-collapse-control {
-  padding-right: 54px;
-}
-
 .message-card-content {
   grid-area: 1 / 1;
   display: grid;
@@ -7296,8 +7292,10 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   height: 28px;
-  margin: -6px -46px 0 0;
+  margin: -6px -8px 0 0;
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 140ms ease;
 }
 
 .message-collapse-toggle {
@@ -7314,6 +7312,16 @@ button:disabled {
   font: inherit;
   line-height: 1;
   cursor: pointer;
+  pointer-events: none;
+}
+
+.message-card.has-message-collapse-control:hover > .message-collapse-control,
+.message-card.has-message-collapse-control:focus-within > .message-collapse-control {
+  opacity: 1;
+}
+
+.message-card.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
+.message-card.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle {
   pointer-events: auto;
 }
 
@@ -7718,35 +7726,29 @@ button:disabled {
 
 .message-code-block-shell.copyable {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 46px;
   width: 100%;
   max-width: 100%;
-  border: 1px solid rgba(18, 24, 39, 0.08);
-  border-radius: 14px;
-  background: rgb(18 24 39);
 }
 
 .message-code-block-actions {
   position: sticky;
   top: 8px;
   z-index: 1;
-  grid-area: 1 / 2;
+  grid-area: 1 / 1;
   align-self: start;
   display: flex;
   justify-content: flex-end;
   min-width: 0;
   height: 30px;
   margin: 8px;
+  opacity: 0;
   pointer-events: none;
+  transition: opacity 140ms ease;
 }
 
 .message-code-block-shell > .message-code-block {
   grid-area: 1 / 1;
   max-width: 100%;
-  padding: 11px 14px;
-  border: 0;
-  border-radius: 13px 0 0 13px;
-  background: transparent;
 }
 
 .message-code-copy-button {
@@ -7764,12 +7766,34 @@ button:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 4px 12px rgba(0, 0, 0, 0.18);
   cursor: pointer;
-  pointer-events: auto;
+  pointer-events: none;
   transition:
     transform 140ms ease,
     border-color 140ms ease,
     background 140ms ease,
     box-shadow 140ms ease;
+}
+
+.message-code-block-shell.copyable:hover > .message-code-block-actions,
+.message-code-block-shell.copyable:focus-within > .message-code-block-actions {
+  opacity: 1;
+}
+
+.message-code-block-shell.copyable:hover > .message-code-block-actions > .message-code-copy-button,
+.message-code-block-shell.copyable:focus-within > .message-code-block-actions > .message-code-copy-button {
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .message-collapse-control,
+  .message-code-block-actions {
+    opacity: 1;
+  }
+
+  .message-collapse-control > .message-collapse-toggle,
+  .message-code-block-actions > .message-code-copy-button {
+    pointer-events: auto;
+  }
 }
 
 .message-code-copy-button svg {
