@@ -211,6 +211,7 @@ export function ImageViewport({
 }: ImageViewportProps) {
   const {
     canvasRef,
+    effectiveZoom,
     handlePanCaptureLoss,
     imageRef,
     isPanning,
@@ -243,7 +244,7 @@ export function ImageViewport({
           draggable={false}
           onContextMenu={onImageContextMenu}
           onLoad={updateFitZoom}
-          style={zoom === "fit" ? undefined : { zoom: zoom / 100 }}
+          style={{ zoom: effectiveZoom / 100 }}
         />
       </div>
     </div>

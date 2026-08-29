@@ -14,6 +14,7 @@ import {
   resolveCodeBlockText,
   resolveMessageMarkdownRenderMode,
 } from "../../src/MessageRichText.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "../../src/image-viewport.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -1182,6 +1183,83 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
     });
 
     assert.equal(container.querySelector(".message-image-loading"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "ImageViewportはFitの実効倍率を画像描画へ適用し、その倍率をZoom Inの基準にする"
+// oracle = { type = "contract", ref = "ユーザー要求: feat-message-image-lightbox引継ぎの確定した仕様" }
+// failure_mode = "Fit倍率の表示だけが更新されて画像へ適用されず、画像がviewportから見切れたままになる"
+// scope = "共有ImageViewportの画像描画境界"
+// lifecycle = "permanent"
+// distinction = "Fit倍率の計算unit testとは異なり、計算結果が画像styleと後続Zoom Inへ投影されることを観測する"
+// @end-test-value
+test("ImageViewport はFit実効倍率を画像描画とZoom Inへ反映する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  function ImageViewportHarness() {
+    const controller = useImageViewport("image-source");
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(ImageZoomControls, { controller }),
+      React.createElement(ImageViewport, {
+        controller,
+        src: "data:image/png;base64,AAAA",
+        alt: "fit target",
+      }),
+    );
+  }
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(ImageViewportHarness));
+    });
+    const viewport = container.querySelector<HTMLElement>(".image-viewport");
+    const image = container.querySelector<HTMLImageElement>(".image-viewport-image");
+    assert.ok(viewport);
+    assert.ok(image);
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 450 },
+    });
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 1600 },
+      naturalHeight: { configurable: true, value: 900 },
+    });
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(
+      container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
+      "50%",
+    );
+    assert.equal(image.style.zoom, "0.5");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button[aria-label='Zoom image in']")?.click();
+    });
+    assert.equal(
+      container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
+      "60%",
+    );
+    assert.equal(image.style.zoom, "0.6");
   } finally {
     if (root) {
       await act(async () => root?.unmount());
