@@ -702,7 +702,7 @@ function parseWorkItemAggregationListInput(value) {
 	return {
 		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
 		...record.decision === void 0 ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") },
-		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
 		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
 	};
 }
