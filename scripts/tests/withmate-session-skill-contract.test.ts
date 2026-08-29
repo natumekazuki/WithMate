@@ -116,7 +116,7 @@ describe("withmate-session managed Skill contract", () => {
     assert.match(contract, /At root, retain every top-level Work Item ID[\s\S]*terminal and adopted or explicitly replaced/);
     assert.match(contract, /Parallel dispatch is valid only for independent children/);
     assert.match(contract, /prerequisite result is terminal, validated as satisfying the dependency, and decided `accepted`/);
-    assert.match(contract, /`retry_requested` decision requires waiting for the replacement result and its later `accepted` decision/);
+    assert.match(contract, /`retry_requested` decision creates a replacement Work Item but does not dispatch it[\s\S]*wait for the replacement result and its later `accepted` decision/);
     assert.match(contract, /`excluded` decision blocks dependent dispatch[\s\S]*cancel and decide the unused dependent Work Item as `excluded`/);
     assert.match(contract, /execution terminal state is not Work Item terminal state/);
     assert.match(contract, /task coordinator with a current parent Work Item[\s\S]*`work\.aggregation\.get`/i);
@@ -158,9 +158,23 @@ describe("withmate-session managed Skill contract", () => {
     const contract = `${skill}\n${operations}`;
 
     assert.match(contract, /current Work Item is `pending`[\s\S]*`work\.transition` to `in_progress`/);
+    assert.match(contract, /it is `waiting` and the blocker is resolved[\s\S]*separate `work\.transition` to `in_progress`/);
     assert.match(contract, /current `expectedRevision` and an operation-specific idempotency key/);
     assert.match(contract, /Turn association does not transition Work Item state/);
-    assert.match(contract, /then read it back/);
+    assert.match(contract, /read the Work Item back before (?:decomposing|creating children)/);
+  });
+
+  it("DECOMP-RETRY-DISPATCH-08: nestedとrootのreplacementを新しいTurnでdispatchする", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /`retry_requested` decision creates a replacement Work Item but does not dispatch it/);
+    assert.match(contract, /`work\.aggregation\.retry` returns a replacement Work Item[\s\S]*`turn\.options`[\s\S]*new `turn\.run` or `turn\.enqueue`/);
+    assert.match(contract, /replacement ID in both `workItemId` and the delegation prompt/);
+    assert.match(contract, /new Turn idempotency key/);
+    assert.match(contract, /top-level replacement[\s\S]*dispatch[\s\S]*`turn\.options`[\s\S]*new `turn\.run` or `turn\.enqueue`/);
+    assert.match(contract, /creation alone leaves it pending/);
   });
 
   it("blockerへの回答、consume、解決を別の状態遷移として案内する", async () => {

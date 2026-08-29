@@ -46,13 +46,13 @@ Base commitは`8183c689ce062de857958334827b4d76dcc03497`とする。task branch�
 ### 安全な操作順と回復
 
 1. `session.self`と`runtime.catalog`でactorとcapabilityを確認する。
-2. 現在のWork Itemと責務を確認し、分割しない選択を先に評価する。
+2. 現在のWork Itemと責務を確認し、`pending`開始または`waiting`再開では`in_progress`へ明示遷移してread-backする。分割しない選択を先に評価する。
 3. 子ごとにRole、goal、scope、完了条件、authority、source identity、依存順を決める。
 4. caller-owned idempotency keyで`session.create`し、`session.get`でworkspace identityを確認する。
 5. 別のidempotency keyで`work.create`し、親Work Itemがある場合は明示する。
 6. `turn.options`の現行tupleからTurnを構築し、Work Item ID付きで`turn.run`または`turn.enqueue`する。
 7. response lossまたは`effect: indeterminate`では、既知のSession、Work Item、executionをread-backし、変更していないmutationだけを同じkeyで再送する。別operationへ切り替えない。
-8. 子Work Itemを明示的にterminalへ確定し、親coordinatorが直属子をdecision後に統合する。
+8. 子Work Itemを明示的にterminalへ確定し、親coordinatorが直属子をdecision後に統合する。replacementを作成した場合は、そのIDで`turn.options`から新しいTurnを構築してdispatchする。
 
 Session作成とWork Item作成を一つのatomic batchとは扱わない。Session作成後に後続操作が失敗した場合は、canonical Sessionをread-backして同じ分割計画を再開する。存在するchild Sessionを成功不明として重複作成しない。
 
@@ -94,6 +94,42 @@ Session作成とWork Item作成を一つのatomic batchとは扱わない。Sess
 - Direct verification: Skill contract testと既存Work Item aggregation contract test。
 - Gate: ready。
 
+### DECOMP-ROOT-CLOSURE-05: root直属委譲を親なしで閉じる
+
+- Accepted anchor: rootのtop-level Work Itemは`parentWorkItemId: null`であり、親aggregationを持たない。
+- Canonical owner: Skillとoperation referenceのroot closure手順。
+- Failure mode: rootが存在しない親aggregationまたは親resultを要求し、直属委譲を完了できない。
+- Observable: rootは`work.get`で各top-level resultを検証して採用し、task coordinatorだけが直属子aggregationを使う。
+- Direct verification: managed Skill contract testと既存Work Item authority test。
+- Gate: ready。
+
+### DECOMP-WORK-IDENTITY-06: targetが担当Work Itemを一意に解決する
+
+- Accepted anchor: Turnのexecution associationはprovider promptへWork Item IDを渡さないため、委譲本文がexact IDを伝える。
+- Canonical owner: Skillとoperation referenceのTurn dispatch手順。
+- Failure mode: 複数のactive Work Itemを持つtargetが別のWork Itemを遷移または完了する。
+- Observable: 委譲本文がexact Work Item IDを含み、targetが`work.get`でactor、goal、scope、完了条件、authority、source identityを確認する。
+- Direct verification: managed Skill contract test。
+- Gate: ready。
+
+### DECOMP-PARENT-STATE-07: coordinatorのcurrent Work Itemを実行状態へ進める
+
+- Accepted anchor: Turn associationはWork Item stateを変更せず、`pending`と`waiting`から`in_progress`への明示遷移が許可される。
+- Canonical owner: Skillとoperation referenceのworkflow開始手順。
+- Failure mode: coordinatorが`pending`のまま親resultを提出して拒否される、またはblocker解消後も`waiting`のまま作業を再開する。
+- Observable: `pending`開始と`waiting`再開を別の`work.transition`として案内し、current revision、operation別key、read-backを要求する。
+- Direct verification: managed Skill contract testと既存Work Item state transition test。
+- Gate: ready。
+
+### DECOMP-RETRY-DISPATCH-08: replacementを作成後に実行開始する
+
+- Accepted anchor: `work.aggregation.retry`とrootの`work.create`はreplacement Work Itemを作るが、Turnを自動dispatchしない。
+- Canonical owner: Skillとoperation referenceのreplacement workflow。
+- Failure mode: replacementが`pending`のまま残り、親集約と依存Work Itemが永久に待機する。
+- Observable: nestedとrootの両経路がreplacement IDで`turn.options`を取得し、新しいkeyの`turn.run`または`turn.enqueue`を実行する。
+- Direct verification: managed Skill contract testと既存Work Item retry contract test。
+- Gate: ready。
+
 ## Test design
 
 | Failure mode | Consumer impact | Canonical owner / observable | Check layer |
@@ -103,6 +139,8 @@ Session作成とWork Item作成を一つのatomic batchとは扱わない。Sess
 | partial success後にchildを重複作成する | 同じ作業が複数Sessionへ委譲される | operation別key、read-back、unchanged replay | static contract test + 既存idempotency test |
 | 依存する子を同時dispatchする | stale input、競合、統合失敗 | Skillのdependency sequencing | static contract test |
 | execution terminalをWork Item terminalとみなす | aggregationにresultがない | explicit `work.result`とaggregation workflow | static contract test + 既存Work Item test |
+| replacementを作成するだけでdispatchしない | replacementが`pending`のまま残り、親と依存作業が停止する | nestedとrootのreplacement dispatch手順 | static contract test + 既存Work Item retry test |
+| coordinatorが`pending`または`waiting`のまま作業する | 親resultの拒否または表示と実行状態の不一致が起きる | current Work Itemの明示遷移とread-back | static contract test + 既存Work Item transition test |
 | WithMate拒否を自由文で迂回する | authorityと追跡が失われる | fail-closed instruction | static contract test |
 
 新しいruntime behavior、storage、public schemaを追加しないため、migration、concurrency、adapter parityの新規testは作らない。既存testを変更して現在のsourceへ合わせることもしない。
@@ -111,7 +149,7 @@ Session作成とWork Item作成を一つのatomic batchとは扱わない。Sess
 
 1. `resources/skills/withmate-session/SKILL.md`へ分割判断、Role選択、dependency sequencing、fail-closed、結果統合を追加する。
 2. `resources/skills/withmate-session/references/operations.md`へ既存operationを使うdecomposition workflowとpartial success recoveryを追加する。
-3. `scripts/tests/withmate-session-skill-contract.test.ts`へDECOMP-POLICY-01からDECOMP-INTEGRATE-04を直接検出するcontract testを追加する。
+3. `scripts/tests/withmate-session-skill-contract.test.ts`へDECOMP-POLICY-01からDECOMP-RETRY-DISPATCH-08を直接検出するcontract testを追加する。
 4. 必要な利用者文書だけを同期し、公開operation数、schema、storage、GUIは変更しない。
 5. targeted Skill contract test、Work Item/aggregation回帰test、`npm run typecheck`、`npm test`、`npm run build`を実行する。
 
@@ -131,7 +169,7 @@ Session作成とWork Item作成を一つのatomic batchとは扱わない。Sess
 本sliceは配布Skillとその直接contract testに限定され、public API、永続化、authority実装を変更しない。targeted checkがaccepted contractを直接検証できるため、独立reviewは起動しない。実装中にruntime contractまたは強制境界の変更が必要になった場合はscopeを再評価し、`contract-closure`へ戻る。
 
 - Agent-owned policyとWithMate-owned contractが文書上もtest上も分離されている。
-- no-split、direct executor、task coordinator、dependency sequencing、partial success、fail-closed、aggregation closureを直接testできる。
+- no-split、direct executor、task coordinator、dependency sequencing、partial success、fail-closed、root closure、Work Item identity、parent state、replacement dispatch、aggregation closureを直接testできる。
 - 公開operation集合と既存runtime contractを変更していない。
 - targeted test、`npm run typecheck`、`npm test`、`npm run build`が現行commitで成功する。
 - 未実行check、validation gap、残リスクを区別して報告する。
