@@ -674,6 +674,7 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         defaultListLimit: 50,
         maxListLimit: 200,
         maxListResponseBytes: 8388608,
+        maxEventPayloadBytes: 524288,
         maxResultBytes: 262144,
         aggregation: {
           contractRevision: 1,

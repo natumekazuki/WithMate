@@ -217,6 +217,7 @@ function invalid$1(field, message) {
 //#endregion
 //#region src/work-item.ts
 var WORK_ITEM_MAX_RESULT_BYTES = 256 * 1024;
+var WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES = 512 * 1024;
 var WORK_ITEM_MAX_TEXT_LENGTH = 16e3;
 var WORK_ITEM_AGGREGATION_DECISIONS = [
 	"accepted",
@@ -644,7 +645,7 @@ function parseWorkItemHistoryAppendInput(value) {
 		"expectedRevision",
 		"idempotencyKey"
 	], "input");
-	return {
+	const input = {
 		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
 		type: requireEnum(record.type, ["progress", "handoff"], "type"),
 		summary: requireBoundedString(record.summary, "summary", WORK_ITEM_MAX_TEXT_LENGTH),
@@ -653,6 +654,17 @@ function parseWorkItemHistoryAppendInput(value) {
 		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
+	const actualBytes = Buffer.byteLength(JSON.stringify({
+		progressSummary: input.summary,
+		blockers: input.blockers,
+		nextAction: input.nextAction
+	}), "utf8");
+	if (actualBytes > 524288) throw new SessionRuntimeValidationError("Work Item history payload exceeds the byte limit.", {
+		field: "input",
+		actualBytes,
+		maxBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES
+	}, "CONTENT_TOO_LARGE");
+	return input;
 }
 function parseWorkItemHistoryListInput(value) {
 	const record = requireObject(value, "input");
@@ -21664,7 +21676,7 @@ var workItemCreateInputSchema = object({
 var workItemInputSchema = object({ workItemId: nonEmptyStringSchema }).strict();
 var workItemReviseInputSchema = object({
 	workItemId: nonEmptyStringSchema,
-	goal: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+	goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
 	scope: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
 	completionCriteria: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
 	authority: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
@@ -21674,9 +21686,9 @@ var workItemReviseInputSchema = object({
 var workItemHistoryAppendInputSchema = object({
 	workItemId: nonEmptyStringSchema,
 	type: _enum(["progress", "handoff"]),
-	summary: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+	summary: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
 	blockers: array(nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)).max(100),
-	nextAction: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+	nextAction: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
 	expectedRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
@@ -22483,6 +22495,7 @@ var resultSchemas = {
 			defaultListLimit: literal(50),
 			maxListLimit: literal(200),
 			maxListResponseBytes: literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
+			maxEventPayloadBytes: literal(WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES),
 			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES),
 			aggregation: object({
 				contractRevision: literal(1),

@@ -114,11 +114,15 @@ test("Root WorkItem の現在値を right pane に表示する", () => {
   assert.match(html, /nextAction.*Run the targeted checks/);
   assert.match(html, /Repository source/);
   assert.doesNotMatch(html, /作業情報はありません|Root WorkItem を作成してください/);
+  const failedMutation = renderToStaticMarkup(<SessionContextPane {...paneProps({
+    rootWorkItemErrorMessage: "Root WorkItemの更新に失敗しました。",
+  })} />);
+  assert.match(failedMutation, /role="alert"[^>]*>Root WorkItemの更新に失敗しました。/);
 });
 
 // @test-value v1
 // kind = "contract"
-// claim = "Root WorkItem の改訂、引き継ぎ操作は native control と accessible label を持ち、owner callback へ入力を渡す"
+// claim = "active Root WorkItemの改訂・引き継ぎはowner callbackへ入力を渡し、空progressでは引き継ぎをdisable、terminalではmutation controlを非表示にする"
 // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
 // failure_mode = "右ペインの改訂・引き継ぎ操作が発見不能、または編集値を owner service へ渡さず表示だけが変わる"
 // scope = "session-context-pane-root-work-item-mutations"
@@ -149,6 +153,34 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
     assert.equal((revisions[0] as { goal: string }).goal, "Root goal");
     await act(async () => handoff.click());
     assert.equal(handoffs, 1);
+
+    await act(async () => root.render(<SessionContextPane {...paneProps({
+      rootWorkItem: { ...rootWorkItem, progressSummary: "", nextAction: "" },
+      onReviseRootWorkItem: (input) => revisions.push(input),
+      onHandoffRootWorkItem: () => { handoffs += 1; },
+    })} />));
+    const disabledHandoff = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "引き継ぎ") as HTMLButtonElement;
+    assert.equal(disabledHandoff.disabled, true);
+    assert.match(disabledHandoff.title, /progressSummary.*nextAction/);
+
+    await act(async () => root.render(<SessionContextPane {...paneProps({
+      rootWorkItem: { ...rootWorkItem, state: "completed", result: {
+        outcome: "completed",
+        summary: "done",
+        changes: [],
+        verificationResults: [],
+        findings: [],
+        unverifiedItems: [],
+        remainingWork: [],
+        reportingSessionId: "session-1",
+        reportedAt: "2026-08-30T02:00:00.000Z",
+      } },
+      onReviseRootWorkItem: (input) => revisions.push(input),
+      onHandoffRootWorkItem: () => { handoffs += 1; },
+    })} />));
+    assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "改訂"), false);
+    assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "引き継ぎ"), false);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

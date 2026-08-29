@@ -1209,8 +1209,12 @@ export default function AgentSessionWindowApp() {
       }
     } catch (error) {
       console.error(error);
+      const errorMessage = error instanceof Error ? error.message : "Root WorkItemの更新に失敗しました。";
       if (selectedSessionIdRef.current === selectedSessionId) {
         await refreshRootWorkItem(selectedSessionId);
+        setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+          ? { ...state, errorMessage }
+          : state);
       }
     } finally {
       rootWorkItemMutationPendingRef.current = false;
@@ -1226,9 +1230,15 @@ export default function AgentSessionWindowApp() {
       || !rootWorkItemState.item
       || rootWorkItemMutationPendingRef.current
     ) return;
+    const current = rootWorkItemState.item;
+    if (!current.progressSummary.trim() || !current.nextAction.trim()) {
+      setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+        ? { ...state, errorMessage: "progressSummaryとnextActionを改訂してから引き継ぎを記録してください。" }
+        : state);
+      return;
+    }
     rootWorkItemMutationPendingRef.current = true;
     setIsRootWorkItemMutationPending(true);
-    const current = rootWorkItemState.item;
     try {
       const item = await withmateApi.appendRootWorkItemHistory(selectedSessionId, {
         type: "handoff",
@@ -1246,8 +1256,12 @@ export default function AgentSessionWindowApp() {
       }
     } catch (error) {
       console.error(error);
+      const errorMessage = error instanceof Error ? error.message : "Root WorkItemの引き継ぎ記録に失敗しました。";
       if (selectedSessionIdRef.current === selectedSessionId) {
         await refreshRootWorkItem(selectedSessionId);
+        setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+          ? { ...state, errorMessage }
+          : state);
       }
     } finally {
       rootWorkItemMutationPendingRef.current = false;

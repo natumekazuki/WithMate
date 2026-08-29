@@ -44,6 +44,7 @@ import {
   WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
   WORK_ITEM_DEFAULT_LIST_LIMIT,
   WORK_ITEM_MAX_LIST_LIMIT,
+  WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_MAX_RESULT_ITEMS,
   WORK_ITEM_MAX_TEXT_LENGTH,
@@ -163,6 +164,7 @@ export type SessionRuntimeCatalogResult = {
       maxListLimit: typeof WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT;
     };
     maxListResponseBytes: typeof SESSION_RUNTIME_MAX_RESPONSE_BYTES;
+    maxEventPayloadBytes: typeof WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES;
     maxResultBytes: typeof WORK_ITEM_MAX_RESULT_BYTES;
   };
   providers: Array<{
@@ -1013,7 +1015,7 @@ function parseWorkItemReviseInput(value: unknown): SessionRuntimeWorkItemReviseI
 function parseWorkItemHistoryAppendInput(value: unknown): SessionRuntimeWorkItemHistoryAppendInput {
   const record = requireObject(value, "input");
   assertKeys(record, ["workItemId", "type", "summary", "blockers", "nextAction", "expectedRevision", "idempotencyKey"], "input");
-  return {
+  const input = {
     workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
     type: requireEnum(record.type, ["progress", "handoff"] as const, "type"),
     summary: requireBoundedString(record.summary, "summary", WORK_ITEM_MAX_TEXT_LENGTH),
@@ -1022,6 +1024,19 @@ function parseWorkItemHistoryAppendInput(value: unknown): SessionRuntimeWorkItem
     expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
+  const actualBytes = Buffer.byteLength(JSON.stringify({
+    progressSummary: input.summary,
+    blockers: input.blockers,
+    nextAction: input.nextAction,
+  }), "utf8");
+  if (actualBytes > WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES) {
+    throw new SessionRuntimeValidationError(
+      "Work Item history payload exceeds the byte limit.",
+      { field: "input", actualBytes, maxBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES },
+      "CONTENT_TOO_LARGE",
+    );
+  }
+  return input;
 }
 
 function parseWorkItemHistoryListInput(value: unknown): SessionRuntimeWorkItemHistoryListInput {

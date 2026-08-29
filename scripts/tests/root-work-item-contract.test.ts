@@ -649,7 +649,7 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "active root Sessionとexecution associationが残るterminal root Sessionの削除は拒否し、削除可能なterminal root SessionではSession、自己所有Root WorkItem、event streamを同じtransactionで物理削除する"
+  // claim = "active root Sessionとexecution associationが残るterminal root Sessionの削除は拒否し、root ownerはcanceledをrevisionedに確定でき、削除可能なterminal rootはSession・WorkItem・eventをatomic deleteする"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
   // failure_mode = "active作業や実行関連の消失、またはterminal Session削除後に自己所有Root WorkItemか履歴だけが孤児として残る"
   // scope = "SQLite delete trigger and SessionStorageV6 delete transaction"
@@ -734,6 +734,26 @@ describe("Root WorkItem contract", () => {
       assert.equal(harness.sessionStorage.getSession("root"), null);
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 0);
       assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 0);
+
+      insertRootSession(harness, "canceled-root", "standalone");
+      const cancelable = getRootWorkItem(harness, "canceled-root");
+      const cancelInput = {
+        workItemId: cancelable.id,
+        expectedRevision: cancelable.revision,
+        idempotencyKey: "cancel-root-work",
+      };
+      const canceled = harness.service.cancel(cancelInput, runtimeBinding("canceled-root"));
+      assert.equal(canceled.state, "canceled");
+      assert.equal(canceled.revision, 2);
+      assert.equal(harness.service.cancel(cancelInput, runtimeBinding("canceled-root")).revision, 2);
+      assert.deepEqual(
+        harness.workStorage.listHistory({ workItemId: cancelable.id, afterSequence: null, limit: 10 })
+          .map((event) => [event.revision, event.type]),
+        [[1, "created"], [2, "state_transitioned"]],
+      );
+      harness.sessionStorage.deleteSession("canceled-root");
+      assert.equal(harness.sessionStorage.getSession("canceled-root"), null);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", cancelable.id), 0);
     } finally {
       await closeHarness(harness);
     }

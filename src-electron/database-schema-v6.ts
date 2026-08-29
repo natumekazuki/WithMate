@@ -1,6 +1,8 @@
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
+import { WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES } from "../src/work-item.js";
+
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
 const SESSION_EXECUTION_ORIGIN_MIGRATION_SETTING_KEY = "session_execution_origins_v6_migrated_at";
@@ -1610,7 +1612,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     payload_json TEXT NOT NULL CHECK (
       json_valid(payload_json)
       AND json_type(payload_json) = 'object'
-      AND length(CAST(payload_json AS BLOB)) <= 524288
+      AND length(CAST(payload_json AS BLOB)) <= ${WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES}
     ),
     created_at TEXT NOT NULL,
     UNIQUE (work_item_id, revision),

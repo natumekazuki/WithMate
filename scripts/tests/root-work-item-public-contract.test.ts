@@ -19,6 +19,7 @@ import {
 } from "../../src/session-runtime-exchange.js";
 import {
   WORK_ITEM_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
   WORK_ITEM_MAX_RESULT_ITEMS,
   WORK_ITEM_MAX_TEXT_LENGTH,
   type WorkItemEvent,
@@ -153,8 +154,11 @@ describe("Root WorkItem public contract", () => {
     field: string;
   }> = [
     { operation: "work.revise", input: { ...reviseInput, unknown: true }, code: "INVALID_INPUT", field: "input.unknown" },
+    { operation: "work.revise", input: { ...reviseInput, goal: " " }, code: "INVALID_INPUT", field: "goal" },
     { operation: "work.history.append", input: { ...historyAppendInput, type: "created" }, code: "INVALID_INPUT", field: "type" },
     { operation: "work.history.append", input: { ...historyAppendInput, summary: "x".repeat(WORK_ITEM_MAX_TEXT_LENGTH + 1) }, code: "INVALID_INPUT", field: "summary" },
+    { operation: "work.history.append", input: { ...historyAppendInput, summary: " " }, code: "INVALID_INPUT", field: "summary" },
+    { operation: "work.history.append", input: { ...historyAppendInput, nextAction: " " }, code: "INVALID_INPUT", field: "nextAction" },
     { operation: "work.history.append", input: { ...historyAppendInput, blockers: Array.from({ length: WORK_ITEM_MAX_RESULT_ITEMS + 1 }, () => "blocked") }, code: "LIMIT_EXCEEDED", field: "blockers" },
     { operation: "work.revise", input: { ...reviseInput, expectedRevision: 0 }, code: "INVALID_INPUT", field: "expectedRevision" },
     { operation: "work.history.append", input: { ...historyAppendInput, idempotencyKey: " " }, code: "INVALID_INPUT", field: "idempotencyKey" },
@@ -169,6 +173,25 @@ describe("Root WorkItem public contract", () => {
       candidate.operation + ":" + candidate.field,
     );
   }
+  const acceptedLargeHistory = {
+    ...historyAppendInput,
+    blockers: Array.from({ length: 32 }, () => "x".repeat(WORK_ITEM_MAX_TEXT_LENGTH)),
+  };
+  assert.equal(
+    parseSessionRuntimeOperationInput("work.history.append", acceptedLargeHistory).blockers.length,
+    32,
+  );
+  const oversizedHistory = {
+    ...historyAppendInput,
+    blockers: Array.from({ length: 33 }, () => "x".repeat(WORK_ITEM_MAX_TEXT_LENGTH)),
+  };
+  assert.throws(
+    () => parseSessionRuntimeOperationInput("work.history.append", oversizedHistory),
+    (error) => error instanceof SessionRuntimeValidationError
+      && error.code === "CONTENT_TOO_LARGE"
+      && error.details.field === "input"
+      && error.details.maxBytes === WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+  );
 });
 
   // @test-value v1
@@ -225,6 +248,13 @@ describe("Root WorkItem public contract", () => {
     ));
     assert.equal(invalid.status, 400);
     assert.equal(JSON.parse(invalid.body).error.code, "INVALID_INPUT");
+    const emptySummary = await postRawRuntime(address.port, createExchangePayload(
+      "work.history.append",
+      { ...historyAppendInput, summary: "" },
+      projection.bindingReference,
+    ));
+    assert.equal(emptySummary.status, 400);
+    assert.equal(JSON.parse(emptySummary.body).error.code, "INVALID_INPUT");
     assert.deepEqual(calls.map((call) => call.operation), inputs.map(([operation]) => operation));
     assert.ok(calls.every((call) => call.actorSessionId === "root-a"));
     assert.deepEqual(calls[2]?.input, { workItemId: rootWorkItem.id, limit: WORK_ITEM_DEFAULT_LIST_LIMIT });
@@ -374,6 +404,18 @@ describe("Root WorkItem public contract", () => {
     assert.equal((await client.callTool({
       name: "work.history.append",
       arguments: { ...historyAppendInput, type: "created" },
+    })).isError, true);
+    assert.equal((await client.callTool({
+      name: "work.revise",
+      arguments: { ...reviseInput, goal: "" },
+    })).isError, true);
+    assert.equal((await client.callTool({
+      name: "work.history.append",
+      arguments: { ...historyAppendInput, summary: "" },
+    })).isError, true);
+    assert.equal((await client.callTool({
+      name: "work.history.append",
+      arguments: { ...historyAppendInput, nextAction: "" },
     })).isError, true);
     assert.equal(requests.length, callsBeforeInvalidInput);
 

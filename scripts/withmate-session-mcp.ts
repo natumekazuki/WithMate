@@ -16,6 +16,7 @@ import {
 } from "../src/session-transcript.js";
 import {
   WORK_ITEM_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_MAX_RESULT_ITEMS,
@@ -217,13 +218,13 @@ const workItemCreateInputSchema = z.object({
 }).strict();
 const workItemInputSchema = z.object({ workItemId: nonEmptyStringSchema }).strict();
 const workItemReviseInputSchema = z.object({
-  workItemId: nonEmptyStringSchema, goal: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+  workItemId: nonEmptyStringSchema, goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), scope: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH),
   completionCriteria: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), authority: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH),
   expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const workItemHistoryAppendInputSchema = z.object({
-  workItemId: nonEmptyStringSchema, type: z.enum(["progress", "handoff"]), summary: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH),
-  blockers: z.array(nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)).max(WORK_ITEM_MAX_RESULT_ITEMS), nextAction: z.string().max(WORK_ITEM_MAX_TEXT_LENGTH), expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
+  workItemId: nonEmptyStringSchema, type: z.enum(["progress", "handoff"]), summary: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  blockers: z.array(nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)).max(WORK_ITEM_MAX_RESULT_ITEMS), nextAction: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), expectedRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const workItemHistoryListInputSchema = z.object({ workItemId: nonEmptyStringSchema, limit: z.number().int().min(1).max(WORK_ITEM_MAX_LIST_LIMIT).default(WORK_ITEM_DEFAULT_LIST_LIMIT), cursor: nonEmptyStringSchema.optional() }).strict();
 const workItemProgressPayloadSchema = z.object({ progressSummary: z.string(), blockers: z.array(z.string()), nextAction: z.string() }).strict();
@@ -734,6 +735,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       defaultListLimit: z.literal(WORK_ITEM_DEFAULT_LIST_LIMIT),
       maxListLimit: z.literal(WORK_ITEM_MAX_LIST_LIMIT),
       maxListResponseBytes: z.literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
+      maxEventPayloadBytes: z.literal(WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES),
       maxResultBytes: z.literal(WORK_ITEM_MAX_RESULT_BYTES),
       aggregation: z.object({
         contractRevision: z.literal(1),

@@ -46,7 +46,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
-import type { RootWorkItem } from "./work-item.js";
+import { isWorkItemActive, type RootWorkItem } from "./work-item.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
@@ -1786,6 +1786,10 @@ function RootWorkItemPane({
   }, [editing, workItem]);
   const update = (key: keyof typeof draft, value: string) =>
     setDraft((current) => ({ ...current, [key]: value }));
+  const canMutate = isWorkItemActive(workItem.state);
+  const canHandoff = canMutate
+    && workItem.progressSummary.trim().length > 0
+    && workItem.nextAction.trim().length > 0;
   return (
     <div className="command-monitor-card root-work-item-pane" aria-busy={loading || mutationPending}>
       <div className="command-monitor-card-head">
@@ -1794,12 +1798,20 @@ function RootWorkItemPane({
           <span className="live-run-step-type">Root WorkItem</span>
           <span className="command-monitor-source">REV {workItem.revision}</span>
         </div>
-        {onRevise ? (
+        {onRevise && canMutate ? (
           <button type="button" className="drawer-toggle compact secondary" onClick={() => setEditing((value) => !value)} aria-expanded={editing} disabled={mutationPending}>
             {editing ? "閉じる" : "改訂"}
           </button>
         ) : null}
-        {onHandoff ? <button type="button" className="drawer-toggle compact secondary" onClick={() => void onHandoff()} disabled={mutationPending}>引き継ぎ</button> : null}
+        {onHandoff && canMutate ? (
+          <button
+            type="button"
+            className="drawer-toggle compact secondary"
+            onClick={() => void onHandoff()}
+            disabled={mutationPending || !canHandoff}
+            title={canHandoff ? undefined : "progressSummaryとnextActionを改訂してから引き継ぎを記録します。"}
+          >引き継ぎ</button>
+        ) : null}
       </div>
       {errorMessage ? <p className="live-run-error" role="alert">{errorMessage}</p> : null}
       {editing ? (

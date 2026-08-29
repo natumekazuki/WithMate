@@ -333,8 +333,13 @@ export class WorkItemService {
     );
     if (replay) return replay;
     const item = this.requireVisibleItem(input.workItemId, binding, false);
-    if (item.kind !== "delegated" || item.creatorSessionId !== binding.actorSessionId || !isWorkItemActive(item.state)) {
-      throw new WorkItemAuthorityError("Only the creator can cancel its active Work Item.", {
+    const canCancel = item.kind === "root"
+      ? item.rootSessionId === binding.actorSessionId
+        && item.creatorSessionId === binding.actorSessionId
+        && item.targetSessionId === binding.actorSessionId
+      : item.creatorSessionId === binding.actorSessionId;
+    if (!canCancel || !isWorkItemActive(item.state)) {
+      throw new WorkItemAuthorityError("Only the root owner or delegated creator can cancel its active Work Item.", {
         workItemId: item.id,
         actorSessionId: binding.actorSessionId,
       });
