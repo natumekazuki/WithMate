@@ -13,3 +13,12 @@ export type SessionRunningTurnStartResult = {
   summary: SessionSummary;
   characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
 };
+
+export type SessionCharacterAuthoringRuntimeClearInput = {
+  sessionId: string;
+};
+
+export type SessionCharacterAuthoringRuntimeClearResult = {
+  summary: SessionSummary;
+  characterRuntimeSnapshot: null;
+};

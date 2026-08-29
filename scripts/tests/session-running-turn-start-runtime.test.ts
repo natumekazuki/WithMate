@@ -136,14 +136,14 @@ function createAdapter(runSessionTurn: ProviderCodingAdapter["runSessionTurn"]):
 
 // @test-value v1
 // kind = "invariant"
-// claim = "snapshot clearを含むrunning turn開始の永続化が失敗した場合はprovider thread invalidation、provider dispatch、running audit作成を行わない"
-// oracle = { type = "contract", ref = "running-turn-start-persistence#2,#5,#6,#8" }
-// failure_mode = "user messageとsnapshot clearをcommitできていないturnでthread invalidationまたはprovider外部副作用だけを開始する"
+// claim = "invalid authoring snapshotの専用metadata transactionが失敗した場合はcomposer、thread invalidation、running開始保存、providerへ進まない"
+// oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
+// failure_mode = "snapshot/thread clearがcommitできていないのにvalidationまたはprovider外部副作用を開始する"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
-// distinction = "有効なauthoring snapshotからnullへ遷移する開始保存のcommit failure timingを観測する"
+// distinction = "running開始transactionではなくcomposerより前の専用metadata transaction failure timingを観測する"
 // @end-test-value
-it("snapshot clearを含むrunning turn開始の保存失敗時はthreadをinvalidateせずproviderをdispatchしない", async () => {
+it("invalid authoring snapshotのmetadata clear失敗時はcomposerもthread invalidationも開始しない", async () => {
   const oldSnapshot = createCharacterRuntimeSnapshot("Old");
   const session = createSession({
     sessionKind: "character-authoring",
@@ -153,16 +153,24 @@ it("snapshot clearを含むrunning turn開始の保存失敗時はthreadをinval
   let providerDispatched = false;
   let providerThreadInvalidated = false;
   let runningAuditCreated = false;
+  let composerResolved = false;
+  let runningStartPersisted = false;
   const adapter = createAdapter(async () => {
     providerDispatched = true;
     throw new Error("provider must not run");
   });
   const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
     resolveRuntimeSessionForTurn: (stored) => ({ ...stored, characterRuntimeSnapshot: null }),
+    clearCharacterAuthoringRuntimeState: () => {
+      throw new Error("metadata clear failed");
+    },
+    resolveComposerPreview: async () => {
+      composerResolved = true;
+      return { attachments: [], errors: [] };
+    },
     persistRunningTurnStart: (next) => {
-      assert.equal(next.characterRuntimeSnapshot, null);
-      assert.equal(next.threadId, "");
-      throw new Error("running persistence failed");
+      runningStartPersisted = true;
+      return next;
     },
     invalidateProviderSessionThread: () => {
       providerThreadInvalidated = true;
@@ -175,8 +183,10 @@ it("snapshot clearを含むrunning turn開始の保存失敗時はthreadをinval
 
   await assert.rejects(
     service.runSessionTurn(session.id, { userMessage: "お願い" }),
-    /running persistence failed/,
+    /metadata clear failed/,
   );
+  assert.equal(composerResolved, false);
+  assert.equal(runningStartPersisted, false);
   assert.equal(providerDispatched, false);
   assert.equal(providerThreadInvalidated, false);
   assert.equal(runningAuditCreated, false);
@@ -184,14 +194,14 @@ it("snapshot clearを含むrunning turn開始の保存失敗時はthreadをinval
 
 // @test-value v1
 // kind = "regression"
-// claim = "invalid authoring snapshotはcomposer validationへnull投影するが、validation失敗時は永続化とthread invalidationを開始しない"
-// oracle = { type = "contract", ref = "docs/design/character-storage.md#Runtime-Snapshot;running-turn-start-persistence#2,#6" }
-// failure_mode = "composer validationより前のsnapshot破棄をgeneric保存とthread invalidationで実行し、送信不成立でも永続状態だけ変更する"
+// claim = "invalid authoring snapshotは専用metadata transactionで永続clearし、thread cache無効化後のcomposer validationが失敗してもclear済み状態を維持する"
+// oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
+// failure_mode = "composer validation失敗時に古いsnapshotまたはprovider threadを永続状態やprocess-local cacheへ残す"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
-// distinction = "storage commit failureではなくcomposer validationでrunning開始transactionへ到達しない経路を観測する"
+// distinction = "metadata transaction failureではなく、clear commit後のcomposer validation failureとuser message非保存を観測する"
 // @end-test-value
-it("invalid authoring snapshotはcomposerへnull投影し、validation失敗時は保存もthread invalidationもしない", async () => {
+it("invalid authoring snapshotはcomposerより前に永続clearし、validation失敗後もclear済み状態を維持する", async () => {
   const oldSnapshot = createCharacterRuntimeSnapshot("Old");
   const session = createSession({
     sessionKind: "character-authoring",
@@ -202,13 +212,21 @@ it("invalid authoring snapshotはcomposerへnull投影し、validation失敗時�
   let runningStartPersisted = false;
   let providerThreadInvalidated = false;
   let providerDispatched = false;
+  let persistedSession = session;
+  const events: string[] = [];
   const adapter = createAdapter(async () => {
     providerDispatched = true;
     throw new Error("provider must not run");
   });
   const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
     resolveRuntimeSessionForTurn: (stored) => ({ ...stored, characterRuntimeSnapshot: null }),
+    clearCharacterAuthoringRuntimeState: (resolved) => {
+      events.push("metadata-clear");
+      persistedSession = { ...resolved, characterRuntimeSnapshot: null, threadId: "" };
+      return persistedSession;
+    },
     resolveComposerPreview: async (resolved) => {
+      events.push("composer-validation");
       assert.equal(resolved.characterRuntimeSnapshot, null);
       assert.equal(resolved.threadId, "");
       return { attachments: [], errors: ["attachment invalid"] };
@@ -223,6 +241,7 @@ it("invalid authoring snapshotはcomposerへnull投影し、validation失敗時�
     },
     invalidateProviderSessionThread: () => {
       providerThreadInvalidated = true;
+      events.push("thread-invalidated");
     },
   }));
 
@@ -232,18 +251,23 @@ it("invalid authoring snapshotはcomposerへnull投影し、validation失敗時�
   );
   assert.equal(genericUpsertCalled, false);
   assert.equal(runningStartPersisted, false);
-  assert.equal(providerThreadInvalidated, false);
+  assert.equal(providerThreadInvalidated, true);
   assert.equal(providerDispatched, false);
+  assert.equal(persistedSession.characterRuntimeSnapshot, null);
+  assert.equal(persistedSession.threadId, "");
+  assert.deepEqual(persistedSession.messages, []);
+  assert.equal(persistedSession.runState, "idle");
+  assert.deepEqual(events, ["metadata-clear", "thread-invalidated", "composer-validation"]);
 });
 
 // @test-value v1
 // kind = "invariant"
-// claim = "authoring snapshot clearのcommit成功後にthreadをinvalidateし、その後だけproviderをdispatchしてterminal保存は既存経路を使う"
-// oracle = { type = "contract", ref = "running-turn-start-persistence#1,#5,#6,#8,#9;docs/design/character-storage.md#Runtime-Snapshot" }
+// claim = "authoring snapshotの専用clear commit後にthreadをinvalidateし、composerとrunning開始保存の成功後だけproviderをdispatchする"
+// oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
 // failure_mode = "snapshot clearのcommit前にthreadをinvalidateするか、古いthreadを保持したままproviderを開始する"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
-// distinction = "有効なsnapshotからnullへの遷移で開始commit、thread invalidation、provider、terminal generic保存の順序を観測する"
+// distinction = "composer validation failureではなく、metadata clear、invalidation、composer、running開始、provider、terminalの成功順序を観測する"
 // @end-test-value
 it("snapshot clearをcommitしてthreadをinvalidateした後にproviderをdispatchし、terminal状態はgeneric経路で保存する", async () => {
   const oldSnapshot = createCharacterRuntimeSnapshot("Old");
@@ -262,6 +286,14 @@ it("snapshot clearをcommitしてthreadをinvalidateした後にproviderをdispa
       ...stored,
       characterRuntimeSnapshot: null,
     }),
+    clearCharacterAuthoringRuntimeState: (resolved) => {
+      events.push("metadata-clear");
+      return { ...resolved, characterRuntimeSnapshot: null, threadId: "" };
+    },
+    resolveComposerPreview: async () => {
+      events.push("composer-validation");
+      return { attachments: [], errors: [] };
+    },
     persistRunningTurnStart: (next, expectedMessageCount) => {
       assert.equal(expectedMessageCount, 0);
       assert.equal(next.characterRuntimeSnapshot, null);
@@ -284,8 +316,10 @@ it("snapshot clearをcommitしてthreadをinvalidateした後にproviderをdispa
 
   assert.equal(result.runState, "error");
   assert.deepEqual(events, [
-    "running-start-persisted",
+    "metadata-clear",
     "provider-thread-invalidated",
+    "composer-validation",
+    "running-start-persisted",
     "provider-dispatch",
     "generic-terminal-error",
     "provider-thread-invalidated",

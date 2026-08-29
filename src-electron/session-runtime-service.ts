@@ -56,6 +56,7 @@ export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
   persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
+  clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -897,9 +898,16 @@ export class SessionRuntimeService {
     const shouldResetCharacterAuthoringThread = storedSession.sessionKind === "character-authoring"
       && storedSession.characterRuntimeSnapshot !== null
       && resolvedSession.characterRuntimeSnapshot === null;
-    const session = shouldResetCharacterAuthoringThread
+    let session = shouldResetCharacterAuthoringThread
       ? { ...resolvedSession, threadId: "" }
       : resolvedSession;
+    if (shouldResetCharacterAuthoringThread) {
+      if (!this.deps.clearCharacterAuthoringRuntimeState) {
+        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      }
+      session = await this.deps.clearCharacterAuthoringRuntimeState(session);
+      await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
+    }
     throwIfRunCanceled(runAbortController.signal);
     logSessionRunStuckInvestigation("runtime.start", {
       sessionId,
@@ -990,9 +998,6 @@ export class SessionRuntimeService {
         ?? this.deps.upsertSession(runningSession)
       );
       setupRunningSessionSaved = true;
-      if (shouldResetCharacterAuthoringThread) {
-        await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
-      }
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,

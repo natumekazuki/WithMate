@@ -113,3 +113,85 @@ it("authoring snapshotのnull入力を保持し、canonical resultをcacheへ反
   assert.deepEqual(cachedSessions[0]?.messages, []);
   assert.deepEqual(broadcasts, [[initial.id]]);
 });
+
+// @test-value v1
+// kind = "invariant"
+// claim = "Character authoring runtime clearは専用storage resultからfull runtimeとsummary cacheを構築し、generic upsertやrunning開始保存を使わない"
+// oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
+// failure_mode = "validation前clearがfull-session rewriteに退行するか、commit後のcacheに古いsnapshotまたはthreadを残す"
+// scope = "SessionPersistenceService.clearCharacterAuthoringRuntimeState"
+// lifecycle = "permanent"
+// distinction = "running開始のnull伝播ではなく、messageを所有しない専用metadata clearのcanonical projectionを観測する"
+// @end-test-value
+it("authoring runtime clearは専用storageだけを使いcanonical resultをcacheへ反映する", async () => {
+  const oldSnapshot = {
+    characterId: "char-a",
+    name: "Old",
+    description: "",
+    iconFilePath: "old.png",
+    theme: { main: "#111111", sub: "#222222" },
+    definitionMarkdown: "# Old",
+    definitionSha256: "old",
+    definitionByteSize: 5,
+    snapshotAt: "old",
+  };
+  const initial = createSession({
+    id: "authoring-runtime-clear-projection",
+    sessionKind: "character-authoring",
+    characterRuntimeSnapshot: oldSnapshot,
+    threadId: "thread-old",
+    messages: [{ role: "assistant", text: "existing" }],
+  });
+  const resolved = { ...initial, characterRuntimeSnapshot: null, threadId: "" };
+  let cachedSessions = [initial];
+  const broadcasts: string[][] = [];
+  let genericUpsertCalled = false;
+  let runningStartCalled = false;
+  const service = new SessionPersistenceService({
+    getSessions: () => cachedSessions,
+    setSessions: (next) => { cachedSessions = next; },
+    getSession: (sessionId) => cachedSessions.find((session) => session.id === sessionId) ?? null,
+    isSessionRunInFlight: () => false,
+    upsertStoredSession: (next) => {
+      genericUpsertCalled = true;
+      return next;
+    },
+    appendStoredRunningTurnStart: () => {
+      runningStartCalled = true;
+      throw new Error("running start must not run");
+    },
+    clearStoredCharacterAuthoringRuntimeState(input) {
+      assert.equal(input.sessionId, initial.id);
+      return {
+        summary: {
+          ...projectSessionSummary(initial),
+          threadId: "",
+        },
+        characterRuntimeSnapshot: null,
+      };
+    },
+    replaceStoredSessions: () => undefined,
+    listStoredSessions: () => [initial],
+    getAppSettings: () => normalizeAppSettings({}),
+    getModelCatalogSnapshot: () => ({ revision: 1, providers: [] }),
+    syncSessionDependencies: () => undefined,
+    clearSessionContextTelemetry: () => undefined,
+    clearSessionBackgroundActivities: () => undefined,
+    invalidateProviderSessionThread: () => undefined,
+    closeSessionWindow: () => undefined,
+    broadcastSessions: (sessionIds) => broadcasts.push(Array.from(sessionIds ?? [])),
+  });
+
+  const stored = await service.clearCharacterAuthoringRuntimeState(resolved);
+
+  assert.equal(genericUpsertCalled, false);
+  assert.equal(runningStartCalled, false);
+  assert.equal(stored.characterRuntimeSnapshot, null);
+  assert.equal(stored.threadId, "");
+  assert.deepEqual(stored.messages, initial.messages);
+  assert.equal(stored.runState, "idle");
+  assert.equal(cachedSessions[0]?.characterRuntimeSnapshot, null);
+  assert.equal(cachedSessions[0]?.threadId, "");
+  assert.deepEqual(cachedSessions[0]?.messages, []);
+  assert.deepEqual(broadcasts, [[initial.id]]);
+});

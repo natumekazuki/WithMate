@@ -67,6 +67,10 @@ export class MainSessionPersistenceFacade {
     return this.deps.getSessionPersistenceService().persistRunningTurnStart(session, expectedMessageCount);
   }
 
+  async clearCharacterAuthoringRuntimeState(session: Session): Promise<Session> {
+    return this.deps.getSessionPersistenceService().clearCharacterAuthoringRuntimeState(session);
+  }
+
   async replaceAllSessions(nextSessions: Session[], options?: ReplaceAllSessionsOptions): Promise<Session[]> {
     return this.deps.getSessionPersistenceService().replaceAllSessions(nextSessions, options);
   }

@@ -54,6 +54,8 @@ import {
   type SessionTurnTerminalCommit,
 } from "./session-turn-terminal-commit.js";
 import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
@@ -495,6 +497,53 @@ export class SessionStorageV6 {
 
   upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
     return this.storeSession(session, "upsert", terminalCommit);
+  }
+
+  clearCharacterAuthoringRuntimeState(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): SessionCharacterAuthoringRuntimeClearResult {
+    const sessionId = input.sessionId.trim();
+    if (!sessionId) {
+      throw new Error("Character authoring runtime clearの保存形式が不正だよ。");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+      if (!currentRow) {
+        throw new Error("対象セッションが見つからないよ。");
+      }
+      if (currentRow.session_kind !== "character-authoring") {
+        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+      }
+
+      const updateResult = this.db.prepare(`
+        UPDATE sessions_v6
+        SET character_snapshot_json = NULL,
+            character_id = NULL,
+            thread_id = ''
+        WHERE id = ?
+      `).run(sessionId);
+      if (Number(updateResult.changes) !== 1) {
+        throw new Error("Character authoring runtime stateをclearできなかったよ。");
+      }
+
+      const storedRow: SessionV6Row = {
+        ...currentRow,
+        character_snapshot_json: null,
+        character_id: null,
+        thread_id: "",
+      };
+      const storedResult: SessionCharacterAuthoringRuntimeClearResult = {
+        summary: this.rowToSessionSummary(storedRow, decodeSessionV6RuntimeState(storedRow)),
+        characterRuntimeSnapshot: null,
+      };
+      this.db.exec("COMMIT");
+      return storedResult;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   appendRunningTurnStart(input: SessionRunningTurnStartInput): SessionRunningTurnStartResult {

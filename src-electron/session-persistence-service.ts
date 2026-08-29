@@ -28,6 +28,8 @@ import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
@@ -54,6 +56,9 @@ export type SessionPersistenceServiceDeps = {
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  clearStoredCharacterAuthoringRuntimeState?(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
@@ -387,6 +392,37 @@ export class SessionPersistenceService {
         this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
       });
       this.runCommittedProjectionBestEffort("running turn", "broadcast", () => {
+        this.deps.broadcastSessions([stored.id]);
+      });
+      return stored;
+    });
+  }
+
+  async clearCharacterAuthoringRuntimeState(nextSession: Session): Promise<Session> {
+    return this.enqueueSessionMutation(async () => {
+      const currentSession = this.deps.getSession(nextSession.id);
+      if (currentSession) {
+        assertSessionWritable(currentSession);
+      }
+      if (nextSession.sessionKind !== "character-authoring") {
+        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+      }
+      if (!this.deps.clearStoredCharacterAuthoringRuntimeState) {
+        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      }
+
+      const storedResult = await this.deps.clearStoredCharacterAuthoringRuntimeState({
+        sessionId: nextSession.id,
+      });
+      const stored = cloneSessions([{
+        ...nextSession,
+        ...storedResult.summary,
+        characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
+      }])[0];
+      this.runCommittedProjectionBestEffort("Character authoring runtime clear", "cache update", () => {
+        this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
+      });
+      this.runCommittedProjectionBestEffort("Character authoring runtime clear", "broadcast", () => {
         this.deps.broadcastSessions([stored.id]);
       });
       return stored;

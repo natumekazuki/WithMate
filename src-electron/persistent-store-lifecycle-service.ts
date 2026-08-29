@@ -47,6 +47,8 @@ import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js"
 import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
 import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
   SessionRunningTurnStartInput,
   SessionRunningTurnStartResult,
 } from "./session-running-turn-start.js";
@@ -81,6 +83,9 @@ export type SessionStorageWrite = AwaitableStorageMethods<
 > & SessionStorageRead & {
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  clearCharacterAuthoringRuntimeState?(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
 };
 export type SessionPinStorage = {
   setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;

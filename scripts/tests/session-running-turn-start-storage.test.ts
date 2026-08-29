@@ -166,6 +166,111 @@ it("running turn開始は既存内容と非所有metadataを保持し、retryを
 });
 
 // @test-value v1
+// kind = "invariant"
+// claim = "invalid character-authoring snapshotの専用metadata transactionはsnapshot、relational owner、threadだけをatomicにclearし、message、run state、stable owner、display metadataを維持する"
+// oracle = { type = "adr", ref = "ADR-010#Authoring-snapshot-lifecycle" }
+// failure_mode = "composer前のclearが部分commitするか、user message、running metadata、stable owner、display metadataを変更する"
+// scope = "SessionStorageV6.clearCharacterAuthoringRuntimeState"
+// lifecycle = "permanent"
+// distinction = "running開始transactionではなく、message tableを触らないvalidation前metadata clearのrollbackとcommitをDB read-backで観測する"
+// @end-test-value
+it("character-authoring runtime metadataだけをatomicにclearしてmessageとrunning stateを変更しない", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-authoring-runtime-clear-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+
+  try {
+    const oldSnapshot = createCharacterRuntimeSnapshot("Old");
+    insertCharacter(dbPath, oldSnapshot);
+    const initial = storage.insertSession({
+      ...createSessionInput("authoring-runtime-clear", [{ role: "assistant", text: "existing" }]),
+      sessionKind: "character-authoring",
+      character: oldSnapshot.name,
+      characterIconPath: oldSnapshot.iconFilePath,
+      characterThemeColors: oldSnapshot.theme,
+      characterRuntimeSnapshot: oldSnapshot,
+      threadId: "thread-old",
+    });
+    const failureDb = new DatabaseSync(dbPath);
+    try {
+      failureDb.exec(`
+        CREATE TRIGGER fail_authoring_runtime_clear
+        BEFORE UPDATE OF character_snapshot_json, character_id, thread_id ON sessions_v6
+        WHEN OLD.id = 'authoring-runtime-clear'
+        BEGIN SELECT RAISE(ABORT, 'authoring runtime clear failed'); END;
+      `);
+    } finally {
+      failureDb.close();
+    }
+
+    assert.throws(
+      () => storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id }),
+      /authoring runtime clear failed/,
+    );
+    const rolledBack = storage.getSession(initial.id);
+    assert.deepEqual(rolledBack?.characterRuntimeSnapshot, oldSnapshot);
+    assert.equal(rolledBack?.threadId, "thread-old");
+    assert.deepEqual(rolledBack?.messages.map((message) => message.text), ["existing"]);
+    assert.equal(rolledBack?.runState, "idle");
+    assert.equal(rolledBack?.status, "idle");
+
+    const cleanupDb = new DatabaseSync(dbPath);
+    try {
+      cleanupDb.exec("DROP TRIGGER fail_authoring_runtime_clear;");
+    } finally {
+      cleanupDb.close();
+    }
+    const storedResult = storage.clearCharacterAuthoringRuntimeState({ sessionId: initial.id });
+
+    assert.equal(storedResult.characterRuntimeSnapshot, null);
+    assert.equal(storedResult.summary.characterId, oldSnapshot.characterId);
+    assert.equal(storedResult.summary.character, oldSnapshot.name);
+    assert.equal(storedResult.summary.characterIconPath, oldSnapshot.iconFilePath);
+    assert.deepEqual(storedResult.summary.characterThemeColors, oldSnapshot.theme);
+    assert.equal(storedResult.summary.threadId, "");
+    assert.equal(storedResult.summary.runState, "idle");
+    const hydrated = storage.getSession(initial.id);
+    assert.equal(hydrated?.characterRuntimeSnapshot, null);
+    assert.equal(hydrated?.characterId, oldSnapshot.characterId);
+    assert.equal(hydrated?.threadId, "");
+    assert.deepEqual(hydrated?.messages.map((message) => message.text), ["existing"]);
+    assert.equal(hydrated?.runState, "idle");
+    assert.equal(hydrated?.status, "idle");
+    assert.equal(hydrated?.updatedAt, initial.updatedAt);
+    const inspectionDb = new DatabaseSync(dbPath);
+    try {
+      const row = inspectionDb.prepare(`
+        SELECT character_id, character_snapshot_json, thread_id, runtime_policy_json
+        FROM sessions_v6
+        WHERE id = ?
+      `).get(initial.id) as {
+        character_id: string | null;
+        character_snapshot_json: string | null;
+        thread_id: string;
+        runtime_policy_json: string;
+      };
+      const runtimePolicy = JSON.parse(row.runtime_policy_json) as Record<string, unknown>;
+      assert.equal(row.character_id, null);
+      assert.equal(row.character_snapshot_json, null);
+      assert.equal(row.thread_id, "");
+      assert.equal(runtimePolicy.characterId, oldSnapshot.characterId);
+      assert.equal(runtimePolicy.characterName, oldSnapshot.name);
+      assert.equal(runtimePolicy.appStatus, "idle");
+      assert.equal(runtimePolicy.runState, "idle");
+      const messageCount = inspectionDb.prepare(`
+        SELECT COUNT(*) AS count FROM session_messages_v6 WHERE session_id = ?
+      `).get(initial.id) as { count: number };
+      assert.equal(messageCount.count, 1);
+    } finally {
+      inspectionDb.close();
+    }
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
 // kind = "regression"
 // claim = "character-authoringのrunning turn開始は最新runtime snapshotと表示metadataをuser messageと同じtransactionへ保存し、中間失敗時は全て戻す"
 // oracle = { type = "contract", ref = "docs/design/character-storage.md#Runtime-Snapshot" }
