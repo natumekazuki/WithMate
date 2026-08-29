@@ -112,17 +112,55 @@ describe("withmate-session managed Skill contract", () => {
     const contract = `${skill}\n${operations}`;
 
     assert.match(contract, /Create the canonical Session and active Work Item for every planned child before dispatching any child/);
-    assert.match(contract, /never submit the parent result while a planned delegation has no Work Item/i);
+    assert.match(contract, /Under a current parent Work Item[\s\S]*keeps undispatched dependencies visible to parent finalization/);
+    assert.match(contract, /At root, retain every top-level Work Item ID[\s\S]*terminal and adopted or explicitly replaced/);
     assert.match(contract, /Parallel dispatch is valid only for independent children/);
     assert.match(contract, /prerequisite result is terminal, validated as satisfying the dependency, and decided `accepted`/);
     assert.match(contract, /`retry_requested` decision requires waiting for the replacement result and its later `accepted` decision/);
     assert.match(contract, /`excluded` decision blocks dependent dispatch[\s\S]*cancel and decide the unused dependent Work Item as `excluded`/);
     assert.match(contract, /execution terminal state is not Work Item terminal state/);
-    assert.match(contract, /parent Work Item's target coordinator[\s\S]*Inspect and decide only direct children/);
-    assert.match(contract, /Before each `work\.aggregation\.decide` or `work\.aggregation\.retry`, call `work\.aggregation\.get`/);
+    assert.match(contract, /task coordinator with a current parent Work Item[\s\S]*`work\.aggregation\.get`/i);
+    assert.match(contract, /Inspect and decide only direct children/);
+    assert.match(contract, /calls `work\.aggregation\.get` before each `work\.aggregation\.decide` or `work\.aggregation\.retry`/);
     assert.match(contract, /current `aggregateRevision` as `expectedAggregateRevision`/);
-    assert.match(contract, /call `work\.aggregation\.get` once more[\s\S]*strict parent `work\.result`/);
-    assert.match(contract, /overall coordinator does not flatten grandchildren/);
+    assert.match(contract, /gets the aggregation once more[\s\S]*strict parent `work\.result`/);
+    assert.match(contract, /root does not flatten grandchildren/);
+  });
+
+  it("DECOMP-ROOT-CLOSURE-05: root直属委譲とtask配下集約を別のclosureで閉じる", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /root overall coordinator has no current Work Item/i);
+    assert.match(contract, /top-level Work Items with `parentWorkItemId: null`/);
+    assert.match(contract, /`work\.get` to validate and adopt the prerequisite's terminal result/);
+    assert.match(contract, /Do not call `work\.aggregation\.\*` for top-level items or submit a nonexistent parent `work\.result`/);
+    assert.match(contract, /task coordinator with a current parent Work Item[\s\S]*`work\.aggregation\.get`/i);
+    assert.match(contract, /passes that revision to its own strict parent `work\.result`/);
+  });
+
+  it("DECOMP-WORK-IDENTITY-06: targetへWork Item IDを渡しcanonical bindingを確認させる", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /exact Work Item ID in the delegation prompt/);
+    assert.match(contract, /call `work\.get`[\s\S]*canonical target matches the actor/);
+    assert.match(contract, /goal, scope, completion criteria, authority, and source identity/);
+    assert.match(contract, /Do not infer the current Work Item from other active items/);
+    assert.match(contract, /execution association alone is not prompt context/);
+  });
+
+  it("DECOMP-PARENT-STATE-07: current Work Itemをin_progressへ進めてから分割する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /current Work Item is `pending`[\s\S]*`work\.transition` to `in_progress`/);
+    assert.match(contract, /current `expectedRevision` and an operation-specific idempotency key/);
+    assert.match(contract, /Turn association does not transition Work Item state/);
+    assert.match(contract, /then read it back/);
   });
 
   it("blockerへの回答、consume、解決を別の状態遷移として案内する", async () => {
