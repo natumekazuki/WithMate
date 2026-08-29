@@ -97,7 +97,7 @@ describe("withmate-session managed Skill contract", () => {
     const contract = `${skill}\n${operations}`;
 
     assert.match(skill, /`session.create` with a caller-owned idempotency key[\s\S]*`session.get`/);
-    assert.match(skill, /`work.create` with a different idempotency key/);
+    assert.match(skill, /`work.create` for every planned child with an operation-specific idempotency key/);
     assert.match(skill, /`turn.run` or `turn.enqueue`[\s\S]*a separate key/);
     assert.match(contract, /not an atomic batch/);
     assert.match(contract, /resume the same decomposition plan from the failed step/);
@@ -111,11 +111,17 @@ describe("withmate-session managed Skill contract", () => {
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
     const contract = `${skill}\n${operations}`;
 
+    assert.match(contract, /Create the canonical Session and active Work Item for every planned child before dispatching any child/);
+    assert.match(contract, /never submit the parent result while a planned delegation has no Work Item/i);
     assert.match(contract, /Parallel dispatch is valid only for independent children/);
-    assert.match(contract, /dependent work after the parent coordinator validates and decides the prerequisite result/);
+    assert.match(contract, /prerequisite result is terminal, validated as satisfying the dependency, and decided `accepted`/);
+    assert.match(contract, /`retry_requested` decision requires waiting for the replacement result and its later `accepted` decision/);
+    assert.match(contract, /`excluded` decision blocks dependent dispatch[\s\S]*cancel and decide the unused dependent Work Item as `excluded`/);
     assert.match(contract, /execution terminal state is not Work Item terminal state/);
-    assert.match(contract, /parent Work Item's target coordinator[\s\S]*only its direct children/);
-    assert.match(contract, /`accepted`, `excluded`, or `retry_requested`[\s\S]*strict parent result/);
+    assert.match(contract, /parent Work Item's target coordinator[\s\S]*Inspect and decide only direct children/);
+    assert.match(contract, /Before each `work\.aggregation\.decide` or `work\.aggregation\.retry`, call `work\.aggregation\.get`/);
+    assert.match(contract, /current `aggregateRevision` as `expectedAggregateRevision`/);
+    assert.match(contract, /call `work\.aggregation\.get` once more[\s\S]*strict parent `work\.result`/);
     assert.match(contract, /overall coordinator does not flatten grandchildren/);
   });
 

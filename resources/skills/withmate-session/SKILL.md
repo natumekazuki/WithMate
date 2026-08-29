@@ -31,7 +31,8 @@ The Agent owns the work-decomposition policy. WithMate owns the enforced Role hi
 - An `overall-coordinator` uses a direct `executor` child for one independent delegation. Create a direct `task-coordinator` only when one task needs multiple slices, dependency management, integration, or review convergence.
 - A `task-coordinator` decomposes only to its direct `executor` children. A permitted maximum depth is an enforcement limit, not a policy target; do not build every allowed layer.
 - Define each child Work Item as one coherent delegation with an explicit goal, scope, completion criteria, authority, and source identity. Keep sibling scopes non-overlapping and assign integration ownership instead of leaving it implicit.
-- Dispatch children in parallel only when they are independent. Create or dispatch a dependent child only after the prerequisite result has been validated and decided by its parent coordinator.
+- Create the canonical Session and active Work Item for every planned child before dispatching any child. This keeps an undispatched dependency visible to parent finalization; never submit the parent result while a planned delegation has no Work Item.
+- Dispatch children in parallel only when they are independent. Dispatch a dependent child only after the prerequisite result is terminal, validated as satisfying the dependency, and decided `accepted` by its parent coordinator. A `retry_requested` decision requires waiting for the replacement result and its later `accepted` decision. An `excluded` decision blocks dependent dispatch until the coordinator explicitly revises the plan; cancel and decide the unused dependent Work Item as `excluded` if it is no longer required.
 - Use the minimum number of children needed for independently verifiable responsibilities. Do not invent a fixed decomposition or parallelism limit that is absent from `runtime.catalog`.
 - Treat each child result as an adoption candidate. The coordinator that owns the parent Work Item validates each direct child's result and closes it through the existing aggregation decisions and strict parent result.
 
@@ -42,11 +43,11 @@ WithMate derives the actor, Role, permitted child Role, root, parent, depth, and
 1. Call `session.self` and `runtime.catalog` to establish the actor, Role, permitted capabilities, and current limits.
 2. Inspect the current Work Item and responsibility, and evaluate the no-decomposition choice first.
 3. For every necessary child, choose its Role, goal, scope, completion criteria, authority, source identity, and dependency order before creating resources.
-4. Call `session.create` with a caller-owned idempotency key, then use `session.get` to confirm the canonical child and workspace identity.
-5. Call `work.create` with a different idempotency key. Include the active parent Work Item when the delegation is a child of tracked work.
-6. Call `turn.options`, construct a currently supported provider tuple, and dispatch with `turn.run` or `turn.enqueue` using the Work Item ID and a separate key. Do not switch operations after an admission failure.
+4. Materialize every planned child before dispatch: call `session.create` with a caller-owned idempotency key, then use `session.get` to confirm the canonical child and workspace identity.
+5. Call `work.create` for every planned child with an operation-specific idempotency key. Include the active parent Work Item when the delegation is a child of tracked work. Do not dispatch until every planned child has a canonical Work Item.
+6. For each dependency-ready child, call `turn.options`, construct a currently supported provider tuple, and dispatch with `turn.run` or `turn.enqueue` using the Work Item ID and a separate key. Do not switch operations after an admission failure. Leave dependent Work Items undispatched until their prerequisite satisfies the decision rules above.
 7. After response loss or `effect: indeterminate`, read back the canonical Session, Work Item, or execution and replay only the unchanged mutation with its original key. Session creation and Work Item creation are not an atomic batch: if a later operation fails, resume the same plan from the existing canonical child rather than creating a duplicate Session.
-8. Require the target Session to submit an explicit terminal Work Item result. The parent target coordinator then validates and decides each direct child through `work.aggregation.*` before submitting the strict parent result; never flatten a grandchild result into the root aggregation.
+8. Require the target Session to submit an explicit terminal Work Item result. Before each `work.aggregation.decide` or `work.aggregation.retry`, call `work.aggregation.get` and pass its current `aggregateRevision` as `expectedAggregateRevision`. Read the aggregation again after each mutation. After every planned direct child is terminal and decided, call `work.aggregation.get` once more and pass that current revision as `expectedAggregateRevision` to the strict parent `work.result`; never flatten a grandchild result into the root aggregation.
 
 ## Follow the discovery workflow
 
