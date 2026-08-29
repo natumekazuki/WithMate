@@ -142,6 +142,7 @@ import type {
   SetSessionPinnedRequest,
 } from "../src/session-state.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
+import type { SessionWindowRestoreResult } from "../src/session-window-restore.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
   type WorkspaceDirectoryValidationResult,
@@ -251,6 +252,8 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
@@ -329,6 +332,8 @@ export type MainIpcRegistrationDeps = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<void>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
@@ -550,6 +555,8 @@ type MainIpcWindowDeps = Pick<
   | "resolveHomeWindow"
   | "resolveSessionWindow"
   | "openSessionWindow"
+  | "getSessionWindowRestoreSet"
+  | "restoreSessionWindows"
   | "openHomeWindow"
   | "openSessionMonitorWindow"
   | "openSettingsWindow"
@@ -1276,6 +1283,14 @@ function registerWindowHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcWindow
       return;
     }
     await deps.openSessionWindow(sessionId);
+  });
+  ipcMain.handle(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL, async (event) => {
+    assertHomeWindowSender(event, deps);
+    return deps.getSessionWindowRestoreSet();
+  });
+  ipcMain.handle(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL, async (event) => {
+    assertHomeWindowSender(event, deps);
+    return deps.restoreSessionWindows();
   });
   ipcMain.handle(WITHMATE_OPEN_HOME_WINDOW_CHANNEL, async () => {
     await deps.openHomeWindow();

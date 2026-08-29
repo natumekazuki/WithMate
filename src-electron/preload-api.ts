@@ -7,6 +7,10 @@ import {
   normalizeOpenSessionWindowIdsPageResult,
   OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
 } from "../src/withmate-window-types.js";
+import {
+  normalizeSessionWindowRestoreIds,
+  normalizeSessionWindowRestoreResult,
+} from "../src/session-window-restore.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
@@ -127,11 +131,14 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
+  WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
@@ -247,6 +254,24 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
   return {
     openSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_CHANNEL, sessionId);
+    },
+    async getSessionWindowRestoreSet() {
+      const sessionIds = normalizeSessionWindowRestoreIds(
+        await ipcRenderer.invoke(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL),
+      );
+      if (!sessionIds) {
+        throw new Error("Session Window restore set response が不正です。");
+      }
+      return sessionIds;
+    },
+    async restoreSessionWindows() {
+      const result = normalizeSessionWindowRestoreResult(
+        await ipcRenderer.invoke(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL),
+      );
+      if (!result) {
+        throw new Error("Session Window restore result が不正です。");
+      }
+      return result;
     },
     openHomeWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_HOME_WINDOW_CHANNEL);
@@ -832,6 +857,14 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
           return;
         }
         void listAllOpenSessionWindowIds(ipcRenderer).then(listener);
+      });
+    },
+    subscribeSessionWindowRestoreSet(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT, (payload: unknown) => {
+        const sessionIds = normalizeSessionWindowRestoreIds(payload);
+        if (sessionIds) {
+          listener(sessionIds);
+        }
       });
     },
     subscribeOpenCompanionReviewWindowIds(listener) {

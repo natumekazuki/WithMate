@@ -15,6 +15,18 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         calls.push(`openSession:${sessionId}`);
         return {} as never;
       },
+      async getSessionWindowRestoreSet() {
+        calls.push("getSessionWindowRestoreSet");
+        return ["session-1"];
+      },
+      async restoreSessionWindows() {
+        calls.push("restoreSessionWindows");
+        return {
+          requestedSessionIds: ["session-1"],
+          openedSessionIds: ["session-1"],
+          failures: [],
+        };
+      },
       async openHomeWindow() {
         calls.push("openHome");
         return {} as never;
@@ -266,6 +278,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(deps.isSettingsWindow({} as never), true);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
+  assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
+  assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
   await deps.getMateState();
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });
@@ -278,6 +292,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "isMemoryReview",
     "isSettings",
     "openSession:session-1",
+    "getSessionWindowRestoreSet",
+    "restoreSessionWindows",
     "getMateState",
     "getMateProfile",
     "createMate:Buddy",

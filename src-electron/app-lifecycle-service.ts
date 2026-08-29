@@ -10,6 +10,7 @@ type AppLifecycleServiceDeps = {
   quitApp(): void;
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
+  prepareSessionWindowSnapshotForQuit?(): Promise<void>;
   closePersistentStores(): void;
   invalidateAllProviderSessionThreads?(): Promise<void>;
   revokeAllAgentRuntimeBindings?(): void;
@@ -58,6 +59,13 @@ export class AppLifecycleService {
     event.preventDefault();
     if (!this.quitCleanupPromise) {
       this.quitCleanupPromise = (async () => {
+        try {
+          if (this.deps.prepareSessionWindowSnapshotForQuit) {
+            await this.deps.prepareSessionWindowSnapshotForQuit();
+          }
+        } catch {
+          // Remaining cleanup must still run if the best-effort snapshot fails.
+        }
         try {
           await this.deps.invalidateAllProviderSessionThreads?.();
         } catch {

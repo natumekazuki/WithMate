@@ -16,6 +16,7 @@ import {
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
+  WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
@@ -38,6 +39,7 @@ type WindowLike = {
 type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
   getAllWindows(): TWindow[];
   getHomeWindows(): TWindow[];
+  getPrimaryHomeWindow(): TWindow | null;
   getSessionWindows(): TWindow[];
 };
 
@@ -74,6 +76,18 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
       ? { scope: "all" }
       : { scope: "ids", sessionIds: uniqueSessionIds };
     this.broadcast(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, payload);
+  }
+
+  public broadcastSessionWindowRestoreSet(sessionIds: readonly string[]): void {
+    const homeWindow = this.options.getPrimaryHomeWindow();
+    if (!homeWindow) {
+      return;
+    }
+    this.broadcastTo(
+      [homeWindow],
+      WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
+      [...sessionIds],
+    );
   }
 
   public broadcastOpenCompanionReviewWindowIds(sessionIds: string[]): void {

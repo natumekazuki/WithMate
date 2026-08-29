@@ -790,6 +790,14 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal(newSessionButtons?.length, 1);
   });
 
+  it("検索行には検索欄とNew Sessionだけを表示する", () => {
+    const html = renderHomeRecentSessions();
+
+    assert.match(html, /class="toolbar-search-field"/);
+    assert.match(html, /class="start-session-button"/);
+    assert.doesNotMatch(html, /Restore Sessions|restore-session-windows-button/);
+  });
+
   it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {
     const html = renderHomeRecentSessions({ hasMore: true });
 
@@ -984,7 +992,8 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 2);
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("閲覧専用"));
-    assert.ok(!html.includes("disabled=\"\""));
+    assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
+    assert.match(html, /class="session-card home-session-card"[^>]*aria-disabled="false"/);
   });
 });
 
@@ -1125,6 +1134,9 @@ describe("HomeRightPane", () => {
   }],
     canUsePrimaryFeatures = true,
     characterListFeedback = "",
+    sessionWindowRestoreIds: readonly string[] = [],
+    sessionWindowRestorePending = false,
+    sessionWindowRestoreFeedback = "",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
@@ -1136,11 +1148,15 @@ describe("HomeRightPane", () => {
       onChangeRightPaneView={noOp}
       onOpenSessionMonitorWindow={noOp}
       onOpenSettingsWindow={noOp}
+      onRestoreSessionWindows={noOp}
       onCreateCharacter={noOp}
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
+      sessionWindowRestoreIds={sessionWindowRestoreIds}
+      sessionWindowRestorePending={sessionWindowRestorePending}
+      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
     />,
   );
 
@@ -1234,6 +1250,28 @@ describe("HomeRightPane", () => {
     assert.doesNotMatch(characterHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
     assertNoMateTalkChatSurface(monitorHtml);
     assertNoMateTalkChatSurface(characterHtml);
+  });
+
+  it("一括復元操作を上部へ常設し、対象なし・処理中のdisabledと対象別failureを投影する", () => {
+    const emptyHtml = renderHomeRightPane("monitor");
+    const enabledHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a", "session-b"]);
+    const pendingHtml = renderHomeRightPane(
+      "monitor",
+      undefined,
+      true,
+      "",
+      ["session-a", "session-b"],
+      true,
+      "1件のSessionを開きました。 復元できなかったSession: session-b（削除済み）",
+    );
+
+    assert.match(emptyHtml, /Restore Sessions/);
+    assert.match(emptyHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(enabledHtml, /Restore Sessions/);
+    assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(pendingHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
+    assert.match(pendingHtml, /session-b（削除済み）/);
+    assert.match(pendingHtml, /role="status" aria-live="polite"/);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

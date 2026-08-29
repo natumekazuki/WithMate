@@ -384,6 +384,45 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   });
 });
 
+test("Session Window restore API はsnapshotと対象別resultを検証して公開する", async () => {
+  const listeners = new Map<string, Listener>();
+  const api = createWithMateWindowApi({
+    invoke(channel: string) {
+      if (channel === "withmate:get-session-window-restore-set") {
+        return Promise.resolve(["session-a", "session-a", "session-b"]);
+      }
+      if (channel === "withmate:restore-session-windows") {
+        return Promise.resolve({
+          requestedSessionIds: ["session-a", "session-b"],
+          openedSessionIds: ["session-a"],
+          failures: [{ sessionId: "session-b", reason: "missing" }],
+        });
+      }
+      return Promise.resolve(undefined);
+    },
+    on(channel: string, listener: Listener) {
+      listeners.set(channel, listener);
+    },
+    removeListener(channel: string) {
+      listeners.delete(channel);
+    },
+    send() {},
+  } as never);
+
+  assert.deepEqual(await api.getSessionWindowRestoreSet(), ["session-a", "session-b"]);
+  assert.deepEqual(await api.restoreSessionWindows(), {
+    requestedSessionIds: ["session-a", "session-b"],
+    openedSessionIds: ["session-a"],
+    failures: [{ sessionId: "session-b", reason: "missing" }],
+  });
+
+  const snapshots: string[][] = [];
+  const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => snapshots.push(sessionIds));
+  listeners.get("withmate:session-window-restore-set-changed")?.({}, ["session-c", "session-c"]);
+  assert.deepEqual(snapshots, [["session-c"]]);
+  unsubscribe();
+});
+
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -428,6 +467,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "getSession",
+    "getSessionWindowRestoreSet",
     "getSessionGlossaryProjection",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
@@ -510,6 +550,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "reportRendererLog",
     "resetAppDatabase",
     "restoreCompanionTargetStash",
+    "restoreSessionWindows",
     "resolveLiveApproval",
     "resolveLiveElicitation",
     "resolveLaunchCharacter",
@@ -533,6 +574,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenCompanionReviewWindowIds",
     "subscribeOpenSessionWindowIds",
+    "subscribeSessionWindowRestoreSet",
     "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionFilePreviewNavigation",

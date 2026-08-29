@@ -131,9 +131,12 @@ import type {
   GlossarySearchRequest,
   SessionGlossaryProjection,
 } from "./glossary-contract.js";
+import type { SessionWindowRestoreResult } from "./session-window-restore.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
@@ -357,6 +360,7 @@ export type WithMateWindowSubscriptionApi = {
   ): () => void;
   subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
   subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };

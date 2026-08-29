@@ -97,6 +97,10 @@ import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
 import {
+  buildSessionWindowRestoreFeedback,
+  selectPendingSessionWindowRestoreIds,
+} from "./home/home-session-window-restore.js";
+import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
 } from "./home/home-active-auxiliary-refresh.js";
@@ -178,6 +182,15 @@ export default function HomeApp() {
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [pendingSessionPinIds, setPendingSessionPinIds] = useState<string[]>([]);
+  const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
+  const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
+  const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
+  const pendingSessionWindowRestoreIds = useMemo(
+    () => openSessionWindowIdsState.status === "loaded"
+      ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
+      : [],
+    [openSessionWindowIds, openSessionWindowIdsState.status, sessionWindowRestoreIds],
+  );
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
@@ -600,6 +613,55 @@ export default function HomeApp() {
   });
 
   useEffect(() => {
+    const api = getWithMateApi();
+    if (!api || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
+      return;
+    }
+    let active = true;
+    let receivedSnapshotUpdate = false;
+    const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => {
+      if (active) {
+        receivedSnapshotUpdate = true;
+        setSessionWindowRestoreIds(sessionIds);
+      }
+    });
+    void api.getSessionWindowRestoreSet().then((sessionIds) => {
+      if (active && !receivedSnapshotUpdate) {
+        setSessionWindowRestoreIds(sessionIds);
+      }
+    }).catch((error) => {
+      if (active) {
+        setSessionWindowRestoreFeedback(
+          error instanceof Error ? error.message : "前回のSession一覧を読み込めませんでした。",
+        );
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+
+  const restoreSessionWindows = async () => {
+    const api = getWithMateApi();
+    if (!api || sessionWindowRestorePending) {
+      return;
+    }
+    setSessionWindowRestorePending(true);
+    setSessionWindowRestoreFeedback("");
+    try {
+      const result = await api.restoreSessionWindows();
+      setSessionWindowRestoreFeedback(buildSessionWindowRestoreFeedback(result));
+    } catch (error) {
+      setSessionWindowRestoreFeedback(
+        error instanceof Error ? error.message : "前回のSessionを復元できませんでした。",
+      );
+    } finally {
+      setSessionWindowRestorePending(false);
+    }
+  };
+
+  useEffect(() => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
       setActiveAuxiliarySessions([]);
@@ -894,12 +956,16 @@ export default function HomeApp() {
         onChangeRightPaneView: setRightPaneView,
         onOpenSessionMonitorWindow: () => void openSessionMonitorWindow(),
         onOpenSettingsWindow: () => void openSettingsWindow(),
+        onRestoreSessionWindows: () => void restoreSessionWindows(),
         onCreateCharacter: () => void openCharacterEditorWindow(),
         onEditCharacter: (characterId) => void openCharacterEditorWindow(characterId),
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
       },
       canUsePrimaryFeatures,
+      sessionWindowRestoreIds: pendingSessionWindowRestoreIds,
+      sessionWindowRestorePending,
+      sessionWindowRestoreFeedback,
     }),
     launchDialog: buildHomeLaunchDialogProps({
       draft: launchDraft,

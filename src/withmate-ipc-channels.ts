@@ -1,4 +1,6 @@
 export const WITHMATE_OPEN_SESSION_CHANNEL = "withmate:open-session";
+export const WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL = "withmate:get-session-window-restore-set";
+export const WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL = "withmate:restore-session-windows";
 export const WITHMATE_OPEN_HOME_WINDOW_CHANNEL = "withmate:open-home-window";
 export const WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL = "withmate:open-session-monitor-window";
 export const WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL = "withmate:open-settings-window";
@@ -165,6 +167,7 @@ export const WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT = "withmate:session-contex
 export const WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT = "withmate:session-background-activity";
 export const WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT = "withmate:session-glossary-changed";
 export const WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT = "withmate:open-session-windows-changed";
+export const WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT = "withmate:session-window-restore-set-changed";
 export const WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT = "withmate:open-companion-review-windows-changed";
 export const WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT = "withmate:companion-sessions-changed";
 export const WITHMATE_APP_BOOT_STATUS_EVENT = "withmate:app-boot-status";

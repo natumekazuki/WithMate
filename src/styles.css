@@ -937,6 +937,7 @@ button:disabled {
 
 .home-settings-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 10px;
@@ -2278,6 +2279,7 @@ button:disabled {
 .composer-path-match:focus-visible,
 .diff-close:focus-visible,
 .start-session-button:focus-visible,
+.restore-session-windows-button:focus-visible,
 .launch-toggle:focus-visible,
 .browse-button:focus-visible {
   outline: 2px solid rgba(96, 165, 250, 0.88);
@@ -2364,6 +2366,43 @@ button:disabled {
 .start-session-button:disabled {
   cursor: not-allowed;
   opacity: 0.52;
+}
+
+.restore-session-windows-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 10px 16px;
+  border: 1px solid rgba(111, 140, 255, 0.32);
+  border-radius: 999px;
+  background: rgba(111, 140, 255, 0.1);
+  color: var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.restore-session-windows-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.restore-session-windows-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  animation: home-session-list-load-spin 760ms linear infinite;
+}
+
+.session-window-restore-feedback {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.45;
+  text-align: right;
 }
 
 .launch-feedback {

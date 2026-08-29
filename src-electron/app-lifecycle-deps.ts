@@ -8,6 +8,7 @@ type CreateAppLifecycleDepsArgs = {
   quitApp(): void;
   shouldQuitWhenAllWindowsClosed(): boolean;
   confirmQuitWhileRunning(): boolean;
+  prepareSessionWindowSnapshotForQuit?(): Promise<void>;
   closePersistentStores(): void;
   invalidateAllProviderSessionThreads?(): Promise<void>;
   revokeAllAgentRuntimeBindings?(): void;
@@ -24,6 +25,9 @@ export function createAppLifecycleDeps(
     quitApp: args.quitApp,
     shouldQuitWhenAllWindowsClosed: args.shouldQuitWhenAllWindowsClosed,
     confirmQuitWhileRunning: args.confirmQuitWhileRunning,
+    ...(args.prepareSessionWindowSnapshotForQuit
+      ? { prepareSessionWindowSnapshotForQuit: args.prepareSessionWindowSnapshotForQuit }
+      : {}),
     closePersistentStores: args.closePersistentStores,
     ...(args.invalidateAllProviderSessionThreads
       ? { invalidateAllProviderSessionThreads: args.invalidateAllProviderSessionThreads }

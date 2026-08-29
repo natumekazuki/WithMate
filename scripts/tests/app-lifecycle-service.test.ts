@@ -139,6 +139,9 @@ test("AppLifecycleService は before-quit で confirm が true ならcleanup後�
     },
     shouldQuitWhenAllWindowsClosed: () => true,
     confirmQuitWhileRunning: () => true,
+    async prepareSessionWindowSnapshotForQuit() {
+      calls.push("prepareSessionWindowSnapshotForQuit");
+    },
     closePersistentStores() {
       calls.push("closePersistentStores");
     },
@@ -159,6 +162,7 @@ test("AppLifecycleService は before-quit で confirm が true ならcleanup後�
   assert.equal(prevented, true);
   assert.deepEqual(calls, [
     "setAllowQuit",
+    "prepareSessionWindowSnapshotForQuit",
     "invalidateAllProviderSessionThreads",
     "revokeAllAgentRuntimeBindings",
     "closePersistentStores",
