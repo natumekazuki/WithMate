@@ -3123,8 +3123,8 @@ function requireSessionWindowRestoreService(): SessionWindowRestoreService {
     sessionWindowRestoreService = new SessionWindowRestoreService({
       storage: new SessionWindowRestoreStorage(app.getPath("userData")),
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
-      getSettledOpenSessionWindowIds: () =>
-        requireSessionWindowBridge().listSettledOpenSessionWindowIds(),
+      getSessionWindowRestoreStates: () =>
+        requireSessionWindowBridge().getSessionWindowRestoreStates(),
       openSessionWindow: (sessionId) => requireSessionWindowBridge().openSessionWindow(sessionId),
       onRestoreSetChanged: (sessionIds) => {
         requireWindowBroadcastService().broadcastSessionWindowRestoreSet(sessionIds);

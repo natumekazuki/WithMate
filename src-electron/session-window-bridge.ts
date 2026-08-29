@@ -30,6 +30,10 @@ export type SessionWindowBridgeDeps<TWindow extends SessionWindowLike> = {
   onSnapshotPersistenceError?(error: unknown): void;
 };
 
+export type SessionWindowRestoreState =
+  | { kind: "settled-open" }
+  | { kind: "opening" };
+
 export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   private readonly sessionWindows = new Map<string, TWindow>();
   private readonly openingSessionWindows = new Map<string, Promise<TWindow>>();
@@ -63,6 +67,27 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     }
 
     return settledOpenSessionIds;
+  }
+
+  getSessionWindowRestoreStates(): ReadonlyMap<string, SessionWindowRestoreState> {
+    const states = new Map<string, SessionWindowRestoreState>();
+    for (const [sessionId, window] of this.sessionWindows.entries()) {
+      if (window.isDestroyed()) {
+        continue;
+      }
+
+      if (this.snapshotEligibleWindows.has(window)) {
+        states.set(sessionId, { kind: "settled-open" });
+        continue;
+      }
+
+      const openingPromise = this.openingSessionWindows.get(sessionId);
+      if (openingPromise) {
+        states.set(sessionId, { kind: "opening" });
+      }
+    }
+
+    return states;
   }
 
   getWindow(sessionId: string): TWindow | null {

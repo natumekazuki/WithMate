@@ -3,6 +3,7 @@ import {
   normalizeSessionWindowRestoreIds,
   type SessionWindowRestoreResult,
 } from "../src/session-window-restore.js";
+import type { SessionWindowRestoreState } from "./session-window-bridge.js";
 
 type SessionWindowRestoreStorageLike = {
   loadSnapshot(): Promise<string[]>;
@@ -12,7 +13,7 @@ type SessionWindowRestoreStorageLike = {
 type SessionWindowRestoreServiceDeps = {
   storage: SessionWindowRestoreStorageLike;
   getSession(sessionId: string): Awaitable<unknown | null>;
-  getSettledOpenSessionWindowIds(): Awaitable<readonly string[]>;
+  getSessionWindowRestoreStates(): ReadonlyMap<string, SessionWindowRestoreState>;
   openSessionWindow(sessionId: string): Promise<unknown>;
   onRestoreSetChanged?(sessionIds: readonly string[]): void;
 };
@@ -56,15 +57,36 @@ export class SessionWindowRestoreService {
   }
 
   async restoreSnapshot(): Promise<SessionWindowRestoreResult> {
+    const initialWindowStates = this.deps.getSessionWindowRestoreStates();
+    const openingResults = new Map<string, Promise<"opened" | "open-failed">>();
+    for (const [sessionId, state] of initialWindowStates.entries()) {
+      if (state.kind !== "opening") {
+        continue;
+      }
+      openingResults.set(sessionId, this.deps.openSessionWindow(sessionId).then(
+        () => "opened",
+        () => "open-failed",
+      ));
+    }
     const restoreSessionIds = await this.getSnapshot();
-    const openSessionIdSet = new Set(await this.deps.getSettledOpenSessionWindowIds());
     const requestedSessionIds = restoreSessionIds.filter(
-      (sessionId) => !openSessionIdSet.has(sessionId),
+      (sessionId) => initialWindowStates.get(sessionId)?.kind !== "settled-open",
     );
     const openedSessionIds: string[] = [];
     const failures: SessionWindowRestoreResult["failures"] = [];
 
     for (const sessionId of requestedSessionIds) {
+      const initialWindowState = initialWindowStates.get(sessionId);
+      if (initialWindowState?.kind === "opening") {
+        const openingResult = await openingResults.get(sessionId);
+        if (openingResult === "opened") {
+          openedSessionIds.push(sessionId);
+        } else {
+          failures.push({ sessionId, reason: "open-failed" });
+        }
+        continue;
+      }
+
       let session: unknown | null;
       try {
         session = await this.deps.getSession(sessionId);

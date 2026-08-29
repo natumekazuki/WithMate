@@ -389,12 +389,14 @@ describe("SessionWindowBridge", () => {
 
     assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
     assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), []);
+    assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "opening");
 
     assert.ok(resolveLoad);
     resolveLoad();
     await opening;
 
     assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), [session.id]);
+    assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "settled-open");
   });
 
   it("別Sessionのopen完了時に読込中のWindowをsnapshotへ混ぜず、読込失敗後も残さない", async () => {
