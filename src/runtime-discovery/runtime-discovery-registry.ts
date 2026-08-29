@@ -9,6 +9,7 @@ import {
   rm,
 } from "node:fs/promises";
 import path from "node:path";
+import * as properLockfile from "proper-lockfile";
 import {
   buildRuntimeDiscoveryCredentialFileName,
   buildRuntimeDiscoverySlotName,
@@ -33,6 +34,8 @@ import {
 const ACTIVE_DIRECTORY_NAME = "active";
 const STAGING_DIRECTORY_NAME = "staging";
 const RETIRED_DIRECTORY_NAME = "retired";
+const REGISTRY_MUTATION_LOCK_FILE_NAME = ".registry-mutation.lock";
+const REGISTRY_MUTATION_LOCK_STALE_MS = 20_000;
 const STAGING_NAME_PATTERN = /^stage-[0-9a-f-]{36}$/;
 const RETIRED_NAME_PATTERN = /^retired-[0-9a-f-]{36}$/;
 
@@ -72,11 +75,19 @@ export type RuntimeDiscoveryRegistryChallenge = (
   slotDirectoryPath: string,
 ) => Promise<boolean>;
 
+type RegistryMutationKind =
+  "heartbeat" | "retire" | "unpublish" | "publish" | "rollback";
+type RegistryMutationObserver = (
+  kind: RegistryMutationKind,
+) => void | Promise<void>;
+
 export type RuntimeDiscoveryRegistryLayoutOptions = {
   rootDirectoryPath?: string;
   security: RuntimePathSecurity;
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
   clock?: RuntimeDiscoveryClock;
+  /** Test-only observation point; it runs after the cross-process lock is held. */
+  mutationObserver?: RegistryMutationObserver;
 };
 
 export type PublishRuntimeDiscoveryEntryOptions =
@@ -126,6 +137,43 @@ function normalizeRootDirectoryPath(rootDirectoryPath?: string): string {
   return path.resolve(
     rootDirectoryPath ?? resolveDefaultRuntimeDiscoveryRegistryRoot(),
   );
+}
+
+export function resolveRuntimeDiscoveryMutationLockFilePath(
+  rootDirectoryPath?: string,
+): string {
+  return path.join(
+    normalizeRootDirectoryPath(rootDirectoryPath),
+    REGISTRY_MUTATION_LOCK_FILE_NAME,
+  );
+}
+
+async function withRegistryMutationLock<T>(
+  layout: RegistryLayout,
+  kind: RegistryMutationKind,
+  observer: RegistryMutationObserver | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = await properLockfile.lock(layout.rootDirectoryPath, {
+    realpath: false,
+    lockfilePath: resolveRuntimeDiscoveryMutationLockFilePath(
+      layout.rootDirectoryPath,
+    ),
+    stale: REGISTRY_MUTATION_LOCK_STALE_MS,
+    update: REGISTRY_MUTATION_LOCK_STALE_MS / 4,
+    retries: {
+      retries: 500,
+      factor: 1,
+      minTimeout: 50,
+      maxTimeout: 50,
+    },
+  });
+  try {
+    await observer?.(kind);
+    return await operation();
+  } finally {
+    await release();
+  }
 }
 
 function isMissingError(error: unknown): boolean {
@@ -438,25 +486,33 @@ async function readUnchangedRecord(
 
 async function retireUnchangedRecord(
   record: RuntimeDiscoveryRegistryRecord,
-  retiredDirectoryPath: string,
+  layout: RegistryLayout,
+  mutationObserver?: RegistryMutationObserver,
 ): Promise<string | null> {
-  const unchanged = await readUnchangedRecord(record);
-  if (!unchanged) {
-    return null;
-  }
-  const destinationPath = path.join(
-    retiredDirectoryPath,
-    `retired-${randomUUID()}`,
+  return withRegistryMutationLock(
+    layout,
+    "retire",
+    mutationObserver,
+    async () => {
+      const unchanged = await readUnchangedRecord(record);
+      if (!unchanged) {
+        return null;
+      }
+      const destinationPath = path.join(
+        layout.retiredDirectoryPath,
+        `retired-${randomUUID()}`,
+      );
+      try {
+        await rename(unchanged.slotDirectoryPath, destinationPath);
+        return destinationPath;
+      } catch (error) {
+        if (isMissingError(error) || isAlreadyExistsError(error)) {
+          return null;
+        }
+        throw error;
+      }
+    },
   );
-  try {
-    await rename(unchanged.slotDirectoryPath, destinationPath);
-    return destinationPath;
-  } catch (error) {
-    if (isMissingError(error) || isAlreadyExistsError(error)) {
-      return null;
-    }
-    throw error;
-  }
 }
 
 async function removeAgedArtifacts(
@@ -531,7 +587,8 @@ export async function maintainRuntimeDiscoveryRegistry(
     }
     const retiredPath = await retireUnchangedRecord(
       record,
-      layout.retiredDirectoryPath,
+      layout,
+      options.mutationObserver,
     );
     if (retiredPath) {
       retiredEntries += 1;
@@ -668,6 +725,7 @@ function createPublicationHandle(args: {
   timers: RuntimeDiscoveryTimers;
   limits: RuntimeDiscoveryRegistryLimits;
   onHeartbeatError?: (error: unknown) => void;
+  mutationObserver?: RegistryMutationObserver;
 }): RuntimeDiscoveryRegistryPublication {
   let currentEntry = args.record.entry;
   let heartbeatHandle: RuntimeDiscoveryTimerHandle | null = null;
@@ -694,29 +752,36 @@ function createPublicationHandle(args: {
   };
 
   const refreshHeartbeat = async (): Promise<boolean> =>
-    runSerialized(async () => {
-      if (unpublished) {
-        return false;
-      }
-      const readBack = await readRecordFromSlot(
-        args.layout.activeDirectoryPath,
-        args.record.slotName,
-      );
-      if (!readBack.record || !isOwnedEntry(readBack.record.entry)) {
-        return false;
-      }
-      const nextEntry = {
-        ...readBack.record.entry,
-        lease: { heartbeatAt: args.clock.now().toISOString() },
-      };
-      await replaceEntryAtomically(
-        readBack.record.slotDirectoryPath,
-        nextEntry,
-        args.security,
-      );
-      currentEntry = nextEntry;
-      return true;
-    });
+    runSerialized(() =>
+      withRegistryMutationLock(
+        args.layout,
+        "heartbeat",
+        args.mutationObserver,
+        async () => {
+          if (unpublished) {
+            return false;
+          }
+          const readBack = await readRecordFromSlot(
+            args.layout.activeDirectoryPath,
+            args.record.slotName,
+          );
+          if (!readBack.record || !isOwnedEntry(readBack.record.entry)) {
+            return false;
+          }
+          const nextEntry = {
+            ...readBack.record.entry,
+            lease: { heartbeatAt: args.clock.now().toISOString() },
+          };
+          await replaceEntryAtomically(
+            readBack.record.slotDirectoryPath,
+            nextEntry,
+            args.security,
+          );
+          currentEntry = nextEntry;
+          return true;
+        },
+      ),
+    );
 
   const stopHeartbeat = async (): Promise<void> => {
     if (heartbeatHandle) {
@@ -728,38 +793,45 @@ function createPublicationHandle(args: {
 
   const unpublish = async (): Promise<boolean> => {
     await stopHeartbeat();
-    return runSerialized(async () => {
-      if (unpublished) {
-        return false;
-      }
-      const readBack = await readRecordFromSlot(
-        args.layout.activeDirectoryPath,
-        args.record.slotName,
-      );
-      if (!readBack.record || !isOwnedEntry(readBack.record.entry)) {
-        unpublished = true;
-        return false;
-      }
-      const destinationPath = path.join(
-        args.layout.retiredDirectoryPath,
-        `retired-${randomUUID()}`,
-      );
-      try {
-        await rename(readBack.record.slotDirectoryPath, destinationPath);
-        retiredDirectoryPath = destinationPath;
-        unpublished = true;
-        return true;
-      } catch (error) {
-        if (isMissingError(error)) {
-          unpublished = true;
-          return false;
-        }
-        if (isAlreadyExistsError(error)) {
-          return false;
-        }
-        throw error;
-      }
-    });
+    return runSerialized(() =>
+      withRegistryMutationLock(
+        args.layout,
+        "unpublish",
+        args.mutationObserver,
+        async () => {
+          if (unpublished) {
+            return false;
+          }
+          const readBack = await readRecordFromSlot(
+            args.layout.activeDirectoryPath,
+            args.record.slotName,
+          );
+          if (!readBack.record || !isOwnedEntry(readBack.record.entry)) {
+            unpublished = true;
+            return false;
+          }
+          const destinationPath = path.join(
+            args.layout.retiredDirectoryPath,
+            `retired-${randomUUID()}`,
+          );
+          try {
+            await rename(readBack.record.slotDirectoryPath, destinationPath);
+            retiredDirectoryPath = destinationPath;
+            unpublished = true;
+            return true;
+          } catch (error) {
+            if (isMissingError(error)) {
+              unpublished = true;
+              return false;
+            }
+            if (isAlreadyExistsError(error)) {
+              return false;
+            }
+            throw error;
+          }
+        },
+      ),
+    );
   };
 
   const cleanupGeneration = async (): Promise<boolean> =>
@@ -916,91 +988,127 @@ export async function publishRuntimeDiscoveryEntry(
       path.join(stagingDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME),
     );
 
-    for (let index = 0; index < limits.maxEntries; index += 1) {
-      const slotName = buildRuntimeDiscoverySlotName(index);
-      if (occupiedSlots.has(slotName)) {
-        continue;
-      }
-      const slotDirectoryPath = path.join(layout.activeDirectoryPath, slotName);
-      try {
-        await rename(stagingDirectoryPath, slotDirectoryPath);
-        claimedSlotPath = slotDirectoryPath;
-      } catch (error) {
-        const exactAfterFailure = await findExactRecord(
+    await withRegistryMutationLock(
+      layout,
+      "publish",
+      options.mutationObserver,
+      async () => {
+        const lockedSnapshot = await listRuntimeDiscoveryRegistryEntries(
           layout.rootDirectoryPath,
-          options.identity,
           limits,
         );
+        occupiedSlots = new Set(
+          lockedSnapshot.records.map((record) => record.slotName),
+        );
+        for (const issue of lockedSnapshot.issues) {
+          occupiedSlots.add(issue.slotName);
+        }
         if (
-          exactAfterFailure &&
-          exactAfterFailure.entry.publicationId === publicationId &&
-          (await credentialsMatch(exactAfterFailure, credentialDocuments))
+          lockedSnapshot.records.some((record) =>
+            isSameRuntimeDiscoveryIdentity(record.entry, options.identity),
+          )
         ) {
-          claimedSlotPath = exactAfterFailure.slotDirectoryPath;
+          throw new RuntimeDiscoveryRegistryError(
+            "registry_conflict",
+            "The runtime identity tuple is already owned by another publication.",
+          );
+        }
+
+        for (let index = 0; index < limits.maxEntries; index += 1) {
+          const slotName = buildRuntimeDiscoverySlotName(index);
+          if (occupiedSlots.has(slotName)) {
+            continue;
+          }
+          const slotDirectoryPath = path.join(
+            layout.activeDirectoryPath,
+            slotName,
+          );
+          try {
+            await rename(stagingDirectoryPath, slotDirectoryPath);
+            claimedSlotPath = slotDirectoryPath;
+          } catch (error) {
+            const exactAfterFailure = await findExactRecord(
+              layout.rootDirectoryPath,
+              options.identity,
+              limits,
+            );
+            if (
+              exactAfterFailure &&
+              exactAfterFailure.entry.publicationId === publicationId &&
+              (await credentialsMatch(exactAfterFailure, credentialDocuments))
+            ) {
+              claimedSlotPath = exactAfterFailure.slotDirectoryPath;
+              await applyPathSecurity(
+                claimedSlotPath,
+                "directory",
+                options.security,
+              );
+              const readBackAfterFailure = await readRecordFromSlot(
+                layout.activeDirectoryPath,
+                exactAfterFailure.slotName,
+              );
+              if (
+                !readBackAfterFailure.record ||
+                readBackAfterFailure.record.entry.publicationId !==
+                  publicationId ||
+                !isSameRuntimeDiscoveryIdentity(
+                  readBackAfterFailure.record.entry,
+                  entry,
+                ) ||
+                !(await credentialsMatch(
+                  readBackAfterFailure.record,
+                  credentialDocuments,
+                ))
+              ) {
+                throw new RuntimeDiscoveryRegistryError(
+                  "registry_io",
+                  "Runtime registry publication read-back failed.",
+                );
+              }
+              committedRecord = readBackAfterFailure.record;
+              break;
+            }
+            if (isAlreadyExistsError(error)) {
+              occupiedSlots.add(slotName);
+              continue;
+            }
+            throw error;
+          }
           await applyPathSecurity(
-            claimedSlotPath,
+            slotDirectoryPath,
             "directory",
             options.security,
           );
-          const readBackAfterFailure = await readRecordFromSlot(
+          const securedSlotStats = await lstat(slotDirectoryPath);
+          if (
+            !securedSlotStats.isDirectory() ||
+            securedSlotStats.isSymbolicLink()
+          ) {
+            throw new RuntimeDiscoveryRegistryError(
+              "registry_security",
+              "Runtime registry slot directory is unsafe.",
+            );
+          }
+          const result = await readRecordFromSlot(
             layout.activeDirectoryPath,
-            exactAfterFailure.slotName,
+            slotName,
           );
           if (
-            !readBackAfterFailure.record ||
-            readBackAfterFailure.record.entry.publicationId !== publicationId ||
-            !isSameRuntimeDiscoveryIdentity(
-              readBackAfterFailure.record.entry,
-              entry,
-            ) ||
-            !(await credentialsMatch(
-              readBackAfterFailure.record,
-              credentialDocuments,
-            ))
+            !result.record ||
+            !isSameRuntimeDiscoveryIdentity(result.record.entry, entry) ||
+            result.record.entry.publicationId !== publicationId ||
+            !(await credentialsMatch(result.record, credentialDocuments))
           ) {
             throw new RuntimeDiscoveryRegistryError(
               "registry_io",
               "Runtime registry publication read-back failed.",
             );
           }
-          committedRecord = readBackAfterFailure.record;
+          committedRecord = result.record;
           break;
         }
-        if (isAlreadyExistsError(error)) {
-          occupiedSlots.add(slotName);
-          continue;
-        }
-        throw error;
-      }
-      await applyPathSecurity(slotDirectoryPath, "directory", options.security);
-      const securedSlotStats = await lstat(slotDirectoryPath);
-      if (
-        !securedSlotStats.isDirectory() ||
-        securedSlotStats.isSymbolicLink()
-      ) {
-        throw new RuntimeDiscoveryRegistryError(
-          "registry_security",
-          "Runtime registry slot directory is unsafe.",
-        );
-      }
-      const result = await readRecordFromSlot(
-        layout.activeDirectoryPath,
-        slotName,
-      );
-      if (
-        !result.record ||
-        !isSameRuntimeDiscoveryIdentity(result.record.entry, entry) ||
-        result.record.entry.publicationId !== publicationId ||
-        !(await credentialsMatch(result.record, credentialDocuments))
-      ) {
-        throw new RuntimeDiscoveryRegistryError(
-          "registry_io",
-          "Runtime registry publication read-back failed.",
-        );
-      }
-      committedRecord = result.record;
-      break;
-    }
+      },
+    );
     if (!committedRecord) {
       throw new RuntimeDiscoveryRegistryError(
         "registry_capacity",
@@ -1009,49 +1117,48 @@ export async function publishRuntimeDiscoveryEntry(
     }
   } catch (error) {
     if (claimedSlotPath) {
-      const slotName = path.basename(claimedSlotPath);
-      const readBack = await readRecordFromSlot(
-        layout.activeDirectoryPath,
-        slotName,
-      ).catch(() => ({ record: null }));
-      if (
-        readBack.record &&
-        isSameRuntimeDiscoveryIdentity(readBack.record.entry, entry) &&
-        readBack.record.entry.publicationId === publicationId
-      ) {
-        const rollbackPath = path.join(
-          layout.retiredDirectoryPath,
-          `retired-${randomUUID()}`,
-        );
-        try {
-          await rename(claimedSlotPath, rollbackPath);
-          await rm(rollbackPath, { recursive: true, force: false });
-        } catch (rollbackError) {
-          if (isMissingError(rollbackError)) {
-            claimedSlotPath = null;
-          } else {
+      await withRegistryMutationLock(
+        layout,
+        "rollback",
+        options.mutationObserver,
+        async () => {
+          const slotName = path.basename(claimedSlotPath!);
+          const readBack = await readRecordFromSlot(
+            layout.activeDirectoryPath,
+            slotName,
+          ).catch(() => ({ record: null }));
+          if (
+            readBack.record &&
+            isSameRuntimeDiscoveryIdentity(readBack.record.entry, entry) &&
+            readBack.record.entry.publicationId === publicationId
+          ) {
+            const rollbackPath = path.join(
+              layout.retiredDirectoryPath,
+              `retired-${randomUUID()}`,
+            );
             try {
-              const current = await readRecordFromSlot(
-                layout.activeDirectoryPath,
-                slotName,
-              );
-              if (
-                current.record &&
-                isSameRuntimeDiscoveryIdentity(current.record.entry, entry) &&
-                current.record.entry.publicationId === publicationId
-              ) {
-                await rm(claimedSlotPath, { recursive: true, force: false });
+              await rename(claimedSlotPath!, rollbackPath);
+              await rm(rollbackPath, { recursive: true, force: false });
+            } catch (rollbackError) {
+              if (isMissingError(rollbackError)) {
+                claimedSlotPath = null;
+              } else {
+                const current = await readRecordFromSlot(
+                  layout.activeDirectoryPath,
+                  slotName,
+                );
+                if (
+                  current.record &&
+                  isSameRuntimeDiscoveryIdentity(current.record.entry, entry) &&
+                  current.record.entry.publicationId === publicationId
+                ) {
+                  await rm(claimedSlotPath!, { recursive: true, force: false });
+                }
               }
-            } catch (directCleanupError) {
-              throw new RuntimeDiscoveryRegistryError(
-                "registry_io",
-                "Runtime registry publication rollback failed.",
-                { cause: directCleanupError },
-              );
             }
           }
-        }
-      }
+        },
+      );
     }
     throw error;
   } finally {
@@ -1068,5 +1175,6 @@ export async function publishRuntimeDiscoveryEntry(
     timers,
     limits,
     onHeartbeatError: options.onHeartbeatError,
+    mutationObserver: options.mutationObserver,
   });
 }

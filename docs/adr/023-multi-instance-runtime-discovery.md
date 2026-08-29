@@ -24,6 +24,7 @@ MemoryとSessionは異なるadapter runtimeを持つが、OSユーザー単位�
 - heartbeatは既定5秒、stale thresholdは20秒、capacity cleanup graceは60秒、retentionは24時間、entry上限は64件とする。lease期限切れだけではstaleにせず、operation前のidentity challengeも省略しない。lease期限切れかつchallenge失敗のentryだけをstaleとする。PID存在だけでactiveへ戻さない。
 - publish前にstale entryと参照されないgenerationをboundedに回収する。freshまたはchallenge成功したentryはcapacity pressureでも削除しない。上限を下げられない場合はcredential公開前にregistry capacity errorで失敗する。
 - cleanupは自分のidentity tuple（application instance、runtime generation、adapter kind）とgenerationだけを対象とする。正常終了はunpublish、listener停止、自generation削除の順序で行い、ownerでないruntimeのcleanupはactive集合を変更しない。commit後に結果が不明な場合は同じtupleをread-backして公開状態を判定する。
+- 固定slotのowner確認、heartbeat更新、retire、unpublish、publish claim、rollbackはOSユーザー共通のcross-process mutation lock内で直列化する。process crashで残ったlockはstale threshold後に回収し、owner確認後のslot再利用で別publicationを変更しない。
 
 ### Selection and binding
 
