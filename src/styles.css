@@ -7546,10 +7546,6 @@ button:disabled {
   color: currentColor;
 }
 
-.message-list > li + li {
-  margin-block-start: 6px;
-}
-
 .message-list .message-list {
   margin-block-start: 6px;
 }
