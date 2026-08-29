@@ -27,7 +27,9 @@ const CLI_ENV = {
   WITHMATE_MEMORY_API_URL: "http://127.0.0.1:7777",
   WITHMATE_MEMORY_API_SECRET: "api-secret",
   WITHMATE_MEMORY_OPERATOR_API_SECRET: "operator-secret",
-  WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "runtime-a",
+  WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID: "11111111-1111-4111-8111-111111111111",
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID: "22222222-2222-4222-8222-222222222222",
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE: "binding-reference",
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "1",
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY: "turn-capability",
@@ -58,7 +60,15 @@ function echoRuntimeCall(calls: WithMateMemoryRuntimeOperation[]) {
 }
 
 describe("withmate-glossary MCP contract", () => {
-  it("全operationをcanonical input schemaで公開し、pathやSession IDをauthority inputに持たない", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "Glossary MCPがcanonical input schemaを公開する"
+// oracle = { type = "contract", ref = "Glossary runtime contract" }
+// failure_mode = "pathやSession IDがauthority inputへ混入する"
+// scope = "glossary-mcp"
+// lifecycle = "permanent"
+// @end-test-value
+it("全operationをcanonical input schemaで公開し、pathやSession IDをauthority inputに持たない", async () => {
     const calls: WithMateMemoryRuntimeOperation[] = [];
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateGlossaryMcpServer({ env: MCP_ENV, runtimeCall: echoRuntimeCall(calls) });
@@ -102,7 +112,15 @@ describe("withmate-glossary MCP contract", () => {
 });
 
 describe("withmate-glossary CLI contract", () => {
-  it("MCPと同じrequest bodyを構築し、caller pathやSession ID optionを受け付けない", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "Glossary CLIとMCPが同じrequest bodyを構築する"
+// oracle = { type = "contract", ref = "Glossary runtime contract" }
+// failure_mode = "CLIだけがcaller pathを受け入れる"
+// scope = "glossary-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("MCPと同じrequest bodyを構築し、caller pathやSession ID optionを受け付けない", async () => {
     const calls: WithMateMemoryRuntimeOperation[] = [];
     let output = "";
     const exitCode = await runWithMateGlossaryCli(["get", "--term", "RT"], {
@@ -133,7 +151,15 @@ describe("withmate-glossary CLI contract", () => {
     }
   });
 
-  it("provider execution markerにbindingがなければdispatchせずstructured authority errorを返す", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "binding欠落時にGlossary dispatchを拒否する"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "provider executionがunboundへdowngradeする"
+// scope = "glossary-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("provider execution markerにbindingがなければdispatchせずstructured authority errorを返す", async () => {
     let calls = 0;
     let output = "";
     const exitCode = await runWithMateGlossaryCli(["list"], {
@@ -153,7 +179,15 @@ describe("withmate-glossary CLI contract", () => {
     assert.equal((JSON.parse(output) as { code: string }).code, "GLOSSARY_SESSION_BINDING_REQUIRED");
   });
 
-  it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect unknownにする", async () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "dispatch済みwriteのresponse lossをeffect unknownへ分類する"
+// oracle = { type = "contract", ref = "Glossary runtime contract" }
+// failure_mode = "保存結果を成功と誤認する"
+// scope = "glossary-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("dispatch済みwriteの非glossary responseはHTTP statusによらずeffect unknownにする", async () => {
     const result = await callGlossaryRuntime({
       operation: "create",
       path: GLOSSARY_RUNTIME_OPERATION_PATHS.create,
@@ -177,7 +211,15 @@ describe("withmate-glossary CLI contract", () => {
     }
   });
 
-  it("Glossary専用exchangeを使い、body拒否はapplication未到達のeffect noneにする", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "Glossary exchangeでbody拒否をdispatch前effect noneへ分類する"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "拒否されたbodyがapplicationへ到達する"
+// scope = "glossary-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("Glossary専用exchangeを使い、body拒否はapplication未到達のeffect noneにする", async () => {
     let exchangePath = "";
     let turnCapability = "";
     const result = await callGlossaryRuntime({

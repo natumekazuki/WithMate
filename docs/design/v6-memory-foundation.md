@@ -538,15 +538,15 @@ CLI requestは、runtime secretとnonce challengeを通過した同一OS userの
 retrieval ranking、暗黙target注入、毎turn prompt注入は行わない。
 bindingなしの外部CLIによるappend / forgetではMemory entryの`source.sessionId`を`null`として保存する。WithMateが起動したagent executionからbinding付きで操作する場合は、runtimeが解決したactor Sessionをsourceとidempotency principalへ保存する。
 `--self` flagは採用しない。
-current CLIは`WITHMATE_MEMORY_API_URL`またはruntime discovery fileからlocalhost APIを発見する。
-discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、`apiSecret`、`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。
+current CLIは`WITHMATE_MEMORY_API_URL`、OSユーザー共通runtime registry、または互換用runtime discovery fileからlocalhost APIを発見する。registryは複数のactive entryを正本とし、selectorなしではactive候補が一意な場合だけ選択する。複数候補は`WITHMATE_RUNTIME_AMBIGUOUS`を返し、`--instance <applicationInstanceId>`で明示選択できる。
+registry entryはsafe metadataとhash化したcredential参照だけを保持する。credential documentはapplication instanceとMemory固有runtime generationを分離して持つ。legacy discovery fileは`withmate-memory-discovery-v1` documentとして`baseUrl`、credential、`applicationInstanceId`、`runtimeGenerationId`、legacy aliasの`runtimeInstanceId`、`publishedAt`を公開し、CLIはloopback HTTP URL以外を拒否する。
 `--api-url`または`WITHMATE_MEMORY_API_URL`で明示したURLがloopback HTTP URLでない場合、CLIはusage errorで終了し、discovery fileへfallbackしない。
-既定のdiscovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
+Windows registry rootは`%LOCALAPPDATA%\WithMate\runtime-discovery\v1`とする。既定のlegacy discovery fileは`WITHMATE_MEMORY_RUNTIME_DIR`があればその直下、なければOS temp配下のuser-specific runtime directoryに置く。
 app側writerはruntime directoryをOS userだけが読める権限で作成し、POSIXではsymlink directory、他user所有、group / other readableなdirectoryを拒否または修正する。discovery fileは0600相当でexclusive temporary fileから置き換える。
-current app起動配線は`src-electron/memory-v6-runtime.ts`で行う。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost APIを起動してdiscovery fileをpublishする。起動時は既存discovery fileのschema、loopback HTTP URL、`runtimeInstanceId`、nonce challengeを確認し、生きていないendpointだけstaleとして回収する。app shutdown時はcurrent fileの`runtimeInstanceId`が自分のpublishと一致する場合だけ削除する。V6 DBがinvalidなどでMemory runtimeだけ起動できない場合でも、通常app bootは継続し、discovery fileは残さない。
+current app起動配線は`src-electron/memory-v6-runtime.ts`で行う。main processは起動ごとに`applicationInstanceId`を一度だけ生成し、Memory runtimeは起動ごとに独立した`runtimeGenerationId`を生成する。app ready後に`withmate-v6.db`をbest-effortでbootstrapし、localhost API、credential generation、registry entry、lease heartbeatの順でpublishし、最後にlegacy pointerをbest-effort更新する。app shutdown時は自分のpublication IDとidentity tupleが一致するentryだけをunpublishし、listener停止後に自generationを削除する。V6 DB、ACL、capacity validationなどでMemory runtimeだけ起動できない場合でも通常app bootは継続し、未完成entryやcredentialを公開しない。
 全 window close では app process を終了せず、Windows でも runtime API / CLI discovery を維持する。`app.requestSingleInstanceLock()` と `second-instance` handler により、Start Menu などから再起動された場合は既存 process の Home を再表示・focus する。
 Settings の `launchAtLoginEnabled` が有効な場合、packaged app だけが Electron login item へ `--background` 付きで登録する。dev / visual-check の unpackaged app は、引数なしの `electron.exe` をOSの起動先へ登録しないため、保存済み設定にかかわらずlogin itemを変更しない。`--background` 起動では Boot window / Home window を表示せず、runtime API と CLI discovery だけを立ち上げる。
-runtime APIはapp起動ごとの短命`apiSecret`と`runtimeInstanceId`を要求する。CLIはmutation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`で`runtimeInstanceId`と`HMAC-SHA256(apiSecret, nonce)` challengeを検証し、成功した場合だけdiscovery fileまたは`WITHMATE_MEMORY_API_SECRET`から取得したsecretを`X-WithMate-Memory-Api-Secret` headerで送る。app logにはruntime endpoint URLやapp-internal secretを出さず、discovery file publishの成否とaddress familyだけを記録する。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
+runtime APIはapp起動ごとの短命`apiSecret`、`applicationInstanceId`、Memory `runtimeGenerationId`を要求する。CLI/MCPはoperation bodyやsecret headerを送る前に、secretを送らない`GET /v1/status?nonce=...`でapplication instance、generation、owner challengeを検証する。lease期限切れでもchallenge成功runtimeはactiveとし、期限切れかつchallenge失敗だけをstaleとする。app log、status、diagnostics、error detailsにはruntime endpoint URL、credential path、userData path、binding reference、secretを出さない。V6 bootstrap後はboot diagnosticsを再取得し、fresh userDataでも`withmate-v6.db`が`foundation-ready`として見える状態にする。
 CLIはsession由来の暗黙targetを扱わない。
 Memoryのowner / scope targetはcommand引数またはinput payloadで明示する。
 
@@ -554,6 +554,9 @@ current raw JSON CLI:
 
 ```text
 withmate-memory status
+withmate-memory status --all
+withmate-memory instances
+withmate-memory status --instance <application-instance-id>
 withmate-memory characters
 withmate-memory list-targets
 withmate-memory list-entries --project <absolute-project-path> --limit 100
@@ -577,7 +580,7 @@ withmate-memory search --project <absolute-project-path> --tags topic:delivery-c
 Windows PowerShell / `.cmd` wrapper経由ではinline JSONのquoteが壊れやすいため、request bodyを渡すcommandでは`--stdin`または`--file <path>`を推奨する。
 `schema`と`validate`はruntime APIへ接続せずにCLI process内で完結する。`validate`はMemory entryを作成、更新、forgetしない。
 API errorもtransportできた場合はruntime APIのJSON responseをそのままstdoutへ出す。
-CLI request timeoutは10秒を既定とし、discovery endpointへ接続できない、または応答が戻らない場合は`WITHMATE_NOT_RUNNING`として扱う。
+CLI request timeoutは10秒を既定とする。structured JSONの正本は`WITHMATE_RUNTIME_UNAVAILABLE`、`WITHMATE_RUNTIME_INSTANCE_MISMATCH`、`WITHMATE_RUNTIME_GENERATION_CHANGED`、`WITHMATE_RUNTIME_AMBIGUOUS`、`WITHMATE_RUNTIME_STALE`、`WITHMATE_RUNTIME_REGISTRY_CAPACITY`であり、`WITHMATE_NOT_RUNNING`はunavailableのlegacy aliasとして必要な互換期間だけdetailsへ残す。
 CLI fetchはHTTP redirectを追従しない。初期URLがloopbackでも、POST bodyを別endpointへ転送しないためにredirectは接続失敗と同じ扱いにする。
 stable exit codeは次とする。
 
@@ -585,7 +588,7 @@ stable exit codeは次とする。
 | --- | --- |
 | `0` | success |
 | `1` | CLI usage error |
-| `2` | `WITHMATE_NOT_RUNNING` |
+| `2` | runtime discovery selection error (`WITHMATE_RUNTIME_*`) |
 | `3` | runtime APIがnon-2xx JSON responseを返した |
 | `4` | transport failure |
 
@@ -640,8 +643,12 @@ WithMateが起動していない場合:
 {
   "schemaVersion": "withmate-memory-v1",
   "error": {
-    "code": "WITHMATE_NOT_RUNNING",
-    "message": "WithMate Memory API is not running or could not be discovered."
+    "code": "WITHMATE_RUNTIME_UNAVAILABLE",
+    "message": "WithMate Memory runtime discovery could not select a runtime.",
+    "details": {
+      "discoveryCode": "WITHMATE_RUNTIME_UNAVAILABLE",
+      "legacyCode": "WITHMATE_NOT_RUNNING"
+    }
   }
 }
 ```

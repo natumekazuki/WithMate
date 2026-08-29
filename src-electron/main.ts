@@ -258,6 +258,7 @@ import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
+import { RuntimeDiscoveryRegistryError } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import {
   GlossaryApplicationService,
   projectGlossaryCheckoutAuthority,
@@ -289,6 +290,13 @@ const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
 const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
 const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
+const applicationInstanceId = crypto.randomUUID();
+const processStartedAt = new Date().toISOString();
+const runtimeBuildChannel = process.argv.some((argument) => argument.toLowerCase() === "--withmate-visual-check")
+  ? "visual-check" as const
+  : app.isPackaged
+    ? "installed" as const
+    : "development" as const;
 app.setAppUserModelId(resolveAppUserModelId({
   isPackaged: app.isPackaged,
   execPath: process.execPath,
@@ -490,12 +498,16 @@ function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
   return appDatabaseDiagnostics;
 }
 
-function recordMemoryV6DiagnosticError(kind: string, message: string): void {
+function recordMemoryV6DiagnosticError(
+  kind: string,
+  _message: string,
+  discoveryCode?: MemoryV6DiagnosticEvent["discoveryCode"],
+): void {
   memoryV6DiagnosticErrors = [
     {
       kind,
-      message,
       occurredAt: new Date().toISOString(),
+      ...(discoveryCode ? { discoveryCode } : {}),
     },
     ...memoryV6DiagnosticErrors,
   ].slice(0, 3);
@@ -515,15 +527,16 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
   const latestSkillResultByProvider = new Map(
     managedMemorySkillSyncResults.map((result) => [result.providerId, result]),
   );
+  const cliShimDiagnostics = await requireMemoryCliShimService().getDiagnostics();
 
   return {
     generatedAt: new Date().toISOString(),
     runtime: {
       status: memoryV6RuntimeApi ? "running" : memoryV6RuntimeStatus,
-      baseUrl: memoryV6RuntimeApi?.baseUrl ?? null,
-      dbPath: memoryV6RuntimeApi?.dbPath ?? null,
-      discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
-      hasApiSecret: Boolean(memoryV6RuntimeApi),
+      applicationInstanceId: memoryV6RuntimeApi?.applicationInstanceId ?? null,
+      runtimeGenerationId: memoryV6RuntimeApi?.runtimeGenerationId ?? null,
+      buildChannel: memoryV6RuntimeApi?.buildChannel ?? null,
+      discoveryPublished: Boolean(memoryV6RuntimeApi),
     },
     providers: configuredProviderIds.map((providerId) => {
       const capabilities = getProviderRuntimeCapabilities({ providerId });
@@ -538,12 +551,16 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
       return {
         providerId,
         skillRootConfigured: Boolean(result?.skillRootPath ?? configuredSkillRootPath.trim()),
-        skillPath: result?.skillPath ?? null,
         status: result?.status ?? "not-run",
-        ...(result?.errorMessage ? { errorMessage: result.errorMessage } : {}),
       };
     }),
-    cliShim: await requireMemoryCliShimService().getDiagnostics(),
+    cliShim: {
+      platform: cliShimDiagnostics.platform,
+      commandName: cliShimDiagnostics.commandName,
+      supported: cliShimDiagnostics.supported,
+      status: cliShimDiagnostics.status,
+      pathContainsShimDirectory: cliShimDiagnostics.pathContainsShimDirectory,
+    },
     lastErrors: memoryV6DiagnosticErrors,
   };
 }
@@ -663,7 +680,7 @@ async function issueProviderAgentRuntimeBinding(
   } catch {
     // Non-Git workspaces keep Memory grants but do not receive glossary authority.
   }
-  return agentRuntimeBindingRegistry.issueOrReuse({
+  const binding = agentRuntimeBindingRegistry.issueOrReuse({
     actorSessionId: session.id,
     providerId,
     authoritySnapshot: {
@@ -676,6 +693,15 @@ async function issueProviderAgentRuntimeBinding(
       ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
     ],
   });
+  return memoryV6RuntimeApi
+    ? {
+        ...binding,
+        memoryRuntimeOwner: {
+          applicationInstanceId: memoryV6RuntimeApi.applicationInstanceId,
+          runtimeGenerationId: memoryV6RuntimeApi.runtimeGenerationId,
+        },
+      }
+    : binding;
 }
 
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
@@ -687,6 +713,9 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeStatus = "stopped";
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
+      applicationInstanceId,
+      buildChannel: runtimeBuildChannel,
+      processStartedAt,
       listCharacters: () => requireCharacterService().listCharacters(),
       resolveCharacterById: (id) => {
         const character = requireCharacterService().getCharacterCatalogEntry(id);
@@ -708,13 +737,16 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     recordMemoryV6DiagnosticError(
       "memory-v6.runtime-api.start-failed",
       error instanceof Error ? error.message : String(error),
+      error instanceof RuntimeDiscoveryRegistryError && error.code === "registry_capacity"
+        ? "WITHMATE_RUNTIME_REGISTRY_CAPACITY"
+        : undefined,
     );
     writeAppLog({
       level: "warn",
       kind: "memory-v6.runtime-api.start-failed",
       process: "main",
       message: "Memory V6 runtime API did not start",
-      error: appLogService.errorToLogError(error),
+      data: { errorName: error instanceof Error ? error.name : "UnknownError" },
     });
   }
 }
@@ -745,7 +777,7 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
       kind: "memory-v6.runtime-api.stop-failed",
       process: "main",
       message: "Memory V6 runtime API cleanup failed",
-      error: appLogService.errorToLogError(error),
+      data: { errorName: error instanceof Error ? error.name : "UnknownError" },
     });
   }
 }
@@ -1505,6 +1537,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
             },
             prepareSessionWindowSnapshotForQuit: () =>
               requireSessionWindowBridge().prepareSnapshotForQuit(),
+            stopMemoryRuntime: stopMemoryV6RuntimeApiBestEffort,
             closePersistentStores,
             invalidateAllProviderSessionThreads,
             revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
@@ -4476,6 +4509,5 @@ if (!hasSingleInstanceLock) {
     });
     appTrayService?.dispose();
     characterAffectTurnRetryScheduler?.dispose();
-    void stopMemoryV6RuntimeApiBestEffort();
   });
 }

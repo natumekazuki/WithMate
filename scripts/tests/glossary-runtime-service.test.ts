@@ -277,6 +277,14 @@ describe("Glossary runtime mutation policy", () => {
 });
 
 describe("Glossary authenticated runtime exchange", () => {
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Glossaryのauthenticated exchangeはMemory runtime generation challengeを通過した接続だけをdispatchする"
+  // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+  // failure_mode = "generationが未検証の接続へGlossary operationをdispatchする"
+  // scope = "glossary-authenticated-runtime-exchange"
+  // lifecycle = "permanent"
+  // @end-test-value
   it("MCPとCLI adapterを同じschema・authority・application serviceへdispatchし、direct HTTPは公開しない", async () => {
     const root = await createRepository();
     const { actor, binding, registry, runtime } = await createRuntime(root, { proactiveLimit: 1 });
@@ -303,7 +311,12 @@ describe("Glossary authenticated runtime exchange", () => {
           selector: { kind: "primary" },
         },
       };
-      const api = { baseUrl, apiSecret: "api-secret", runtimeInstanceId: "runtime-a" };
+      const api = {
+        baseUrl,
+        apiSecret: "api-secret",
+        runtimeInstanceId: "runtime-a",
+        runtimeGenerationId: "runtime-a",
+      };
       const mcp = await callWithMateMemoryRuntime(
         { api, credential: { adapter: "mcp", adapterSecret: "mcp-secret" } },
         operation,

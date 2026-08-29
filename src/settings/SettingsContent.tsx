@@ -327,7 +327,7 @@ export function HomeSettingsContent({
                   <div className="settings-diagnostics-item">
                     <span>Memory API</span>
                     <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryFilePath ? "discovery published" : "discovery unavailable"}</small>
+                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "discovery published" : "discovery unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
                     <span>Managed Skill</span>
@@ -341,8 +341,12 @@ export function HomeSettingsContent({
                   </div>
                   <div className="settings-diagnostics-item settings-diagnostics-wide">
                     <span>Last Error</span>
-                    <strong>{memoryV6Diagnostics.lastErrors[0]?.kind ?? "none"}</strong>
-                    <small>{memoryV6Diagnostics.lastErrors[0]?.message ?? "Memory V6 diagnostics has no recorded error."}</small>
+                    <strong>
+                      {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
+                        ?? memoryV6Diagnostics.lastErrors[0]?.kind
+                        ?? "none"}
+                    </strong>
+                    <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "Memory V6 diagnostics has no recorded error."}</small>
                   </div>
                 </div>
               ) : (
@@ -508,11 +512,11 @@ function formatSkillSyncDetail(diagnostics: MemoryV6Diagnostics): string {
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
   const shim = diagnostics.cliShim;
   if (!shim.supported) {
-    return shim.message;
+    return shim.status === "managed-by-installer" ? "managed by installer" : "unsupported";
   }
 
   const pathStatus = shim.pathContainsShimDirectory ? "PATH ready" : "PATH missing";
-  return `${pathStatus}: ${shim.shimPath ?? shim.shimDirectory ?? shim.message}`;
+  return `${pathStatus}: ${shim.commandName}`;
 }
 
 function canUninstallCliShim(diagnostics: MemoryV6Diagnostics | null): boolean {

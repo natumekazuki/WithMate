@@ -1,5 +1,5 @@
 // Generated from scripts/withmate-glossary.ts. Do not edit directly.
-import { readFile } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import process$1 from "node:process";
 import { createHash, createHmac, randomBytes } from "node:crypto";
@@ -20025,15 +20025,26 @@ var StdioServerTransport = class {
 //#region src/memory-v6/memory-runtime-exchange.ts
 var WITHMATE_MEMORY_RUNTIME_NONCE_HEADER = "x-withmate-memory-runtime-nonce";
 var WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER = "x-withmate-memory-runtime-instance";
+/** Non-secret application owner identity (main-process lifetime). */
+var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER = "x-withmate-memory-application-instance";
+/** Canonical Memory runtime generation header; runtime-instance remains a legacy alias. */
+var WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER = "x-withmate-memory-runtime-generation";
 var WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER = "x-withmate-memory-runtime-challenge";
 var WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH = "/v1/agent-runtime-extension-exchange";
 var WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION = "withmate-memory-runtime-exchange-v1";
-function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeInstanceId, nonce) {
-	return createHmac("sha256", apiSecret).update(`${runtimeInstanceId}\n${nonce}`, "utf8").digest("base64url");
+function createWithMateMemoryRuntimeChallenge(apiSecret, runtimeGenerationId, nonce) {
+	return createHmac("sha256", apiSecret).update(`${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
+}
+/**
+* New owner-aware challenge. The legacy challenge above is intentionally kept
+* unchanged so 6.3.x clients can continue to authenticate during migration.
+*/
+function createWithMateMemoryRuntimeOwnerChallenge(apiSecret, applicationInstanceId, runtimeGenerationId, nonce) {
+	return createHmac("sha256", apiSecret).update(`${applicationInstanceId}\n${runtimeGenerationId}\n${nonce}`, "utf8").digest("base64url");
 }
 var WITHMATE_MEMORY_DISCOVERY_FILE_NAME = "memory-v6.current.json";
-function buildWithMateMemoryDiscoveryGenerationFileName(adapter, runtimeInstanceId) {
-	return `memory-v6-${adapter}.${createHash("sha256").update(runtimeInstanceId, "utf8").digest("hex")}.json`;
+function buildWithMateMemoryDiscoveryGenerationFileName(adapter, runtimeGenerationId) {
+	return `memory-v6-${adapter}.${createHash("sha256").update(runtimeGenerationId, "utf8").digest("hex")}.json`;
 }
 function isLoopbackHostname(hostname) {
 	const normalized = hostname.toLowerCase();
@@ -20078,14 +20089,246 @@ function createMemoryErrorResponse(error) {
 //#endregion
 //#region src/agent-runtime/agent-runtime-binding-contract.ts
 var WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE";
+var WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV = "WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED";
+/** Canonical, client-scoped selector for the Memory runtime owner. */
+var WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV = "WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID";
+var WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV = "WITHMATE_MEMORY_RUNTIME_GENERATION_ID";
+var RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME = "runtime-discovery";
+var RUNTIME_DISCOVERY_ENTRY_FILE_NAME = "entry.json";
+var RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS = 5e3;
+var RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS = 2e4;
+var RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS = 6e4;
+var RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS = 1440 * 60 * 1e3;
+var RuntimeDiscoveryRegistryError = class extends Error {
+	code;
+	constructor(code, message, options) {
+		super(message, options);
+		this.name = "RuntimeDiscoveryRegistryError";
+		this.code = code;
+	}
+};
+var DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS = {
+	heartbeatMs: RUNTIME_DISCOVERY_DEFAULT_HEARTBEAT_MS,
+	staleThresholdMs: RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS,
+	capacityCleanupGraceMs: RUNTIME_DISCOVERY_DEFAULT_CAPACITY_CLEANUP_GRACE_MS,
+	retentionMs: RUNTIME_DISCOVERY_DEFAULT_RETENTION_MS,
+	maxEntries: 64
+};
+var UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+var RUNTIME_KIND_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+var ADAPTER_KIND_PATTERN = /^[a-z][a-z0-9-]{0,63}$/;
+var CREDENTIAL_FILE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,126}\.json$/;
+var BUILD_CHANNELS = /* @__PURE__ */ new Set([
+	"installed",
+	"development",
+	"visual-check",
+	"unknown"
+]);
+function isRecord$1(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasExactKeys(value, keys) {
+	const actualKeys = Object.keys(value).sort();
+	const expectedKeys = [...keys].sort();
+	return actualKeys.length === expectedKeys.length && actualKeys.every((key, index) => key === expectedKeys[index]);
+}
+function isIsoTimestamp(value) {
+	if (typeof value !== "string" || !value) return false;
+	const timestamp = Date.parse(value);
+	return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+function isUuid(value) {
+	return typeof value === "string" && UUID_PATTERN.test(value);
+}
+function isSafeRelativeRuntimeDiscoveryReference(value) {
+	return typeof value === "string" && value.length > 0 && !path.posix.isAbsolute(value) && !path.win32.isAbsolute(value) && !value.includes("/") && !value.includes("\\") && path.posix.basename(value) === value;
+}
+function isRuntimeDiscoveryIdentity(value) {
+	if (!isRecord$1(value)) return false;
+	return typeof value.applicationInstanceId === "string" && UUID_PATTERN.test(value.applicationInstanceId) && typeof value.runtimeGenerationId === "string" && UUID_PATTERN.test(value.runtimeGenerationId) && typeof value.runtimeKind === "string" && RUNTIME_KIND_PATTERN.test(value.runtimeKind);
+}
+function isRuntimeDiscoveryAdapterReference(value) {
+	if (!isRecord$1(value) || !hasExactKeys(value, ["adapterKind", "credentialFileName"])) return false;
+	if (typeof value.adapterKind !== "string" || !ADAPTER_KIND_PATTERN.test(value.adapterKind)) return false;
+	if (typeof value.credentialFileName !== "string" || !CREDENTIAL_FILE_NAME_PATTERN.test(value.credentialFileName) || !isSafeRelativeRuntimeDiscoveryReference(value.credentialFileName) || value.credentialFileName === "entry.json") return false;
+	return true;
+}
+function buildRuntimeDiscoveryCredentialFileName(identity, adapterKind) {
+	if (!ADAPTER_KIND_PATTERN.test(adapterKind)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Invalid adapter kind.");
+	return `credential-${createHash("sha256").update(`${identity.applicationInstanceId}\0${identity.runtimeKind}\0${identity.runtimeGenerationId}\0${adapterKind}`).digest("hex")}.json`;
+}
+function buildRuntimeDiscoverySlotName(slot) {
+	if (!Number.isSafeInteger(slot) || slot < 0 || slot >= 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", "Runtime registry slot is out of range.");
+	return `slot-${String(slot).padStart(2, "0")}`;
+}
+function parseRuntimeDiscoveryRegistryEntry(value) {
+	if (!isRecord$1(value) || !hasExactKeys(value, [
+		"schemaVersion",
+		"applicationInstanceId",
+		"runtimeKind",
+		"runtimeGenerationId",
+		"buildChannel",
+		"process",
+		"publicationId",
+		"publishedAt",
+		"lease",
+		"adapters"
+	])) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry has an invalid shape.");
+	if (value.schemaVersion !== "withmate-runtime-discovery-entry-v1" || !isRuntimeDiscoveryIdentity(value) || typeof value.buildChannel !== "string" || !BUILD_CHANNELS.has(value.buildChannel) || !isUuid(value.publicationId) || !isIsoTimestamp(value.publishedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry metadata is invalid.");
+	const entry = value;
+	if (!isRecord$1(entry.process) || !hasExactKeys(entry.process, ["pid", "startedAt"]) || typeof entry.process.pid !== "number" || !Number.isSafeInteger(entry.process.pid) || entry.process.pid <= 0 || !isIsoTimestamp(entry.process.startedAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry process metadata is invalid.");
+	if (!isRecord$1(entry.lease) || !hasExactKeys(entry.lease, ["heartbeatAt"]) || !isIsoTimestamp(entry.lease.heartbeatAt)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry lease metadata is invalid.");
+	if (!Array.isArray(entry.adapters) || entry.adapters.length === 0 || !entry.adapters.every(isRuntimeDiscoveryAdapterReference)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references are invalid.");
+	const adapterKinds = /* @__PURE__ */ new Set();
+	const credentialFileNames = /* @__PURE__ */ new Set();
+	for (const adapter of entry.adapters) {
+		if (adapterKinds.has(adapter.adapterKind) || credentialFileNames.has(adapter.credentialFileName)) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry adapter references must be unique.");
+		adapterKinds.add(adapter.adapterKind);
+		credentialFileNames.add(adapter.credentialFileName);
+	}
+	return value;
+}
+function getRuntimeDiscoveryLeaseState(entry, now, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
+	return now.getTime() - Date.parse(entry.lease.heartbeatAt) > staleThresholdMs ? "expired" : "fresh";
+}
+function resolveDefaultRuntimeDiscoveryRegistryRoot(env = process.env, platform = process.platform) {
+	if (platform === "win32") {
+		const localAppData = env.LOCALAPPDATA?.trim();
+		if (!localAppData || !path.win32.isAbsolute(localAppData)) throw new RuntimeDiscoveryRegistryError("registry_configuration", "LOCALAPPDATA must identify an absolute Windows directory.");
+		return path.win32.join(localAppData, "WithMate", RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
+	}
+	const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
+	return path.join(tmpdir(), "withmate", ownerSegment, RUNTIME_DISCOVERY_REGISTRY_DIRECTORY_NAME, "v1");
+}
+function normalizeRuntimeDiscoveryRegistryLimits(overrides = {}) {
+	const limits = {
+		...DEFAULT_RUNTIME_DISCOVERY_REGISTRY_LIMITS,
+		...overrides
+	};
+	for (const [name, value] of Object.entries(limits)) if (!Number.isSafeInteger(value) || value <= 0) throw new RuntimeDiscoveryRegistryError("registry_configuration", `Runtime registry limit ${name} must be a positive integer.`);
+	if (limits.maxEntries > 64) throw new RuntimeDiscoveryRegistryError("registry_configuration", `Runtime registry maxEntries must not exceed 64.`);
+	return limits;
+}
+//#endregion
+//#region src/runtime-discovery/runtime-discovery-registry.ts
+var ACTIVE_DIRECTORY_NAME = "active";
+function normalizeRootDirectoryPath(rootDirectoryPath) {
+	return path.resolve(rootDirectoryPath ?? resolveDefaultRuntimeDiscoveryRegistryRoot());
+}
+function isMissingError(error) {
+	return error?.code === "ENOENT";
+}
+async function lstatSafe(targetPath) {
+	try {
+		return await lstat(targetPath);
+	} catch (error) {
+		if (isMissingError(error)) return null;
+		throw error;
+	}
+}
+async function readEntryFile(entryFilePath) {
+	const stats = await lstat(entryFilePath);
+	if (!stats.isFile() || stats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry file is unsafe.");
+	const contents = await readFile(entryFilePath, "utf8");
+	let parsed;
+	try {
+		parsed = JSON.parse(contents);
+	} catch (error) {
+		throw new RuntimeDiscoveryRegistryError("registry_invalid_entry", "Runtime registry entry is not valid JSON.", { cause: error });
+	}
+	return parseRuntimeDiscoveryRegistryEntry(parsed);
+}
+async function readRecordFromSlot(activeDirectoryPath, slotName) {
+	const slotDirectoryPath = path.join(activeDirectoryPath, slotName);
+	const slotStats = await lstatSafe(slotDirectoryPath);
+	if (!slotStats) return { record: null };
+	if (!slotStats.isDirectory() || slotStats.isSymbolicLink()) return {
+		record: null,
+		issue: {
+			slotName,
+			code: "unsafe_slot"
+		}
+	};
+	try {
+		const entry = await readEntryFile(path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME));
+		for (const adapter of entry.adapters) {
+			if (adapter.credentialFileName !== buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)) return {
+				record: null,
+				issue: {
+					slotName,
+					code: "invalid_entry"
+				}
+			};
+			const credentialStats = await lstatSafe(path.join(slotDirectoryPath, adapter.credentialFileName));
+			if (!credentialStats) return {
+				record: null,
+				issue: {
+					slotName,
+					code: "missing_credential"
+				}
+			};
+			if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) return {
+				record: null,
+				issue: {
+					slotName,
+					code: "unsafe_credential"
+				}
+			};
+		}
+		return { record: {
+			slotName,
+			entry,
+			slotDirectoryPath
+		} };
+	} catch {
+		return {
+			record: null,
+			issue: {
+				slotName,
+				code: "invalid_entry"
+			}
+		};
+	}
+}
+async function listRuntimeDiscoveryRegistryEntries(rootDirectoryPath, limitsOverride = {}) {
+	const limits = normalizeRuntimeDiscoveryRegistryLimits(limitsOverride);
+	const activeDirectoryPath = path.join(normalizeRootDirectoryPath(rootDirectoryPath), ACTIVE_DIRECTORY_NAME);
+	const activeStats = await lstatSafe(activeDirectoryPath);
+	if (!activeStats) return {
+		records: [],
+		issues: []
+	};
+	if (!activeStats.isDirectory() || activeStats.isSymbolicLink()) throw new RuntimeDiscoveryRegistryError("registry_security", "Runtime registry active directory is unsafe.");
+	const records = [];
+	const issues = [];
+	for (let index = 0; index < limits.maxEntries; index += 1) {
+		const result = await readRecordFromSlot(activeDirectoryPath, buildRuntimeDiscoverySlotName(index));
+		if (result.record) records.push(result.record);
+		if (result.issue) issues.push(result.issue);
+	}
+	return {
+		records,
+		issues
+	};
+}
+async function readRuntimeDiscoveryCredential(record, adapterKind) {
+	const reference = record.entry.adapters.find((adapter) => adapter.adapterKind === adapterKind);
+	if (!reference) return null;
+	const credentialPath = path.join(record.slotDirectoryPath, reference.credentialFileName);
+	const stats = await lstatSafe(credentialPath);
+	if (!stats || !stats.isFile() || stats.isSymbolicLink()) return null;
+	return readFile(credentialPath, "utf8");
+}
 //#endregion
 //#region scripts/withmate-memory-runtime-client.ts
 var WithMateMemoryRuntimeExchangeError = class extends Error {
 	dispatched;
+	discoveryCode;
 	constructor(message, dispatched, options) {
 		super(message, options);
 		this.name = "WithMateMemoryRuntimeExchangeError";
 		this.dispatched = dispatched;
+		this.discoveryCode = options?.discoveryCode;
 	}
 };
 function usageError(message) {
@@ -20097,6 +20340,13 @@ function usageError(message) {
 		effect: "none"
 	});
 }
+function transportError(message) {
+	return createMemoryErrorResponse({
+		code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
+		message,
+		effect: "none"
+	});
+}
 function readRequiredEnvValue(env, name) {
 	const value = env[name]?.trim();
 	return value ? value : void 0;
@@ -20105,12 +20355,15 @@ function resolveAdapterSecret(env, adapter) {
 	return readRequiredEnvValue(env, adapter === "cli" ? "WITHMATE_MEMORY_OPERATOR_API_SECRET" : "WITHMATE_MEMORY_MCP_API_SECRET");
 }
 function buildConnectionFromValues(input) {
-	if (!input.apiSecret || !input.adapterSecret || !input.runtimeInstanceId) return null;
+	const runtimeGenerationId = input.runtimeGenerationId ?? input.runtimeInstanceId;
+	if (!input.apiSecret || !input.adapterSecret || !runtimeGenerationId) return null;
 	return {
 		api: {
 			baseUrl: input.baseUrl,
 			apiSecret: input.apiSecret,
-			runtimeInstanceId: input.runtimeInstanceId
+			...input.applicationInstanceId ? { applicationInstanceId: input.applicationInstanceId } : {},
+			runtimeGenerationId,
+			runtimeInstanceId: runtimeGenerationId
 		},
 		credential: {
 			adapter: input.adapter,
@@ -20126,50 +20379,271 @@ async function readDiscoveryProjection(pointerFilePath, adapter, read) {
 	const document = JSON.parse(await read(generationFilePath, "utf8"));
 	return document.runtimeInstanceId === first.runtimeInstanceId ? document : null;
 }
-async function discoverWithMateMemoryApi(options) {
+var MEMORY_RUNTIME_KIND = "memory";
+var KNOWN_MEMORY_DISCOVERY_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"adapter",
+	"baseUrl",
+	"apiSecret",
+	"adapterSecret",
+	"applicationInstanceId",
+	"runtimeGenerationId",
+	"runtimeInstanceId",
+	"buildChannel",
+	"publishedAt"
+]);
+var KNOWN_CREDENTIAL_ENVELOPE_KEYS = /* @__PURE__ */ new Set([
+	"schemaVersion",
+	"applicationInstanceId",
+	"runtimeKind",
+	"adapterKind",
+	"runtimeGenerationId",
+	"credential"
+]);
+function isRecord(value) {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hasOnlyKnownKeys(value, keys) {
+	return Object.keys(value).every((key) => keys.has(key));
+}
+function isBuildChannel(value) {
+	return value === "installed" || value === "development" || value === "visual-check" || value === "unknown";
+}
+function parseRegistryMemoryCredential(serialized, record, adapter) {
+	let value;
+	try {
+		value = JSON.parse(serialized);
+	} catch {
+		return null;
+	}
+	if (!isRecord(value) || !hasOnlyKnownKeys(value, KNOWN_CREDENTIAL_ENVELOPE_KEYS) || value.schemaVersion !== "withmate-runtime-credential-v1" || value.applicationInstanceId !== record.entry.applicationInstanceId || value.runtimeKind !== MEMORY_RUNTIME_KIND || value.adapterKind !== adapter || value.runtimeGenerationId !== record.entry.runtimeGenerationId || !isRecord(value.credential) || !hasOnlyKnownKeys(value.credential, KNOWN_MEMORY_DISCOVERY_KEYS)) return null;
+	const document = value.credential;
+	if (document.schemaVersion !== "withmate-memory-discovery-v2" || document.adapter !== adapter || document.applicationInstanceId !== record.entry.applicationInstanceId || document.runtimeGenerationId !== record.entry.runtimeGenerationId || document.runtimeInstanceId !== record.entry.runtimeGenerationId || typeof document.baseUrl !== "string" || document.buildChannel !== void 0 && document.buildChannel !== record.entry.buildChannel) return null;
+	const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+	if (!baseUrl) return null;
+	return buildConnectionFromValues({
+		adapter,
+		baseUrl,
+		apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() : void 0,
+		adapterSecret: typeof document.adapterSecret === "string" ? document.adapterSecret.trim() : void 0,
+		applicationInstanceId: record.entry.applicationInstanceId,
+		runtimeGenerationId: record.entry.runtimeGenerationId
+	});
+}
+function buildRegistrySafeCandidate(record, now, active, staleThresholdMs = RUNTIME_DISCOVERY_DEFAULT_STALE_THRESHOLD_MS) {
+	return {
+		source: "registry",
+		applicationInstanceId: record.entry.applicationInstanceId,
+		runtimeGenerationId: record.entry.runtimeGenerationId,
+		buildChannel: record.entry.buildChannel,
+		pid: record.entry.process.pid,
+		leaseState: getRuntimeDiscoveryLeaseState(record.entry, now, staleThresholdMs),
+		active
+	};
+}
+function candidateMatchesSelector(candidate, applicationInstanceId, runtimeGenerationId) {
+	return (!applicationInstanceId || candidate.safe.applicationInstanceId === applicationInstanceId) && (!runtimeGenerationId || candidate.safe.runtimeGenerationId === runtimeGenerationId);
+}
+function toSafeCandidates(candidates) {
+	return candidates.map(({ safe }) => safe);
+}
+function candidateDedupeKey(candidate) {
+	const baseUrl = candidate.connection?.api.baseUrl ?? "";
+	return `${candidate.safe.applicationInstanceId ?? "legacy"}\0${candidate.safe.runtimeGenerationId}\0${baseUrl}`;
+}
+function dedupeCandidates(candidates) {
+	const result = /* @__PURE__ */ new Map();
+	for (const candidate of candidates) {
+		let key = candidateDedupeKey(candidate);
+		if (candidate.safe.source === "legacy") {
+			const registryMatch = candidates.find((other) => other.safe.source === "registry" && other.safe.runtimeGenerationId === candidate.safe.runtimeGenerationId && other.connection?.api.baseUrl === candidate.connection?.api.baseUrl && (candidate.safe.applicationInstanceId === null || other.safe.applicationInstanceId === candidate.safe.applicationInstanceId));
+			if (registryMatch) key = candidateDedupeKey(registryMatch);
+		}
+		const existing = result.get(key);
+		if (!existing || existing.safe.source === "legacy" && candidate.safe.source === "registry") result.set(key, candidate);
+	}
+	return [...result.values()];
+}
+function discoveryError(code, candidates) {
+	return {
+		kind: "error",
+		code,
+		candidates: toSafeCandidates(candidates)
+	};
+}
+function mapWithMateMemoryDiscoveryCode(code) {
+	switch (code) {
+		case "runtime_instance_mismatch": return "WITHMATE_RUNTIME_INSTANCE_MISMATCH";
+		case "runtime_generation_changed": return "WITHMATE_RUNTIME_GENERATION_CHANGED";
+		case "runtime_ambiguous": return "WITHMATE_RUNTIME_AMBIGUOUS";
+		case "runtime_stale": return "WITHMATE_RUNTIME_STALE";
+		case "runtime_registry_capacity": return "WITHMATE_RUNTIME_REGISTRY_CAPACITY";
+		case "runtime_selector_invalid":
+		case "runtime_invalid": return "WITHMATE_RUNTIME_SELECTOR_INVALID";
+		case "runtime_credential_unavailable": return "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE";
+		case "runtime_unavailable": return "WITHMATE_RUNTIME_UNAVAILABLE";
+	}
+}
+async function resolveWithMateMemoryApi(options) {
 	const env = options.env ?? process.env;
+	const bindingRequired = env[WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]?.trim() === "1";
+	const envApplicationInstanceId = readRequiredEnvValue(env, WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV);
+	const envRuntimeGenerationId = readRequiredEnvValue(env, WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV);
+	if (bindingRequired && (!envApplicationInstanceId || !envRuntimeGenerationId)) return discoveryError("runtime_selector_invalid", []);
+	const applicationInstanceId = bindingRequired ? envApplicationInstanceId : options.applicationInstanceId ?? envApplicationInstanceId;
+	const runtimeGenerationId = bindingRequired ? envRuntimeGenerationId : options.runtimeGenerationId ?? envRuntimeGenerationId;
+	if (applicationInstanceId && !isUuid(applicationInstanceId) || runtimeGenerationId && !isUuid(runtimeGenerationId) || runtimeGenerationId && !applicationInstanceId) return discoveryError("runtime_selector_invalid", []);
 	const explicitApiUrl = options.apiUrl ?? env.WITHMATE_MEMORY_API_URL?.trim();
 	if (explicitApiUrl) {
 		const baseUrl = normalizeWithMateMemoryApiBaseUrl(explicitApiUrl);
-		if (!baseUrl) throw usageError(`${options.apiUrl !== void 0 ? "--api-url" : "WITHMATE_MEMORY_API_URL"} must be a valid loopback HTTP URL.`);
-		return buildConnectionFromValues({
+		if (!baseUrl) return discoveryError("runtime_selector_invalid", []);
+		const connection = buildConnectionFromValues({
 			adapter: options.adapter,
 			baseUrl,
 			apiSecret: readRequiredEnvValue(env, "WITHMATE_MEMORY_API_SECRET"),
 			adapterSecret: resolveAdapterSecret(env, options.adapter),
+			applicationInstanceId,
+			runtimeGenerationId,
 			runtimeInstanceId: readRequiredEnvValue(env, "WITHMATE_MEMORY_RUNTIME_INSTANCE_ID")
 		});
+		if (!connection || bindingRequired && !connection.api.applicationInstanceId) return discoveryError("runtime_credential_unavailable", []);
+		const candidate = {
+			source: "explicit",
+			applicationInstanceId: connection.api.applicationInstanceId ?? null,
+			runtimeGenerationId: connection.api.runtimeGenerationId,
+			buildChannel: "unknown",
+			pid: null,
+			leaseState: "explicit",
+			active: true
+		};
+		return {
+			kind: "selected",
+			connection,
+			candidate,
+			candidates: [candidate]
+		};
 	}
-	const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
-	const discoveryFilePath = options.discoveryFilePath ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env, options.adapter));
-	const read = options.readFile ?? readFile;
+	const now = options.clock?.now() ?? /* @__PURE__ */ new Date();
+	const staleThresholdMs = options.staleThresholdMs ?? 2e4;
+	const fetchImpl = options.fetch ?? fetch;
+	const signal = options.signal ?? AbortSignal.timeout(1e4);
+	const registryRootDirectoryPath = options.registryRootDirectoryPath ?? options.registryDirectoryPath;
+	const registryCandidates = [];
 	try {
-		const document = await readDiscoveryProjection(discoveryFilePath, options.adapter, read);
-		if (document?.schemaVersion !== "withmate-memory-discovery-v2" || document.adapter !== options.adapter || typeof document.baseUrl !== "string") return null;
-		const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
-		if (!baseUrl) return null;
-		return buildConnectionFromValues({
-			adapter: options.adapter,
-			baseUrl,
-			apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() : void 0,
-			adapterSecret: typeof document.adapterSecret === "string" ? document.adapterSecret.trim() : void 0,
-			runtimeInstanceId: typeof document.runtimeInstanceId === "string" ? document.runtimeInstanceId.trim() : void 0
-		});
+		const snapshot = await listRuntimeDiscoveryRegistryEntries(registryRootDirectoryPath);
+		for (const record of snapshot.records) {
+			if (record.entry.schemaVersion !== "withmate-runtime-discovery-entry-v1" || record.entry.runtimeKind !== MEMORY_RUNTIME_KIND) continue;
+			const credential = await readRuntimeDiscoveryCredential(record, options.adapter);
+			const connection = credential === null ? null : parseRegistryMemoryCredential(credential, record, options.adapter);
+			const fresh = getRuntimeDiscoveryLeaseState(record.entry, now, staleThresholdMs) === "fresh";
+			registryCandidates.push({
+				safe: buildRegistrySafeCandidate(record, now, fresh, staleThresholdMs),
+				connection,
+				credentialUnavailable: connection === null
+			});
+		}
 	} catch {
-		return null;
+		return discoveryError("runtime_unavailable", []);
 	}
+	const targetedRegistryCandidates = applicationInstanceId ? registryCandidates.filter((candidate) => candidateMatchesSelector(candidate, applicationInstanceId, runtimeGenerationId)) : registryCandidates;
+	for (const candidate of targetedRegistryCandidates) {
+		if (candidate.safe.leaseState !== "expired" || !candidate.connection) continue;
+		try {
+			candidate.safe.active = await verifyRuntimeIdentity(candidate.connection.api, fetchImpl, signal);
+		} catch {
+			candidate.safe.active = false;
+		}
+	}
+	const legacyCandidates = [];
+	if (!bindingRequired) {
+		const read = options.readFile ?? readFile;
+		const envDiscoveryFilePath = env.WITHMATE_MEMORY_DISCOVERY_FILE?.trim();
+		const legacyDiscoveryFilePath = options.legacyDiscoveryFilePath ?? options.discoveryFilePath ?? (envDiscoveryFilePath || resolveDefaultWithMateMemoryDiscoveryFilePath(env, options.adapter));
+		try {
+			const document = await readDiscoveryProjection(legacyDiscoveryFilePath, options.adapter, read);
+			if (document?.schemaVersion === "withmate-memory-discovery-v2" && document.adapter === options.adapter && typeof document.baseUrl === "string") {
+				const baseUrl = normalizeWithMateMemoryApiBaseUrl(document.baseUrl);
+				const legacyGeneration = typeof document.runtimeGenerationId === "string" ? document.runtimeGenerationId.trim() : typeof document.runtimeInstanceId === "string" ? document.runtimeInstanceId.trim() : void 0;
+				const legacyApplication = typeof document.applicationInstanceId === "string" ? document.applicationInstanceId.trim() : void 0;
+				if (baseUrl && legacyGeneration && (!applicationInstanceId || legacyApplication === applicationInstanceId) && (!runtimeGenerationId || legacyGeneration === runtimeGenerationId)) {
+					const connection = buildConnectionFromValues({
+						adapter: options.adapter,
+						baseUrl,
+						apiSecret: typeof document.apiSecret === "string" ? document.apiSecret.trim() : void 0,
+						adapterSecret: typeof document.adapterSecret === "string" ? document.adapterSecret.trim() : void 0,
+						applicationInstanceId: legacyApplication,
+						runtimeGenerationId: legacyGeneration
+					});
+					if (connection) {
+						let active = false;
+						try {
+							active = await verifyRuntimeIdentity(connection.api, fetchImpl, signal);
+						} catch {
+							active = false;
+						}
+						legacyCandidates.push({
+							connection,
+							credentialUnavailable: false,
+							safe: {
+								source: "legacy",
+								applicationInstanceId: legacyApplication ?? null,
+								runtimeGenerationId: legacyGeneration,
+								buildChannel: isBuildChannel(document.buildChannel) ? document.buildChannel : "unknown",
+								pid: null,
+								leaseState: "legacy",
+								active
+							}
+						});
+					}
+				}
+			}
+		} catch {}
+	}
+	const allCandidates = dedupeCandidates([...registryCandidates, ...legacyCandidates]);
+	const matching = allCandidates.filter((candidate) => candidateMatchesSelector(candidate, applicationInstanceId, runtimeGenerationId));
+	if (applicationInstanceId && matching.length === 0) {
+		const sameApplication = allCandidates.filter((candidate) => candidate.safe.applicationInstanceId === applicationInstanceId);
+		if (runtimeGenerationId && sameApplication.length > 0) return discoveryError("runtime_generation_changed", sameApplication);
+		return discoveryError(allCandidates.length > 0 ? "runtime_instance_mismatch" : "runtime_unavailable", allCandidates);
+	}
+	if (matching.some((candidate) => candidate.credentialUnavailable)) {
+		if (matching.filter((candidate) => !candidate.credentialUnavailable).length === 0) return discoveryError("runtime_credential_unavailable", matching);
+	}
+	const active = matching.filter((candidate) => candidate.safe.active && candidate.connection !== null);
+	if (active.length === 0) return discoveryError(matching.length > 0 ? "runtime_stale" : "runtime_unavailable", matching);
+	if (active.length > 1) return discoveryError("runtime_ambiguous", matching);
+	const selected = active[0];
+	return {
+		kind: "selected",
+		connection: selected.connection,
+		candidate: selected.safe,
+		candidates: toSafeCandidates(allCandidates)
+	};
 }
 async function callWithMateMemoryRuntime(connection, operation, options) {
+	let identityOutcome;
+	try {
+		identityOutcome = await verifyRuntimeIdentityOutcome(connection.api, options.fetch ?? fetch, options.signal);
+	} catch (error) {
+		throw new WithMateMemoryRuntimeExchangeError("Memory API runtime identity preflight failed.", false, {
+			cause: error,
+			discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE"
+		});
+	}
+	if (!identityOutcome.ok) throw new WithMateMemoryRuntimeExchangeError("Memory API runtime identity could not be verified.", false, { discoveryCode: identityOutcome.discoveryCode });
 	const nonce = randomBytes(16).toString("base64url");
 	const exchangeUrl = new URL(options.exchangePath ?? "/v1/exchange", connection.api.baseUrl);
 	return new Promise((resolve, reject) => {
 		let dispatched = false;
 		let identityVerified = false;
 		let settled = false;
-		const fail = (message, cause) => {
+		const fail = (message, cause, discoveryCode) => {
 			if (settled) return;
 			settled = true;
-			reject(new WithMateMemoryRuntimeExchangeError(message, dispatched, cause === void 0 ? void 0 : { cause }));
+			reject(new WithMateMemoryRuntimeExchangeError(message, dispatched, {
+				...cause === void 0 ? {} : { cause },
+				...discoveryCode === void 0 ? {} : { discoveryCode }
+			}));
 		};
 		let request$1;
 		try {
@@ -20182,7 +20656,9 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 				headers: {
 					"Content-Type": "application/json",
 					[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER]: nonce,
-					[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeInstanceId
+					[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: connection.api.runtimeGenerationId,
+					[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: connection.api.runtimeGenerationId,
+					...connection.api.applicationInstanceId ? { [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER]: connection.api.applicationInstanceId } : {}
 				},
 				signal: options.signal
 			}, (response) => {
@@ -20222,11 +20698,19 @@ async function callWithMateMemoryRuntime(connection, operation, options) {
 		request$1.on("information", (information) => {
 			if (settled || identityVerified || information.statusCode !== 103) return;
 			const runtimeInstanceId = information.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+			const runtimeGenerationId = information.headers[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER];
+			const applicationInstanceId = information.headers[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER];
 			const challenge = information.headers[WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER];
-			const expected = createWithMateMemoryRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeInstanceId, nonce);
-			if (runtimeInstanceId !== connection.api.runtimeInstanceId || challenge !== expected) {
+			const expected = createWithMateMemoryRuntimeChallenge(connection.api.apiSecret, connection.api.runtimeGenerationId, nonce);
+			if (runtimeInstanceId !== connection.api.runtimeGenerationId || runtimeGenerationId !== void 0 && runtimeGenerationId !== connection.api.runtimeGenerationId || connection.api.applicationInstanceId && runtimeGenerationId !== connection.api.runtimeGenerationId || connection.api.applicationInstanceId && applicationInstanceId !== connection.api.applicationInstanceId) {
 				request$1.destroy();
-				fail("Memory API runtime identity could not be verified.");
+				const discoveryCode = connection.api.applicationInstanceId && applicationInstanceId !== connection.api.applicationInstanceId ? "WITHMATE_RUNTIME_INSTANCE_MISMATCH" : "WITHMATE_RUNTIME_GENERATION_CHANGED";
+				fail("Memory API runtime identity could not be verified.", void 0, discoveryCode);
+				return;
+			}
+			if (challenge !== expected) {
+				request$1.destroy();
+				fail("Memory API runtime identity challenge could not be verified.", void 0, "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE");
 				return;
 			}
 			identityVerified = true;
@@ -20259,6 +20743,48 @@ function resolveAgentRuntimeBindingReference(env = process.env) {
 function resolveAgentRuntimeTurnCapability(env = process.env) {
 	return env["WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY"]?.trim() || void 0;
 }
+async function verifyRuntimeIdentityOutcome(connection, fetchImpl, signal) {
+	const nonce = randomBytes(16).toString("base64url");
+	const response = await fetchImpl(`${connection.baseUrl}/v1/status?nonce=${encodeURIComponent(nonce)}`, {
+		method: "GET",
+		redirect: "error",
+		signal
+	});
+	if (!response.ok) return {
+		ok: false,
+		discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE"
+	};
+	const text = await response.text();
+	if (!text.trim()) throw transportError("Memory API returned a non-JSON response.");
+	let status;
+	try {
+		status = JSON.parse(text);
+	} catch {
+		throw transportError("Memory API returned a non-JSON response.");
+	}
+	const expectedLegacyChallenge = createHmac("sha256", connection.apiSecret).update(nonce, "utf8").digest("base64url");
+	if (connection.applicationInstanceId && status.applicationInstanceId !== connection.applicationInstanceId) return {
+		ok: false,
+		discoveryCode: "WITHMATE_RUNTIME_INSTANCE_MISMATCH"
+	};
+	if (status.runtimeInstanceId !== connection.runtimeGenerationId || status.runtimeGenerationId !== void 0 && status.runtimeGenerationId !== connection.runtimeGenerationId || connection.applicationInstanceId && status.runtimeGenerationId !== connection.runtimeGenerationId) return {
+		ok: false,
+		discoveryCode: "WITHMATE_RUNTIME_GENERATION_CHANGED"
+	};
+	if (status.challenge?.nonce !== nonce || status.challenge.hmacSha256 !== expectedLegacyChallenge) return {
+		ok: false,
+		discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE"
+	};
+	if (!connection.applicationInstanceId) return { ok: true };
+	const expectedOwnerChallenge = createWithMateMemoryRuntimeOwnerChallenge(connection.apiSecret, connection.applicationInstanceId, connection.runtimeGenerationId, nonce);
+	return status.challenge.ownerHmacSha256 === expectedOwnerChallenge ? { ok: true } : {
+		ok: false,
+		discoveryCode: "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE"
+	};
+}
+async function verifyRuntimeIdentity(connection, fetchImpl, signal) {
+	return (await verifyRuntimeIdentityOutcome(connection, fetchImpl, signal)).ok;
+}
 //#endregion
 //#region scripts/withmate-glossary-runtime-client.ts
 function isGlossaryRuntimeResult(value) {
@@ -20284,6 +20810,35 @@ function createGlossaryBindingRequiredError() {
 		retryable: false
 	};
 }
+function mapGlossaryRuntimeDiscoveryCode(discoveryCode) {
+	switch (discoveryCode) {
+		case "WITHMATE_RUNTIME_INSTANCE_MISMATCH": return "GLOSSARY_RUNTIME_INSTANCE_MISMATCH";
+		case "WITHMATE_RUNTIME_GENERATION_CHANGED": return "GLOSSARY_RUNTIME_GENERATION_CHANGED";
+		case "WITHMATE_RUNTIME_AMBIGUOUS": return "GLOSSARY_RUNTIME_AMBIGUOUS";
+		case "WITHMATE_RUNTIME_STALE": return "GLOSSARY_RUNTIME_STALE";
+		case "WITHMATE_RUNTIME_REGISTRY_CAPACITY": return "GLOSSARY_RUNTIME_REGISTRY_CAPACITY";
+		case "WITHMATE_RUNTIME_SELECTOR_INVALID": return "GLOSSARY_RUNTIME_SELECTOR_INVALID";
+		case "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE": return "GLOSSARY_RUNTIME_CREDENTIAL_UNAVAILABLE";
+		case "WITHMATE_RUNTIME_UNAVAILABLE": return "GLOSSARY_RUNTIME_UNAVAILABLE";
+	}
+}
+function createGlossaryPublicDiscoveryError(discoveryCode, candidates = []) {
+	return {
+		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+		ok: false,
+		code: mapGlossaryRuntimeDiscoveryCode(discoveryCode),
+		message: "WithMate glossary runtime discovery could not select a runtime.",
+		effect: "none",
+		retryable: discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" || discoveryCode === "WITHMATE_RUNTIME_STALE",
+		details: {
+			discoveryCode,
+			candidates
+		}
+	};
+}
+function createGlossaryRuntimeDiscoveryError(resolution) {
+	return createGlossaryPublicDiscoveryError(mapWithMateMemoryDiscoveryCode(resolution.code), resolution.candidates);
+}
 function createGlossaryRequestTooLargeError() {
 	return {
 		schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -20306,19 +20861,26 @@ async function callGlossaryRuntime(input, deps) {
 	} catch {
 		return createGlossaryBindingRequiredError();
 	}
-	let connection;
+	let resolution;
 	try {
-		connection = await discoverWithMateMemoryApi({
+		resolution = await resolveWithMateMemoryApi({
 			adapter: deps.adapter,
 			env: deps.env,
 			apiUrl: deps.apiUrl,
 			discoveryFilePath: deps.discoveryFilePath,
+			applicationInstanceId: deps.applicationInstanceId,
+			runtimeGenerationId: deps.runtimeGenerationId,
+			registryRootDirectoryPath: deps.registryRootDirectoryPath,
+			clock: deps.clock,
+			staleThresholdMs: deps.staleThresholdMs,
+			fetch: deps.fetch,
 			readFile: deps.readFile
 		});
 	} catch {
 		return createGlossaryTransportError("WithMate runtime discovery failed.");
 	}
-	if (!connection) return createGlossaryTransportError("WithMate runtime is unavailable.");
+	if (resolution.kind === "error") return createGlossaryRuntimeDiscoveryError(resolution);
+	const connection = resolution.connection;
 	const abortController = new AbortController();
 	const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 1e4);
 	let dispatched = false;
@@ -20339,6 +20901,7 @@ async function callGlossaryRuntime(input, deps) {
 		return createGlossaryTransportError("WithMate runtime returned a non-glossary response.", isWriteOperation(input.operation) ? "unknown" : "none");
 	} catch (error) {
 		const wasDispatched = error instanceof WithMateMemoryRuntimeExchangeError ? error.dispatched : dispatched;
+		if (error instanceof WithMateMemoryRuntimeExchangeError && !wasDispatched && error.discoveryCode) return createGlossaryPublicDiscoveryError(error.discoveryCode);
 		return createGlossaryTransportError("WithMate glossary runtime request failed.", isWriteOperation(input.operation) && wasDispatched ? "unknown" : "none");
 	} finally {
 		clearTimeout(timeout);
@@ -20557,6 +21120,8 @@ Input shorthands:
 Connection options:
   --api-url <loopback-url>
   --discovery-file <path>
+  --instance <application-instance-id>
+  --generation <runtime-generation-id>
 `;
 var GlossaryCliUsageError = class extends Error {};
 function requireOptionValue(args, index, option) {
@@ -20591,6 +21156,8 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 	let inputSourceSeen = false;
 	let apiUrl;
 	let discoveryFilePath;
+	let applicationInstanceId;
+	let runtimeGenerationId;
 	let checkoutId;
 	const shorthand = {};
 	const read = deps.readFile ?? readFile;
@@ -20617,6 +21184,12 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 			index += 1;
 		} else if (argument === "--discovery-file") {
 			discoveryFilePath = requireOptionValue(args, index, argument);
+			index += 1;
+		} else if (argument === "--instance") {
+			applicationInstanceId = requireOptionValue(args, index, argument);
+			index += 1;
+		} else if (argument === "--generation") {
+			runtimeGenerationId = requireOptionValue(args, index, argument);
 			index += 1;
 		} else if (argument === "--checkout-id") {
 			checkoutId = requireOptionValue(args, index, argument);
@@ -20653,7 +21226,9 @@ async function parseWithMateGlossaryCliArgs(args, deps = {}) {
 		command,
 		body,
 		...apiUrl ? { apiUrl } : {},
-		...discoveryFilePath ? { discoveryFilePath } : {}
+		...discoveryFilePath ? { discoveryFilePath } : {},
+		...applicationInstanceId ? { applicationInstanceId } : {},
+		...runtimeGenerationId ? { runtimeGenerationId } : {}
 	};
 }
 function schemaProjection() {
@@ -20694,10 +21269,12 @@ async function runWithMateGlossaryCli(args, deps = {}) {
 			...deps,
 			adapter: "cli",
 			apiUrl: request.apiUrl,
-			discoveryFilePath: request.discoveryFilePath
+			discoveryFilePath: request.discoveryFilePath,
+			applicationInstanceId: request.applicationInstanceId,
+			runtimeGenerationId: request.runtimeGenerationId
 		});
 		stdout.write(`${JSON.stringify(value)}\n`);
-		if ("ok" in value && value.ok === false) return "code" in value && value.code === "GLOSSARY_TRANSPORT_ERROR" ? WITHMATE_GLOSSARY_CLI_EXIT_CODES.transportError : WITHMATE_GLOSSARY_CLI_EXIT_CODES.operationError;
+		if ("ok" in value && value.ok === false) return "code" in value && typeof value.code === "string" && (value.code === "GLOSSARY_TRANSPORT_ERROR" || value.code.startsWith("GLOSSARY_RUNTIME_")) ? WITHMATE_GLOSSARY_CLI_EXIT_CODES.transportError : WITHMATE_GLOSSARY_CLI_EXIT_CODES.operationError;
 		return WITHMATE_GLOSSARY_CLI_EXIT_CODES.ok;
 	} catch (error) {
 		const message = error instanceof Error ? error.message : "Glossary CLI request failed.";

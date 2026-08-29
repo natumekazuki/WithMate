@@ -124,7 +124,15 @@ test("AppLifecycleService は before-quit で実行中 session があり confirm
   assert.deepEqual(calls, []);
 });
 
-test("AppLifecycleService は before-quit で confirm が true ならcleanup後に終了する", async () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "終了時はprovider binding失効後にMemory runtimeを停止し、その後persistent storeを閉じる"
+// oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
+// failure_mode = "Memory runtimeのunpublishより先にstoreまたはprocessが終了し、別processからstale entryがactiveに見える"
+// scope = "application-shutdown-runtime-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("AppLifecycleService は before-quit で runtime cleanup後にpersistent storeを閉じて終了する", async () => {
   let prevented = false;
   const calls: string[] = [];
   const service = new AppLifecycleService({
@@ -151,6 +159,9 @@ test("AppLifecycleService は before-quit で confirm が true ならcleanup後�
     revokeAllAgentRuntimeBindings() {
       calls.push("revokeAllAgentRuntimeBindings");
     },
+    async stopMemoryRuntime() {
+      calls.push("stopMemoryRuntime");
+    },
   });
 
   await service.handleBeforeQuit({
@@ -165,12 +176,22 @@ test("AppLifecycleService は before-quit で confirm が true ならcleanup後�
     "prepareSessionWindowSnapshotForQuit",
     "invalidateAllProviderSessionThreads",
     "revokeAllAgentRuntimeBindings",
+    "stopMemoryRuntime",
     "closePersistentStores",
     "quitApp",
   ]);
 });
 
-test("AppLifecycleService はprovider停止完了後にpersistent storesを閉じて終了する", async () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "provider cleanupとMemory runtime cleanupの完了を待ってからpersistent storeを閉じる"
+// oracle = { type = "adr", ref = "ADR-021 and ADR-023 shutdown ordering" }
+// failure_mode = "非同期cleanupの途中でstoreを閉じ、runtime operationまたはowner cleanupが部分状態になる"
+// scope = "application-shutdown-runtime-discovery"
+// lifecycle = "permanent"
+// distinction = "cleanup順序だけでなく非同期provider cleanupの完了待機を観測する"
+// @end-test-value
+test("AppLifecycleService はproviderとMemory runtime停止完了後にpersistent storesを閉じて終了する", async () => {
   let prevented = false;
   const calls: string[] = [];
   let resolveProviderCleanup: (() => void) | null = null;
@@ -199,6 +220,9 @@ test("AppLifecycleService はprovider停止完了後にpersistent storesを閉�
     revokeAllAgentRuntimeBindings() {
       calls.push("revokeAllAgentRuntimeBindings");
     },
+    async stopMemoryRuntime() {
+      calls.push("stopMemoryRuntime");
+    },
   });
 
   const cleanup = service.handleBeforeQuit({
@@ -217,12 +241,21 @@ test("AppLifecycleService はprovider停止完了後にpersistent storesを閉�
     "invalidateAllProviderSessionThreads:start",
     "invalidateAllProviderSessionThreads:end",
     "revokeAllAgentRuntimeBindings",
+    "stopMemoryRuntime",
     "closePersistentStores",
     "quitApp",
   ]);
 });
 
-test("AppLifecycleService はbinding revokeとpersistent store closeが失敗しても終了処理をsettleする", async () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "binding revoke、runtime stop、store closeが個別に失敗しても終了処理は一度だけsettleする"
+// oracle = { type = "adr", ref = "ADR-021 and ADR-023 shutdown failure timing" }
+// failure_mode = "cleanup失敗でquit barrierが永久に未完了となるか、後続cleanupが実行されない"
+// scope = "application-shutdown-runtime-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+test("AppLifecycleService はbinding revoke、runtime stop、store closeが失敗しても終了処理をsettleする", async () => {
   const calls: string[] = [];
   const service = new AppLifecycleService({
     hasInFlightSessionRuns: () => false,
@@ -245,6 +278,10 @@ test("AppLifecycleService はbinding revokeとpersistent store closeが失敗し
       calls.push("revokeAllAgentRuntimeBindings");
       throw new Error("revoke failed");
     },
+    async stopMemoryRuntime() {
+      calls.push("stopMemoryRuntime");
+      throw new Error("runtime stop failed");
+    },
   });
 
   await service.handleBeforeQuit({ preventDefault() {} });
@@ -257,6 +294,7 @@ test("AppLifecycleService はbinding revokeとpersistent store closeが失敗し
   assert.deepEqual(calls, [
     "invalidateAllProviderSessionThreads",
     "revokeAllAgentRuntimeBindings",
+    "stopMemoryRuntime",
     "closePersistentStores",
     "quitApp",
   ]);

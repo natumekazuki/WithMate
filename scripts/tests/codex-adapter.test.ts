@@ -38,6 +38,8 @@ import { toProviderMetadataLogData } from "../../src-electron/provider-metadata-
 import {
   PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../../src-electron/provider-agent-runtime-binding.js";
 
 const CODEX_PROVIDER_CATALOG: ModelCatalogProvider = {
@@ -1557,7 +1559,15 @@ describe("CodexAdapter background structured prompt", () => {
 });
 
 describe("CodexAdapter agent runtime binding", () => {
-  it("Session generationごとのclient envを分離しbackground clientをunboundに保つ", () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "Codex clients for different Memory owners receive distinct selectors while background clients remain unbound"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "Codex client reuses another instance generation or exposes owner selectors through global environment"
+// scope = "codex-provider-adapter"
+// lifecycle = "permanent"
+// @end-test-value
+it("Session generationごとのclient envを分離しbackground clientをunboundに保つ", () => {
     const adapter = new CodexAdapter() as unknown as {
       getClient: (
         providerId: string,
@@ -1569,6 +1579,10 @@ describe("CodexAdapter agent runtime binding", () => {
           executionGeneration: string;
           transport: "env";
           expiresAt: null;
+          memoryRuntimeOwner?: {
+            applicationInstanceId: string;
+            runtimeGenerationId: string;
+          };
         },
       ) => {
         client: { options: { env?: Record<string, string> } };
@@ -1577,6 +1591,8 @@ describe("CodexAdapter agent runtime binding", () => {
     };
     const settings = createDefaultAppSettings();
     const before = process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV];
+    const beforeApplicationInstance = process.env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV];
+    const beforeGeneration = process.env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV];
     const bindingA = {
       bindingId: "binding-a",
       bindingReference: "opaque-reference-a",
@@ -1584,6 +1600,7 @@ describe("CodexAdapter agent runtime binding", () => {
       executionGeneration: "generation-a",
       transport: "env" as const,
       expiresAt: null,
+      memoryRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-a" },
     };
     const bindingB = {
       bindingId: "binding-b",
@@ -1592,6 +1609,7 @@ describe("CodexAdapter agent runtime binding", () => {
       executionGeneration: "generation-b",
       transport: "env" as const,
       expiresAt: null,
+      memoryRuntimeOwner: { applicationInstanceId: "app-instance-b", runtimeGenerationId: "memory-generation-b" },
     };
 
     const clientA = adapter.getClient("codex", settings, bindingA);
@@ -1610,11 +1628,26 @@ describe("CodexAdapter agent runtime binding", () => {
       clientB.client.options.env?.[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
       bindingB.bindingReference,
     );
+    assert.equal(clientA.client.options.env?.[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+    assert.equal(clientA.client.options.env?.[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
+    assert.equal(clientB.client.options.env?.[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-b");
+    assert.equal(clientB.client.options.env?.[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-b");
     assert.equal(
       backgroundClient.client.options.env?.[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV],
       undefined,
     );
+    assert.equal(backgroundClient.client.options.env?.[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], undefined);
+    assert.equal(backgroundClient.client.options.env?.[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], undefined);
+    assert.equal(
+      Object.keys(backgroundClient.client.options.env ?? {}).some(
+        (key) => key.toLowerCase() === WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()
+          || key.toLowerCase() === WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase(),
+      ),
+      false,
+    );
     assert.equal(process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], before);
+    assert.equal(process.env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], beforeApplicationInstance);
+    assert.equal(process.env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], beforeGeneration);
   });
 
   it("binding referenceをprovider由来のlive・audit projectionから除去しlogical promptは変更しない", async () => {

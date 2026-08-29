@@ -6,6 +6,8 @@ import {
   PROVIDER_AGENT_RUNTIME_BINDING_REDACTED_MARKER,
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
   buildProviderAgentRuntimeBindingCacheKey,
   buildProviderAgentRuntimeBindingEnv,
   createProviderAgentRuntimeBindingRedactor,
@@ -257,7 +259,15 @@ describe("AgentRuntimeBindingRegistry", () => {
   });
 });
 
-it("provider envはbindingとturn capabilityを投影しcache keyやglobal envへsecretを混ぜない", () => {
+// @test-value v1
+// kind = "invariant"
+// claim = "Memory runtime owner selector is projected only into the provider client environment and changes cache identity"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "provider client leaks selector through process.env or reuses a client across runtime generations"
+// scope = "provider-agent-runtime-binding"
+// lifecycle = "permanent"
+// @end-test-value
+it("provider envはbindingとMemory owner selectorを投影しcache keyやglobal envへsecretを混ぜない", () => {
   const registry = new AgentRuntimeBindingRegistry();
   const projection = registry.issueOrReuse({
     actorSessionId: "session-a",
@@ -265,11 +275,22 @@ it("provider envはbindingとturn capabilityを投影しcache keyやglobal env�
     operationGrants: ["character.context.get"],
   });
   const before = process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV];
-  const turnProjection = { ...projection, turnCapability: "turn-capability-current" };
+  const beforeApplicationInstance = process.env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV];
+  const beforeGeneration = process.env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV];
+  const turnProjection = {
+    ...projection,
+    turnCapability: "turn-capability-current",
+    memoryRuntimeOwner: {
+      applicationInstanceId: "app-instance-a",
+      runtimeGenerationId: "memory-generation-a",
+    },
+  };
   const env = mergeDefinedProviderEnv(
     {
       PATH: "bin",
       [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: "stale",
+      [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase()]: "stale-app",
+      [WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase()]: "stale-generation",
       WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED: "stale",
       [WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]: "stale-turn",
       EMPTY: undefined,
@@ -278,17 +299,28 @@ it("provider envはbindingとturn capabilityを投影しcache keyやglobal env�
   );
 
   assert.equal(env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], projection.bindingReference);
+  assert.equal(env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], "app-instance-a");
+  assert.equal(env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], "memory-generation-a");
   assert.equal(env.WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED, "1");
   assert.equal(env[WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV], turnProjection.turnCapability);
   assert.equal(env.PATH, "bin");
   assert.equal("EMPTY" in env, false);
   assert.equal(process.env[WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV], before);
+  assert.equal(process.env[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV], beforeApplicationInstance);
+  assert.equal(process.env[WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV], beforeGeneration);
   const cacheKey = buildProviderAgentRuntimeBindingCacheKey(turnProjection);
   assert.doesNotMatch(cacheKey, new RegExp(projection.bindingReference));
   assert.doesNotMatch(cacheKey, new RegExp(turnProjection.turnCapability));
   assert.notEqual(
     cacheKey,
     buildProviderAgentRuntimeBindingCacheKey({ ...turnProjection, turnCapability: "turn-capability-next" }),
+  );
+  assert.notEqual(
+    cacheKey,
+    buildProviderAgentRuntimeBindingCacheKey({
+      ...turnProjection,
+      memoryRuntimeOwner: { applicationInstanceId: "app-instance-a", runtimeGenerationId: "memory-generation-b" },
+    }),
   );
   assert.equal(getProviderAgentRuntimeBindingCapability("codex").transport, "env");
   assert.equal(getProviderAgentRuntimeBindingCapability("copilot").transport, "env");
