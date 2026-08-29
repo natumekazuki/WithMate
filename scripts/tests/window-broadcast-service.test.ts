@@ -46,6 +46,26 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
   assert.deepEqual(home.sent[1]?.payload, { scope: "ids", sessionIds: ["session-1"] });
 });
 
+test("WindowBroadcastService は Session Window復元集合をHomeだけへ通知する", () => {
+  const home = createWindow(false);
+  const session = createWindow(false);
+  const closedHome = createWindow(true);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [home.window, session.window, closedHome.window],
+    getHomeWindows: () => [home.window, closedHome.window],
+    getSessionWindows: () => [session.window],
+  });
+
+  service.broadcastSessionWindowRestoreSet(["session-1", "session-2"]);
+
+  assert.deepEqual(home.sent, [{
+    channel: "withmate:session-window-restore-set-changed",
+    payload: ["session-1", "session-2"],
+  }]);
+  assert.equal(session.sent.length, 0);
+  assert.equal(closedHome.sent.length, 0);
+});
+
 test("WindowBroadcastService は open Session ID の上限超過を all にする", () => {
   const home = createWindow(false);
   const service = new WindowBroadcastService({

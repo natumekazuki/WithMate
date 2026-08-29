@@ -78,7 +78,11 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   }
 
   public broadcastSessionWindowRestoreSet(sessionIds: readonly string[]): void {
-    this.broadcast(WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT, [...sessionIds]);
+    this.broadcastTo(
+      this.options.getHomeWindows(),
+      WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
+      [...sessionIds],
+    );
   }
 
   public broadcastOpenCompanionReviewWindowIds(sessionIds: string[]): void {
