@@ -34,7 +34,7 @@ create inputは次のstrict unionとする。
 
 - existing SessionへWork ItemとTurnを作る
 - new child Session、Work Item、Turnを作る
-- new root Session、Root WorkItem successor、Turnを作る
+- new root Session、predecessorを持たないRoot WorkItem、Turnを作る
 - prepareだけ行い、dispatchを後で開始する
 
 既存の`session.create`、`work.create`、`turn.enqueue`は単体操作として維持する。delegation serviceはこれらのstorage ownerを迂回せず、共有transaction helperまたは明示的なsaga stepとして呼ぶ。

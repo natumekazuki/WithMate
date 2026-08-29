@@ -60,7 +60,7 @@ Root WorkItem resultをroot resultのcanonical sourceとする。`root.get`と`r
 
 archiveはroot全体をdefault active viewから外し、grantを新規mutation不可へ縮退し、budget reserveを解放する。read、export、reuse、retention cleanupは許可する。
 
-root Sessionへの`session.move`はgrant設計のmanifestとdraining lifecycleを使う。source owner、destination owner、root Session、Work Item、artifact、budget、Coordination、pending operationを一括で移す。transfer完了後もlineageと旧owner eventを保持する。
+root Sessionへの`session.move`はgrant設計のmanifestとdraining lifecycleを使う。source owner、destination owner、root Session、Work Item、artifact、budget、Coordination、pending operationをdurable transfer operationへ列挙し、各resourceをsettleした後にtopologyとownerの切替を原子的に確定する。全resourceと外部side effectを一つの巨大transactionへ入れない。transfer完了後もlineageと旧owner eventを保持する。
 
 ## Cleanup
 

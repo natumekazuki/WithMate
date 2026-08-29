@@ -153,6 +153,8 @@ finding修正は同じfamilyのdirect checkとresulting delta reviewで閉じる
 
 最終commitでtypecheck、全test、build、migration rehearsal、必要なvisual／filesystem smokeを実行する。未実行check、validation gap、accepted riskを区別し、未解決blocking findingがないことをrelease条件とする。
 
+capability coverageのdriftを検出するため、release closureで「capability、operationまたはcomposition、canonical owner、Invariant、direct check」のtraceability matrixをcanonical operation registryから生成または同期検証する。独立APIへ統合しなかった能力も行を失わない。
+
 ## Documentation closure
 
 - authority、event history、delete、budget、artifact identityはADRへ残す。

@@ -86,7 +86,8 @@ revokeは新規admissionを直ちに止める。既にcommit中のoperationは�
 - transfer manifestとdraining lifecycle
 - current route projection
 - Turn、Work Item、artifact serviceのgrant evaluator統合
-- Role template migration
+- 既存全operationのgrant action／resource scope／effect class mapping
+- baseline active grant migrationとRole authority cutover
 - runtime catalogのgrant capability／limit projection
 
 ## Direct validation
@@ -99,6 +100,7 @@ revokeは新規admissionを直ちに止める。既にcommit中のoperationは�
 - revokeとrunning／queued operationの各policyを検証する。
 - stale runtime generationとexpired grantでretryできない。
 - migration baseline grantが現行authorityを超えない。
+- 既存全operationがgrant mappingを持ち、未分類operationをRole fallbackで許可しない。
 
 ## Review lens
 

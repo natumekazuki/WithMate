@@ -103,8 +103,8 @@ Agentが作成直後に不要と判断した未着手Work Itemは、自律的に
 ## Direct validation
 
 - pending、in-progress、waiting、terminalごとのrevise可能fieldを直接検証する。
-- source refreshがworkspace／repository／branch／base／headをtupleで保存する。
-- execution開始後のsource revisionとexecution associationが一致する。
+- planned source revisionが依頼時のworkspace／repository／branch／base／headをtupleで保存する。
+- queuedからrunningへのadmission transactionがcanonical Workspaceからactual start sourceを解決し、そのWork revisionとexecution associationへ保存する。caller入力や事前resolve結果をactual sourceの正本にしない。
 - reassignの各failure pointで二重targetまたは無targetを作らない。
 - reparentがcycle、root不一致、decision orphanを作らない。
 - split、mergeのsource／successor relationとresult provenanceをevent replayできる。

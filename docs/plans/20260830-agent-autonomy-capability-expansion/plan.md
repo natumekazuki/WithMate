@@ -103,7 +103,7 @@ Root WorkItem の一意性、自己所有、Session 作成との原子性、appe
 | Aggregation | `work.aggregation.correct`、`work.aggregation.list`のdepth拡張。finalizationは`work.result`へ収束する |
 | Delegation | `delegation.create`、`delegation.get`、`delegation.list`、`delegation.retry`、`delegation.cancel`、`delegation.compensate` |
 | Grant | `grant.create`、`grant.get`、`grant.list`、`grant.revoke` |
-| Files | `session.files.stat`、`list`、`read_text`、`write_text`、`read_binary`、`write_binary`、`mkdir`、`delete`、`move`、`copy` |
+| Files | `session.files.roots.list`、`stat`、`list`、`read_text`、`write_text`、`read_binary`、`write_binary`、`mkdir`、`delete`、`move`、`copy` |
 | Artifact | `artifact.create`、`get`、`list`、`read`、`attach`、`detach`、`transfer`、`delete` |
 | Root | `root.get`、`root.list`、`root.status`、`root.stop`、`root.archive` |
 | Budget | `budget.get`、`budget.list`、`budget.configure` |
@@ -143,10 +143,10 @@ source identityは手入力の`work.source.refresh`を正本にしない。Work 
 
 ### AUTONOMY-GRANT-02: 再委譲は実効 authority を拡張しない
 
-- Accepted contract: child grant、cross-root grant、budget allocation は issuer の active grant と resource scope の部分集合である。
+- Accepted contract: child grant、cross-root grant、budget allocationはissuerのactive grantとresource scopeの部分集合である。新規resource作成はplacement namespaceへのconstruction capabilityから導出し、生成resource IDをwildcardへ暗黙追加しない。
 - Canonical owner: grant evaluator と immutable grant event storage。
-- Failure mode: wildcard、stale grant、Role template、reparent を経由して権限が拡張される。
-- Direct verification: grant lattice の property test と create、delegate、revoke、reparent integration test。
+- Failure mode: wildcard、stale grant、Role template、reparent、root作成special caseを経由して権限が拡張される。
+- Direct verification: grant latticeとconstruction capabilityのproperty test、create、delegate、revoke、reparent integration test。
 - Review trigger: authorization boundary のため complete-diff review を行う。
 - Gate: ready。
 
@@ -170,10 +170,10 @@ source identityは手入力の`work.source.refresh`を正本にしない。Work 
 
 ### AUTONOMY-MUTATION-05: 複合 mutation を部分成功させない
 
-- Accepted contract: expected revision、operation 単位 idempotency key、transaction、effect certainty、read-back を全 mutation で共有する。
+- Accepted contract: createはcanonical container revisionとserver-reserved ID、既存resource mutationはtarget revision、sagaはoperation revisionとcommitted manifestを使い、idempotency、effect certainty、read-backを共有する。
 - Canonical owner: shared mutation admission と各 storage transaction。
-- Failure mode: delegation、split、merge、move、transfer の途中だけが commit され、retry が重複 resource を作る。
-- Direct verification: transaction の各 failure point、commit 後 response loss、同一 key replay、別 payload conflict test。
+- Failure mode: createがcaller-supplied identityを信用する、またはdelegation、split、merge、move、transferの途中だけがcommitされ、retryが重複resourceを作る。
+- Direct verification: create transactionとsaga stepの各failure point、commit後response loss、同一key replay、別payload conflict test。
 - Review trigger: failure timing を横断するため complete-diff review を行う。
 - Gate: ready。
 
@@ -220,7 +220,7 @@ source identityは手入力の`work.source.refresh`を正本にしない。Work 
 | 順序 | Slice | 主な成果 | 依存 |
 | --- | --- | --- | --- |
 | 0 | Root WorkItem baseline | root Session の自己所有 WorkItem と履歴 | 進行中実装の統合 |
-| 1 | Shared authority and history | grant evaluator、principal、共通 event／mutation contract | 0 |
+| 1 | Shared authority and history cutover | principal、grant evaluator、user decision policy、mutation envelope、既存Roleからbaseline active grantへのmigration、既存全operationのgrant mappingと一括cutover | 0 |
 | 2 | Resource budget | root ledger、reserve、reconcile、admission | 1 |
 | 3 | Session lifecycle | create拡張、configure、move、clone、restore、archive、delete | 1、2 |
 | 4 | Work Item lifecycle | revise、admission時source確定、reassign、move、clone、reopen、archive、delete | 1、2、3 |
@@ -229,7 +229,7 @@ source identityは手入力の`work.source.refresh`を正本にしない。Work 
 | 7 | Grant routing and transfer | same-root routing、temporary grant consultation、moveによるownership transfer | 1、3、4 |
 | 8 | Files and artifacts | file lifecycle、binary、artifact registry と transfer | 1、2、3 |
 | 9 | Root management | root query、stop、archive、aggregate result projection、cleanup | 2 から 8 |
-| 10 | Role policy migration | Role matrix を default grant template へ縮退し、managed Skill を更新 | 7、9 |
+| 10 | Role policy cleanup | 残存Role判定を削除し、default grant template、表示、managed Skillを更新 | 7、9 |
 | 11 | Integrated release closure | migration rehearsal、full test、build、visual／smoke、cross-slice interaction review | 0 から 10 |
 
 ## 個別設計

@@ -12,6 +12,7 @@
 ### Session file
 
 - `session.files.stat`
+- `session.files.roots.list`
 - `session.files.list`
 - `session.files.mkdir`
 - `session.files.delete`
@@ -47,6 +48,8 @@ requestへ任意host absolute pathを渡さない。sourceとdestinationは次�
 
 serviceは保存済みSessionとgrantからrootを解決する。`..`、absolute path、ADS、device path、symlink、junction escapeを拒否する。validation後からside effect直前までのidentity変化を検出する。
 
+`session.files.roots.list`はactorが利用できるroot handleをgrant projectionから列挙する。返すのはallowed directory ID、kind、display label、許可capability、visibility revisionであり、host absolute pathは返さない。sourceとdestinationのhandleはこのprojectionまたは同じcanonical grant revisionから取得する。
+
 ## File operation
 
 deleteはfileとempty directoryを既定とし、recursive deleteは別のexplicit optionとdeletion manifestを要求する。move、copyはsourceとdestination双方のgrant、size、quotaを検証する。
@@ -78,6 +81,7 @@ Session deleteはartifact manifestを取得し、transfer、archive、cascade de
 ## 必要な schema と service
 
 - allowed directory identityとfile handle contract
+- grant-backed allowed root discovery projection
 - file mutation idempotencyとidentity-bound replace primitive
 - binary chunk／stream service
 - artifact registry、event、reference table
@@ -99,6 +103,7 @@ Session deleteはartifact manifestを取得し、transfer、archive、cascade de
 - artifact attach／detach／transfer／deleteでreferenceとcontent ownerが一致する。
 - Session deleteとartifact retentionが部分削除を起こさない。
 - public projectionへabsolute private pathやsecret metadataを出さない。
+- root discoveryがgrant外directoryを列挙せず、返したvisibility revisionをmutation admissionで再検証する。
 
 ## Review lens
 

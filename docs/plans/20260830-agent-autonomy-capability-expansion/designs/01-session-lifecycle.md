@@ -40,7 +40,7 @@ Agentによるroot作成は、現在のrootから独立した作業領域を作�
 - SessionFolderまたは選択Workspace reference
 - idempotency result
 
-新rootのgrantとbudgetは作成元の委譲可能範囲を超えない。作成元rootとのlineageはaudit用に保存するが、暗黙のread／write authorityを与えない。
+新rootのgrantとbudgetは、作成元のroot construction capabilityに記録されたWorkspace／Project境界、初期visibility、delegable action、budget ceiling、expiryから導出する。新root IDを既存resource scopeの単純な部分集合とは扱わず、作成元rootとのlineageとconstruction grantをaudit用に保存する。lineageだけで暗黙のread／write authorityを与えない。
 
 ## Move、adopt、reuse
 
@@ -55,9 +55,9 @@ moveは次を原子的に再評価する。
 - grant、budget、artifact visibility
 - Coordination Eventの宛先とpending response
 
-cross-root moveはsource rootとdestination root双方のgrantを必要とし、transfer manifestへSession、descendant、Work Item、artifact、budget reservation、open coordinationを列挙する。対象を暗黙に落とさない。適用できないresourceが一つでもあればcommit前に拒否するか、明示されたpartial transfer planへ分ける。
+cross-root moveはsource rootとdestination root双方のgrantを必要とし、まずtransfer manifestへSession、descendant、Work Item、artifact、budget reservation、open coordinationを列挙する。対象を暗黙に落とさない。外部side effectやrunning resourceを巨大なdatabase transactionへ含めず、drain、settlement、handoffをdurable operationとして進め、最後のtopology／owner切替だけを原子的にcommitする。適用できないresourceがあれば開始前に拒否するか、明示されたpartial transfer planへ分ける。
 
-restoreはarchive済みSessionへ新しいpurpose revision、Root WorkItem successor、active binding、budgetを追加する。既存active Sessionのreuseはdelegation targetの選択で表し、別operationを追加しない。過去履歴を新規Sessionの履歴として書き換えない。物理的なprovider threadを継続するかresetするかはProvider tupleの一部として明示する。
+restoreはroot／childのstrict unionとする。root restoreは新しいpurpose revision、Root WorkItem successor、active binding、budgetを追加する。child restoreは新しいpurpose revisionとactive bindingを追加するが、Root WorkItemを作らない。既存active Sessionのreuseはdelegation targetの選択で表し、別operationを追加しない。過去履歴を新規Sessionの履歴として書き換えない。物理的なprovider threadを継続するかresetするかはProvider tupleの一部として明示する。
 
 ## Archive、discard、delete
 
@@ -81,12 +81,14 @@ Agentは自分が作成した未使用childを、delegation compensationから�
 
 ## Migration
 
-既存Sessionには現在のbindingを`migration_baseline`として一件追加する。既存rootとparent関係、Character runtime identity、Provider thread、Workspaceを変更しない。既存Roleからdefault grant templateを生成するのはgrant migration sliceで行い、本sliceで過大なgrantを推測しない。
+既存Sessionには現在のbindingを`migration_baseline`として一件追加する。既存rootとparent関係、Character runtime identity、Provider thread、Workspaceを変更しない。既存Roleに対応するbaseline active grantはshared authority cutoverで作成済みであることを前提とし、本sliceでgrantを再生成または拡張しない。
 
 ## Direct validation
 
 - root作成がSession、Root WorkItem、grant、budgetの片方だけを残さない。
+- root construction capabilityから初期grantとbudgetを導出し、action、visibility、budget、expiryの上限を超えない。
 - child作成とroot作成のplacement schemaを混同しない。
+- root restoreだけがRoot WorkItem successorを作り、child restoreと新規root作成はsuccessorを誤作成しない。
 - Provider／model／reasoning／catalog revisionとCharacter／runtime snapshotをtupleで更新する。
 - binding更新前に開始したTurnが旧revisionへ、更新後のTurnが新revisionへ帰属する。
 - moveでcycle、orphan、root不一致、Work Item relation不一致を作らない。
