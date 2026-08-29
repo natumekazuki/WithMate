@@ -1639,6 +1639,7 @@ export type SessionContextPaneProps = {
   rootWorkItemLoading?: boolean;
   rootWorkItemErrorMessage?: string | null;
   isRootWorkItemMutationPending?: boolean;
+  onRetryRootWorkItem?: () => void | Promise<void>;
   onReviseRootWorkItem?: (input: {
     goal: string;
     scope: string;
@@ -1867,6 +1868,7 @@ export function SessionContextPane({
   rootWorkItemLoading = false,
   rootWorkItemErrorMessage = null,
   isRootWorkItemMutationPending = false,
+  onRetryRootWorkItem,
   onReviseRootWorkItem,
   onHandoffRootWorkItem,
 }: SessionContextPaneProps) {
@@ -1897,7 +1899,7 @@ export function SessionContextPane({
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
           .join("|");
       case "work-item":
-        return `${rootWorkItem?.id ?? ""}:${rootWorkItem?.revision ?? 0}:${rootWorkItem?.state ?? ""}`;
+        return `${rootWorkItem?.id ?? ""}:${rootWorkItem?.revision ?? 0}:${rootWorkItem?.state ?? ""}:${rootWorkItemLoading}:${rootWorkItemErrorMessage ?? ""}`;
       default:
         return "";
     }
@@ -1911,6 +1913,8 @@ export function SessionContextPane({
     taskEntries,
     selectedSessionLiveRunErrorMessage,
     rootWorkItem,
+    rootWorkItemErrorMessage,
+    rootWorkItemLoading,
   ]);
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
@@ -2163,16 +2167,32 @@ export function SessionContextPane({
               )
             ) : null}
 
-            {activeContextPaneTab === "work-item" && rootWorkItem ? (
-              <RootWorkItemPane
-                workItem={rootWorkItem}
-                history={rootWorkItemHistory}
-                onRevise={onReviseRootWorkItem}
-                onHandoff={onHandoffRootWorkItem}
-                loading={rootWorkItemLoading}
-                errorMessage={rootWorkItemErrorMessage}
-                mutationPending={isRootWorkItemMutationPending}
-              />
+            {activeContextPaneTab === "work-item" ? (
+              rootWorkItem ? (
+                <RootWorkItemPane
+                  workItem={rootWorkItem}
+                  history={rootWorkItemHistory}
+                  onRevise={onReviseRootWorkItem}
+                  onHandoff={onHandoffRootWorkItem}
+                  loading={rootWorkItemLoading}
+                  errorMessage={rootWorkItemErrorMessage}
+                  mutationPending={isRootWorkItemMutationPending}
+                />
+              ) : rootWorkItemLoading ? (
+                <div className="command-monitor-empty-shell root-work-item-load-state" role="status" aria-live="polite" aria-busy="true">
+                  <span className="root-work-item-spinner" aria-hidden="true" />
+                  <p className="command-monitor-empty">Root WorkItemを読み込んでいます。</p>
+                </div>
+              ) : rootWorkItemErrorMessage ? (
+                <div className="command-monitor-empty-shell root-work-item-load-state">
+                  <p className="live-run-error" role="alert">{rootWorkItemErrorMessage}</p>
+                  {onRetryRootWorkItem ? (
+                    <button type="button" className="drawer-toggle compact secondary" onClick={() => void onRetryRootWorkItem()}>
+                      再試行
+                    </button>
+                  ) : null}
+                </div>
+              ) : null
             ) : null}
 
           </div>

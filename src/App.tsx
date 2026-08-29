@@ -86,6 +86,7 @@ import {
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   type ContextPaneTabKey,
+  isRootWorkItemContextEligible,
   resolveAvailableContextPaneTabs,
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
@@ -985,6 +986,7 @@ export default function AgentSessionWindowApp() {
     () => sessions.find((session) => session.id === selectedId) ?? sessions[0] ?? null,
     [selectedId, sessions],
   );
+  const selectedSessionSupportsRootWorkItem = isRootWorkItemContextEligible(selectedSession);
   useEffect(() => {
     const sessionId = selectedSession?.id;
     if (!withmateApi || !sessionId) {
@@ -1103,9 +1105,8 @@ export default function AgentSessionWindowApp() {
         });
     try {
       const item = await withmateApi.getRootWorkItem(sessionId);
-      const history = item
-        ? await withmateApi.listRootWorkItemHistory(sessionId, ROOT_WORK_ITEM_HISTORY_LIMIT)
-        : [];
+      if (!item) throw new Error("Root WorkItem was not found for the selected Session.");
+      const history = await withmateApi.listRootWorkItemHistory(sessionId, ROOT_WORK_ITEM_HISTORY_LIMIT);
       if (requestRevision !== rootWorkItemFetchRevisionRef.current) return null;
       setRootWorkItemState({
         ownerSessionId: sessionId,
@@ -1131,7 +1132,7 @@ export default function AgentSessionWindowApp() {
   }, [withmateApi]);
 
   useEffect(() => {
-    if (!withmateApi || !selectedSessionId) {
+    if (!withmateApi || !selectedSessionId || !selectedSessionSupportsRootWorkItem) {
       rootWorkItemFetchRevisionRef.current += 1;
       setRootWorkItemState({
         ownerSessionId: null,
@@ -1151,7 +1152,7 @@ export default function AgentSessionWindowApp() {
       rootWorkItemFetchRevisionRef.current += 1;
       unsubscribe();
     };
-  }, [refreshRootWorkItem, selectedSessionId, withmateApi]);
+  }, [refreshRootWorkItem, selectedSessionId, selectedSessionSupportsRootWorkItem, withmateApi]);
 
   const handleReviseRootWorkItem = useCallback(async (input: {
     goal: string;
@@ -2395,6 +2396,9 @@ export default function AgentSessionWindowApp() {
   const selectedRootWorkItem = rootWorkItemState.ownerSessionId === selectedSessionId
     ? rootWorkItemState.item
     : null;
+  const showRootWorkItemTab = selectedSessionSupportsRootWorkItem;
+  const selectedRootWorkItemLoading = showRootWorkItemTab
+    && (rootWorkItemState.ownerSessionId !== selectedSessionId || rootWorkItemState.loading);
   const selectedRootWorkItemHistory = useMemo(() => (
     rootWorkItemState.ownerSessionId === selectedSessionId
       ? rootWorkItemState.history.map((event) => ({
@@ -2411,14 +2415,14 @@ export default function AgentSessionWindowApp() {
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
-      hasRootWorkItem: selectedRootWorkItem !== null,
+      showRootWorkItemTab,
     }),
     [
       hasLiveRunReasoningText,
       hasReasoningCapability,
       isCopilotSession,
       selectedCompanionGroupMonitorEntries.length,
-      selectedRootWorkItem,
+      showRootWorkItemTab,
     ],
   );
 
@@ -4593,12 +4597,14 @@ export default function AgentSessionWindowApp() {
         selectedSessionContextTelemetryProjection,
         rootWorkItem: selectedRootWorkItem,
         rootWorkItemHistory: selectedRootWorkItemHistory,
-        rootWorkItemLoading: rootWorkItemState.ownerSessionId === selectedSessionId
-          && rootWorkItemState.loading,
+        rootWorkItemLoading: selectedRootWorkItemLoading,
         rootWorkItemErrorMessage: rootWorkItemState.ownerSessionId === selectedSessionId
           ? rootWorkItemState.errorMessage
           : null,
         isRootWorkItemMutationPending,
+        onRetryRootWorkItem: async () => {
+          if (selectedSessionId) await refreshRootWorkItem(selectedSessionId);
+        },
         onReviseRootWorkItem: handleReviseRootWorkItem,
         onHandoffRootWorkItem: handleHandoffRootWorkItem,
         selectedContextEmptyText,

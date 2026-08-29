@@ -1720,18 +1720,16 @@ export class SessionStorageV6 {
       throw new Error(`WORK_ITEM_SESSION_PROTECTED: ${protectedItem.id}`);
     }
 
-    const associatedRoot = this.db.prepare(`
-      SELECT item.id
-      FROM work_items_v6 AS item
-      INNER JOIN work_item_execution_associations_v6 AS association
-        ON association.work_item_id = item.id
-      WHERE item.kind = 'root'
-        AND item.root_session_id IN (${placeholders})
-      LIMIT 1
-    `).get(...uniqueSessionIds) as { id?: unknown } | undefined;
-    if (typeof associatedRoot?.id === "string") {
-      throw new Error(`WORK_ITEM_SESSION_PROTECTED: ${associatedRoot.id}`);
-    }
+    this.db.prepare(`
+      DELETE FROM work_item_execution_associations_v6
+      WHERE work_item_id IN (
+        SELECT id
+        FROM work_items_v6
+        WHERE kind = 'root'
+          AND root_session_id IN (${placeholders})
+          AND state IN ('completed', 'partially_completed', 'failed', 'canceled')
+      )
+    `).run(...uniqueSessionIds);
 
     this.db.prepare(`
       DELETE FROM work_items_v6

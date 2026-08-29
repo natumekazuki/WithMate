@@ -7,7 +7,12 @@ import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { SessionContextPane, type SessionContextPaneProps } from "../../src/session-components.js";
-import { resolveAvailableContextPaneTabs, type ContextPaneProjection } from "../../src/session-ui-projection.js";
+import {
+  isRootWorkItemContextEligible,
+  resolveAvailableContextPaneTabs,
+  type ContextPaneProjection,
+} from "../../src/session-ui-projection.js";
+import { buildChildSessionRoleBinding, buildRootSessionRoleBinding } from "../../src/session-role-binding.js";
 import type { RootWorkItem } from "../../src/work-item.js";
 
 const rootWorkItem: RootWorkItem = {
@@ -86,15 +91,63 @@ function paneProps(overrides: Partial<SessionContextPaneProps> = {}): SessionCon
 
 // @test-value v1
 // kind = "invariant"
-// claim = "Root WorkItem が存在する時だけ WorkItem tab が available になり、child/no-data の時は含まれない"
+// claim = "standaloneまたはoverall-coordinatorのroot SessionはRoot WorkItem取得前や取得失敗中もWorkItem tabをavailableに保ち、childとcharacter-authoring Sessionは含めない"
 // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6-ui" }
-// failure_mode = "child Session や Root WorkItem 未取得の Session に WorkItem tab が表示され、存在しない作業情報へ誘導する"
+// failure_mode = "初回取得失敗でitemがnullになるとtab自体が消えてerrorとretryへ到達不能になる、または対象外childにtabが表示される"
 // scope = "session-context-pane-tab-availability"
 // lifecycle = "permanent"
 // @end-test-value
-test("Root WorkItem の有無だけで WorkItem tab の available を決める", () => {
-  assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasRootWorkItem: true }), ["latest-command", "work-item"]);
-  assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, hasRootWorkItem: false }), ["latest-command"]);
+test("Root Session の適格性で WorkItem tab の available を決める", () => {
+  const rootBinding = buildRootSessionRoleBinding("root", "overall-coordinator");
+  const childBinding = buildChildSessionRoleBinding("child", "root", rootBinding, "executor");
+  assert.equal(isRootWorkItemContextEligible({ id: "root", sessionKind: "default", roleBinding: rootBinding }), true);
+  assert.equal(isRootWorkItemContextEligible({ id: "child", sessionKind: "default", roleBinding: childBinding }), false);
+  assert.equal(isRootWorkItemContextEligible({ id: "author", sessionKind: "character-authoring", roleBinding: null }), false);
+  assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, showRootWorkItemTab: true }), ["latest-command", "work-item"]);
+  assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: false, showRootWorkItemTab: false }), ["latest-command"]);
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "WorkItem tabはitem未取得でもloading statusを表示し、初回取得失敗時はalertと再試行buttonを残してowner callbackを一回呼ぶ"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6-ui" }
+// failure_mode = "itemがnullの分岐でpane全体が空になり、保持済みerrorも再取得手段も利用者に表示されない"
+// scope = "SessionContextPane root WorkItem loading and initial error recovery"
+// lifecycle = "permanent"
+// distinction = "loaded item上のmutation errorではなく、itemが一度も取得できていないloading/error tupleと実button clickを観測する"
+// @end-test-value
+test("Root WorkItem 初回取得のloadingとerror retryを描画する", async () => {
+  const loading = renderToStaticMarkup(<SessionContextPane {...paneProps({
+    rootWorkItem: null,
+    rootWorkItemLoading: true,
+  })} />);
+  assert.match(loading, /role="status"[^>]*aria-live="polite"[^>]*aria-busy="true"/);
+  assert.match(loading, /root-work-item-spinner/);
+  assert.match(loading, /Root WorkItemを読み込んでいます。/);
+
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const container = dom.window.document.getElementById("root") as HTMLElement;
+  const root = createRoot(container);
+  let retries = 0;
+  const previous = { window: globalThis.window, document: globalThis.document, Node: globalThis.Node, HTMLElement: globalThis.HTMLElement };
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement });
+  try {
+    await act(async () => root.render(<SessionContextPane {...paneProps({
+      rootWorkItem: null,
+      rootWorkItemLoading: false,
+      rootWorkItemErrorMessage: "Root WorkItem could not be loaded.",
+      onRetryRootWorkItem: () => { retries += 1; },
+    })} />));
+    assert.equal(container.querySelector('[role="alert"]')?.textContent, "Root WorkItem could not be loaded.");
+    const retry = [...container.querySelectorAll("button")].find((button) => button.textContent?.trim() === "再試行") as HTMLButtonElement;
+    assert.ok(retry);
+    await act(async () => retry.click());
+    assert.equal(retries, 1);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.assign(globalThis, previous);
+  }
 });
 
 // @test-value v1

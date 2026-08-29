@@ -12606,6 +12606,32 @@ button:disabled {
   font-size: 0.95rem;
 }
 
+.root-work-item-load-state {
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.root-work-item-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid color-mix(in srgb, var(--text-muted, #9ca3af) 45%, transparent);
+  border-top-color: var(--text-primary, #f3f4f6);
+  border-radius: 50%;
+  animation: root-work-item-spin 0.8s linear infinite;
+}
+
+@keyframes root-work-item-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root-work-item-spinner {
+    animation: none;
+  }
+}
+
 .root-work-item-summary p {
   margin: 0.35rem 0;
   white-space: pre-wrap;

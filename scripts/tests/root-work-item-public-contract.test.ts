@@ -7,6 +7,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SessionRuntimeValidationError,
   createSessionRuntimeResult,
   parseSessionRuntimeOperationInput,
@@ -263,16 +264,16 @@ describe("Root WorkItem public contract", () => {
   }
 });
 
-  // @test-value v1
-  // kind = "contract"
-  // claim = "application dispatchはRoot owner bindingをrevise、appendHistory、listHistoryへ渡し、history cursorをwork itemとactor scopeへ固定してdomain conflictをstable errorへ写像する"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "operationが誤ったservice methodへdispatchされる、別ownerがcursorを再利用できる、またはstale revisionがgeneric runtime errorへ崩れる"
-  // scope = "session-external-application-service"
-  // lifecycle = "permanent"
-  // distinction = "parserとtransportでは見えないowner binding、cursor scope、domain error envelopeをapplication境界で観測する"
-  // @end-test-value
-  test("application dispatchはRoot owner method・history cursor scope・revision errorを保つ", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "application dispatchはRoot owner bindingをrevise、appendHistory、listHistoryへ渡し、history cursorをwork itemとactor scopeへ固定してdomain conflictをstable errorへ写像する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
+// failure_mode = "operationが誤ったservice methodへdispatchされる、別ownerがcursorを再利用できる、またはstale revisionがgeneric runtime errorへ崩れる"
+// scope = "session-external-application-service"
+// lifecycle = "permanent"
+// distinction = "parserとtransportでは見えないowner binding、cursor scope、domain error envelopeをapplication境界で観測する"
+// @end-test-value
+test("application dispatchはRoot owner method・history cursor scope・revision errorを保つ", async () => {
   const calls: Array<{ method: string; input: unknown; actorSessionId: string }> = [];
   const service = new SessionExternalApplicationService({
     executionService: { beginShutdown() {} },
@@ -332,6 +333,71 @@ describe("Root WorkItem public contract", () => {
     afterSequence: null,
   });
   assert.equal(calls.some((call) => call.method === "listHistory" && call.actorSessionId === "root-b"), false);
+});
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "work.history.listは要求page全体が8 MiBを超える場合、収まるeventだけとlast included sequenceに固定したnext cursorを返し、次pageを欠落なく再開する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
+  // failure_mode = "個々は512 KiB以内のvalid eventが既定件数まで蓄積すると要求全体をLIMIT_EXCEEDEDで拒否し、consumerが履歴へ到達できない"
+  // scope = "SessionExternalApplicationService work.history.list response projection"
+  // lifecycle = "permanent"
+  // distinction = "単一巨大eventではなくvalidな大容量eventを複数返し、response byte上限、短いpage、cursor連続性を同時に観測する"
+  // @end-test-value
+  test("work.history.listはresponse上限へ収まるpageと継続cursorを返す", async () => {
+  const largeBlockers = Array.from({ length: 25 }, () => "x".repeat(WORK_ITEM_MAX_TEXT_LENGTH));
+  const events: WorkItemEvent[] = Array.from({ length: 30 }, (_, index) => ({
+    ...progressEvent,
+    sequence: index + 1,
+    revision: index + 1,
+    payload: {
+      progressSummary: `progress-${index + 1}`,
+      blockers: largeBlockers,
+      nextAction: "Continue",
+    },
+  }));
+  const service = new SessionExternalApplicationService({
+    executionService: { beginShutdown() {} },
+    crudService: {},
+    currentModelCatalog: () => null,
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    resolveTurnInitiator: async () => null,
+    getTurnAuthoritySession: () => null,
+    workItemService: {
+      resolveListScope(binding: ResolvedAgentRuntimeBinding) {
+        return { rootSessionId: "root-a", actorSessionId: binding.actorSessionId, visibility: "root" as const };
+      },
+      listHistory(input: { limit: number; afterSequence: number | null }) {
+        return events
+          .filter((event) => event.sequence > (input.afterSequence ?? 0))
+          .slice(0, input.limit);
+      },
+    },
+  } as any);
+
+  const first = await service.execute("work.history.list", {
+    workItemId: rootWorkItem.id,
+    limit: WORK_ITEM_DEFAULT_LIST_LIMIT,
+  }, actorBinding("root-a"));
+  assert.ok("result" in first);
+  if (!("result" in first)) throw new Error("first history page failed");
+  assert.ok(first.result.items.length > 0);
+  assert.ok(first.result.items.length < events.length);
+  assert.ok(first.result.nextCursor);
+  assert.ok(Buffer.byteLength(JSON.stringify(first), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
+
+  const lastSequence = first.result.items.at(-1)?.sequence;
+  const second = await service.execute("work.history.list", {
+    workItemId: rootWorkItem.id,
+    limit: WORK_ITEM_DEFAULT_LIST_LIMIT,
+    cursor: first.result.nextCursor,
+  }, actorBinding("root-a"));
+  assert.ok("result" in second);
+  if (!("result" in second)) throw new Error("second history page failed");
+  assert.equal(second.result.items[0]?.sequence, (lastSequence ?? 0) + 1);
+  assert.ok(Buffer.byteLength(JSON.stringify(second), "utf8") <= SESSION_RUNTIME_MAX_RESPONSE_BYTES);
 });
 
   // @test-value v1

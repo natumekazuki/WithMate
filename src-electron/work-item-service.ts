@@ -166,7 +166,7 @@ export class WorkItemService {
     storage: Pick<
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
-      | "reviseRoot" | "appendRootHistory" | "listHistory"
+      | "reviseRoot" | "appendRootHistory" | "listHistory" | "listRecentHistory"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
       | "resolveAggregationIdempotency"
     >;
@@ -303,6 +303,14 @@ export class WorkItemService {
   listHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding): WorkItemEvent[] {
     this.requireRootOwner(input.workItemId, binding);
     return this.deps.storage.listHistory(input);
+  }
+
+  listRecentHistory(
+    input: Pick<WorkItemHistoryListInput, "workItemId" | "limit">,
+    binding: ResolvedAgentRuntimeBinding,
+  ): WorkItemEvent[] {
+    this.requireRootOwner(input.workItemId, binding);
+    return this.deps.storage.listRecentHistory(input);
   }
 
   reportResult(input: WorkItemResultInput, binding: ResolvedAgentRuntimeBinding): WorkItem {

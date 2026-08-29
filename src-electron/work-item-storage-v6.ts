@@ -509,6 +509,21 @@ export class WorkItemStorageV6 {
     return rows.map(parseWorkItemEvent);
   }
 
+  listRecentHistory(input: {
+    workItemId: string;
+    limit: number;
+  }): WorkItemEvent[] {
+    this.getRequired(input.workItemId);
+    const rows = this.db.prepare(`
+      SELECT sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+      FROM work_item_events_v6
+      WHERE work_item_id = ?
+      ORDER BY sequence DESC
+      LIMIT ?
+    `).all(input.workItemId, input.limit) as WorkItemEventRow[];
+    return rows.reverse().map(parseWorkItemEvent);
+  }
+
   get(workItemId: string): WorkItem | null {
     const row = this.db.prepare("SELECT * FROM work_items_v6 WHERE id = ?").get(workItemId) as WorkItemRow | undefined;
     return row ? parseWorkItem(row) : null;
@@ -777,7 +792,11 @@ export class WorkItemStorageV6 {
         ON decision.child_work_item_id = child.id
       WHERE child.root_session_id = ? AND child.id <> ? AND (
         child.state IN ('pending', 'in_progress', 'waiting')
-        OR (child.parent_work_item_id IS NULL AND child.result_json IS NULL)
+        OR (
+          child.parent_work_item_id IS NULL
+          AND child.state <> 'canceled'
+          AND child.result_json IS NULL
+        )
         OR (child.parent_work_item_id IS NOT NULL AND decision.child_work_item_id IS NULL)
         OR (decision.child_revision IS NOT NULL AND decision.child_revision <> child.revision)
       )

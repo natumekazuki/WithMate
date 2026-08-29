@@ -3426,9 +3426,8 @@ function listRootWorkItemHistory(sessionId: string, limit: number): readonly Wor
   }
   const binding = createRendererRootWorkItemBinding(sessionId);
   const item = requireRootWorkItemForSession(sessionId);
-  const events = requireWorkItemService().listHistory({
+  const events = requireWorkItemService().listRecentHistory({
     workItemId: item.id,
-    afterSequence: null,
     limit,
   }, binding);
   const bounded: WorkItemEvent[] = [];

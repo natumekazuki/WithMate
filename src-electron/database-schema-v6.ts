@@ -1,7 +1,10 @@
 import { basename, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 
-import { WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES } from "../src/work-item.js";
+import {
+  WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+  WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES,
+} from "../src/work-item.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
 export const APP_DATABASE_V6_SCHEMA_VERSION = 6;
@@ -881,6 +884,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && rootWorkItemUniqueIndexSql.includes("WHERE kind = 'root'")
     && workItemIdempotencySql.includes("'work.revise'")
     && workItemIdempotencySql.includes("'work.history.append'")
+    && workItemIdempotencySql.includes(`length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`)
     && workItemAggregationDecisionSql.includes("decision_type IN ('accepted', 'excluded', 'retry_requested')")
     && workItemAggregationDecisionSql.includes("replacement_work_item_id IS NOT NULL")
     && workItemAggregationIdempotencySql.includes("operation IN ('work.aggregation.decide', 'work.aggregation.retry')")
@@ -889,7 +893,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "child_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "replacement_work_item_id", "work_items_v6", "id")
     && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
-    && workItemDeleteTriggerSql.includes("work_item_execution_associations_v6")
+    && !workItemDeleteTriggerSql.includes("work_item_execution_associations_v6")
     && workItemDeleteCleanupTriggerSql.includes("DELETE FROM work_items_v6")
     && workItemDeleteCleanupTriggerSql.includes("kind = 'root'")
     && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
@@ -1633,7 +1637,7 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     work_item_id TEXT NOT NULL,
     response_json TEXT CHECK (
       response_json IS NULL
-      OR (json_valid(response_json) AND length(CAST(response_json AS BLOB)) <= 524288)
+      OR (json_valid(response_json) AND length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES})
     ),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
@@ -1711,13 +1715,6 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
         kind = 'delegated'
         OR (kind = 'root' AND state IN ('pending', 'in_progress', 'waiting'))
       )
-  )
-  OR EXISTS (
-    SELECT 1
-    FROM work_item_execution_associations_v6 AS association
-    INNER JOIN work_items_v6 AS item ON item.id = association.work_item_id
-    WHERE item.kind = 'root'
-      AND item.root_session_id = OLD.id
   )
   BEGIN
     SELECT RAISE(ABORT, 'WORK_ITEM_SESSION_PROTECTED');
@@ -3108,6 +3105,7 @@ function upgradeWorkItemContractV2(db: DatabaseSync): void {
       !idempotencyColumns.has("response_json")
       || !idempotencySql.includes("'work.revise'")
       || !idempotencySql.includes("'work.history.append'")
+      || !idempotencySql.includes(`length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`)
     ) {
       rebuildWorkItemIdempotencyV2(db);
     }

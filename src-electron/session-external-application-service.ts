@@ -756,17 +756,30 @@ export class SessionExternalApplicationService {
     const scope = service.resolveListScope(binding);
     const afterSequence = input.cursor ? decodeWorkItemHistoryCursor(input, scope, input.cursor) : null;
     const events = service.listHistory({ workItemId: input.workItemId, limit: input.limit + 1, afterSequence }, binding);
-    const items = events.slice(0, input.limit);
-    const projected = { items };
-    if (Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("work.history.list", projected)), "utf8") > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
-      throw new SessionRuntimeProjectionLimitError("result.items");
+    const result: {
+      items: Array<(typeof events)[number]>;
+      nextCursor?: string;
+    } = { items: [] };
+    for (let index = 0; index < events.length && result.items.length < input.limit; index += 1) {
+      const event = events[index]!;
+      const hasMore = index + 1 < events.length;
+      const candidate: SessionRuntimeWorkItemHistoryListResult = {
+        items: [...result.items, event],
+        ...(hasMore ? { nextCursor: encodeWorkItemHistoryCursor(input, scope, event.sequence) } : {}),
+      };
+      if (
+        Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("work.history.list", candidate)), "utf8")
+        > SESSION_RUNTIME_MAX_RESPONSE_BYTES
+      ) {
+        const last = result.items[result.items.length - 1];
+        if (!last) throw new SessionRuntimeProjectionLimitError("result.items");
+        result.nextCursor = encodeWorkItemHistoryCursor(input, scope, last.sequence);
+        break;
+      }
+      result.items.push(event);
+      if (hasMore && result.items.length === input.limit) result.nextCursor = candidate.nextCursor;
     }
-    return {
-      items,
-      ...(events.length > input.limit && items.length > 0
-        ? { nextCursor: encodeWorkItemHistoryCursor(input, scope, (items[items.length - 1] as { sequence: number }).sequence) }
-        : {}),
-    };
+    return result;
   }
 
   private resolveWorkItemAssociation(

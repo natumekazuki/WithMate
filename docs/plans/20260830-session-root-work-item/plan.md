@@ -101,7 +101,7 @@ Root WorkItem の現在値は一覧や再開時の高速な参照に使い、eve
 
 全 mutation は同じ単調増加 resource revision 上で直列化する。current projection、event、idempotency response を同じ transaction で保存し、expected revision と idempotency key を要求する。
 
-履歴取得は cursor と上限件数を持つ。payload size、blocker 件数、文字数を既存の runtime limit と同じ境界で制限する。
+履歴取得は cursor と上限件数を持つ。payload size、blocker 件数、文字数を既存の runtime limit と同じ境界で制限し、要求件数が response 上限へ収まらない場合は収まる件数と次 cursor を返す。trusted GUI は再開に必要な最新ページを取得する。
 
 ## 状態遷移
 
@@ -157,7 +157,7 @@ Root WorkItem の自動作成後は、現行の Session delete protection をそ
 
 - active な Root WorkItem を持つ root Session の削除は拒否する。
 - terminal な Root WorkItem を持つ root Session の明示削除は、Session と自己所有 Root WorkItem の履歴を同じ transaction で削除する。
-- delegated WorkItem、未回収結果、child Session、execution association が残る場合は従来どおり拒否する。
+- delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。削除可能な terminal root に結びつく execution association は、Root WorkItem より先に同じ transaction で削除する。
 - UI 上の非表示や archive と物理削除を混同しない。
 
 Root WorkItem の履歴は Session の所有データであり、Session の明示的な物理削除後まで独立保存しない。
@@ -284,7 +284,7 @@ public API、永続化、owner scope、複合不変条件を横断するため�
 2. active な Root WorkItem、active descendant、未回収結果がある root Session は削除できない。条件を満たす terminal root Session の明示削除では、自己所有 Root WorkItem と履歴を同じ transaction で物理削除する。
 3. authority は改訂可能な説明として保持するが、認可には使わない。実効権限は既存の Session role、communication policy、runtime capability だけから判定し、新しい capability model は導入しない。
 4. 新規 Root WorkItem の goal は Session の task title から初期化する。scope、completionCriteria、authority は root 専用で空を許容し、owner が最初の契約改訂で具体化できるようにする。
-5. Root WorkItem の terminal result は、全 descendant WorkItem が terminal で、nested aggregation decision が確定している場合だけ許可する。parent-null legacy delegated WorkItem には新しい decision を捏造せず、terminal result の存在を確認する。
+5. Root WorkItem の terminal result は、全 descendant WorkItem が terminal で、nested aggregation decision が確定している場合だけ許可する。parent-null top-level / legacy delegated WorkItem には新しい decision を捏造せず、result を持つ terminal または再開不能な `canceled` への収束を確認する。
 
 ## 完了条件
 

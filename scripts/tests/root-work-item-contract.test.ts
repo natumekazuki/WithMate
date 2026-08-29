@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { describe, it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
 import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v6-bootstrap.js";
 import { ensureV6Schema } from "../../src-electron/database-schema-v6.js";
@@ -29,7 +30,13 @@ import {
   type SessionRoleBinding,
 } from "../../src/session-role-binding.js";
 import { buildNewSession, type Session, type SessionKind } from "../../src/session-state.js";
-import type { WorkItem, WorkItemResultState } from "../../src/work-item.js";
+import {
+  WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+  WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES,
+  WORK_ITEM_MAX_TEXT_LENGTH,
+  type WorkItem,
+  type WorkItemResultState,
+} from "../../src/work-item.js";
 
 const NOW = "2026-08-30T00:00:00.000Z";
 const EXPIRES = "2026-08-31T00:00:00.000Z";
@@ -341,9 +348,9 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "Root ownerのcontract revision、progress、handoffは一つの単調revisionでcurrent projectionとappend-only eventへ保存され、同一keyの再送は新しいrevisionを作らない"
+  // claim = "Root ownerのcontract revision、progress、handoffは一つの単調revisionでcurrent projectionとappend-only eventへ保存され、同一keyの再送は新しいrevisionを作らず、trusted GUI向けrecent historyは最新pageを時系列順で返す"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
-  // failure_mode = "応答喪失後の再送、stale revision、またはprocess再起動でcurrent projectionと履歴が分岐し次の行動を一意に復元できない"
+  // failure_mode = "応答喪失後の再送、stale revision、process再起動、または先頭page固定でcurrent projectionと最新履歴が分岐し次の行動を一意に復元できない"
   // scope = "WorkItemService root mutation and WorkItemStorageV6 event stream"
   // lifecycle = "permanent"
   // distinction = "contract、progress、handoffの三種を連続更新し、replay、異payload key再利用、stale revision、restart recoveryを同じstreamで検証する"
@@ -433,6 +440,11 @@ describe("Root WorkItem contract", () => {
           authority: "Repository-local changes only",
         },
       });
+      assert.deepEqual(
+        harness.service.listRecentHistory({ workItemId: rootItem.id, limit: 2 }, runtimeBinding("root"))
+          .map((event) => [event.revision, event.type]),
+        [[3, "progress"], [4, "handoff"]],
+      );
 
       harness.workStorage.close();
       harness.workStorage = new WorkItemStorageV6(harness.dbPath);
@@ -444,6 +456,61 @@ describe("Root WorkItem contract", () => {
         afterSequence: null,
         limit: 10,
       }, runtimeBinding("root")), history);
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "public validatorが512 KiB境界内で受理したhistory mutationは、canonical Work Item全体のidempotency responseも同じtransactionで保存して同一keyをreplayできる"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
+  // failure_mode = "event単体は受理されるのにcontractと最新progressを含むresponseがledger CHECKを超え、mutation全体がrollbackする"
+  // scope = "shared public validator and WorkItemStorageV6 idempotency ledger"
+  // lifecycle = "permanent"
+  // distinction = "最大長contractと512 KiB近傍のblocker payloadを組み合わせ、event sizeではなく保存済みcanonical response byte数とreplayを観測する"
+  // @end-test-value
+  it("RW-2B: validator受理payloadをcanonical idempotency responseとして保存してreplayする", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone", "Initial goal");
+      const rootItem = getRootWorkItem(harness, "root");
+      const wideText = "契".repeat(WORK_ITEM_MAX_TEXT_LENGTH);
+      const revised = harness.service.revise({
+        workItemId: rootItem.id,
+        goal: wideText,
+        scope: wideText,
+        completionCriteria: wideText,
+        authority: wideText,
+        expectedRevision: rootItem.revision,
+        idempotencyKey: "wide-contract",
+      }, runtimeBinding("root"));
+      const rawInput = {
+        workItemId: rootItem.id,
+        type: "progress" as const,
+        summary: "Near-limit progress",
+        blockers: Array.from({ length: 32 }, () => "x".repeat(WORK_ITEM_MAX_TEXT_LENGTH)),
+        nextAction: "Replay the canonical response",
+        expectedRevision: revised.revision,
+        idempotencyKey: "near-limit-history",
+      };
+      const parsed = parseSessionRuntimeOperationInput("work.history.append", rawInput);
+      assert.ok(Buffer.byteLength(JSON.stringify(parsed), "utf8") <= WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES);
+      const updated = harness.service.appendHistory(parsed, runtimeBinding("root"));
+      assert.equal(harness.service.appendHistory(parsed, runtimeBinding("root")).revision, updated.revision);
+
+      const db = new DatabaseSync(harness.dbPath, { readOnly: true });
+      try {
+        const ledger = db.prepare(`
+          SELECT length(CAST(response_json AS BLOB)) AS response_bytes
+          FROM work_item_idempotency_v6
+          WHERE operation = 'work.history.append' AND idempotency_key = 'near-limit-history'
+        `).get() as { response_bytes: number };
+        assert.ok(ledger.response_bytes > WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES);
+        assert.ok(ledger.response_bytes <= WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES);
+      } finally {
+        db.close();
+      }
     } finally {
       await closeHarness(harness);
     }
@@ -554,14 +621,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "invariant"
-  // claim = "Root WorkItemのterminal resultはnested descendantがterminalで各aggregation decisionが確定し、parent-null delegated branchにresultが存在する場合だけ保存される"
+  // claim = "Root WorkItemのterminal resultはnested descendantがterminalで各aggregation decisionが確定し、parent-null top-level delegated branchがresult付きterminalへ収束した場合だけ保存される"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#確定した判断" }
-  // failure_mode = "direct childだけの集約でrootをterminalにし、active nested作業、未確定decision、または結果未回収legacy branchを残したまま目的完了と誤認する"
+  // failure_mode = "direct childだけの集約でrootをterminalにし、active nested作業、未確定decision、または結果未回収top-level branchを残したまま目的完了と誤認する"
   // scope = "WorkItemStorageV6 root terminal aggregation"
   // lifecycle = "permanent"
-  // distinction = "root直下へ自動reparentしないparent-null branchと、そのnested child decisionを段階的に確定してfailure timingを観測する"
+  // distinction = "root直下へreparentしないtop-level parent-null branchと、そのnested child decisionを段階的に確定してfailure timingを観測する"
   // @end-test-value
-  it("RW-4: nested aggregationとparent-null delegated branchが確定するまでroot resultを拒否する", async () => {
+  it("RW-4: nested aggregationとparent-null top-level branchが確定するまでroot resultを拒否する", async () => {
     const harness = await createHarness();
     try {
       const root = insertRootSession(harness, "root", "overall-coordinator");
@@ -574,14 +641,14 @@ describe("Root WorkItem contract", () => {
         expectedRevision: rootItem.revision,
         idempotencyKey: "root-start",
       }, runtimeBinding("root"));
-      const legacyBranch = createDelegated(harness, "root", "task", "legacy-parent-null");
+      const topLevelBranch = createDelegated(harness, "root", "task", "top-level-parent-null");
       const activeBranch = harness.service.transition({
-        workItemId: legacyBranch.id,
+        workItemId: topLevelBranch.id,
         state: "in_progress",
-        expectedRevision: legacyBranch.revision,
-        idempotencyKey: "legacy-start",
+        expectedRevision: topLevelBranch.revision,
+        idempotencyKey: "top-level-start",
       }, runtimeBinding("task"));
-      const nested = createDelegated(harness, "task", "executor", "nested", legacyBranch.id);
+      const nested = createDelegated(harness, "task", "executor", "nested", topLevelBranch.id);
       const activeNested = harness.service.transition({
         workItemId: nested.id,
         state: "in_progress",
@@ -603,29 +670,29 @@ describe("Root WorkItem contract", () => {
       );
       assert.equal(terminalNested.state, "completed");
       assert.throws(
-        () => reportResult(harness, legacyBranch.id, "task", "completed", activeBranch.revision, "branch-before-decision", 1),
+        () => reportResult(harness, topLevelBranch.id, "task", "completed", activeBranch.revision, "branch-before-decision", 1),
         WorkItemAggregationConflictError,
       );
 
-      const aggregate = harness.service.getAggregation({ parentWorkItemId: legacyBranch.id }, runtimeBinding("task"));
+      const aggregate = harness.service.getAggregation({ parentWorkItemId: topLevelBranch.id }, runtimeBinding("task"));
       harness.service.decideAggregation({
-        parentWorkItemId: legacyBranch.id,
+        parentWorkItemId: topLevelBranch.id,
         childWorkItemId: nested.id,
         decision: "accepted",
         expectedAggregateRevision: aggregate.aggregateRevision,
         idempotencyKey: "accept-nested",
       }, runtimeBinding("task"));
-      const resolvedAggregate = harness.service.getAggregation({ parentWorkItemId: legacyBranch.id }, runtimeBinding("task"));
+      const resolvedAggregate = harness.service.getAggregation({ parentWorkItemId: topLevelBranch.id }, runtimeBinding("task"));
       const terminalBranch = reportResult(
         harness,
-        legacyBranch.id,
+        topLevelBranch.id,
         "task",
         "completed",
         activeBranch.revision,
-        "legacy-result",
+        "top-level-result",
         resolvedAggregate.aggregateRevision,
       );
-      assert.equal(terminalBranch.result?.summary, legacyBranch.id + " result");
+      assert.equal(terminalBranch.result?.summary, topLevelBranch.id + " result");
       const terminalRoot = reportResult(
         harness,
         rootItem.id,
@@ -648,15 +715,59 @@ describe("Root WorkItem contract", () => {
   });
 
   // @test-value v1
+  // kind = "regression"
+  // claim = "root coordinatorが作成したparent-null top-level delegated WorkItemは、terminal canceledへ収束すればresultなしでもRoot finalizationを永久に阻害しない"
+  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
+  // failure_mode = "再開不能なcanceled top-levelをresultなしの未回収作業として扱い続け、Root resultが以後すべてWORK_ITEM_AGGREGATION_INCOMPLETEになる"
+  // scope = "WorkItemStorageV6 root finalization for top-level cancellation"
+  // lifecycle = "permanent"
+  // distinction = "completed resultを持つtop-levelの既存経路ではなく、cancel APIが作るterminalかつresultなしのtupleを直接作ってRoot resultを報告する"
+  // @end-test-value
+  it("RW-4B: canceled top-level WorkItemをsettledとしてRoot resultを確定する", async () => {
+    const harness = await createHarness();
+    try {
+      const root = insertRootSession(harness, "root", "overall-coordinator");
+      insertChildSession(harness, "task", root, "task-coordinator");
+      const rootItem = getRootWorkItem(harness, "root");
+      const activeRoot = harness.service.transition({
+        workItemId: rootItem.id,
+        state: "in_progress",
+        expectedRevision: rootItem.revision,
+        idempotencyKey: "root-start",
+      }, runtimeBinding("root"));
+      const topLevel = createDelegated(harness, "root", "task", "cancel-top-level");
+      const canceled = harness.service.cancel({
+        workItemId: topLevel.id,
+        expectedRevision: topLevel.revision,
+        idempotencyKey: "cancel-top-level",
+      }, runtimeBinding("root"));
+      assert.equal(canceled.state, "canceled");
+      assert.equal(canceled.result, null);
+
+      const terminalRoot = reportResult(
+        harness,
+        rootItem.id,
+        "root",
+        "completed",
+        activeRoot.revision,
+        "root-after-cancel",
+      );
+      assert.equal(terminalRoot.state, "completed");
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v1
   // kind = "invariant"
-  // claim = "active root Sessionとexecution associationが残るterminal root Sessionの削除は拒否し、root ownerはcanceledをrevisionedに確定でき、削除可能なterminal rootはSession・WorkItem・eventをatomic deleteする"
-  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
-  // failure_mode = "active作業や実行関連の消失、またはterminal Session削除後に自己所有Root WorkItemか履歴だけが孤児として残る"
+  // claim = "active root Sessionの削除は拒否し、削除可能なterminal rootはSession、WorkItem、event、execution、associationを同じtransactionで削除して失敗時は全rowをrollbackする"
+  // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
+  // failure_mode = "通常turnのexecution associationがterminal Sessionを削除不能にする、または途中失敗でassociationだけ消えてRoot WorkItemとexecutionが分岐する"
   // scope = "SQLite delete trigger and SessionStorageV6 delete transaction"
   // lifecycle = "permanent"
-  // distinction = "同じSessionをactive時に拒否した後terminalへ進め、delete前後の三表を直接観測する"
+  // distinction = "同じSessionをactive時に拒否した後terminalへ進め、Root WorkItem deleteの失敗注入前後で五表のrollbackと最終削除を直接観測する"
   // @end-test-value
-  it("RW-6: active rootの削除を拒否しterminal rootとeventをatomic deleteする", async () => {
+  it("RW-6: active rootの削除を拒否しterminal rootとexecution associationをatomic deleteする", async () => {
     const harness = await createHarness();
     try {
       insertRootSession(harness, "root", "standalone");
@@ -691,18 +802,6 @@ describe("Root WorkItem contract", () => {
       reportResult(harness, rootItem.id, "root", "completed", active.revision, "root-result");
       assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
 
-      const associated = new DatabaseSync(harness.dbPath);
-      try {
-        assert.throws(
-          () => associated.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("root"),
-          /WORK_ITEM_SESSION_PROTECTED/,
-        );
-        associated.prepare("DELETE FROM session_executions_v6 WHERE id = ?")
-          .run("execution-before-terminal");
-      } finally {
-        associated.close();
-      }
-
       const db = new DatabaseSync(harness.dbPath);
       try {
         db.exec(`
@@ -723,6 +822,8 @@ describe("Root WorkItem contract", () => {
       assert.ok(harness.sessionStorage.getSession("root"));
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 1);
       assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 3);
+      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 1);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 1);
       const cleanup = new DatabaseSync(harness.dbPath);
       try {
         cleanup.exec("DROP TRIGGER fail_terminal_root_work_item_delete;");
@@ -734,6 +835,8 @@ describe("Root WorkItem contract", () => {
       assert.equal(harness.sessionStorage.getSession("root"), null);
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "id = ?", rootItem.id), 0);
       assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id = ?", rootItem.id), 0);
+      assert.equal(tableCount(harness.dbPath, "session_executions_v6", "id = 'execution-before-terminal'"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_execution_associations_v6", "execution_id = 'execution-before-terminal'"), 0);
 
       insertRootSession(harness, "canceled-root", "standalone");
       const cancelable = getRootWorkItem(harness, "canceled-root");
@@ -815,6 +918,80 @@ describe("Root WorkItem contract", () => {
           childWorkItemId: "legacy-child",
         });
         assert.equal(first.childResultSummary, "legacy child result");
+      } finally {
+        db.close();
+      }
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "既存V2 databaseの512 KiB idempotency response CHECKは、rowを保持したままcanonical Work Item用の2 MiB境界へrepairされ、再実行しても収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
+  // failure_mode = "fresh databaseだけ上限が広がり、既存利用者ではvalidator受理payloadが古いledger CHECKでrollbackし続けるか、table rebuildでreplay rowを失う"
+  // scope = "ensureV6Schema WorkItem idempotency response limit repair"
+  // lifecycle = "permanent"
+  // distinction = "現行V2 tableを旧CHECKへ狭めて保存済みledger rowを置き、schema repair二回後のDDLとrow保持を直接観測する"
+  // @end-test-value
+  it("RW-5B: 旧idempotency response上限をrow保持付きでrepairする", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "withmate-root-idempotency-repair-"));
+    try {
+      const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
+      const storage = new SessionStorageV6(dbPath);
+      try {
+        storage.insertSession(createSession({ id: "root", rootRole: "standalone" }));
+      } finally {
+        storage.close();
+      }
+      const db = new DatabaseSync(dbPath);
+      try {
+        const rootRow = db.prepare("SELECT id FROM work_items_v6 WHERE kind = 'root' AND root_session_id = 'root'")
+          .get() as { id: string };
+        db.prepare(`
+          INSERT INTO work_item_idempotency_v6 (
+            operation, principal_session_id, idempotency_key, request_fingerprint,
+            work_item_id, response_json, created_at, expires_at
+          ) VALUES ('work.revise', 'root', 'preserved-key', 'fingerprint', ?, NULL, ?, ?)
+        `).run(rootRow.id, NOW, EXPIRES);
+        const current = db.prepare(`
+          SELECT sql FROM sqlite_schema
+          WHERE type = 'table' AND name = 'work_item_idempotency_v6'
+        `).get() as { sql: string };
+        const oldCapSql = current.sql.replace(
+          `length(CAST(response_json AS BLOB)) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`,
+          "length(CAST(response_json AS BLOB)) <= 524288",
+        );
+        assert.notEqual(oldCapSql, current.sql);
+        db.exec(`
+          ALTER TABLE work_item_idempotency_v6 RENAME TO work_item_idempotency_v6_old_cap;
+          DROP INDEX IF EXISTS idx_v6_work_item_idempotency_item;
+          DROP INDEX IF EXISTS idx_v6_work_item_idempotency_expiry;
+          ${oldCapSql};
+          CREATE INDEX idx_v6_work_item_idempotency_item ON work_item_idempotency_v6(work_item_id);
+          CREATE INDEX idx_v6_work_item_idempotency_expiry ON work_item_idempotency_v6(expires_at);
+          INSERT INTO work_item_idempotency_v6
+          SELECT * FROM work_item_idempotency_v6_old_cap;
+          DROP TABLE work_item_idempotency_v6_old_cap;
+        `);
+
+        ensureV6Schema(db);
+        ensureV6Schema(db);
+        const repaired = db.prepare(`
+          SELECT sql FROM sqlite_schema
+          WHERE type = 'table' AND name = 'work_item_idempotency_v6'
+        `).get() as { sql: string };
+        assert.match(
+          repaired.sql,
+          new RegExp(`length\\(CAST\\(response_json AS BLOB\\)\\) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`),
+        );
+        const preserved = db.prepare(`
+          SELECT COUNT(*) AS count
+          FROM work_item_idempotency_v6
+          WHERE idempotency_key = 'preserved-key'
+        `).get() as { count: number };
+        assert.equal(preserved.count, 1);
       } finally {
         db.close();
       }

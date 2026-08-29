@@ -139,6 +139,7 @@ export type AgentSessionChatProjectionInput = {
   rootWorkItemLoading: SessionContextPaneProps["rootWorkItemLoading"];
   rootWorkItemErrorMessage: SessionContextPaneProps["rootWorkItemErrorMessage"];
   isRootWorkItemMutationPending: SessionContextPaneProps["isRootWorkItemMutationPending"];
+  onRetryRootWorkItem: SessionContextPaneProps["onRetryRootWorkItem"];
   onReviseRootWorkItem: SessionContextPaneProps["onReviseRootWorkItem"];
   onHandoffRootWorkItem: SessionContextPaneProps["onHandoffRootWorkItem"];
   selectedContextEmptyText: string;
@@ -416,6 +417,7 @@ export function buildAgentSessionChatWindowProps(input: AgentSessionChatProjecti
     rootWorkItemLoading: input.rootWorkItemLoading,
     rootWorkItemErrorMessage: input.rootWorkItemErrorMessage,
     isRootWorkItemMutationPending: input.isRootWorkItemMutationPending,
+    onRetryRootWorkItem: input.onRetryRootWorkItem,
     onReviseRootWorkItem: input.onReviseRootWorkItem,
     onHandoffRootWorkItem: input.onHandoffRootWorkItem,
     contextEmptyText: input.selectedContextEmptyText,
