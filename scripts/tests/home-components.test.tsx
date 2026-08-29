@@ -800,16 +800,21 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal(newSessionButtons?.length, 1);
   });
 
-  it("保存集合がある時だけ一括復元操作を表示し、処理中と対象別failureを投影する", () => {
+  it("一括復元操作を常設し、対象なし・処理中のdisabledと対象別failureを投影する", () => {
     const emptyHtml = renderHomeRecentSessions();
+    const enabledHtml = renderHomeRecentSessions({
+      sessionWindowRestoreIds: ["session-a", "session-b"],
+    });
     const restoreHtml = renderHomeRecentSessions({
       sessionWindowRestoreIds: ["session-a", "session-b"],
       sessionWindowRestorePending: true,
       sessionWindowRestoreFeedback: "1件のSessionを開きました。 復元できなかったSession: session-b（削除済み）",
     });
 
-    assert.doesNotMatch(emptyHtml, /前回のセッションをすべて開く/);
-    assert.match(restoreHtml, /前回のセッションをすべて開く（2）/);
+    assert.match(emptyHtml, /Restore Previous Sessions/);
+    assert.match(emptyHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(enabledHtml, /Restore Previous Sessions/);
+    assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
     assert.match(restoreHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
     assert.match(restoreHtml, /session-b（削除済み）/);
     assert.match(restoreHtml, /role="status" aria-live="polite"/);
@@ -1009,7 +1014,8 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 2);
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("閲覧専用"));
-    assert.ok(!html.includes("disabled=\"\""));
+    assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
+    assert.match(html, /class="session-card home-session-card"[^>]*aria-disabled="false"/);
   });
 });
 

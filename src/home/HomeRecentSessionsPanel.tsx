@@ -154,18 +154,22 @@ export function HomeRecentSessionsPanel({
             onChange={(event) => onChangeSearchText(event.target.value)}
           />
         </label>
-        {sessionWindowRestoreIds.length > 0 && onRestoreSessionWindows ? (
+        {onRestoreSessionWindows ? (
           <button
             className="restore-session-windows-button"
             type="button"
             onClick={onRestoreSessionWindows}
-            disabled={!canUsePrimaryFeatures || sessionWindowRestorePending}
+            disabled={
+              !canUsePrimaryFeatures
+              || sessionWindowRestorePending
+              || sessionWindowRestoreIds.length === 0
+            }
             aria-busy={sessionWindowRestorePending}
           >
             {sessionWindowRestorePending ? (
               <span className="restore-session-windows-spinner" aria-hidden="true" />
             ) : null}
-            <span>{`前回のセッションをすべて開く（${sessionWindowRestoreIds.length}）`}</span>
+            <span>Restore Previous Sessions</span>
           </button>
         ) : null}
         <button
