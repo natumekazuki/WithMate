@@ -553,7 +553,7 @@ export class WorkItemStorageV6 {
         input.actorSessionId, input.decision, input.reason, input.replacementWorkItemId, input.decidedAt);
   }
 
-  private resolveAggregationIdempotency(
+  resolveAggregationIdempotency(
     operation: WorkItemAggregationMutationOperation,
     actorSessionId: string,
     key: string,

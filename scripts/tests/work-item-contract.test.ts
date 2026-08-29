@@ -190,8 +190,18 @@ describe("Work Item contract", () => {
     const parent = createRootWork("retry-parent");
     const child = createChild(parent.id, "retry-child");
     service.cancel({ workItemId: child.id, expectedRevision: 1, idempotencyKey: "cancel-child" }, binding("task"));
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.prepare(`
+        UPDATE session_role_bindings_v6
+        SET session_role = 'executor', root_session_id = 'root', parent_session_id = 'task', delegation_depth = 2
+        WHERE session_id = 'task-sibling'
+      `).run();
+    } finally {
+      db.close();
+    }
     const request = {
-      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "executor",
+      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "task-sibling",
       goal: "retry", scope: "retry scope", completionCriteria: "done", authority: "local", sourceIdentity,
       expectedAggregateRevision: 1, idempotencyKey: "retry-request",
     } as const;
@@ -201,6 +211,20 @@ describe("Work Item contract", () => {
     assert.equal(first.decision.replacementWorkItemId, first.replacement.id);
     assert.equal(storage.get(child.id)?.state, "canceled");
     assert.equal(service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).aggregateRevision, 3);
+    service.cancel({
+      workItemId: first.replacement.id,
+      expectedRevision: first.replacement.revision,
+      idempotencyKey: "cancel-replacement-before-replay",
+    }, binding("task"));
+    const deleteTargetDb = new DatabaseSync(dbPath);
+    try {
+      deleteTargetDb.exec(`
+        DELETE FROM session_role_bindings_v6 WHERE session_id = 'task-sibling';
+        DELETE FROM sessions_v6 WHERE id = 'task-sibling';
+      `);
+    } finally {
+      deleteTargetDb.close();
+    }
     storage.close();
     storage = new WorkItemStorageV6(dbPath);
     service = makeService(storage);

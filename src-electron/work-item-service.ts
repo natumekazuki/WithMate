@@ -136,6 +136,7 @@ export class WorkItemService {
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
+      | "resolveAggregationIdempotency"
     >;
     getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
     createWorkItemId(): string;
@@ -343,12 +344,21 @@ export class WorkItemService {
 
   decideAggregation(input: WorkItemAggregationDecisionInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationDecision {
     const decidedAt = this.deps.currentTimestamp();
+    const requestFingerprint = fingerprintMutation(input, binding.actorSessionId);
+    const replay = this.deps.storage.resolveAggregationIdempotency(
+      "work.aggregation.decide",
+      binding.actorSessionId,
+      input.idempotencyKey,
+      requestFingerprint,
+      decidedAt,
+    );
+    if (replay) return replay;
     this.requireAggregationActor(input.parentWorkItemId, binding);
     return this.deps.storage.decideAggregation({
       ...input,
       actorSessionId: binding.actorSessionId,
       reason: input.reason ?? null,
-      requestFingerprint: fingerprintMutation(input, binding.actorSessionId),
+      requestFingerprint,
       decidedAt,
       expiresAt: resolveIdempotencyExpiresAt(decidedAt),
     });
@@ -356,6 +366,21 @@ export class WorkItemService {
 
   retryAggregation(input: WorkItemAggregationRetryInput, binding: ResolvedAgentRuntimeBinding): { decision: WorkItemAggregationDecision; replacement: WorkItem } {
     const decidedAt = this.deps.currentTimestamp();
+    const requestFingerprint = fingerprintMutation(input, binding.actorSessionId);
+    const replay = this.deps.storage.resolveAggregationIdempotency(
+      "work.aggregation.retry",
+      binding.actorSessionId,
+      input.idempotencyKey,
+      requestFingerprint,
+      decidedAt,
+    );
+    if (replay) {
+      const replacement = replay.replacementWorkItemId === null
+        ? null
+        : this.deps.storage.get(replay.replacementWorkItemId);
+      if (!replacement) throw new Error("A retry idempotency result is missing its replacement Work Item.");
+      return { decision: replay, replacement };
+    }
     const parent = this.requireAggregationActor(input.parentWorkItemId, binding);
     const actor = this.requireSession(binding.actorSessionId);
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
@@ -376,7 +401,7 @@ export class WorkItemService {
       actorSessionId: binding.actorSessionId,
       expectedAggregateRevision: input.expectedAggregateRevision,
       idempotencyKey: input.idempotencyKey,
-      requestFingerprint: fingerprintMutation(input, binding.actorSessionId),
+      requestFingerprint,
       replacementId: this.deps.createWorkItemId(),
       replacementBinding: {
         rootSessionId: parent.rootSessionId,
