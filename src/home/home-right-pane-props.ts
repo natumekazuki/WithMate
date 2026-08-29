@@ -8,6 +8,7 @@ type HomeRightPaneHandlers = {
   onChangeRightPaneView: (view: HomeRightPaneProps["rightPaneView"]) => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
+  onRestoreSessionWindows: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string) => void;
@@ -23,6 +24,9 @@ export type HomeRightPanePropsInput = {
   characterListFeedback?: string;
   handlers: HomeRightPaneHandlers;
   canUsePrimaryFeatures?: boolean;
+  sessionWindowRestoreIds?: readonly string[];
+  sessionWindowRestorePending?: boolean;
+  sessionWindowRestoreFeedback?: string;
 };
 
 export function buildHomeRightPaneProps({
@@ -34,6 +38,9 @@ export function buildHomeRightPaneProps({
   characterListFeedback,
   handlers,
   canUsePrimaryFeatures,
+  sessionWindowRestoreIds,
+  sessionWindowRestorePending,
+  sessionWindowRestoreFeedback,
 }: HomeRightPanePropsInput): HomeRightPaneProps {
   return {
     rightPaneView,
@@ -45,10 +52,14 @@ export function buildHomeRightPaneProps({
     onChangeRightPaneView: handlers.onChangeRightPaneView,
     onOpenSessionMonitorWindow: handlers.onOpenSessionMonitorWindow,
     onOpenSettingsWindow: handlers.onOpenSettingsWindow,
+    onRestoreSessionWindows: handlers.onRestoreSessionWindows,
     onCreateCharacter: handlers.onCreateCharacter,
     onEditCharacter: handlers.onEditCharacter,
     onOpenSession: handlers.onOpenSession,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
     canUsePrimaryFeatures,
+    sessionWindowRestoreIds,
+    sessionWindowRestorePending,
+    sessionWindowRestoreFeedback,
   };
 }

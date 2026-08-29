@@ -11,7 +11,6 @@ type HomeRecentSessionsPanelHandlers = {
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
-  onRestoreSessionWindows: () => void;
 };
 
 export type HomeRecentSessionsPanelPropsInput = {
@@ -26,9 +25,6 @@ export type HomeRecentSessionsPanelPropsInput = {
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
-  sessionWindowRestoreIds?: readonly string[];
-  sessionWindowRestorePending?: boolean;
-  sessionWindowRestoreFeedback?: string;
 };
 
 export function buildHomeRecentSessionsPanelProps({
@@ -43,9 +39,6 @@ export function buildHomeRecentSessionsPanelProps({
   loadingMore,
   onLoadMore,
   pendingSessionPinIds,
-  sessionWindowRestoreIds,
-  sessionWindowRestorePending,
-  sessionWindowRestoreFeedback,
 }: HomeRecentSessionsPanelPropsInput): HomeRecentSessionsPanelProps {
   return {
     filteredSessionEntries,
@@ -58,14 +51,10 @@ export function buildHomeRecentSessionsPanelProps({
     onOpenSession: handlers.onOpenSession,
     onSetSessionPinned: handlers.onSetSessionPinned,
     onOpenCompanionReview: handlers.onOpenCompanionReview,
-    onRestoreSessionWindows: handlers.onRestoreSessionWindows,
     canUsePrimaryFeatures,
     hasMore,
     loadingMore,
     onLoadMore,
     pendingSessionPinIds,
-    sessionWindowRestoreIds,
-    sessionWindowRestorePending,
-    sessionWindowRestoreFeedback,
   };
 }

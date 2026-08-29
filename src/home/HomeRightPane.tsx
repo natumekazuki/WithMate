@@ -15,11 +15,15 @@ export type HomeRightPaneProps = {
   onChangeRightPaneView: (view: "monitor" | "characters") => void;
   onOpenSessionMonitorWindow: () => void;
   onOpenSettingsWindow: () => void;
+  onRestoreSessionWindows: () => void;
   onCreateCharacter: () => void;
   onEditCharacter: (characterId: string) => void;
   onOpenSession: (sessionId: string) => void;
   onOpenCompanionReview: (sessionId: string) => void;
   canUsePrimaryFeatures?: boolean;
+  sessionWindowRestoreIds?: readonly string[];
+  sessionWindowRestorePending?: boolean;
+  sessionWindowRestoreFeedback?: string;
 };
 
 export function HomeRightPane({
@@ -32,11 +36,15 @@ export function HomeRightPane({
   onChangeRightPaneView,
   onOpenSessionMonitorWindow,
   onOpenSettingsWindow,
+  onRestoreSessionWindows,
   onCreateCharacter,
   onEditCharacter,
   onOpenSession,
   onOpenCompanionReview,
   canUsePrimaryFeatures = true,
+  sessionWindowRestoreIds = [],
+  sessionWindowRestorePending = false,
+  sessionWindowRestoreFeedback = "",
 }: HomeRightPaneProps) {
   const openSessionMonitorWindow = () => {
     if (!canUsePrimaryFeatures) {
@@ -62,6 +70,22 @@ export function HomeRightPane({
       <div className="home-settings-rail">
         <div className="home-settings-actions">
           <button
+            className="restore-session-windows-button"
+            type="button"
+            onClick={onRestoreSessionWindows}
+            disabled={
+              !canUsePrimaryFeatures
+              || sessionWindowRestorePending
+              || sessionWindowRestoreIds.length === 0
+            }
+            aria-busy={sessionWindowRestorePending}
+          >
+            {sessionWindowRestorePending ? (
+              <span className="restore-session-windows-spinner" aria-hidden="true" />
+            ) : null}
+            <span>Restore Sessions</span>
+          </button>
+          <button
             className="launch-toggle home-monitor-window-button"
             type="button"
             aria-label="Session Monitor Window を開く"
@@ -76,6 +100,11 @@ export function HomeRightPane({
             Settings
           </button>
         </div>
+        {sessionWindowRestoreFeedback ? (
+          <p className="session-window-restore-feedback" role="status" aria-live="polite">
+            {sessionWindowRestoreFeedback}
+          </p>
+        ) : null}
         <div className="home-pane-toggle" role="tablist" aria-label="Home right pane">
           <button
             className={`home-pane-toggle-button ${rightPaneView === "monitor" ? "active" : ""}`.trim()}
