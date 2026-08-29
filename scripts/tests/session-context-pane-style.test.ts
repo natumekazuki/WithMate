@@ -367,12 +367,13 @@ test("Markdown list はlogical paddingと階層ごとのmarkerを持つ", async 
   assert.doesNotMatch(stylesSource, /\.message-list\s*{[^}]*padding-left:/);
 });
 
-test("Markdown list はnative markerと本文を同じblock flowに置き隣接itemへ余分な間隔を付けない", async () => {
+test("Markdown list はitem間の改行を余白にせずnative markerと本文を同じblock flowに置く", async () => {
   const stylesSource = await readFile("src/styles.css", "utf8");
   const listRule = stylesSource.match(/\.message-list\s*{(?<body>[^}]*)}/)?.groups?.body ?? "";
 
   assert.match(listRule, /display:\s*block;/);
   assert.doesNotMatch(listRule, /display:\s*grid;/);
+  assert.match(listRule, /white-space:\s*normal;/);
   assert.doesNotMatch(
     stylesSource,
     /\.message-list\s*>\s*li\s*\+\s*li\s*{[^}]*margin-block-start:/,
