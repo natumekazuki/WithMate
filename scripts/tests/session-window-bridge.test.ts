@@ -370,6 +370,42 @@ describe("SessionWindowBridge", () => {
     assert.equal(bridge.getWindow(session.id), null);
   });
 
+  it("別Sessionのopen完了時に読込中のWindowをsnapshotへ混ぜず、読込失敗後も残さない", async () => {
+    const sessionA = createSession({ id: "session-a" });
+    const sessionB = createSession({ id: "session-b" });
+    let rejectSessionA: ((error: Error) => void) | null = null;
+    const savedSnapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      loadChatEntry(_window, mode) {
+        if (mode.sessionId === sessionA.id) {
+          return new Promise<void>((_resolve, reject) => {
+            rejectSessionA = reject;
+          });
+        }
+        return Promise.resolve();
+      },
+      getSession: (sessionId) => sessionId === sessionA.id ? sessionA : sessionB,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(sessionIds) {
+        savedSnapshots.push([...sessionIds]);
+      },
+    });
+
+    const openingA = bridge.openSessionWindow(sessionA.id);
+    await bridge.openSessionWindow(sessionB.id);
+    assert.deepEqual(savedSnapshots, [[sessionB.id]]);
+
+    assert.ok(rejectSessionA);
+    rejectSessionA(new Error("load failed"));
+    await assert.rejects(openingA, /load failed/);
+
+    assert.deepEqual(savedSnapshots, [[sessionB.id]]);
+  });
+
   it("古い window の遅延 closed は同じ Session の新しい window claim を解放しない", async () => {
     const session = createSession();
     const windows: StubWindow[] = [];

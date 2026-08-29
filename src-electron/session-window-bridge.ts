@@ -205,9 +205,19 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
       return;
     }
     try {
-      await this.deps.persistOpenSessionWindowIds(this.listOpenSessionWindowIds());
+      await this.deps.persistOpenSessionWindowIds(this.listSnapshotSessionWindowIds());
     } catch (error) {
       this.deps.onSnapshotPersistenceError?.(error);
     }
+  }
+
+  private listSnapshotSessionWindowIds(): string[] {
+    const sessionIds: string[] = [];
+    for (const [sessionId, window] of this.sessionWindows.entries()) {
+      if (!window.isDestroyed() && this.snapshotEligibleWindows.has(window)) {
+        sessionIds.push(sessionId);
+      }
+    }
+    return sessionIds;
   }
 }
