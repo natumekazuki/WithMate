@@ -151,6 +151,8 @@ import {
 } from "./character-affect-turn-settlement-storage.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
+import { SessionWindowRestoreService } from "./session-window-restore-service.js";
+import { SessionWindowRestoreStorage } from "./session-window-restore-storage.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
 import { SessionApprovalService } from "./session-approval-service.js";
@@ -401,6 +403,7 @@ let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
+let sessionWindowRestoreService: SessionWindowRestoreService | null = null;
 let settingsCatalogService: SettingsCatalogService | null = null;
 let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
@@ -1499,6 +1502,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               return choice === 1;
             },
+            prepareSessionWindowSnapshotForQuit: () =>
+              requireSessionWindowBridge().prepareSnapshotForQuit(),
             closePersistentStores,
             invalidateAllProviderSessionThreads,
             revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
@@ -1527,6 +1532,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveCompanionReviewWindow: (sessionId) =>
                   requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
+                getSessionWindowRestoreSet: () => requireSessionWindowRestoreService().getSnapshot(),
+                restoreSessionWindows: () => requireSessionWindowRestoreService().restoreSnapshot(),
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
@@ -3093,10 +3100,35 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
         return choice === 1;
       },
       broadcastOpenSessionWindowIds,
+      persistOpenSessionWindowIds: (sessionIds) =>
+        requireSessionWindowRestoreService().saveSnapshot(sessionIds),
+      onSnapshotPersistenceError: (error) => {
+        writeAppLog({
+          level: "warn",
+          kind: "session.window.restore_snapshot.save_failed",
+          process: "main",
+          message: "Session Window restore snapshot save failed",
+          error: appLogService.errorToLogError(error),
+        });
+      },
     });
   }
 
   return sessionWindowBridge;
+}
+
+function requireSessionWindowRestoreService(): SessionWindowRestoreService {
+  if (!sessionWindowRestoreService) {
+    sessionWindowRestoreService = new SessionWindowRestoreService({
+      storage: new SessionWindowRestoreStorage(app.getPath("userData")),
+      getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+      openSessionWindow: (sessionId) => requireSessionWindowBridge().openSessionWindow(sessionId),
+      onSnapshotSaved: (sessionIds) => {
+        requireWindowBroadcastService().broadcastSessionWindowRestoreSet(sessionIds);
+      },
+    });
+  }
+  return sessionWindowRestoreService;
 }
 
 function requireSettingsCatalogService(): SettingsCatalogService {

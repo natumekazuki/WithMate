@@ -141,6 +141,7 @@ import type {
   UpdatePromptTemplateInput,
 } from "../src/prompt-template.js";
 import type { MainIpcRegistrationDeps } from "./main-ipc-registration.js";
+import type { SessionWindowRestoreResult } from "../src/session-window-restore.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
@@ -150,6 +151,8 @@ export type MainIpcWindowDepsArgs = {
   resolveSessionWindow(sessionId: string): MaybeWindow;
   resolveCompanionReviewWindow(sessionId: string): MaybeWindow;
   openSessionWindow(sessionId: string): Promise<BrowserWindow>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<BrowserWindow>;
   openSessionMonitorWindow(): Promise<BrowserWindow>;
   openSettingsWindow(): Promise<BrowserWindow>;
@@ -436,6 +439,8 @@ export function createMainIpcRegistrationDeps(
     openSessionWindow: async (sessionId) => {
       await args.window.openSessionWindow(sessionId);
     },
+    getSessionWindowRestoreSet: () => args.window.getSessionWindowRestoreSet(),
+    restoreSessionWindows: () => args.window.restoreSessionWindows(),
     openHomeWindow: async () => {
       await args.window.openHomeWindow();
     },

@@ -96,6 +96,7 @@ import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js"
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
+import { buildSessionWindowRestoreFeedback } from "./home/home-session-window-restore.js";
 import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
@@ -178,6 +179,9 @@ export default function HomeApp() {
   const [openCompanionReviewWindowIds, setOpenCompanionReviewWindowIds] = useState<string[]>([]);
   const [sessionSearchText, setSessionSearchText] = useState("");
   const [pendingSessionPinIds, setPendingSessionPinIds] = useState<string[]>([]);
+  const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
+  const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
+  const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
@@ -600,6 +604,55 @@ export default function HomeApp() {
   });
 
   useEffect(() => {
+    const api = getWithMateApi();
+    if (!api || isSettingsWindowMode || isMonitorWindowMode || isMemoryReviewWindowMode) {
+      return;
+    }
+    let active = true;
+    let receivedSnapshotUpdate = false;
+    const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => {
+      if (active) {
+        receivedSnapshotUpdate = true;
+        setSessionWindowRestoreIds(sessionIds);
+      }
+    });
+    void api.getSessionWindowRestoreSet().then((sessionIds) => {
+      if (active && !receivedSnapshotUpdate) {
+        setSessionWindowRestoreIds(sessionIds);
+      }
+    }).catch((error) => {
+      if (active) {
+        setSessionWindowRestoreFeedback(
+          error instanceof Error ? error.message : "前回のSession一覧を読み込めませんでした。",
+        );
+      }
+    });
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [isMemoryReviewWindowMode, isMonitorWindowMode, isSettingsWindowMode]);
+
+  const restoreSessionWindows = async () => {
+    const api = getWithMateApi();
+    if (!api || sessionWindowRestorePending) {
+      return;
+    }
+    setSessionWindowRestorePending(true);
+    setSessionWindowRestoreFeedback("");
+    try {
+      const result = await api.restoreSessionWindows();
+      setSessionWindowRestoreFeedback(buildSessionWindowRestoreFeedback(result));
+    } catch (error) {
+      setSessionWindowRestoreFeedback(
+        error instanceof Error ? error.message : "前回のSessionを復元できませんでした。",
+      );
+    } finally {
+      setSessionWindowRestorePending(false);
+    }
+  };
+
+  useEffect(() => {
     const withmateApi = getWithMateApi();
     if (!withmateApi) {
       setActiveAuxiliarySessions([]);
@@ -876,12 +929,16 @@ export default function HomeApp() {
         onOpenSession: (sessionId) => void openSessionWindow(sessionId),
         onSetSessionPinned: (sessionId, isPinned) => void setSessionPinned(sessionId, isPinned),
         onOpenCompanionReview: (sessionId) => void openCompanionReviewWindow(sessionId),
+        onRestoreSessionWindows: () => void restoreSessionWindows(),
       },
       canUsePrimaryFeatures,
       hasMore: sessionSummariesState.hasMoreRecent || sessionSummariesState.hasMorePinned,
       loadingMore: sessionSummariesState.loadingRecentPage || sessionSummariesState.loadingPinnedPage,
       onLoadMore: loadNextSessionSummaryPage,
       pendingSessionPinIds,
+      sessionWindowRestoreIds,
+      sessionWindowRestorePending,
+      sessionWindowRestoreFeedback,
     }),
     rightPane: buildHomeRightPaneProps({
       rightPaneView,

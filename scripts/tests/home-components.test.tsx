@@ -750,6 +750,9 @@ describe("HomeRecentSessionsPanel", () => {
     hasMore = false,
     loadingMore = false,
     onLoadMore = noOp,
+    sessionWindowRestoreIds = [],
+    sessionWindowRestorePending = false,
+    sessionWindowRestoreFeedback = "",
   }: {
     canUsePrimaryFeatures?: boolean;
     filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
@@ -759,6 +762,9 @@ describe("HomeRecentSessionsPanel", () => {
     hasMore?: boolean;
     loadingMore?: boolean;
     onLoadMore?: () => void;
+    sessionWindowRestoreIds?: readonly string[];
+    sessionWindowRestorePending?: boolean;
+    sessionWindowRestoreFeedback?: string;
   } = {}) => renderToStaticMarkup(
     <HomeRecentSessionsPanel
       filteredSessionEntries={filteredSessionEntries}
@@ -775,6 +781,10 @@ describe("HomeRecentSessionsPanel", () => {
       hasMore={hasMore}
       loadingMore={loadingMore}
       onLoadMore={onLoadMore}
+      onRestoreSessionWindows={noOp}
+      sessionWindowRestoreIds={sessionWindowRestoreIds}
+      sessionWindowRestorePending={sessionWindowRestorePending}
+      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
     />,
   );
 
@@ -788,6 +798,21 @@ describe("HomeRecentSessionsPanel", () => {
     const html = renderHomeRecentSessions();
     const newSessionButtons = html.match(/<button class="start-session-button"/g);
     assert.equal(newSessionButtons?.length, 1);
+  });
+
+  it("保存集合がある時だけ一括復元操作を表示し、処理中と対象別failureを投影する", () => {
+    const emptyHtml = renderHomeRecentSessions();
+    const restoreHtml = renderHomeRecentSessions({
+      sessionWindowRestoreIds: ["session-a", "session-b"],
+      sessionWindowRestorePending: true,
+      sessionWindowRestoreFeedback: "1件のSessionを開きました。 復元できなかったSession: session-b（削除済み）",
+    });
+
+    assert.doesNotMatch(emptyHtml, /前回のセッションをすべて開く/);
+    assert.match(restoreHtml, /前回のセッションをすべて開く（2）/);
+    assert.match(restoreHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
+    assert.match(restoreHtml, /session-b（削除済み）/);
+    assert.match(restoreHtml, /role="status" aria-live="polite"/);
   });
 
   it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {

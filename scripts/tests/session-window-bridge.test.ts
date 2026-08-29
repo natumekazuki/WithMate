@@ -473,4 +473,57 @@ describe("SessionWindowBridge", () => {
 
     assert.deepEqual(broadcasts.at(-1), []);
   });
+
+  it("snapshot保存失敗でもopenとcloseを維持する", async () => {
+    const session = createSession();
+    const errors: unknown[] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds() {
+        throw new Error("save failed");
+      },
+      onSnapshotPersistenceError(error) {
+        errors.push(error);
+      },
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    assert.equal(bridge.getWindow(session.id), window);
+    window.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(bridge.getWindow(session.id), null);
+    assert.equal(errors.length, 2);
+  });
+
+  it("quit前に現在集合を保存し、その後のWindow closeではsnapshotを空にしない", async () => {
+    const session = createSession();
+    const savedSnapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => true,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(sessionIds) {
+        savedSnapshots.push([...sessionIds]);
+      },
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    savedSnapshots.splice(0);
+    await bridge.prepareSnapshotForQuit();
+    window.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(savedSnapshots, [[session.id]]);
+  });
 });

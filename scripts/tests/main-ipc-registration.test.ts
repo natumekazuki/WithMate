@@ -59,6 +59,8 @@ import {
   WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
@@ -170,6 +172,8 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   registerMainIpcHandlers(ipcMain, deps);
 
   assert.ok(handlers.has(WITHMATE_OPEN_SESSION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL));
@@ -238,6 +242,51 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("Session Window restore IPC はHomeだけからsnapshot取得と一括復元を実行できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  let eventWindow = homeWindow;
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    getSessionWindowRestoreSet: async () => {
+      calls.push("get");
+      return ["session-1"];
+    },
+    restoreSessionWindows: async () => {
+      calls.push("restore");
+      return {
+        requestedSessionIds: ["session-1"],
+        openedSessionIds: ["session-1"],
+        failures: [],
+      };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL)?.({}),
+    ["session-1"],
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL)?.({}),
+    {
+      requestedSessionIds: ["session-1"],
+      openedSessionIds: ["session-1"],
+      failures: [],
+    },
+  );
+
+  eventWindow = sessionWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL)?.({}) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.deepEqual(calls, ["get", "restore"]);
 });
 
 test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {

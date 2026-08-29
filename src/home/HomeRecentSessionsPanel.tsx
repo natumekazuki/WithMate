@@ -16,11 +16,15 @@ export type HomeRecentSessionsPanelProps = {
   onOpenSession: (sessionId: string) => void;
   onSetSessionPinned: (sessionId: string, isPinned: boolean) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  onRestoreSessionWindows?: () => void;
   hasMore?: boolean;
   loadingMore?: boolean;
   onLoadMore?: () => void;
   pendingSessionPinIds?: readonly string[];
   canUsePrimaryFeatures?: boolean;
+  sessionWindowRestoreIds?: readonly string[];
+  sessionWindowRestorePending?: boolean;
+  sessionWindowRestoreFeedback?: string;
 };
 
 function getAgentSessionModeBadge(session: HomeSessionSummary): { className: string; label: string } {
@@ -48,11 +52,15 @@ export function HomeRecentSessionsPanel({
   onOpenSession,
   onSetSessionPinned,
   onOpenCompanionReview,
+  onRestoreSessionWindows,
   hasMore = false,
   loadingMore = false,
   onLoadMore,
   pendingSessionPinIds = [],
   canUsePrimaryFeatures = true,
+  sessionWindowRestoreIds = [],
+  sessionWindowRestorePending = false,
+  sessionWindowRestoreFeedback = "",
 }: HomeRecentSessionsPanelProps) {
   const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
 
@@ -146,6 +154,20 @@ export function HomeRecentSessionsPanel({
             onChange={(event) => onChangeSearchText(event.target.value)}
           />
         </label>
+        {sessionWindowRestoreIds.length > 0 && onRestoreSessionWindows ? (
+          <button
+            className="restore-session-windows-button"
+            type="button"
+            onClick={onRestoreSessionWindows}
+            disabled={!canUsePrimaryFeatures || sessionWindowRestorePending}
+            aria-busy={sessionWindowRestorePending}
+          >
+            {sessionWindowRestorePending ? (
+              <span className="restore-session-windows-spinner" aria-hidden="true" />
+            ) : null}
+            <span>{`前回のセッションをすべて開く（${sessionWindowRestoreIds.length}）`}</span>
+          </button>
+        ) : null}
         <button
           className="start-session-button"
           type="button"
@@ -156,6 +178,12 @@ export function HomeRecentSessionsPanel({
           New Session
         </button>
       </div>
+
+      {sessionWindowRestoreFeedback ? (
+        <p className="session-window-restore-feedback" role="status" aria-live="polite">
+          {sessionWindowRestoreFeedback}
+        </p>
+      ) : null}
 
       <div className="session-card-list home-session-card-list">
         {visibleSessionEntries.map((item) => {
