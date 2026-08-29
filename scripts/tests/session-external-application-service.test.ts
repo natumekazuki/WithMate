@@ -1827,6 +1827,47 @@ test("AGG-ADAPTER-01: aggregation operationはshared Work Item serviceへdispatc
   assert.deepEqual(calls, [{ input: { parentWorkItemId: "work-parent" }, actorSessionId: "session-actor" }]);
 });
 
+test("AGG-EFFECT-02: aggregation mutationの予期しないfailureはindeterminateを返す", async () => {
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      decideAggregation() { throw new Error("unexpected decide failure"); },
+      retryAggregation() { throw new Error("unexpected retry failure"); },
+    } as never,
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; }, listPage() { return []; },
+      async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+  });
+  const sourceIdentity = { workspace: null, repository: null, branch: null, base: null, head: null };
+  const cases = [
+    ["work.aggregation.decide", {
+      parentWorkItemId: "work-parent", childWorkItemId: "work-child", decision: "accepted",
+      expectedAggregateRevision: 1, idempotencyKey: "decide-key",
+    }],
+    ["work.aggregation.retry", {
+      parentWorkItemId: "work-parent", childWorkItemId: "work-child", targetSessionId: "session-target",
+      goal: "retry", scope: "scope", completionCriteria: "done", authority: "local", sourceIdentity,
+      expectedAggregateRevision: 1, idempotencyKey: "retry-key",
+    }],
+  ] as const;
+  for (const [operation, input] of cases) {
+    const response = await executeBound(service, operation, input);
+    assert.ok("error" in response);
+    if ("error" in response) {
+      assert.equal(response.error.code, "RUNTIME_UNAVAILABLE", operation);
+      assert.equal(response.error.effect, "indeterminate", operation);
+    }
+  }
+});
+
 test("AGG-QUERY-05: aggregation cursorをparent・actor・visibility・filterへ束縛する", async () => {
   const item = (sequence: number) => ({
     child: {

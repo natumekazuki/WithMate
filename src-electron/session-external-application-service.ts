@@ -1354,6 +1354,8 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "work.transition"
     || operation === "work.result"
     || operation === "work.cancel"
+    || operation === "work.aggregation.decide"
+    || operation === "work.aggregation.retry"
     || operation === "interaction.respond"
     || operation === "coordination.event.create"
     || operation === "coordination.event.resolve"

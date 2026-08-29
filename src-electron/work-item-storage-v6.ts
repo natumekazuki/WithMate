@@ -468,11 +468,15 @@ export class WorkItemStorageV6 {
   }
 
   cleanupExpiredIdempotency(expiredBeforeOrAt: string): number {
-    const result = this.db.prepare(`
+    const workItemResult = this.db.prepare(`
       DELETE FROM work_item_idempotency_v6
       WHERE expires_at <= ?
     `).run(expiredBeforeOrAt);
-    return Number(result.changes);
+    const aggregationResult = this.db.prepare(`
+      DELETE FROM work_item_aggregation_idempotency_v6
+      WHERE expires_at <= ?
+    `).run(expiredBeforeOrAt);
+    return Number(workItemResult.changes) + Number(aggregationResult.changes);
   }
 
   close(): void {
@@ -560,7 +564,7 @@ export class WorkItemStorageV6 {
     fingerprint: string,
     observedAt: string,
   ): WorkItemAggregationDecision | null {
-    this.db.prepare("DELETE FROM work_item_aggregation_idempotency_v6 WHERE expires_at <= ?").run(observedAt);
+    this.cleanupExpiredIdempotency(observedAt);
     const row = this.db.prepare(`SELECT request_fingerprint, child_work_item_id FROM work_item_aggregation_idempotency_v6
       WHERE operation = ? AND principal_session_id = ? AND idempotency_key = ?`).get(operation, actorSessionId, key) as
       | { request_fingerprint: string; child_work_item_id: string }

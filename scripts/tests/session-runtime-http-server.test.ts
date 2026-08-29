@@ -437,6 +437,33 @@ test("Session runtime rejects a declared body over 8 MiB before handler invocati
   }
 });
 
+test("AGG-QUERY-05: aggregation list limit超過はHTTP 413でhandler前に拒否する", async () => {
+  let invoked = false;
+  const server = createSessionRuntimeHttpServer({
+    ...boundServerOptions,
+    handle: async (operation) => {
+      invoked = true;
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "work.aggregation.list",
+      input: { parentWorkItemId: "work-parent", limit: 201 },
+    });
+    const response = await post(address.port, exchangePayload("cli", body));
+    assert.equal(response.status, 413);
+    assert.equal(JSON.parse(response.body).error.code, "LIMIT_EXCEEDED");
+    assert.equal(invoked, false);
+  } finally {
+    await server.stop();
+  }
+});
+
 test("Session runtime status proves the discovered runtime identity", async () => {
   const server = createSessionRuntimeHttpServer({
     ...boundServerOptions,

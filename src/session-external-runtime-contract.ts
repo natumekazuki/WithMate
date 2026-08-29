@@ -1022,7 +1022,7 @@ function parseWorkItemAggregationListInput(value: unknown): SessionRuntimeWorkIt
     parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
     ...(record.decision === undefined ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") }),
     limit: record.limit === undefined ? WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT
-      : requireInteger(record.limit, "limit", 1, WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT),
+      : requireInteger(record.limit, "limit", 1, WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
     ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
   };
 }

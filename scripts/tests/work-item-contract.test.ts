@@ -360,6 +360,37 @@ describe("Work Item contract", () => {
     }
   });
 
+  it("AGG-IDEM-06: maintenance cleanupは通常とaggregationの期限切れledgerを同時に削除する", () => {
+    const parent = createRootWork("cleanup-parent");
+    const child = createChild(parent.id, "cleanup-child");
+    service.cancel({
+      workItemId: child.id,
+      expectedRevision: child.revision,
+      idempotencyKey: "cleanup-child-cancel",
+    }, binding("task"));
+    service.retryAggregation({
+      parentWorkItemId: parent.id,
+      childWorkItemId: child.id,
+      targetSessionId: "executor",
+      goal: "retry",
+      scope: "scope",
+      completionCriteria: "done",
+      authority: "local",
+      sourceIdentity,
+      expectedAggregateRevision: 1,
+      idempotencyKey: "cleanup-retry",
+    }, binding("task"));
+    currentNow = AFTER_EXPIRES;
+    assert.equal(service.cleanupExpiredIdempotency(), 4);
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_item_idempotency_v6").get() as { count: number }).count, 0);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_item_aggregation_idempotency_v6").get() as { count: number }).count, 0);
+    } finally {
+      db.close();
+    }
+  });
+
   it("WORK-AUTH-02: coordinatorとactive parentだけが直属targetへ委譲できる", () => {
     const parent = createRootWork();
     assert.throws(() => service.create({
