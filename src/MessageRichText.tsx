@@ -630,12 +630,12 @@ type MessageImageLightboxProps = {
 };
 
 function MessageImageLightbox({ source, alt, onClose }: MessageImageLightboxProps) {
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const initialFocusRef = useRef<HTMLElement | null>(null);
   const imageViewport = useImageViewport(source);
   const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
     open: true,
     onClose,
-    initialFocusRef: closeButtonRef,
+    initialFocusRef,
   });
 
   if (typeof document === "undefined") {
@@ -645,24 +645,19 @@ function MessageImageLightbox({ source, alt, onClose }: MessageImageLightboxProp
   return createPortal(
     <div className="message-image-lightbox" onClick={onClose}>
       <section
-        ref={dialogRef}
+        ref={(element) => {
+          dialogRef.current = element;
+          initialFocusRef.current = element;
+        }}
         className="message-image-lightbox-dialog"
         role="dialog"
         aria-modal="true"
         aria-label={alt ? `Image preview: ${alt}` : "Image preview"}
+        tabIndex={-1}
         onClick={(event) => event.stopPropagation()}
         onKeyDown={handleDialogKeyDown}
       >
-        <div className="message-image-lightbox-controls">
-          <ImageZoomControls controller={imageViewport} className="message-image-lightbox-zoom" />
-          <button
-            ref={closeButtonRef}
-            className="message-image-lightbox-close"
-            type="button"
-            aria-label="Close image preview"
-            onClick={onClose}
-          >×</button>
-        </div>
+        <ImageZoomControls controller={imageViewport} className="message-image-lightbox-controls" />
         <ImageViewport
           controller={imageViewport}
           src={source}

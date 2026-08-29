@@ -119,9 +119,8 @@ button:disabled {
     linear-gradient(180deg, #0f131a 0%, #151a22 100%);
 }
 
-.session-page {
-  gap: 0;
-  padding: 10px 12px 12px;
+.session-page,
+.message-image-lightbox {
   --surface: rgba(25, 29, 38, 0.94);
   --surface-strong: rgba(28, 33, 43, 0.98);
   --surface-deep: rgba(18, 22, 30, 0.98);
@@ -133,6 +132,11 @@ button:disabled {
   --teal: #6fb8c7;
   --teal-soft: rgba(111, 184, 199, 0.14);
   --shadow: 0 24px 48px rgba(0, 0, 0, 0.34);
+}
+
+.session-page {
+  gap: 0;
+  padding: 10px 12px 12px;
   background:
     radial-gradient(circle at top left, rgba(111, 140, 255, 0.12), transparent 28%),
     linear-gradient(180deg, #0f131a 0%, #151a22 100%);
@@ -5360,21 +5364,16 @@ button:disabled {
   top: 12px;
   right: 12px;
   display: flex;
-  gap: 8px;
   align-items: center;
-}
-
-.message-image-lightbox-zoom {
-  display: flex;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: var(--surface-strong);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(12px);
 }
 
-.message-image-lightbox-zoom button,
-.message-image-lightbox-close {
+.message-image-lightbox-controls button {
   min-width: 34px;
   min-height: 34px;
   padding: 5px 9px;
@@ -5384,22 +5383,20 @@ button:disabled {
   color: var(--ink);
 }
 
-.message-image-lightbox-zoom button + button {
+.message-image-lightbox-controls button + button {
   border-left: 1px solid var(--line);
 }
 
-.message-image-lightbox-zoom button:hover,
-.message-image-lightbox-zoom button.is-active,
-.message-image-lightbox-close:hover {
+.message-image-lightbox-controls button:hover,
+.message-image-lightbox-controls button.is-active {
   background: var(--orange-soft);
 }
 
-.message-image-lightbox-close {
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--surface-strong);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
-  font-size: 1.2rem;
+.message-image-lightbox-controls button:focus-visible {
+  position: relative;
+  z-index: 1;
+  outline: 2px solid rgba(111, 140, 255, 0.88);
+  outline-offset: -2px;
 }
 
 .image-viewport {

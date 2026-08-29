@@ -1271,12 +1271,12 @@ test("ImageViewport はFit実効倍率を画像描画とZoom Inへ反映する",
 
 // @test-value v1
 // kind = "contract"
-// claim = "読込済みのメッセージ画像はlightboxで拡大でき、Escapeまたは背景clickで閉じて元の画像へfocusを戻せる"
-// oracle = { type = "contract", ref = "ユーザー要求: feat-message-image-lightbox引継ぎの確定した仕様" }
-// failure_mode = "lightboxのdialog遷移、倍率操作、閉じる経路、またはfocus復帰が欠け、mouseまたはkeyboard利用者が画像表示から安全に戻れない"
+// claim = "読込済みのメッセージ画像はcloseボタンを常設せず、dialogへfocusしてEscapeまたは背景clickで閉じ、元の画像へfocusを戻せる"
+// oracle = { type = "contract", ref = "ユーザー要求: lightboxの×ボタンを削除し、背景clickとEscapeを閉じる経路にする" }
+// failure_mode = "冗長なcloseボタンが残るか、dialogのfocus、Escapeまたは背景click、focus復帰が欠け、mouseまたはkeyboard利用者が画像表示から安全に戻れない"
 // scope = "MessageRichTextの画像lightbox interaction境界"
 // lifecycle = "permanent"
-// distinction = "既存の画像load確認とは異なり、portal dialogの表示、倍率遷移、Escapeと背景click、focus復帰を観測する"
+// distinction = "既存の画像load確認とは異なり、closeボタンの不在、portal dialogのfocus、倍率遷移、Escapeと背景click、focus復帰を観測する"
 // @end-test-value
 test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背景clickで元の画像へ戻る", async () => {
   const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
@@ -1318,7 +1318,8 @@ test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背�
 
     let dialog = dom.window.document.querySelector<HTMLElement>("[role='dialog'][aria-label='Image preview: cached']");
     assert.ok(dialog);
-    assert.equal(dom.window.document.activeElement?.getAttribute("aria-label"), "Close image preview");
+    assert.equal(dom.window.document.activeElement, dialog);
+    assert.equal(dialog.querySelector("button[aria-label='Close image preview']"), null);
     assert.equal(
       dialog.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent?.trim(),
       "100%",
