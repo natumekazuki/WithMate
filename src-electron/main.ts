@@ -2647,6 +2647,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+      persistRunningTurnStart: (session, expectedMessageCount) =>
+        requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
+      clearCharacterAuthoringRuntimeState: (session) =>
+        requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
       upsertTerminalSession: (session, terminalCommit) =>
         requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
@@ -3036,6 +3040,20 @@ function requireSessionPersistenceService(): SessionPersistenceService {
         return operation === "create"
           ? storage.insertSession(session)
           : storage.upsertSession(session);
+      },
+      appendStoredRunningTurnStart: (input) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.appendRunningTurnStart) {
+          throw new Error("running turn 開始のincremental storageが利用できないよ。");
+        }
+        return storage.appendRunningTurnStart(input);
+      },
+      clearStoredCharacterAuthoringRuntimeState: (input) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.clearCharacterAuthoringRuntimeState) {
+          throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+        }
+        return storage.clearCharacterAuthoringRuntimeState(input);
       },
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);

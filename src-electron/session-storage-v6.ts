@@ -37,7 +37,10 @@ import {
 import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
-import { SessionIdCollisionError } from "./session-storage-errors.js";
+import {
+  SessionIdCollisionError,
+  SessionRunningTurnStartConflictError,
+} from "./session-storage-errors.js";
 import {
   buildSessionSummaryKeysetClause,
   buildSessionSummarySearchClause,
@@ -50,6 +53,12 @@ import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
 } from "./session-turn-terminal-commit.js";
+import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 type SessionV6Row = {
   id: string;
@@ -107,6 +116,10 @@ type ExistingMessageArtifactRow = {
 
 type SessionIdRow = {
   id: string;
+};
+
+type SessionMessageSequenceRow = {
+  seq: number;
 };
 
 type SessionCharacterUsageRow = {
@@ -484,6 +497,176 @@ export class SessionStorageV6 {
 
   upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
     return this.storeSession(session, "upsert", terminalCommit);
+  }
+
+  clearCharacterAuthoringRuntimeState(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): SessionCharacterAuthoringRuntimeClearResult {
+    const sessionId = input.sessionId.trim();
+    if (!sessionId) {
+      throw new Error("Character authoring runtime clearの保存形式が不正だよ。");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+      if (!currentRow) {
+        throw new Error("対象セッションが見つからないよ。");
+      }
+      if (currentRow.session_kind !== "character-authoring") {
+        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+      }
+
+      const updateResult = this.db.prepare(`
+        UPDATE sessions_v6
+        SET character_snapshot_json = NULL,
+            character_id = NULL,
+            thread_id = ''
+        WHERE id = ?
+      `).run(sessionId);
+      if (Number(updateResult.changes) !== 1) {
+        throw new Error("Character authoring runtime stateをclearできなかったよ。");
+      }
+
+      const storedRow: SessionV6Row = {
+        ...currentRow,
+        character_snapshot_json: null,
+        character_id: null,
+        thread_id: "",
+      };
+      const storedResult: SessionCharacterAuthoringRuntimeClearResult = {
+        summary: this.rowToSessionSummary(storedRow, decodeSessionV6RuntimeState(storedRow)),
+        characterRuntimeSnapshot: null,
+      };
+      this.db.exec("COMMIT");
+      return storedResult;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  appendRunningTurnStart(input: SessionRunningTurnStartInput): SessionRunningTurnStartResult {
+    const sessionId = input.sessionId.trim();
+    if (
+      !sessionId
+      || !Number.isSafeInteger(input.expectedMessageCount)
+      || input.expectedMessageCount < 0
+      || input.userMessage.role !== "user"
+      || !input.userMessage.text.trim()
+      || !input.updatedAt.trim()
+    ) {
+      throw new Error("running turn 開始の保存形式が不正だよ。");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+      if (!currentRow) {
+        throw new Error("対象セッションが見つからないよ。");
+      }
+
+      const updatesCharacterSnapshot = input.characterRuntimeSnapshot !== undefined;
+      const nextCharacterSnapshot = input.characterRuntimeSnapshot;
+      const currentRuntimeState = decodeSessionV6RuntimeState(currentRow);
+      if (updatesCharacterSnapshot) {
+        if (currentRow.session_kind !== "character-authoring") {
+          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+        }
+        if (
+          nextCharacterSnapshot
+          && nextCharacterSnapshot.characterId !== currentRuntimeState.characterId
+        ) {
+          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+        }
+      }
+
+      const tailRow = this.db.prepare(`
+        SELECT seq
+        FROM session_messages_v6
+        WHERE session_id = ?
+        ORDER BY seq DESC
+        LIMIT 1
+      `).get(sessionId) as SessionMessageSequenceRow | undefined;
+      const actualMessageCount = tailRow ? tailRow.seq + 1 : 0;
+      if (actualMessageCount !== input.expectedMessageCount) {
+        throw new SessionRunningTurnStartConflictError(
+          sessionId,
+          input.expectedMessageCount,
+          actualMessageCount,
+        );
+      }
+
+      const runtimePolicyJson = JSON.stringify({
+        ...parseJsonObject(currentRow.runtime_policy_json),
+        appStatus: "running",
+        runState: "running",
+        ...(nextCharacterSnapshot ? {
+          characterName: nextCharacterSnapshot.name,
+          characterIconPath: nextCharacterSnapshot.iconFilePath,
+          characterThemeColors: nextCharacterSnapshot.theme,
+        } : {}),
+      });
+      const characterSnapshotJson = updatesCharacterSnapshot
+        ? nextCharacterSnapshot
+          ? stringifyCharacterRuntimeSnapshot(nextCharacterSnapshot)
+          : null
+        : currentRow.character_snapshot_json;
+      const clearsProviderThread = updatesCharacterSnapshot && nextCharacterSnapshot === null;
+      const updateResult = this.db.prepare(`
+        UPDATE sessions_v6
+        SET state = 'active',
+            runtime_policy_json = ?,
+            character_snapshot_json = CASE WHEN ? = 1 THEN ? ELSE character_snapshot_json END,
+            character_id = CASE WHEN ? = 1 THEN NULL ELSE character_id END,
+            thread_id = CASE WHEN ? = 1 THEN '' ELSE thread_id END,
+            updated_at = ?,
+            last_active_at = ?
+        WHERE id = ?
+      `).run(
+        runtimePolicyJson,
+        updatesCharacterSnapshot ? 1 : 0,
+        characterSnapshotJson,
+        clearsProviderThread ? 1 : 0,
+        clearsProviderThread ? 1 : 0,
+        input.updatedAt,
+        input.updatedAt,
+        sessionId,
+      );
+      if (Number(updateResult.changes) !== 1) {
+        throw new Error("running turn のSession metadataを更新できなかったよ。");
+      }
+
+      this.db.prepare(`
+        INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
+        VALUES (?, ?, 'user', ?, NULL, ?)
+      `).run(
+        sessionId,
+        input.expectedMessageCount,
+        encodeMessage(input.userMessage),
+        input.updatedAt,
+      );
+      const storedRow: SessionV6Row = {
+        ...currentRow,
+        state: "active",
+        runtime_policy_json: runtimePolicyJson,
+        character_snapshot_json: characterSnapshotJson,
+        character_id: clearsProviderThread ? null : currentRow.character_id,
+        thread_id: clearsProviderThread ? "" : currentRow.thread_id,
+        updated_at: input.updatedAt,
+        last_active_at: input.updatedAt,
+      };
+      const decodedStoredRow = decodeSessionV6RuntimeState(storedRow);
+      const storedResult: SessionRunningTurnStartResult = {
+        summary: this.rowToSessionSummary(storedRow, decodedStoredRow),
+        characterRuntimeSnapshot: decodedStoredRow.snapshot,
+      };
+      this.db.exec("COMMIT");
+      return storedResult;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   insertSession(session: Session): Session {

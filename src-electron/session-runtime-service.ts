@@ -55,6 +55,8 @@ function logSessionRunStuckInvestigation(
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
+  clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -900,7 +902,10 @@ export class SessionRuntimeService {
       ? { ...resolvedSession, threadId: "" }
       : resolvedSession;
     if (shouldResetCharacterAuthoringThread) {
-      session = await this.deps.upsertSession(session);
+      if (!this.deps.clearCharacterAuthoringRuntimeState) {
+        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      }
+      session = await this.deps.clearCharacterAuthoringRuntimeState(session);
       await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
     }
     throwIfRunCanceled(runAbortController.signal);
@@ -988,14 +993,17 @@ export class SessionRuntimeService {
       };
 
       const runningUpsertStartedAt = Date.now();
-      await this.deps.upsertSession(runningSession);
+      runningSession = await (
+        this.deps.persistRunningTurnStart?.(runningSession, session.messages.length)
+        ?? this.deps.upsertSession(runningSession)
+      );
+      setupRunningSessionSaved = true;
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messages.length,
       });
-      setupRunningSessionSaved = true;
       throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
