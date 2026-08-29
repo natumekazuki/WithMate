@@ -1350,6 +1350,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
         new WindowBroadcastService({
           getAllWindows: () => BrowserWindow.getAllWindows(),
           getHomeWindows: () => requireAuxWindowService().listHomeWindows(),
+          getPrimaryHomeWindow: () => requireAuxWindowService().getHomeWindow(),
           getSessionWindows: () => requireSessionWindowBridge().listWindows(),
         }),
       createWindowDialogService: () =>

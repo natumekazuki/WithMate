@@ -39,6 +39,7 @@ type WindowLike = {
 type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
   getAllWindows(): TWindow[];
   getHomeWindows(): TWindow[];
+  getPrimaryHomeWindow(): TWindow | null;
   getSessionWindows(): TWindow[];
 };
 
@@ -78,8 +79,12 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   }
 
   public broadcastSessionWindowRestoreSet(sessionIds: readonly string[]): void {
+    const homeWindow = this.options.getPrimaryHomeWindow();
+    if (!homeWindow) {
+      return;
+    }
     this.broadcastTo(
-      this.options.getHomeWindows(),
+      [homeWindow],
       WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
       [...sessionIds],
     );
