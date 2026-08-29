@@ -68,6 +68,57 @@ describe("withmate-session managed Skill contract", () => {
     }
   });
 
+  it("DECOMP-POLICY-01: no-split、直属executor、task coordinatorの選択基準を案内する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+
+    assert.match(skill, /Do not decompose a single coherent responsibility[\s\S]*complete and verify directly/);
+    assert.match(skill, /direct `executor` child for one independent delegation/);
+    assert.match(skill, /direct `task-coordinator` only when one task needs multiple slices, dependency management, integration, or review convergence/);
+    assert.match(skill, /`task-coordinator` decomposes only to its direct `executor` children/);
+    assert.match(skill, /maximum depth is an enforcement limit, not a policy target/);
+    assert.match(skill, /minimum number of children needed[\s\S]*Do not invent a fixed decomposition or parallelism limit/);
+  });
+
+  it("DECOMP-BOUNDARY-02: coherentな子とfail-closedな強制境界を分離する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(skill, /Agent owns the work-decomposition policy\. WithMate owns the enforced Role hierarchy, authority, Session and Work Item state, Turn admission, and aggregation contract/);
+    assert.match(skill, /one coherent delegation with an explicit goal, scope, completion criteria, authority, and source identity/);
+    assert.match(skill, /Keep sibling scopes non-overlapping and assign integration ownership/);
+    assert.match(contract, /Do not bypass[\s\S]*free-form Turn[\s\S]*another root[\s\S]*caller-asserted/);
+    assert.match(operations, /Decomposition is an Agent policy over existing operations, not a separate runtime resource or operation/);
+  });
+
+  it("DECOMP-RECOVERY-03: operation別keyとpartial successからの再開を案内する", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(skill, /`session.create` with a caller-owned idempotency key[\s\S]*`session.get`/);
+    assert.match(skill, /`work.create` with a different idempotency key/);
+    assert.match(skill, /`turn.run` or `turn.enqueue`[\s\S]*a separate key/);
+    assert.match(contract, /not an atomic batch/);
+    assert.match(contract, /resume the same decomposition plan from the failed step/);
+    assert.match(contract, /rather than creating a duplicate Session/);
+    assert.match(contract, /response loss or `effect: indeterminate`[\s\S]*Replay only the unchanged operation with its original key/);
+    assert.match(contract, /do not convert a failed `turn\.run` into `turn\.enqueue`/);
+  });
+
+  it("DECOMP-INTEGRATE-04: 依存順、明示result、直属子集約、親finalizationまで閉じる", async () => {
+    const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const contract = `${skill}\n${operations}`;
+
+    assert.match(contract, /Parallel dispatch is valid only for independent children/);
+    assert.match(contract, /dependent work after the parent coordinator validates and decides the prerequisite result/);
+    assert.match(contract, /execution terminal state is not Work Item terminal state/);
+    assert.match(contract, /parent Work Item's target coordinator[\s\S]*only its direct children/);
+    assert.match(contract, /`accepted`, `excluded`, or `retry_requested`[\s\S]*strict parent result/);
+    assert.match(contract, /overall coordinator does not flatten grandchildren/);
+  });
+
   it("blockerへの回答、consume、解決を別の状態遷移として案内する", async () => {
     const skill = await readFile(path.join(skillRoot, "SKILL.md"), "utf8");
     const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");

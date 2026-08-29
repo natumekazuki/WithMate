@@ -23,6 +23,31 @@ If the MCP tools are missing, ask the user to register the Session MCP connectio
 - Derive permission for Session creation, Turn execution, approval, elicitation, cancellation, overwrite, and other external effects from the user's instruction. This Skill does not grant additional authority.
 - Treat another Session's output as an adoption candidate. Validate its source changes and executable contracts in the calling task before accepting them.
 
+## Decide whether and how to decompose
+
+The Agent owns the work-decomposition policy. WithMate owns the enforced Role hierarchy, authority, Session and Work Item state, Turn admission, and aggregation contract.
+
+- Do not decompose a single coherent responsibility that one Session can complete and verify directly.
+- An `overall-coordinator` uses a direct `executor` child for one independent delegation. Create a direct `task-coordinator` only when one task needs multiple slices, dependency management, integration, or review convergence.
+- A `task-coordinator` decomposes only to its direct `executor` children. A permitted maximum depth is an enforcement limit, not a policy target; do not build every allowed layer.
+- Define each child Work Item as one coherent delegation with an explicit goal, scope, completion criteria, authority, and source identity. Keep sibling scopes non-overlapping and assign integration ownership instead of leaving it implicit.
+- Dispatch children in parallel only when they are independent. Create or dispatch a dependent child only after the prerequisite result has been validated and decided by its parent coordinator.
+- Use the minimum number of children needed for independently verifiable responsibilities. Do not invent a fixed decomposition or parallelism limit that is absent from `runtime.catalog`.
+- Treat each child result as an adoption candidate. The coordinator that owns the parent Work Item validates each direct child's result and closes it through the existing aggregation decisions and strict parent result.
+
+WithMate derives the actor, Role, permitted child Role, root, parent, depth, and provider capability from `session.self`, `runtime.catalog`, and canonical resources. Do not bypass a rejected structure with a free-form Turn, another root, caller-asserted hierarchy, or delegation without a Work Item. Revise the decomposition within the advertised contract or ask the user when the required choice changes the result.
+
+## Execute a tracked decomposition
+
+1. Call `session.self` and `runtime.catalog` to establish the actor, Role, permitted capabilities, and current limits.
+2. Inspect the current Work Item and responsibility, and evaluate the no-decomposition choice first.
+3. For every necessary child, choose its Role, goal, scope, completion criteria, authority, source identity, and dependency order before creating resources.
+4. Call `session.create` with a caller-owned idempotency key, then use `session.get` to confirm the canonical child and workspace identity.
+5. Call `work.create` with a different idempotency key. Include the active parent Work Item when the delegation is a child of tracked work.
+6. Call `turn.options`, construct a currently supported provider tuple, and dispatch with `turn.run` or `turn.enqueue` using the Work Item ID and a separate key. Do not switch operations after an admission failure.
+7. After response loss or `effect: indeterminate`, read back the canonical Session, Work Item, or execution and replay only the unchanged mutation with its original key. Session creation and Work Item creation are not an atomic batch: if a later operation fails, resume the same plan from the existing canonical child rather than creating a duplicate Session.
+8. Require the target Session to submit an explicit terminal Work Item result. The parent target coordinator then validates and decides each direct child through `work.aggregation.*` before submitting the strict parent result; never flatten a grandchild result into the root aggregation.
+
 ## Follow the discovery workflow
 
 1. Confirm that the Session MCP tools are exposed by the current host. If CLI fallback was explicitly permitted, run `withmate-session status` when runtime availability or identity is uncertain.

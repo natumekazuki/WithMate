@@ -59,6 +59,26 @@ The target Session owns `pending` to `in_progress` or `waiting` transitions, res
 
 Pass an optional `workItemId` to `turn.run` or `turn.enqueue` to associate an execution. The target, root, active state, and actor authority are checked before the execution or queue entry is created. The association is part of the Turn idempotency fingerprint, so changing only `workItemId` while reusing a key conflicts. An execution becoming completed, failed, canceled, or interrupted does not implicitly complete the Work Item. Reconcile a response loss by reading the canonical Work Item and replaying only the unchanged mutation with the same idempotency key.
 
+## Decomposition workflow
+
+Decomposition is an Agent policy over existing operations, not a separate runtime resource or operation. Evaluate whether the current Session can complete and directly verify one coherent responsibility before creating children. An overall coordinator uses one direct executor for one independent delegation and introduces a direct task coordinator only when one task needs multiple slices, dependencies, integration, or review convergence. A task coordinator delegates only to direct executors.
+
+Plan each child as one coherent Work Item with an explicit goal, non-overlapping scope, completion criteria, authority, source identity, and dependency order. Parallel dispatch is valid only for independent children. Create or dispatch dependent work after the parent coordinator validates and decides the prerequisite result. Keep the child count to the minimum needed for independently verifiable responsibilities; capability and capacity limits come from `runtime.catalog`, not an invented fixed limit.
+
+Use this sequence for each child:
+
+1. Read `session.self` and `runtime.catalog`, then confirm the current Work Item and evaluate the no-decomposition choice.
+2. Choose the child Role and delegation fields within the advertised Role and provider capability.
+3. Call `session.create` with a caller-owned idempotency key. Read the result back with `session.get` and confirm the canonical workspace identity.
+4. Call `work.create` with a different idempotency key and include the active parent Work Item when applicable.
+5. Read `turn.options`, preserve the returned provider tuple, and call `turn.run` or `turn.enqueue` with `workItemId` and a key distinct from both creation keys.
+6. Have the target Session transition and report the Work Item explicitly with `work.result`; execution terminal state is not Work Item terminal state.
+7. Have the parent Work Item's target coordinator inspect only its direct children, record `accepted`, `excluded`, or `retry_requested` through `work.aggregation.*`, and submit the strict parent result only after every direct child is terminal and decided. A task coordinator integrates its executor results into its own parent result; the overall coordinator does not flatten grandchildren.
+
+`session.create`, `work.create`, and Turn dispatch are separate mutations, not an atomic batch. Retain a separate idempotency key for every operation. If Session creation succeeds and a later operation fails, read back the canonical child Session and resume the same decomposition plan from the failed step. Do not create another child because the later effect is unknown.
+
+After response loss or `effect: indeterminate`, read back any known Session, Work Item, aggregation, or execution identifiers. Replay only the unchanged operation with its original key when read-back does not settle the effect. Do not reuse a key for a different operation or changed input, and do not convert a failed `turn.run` into `turn.enqueue` with the same intent. A structured rejection is an enforced boundary: do not bypass it through a free-form Turn, a different root, caller-asserted Role or hierarchy, or untracked delegation without a Work Item.
+
 ## Coordination events
 
 Use coordination events for durable progress, decisions, escalations, blockers, results, corrections, and user decisions that must survive response loss. The event body is immutable; resolution, consumption, cancellation, and supersession are action history. Mutations require an idempotency key. Reconcile by event ID or idempotency key after an indeterminate delivery. Agent resolution accepts an optional note for an addressed escalation or actor-owned blocker; stable option IDs and freeform decision answers belong to the trusted GUI boundary.
