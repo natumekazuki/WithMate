@@ -32,6 +32,20 @@ Root WorkItem 計画の次の判断は、本計画の対応 slice が統合さ�
 
 Root WorkItem の一意性、自己所有、Session 作成との原子性、append-only history、既存 delegated row の保存は維持する。
 
+## v6.4.0 リリース前の実装運用
+
+本計画の実装中は、v6.4.0 の Work Item 機能を作業管理に使用しない。実装 Session の起動と引継ぎには、Git Worktree と SessionFolder 配下の自己完結した初回プロンプトを使用する。Work Item の作成、更新、集約を前提にした自動統括は、v6.4.0 のリリースと導入が完了するまで行わない。
+
+現在は `feat/v6.4.0-session-root-work-item` が進行中であり、追加の実装 Worktree は作成しない。次の `Shared authority and history cutover` は、次の条件をすべて満たした後に開始する。
+
+- Root WorkItem 実装の直接検証と必要な commit-bound review が完了し、未解決 blocking finding がない。
+- 実装 commit が `feat/v6.4.0` へ統合されている。
+- 統合後の `feat/v6.4.0` の commit OID を、次の Worktree と初回プロンプトの base として固定できる。
+
+後続 Slice も、依存する Slice が `feat/v6.4.0` へ統合されてから Worktree を作成する。未レビュー commit や進行中 Worktree から依存 Slice を先行分岐しない。
+
+並列実装は、依存 Slice がすべて統合済みで、semantic owner、変更予定ファイル、生成物が重ならない場合だけ行う。実際の先行差分を確認してから最大二つの write Session を起動し、共通の database schema、application dispatch、TypeScript contract、CLI、MCP を変更する段階は直列に統合する。
+
 ## 対象能力
 
 ### Session lifecycle
@@ -121,6 +135,19 @@ Root WorkItem の一意性、自己所有、Session 作成との原子性、appe
 - budget reserve、consume、release、reconcileはapplication内部操作とし、Agentは残量とpolicyを取得、権限内でconfigureする。
 
 source identityは手入力の`work.source.refresh`を正本にしない。Work Itemはplanned sourceを保持し、queuedからrunningへadmitする時点でWithMateがWorkspaceからactual start sourceを解決し、execution associationへWork Item revisionと同じtransactionで保存する。事前確認が必要ならread-onlyな`work.source.resolve`を追加できる。
+
+## MCP と CLI の公開方針
+
+Agent が直接使用する application operation は、TypeScript contract、application service、raw HTTP client、CLI、MCP、runtime catalog、managed Skill で同じ操作、strict schema、error、effect certainty を公開する。GUI に入口があることや application service に実装があることだけでは、その能力の実装完了とみなさない。
+
+transport ごとに入出力形式を変える必要がある場合も、resource identity、authority、revision、idempotency、failure timing の意味は変えない。たとえば binary content は CLI と MCP で搬送方法が異なっても、同じ file または artifact operation として扱う。特定の transport で安全に表現できない場合は、操作を実装済みとして隠さず validation gap として残す。
+
+次の処理は公開 operation の composition を支える内部操作であり、Agent 向け MCP または CLI operation として公開しない。
+
+- budget の reserve、consume、release、settlement、provider usage reconciliation
+- storage transaction、event projection、idempotency record の内部 helper
+- migration、repair、retention に限定した system principal 操作
+- grant evaluator と mutation admission の内部判定
 
 ## 対象外
 
