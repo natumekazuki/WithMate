@@ -83,7 +83,7 @@ describe("SessionWindowRestoreService", () => {
       const firstService = new SessionWindowRestoreService({
         storage: firstStorage,
         getSession: () => ({}),
-        getOpenSessionWindowIds: () => [],
+        getSettledOpenSessionWindowIds: () => [],
         openSessionWindow: async () => undefined,
       });
       const firstCreated = new Map<string, StubWindow[]>();
@@ -103,7 +103,7 @@ describe("SessionWindowRestoreService", () => {
       const secondService = new SessionWindowRestoreService({
         storage: secondStorage,
         getSession: (sessionId) => ({ id: sessionId }),
-        getOpenSessionWindowIds: () => secondBridge.listOpenSessionWindowIds(),
+        getSettledOpenSessionWindowIds: () => secondBridge.listSettledOpenSessionWindowIds(),
         openSessionWindow: (sessionId) => secondBridge.openSessionWindow(sessionId),
       });
       secondBridge = createBridge({
@@ -149,7 +149,7 @@ describe("SessionWindowRestoreService", () => {
         }
         return { id: sessionId };
       },
-      getOpenSessionWindowIds: () => [],
+      getSettledOpenSessionWindowIds: () => [],
       async openSessionWindow(sessionId) {
         if (sessionId === "open-failed") {
           throw new Error("open failed");
@@ -203,7 +203,7 @@ describe("SessionWindowRestoreService", () => {
         },
       },
       getSession: (sessionId) => ({ id: sessionId }),
-      getOpenSessionWindowIds: () => [],
+      getSettledOpenSessionWindowIds: () => [],
       async openSessionWindow(sessionId) {
         opened.push(sessionId);
       },
@@ -239,7 +239,7 @@ describe("SessionWindowRestoreService", () => {
         },
       },
       getSession: () => ({}),
-      getOpenSessionWindowIds: () => [],
+      getSettledOpenSessionWindowIds: () => [],
       openSessionWindow: async () => undefined,
     });
 
@@ -261,7 +261,7 @@ describe("SessionWindowRestoreService", () => {
         async saveSnapshot() {},
       },
       getSession: () => ({}),
-      getOpenSessionWindowIds: () => [],
+      getSettledOpenSessionWindowIds: () => [],
       openSessionWindow: async () => undefined,
       onRestoreSetChanged() {
         throw new Error("broadcast failed");
@@ -285,7 +285,7 @@ describe("SessionWindowRestoreService", () => {
         async saveSnapshot() {},
       },
       getSession: (sessionId) => ({ id: sessionId }),
-      getOpenSessionWindowIds: () => ["session-a"],
+      getSettledOpenSessionWindowIds: () => ["session-a"],
       async openSessionWindow(sessionId) {
         opened.push(sessionId);
       },
@@ -303,6 +303,136 @@ describe("SessionWindowRestoreService", () => {
     });
     assert.deepEqual(opened, ["session-b"]);
     assert.deepEqual(restoreSetChanges, [[]]);
+    assert.deepEqual(await service.getSnapshot(), []);
+  });
+
+  it("手動open中の対象へ合流し、load失敗を再試行集合へ残して後続対象を復元する", async () => {
+    let rejectSessionA: ((error: Error) => void) | null = null;
+    const created = new Map<string, StubWindow[]>();
+    const restoreSetChanges: string[][] = [];
+    let bridge: SessionWindowBridge<StubWindow>;
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() {
+          return ["session-a", "session-b"];
+        },
+        async saveSnapshot() {},
+      },
+      getSession: (sessionId) => ({ id: sessionId }),
+      getSettledOpenSessionWindowIds: () => bridge.listSettledOpenSessionWindowIds(),
+      openSessionWindow: (sessionId) => bridge.openSessionWindow(sessionId),
+      onRestoreSetChanged(sessionIds) {
+        restoreSetChanges.push([...sessionIds]);
+      },
+    });
+    bridge = new SessionWindowBridge({
+      createWindow(sessionId) {
+        const window = new StubWindow();
+        created.set(sessionId, [...created.get(sessionId) ?? [], window]);
+        return window;
+      },
+      loadChatEntry(_window, mode) {
+        if (mode.sessionId === "session-a") {
+          return new Promise<void>((_resolve, reject) => {
+            rejectSessionA = reject;
+          });
+        }
+        return Promise.resolve();
+      },
+      getSession: () => null,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      persistOpenSessionWindowIds: (sessionIds) => service.saveSnapshot(sessionIds),
+    });
+
+    const manualOpen = bridge.openSessionWindow("session-a");
+    const restoring = service.restoreSnapshot();
+    let restoreSettled = false;
+    void restoring.finally(() => {
+      restoreSettled = true;
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(created.get("session-a")?.length, 1);
+    assert.equal(created.get("session-b")?.length ?? 0, 0);
+    assert.equal(restoreSettled, false);
+    assert.ok(rejectSessionA);
+    rejectSessionA(new Error("load failed"));
+
+    const [manualResult, restoreResult] = await Promise.allSettled([manualOpen, restoring]);
+
+    assert.equal(manualResult.status, "rejected");
+    assert.equal(restoreResult.status, "fulfilled");
+    if (restoreResult.status !== "fulfilled") {
+      assert.fail("restore result should be fulfilled");
+    }
+    assert.deepEqual(restoreResult.value, {
+      requestedSessionIds: ["session-a", "session-b"],
+      openedSessionIds: ["session-b"],
+      failures: [{ sessionId: "session-a", reason: "open-failed" }],
+    });
+    assert.equal(created.get("session-a")?.length, 1);
+    assert.equal(created.get("session-b")?.length, 1);
+    assert.deepEqual(await service.getSnapshot(), ["session-a"]);
+    assert.deepEqual(restoreSetChanges, [["session-a"]]);
+  });
+
+  it("手動open中の対象へ合流し、load成功を重複生成せず復元成功に分類する", async () => {
+    let resolveSessionA: (() => void) | null = null;
+    const created = new Map<string, StubWindow[]>();
+    let bridge: SessionWindowBridge<StubWindow>;
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() {
+          return ["session-a", "session-b"];
+        },
+        async saveSnapshot() {},
+      },
+      getSession: (sessionId) => ({ id: sessionId }),
+      getSettledOpenSessionWindowIds: () => bridge.listSettledOpenSessionWindowIds(),
+      openSessionWindow: (sessionId) => bridge.openSessionWindow(sessionId),
+    });
+    bridge = new SessionWindowBridge({
+      createWindow(sessionId) {
+        const window = new StubWindow();
+        created.set(sessionId, [...created.get(sessionId) ?? [], window]);
+        return window;
+      },
+      loadChatEntry(_window, mode) {
+        if (mode.sessionId === "session-a") {
+          return new Promise<void>((resolve) => {
+            resolveSessionA = resolve;
+          });
+        }
+        return Promise.resolve();
+      },
+      getSession: () => null,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      persistOpenSessionWindowIds: (sessionIds) => service.saveSnapshot(sessionIds),
+    });
+
+    const manualOpen = bridge.openSessionWindow("session-a");
+    const restoring = service.restoreSnapshot();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(created.get("session-a")?.length, 1);
+    assert.ok(resolveSessionA);
+    resolveSessionA();
+
+    const [, result] = await Promise.all([manualOpen, restoring]);
+
+    assert.deepEqual(result, {
+      requestedSessionIds: ["session-a", "session-b"],
+      openedSessionIds: ["session-a", "session-b"],
+      failures: [],
+    });
+    assert.equal(created.get("session-a")?.length, 1);
+    assert.equal(created.get("session-b")?.length, 1);
     assert.deepEqual(await service.getSnapshot(), []);
   });
 });

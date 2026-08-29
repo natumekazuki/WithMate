@@ -12,7 +12,7 @@ type SessionWindowRestoreStorageLike = {
 type SessionWindowRestoreServiceDeps = {
   storage: SessionWindowRestoreStorageLike;
   getSession(sessionId: string): Awaitable<unknown | null>;
-  getOpenSessionWindowIds(): Awaitable<readonly string[]>;
+  getSettledOpenSessionWindowIds(): Awaitable<readonly string[]>;
   openSessionWindow(sessionId: string): Promise<unknown>;
   onRestoreSetChanged?(sessionIds: readonly string[]): void;
 };
@@ -57,7 +57,7 @@ export class SessionWindowRestoreService {
 
   async restoreSnapshot(): Promise<SessionWindowRestoreResult> {
     const restoreSessionIds = await this.getSnapshot();
-    const openSessionIdSet = new Set(await this.deps.getOpenSessionWindowIds());
+    const openSessionIdSet = new Set(await this.deps.getSettledOpenSessionWindowIds());
     const requestedSessionIds = restoreSessionIds.filter(
       (sessionId) => !openSessionIdSet.has(sessionId),
     );

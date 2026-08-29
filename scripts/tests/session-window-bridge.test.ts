@@ -370,6 +370,33 @@ describe("SessionWindowBridge", () => {
     assert.equal(bridge.getWindow(session.id), null);
   });
 
+  it("open通知の集合にはopening中を含め、復元除外用の集合にはload完了後だけ含める", async () => {
+    const session = createSession();
+    let resolveLoad: (() => void) | null = null;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      loadChatEntry: () => new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      }),
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    const opening = bridge.openSessionWindow(session.id);
+
+    assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
+    assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), []);
+
+    assert.ok(resolveLoad);
+    resolveLoad();
+    await opening;
+
+    assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), [session.id]);
+  });
+
   it("別Sessionのopen完了時に読込中のWindowをsnapshotへ混ぜず、読込失敗後も残さない", async () => {
     const sessionA = createSession({ id: "session-a" });
     const sessionB = createSession({ id: "session-b" });

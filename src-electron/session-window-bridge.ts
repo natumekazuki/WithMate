@@ -52,6 +52,19 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
     return openSessionIds;
   }
 
+  listSettledOpenSessionWindowIds(): string[] {
+    const settledOpenSessionIds: string[] = [];
+    for (const [sessionId, window] of this.sessionWindows.entries()) {
+      if (window.isDestroyed() || !this.snapshotEligibleWindows.has(window)) {
+        continue;
+      }
+
+      settledOpenSessionIds.push(sessionId);
+    }
+
+    return settledOpenSessionIds;
+  }
+
   getWindow(sessionId: string): TWindow | null {
     const window = this.sessionWindows.get(sessionId);
     if (!window || window.isDestroyed()) {
@@ -212,12 +225,6 @@ export class SessionWindowBridge<TWindow extends SessionWindowLike> {
   }
 
   private listSnapshotSessionWindowIds(): string[] {
-    const sessionIds: string[] = [];
-    for (const [sessionId, window] of this.sessionWindows.entries()) {
-      if (!window.isDestroyed() && this.snapshotEligibleWindows.has(window)) {
-        sessionIds.push(sessionId);
-      }
-    }
-    return sessionIds;
+    return this.listSettledOpenSessionWindowIds();
   }
 }
