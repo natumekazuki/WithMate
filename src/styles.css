@@ -7280,11 +7280,27 @@ button:disabled {
   padding-right: 54px;
 }
 
-.message-collapse-toggle {
-  position: absolute;
+.message-card-content {
+  grid-area: 1 / 1;
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.message-collapse-control {
+  position: sticky;
   top: 8px;
-  right: 8px;
   z-index: 1;
+  grid-area: 1 / 1;
+  align-self: start;
+  display: flex;
+  justify-content: flex-end;
+  height: 28px;
+  margin: -6px -46px 0 0;
+  pointer-events: none;
+}
+
+.message-collapse-toggle {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -7298,6 +7314,7 @@ button:disabled {
   font: inherit;
   line-height: 1;
   cursor: pointer;
+  pointer-events: auto;
 }
 
 .message-collapse-toggle:hover {
@@ -7700,32 +7717,36 @@ button:disabled {
 }
 
 .message-code-block-shell.copyable {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px;
   width: 100%;
   max-width: 100%;
+  border: 1px solid rgba(18, 24, 39, 0.08);
+  border-radius: 14px;
+  background: rgb(18 24 39);
 }
 
 .message-code-block-actions {
   position: sticky;
-  top: 0;
+  top: 8px;
   z-index: 1;
+  grid-area: 1 / 2;
+  align-self: start;
   display: flex;
   justify-content: flex-end;
-  width: 100%;
-  max-width: 100%;
   min-width: 0;
-  padding: 8px 8px 4px;
-  border: 1px solid rgba(18, 24, 39, 0.08);
-  border-bottom: 0;
-  border-radius: 14px 14px 0 0;
-  background: rgb(18 24 39);
+  height: 30px;
+  margin: 8px;
+  pointer-events: none;
 }
 
 .message-code-block-shell > .message-code-block {
+  grid-area: 1 / 1;
   max-width: 100%;
-  padding: 0 14px 12px;
-  border-top: 0;
-  border-radius: 0 0 14px 14px;
-  background: rgb(18 24 39);
+  padding: 11px 14px;
+  border: 0;
+  border-radius: 13px 0 0 13px;
+  background: transparent;
 }
 
 .message-code-copy-button {
@@ -7743,6 +7764,7 @@ button:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 4px 12px rgba(0, 0, 0, 0.18);
   cursor: pointer;
+  pointer-events: auto;
   transition:
     transform 140ms ease,
     border-color 140ms ease,
