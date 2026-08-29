@@ -14,6 +14,7 @@ import {
   resolveCodeBlockText,
   resolveMessageMarkdownRenderMode,
 } from "../../src/MessageRichText.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "../../src/image-viewport.js";
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -1182,6 +1183,174 @@ test("MessageRichText は直接 image を表示しながら load 完了後に lo
     });
 
     assert.equal(container.querySelector(".message-image-loading"), null);
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "ImageViewportはFitの実効倍率を画像描画へ適用し、その倍率をZoom Inの基準にする"
+// oracle = { type = "contract", ref = "ユーザー要求: feat-message-image-lightbox引継ぎの確定した仕様" }
+// failure_mode = "Fit倍率の表示だけが更新されて画像へ適用されず、画像がviewportから見切れたままになる"
+// scope = "共有ImageViewportの画像描画境界"
+// lifecycle = "permanent"
+// distinction = "Fit倍率の計算unit testとは異なり、計算結果が画像styleと後続Zoom Inへ投影されることを観測する"
+// @end-test-value
+test("ImageViewport はFit実効倍率を画像描画とZoom Inへ反映する", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  function ImageViewportHarness() {
+    const controller = useImageViewport("image-source");
+    return React.createElement(
+      React.Fragment,
+      null,
+      React.createElement(ImageZoomControls, { controller }),
+      React.createElement(ImageViewport, {
+        controller,
+        src: "data:image/png;base64,AAAA",
+        alt: "fit target",
+      }),
+    );
+  }
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(ImageViewportHarness));
+    });
+    const viewport = container.querySelector<HTMLElement>(".image-viewport");
+    const image = container.querySelector<HTMLImageElement>(".image-viewport-image");
+    assert.ok(viewport);
+    assert.ok(image);
+    Object.defineProperties(viewport, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 450 },
+    });
+    Object.defineProperties(image, {
+      naturalWidth: { configurable: true, value: 1600 },
+      naturalHeight: { configurable: true, value: 900 },
+    });
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(
+      container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
+      "50%",
+    );
+    assert.equal(image.style.zoom, "0.5");
+
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>("button[aria-label='Zoom image in']")?.click();
+    });
+    assert.equal(
+      container.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent,
+      "60%",
+    );
+    assert.equal(image.style.zoom, "0.6");
+  } finally {
+    if (root) {
+      await act(async () => root?.unmount());
+    }
+    restoreGlobals();
+    dom.window.close();
+  }
+});
+
+// @test-value v1
+// kind = "contract"
+// claim = "読込済みのメッセージ画像はcloseボタンを常設せず、dialogへfocusしてEscapeまたは背景clickで閉じ、元の画像へfocusを戻せる"
+// oracle = { type = "contract", ref = "ユーザー要求: lightboxの×ボタンを削除し、背景clickとEscapeを閉じる経路にする" }
+// failure_mode = "冗長なcloseボタンが残るか、dialogのfocus、Escapeまたは背景click、focus復帰が欠け、mouseまたはkeyboard利用者が画像表示から安全に戻れない"
+// scope = "MessageRichTextの画像lightbox interaction境界"
+// lifecycle = "permanent"
+// distinction = "既存の画像load確認とは異なり、closeボタンの不在、portal dialogのfocus、倍率遷移、Escapeと背景click、focus復帰を観測する"
+// @end-test-value
+test("MessageRichText の画像はlightboxで拡大操作でき、Escapeと背景clickで元の画像へ戻る", async () => {
+  const dom = new JSDOM("<!doctype html><div id=\"root\"></div>", {
+    pretendToBeVisual: true,
+    url: "http://localhost/",
+  });
+  const restoreGlobals = installDomGlobals(dom);
+  const container = dom.window.document.getElementById("root");
+  let root: Root | null = null;
+
+  try {
+    assert.ok(container);
+    root = createRoot(container);
+    await act(async () => {
+      root?.render(React.createElement(MessageRichText, {
+        forceFullRender: true,
+        text: "![cached](data:image/png;base64,AAAA)",
+      }));
+    });
+
+    const image = container.querySelector<HTMLImageElement>(".message-image");
+    const trigger = container.querySelector<HTMLButtonElement>("button[aria-label='Open image preview: cached']");
+    assert.ok(image);
+    assert.ok(trigger);
+    assert.equal(trigger.disabled, true);
+
+    await act(async () => {
+      image.dispatchEvent(new dom.window.Event("load"));
+    });
+    assert.equal(trigger.disabled, false);
+
+    trigger.focus();
+    await act(async () => {
+      trigger.click();
+    });
+    await act(async () => {
+      await new Promise((resolve) => dom.window.setTimeout(resolve, 0));
+    });
+
+    let dialog = dom.window.document.querySelector<HTMLElement>("[role='dialog'][aria-label='Image preview: cached']");
+    assert.ok(dialog);
+    assert.equal(dom.window.document.activeElement, dialog);
+    assert.equal(dialog.querySelector("button[aria-label='Close image preview']"), null);
+    assert.equal(
+      dialog.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent?.trim(),
+      "100%",
+    );
+
+    await act(async () => {
+      dialog?.querySelector<HTMLButtonElement>("button[aria-label='Zoom image in']")?.click();
+    });
+    assert.equal(
+      dialog.querySelector<HTMLButtonElement>("button[aria-label='Reset image zoom to 100%']")?.textContent?.trim(),
+      "110%",
+    );
+
+    await act(async () => {
+      dialog?.dispatchEvent(new dom.window.KeyboardEvent("keydown", { bubbles: true, key: "Escape" }));
+    });
+    assert.equal(dom.window.document.querySelector(".message-image-lightbox"), null);
+    assert.equal(dom.window.document.activeElement, trigger);
+
+    await act(async () => {
+      trigger.click();
+    });
+    dialog = dom.window.document.querySelector<HTMLElement>("[role='dialog'][aria-label='Image preview: cached']");
+    assert.ok(dialog);
+    const backdrop = dom.window.document.querySelector<HTMLElement>(".message-image-lightbox");
+    assert.ok(backdrop);
+    await act(async () => {
+      backdrop.click();
+    });
+    assert.equal(dom.window.document.querySelector(".message-image-lightbox"), null);
+    assert.equal(dom.window.document.activeElement, trigger);
   } finally {
     if (root) {
       await act(async () => root?.unmount());

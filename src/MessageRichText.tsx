@@ -11,6 +11,7 @@ import {
   type MouseEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkFrontmatter from "remark-frontmatter";
@@ -32,6 +33,8 @@ import type {
   MarkdownLinkContextMenuResult,
 } from "./markdown-link-context-menu.js";
 import { getSessionFileObjectCopyFeedbackTone } from "./file-explorer/session-file-object-copy-contract.js";
+import { useDialogA11y } from "./a11y.js";
+import { ImageViewport, ImageZoomControls, useImageViewport } from "./image-viewport.js";
 import type { GlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import {
   GlossaryAnnotationSpan,
@@ -620,6 +623,55 @@ type MarkdownImageProps = {
   resolveImageSource?: (target: string) => Promise<string | null>;
 };
 
+type MessageImageLightboxProps = {
+  source: string;
+  alt: string;
+  onClose: () => void;
+};
+
+function MessageImageLightbox({ source, alt, onClose }: MessageImageLightboxProps) {
+  const initialFocusRef = useRef<HTMLElement | null>(null);
+  const imageViewport = useImageViewport(source);
+  const { dialogRef, handleDialogKeyDown } = useDialogA11y<HTMLElement>({
+    open: true,
+    onClose,
+    initialFocusRef,
+  });
+
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  return createPortal(
+    <div className="message-image-lightbox" onClick={onClose}>
+      <section
+        ref={(element) => {
+          dialogRef.current = element;
+          initialFocusRef.current = element;
+        }}
+        className="message-image-lightbox-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-label={alt ? `Image preview: ${alt}` : "Image preview"}
+        tabIndex={-1}
+        onClick={(event) => event.stopPropagation()}
+        onKeyDown={handleDialogKeyDown}
+      >
+        <ImageZoomControls controller={imageViewport} className="message-image-lightbox-controls" />
+        <ImageViewport
+          controller={imageViewport}
+          src={source}
+          alt={alt}
+          viewportClassName="message-image-lightbox-viewport"
+          canvasClassName="message-image-lightbox-canvas"
+          imageClassName="message-image-lightbox-image"
+        />
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
 function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImageProps) {
   const canLoadDirectly = !resolveImageSource && isDirectMarkdownImageSource(source);
   const shouldLoadEagerly = shouldLoadMarkdownImageEagerly(source);
@@ -627,6 +679,7 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
   const [loadStatus, setLoadStatus] = useState<"resolving" | "loading" | "ready" | "error">(
     resolveImageSource ? "resolving" : canLoadDirectly ? "loading" : "error",
   );
+  const [lightboxOpen, setLightboxOpen] = useState(false);
 
   useEffect(() => {
     if (!resolveImageSource) {
@@ -680,15 +733,30 @@ function MarkdownImage({ source, alt, title, resolveImageSource }: MarkdownImage
         <span className="message-image-error" role="alert" title={source}>Image could not be loaded.</span>
       ) : null}
       {resolvedSource ? (
-        <img
-          className="message-image"
-          src={resolvedSource}
+        <button
+          className="message-image-trigger"
+          type="button"
+          aria-label={alt ? `Open image preview: ${alt}` : "Open image preview"}
+          disabled={loadStatus !== "ready"}
+          onClick={() => setLightboxOpen(true)}
+        >
+          <img
+            className="message-image"
+            src={resolvedSource}
+            alt={alt ?? ""}
+            title={title}
+            loading={shouldLoadEagerly ? "eager" : "lazy"}
+            fetchPriority={shouldLoadEagerly ? "high" : "auto"}
+            onLoad={() => setLoadStatus("ready")}
+            onError={() => setLoadStatus("error")}
+          />
+        </button>
+      ) : null}
+      {lightboxOpen && resolvedSource ? (
+        <MessageImageLightbox
+          source={resolvedSource}
           alt={alt ?? ""}
-          title={title}
-          loading={shouldLoadEagerly ? "eager" : "lazy"}
-          fetchPriority={shouldLoadEagerly ? "high" : "auto"}
-          onLoad={() => setLoadStatus("ready")}
-          onError={() => setLoadStatus("error")}
+          onClose={() => setLightboxOpen(false)}
         />
       ) : null}
     </span>
