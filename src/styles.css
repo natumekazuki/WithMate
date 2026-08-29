@@ -7276,20 +7276,32 @@ button:disabled {
   background: rgba(255, 255, 255, 0.82);
 }
 
-.message-card.has-message-collapse-control {
-  padding-right: 54px;
+.message-card-content {
+  grid-area: 1 / 1;
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.message-collapse-control {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
 }
 
 .message-collapse-toggle {
-  position: absolute;
+  position: sticky;
   top: 8px;
-  right: 8px;
-  z-index: 1;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -7298,6 +7310,17 @@ button:disabled {
   font: inherit;
   line-height: 1;
   cursor: pointer;
+  pointer-events: none;
+}
+
+.message-card.has-message-collapse-control:hover > .message-collapse-control,
+.message-card.has-message-collapse-control:focus-within > .message-collapse-control {
+  opacity: 1;
+}
+
+.message-card.has-message-collapse-control:hover > .message-collapse-control > .message-collapse-toggle,
+.message-card.has-message-collapse-control:focus-within > .message-collapse-control > .message-collapse-toggle {
+  pointer-events: auto;
 }
 
 .message-collapse-toggle:hover {
@@ -7705,34 +7728,27 @@ button:disabled {
 }
 
 .message-code-block-actions {
-  position: sticky;
-  top: 0;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  display: flex;
-  justify-content: flex-end;
-  width: 100%;
-  max-width: 100%;
-  min-width: 0;
-  padding: 8px 8px 4px;
-  border: 1px solid rgba(18, 24, 39, 0.08);
-  border-bottom: 0;
-  border-radius: 14px 14px 0 0;
-  background: rgb(18 24 39);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease;
 }
 
 .message-code-block-shell > .message-code-block {
   max-width: 100%;
-  padding: 0 14px 12px;
-  border-top: 0;
-  border-radius: 0 0 14px 14px;
-  background: rgb(18 24 39);
 }
 
 .message-code-copy-button {
+  position: sticky;
+  top: 8px;
+  float: right;
   display: inline-grid;
   width: 30px;
   max-width: 100%;
   height: 30px;
+  margin: 8px;
   place-items: center;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.22);
@@ -7743,11 +7759,34 @@ button:disabled {
     inset 0 1px 0 rgba(255, 255, 255, 0.08),
     0 4px 12px rgba(0, 0, 0, 0.18);
   cursor: pointer;
+  pointer-events: none;
   transition:
     transform 140ms ease,
     border-color 140ms ease,
     background 140ms ease,
     box-shadow 140ms ease;
+}
+
+.message-code-block-shell.copyable:hover > .message-code-block-actions,
+.message-code-block-shell.copyable:focus-within > .message-code-block-actions {
+  opacity: 1;
+}
+
+.message-code-block-shell.copyable:hover > .message-code-block-actions > .message-code-copy-button,
+.message-code-block-shell.copyable:focus-within > .message-code-block-actions > .message-code-copy-button {
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .message-collapse-control,
+  .message-code-block-actions {
+    opacity: 1;
+  }
+
+  .message-collapse-control > .message-collapse-toggle,
+  .message-code-block-actions > .message-code-copy-button {
+    pointer-events: auto;
+  }
 }
 
 .message-code-copy-button svg {

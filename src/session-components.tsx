@@ -3327,60 +3327,63 @@ export function SessionMessageColumn({
                 ) : null}
                 <div className={`message-card ${message.role}${message.accent ? " accent" : ""}${artifact ? " has-artifact" : ""}${messageCollapseTarget ? " has-message-collapse-control" : ""}${isMessageCollapsed ? " is-collapsed" : ""}${isMessageCollapsed && shouldRenderFullMessage ? " is-find-temporary-expanded" : ""}`}>
                   {messageCollapseTarget && onToggleMessageCollapse ? (
-                    <button
-                      className="message-collapse-toggle"
-                      type="button"
-                      onClick={() => onToggleMessageCollapse(messageKey)}
-                      aria-expanded={!isMessageCollapsed}
-                      aria-controls={messageBodyId}
-                      aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
-                      title={messageCollapseLabel}
-                    >
-                      <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
-                      <span className="visually-hidden">{messageCollapseLabel}</span>
-                    </button>
+                    <div className="message-collapse-control">
+                      <button
+                        className="message-collapse-toggle"
+                        type="button"
+                        onClick={() => onToggleMessageCollapse(messageKey)}
+                        aria-expanded={!isMessageCollapsed}
+                        aria-controls={messageBodyId}
+                        aria-label={`${messageCollapseLabel}: ${messageCollapseTarget.preview}`}
+                        title={messageCollapseLabel}
+                      >
+                        <span aria-hidden="true">{isMessageCollapsed ? "+" : "−"}</span>
+                        <span className="visually-hidden">{messageCollapseLabel}</span>
+                      </button>
+                    </div>
                   ) : null}
-                  {artifact && !isAssistant ? (
-                    <button
-                      className="artifact-toggle artifact-toggle-icon"
-                      type="button"
-                      onClick={() => {
-                        if (!artifactExpanded) {
-                          loadArtifactDetail(artifactKey, absoluteIndex, artifact);
-                        }
-                        onToggleArtifact(artifactKey);
-                      }}
-                      aria-expanded={artifactExpanded}
-                      aria-controls={`artifact-panel-${artifactKey}`}
-                      aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
-                      title={artifactExpanded ? "Hide Details" : "Details"}
+                  <div className="message-card-content">
+                    {artifact && !isAssistant ? (
+                      <button
+                        className="artifact-toggle artifact-toggle-icon"
+                        type="button"
+                        onClick={() => {
+                          if (!artifactExpanded) {
+                            loadArtifactDetail(artifactKey, absoluteIndex, artifact);
+                          }
+                          onToggleArtifact(artifactKey);
+                        }}
+                        aria-expanded={artifactExpanded}
+                        aria-controls={`artifact-panel-${artifactKey}`}
+                        aria-label={artifactExpanded ? "Details を閉じる" : "Details を開く"}
+                        title={artifactExpanded ? "Hide Details" : "Details"}
+                      >
+                        {artifactExpanded ? "−" : "i"}
+                      </button>
+                    ) : null}
+                    <div
+                      id={messageBodyId}
+                      data-message-body="true"
+                      data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
                     >
-                      {artifactExpanded ? "−" : "i"}
-                    </button>
-                  ) : null}
-                  <div
-                    id={messageBodyId}
-                    data-message-body="true"
-                    data-message-text-actions={canUseMessageTextActions ? "true" : undefined}
-                  >
-                    {shouldRenderFullMessage ? (
-                      <MessageRichText
-                        text={message.text}
-                        forceFullRender={findOpen && hasFindQuery}
-                        displayMode={messageViewMode}
-                        onOpenPath={onOpenPath}
-                        markdownLinkFileContext={markdownLinkFileContext}
-                        glossaryAnnotationMatcher={glossaryAnnotationMatcher}
-                        glossaryAnnotationScopeKey={messageKey}
-                        onActivateGlossaryEntry={onActivateGlossaryEntry}
-                      />
-                    ) : (
-                      <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
-                    )}
-                  </div>
+                      {shouldRenderFullMessage ? (
+                        <MessageRichText
+                          text={message.text}
+                          forceFullRender={findOpen && hasFindQuery}
+                          displayMode={messageViewMode}
+                          onOpenPath={onOpenPath}
+                          markdownLinkFileContext={markdownLinkFileContext}
+                          glossaryAnnotationMatcher={glossaryAnnotationMatcher}
+                          glossaryAnnotationScopeKey={messageKey}
+                          onActivateGlossaryEntry={onActivateGlossaryEntry}
+                        />
+                      ) : (
+                        <p className="message-collapsed-preview">{messageCollapseTarget?.preview}</p>
+                      )}
+                    </div>
 
-                  {artifact ? (
-                    <section className="artifact-shell">
+                    {artifact ? (
+                      <section className="artifact-shell">
                       {artifactExpanded ? (
                         <div id={`artifact-panel-${artifactKey}`} className="artifact-block">
                           {artifactLoading ? (
@@ -3472,8 +3475,9 @@ export function SessionMessageColumn({
                           ) : null}
                         </div>
                       ) : null}
-                    </section>
-                  ) : null}
+                      </section>
+                    ) : null}
+                  </div>
                 </div>
                 </article>
                 {shouldRenderGroupedPending ? renderPendingRow("auxiliary-message-group-item auxiliary-message-group-end") : null}
