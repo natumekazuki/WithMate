@@ -7527,6 +7527,7 @@ button:disabled {
   margin: 0;
   padding-inline-start: 1.5em;
   list-style-position: outside;
+  white-space: normal;
   display: block;
 }
 
@@ -7544,10 +7545,6 @@ button:disabled {
 
 .message-list > li::marker {
   color: currentColor;
-}
-
-.message-list > li + li {
-  margin-block-start: 6px;
 }
 
 .message-list .message-list {
