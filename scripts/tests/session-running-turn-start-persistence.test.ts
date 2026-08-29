@@ -62,9 +62,12 @@ it("running turn開始はcanonical summaryをresultとcacheへ反映してbroadc
       assert.equal(input.expectedMessageCount, 1);
       assert.deepEqual(input.userMessage, { role: "user", text: "new prompt" });
       return {
-        ...projectSessionSummary(running),
-        taskTitle: "Concurrent title",
-        isPinned: true,
+        summary: {
+          ...projectSessionSummary(running),
+          taskTitle: "Concurrent title",
+          isPinned: true,
+        },
+        characterRuntimeSnapshot: running.characterRuntimeSnapshot,
       };
     },
     replaceStoredSessions: () => undefined,

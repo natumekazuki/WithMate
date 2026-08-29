@@ -1,8 +1,15 @@
-import type { Message } from "../src/session-state.js";
+import type { CharacterRuntimeSnapshot } from "../src/character/character-catalog.js";
+import type { Message, SessionSummary } from "../src/session-state.js";
 
 export type SessionRunningTurnStartInput = {
   sessionId: string;
   expectedMessageCount: number;
   userMessage: Message;
   updatedAt: string;
+  characterRuntimeSnapshot?: CharacterRuntimeSnapshot;
+};
+
+export type SessionRunningTurnStartResult = {
+  summary: SessionSummary;
+  characterRuntimeSnapshot: CharacterRuntimeSnapshot | null;
 };

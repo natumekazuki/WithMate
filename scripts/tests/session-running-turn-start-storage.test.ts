@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import { it } from "node:test";
 
 import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
+import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { buildNewSession, type Message, type MessageArtifact } from "../../src/session-state.js";
 import { SessionRunningTurnStartConflictError } from "../../src-electron/session-storage-errors.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
@@ -59,6 +60,20 @@ function createArtifact(): MessageArtifact {
   };
 }
 
+function createCharacterRuntimeSnapshot(name: string): CharacterRuntimeSnapshot {
+  return {
+    characterId: "char-a",
+    name,
+    description: name + " description",
+    iconFilePath: "C:/characters/char-a/" + name.toLowerCase() + ".png",
+    theme: { main: "#123456", sub: "#abcdef" },
+    definitionMarkdown: "# " + name,
+    definitionSha256: name.toLowerCase() + "-sha",
+    definitionByteSize: name.length + 2,
+    snapshotAt: "2026-08-30T00:00:00.000Z",
+  };
+}
+
 // @test-value v1
 // kind = "invariant"
 // claim = "running turn開始は既存messageとartifact detailと非所有metadataを維持し、user messageとrunning metadataだけを追加する"
@@ -88,13 +103,14 @@ it("running turn開始は既存内容と非所有metadataを保持し、retryを
       concurrentDb.close();
     }
 
-    const storedSummary = storage.appendRunningTurnStart({
+    const storedResult = storage.appendRunningTurnStart({
       sessionId: initial.id,
       expectedMessageCount: 2,
       userMessage: { role: "user", text: "new prompt" },
       updatedAt: "2026-08-30T00:01:00.000Z",
     });
 
+    const storedSummary = storedResult.summary;
     assert.equal(storedSummary.taskTitle, "Concurrent title");
     assert.equal(storedSummary.isPinned, true);
     assert.equal(storedSummary.status, "running");
@@ -122,6 +138,112 @@ it("running turn開始は既存内容と非所有metadataを保持し、retryを
       SessionRunningTurnStartConflictError,
     );
     assert.equal(storage.getSession(initial.id)?.messages.length, 3);
+  } finally {
+    storage.close();
+    await removeDirectoryWithRetry(tempDirectory);
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "character-authoringのrunning turn開始は最新runtime snapshotと表示metadataをuser messageと同じtransactionへ保存し、中間失敗時は全て戻す"
+// oracle = { type = "contract", ref = "docs/design/character-storage.md#Runtime-Snapshot" }
+// failure_mode = "providerだけ最新snapshotを使ってDBには旧情報が残るか、message失敗時にsnapshotとrunning metadataだけがcommitされる"
+// scope = "SessionStorageV6.appendRunningTurnStart"
+// lifecycle = "permanent"
+// distinction = "通常Sessionのimmutable snapshotではなく、turnごとに再生成するcharacter-authoring例外をDB read-backで観測する"
+// @end-test-value
+it("character-authoringのrunning turn開始は最新snapshotと表示metadataをatomicに保存して失敗時は戻す", async () => {
+  const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-running-authoring-"));
+  const dbPath = path.join(tempDirectory, "withmate-v6.db");
+  const storage = new SessionStorageV6(dbPath);
+
+  try {
+    const oldSnapshot = createCharacterRuntimeSnapshot("Old");
+    const freshSnapshot = {
+      ...createCharacterRuntimeSnapshot("Fresh"),
+      iconFilePath: "C:/characters/char-a/fresh.png",
+      theme: { main: "#334455", sub: "#ddeeff" },
+      snapshotAt: "2026-08-30T00:01:00.000Z",
+    };
+    const characterDb = new DatabaseSync(dbPath);
+    try {
+      characterDb.prepare(`
+        INSERT INTO characters (id, name, description, icon_file_path, theme_main, theme_sub, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        oldSnapshot.characterId,
+        oldSnapshot.name,
+        oldSnapshot.description,
+        oldSnapshot.iconFilePath,
+        oldSnapshot.theme.main,
+        oldSnapshot.theme.sub,
+        "2026-08-30T00:00:00.000Z",
+        "2026-08-30T00:00:00.000Z",
+      );
+    } finally {
+      characterDb.close();
+    }
+    const initial = storage.insertSession({
+      ...createSessionInput("running-authoring", [{ role: "assistant", text: "existing" }]),
+      sessionKind: "character-authoring",
+      character: oldSnapshot.name,
+      characterIconPath: oldSnapshot.iconFilePath,
+      characterThemeColors: oldSnapshot.theme,
+      characterRuntimeSnapshot: oldSnapshot,
+    });
+
+    const failureDb = new DatabaseSync(dbPath);
+    try {
+      failureDb.exec(`
+        CREATE TRIGGER fail_authoring_message
+        BEFORE INSERT ON session_messages_v6
+        WHEN NEW.session_id = 'running-authoring' AND NEW.seq = 1
+        BEGIN SELECT RAISE(ABORT, 'authoring message failed'); END;
+      `);
+    } finally {
+      failureDb.close();
+    }
+    assert.throws(() => storage.appendRunningTurnStart({
+      sessionId: initial.id,
+      expectedMessageCount: 1,
+      userMessage: { role: "user", text: "new prompt" },
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      characterRuntimeSnapshot: freshSnapshot,
+    }), /authoring message failed/);
+    const rolledBack = storage.getSession(initial.id);
+    assert.deepEqual(rolledBack?.characterRuntimeSnapshot, oldSnapshot);
+    assert.equal(rolledBack?.character, "Old");
+    assert.deepEqual(rolledBack?.messages.map((message) => message.text), ["existing"]);
+    assert.equal(rolledBack?.status, "idle");
+    assert.equal(rolledBack?.runState, "idle");
+    const cleanupDb = new DatabaseSync(dbPath);
+    try {
+      cleanupDb.exec("DROP TRIGGER fail_authoring_message;");
+    } finally {
+      cleanupDb.close();
+    }
+
+    const storedResult = storage.appendRunningTurnStart({
+      sessionId: initial.id,
+      expectedMessageCount: 1,
+      userMessage: { role: "user", text: "new prompt" },
+      updatedAt: "2026-08-30T00:01:00.000Z",
+      characterRuntimeSnapshot: freshSnapshot,
+    });
+
+    assert.equal(storedResult.summary.character, "Fresh");
+    assert.equal(storedResult.summary.characterIconPath, freshSnapshot.iconFilePath);
+    assert.deepEqual(storedResult.summary.characterThemeColors, freshSnapshot.theme);
+    assert.deepEqual(storedResult.characterRuntimeSnapshot, freshSnapshot);
+    const hydrated = storage.getSession(initial.id);
+    assert.deepEqual(hydrated?.characterRuntimeSnapshot, freshSnapshot);
+    assert.equal(hydrated?.character, "Fresh");
+    assert.equal(hydrated?.characterIconPath, freshSnapshot.iconFilePath);
+    assert.deepEqual(hydrated?.characterThemeColors, freshSnapshot.theme);
+    assert.deepEqual(hydrated?.messages.map((message) => message.text), ["existing", "new prompt"]);
+    assert.equal(hydrated?.status, "running");
+    assert.equal(hydrated?.runState, "running");
   } finally {
     storage.close();
     await removeDirectoryWithRetry(tempDirectory);

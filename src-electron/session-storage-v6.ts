@@ -53,7 +53,10 @@ import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
 } from "./session-turn-terminal-commit.js";
-import type { SessionRunningTurnStartInput } from "./session-running-turn-start.js";
+import type {
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 type SessionV6Row = {
   id: string;
@@ -494,7 +497,7 @@ export class SessionStorageV6 {
     return this.storeSession(session, "upsert", terminalCommit);
   }
 
-  appendRunningTurnStart(input: SessionRunningTurnStartInput): SessionSummary {
+  appendRunningTurnStart(input: SessionRunningTurnStartInput): SessionRunningTurnStartResult {
     const sessionId = input.sessionId.trim();
     if (
       !sessionId
@@ -512,6 +515,17 @@ export class SessionStorageV6 {
       const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
       if (!currentRow) {
         throw new Error("対象セッションが見つからないよ。");
+      }
+
+      const nextCharacterSnapshot = input.characterRuntimeSnapshot;
+      if (nextCharacterSnapshot) {
+        const currentCharacterId = decodeSessionV6RuntimeState(currentRow).characterId;
+        if (
+          currentRow.session_kind !== "character-authoring"
+          || nextCharacterSnapshot.characterId !== currentCharacterId
+        ) {
+          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+        }
       }
 
       const tailRow = this.db.prepare(`
@@ -534,15 +548,31 @@ export class SessionStorageV6 {
         ...parseJsonObject(currentRow.runtime_policy_json),
         appStatus: "running",
         runState: "running",
+        ...(nextCharacterSnapshot ? {
+          characterName: nextCharacterSnapshot.name,
+          characterIconPath: nextCharacterSnapshot.iconFilePath,
+          characterThemeColors: nextCharacterSnapshot.theme,
+        } : {}),
       });
+      const characterSnapshotJson = nextCharacterSnapshot
+        ? stringifyCharacterRuntimeSnapshot(nextCharacterSnapshot)
+        : currentRow.character_snapshot_json;
       const updateResult = this.db.prepare(`
         UPDATE sessions_v6
         SET state = 'active',
             runtime_policy_json = ?,
+            character_snapshot_json = CASE WHEN ? = 1 THEN ? ELSE character_snapshot_json END,
             updated_at = ?,
             last_active_at = ?
         WHERE id = ?
-      `).run(runtimePolicyJson, input.updatedAt, input.updatedAt, sessionId);
+      `).run(
+        runtimePolicyJson,
+        nextCharacterSnapshot ? 1 : 0,
+        characterSnapshotJson,
+        input.updatedAt,
+        input.updatedAt,
+        sessionId,
+      );
       if (Number(updateResult.changes) !== 1) {
         throw new Error("running turn のSession metadataを更新できなかったよ。");
       }
@@ -556,15 +586,21 @@ export class SessionStorageV6 {
         encodeMessage(input.userMessage),
         input.updatedAt,
       );
-      const storedSummary = this.rowToSessionSummary({
+      const storedRow: SessionV6Row = {
         ...currentRow,
         state: "active",
         runtime_policy_json: runtimePolicyJson,
+        character_snapshot_json: characterSnapshotJson,
         updated_at: input.updatedAt,
         last_active_at: input.updatedAt,
-      });
+      };
+      const decodedStoredRow = decodeSessionV6RuntimeState(storedRow);
+      const storedResult: SessionRunningTurnStartResult = {
+        summary: this.rowToSessionSummary(storedRow, decodedStoredRow),
+        characterRuntimeSnapshot: decodedStoredRow.snapshot,
+      };
       this.db.exec("COMMIT");
-      return storedSummary;
+      return storedResult;
     } catch (error) {
       this.db.exec("ROLLBACK");
       throw error;

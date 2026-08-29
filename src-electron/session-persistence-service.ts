@@ -27,7 +27,10 @@ import type {
 import { SessionIdCollisionError } from "./session-storage-errors.js";
 import type { RunCharacterAffectTurnOwnershipExclusive } from "./character-affect-turn-ownership-coordinator.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
-import type { SessionRunningTurnStartInput } from "./session-running-turn-start.js";
+import type {
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
 
@@ -50,7 +53,7 @@ export type SessionPersistenceServiceDeps = {
   ): Awaitable<readonly { id: string; parentSessionId: string; provider: string }[]>;
   upsertStoredSession(session: Session, operation: "create" | "upsert"): Awaitable<Session>;
   upsertStoredTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
-  appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionSummary>;
+  appendStoredRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
   replaceStoredSessions(sessions: Session[]): Awaitable<void>;
   setStoredSessionPinned?(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;
   listStoredSessions(): Awaitable<Session[]>;
@@ -366,13 +369,20 @@ export class SessionPersistenceService {
         throw new Error("running turn 開始のincremental storageが利用できないよ。");
       }
 
-      const storedSummary = await this.deps.appendStoredRunningTurnStart({
+      const storedResult = await this.deps.appendStoredRunningTurnStart({
         sessionId: nextSession.id,
         expectedMessageCount,
         userMessage,
         updatedAt: nextSession.updatedAt,
+        characterRuntimeSnapshot: nextSession.sessionKind === "character-authoring"
+          ? nextSession.characterRuntimeSnapshot ?? undefined
+          : undefined,
       });
-      const stored = cloneSessions([{ ...nextSession, ...storedSummary }])[0];
+      const stored = cloneSessions([{
+        ...nextSession,
+        ...storedResult.summary,
+        characterRuntimeSnapshot: storedResult.characterRuntimeSnapshot,
+      }])[0];
       this.runCommittedProjectionBestEffort("running turn", "cache update", () => {
         this.deps.setSessions(upsertSessionInList(this.deps.getSessions(), toCachedSession(stored)));
       });

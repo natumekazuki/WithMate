@@ -19,18 +19,21 @@ import {
   type SessionRuntimeServiceDeps,
 } from "../../src-electron/session-runtime-service.js";
 
-function createSession(): Session {
-  return buildNewSession({
-    taskTitle: "Runtime Test",
-    workspaceLabel: "workspace",
-    workspacePath: "C:/workspace",
-    branch: "main",
-    characterId: "char-a",
-    character: "A",
-    characterIconPath: "",
-    characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
-    approvalMode: DEFAULT_APPROVAL_MODE,
-  });
+function createSession(overrides?: Partial<Session>): Session {
+  return {
+    ...buildNewSession({
+      taskTitle: "Runtime Test",
+      workspaceLabel: "workspace",
+      workspacePath: "C:/workspace",
+      branch: "main",
+      characterId: "char-a",
+      character: "A",
+      characterIconPath: "",
+      characterThemeColors: { main: "#6f8cff", sub: "#6fb8c7" },
+      approvalMode: DEFAULT_APPROVAL_MODE,
+    }),
+    ...overrides,
+  };
 }
 
 function createProviderCatalog(): ModelCatalogProvider {
@@ -153,23 +156,52 @@ it("running turn開始の保存失敗時はproviderをdispatchしない", async 
 
 // @test-value v1
 // kind = "invariant"
-// claim = "provider dispatchは専用running turn開始保存の成功後にだけ行われ、terminal保存は既存経路を使う"
-// oracle = { type = "contract", ref = "running-turn-start-persistence#1,#6,#7" }
-// failure_mode = "providerをrunning turn開始保存より先にdispatchするか、terminal commitまで専用append経路へ混在させる"
+// claim = "provider dispatchは最新authoring snapshotを含む専用開始保存の成功後だけに行われ、terminal保存は既存経路を使う"
+// oracle = { type = "contract", ref = "running-turn-start-persistence#1,#6,#7;docs/design/character-storage.md#Runtime-Snapshot" }
+// failure_mode = "providerを開始保存より先にdispatchするか、再生成したCharacter snapshotを開始保存へ渡さずDBとproviderを不一致にする"
 // scope = "SessionRuntimeService.runSessionTurn"
 // lifecycle = "permanent"
-// distinction = "成功した開始保存、provider外部副作用、provider失敗後のterminal generic保存の順序を観測する"
+// distinction = "authoring snapshot解決、開始保存、provider外部副作用、provider失敗後のterminal generic保存の順序と入力を観測する"
 // @end-test-value
-it("providerはrunning turn開始保存後にdispatchし、terminal状態はgeneric経路で保存する", async () => {
-  const session = createSession();
+it("providerは最新authoring snapshotの開始保存後にdispatchし、terminal状態はgeneric経路で保存する", async () => {
+  const oldSnapshot = {
+    characterId: "char-a",
+    name: "Old",
+    description: "",
+    iconFilePath: "",
+    theme: { main: "#111111", sub: "#222222" },
+    definitionMarkdown: "# Old",
+    definitionSha256: "old",
+    definitionByteSize: 5,
+    snapshotAt: "old",
+  };
+  const freshSnapshot = {
+    ...oldSnapshot,
+    name: "Fresh",
+    definitionMarkdown: "# Fresh",
+    definitionSha256: "fresh",
+    definitionByteSize: 7,
+    snapshotAt: "fresh",
+  };
+  const session = createSession({
+    sessionKind: "character-authoring",
+    characterRuntimeSnapshot: oldSnapshot,
+  });
   const events: string[] = [];
   const adapter = createAdapter(async () => {
     events.push("provider-dispatch");
     throw new Error("provider failed");
   });
   const service = new SessionRuntimeService(createRuntimeDeps(session, adapter, {
+    resolveRuntimeSessionForTurn: (stored) => ({
+      ...stored,
+      character: freshSnapshot.name,
+      characterRuntimeSnapshot: freshSnapshot,
+    }),
     persistRunningTurnStart: (next, expectedMessageCount) => {
       assert.equal(expectedMessageCount, 0);
+      assert.deepEqual(next.characterRuntimeSnapshot, freshSnapshot);
+      assert.equal(next.character, "Fresh");
       events.push("running-start-persisted");
       return next;
     },
