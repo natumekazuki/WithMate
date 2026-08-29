@@ -552,6 +552,10 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `work.transition` | `work transition` |
 | `work.result` | `work result` |
 | `work.cancel` | `work cancel` |
+| `work.aggregation.get` | `work aggregation get` |
+| `work.aggregation.list` | `work aggregation list` |
+| `work.aggregation.decide` | `work aggregation decide` |
+| `work.aggregation.retry` | `work aggregation retry` |
 | `coordination.event.create` | `coordination event create` |
 | `coordination.event.list` | `coordination event list` |
 | `coordination.event.get` | `coordination event get` |
@@ -573,6 +577,10 @@ Work Itemは一つのSession間委譲を表し、executionとは別のserver生�
 `turn.run | turn.enqueue`はoptionalな`workItemId`を受け付ける。新規executionの作成前にactor、root、target、active stateを検証し、execution保存transaction内でもtargetとactive stateを再検証してassociationを同時保存する。`workItemId | null`はTurnのidempotency fingerprintへ含め、同じkeyでassociation先だけを変更した要求はconflictにする。`turn.run | turn.enqueue | turn.get | turn.list`は`workItemId | null`を同じpublic projectionで返す。executionのterminal stateはWork Itemを暗黙に遷移させない。
 
 `work.list`はruntime actorのrootを固定し、creator、target、stateの明示filterとsequence keyset cursorをstorage queryへ渡す。cursorはroot、actor Session、root全体またはactor関連だけを示すvisibility、明示filterへ束縛し、scopeが異なる再利用を`INVALID_CURSOR`で拒否する。overall coordinatorは同じrootを参照でき、それ以外のRoleは自分がcreatorまたはtargetのWork Itemだけを参照する。一覧はWork Itemをstorage iteratorから逐次hydrateし、8 MiBのpublic response上限へ達する前にpageを打ち切って`nextCursor`を返す。Work Item mutationはCoordination Eventを必須副作用にせず、Coordination Event schemaも変更しない。
+
+Work Item aggregationはactiveな親と直属子だけを対象とし、孫をflattenしない。親target Sessionはterminalな直属子へ`accepted | excluded | retry_requested`のimmutable decisionを作成する。`excluded`は理由を必須とし、`canceled`は採用できない。retryは明示された新しいbindingでreplacementを作成し、decision、replacement、idempotency resultを同一transactionへ保存する。元Work Itemのstateとresultは変更しない。
+
+`work.aggregation.get | list`はaggregate revisionと件数、およびidentity、state、result summary、decisionだけをbounded queryで返す。full resultは`work.get`で取得する。cursorはparent、actor、visibility、filterへ束縛する。直属子を持つ親の`work.result`はcurrent aggregate revisionを要求し、全直属子がterminalかつdecision済みであるsnapshotを親resultと同一transactionで検証する。親terminal確定後は直属子追加とdecision mutationを拒否する。
 
 Coordination Eventは通常responseと分離したdedicated historyである。本文とactionをv6 databaseの専用tableへ保存し、stateを初期kindとaction履歴から投影する。actorとRole tupleはruntime bindingから解決し、authorityはcurrent `session_role_bindings_v6`を参照する。CLI、MCP、raw HTTPは七つのshared operationとstrict validatorを共有する。mutationはprincipal Session単位のidempotency keyを必須とし、commit後のpublication failureは`effect: applied`とevent IDを返す。
 

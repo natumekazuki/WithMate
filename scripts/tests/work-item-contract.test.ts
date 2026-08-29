@@ -19,6 +19,7 @@ import {
   WorkItemIdempotencyConflictError,
   WorkItemRevisionConflictError,
   WorkItemStateConflictError,
+  WorkItemAggregationConflictError,
   WorkItemStorageV6,
 } from "../../src-electron/work-item-storage-v6.js";
 import { parseSessionRuntimeOperationInput } from "../../src/session-external-runtime-contract.js";
@@ -140,6 +141,150 @@ describe("Work Item contract", () => {
       idempotencyKey: key,
     }, binding("root"));
   }
+
+  function createChild(parentWorkItemId: string, key: string) {
+    return service.create({
+      targetSessionId: "executor", parentWorkItemId, goal: "child", scope: "scope",
+      completionCriteria: "done", authority: "local", sourceIdentity, idempotencyKey: key,
+    }, binding("task"));
+  }
+
+  function completeChild(workItemId: string, key: string) {
+    const active = service.transition({ workItemId, state: "in_progress", expectedRevision: 1, idempotencyKey: `${key}-start` }, binding("executor"));
+    return service.reportResult({
+      workItemId, state: "completed", expectedRevision: active.revision,
+      result: { summary: "child result", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
+      idempotencyKey: `${key}-result`,
+    }, binding("executor"));
+  }
+
+  it("AGG-SCOPE-01/AGG-DECISION-02: 直属terminal childだけをimmutable decisionへ集約する", () => {
+    const parent = createRootWork("agg-parent");
+    const child = createChild(parent.id, "agg-child");
+    completeChild(child.id, "agg-child");
+    assert.deepEqual(service.getAggregation({ parentWorkItemId: parent.id }, binding("root")), {
+      contractRevision: 1, parentWorkItemId: parent.id, aggregateRevision: 1, directChildCount: 1,
+      activeCount: 0, undecidedTerminalCount: 1, acceptedCount: 0, excludedCount: 0, retryRequestedCount: 0,
+    });
+    assert.throws(() => service.decideAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "accepted",
+      expectedAggregateRevision: 1, idempotencyKey: "wrong-actor",
+    }, binding("root")), WorkItemAuthorityError);
+    const decision = service.decideAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "accepted",
+      expectedAggregateRevision: 1, idempotencyKey: "accept-child",
+    }, binding("task"));
+    assert.equal(decision.decision, "accepted");
+    assert.equal(service.get(child.id, binding("task")).result?.summary, "child result");
+    assert.throws(() => service.decideAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "excluded", reason: "changed mind",
+      expectedAggregateRevision: 2, idempotencyKey: "replace-decision",
+    }, binding("task")), WorkItemAggregationConflictError);
+    const page = service.listAggregation({ parentWorkItemId: parent.id, limit: 2, afterSequence: null }, binding("root"));
+    assert.equal(page.length, 1);
+    assert.equal(page[0]?.resultSummary, "child result");
+    assert.equal(page[0]?.decision?.decision, "accepted");
+  });
+
+  it("AGG-RETRY-03: retry decisionとreplacementをatomicかつ再送可能に保存する", () => {
+    const parent = createRootWork("retry-parent");
+    const child = createChild(parent.id, "retry-child");
+    service.cancel({ workItemId: child.id, expectedRevision: 1, idempotencyKey: "cancel-child" }, binding("task"));
+    const request = {
+      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "executor",
+      goal: "retry", scope: "retry scope", completionCriteria: "done", authority: "local", sourceIdentity,
+      expectedAggregateRevision: 1, idempotencyKey: "retry-request",
+    } as const;
+    const first = service.retryAggregation(request, binding("task"));
+    const replay = service.retryAggregation(request, binding("task"));
+    assert.equal(replay.replacement.id, first.replacement.id);
+    assert.equal(first.decision.replacementWorkItemId, first.replacement.id);
+    assert.equal(storage.get(child.id)?.state, "canceled");
+    assert.equal(service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).aggregateRevision, 3);
+    storage.close();
+    storage = new WorkItemStorageV6(dbPath);
+    service = makeService(storage);
+    assert.equal(service.retryAggregation(request, binding("task")).replacement.id, first.replacement.id);
+    assert.throws(() => service.retryAggregation({ ...request, goal: "different" }, binding("task")), WorkItemIdempotencyConflictError);
+  });
+
+  it("AGG-DECISION-02: activeとcanceled採用を拒否しfailedとpartially_completedを除外できる", () => {
+    const parent = createRootWork("state-parent");
+    const active = createChild(parent.id, "state-active");
+    assert.throws(() => service.decideAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: active.id, decision: "accepted",
+      expectedAggregateRevision: 1, idempotencyKey: "active-accept",
+    }, binding("task")), WorkItemAggregationConflictError);
+    service.cancel({ workItemId: active.id, expectedRevision: 1, idempotencyKey: "state-cancel" }, binding("task"));
+    assert.throws(() => service.decideAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: active.id, decision: "accepted",
+      expectedAggregateRevision: 1, idempotencyKey: "canceled-accept",
+    }, binding("task")), WorkItemAggregationConflictError);
+    service.decideAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: active.id, decision: "excluded", reason: "canceled",
+      expectedAggregateRevision: 1, idempotencyKey: "canceled-exclude",
+    }, binding("task"));
+    for (const state of ["failed", "partially_completed"] as const) {
+      const child = createChild(parent.id, `state-${state}`);
+      service.transition({ workItemId: child.id, state: "in_progress", expectedRevision: 1, idempotencyKey: `${state}-start` }, binding("executor"));
+      service.reportResult({
+        workItemId: child.id, state, expectedRevision: 2,
+        result: { summary: state, changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
+        idempotencyKey: `${state}-result`,
+      }, binding("executor"));
+      const revision = service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).aggregateRevision;
+      service.decideAggregation({
+        parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "excluded", reason: state,
+        expectedAggregateRevision: revision, idempotencyKey: `${state}-exclude`,
+      }, binding("task"));
+    }
+    assert.equal(service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).excludedCount, 3);
+  });
+
+  it("AGG-RETRY-03: decision insert failureはreplacementとaggregate revisionもrollbackする", () => {
+    const parent = createRootWork("rollback-parent");
+    const child = createChild(parent.id, "rollback-child");
+    service.cancel({ workItemId: child.id, expectedRevision: 1, idempotencyKey: "rollback-cancel" }, binding("task"));
+    const db = new DatabaseSync(dbPath);
+    try {
+      db.exec(`CREATE TRIGGER fail_aggregation_decision BEFORE INSERT ON work_item_aggregation_decisions_v6
+        BEGIN SELECT RAISE(ABORT, 'injected decision failure'); END;`);
+    } finally {
+      db.close();
+    }
+    assert.throws(() => service.retryAggregation({
+      parentWorkItemId: parent.id, childWorkItemId: child.id, targetSessionId: "executor",
+      goal: "retry", scope: "scope", completionCriteria: "done", authority: "local", sourceIdentity,
+      expectedAggregateRevision: 1, idempotencyKey: "rollback-retry",
+    }, binding("task")), /injected decision failure/);
+    const verify = new DatabaseSync(dbPath, { readOnly: true });
+    try {
+      assert.equal((verify.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE parent_work_item_id = ?").get(parent.id) as { count: number }).count, 1);
+      assert.equal((verify.prepare("SELECT COUNT(*) AS count FROM work_item_aggregation_decisions_v6").get() as { count: number }).count, 0);
+      assert.equal((verify.prepare("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?").get(parent.id) as { aggregate_revision: number }).aggregate_revision, 1);
+    } finally {
+      verify.close();
+    }
+  });
+
+  it("AGG-FINALIZE-04: 親resultはcurrent aggregate snapshotが解決済みの場合だけatomicに確定する", () => {
+    let parent = createRootWork("final-parent");
+    parent = service.transition({ workItemId: parent.id, state: "in_progress", expectedRevision: 1, idempotencyKey: "parent-start" }, binding("task"));
+    const child = createChild(parent.id, "final-child");
+    completeChild(child.id, "final-child");
+    const resultInput = {
+      workItemId: parent.id, state: "completed" as const, expectedRevision: parent.revision,
+      result: { summary: "integrated", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
+      idempotencyKey: "parent-result",
+    };
+    assert.throws(() => service.reportResult({ ...resultInput, expectedAggregateRevision: 1 }, binding("task")), WorkItemAggregationConflictError);
+    assert.equal(storage.get(parent.id)?.state, "in_progress");
+    service.decideAggregation({ parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "accepted", expectedAggregateRevision: 1, idempotencyKey: "final-accept" }, binding("task"));
+    assert.throws(() => service.reportResult({ ...resultInput, expectedAggregateRevision: 1 }, binding("task")), WorkItemAggregationConflictError);
+    const finalized = service.reportResult({ ...resultInput, expectedAggregateRevision: 2 }, binding("task"));
+    assert.equal(finalized.state, "completed");
+    assert.throws(() => createChild(parent.id, "late-child"), WorkItemParentError);
+  });
 
   it("WORK-IDENTITY-01: create replayはimmutable bindingを復元し異なるfingerprintを拒否する", () => {
     const created = createRootWork();
@@ -564,6 +709,9 @@ describe("Work Item contract", () => {
     const db = new DatabaseSync(dbPath);
     try {
       db.exec(`
+        DROP TABLE work_item_aggregation_idempotency_v6;
+        DROP TABLE work_item_aggregation_decisions_v6;
+        DROP TABLE work_item_aggregations_v6;
         DROP TABLE work_item_execution_associations_v6;
         DROP TABLE work_item_idempotency_v6;
         DROP TRIGGER trg_v6_work_items_protect_session_delete;
@@ -573,6 +721,7 @@ describe("Work Item contract", () => {
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sessions_v6").get() as { count: number }).count, 7);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-existing'").get() as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE id = ?").get(item.id) as { count: number }).count, 1);
+      assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name LIKE 'work_item_aggregation%'").get() as { count: number }).count, 3);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND name = 'trg_v6_work_items_protect_session_delete'").get() as { count: number }).count, 1);
     } finally {
       db.close();

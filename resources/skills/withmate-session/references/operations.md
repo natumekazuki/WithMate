@@ -40,7 +40,7 @@ The CLI and MCP expose the same 31 operations:
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
-- Work Item: `work.create`, `work.list`, `work.get`, `work.transition`, `work.result`, `work.cancel`
+- Work Item: `work.create`, `work.list`, `work.get`, `work.transition`, `work.result`, `work.cancel`, `work.aggregation.get`, `work.aggregation.list`, `work.aggregation.decide`, `work.aggregation.retry`
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`

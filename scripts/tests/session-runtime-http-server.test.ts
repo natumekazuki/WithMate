@@ -81,6 +81,18 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     result: { summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
   },
   "work.cancel": { workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-cancel-key" },
+  "work.aggregation.get": { parentWorkItemId: "work-parent" },
+  "work.aggregation.list": { parentWorkItemId: "work-parent" },
+  "work.aggregation.decide": {
+    parentWorkItemId: "work-parent", childWorkItemId: "work-child", decision: "accepted",
+    expectedAggregateRevision: 1, idempotencyKey: "work-aggregation-decide-key",
+  },
+  "work.aggregation.retry": {
+    parentWorkItemId: "work-parent", childWorkItemId: "work-child", targetSessionId: "session-1",
+    goal: "retry", scope: "scope", completionCriteria: "done", authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+    expectedAggregateRevision: 1, idempotencyKey: "work-aggregation-retry-key",
+  },
   "turn.options": { sessionId: "session-1" },
   "turn.run": {
     sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",

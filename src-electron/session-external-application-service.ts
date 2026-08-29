@@ -59,6 +59,11 @@ import {
   type SessionRuntimeWorkItemListResult,
   type SessionRuntimeWorkItemResultInput,
   type SessionRuntimeWorkItemTransitionInput,
+  type SessionRuntimeWorkItemAggregationGetInput,
+  type SessionRuntimeWorkItemAggregationListInput,
+  type SessionRuntimeWorkItemAggregationListResult,
+  type SessionRuntimeWorkItemAggregationDecisionInput,
+  type SessionRuntimeWorkItemAggregationRetryInput,
 } from "../src/session-external-runtime-contract.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
 import {
@@ -75,6 +80,10 @@ import {
 } from "../src/session-turn-communication-authority.js";
 import {
   WORK_ITEM_CONTRACT_REVISION,
+  WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
+  WORK_ITEM_AGGREGATION_DECISIONS,
+  WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
   WORK_ITEM_DEFAULT_LIST_LIMIT,
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_RESULT_BYTES,
@@ -134,6 +143,7 @@ import {
   WorkItemRevisionConflictError,
   WorkItemResultTooLargeError,
   WorkItemStateConflictError,
+  WorkItemAggregationConflictError,
 } from "./work-item-storage-v6.js";
 
 export type SessionExternalApplicationServiceDeps = {
@@ -170,6 +180,7 @@ export type SessionExternalApplicationServiceDeps = {
   workItemService?: Pick<
     WorkItemService,
     "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
+    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
 };
@@ -280,6 +291,18 @@ export class SessionExternalApplicationService {
     }
     if (operation === "work.cancel") {
       return this.requireWorkItemService().cancel(input as SessionRuntimeWorkItemCancelInput, agentRuntimeBinding);
+    }
+    if (operation === "work.aggregation.get") {
+      return this.requireWorkItemService().getAggregation(input as SessionRuntimeWorkItemAggregationGetInput, agentRuntimeBinding);
+    }
+    if (operation === "work.aggregation.list") {
+      return this.listWorkItemAggregation(input as SessionRuntimeWorkItemAggregationListInput, agentRuntimeBinding);
+    }
+    if (operation === "work.aggregation.decide") {
+      return this.requireWorkItemService().decideAggregation(input as SessionRuntimeWorkItemAggregationDecisionInput, agentRuntimeBinding);
+    }
+    if (operation === "work.aggregation.retry") {
+      return this.requireWorkItemService().retryAggregation(input as SessionRuntimeWorkItemAggregationRetryInput, agentRuntimeBinding);
     }
     if (operation === "turn.options") {
       return this.turnOptions((input as SessionRuntimeSessionInput).sessionId);
@@ -677,6 +700,40 @@ export class SessionExternalApplicationService {
     return result;
   }
 
+  private listWorkItemAggregation(
+    input: SessionRuntimeWorkItemAggregationListInput,
+    binding: ResolvedAgentRuntimeBinding,
+  ): SessionRuntimeWorkItemAggregationListResult {
+    const service = this.requireWorkItemService();
+    const scope = service.resolveListScope(binding);
+    const afterSequence = input.cursor ? decodeWorkItemAggregationCursor(input, scope, input.cursor) : null;
+    const items = service.listAggregation({
+      parentWorkItemId: input.parentWorkItemId,
+      ...(input.decision === undefined ? {} : { decision: input.decision }),
+      limit: input.limit + 1,
+      afterSequence,
+    }, binding);
+    const result: SessionRuntimeWorkItemAggregationListResult = { items: [] };
+    for (let index = 0; index < items.length && result.items.length < input.limit; index += 1) {
+      const item = items[index]!;
+      const hasMore = index + 1 < items.length;
+      const candidate: SessionRuntimeWorkItemAggregationListResult = {
+        items: [...result.items, item],
+        ...(hasMore ? { nextCursor: encodeWorkItemAggregationCursor(input, scope, item.child.sequence) } : {}),
+      };
+      if (Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("work.aggregation.list", candidate)), "utf8")
+        > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+        const last = result.items[result.items.length - 1];
+        if (!last) throw new SessionRuntimeProjectionLimitError("result.items");
+        result.nextCursor = encodeWorkItemAggregationCursor(input, scope, last.child.sequence);
+        break;
+      }
+      result.items.push(item);
+      if (hasMore && result.items.length === input.limit) result.nextCursor = candidate.nextCursor;
+    }
+    return result;
+  }
+
   private resolveWorkItemAssociation(
     input: SessionRuntimeEnqueueInput,
     binding: ResolvedAgentRuntimeBinding,
@@ -852,6 +909,13 @@ function projectRuntimeCatalog(
       maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
       maxListResponseBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES,
       maxResultBytes: WORK_ITEM_MAX_RESULT_BYTES,
+      aggregation: {
+        contractRevision: WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
+        decisions: WORK_ITEM_AGGREGATION_DECISIONS,
+        operations: ["get", "list", "decide", "retry"],
+        defaultListLimit: WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT,
+        maxListLimit: WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
+      },
     },
     providers: snapshot.providers
       .filter((provider) => isProviderSupported(provider.id) && isProviderEnabled(provider.id))
@@ -1054,6 +1118,41 @@ function decodeWorkItemCursor(
   }
 }
 
+function encodeWorkItemAggregationCursor(
+  input: SessionRuntimeWorkItemAggregationListInput,
+  scope: WorkItemListScope,
+  afterSequence: number,
+): string {
+  return Buffer.from(JSON.stringify({
+    version: 1,
+    operation: "work.aggregation.list",
+    parentWorkItemId: input.parentWorkItemId,
+    rootSessionId: scope.rootSessionId,
+    actorSessionId: scope.actorSessionId,
+    visibility: scope.visibility,
+    decision: input.decision ?? null,
+    afterSequence,
+  }), "utf8").toString("base64url");
+}
+
+function decodeWorkItemAggregationCursor(
+  input: SessionRuntimeWorkItemAggregationListInput,
+  scope: WorkItemListScope,
+  cursor: string,
+): number {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (value.version !== 1 || value.operation !== "work.aggregation.list"
+      || value.parentWorkItemId !== input.parentWorkItemId || value.rootSessionId !== scope.rootSessionId
+      || value.actorSessionId !== scope.actorSessionId || value.visibility !== scope.visibility
+      || value.decision !== (input.decision ?? null) || !Number.isSafeInteger(value.afterSequence)
+      || (value.afterSequence as number) < 1) throw new Error("invalid cursor");
+    return value.afterSequence as number;
+  } catch {
+    throw new SessionRuntimeValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
+}
+
 function decodeInteractionCursor(input: SessionRuntimeInteractionListInput, cursor: string): number {
   try {
     const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
@@ -1103,6 +1202,8 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
         || operation === "work.transition"
         || operation === "work.result"
         || operation === "work.cancel"
+        || operation === "work.aggregation.decide"
+        || operation === "work.aggregation.retry"
         || operation === "interaction.respond"
         || operation === "coordination.event.create"
         || operation === "coordination.event.resolve"
@@ -1178,6 +1279,9 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
   }
   if (error instanceof WorkItemRevisionConflictError || error instanceof WorkItemStateConflictError) {
     return createSessionRuntimeError({ code: error.code, message: error.message });
+  }
+  if (error instanceof WorkItemAggregationConflictError) {
+    return createSessionRuntimeError({ code: error.code, message: error.message, details: error.details });
   }
   if (error instanceof WorkItemIdempotencyConflictError) {
     return createSessionRuntimeError({ code: error.code, message: "The idempotency key was reused with different input." });

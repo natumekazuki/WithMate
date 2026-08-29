@@ -21,6 +21,9 @@ import {
   WORK_ITEM_MAX_RESULT_ITEMS,
   WORK_ITEM_MAX_TEXT_LENGTH,
   WORK_ITEM_STATES,
+  WORK_ITEM_AGGREGATION_DECISIONS,
+  WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
 } from "../src/work-item.js";
 import {
   SESSION_RUNTIME_DEFAULT_LIST_LIMIT,
@@ -243,8 +246,31 @@ const workItemResultInputSchema = z.object({
   workItemId: nonEmptyStringSchema,
   state: z.enum(["completed", "partially_completed", "failed"]),
   expectedRevision: z.number().int().min(1),
+  expectedAggregateRevision: z.number().int().min(0).optional(),
   result: workItemResultBodySchema,
   idempotencyKey: nonEmptyStringSchema,
+}).strict();
+const workItemAggregationGetInputSchema = z.object({ parentWorkItemId: nonEmptyStringSchema }).strict();
+const workItemAggregationListInputSchema = z.object({
+  parentWorkItemId: nonEmptyStringSchema,
+  decision: z.enum(WORK_ITEM_AGGREGATION_DECISIONS).optional(),
+  limit: z.number().int().min(1).max(WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT).default(WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT),
+  cursor: nonEmptyStringSchema.optional(),
+}).strict();
+const workItemAggregationDecisionInputSchema = z.object({
+  parentWorkItemId: nonEmptyStringSchema, childWorkItemId: nonEmptyStringSchema,
+  decision: z.enum(["accepted", "excluded"]), reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH).optional(),
+  expectedAggregateRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
+}).strict().superRefine((value, context) => {
+  if (value.decision === "excluded" && value.reason === undefined) context.addIssue({ code: "custom", path: ["reason"], message: "excluded requires a reason." });
+});
+const workItemAggregationRetryInputSchema = z.object({
+  parentWorkItemId: nonEmptyStringSchema, childWorkItemId: nonEmptyStringSchema,
+  targetSessionId: nonEmptyStringSchema, goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  scope: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  completionCriteria: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+  authority: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH), sourceIdentity: workItemSourceIdentitySchema,
+  reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH).optional(), expectedAggregateRevision: z.number().int().min(1), idempotencyKey: nonEmptyStringSchema,
 }).strict();
 const workItemCancelInputSchema = z.object({
   workItemId: nonEmptyStringSchema,
@@ -603,6 +629,19 @@ const resultWorkItemSchema = z.union([
   z.object({ ...workItemIdentityShape, state: z.literal("failed"), result: workItemResultSchema.extend({ outcome: z.literal("failed") }).strict() }).strict(),
 ]);
 const workItemSchema = z.union([activeWorkItemSchema, canceledWorkItemSchema, resultWorkItemSchema]);
+const workItemAggregationDecisionSchema = z.object({
+  parentWorkItemId: z.string(), childWorkItemId: z.string(), revision: z.number().int().positive(),
+  childRevision: z.number().int().positive(), actorSessionId: z.string(), decision: z.enum(WORK_ITEM_AGGREGATION_DECISIONS),
+  reason: z.string().nullable(), replacementWorkItemId: z.string().nullable(), decidedAt: z.string(),
+}).strict();
+const workItemAggregationItemSchema = z.object({
+  child: z.object({
+    id: z.string(), sequence: z.number().int().positive(), creatorSessionId: z.string(), targetSessionId: z.string(),
+    parentWorkItemId: z.string().nullable(), state: z.enum(WORK_ITEM_STATES), revision: z.number().int().positive(),
+    createdAt: z.string(), updatedAt: z.string(),
+  }).strict(),
+  hasResult: z.boolean(), resultSummary: z.string().nullable(), decision: workItemAggregationDecisionSchema.nullable(),
+}).strict();
 const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "runtime.catalog": z.object({
     revision: z.number().int(),
@@ -631,6 +670,13 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       maxListLimit: z.literal(WORK_ITEM_MAX_LIST_LIMIT),
       maxListResponseBytes: z.literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
       maxResultBytes: z.literal(WORK_ITEM_MAX_RESULT_BYTES),
+      aggregation: z.object({
+        contractRevision: z.literal(1),
+        decisions: z.tuple([z.literal("accepted"), z.literal("excluded"), z.literal("retry_requested")]),
+        operations: z.tuple([z.literal("get"), z.literal("list"), z.literal("decide"), z.literal("retry")]),
+        defaultListLimit: z.literal(WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT),
+        maxListLimit: z.literal(WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT),
+      }).strict(),
     }).strict(),
     providers: z.array(z.object({
       id: z.string(),
@@ -654,6 +700,15 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
   "work.transition": workItemSchema,
   "work.result": resultWorkItemSchema,
   "work.cancel": canceledWorkItemSchema,
+  "work.aggregation.get": z.object({
+    contractRevision: z.literal(1), parentWorkItemId: z.string(), aggregateRevision: z.number().int().nonnegative(),
+    directChildCount: z.number().int().nonnegative(), activeCount: z.number().int().nonnegative(),
+    undecidedTerminalCount: z.number().int().nonnegative(), acceptedCount: z.number().int().nonnegative(),
+    excludedCount: z.number().int().nonnegative(), retryRequestedCount: z.number().int().nonnegative(),
+  }).strict(),
+  "work.aggregation.list": z.object({ items: z.array(workItemAggregationItemSchema), nextCursor: z.string().optional() }).strict(),
+  "work.aggregation.decide": workItemAggregationDecisionSchema,
+  "work.aggregation.retry": z.object({ decision: workItemAggregationDecisionSchema, replacement: workItemSchema }).strict(),
   "turn.options": turnOptionsSchema,
   "turn.run": runExecutionSchema,
   "turn.enqueue": enqueueExecutionSchema,
@@ -724,6 +779,10 @@ export const SESSION_MCP_TOOL_DEFINITIONS = [
   { name: "work.transition", title: "Transition Work Item", description: "Start, wait, or resume a Work Item assigned to the bound Session.", readOnly: false, destructive: false },
   { name: "work.result", title: "Report Work Item result", description: "Atomically report a strict result and terminal Work Item state.", readOnly: false, destructive: false },
   { name: "work.cancel", title: "Cancel Work Item", description: "Cancel an active Work Item created by the bound Session.", readOnly: false, destructive: true },
+  { name: "work.aggregation.get", title: "Get Work Item aggregation", description: "Get bounded aggregation counts for one parent Work Item.", readOnly: true, destructive: false },
+  { name: "work.aggregation.list", title: "List Work Item aggregation", description: "List direct child summaries and immutable decisions using a bounded cursor.", readOnly: true, destructive: false },
+  { name: "work.aggregation.decide", title: "Decide Work Item result", description: "Accept or exclude one terminal direct child result.", readOnly: false, destructive: false },
+  { name: "work.aggregation.retry", title: "Retry Work Item result", description: "Atomically record a retry decision and create its replacement Work Item.", readOnly: false, destructive: false },
   { name: "turn.options", title: "Get Session turn options", description: "Read valid turn options for one normal Session.", readOnly: true, destructive: false },
   { name: "turn.run", title: "Run Session turn", description: "Start one turn immediately in the specified Session.", readOnly: false, destructive: true },
   { name: "turn.enqueue", title: "Enqueue Session turn", description: "Append one turn to the specified Session FIFO queue.", readOnly: false, destructive: true },
@@ -758,6 +817,7 @@ function isMutation(operation: SessionRuntimeOperation, input?: unknown): boolea
     || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel"
     || operation === "work.create" || operation === "work.transition"
     || operation === "work.result" || operation === "work.cancel"
+    || operation === "work.aggregation.decide" || operation === "work.aggregation.retry"
     || operation === "interaction.respond"
     || operation === "coordination.event.create" || operation === "coordination.event.resolve"
     || operation === "coordination.event.consume"
@@ -935,6 +995,22 @@ export function createWithMateSessionMcpServer(deps: McpRuntimeDeps = {}): McpSe
     ...definitions.get("work.cancel")!, annotations: annotations(definitions.get("work.cancel")!),
     inputSchema: workItemCancelInputSchema, outputSchema: createOutputSchema("work.cancel"),
   }, async (input) => executeOperation("work.cancel", input, deps));
+  server.registerTool("work.aggregation.get", {
+    ...definitions.get("work.aggregation.get")!, annotations: annotations(definitions.get("work.aggregation.get")!),
+    inputSchema: workItemAggregationGetInputSchema, outputSchema: createOutputSchema("work.aggregation.get"),
+  }, async (input) => executeOperation("work.aggregation.get", input, deps));
+  server.registerTool("work.aggregation.list", {
+    ...definitions.get("work.aggregation.list")!, annotations: annotations(definitions.get("work.aggregation.list")!),
+    inputSchema: workItemAggregationListInputSchema, outputSchema: createOutputSchema("work.aggregation.list"),
+  }, async (input) => executeOperation("work.aggregation.list", input, deps));
+  server.registerTool("work.aggregation.decide", {
+    ...definitions.get("work.aggregation.decide")!, annotations: annotations(definitions.get("work.aggregation.decide")!),
+    inputSchema: workItemAggregationDecisionInputSchema, outputSchema: createOutputSchema("work.aggregation.decide"),
+  }, async (input) => executeOperation("work.aggregation.decide", input, deps));
+  server.registerTool("work.aggregation.retry", {
+    ...definitions.get("work.aggregation.retry")!, annotations: annotations(definitions.get("work.aggregation.retry")!),
+    inputSchema: workItemAggregationRetryInputSchema, outputSchema: createOutputSchema("work.aggregation.retry"),
+  }, async (input) => executeOperation("work.aggregation.retry", input, deps));
   server.registerTool("turn.options", {
     ...definitions.get("turn.options")!,
     annotations: annotations(definitions.get("turn.options")!),

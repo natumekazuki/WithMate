@@ -26,6 +26,9 @@ export const REQUIRED_V6_TABLES = [
   "work_items_v6",
   "work_item_idempotency_v6",
   "work_item_execution_associations_v6",
+  "work_item_aggregations_v6",
+  "work_item_aggregation_decisions_v6",
+  "work_item_aggregation_idempotency_v6",
   "session_execution_public_progress_v6",
   "session_turn_public_context_v6",
   "session_interactions_v6",
@@ -223,6 +226,15 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "expires_at",
   ],
   work_item_execution_associations_v6: ["execution_id", "work_item_id", "created_at"],
+  work_item_aggregations_v6: ["parent_work_item_id", "aggregate_revision", "updated_at"],
+  work_item_aggregation_decisions_v6: [
+    "sequence", "parent_work_item_id", "child_work_item_id", "decision_revision", "child_revision",
+    "actor_session_id", "decision_type", "reason", "replacement_work_item_id", "decided_at",
+  ],
+  work_item_aggregation_idempotency_v6: [
+    "operation", "principal_session_id", "idempotency_key", "request_fingerprint",
+    "child_work_item_id", "replacement_work_item_id", "created_at", "expires_at",
+  ],
   session_execution_public_progress_v6: [
     "execution_id",
     "assistant_text",
@@ -801,6 +813,8 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionExecutionPublicProgressSql = tableSql(db, "session_execution_public_progress_v6");
   const workItemsSql = tableSql(db, "work_items_v6");
   const workItemIdempotencySql = tableSql(db, "work_item_idempotency_v6");
+  const workItemAggregationDecisionSql = tableSql(db, "work_item_aggregation_decisions_v6");
+  const workItemAggregationIdempotencySql = tableSql(db, "work_item_aggregation_idempotency_v6");
   const workItemDeleteTriggerSql = schemaObjectSql(db, "trigger", "trg_v6_work_items_protect_session_delete");
   const sessionTurnPublicContextSql = tableSql(db, "session_turn_public_context_v6");
   const sessionInteractionsSql = tableSql(db, "session_interactions_v6");
@@ -836,6 +850,13 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && workItemsSql.includes("state IN ('completed', 'partially_completed', 'failed')")
     && workItemsSql.includes("json_extract(result_json, '$.outcome') IS state")
     && workItemIdempotencySql.includes("operation IN ('work.create', 'work.transition', 'work.result', 'work.cancel')")
+    && workItemAggregationDecisionSql.includes("decision_type IN ('accepted', 'excluded', 'retry_requested')")
+    && workItemAggregationDecisionSql.includes("replacement_work_item_id IS NOT NULL")
+    && workItemAggregationIdempotencySql.includes("operation IN ('work.aggregation.decide', 'work.aggregation.retry')")
+    && hasForeignKey(db, "work_item_aggregations_v6", "parent_work_item_id", "work_items_v6", "id")
+    && hasForeignKey(db, "work_item_aggregation_decisions_v6", "parent_work_item_id", "work_items_v6", "id")
+    && hasForeignKey(db, "work_item_aggregation_decisions_v6", "child_work_item_id", "work_items_v6", "id")
+    && hasForeignKey(db, "work_item_aggregation_decisions_v6", "replacement_work_item_id", "work_items_v6", "id")
     && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
     && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
     && sessionTurnPublicContextSql.includes("json_type(attachments_json) = 'array'")
@@ -1536,6 +1557,49 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
   );
   CREATE INDEX IF NOT EXISTS idx_v6_work_item_execution_item
     ON work_item_execution_associations_v6(work_item_id, execution_id);
+
+  CREATE TABLE IF NOT EXISTS work_item_aggregations_v6 (
+    parent_work_item_id TEXT PRIMARY KEY,
+    aggregate_revision INTEGER NOT NULL CHECK (aggregate_revision >= 1),
+    updated_at TEXT NOT NULL,
+    FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS work_item_aggregation_decisions_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_work_item_id TEXT NOT NULL,
+    child_work_item_id TEXT NOT NULL UNIQUE,
+    decision_revision INTEGER NOT NULL CHECK (decision_revision >= 1),
+    child_revision INTEGER NOT NULL CHECK (child_revision >= 1),
+    actor_session_id TEXT NOT NULL,
+    decision_type TEXT NOT NULL CHECK (decision_type IN ('accepted', 'excluded', 'retry_requested')),
+    reason TEXT,
+    replacement_work_item_id TEXT UNIQUE,
+    decided_at TEXT NOT NULL,
+    FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
+    FOREIGN KEY (child_work_item_id) REFERENCES work_items_v6(id),
+    FOREIGN KEY (replacement_work_item_id) REFERENCES work_items_v6(id),
+    CHECK (decision_type <> 'excluded' OR (reason IS NOT NULL AND length(trim(reason)) > 0)),
+    CHECK ((decision_type = 'retry_requested') = (replacement_work_item_id IS NOT NULL))
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_aggregation_decisions_parent_sequence
+    ON work_item_aggregation_decisions_v6(parent_work_item_id, sequence ASC);
+
+  CREATE TABLE IF NOT EXISTS work_item_aggregation_idempotency_v6 (
+    operation TEXT NOT NULL CHECK (operation IN ('work.aggregation.decide', 'work.aggregation.retry')),
+    principal_session_id TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_fingerprint TEXT NOT NULL,
+    child_work_item_id TEXT NOT NULL,
+    replacement_work_item_id TEXT,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY (operation, principal_session_id, idempotency_key),
+    FOREIGN KEY (child_work_item_id) REFERENCES work_items_v6(id),
+    FOREIGN KEY (replacement_work_item_id) REFERENCES work_items_v6(id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_aggregation_idempotency_expiry
+    ON work_item_aggregation_idempotency_v6(expires_at);
 
   CREATE TRIGGER IF NOT EXISTS trg_v6_work_items_protect_session_delete
   BEFORE DELETE ON sessions_v6

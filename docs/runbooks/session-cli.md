@@ -56,6 +56,8 @@ withmate-session work transition --json '{"workItemId":"WORK_ITEM_ID","state":"i
 
 `turn run`または`turn enqueue`のtop-levelへ任意の`workItemId`を指定すると、root、target、active state、actor authorityをexecution作成前に検証し、関連付けを保存する。`workItemId`はTurnのidempotency fingerprintへ含まれるため、同じkeyで関連先だけを変更するとconflictになる。executionのterminal stateはWork Itemを暗黙に完了させない。target Sessionが`work result`で`completed`、`partially_completed`、`failed`のstateとstrict resultを同時に報告する。creator Sessionは非terminal Work Itemを`work cancel`で取消せる。全mutationはcurrent `expectedRevision`とidempotency keyを要求する。
 
+直属子を持つWork Itemでは、親のtarget Sessionが`work aggregation get/list`でbounded summaryを取得し、terminalな直属子へ`work aggregation decide`または`work aggregation retry`を実行する。`retry`はdecisionとreplacement Work Itemを同一transactionで作成する。すべての直属子がterminalかつdecision済みになった後、`work result`へcurrent `expectedAggregateRevision`を指定して親resultを確定する。孫Work Itemは親集約へ直接含めず、result本文の詳細は`work get`で取得する。
+
 `turn options`は対象Sessionのproviderに応じた候補を返す。Codex Turnは`provider: "codex"`と`codexSandboxMode`、Copilot Turnは`provider: "copilot"`と`customAgentName`を指定する。provider固有fieldを混在させない。
 
 Agent起点の`turn run`と`turn enqueue`は、runtime bindingで確定したactorとtargetのcanonical Role bindingに対して次の送信matrixを適用する。

@@ -164,6 +164,9 @@ Main Process 側では `MainQueryService`、`SessionRuntimeService`、`SessionPe
 - `work_item_execution_associations_v6`
   - 一つのWork Itemと複数の`turn.run | turn.enqueue` executionを別identityのまま関連付ける
   - associationはexecution作成transaction内でWork Itemのtarget一致とactive stateを再検証して保存し、executionのterminal stateからWork Item stateを更新しない
+- `work_item_aggregations_v6` / `work_item_aggregation_decisions_v6` / `work_item_aggregation_idempotency_v6`
+  - 親Work Itemごとのaggregate revision、直属子resultへのimmutable decision、retry replacement linkageをresult本文やCoordination Eventとは別の正本として保存する
+  - 直属子作成とaggregate revision、retry decisionとreplacement、親resultと集約preconditionはそれぞれ同一transactionで確定する
 - `project_scopes` / `project_memory_entries`
   - project 単位の durable knowledge
 - `character_scopes` / `character_memory_entries`

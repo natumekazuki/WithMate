@@ -139,7 +139,7 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("31 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  it("35 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /scope or policy decision/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Use user_decision_required/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /free-text response to your blocker/);
@@ -176,6 +176,8 @@ describe("WithMate Session MCP contract", () => {
       assert.equal(result.tools.find((tool) => tool.name === "session.files.read_text")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.readOnlyHint, false);
       assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.destructiveHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "work.aggregation.get")?.annotations?.readOnlyHint, true);
+      assert.equal(result.tools.find((tool) => tool.name === "work.aggregation.retry")?.annotations?.readOnlyHint, false);
       assert.equal(result.tools.find((tool) => tool.name === "interaction.list")?.annotations?.readOnlyHint, true);
       assert.equal(result.tools.find((tool) => tool.name === "interaction.respond")?.annotations?.destructiveHint, true);
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.create")?.description ?? "", /stable eventId/);
@@ -306,6 +308,25 @@ describe("WithMate Session MCP contract", () => {
       });
       assert.equal(result.isError, undefined);
       assert.deepEqual(requests.map((request) => request.operation), ["work.create", "work.result"]);
+    });
+  });
+
+  it("AGG-ADAPTER-01: Work Item aggregation getをshared operationへdispatchする", async () => {
+    const requests: any[] = [];
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: createSessionRuntimeResult("work.aggregation.get", {
+          contractRevision: 1, parentWorkItemId: "work-parent", aggregateRevision: 2,
+          directChildCount: 1, activeCount: 0, undecidedTerminalCount: 0,
+          acceptedCount: 1, excludedCount: 0, retryRequestedCount: 0,
+        }) };
+      },
+    }), async (client) => {
+      const result = await client.callTool({ name: "work.aggregation.get", arguments: { parentWorkItemId: "work-parent" } });
+      assert.equal(result.isError, undefined);
+      assert.deepEqual(requests.map((request) => request.operation), ["work.aggregation.get"]);
     });
   });
 
@@ -469,6 +490,13 @@ describe("WithMate Session MCP contract", () => {
               maxListLimit: 200,
               maxListResponseBytes: 8388608,
               maxResultBytes: 262144,
+              aggregation: {
+                contractRevision: 1,
+                decisions: ["accepted", "excluded", "retry_requested"],
+                operations: ["get", "list", "decide", "retry"],
+                defaultListLimit: 50,
+                maxListLimit: 200,
+              },
             },
             providers: [],
           }),
@@ -509,6 +537,13 @@ describe("WithMate Session MCP contract", () => {
           maxListLimit: 200,
           maxListResponseBytes: 8388608,
           maxResultBytes: 262144,
+          aggregation: {
+            contractRevision: 1,
+            decisions: ["accepted", "excluded", "retry_requested"],
+            operations: ["get", "list", "decide", "retry"],
+            defaultListLimit: 50,
+            maxListLimit: 200,
+          },
         },
         providers: [],
       });

@@ -38,6 +38,10 @@ import {
 import { SESSION_TURN_COMMUNICATION_CONTRACT_REVISION } from "./session-turn-communication-authority.js";
 import {
   WORK_ITEM_CONTRACT_REVISION,
+  WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
+  WORK_ITEM_AGGREGATION_DECISIONS,
+  WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT,
+  WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
   WORK_ITEM_DEFAULT_LIST_LIMIT,
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_RESULT_BYTES,
@@ -45,6 +49,10 @@ import {
   WORK_ITEM_MAX_TEXT_LENGTH,
   WORK_ITEM_STATES,
   type WorkItem,
+  type WorkItemAggregationDecision,
+  type WorkItemAggregationDecisionType,
+  type WorkItemAggregationListItem,
+  type WorkItemAggregationSummary,
   type WorkItemResult,
   type WorkItemResultState,
   type WorkItemSourceIdentity,
@@ -89,6 +97,10 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "work.transition",
   "work.result",
   "work.cancel",
+  "work.aggregation.get",
+  "work.aggregation.list",
+  "work.aggregation.decide",
+  "work.aggregation.retry",
   "turn.options",
   "turn.run",
   "turn.enqueue",
@@ -133,6 +145,13 @@ export type SessionRuntimeCatalogResult = {
     mutations: readonly ["create", "transition", "result", "cancel"];
     defaultListLimit: typeof WORK_ITEM_DEFAULT_LIST_LIMIT;
     maxListLimit: typeof WORK_ITEM_MAX_LIST_LIMIT;
+    aggregation: {
+      contractRevision: typeof WORK_ITEM_AGGREGATION_CONTRACT_REVISION;
+      decisions: typeof WORK_ITEM_AGGREGATION_DECISIONS;
+      operations: readonly ["get", "list", "decide", "retry"];
+      defaultListLimit: typeof WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT;
+      maxListLimit: typeof WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT;
+    };
     maxListResponseBytes: typeof SESSION_RUNTIME_MAX_RESPONSE_BYTES;
     maxResultBytes: typeof WORK_ITEM_MAX_RESULT_BYTES;
   };
@@ -266,11 +285,48 @@ export type SessionRuntimeWorkItemResultInput = {
   expectedRevision: number;
   result: Omit<WorkItemResult, "outcome" | "reportingSessionId" | "reportedAt">;
   idempotencyKey: string;
+  expectedAggregateRevision?: number;
 };
 export type SessionRuntimeWorkItemCancelInput = {
   workItemId: string;
   expectedRevision: number;
   idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemAggregationGetInput = { parentWorkItemId: string };
+export type SessionRuntimeWorkItemAggregationListInput = {
+  parentWorkItemId: string;
+  decision?: WorkItemAggregationDecisionType;
+  limit: number;
+  cursor?: string;
+};
+export type SessionRuntimeWorkItemAggregationListResult = {
+  items: WorkItemAggregationListItem[];
+  nextCursor?: string;
+};
+export type SessionRuntimeWorkItemAggregationDecisionInput = {
+  parentWorkItemId: string;
+  childWorkItemId: string;
+  decision: "accepted" | "excluded";
+  reason?: string;
+  expectedAggregateRevision: number;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemAggregationRetryInput = {
+  parentWorkItemId: string;
+  childWorkItemId: string;
+  targetSessionId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  reason?: string;
+  expectedAggregateRevision: number;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemAggregationRetryResult = {
+  decision: WorkItemAggregationDecision;
+  replacement: WorkItem;
 };
 
 type SessionRuntimeTurnRequestBase = {
@@ -447,6 +503,10 @@ export type SessionRuntimeResultByOperation = {
   "work.transition": WorkItem;
   "work.result": WorkItem;
   "work.cancel": WorkItem;
+  "work.aggregation.get": WorkItemAggregationSummary;
+  "work.aggregation.list": SessionRuntimeWorkItemAggregationListResult;
+  "work.aggregation.decide": WorkItemAggregationDecision;
+  "work.aggregation.retry": SessionRuntimeWorkItemAggregationRetryResult;
   "turn.options": SessionRuntimeTurnOptionsResult;
   "turn.run": SessionRuntimePublicExecution;
   "turn.enqueue": SessionRuntimePublicExecution;
@@ -590,6 +650,10 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "work.transition") return parseWorkItemTransitionInput(value);
   if (operation === "work.result") return parseWorkItemResultInput(value);
   if (operation === "work.cancel") return parseWorkItemCancelInput(value);
+  if (operation === "work.aggregation.get") return parseWorkItemAggregationGetInput(value);
+  if (operation === "work.aggregation.list") return parseWorkItemAggregationListInput(value);
+  if (operation === "work.aggregation.decide") return parseWorkItemAggregationDecisionInput(value);
+  if (operation === "work.aggregation.retry") return parseWorkItemAggregationRetryInput(value);
   if (operation === "turn.options") {
     return parseSessionInput(value);
   }
@@ -905,7 +969,7 @@ function parseWorkItemTransitionInput(value: unknown): SessionRuntimeWorkItemTra
 
 function parseWorkItemResultInput(value: unknown): SessionRuntimeWorkItemResultInput {
   const record = requireObject(value, "input");
-  assertKeys(record, ["workItemId", "state", "expectedRevision", "result", "idempotencyKey"], "input");
+  assertKeys(record, ["workItemId", "state", "expectedRevision", "expectedAggregateRevision", "result", "idempotencyKey"], "input");
   const state = requireEnum(record.state, ["completed", "partially_completed", "failed"] as const, "state");
   const result = requireObject(record.result, "result");
   assertKeys(result, [
@@ -938,6 +1002,68 @@ function parseWorkItemResultInput(value: unknown): SessionRuntimeWorkItemResultI
     state,
     expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     result: parsedResult,
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+    ...(record.expectedAggregateRevision === undefined ? {} : {
+      expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER),
+    }),
+  };
+}
+
+function parseWorkItemAggregationGetInput(value: unknown): SessionRuntimeWorkItemAggregationGetInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["parentWorkItemId"], "input");
+  return { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") };
+}
+
+function parseWorkItemAggregationListInput(value: unknown): SessionRuntimeWorkItemAggregationListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["parentWorkItemId", "decision", "limit", "cursor"], "input");
+  return {
+    parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+    ...(record.decision === undefined ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") }),
+    limit: record.limit === undefined ? WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT
+      : requireInteger(record.limit, "limit", 1, WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
+}
+
+function parseWorkItemAggregationDecisionInput(value: unknown): SessionRuntimeWorkItemAggregationDecisionInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["parentWorkItemId", "childWorkItemId", "decision", "reason", "expectedAggregateRevision", "idempotencyKey"], "input");
+  const decision = requireEnum(record.decision, ["accepted", "excluded"] as const, "decision");
+  const reason = record.reason === undefined ? undefined : requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH);
+  if (decision === "excluded" && reason === undefined) throw invalid("reason", "excluded requires a reason.");
+  return {
+    parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+    childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"), decision,
+    ...(reason === undefined ? {} : { reason }),
+    expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemAggregationRetryInput(value: unknown): SessionRuntimeWorkItemAggregationRetryInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["parentWorkItemId", "childWorkItemId", "targetSessionId", "goal", "scope", "completionCriteria", "authority", "sourceIdentity", "reason", "expectedAggregateRevision", "idempotencyKey"], "input");
+  const sourceIdentity = requireObject(record.sourceIdentity, "sourceIdentity");
+  assertKeys(sourceIdentity, ["workspace", "repository", "branch", "base", "head"], "sourceIdentity");
+  return {
+    parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+    childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+    targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
+    goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+    scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+    completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+    authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+    sourceIdentity: {
+      workspace: requireNullableBoundedString(sourceIdentity.workspace, "sourceIdentity.workspace"),
+      repository: requireNullableBoundedString(sourceIdentity.repository, "sourceIdentity.repository"),
+      branch: requireNullableBoundedString(sourceIdentity.branch, "sourceIdentity.branch"),
+      base: requireNullableBoundedString(sourceIdentity.base, "sourceIdentity.base"),
+      head: requireNullableBoundedString(sourceIdentity.head, "sourceIdentity.head"),
+    },
+    ...(record.reason === undefined ? {} : { reason: requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH) }),
+    expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
 }

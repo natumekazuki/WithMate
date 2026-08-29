@@ -9,6 +9,10 @@ import {
   WORK_ITEM_IDEMPOTENCY_RETENTION_MS,
   isWorkItemActive,
   type WorkItem,
+  type WorkItemAggregationDecision,
+  type WorkItemAggregationDecisionType,
+  type WorkItemAggregationListItem,
+  type WorkItemAggregationSummary,
   type WorkItemBinding,
   type WorkItemResult,
   type WorkItemResultState,
@@ -44,6 +48,41 @@ export type WorkItemResultInput = {
   state: WorkItemResultState;
   expectedRevision: number;
   result: Omit<WorkItemResult, "outcome" | "reportingSessionId" | "reportedAt">;
+  idempotencyKey: string;
+  expectedAggregateRevision?: number;
+};
+
+export type WorkItemAggregationGetInput = {
+  parentWorkItemId: string;
+};
+
+export type WorkItemAggregationListInput = {
+  parentWorkItemId: string;
+  decision?: WorkItemAggregationDecisionType;
+  limit: number;
+  afterSequence: number | null;
+};
+
+export type WorkItemAggregationDecisionInput = {
+  parentWorkItemId: string;
+  childWorkItemId: string;
+  decision: "accepted" | "excluded";
+  reason?: string;
+  expectedAggregateRevision: number;
+  idempotencyKey: string;
+};
+
+export type WorkItemAggregationRetryInput = {
+  parentWorkItemId: string;
+  childWorkItemId: string;
+  targetSessionId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  sourceIdentity: WorkItemSourceIdentity;
+  reason?: string;
+  expectedAggregateRevision: number;
   idempotencyKey: string;
 };
 
@@ -96,6 +135,7 @@ export class WorkItemService {
     storage: Pick<
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
+      | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
     >;
     getTurnAuthoritySession(sessionId: string): SessionTurnAuthoritySession | null;
     createWorkItemId(): string;
@@ -291,6 +331,70 @@ export class WorkItemService {
     return this.deps.storage.cleanupExpiredIdempotency(this.deps.currentTimestamp());
   }
 
+  getAggregation(input: WorkItemAggregationGetInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationSummary {
+    this.requireVisibleItem(input.parentWorkItemId, binding, true);
+    return this.deps.storage.getAggregationSummary(input.parentWorkItemId);
+  }
+
+  listAggregation(input: WorkItemAggregationListInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationListItem[] {
+    this.requireVisibleItem(input.parentWorkItemId, binding, true);
+    return this.deps.storage.listAggregationItems(input);
+  }
+
+  decideAggregation(input: WorkItemAggregationDecisionInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationDecision {
+    const decidedAt = this.deps.currentTimestamp();
+    this.requireAggregationActor(input.parentWorkItemId, binding);
+    return this.deps.storage.decideAggregation({
+      ...input,
+      actorSessionId: binding.actorSessionId,
+      reason: input.reason ?? null,
+      requestFingerprint: fingerprintMutation(input, binding.actorSessionId),
+      decidedAt,
+      expiresAt: resolveIdempotencyExpiresAt(decidedAt),
+    });
+  }
+
+  retryAggregation(input: WorkItemAggregationRetryInput, binding: ResolvedAgentRuntimeBinding): { decision: WorkItemAggregationDecision; replacement: WorkItem } {
+    const decidedAt = this.deps.currentTimestamp();
+    const parent = this.requireAggregationActor(input.parentWorkItemId, binding);
+    const actor = this.requireSession(binding.actorSessionId);
+    const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
+    const target = this.requireSession(input.targetSessionId);
+    const targetBinding = requireSessionRoleBinding(target.sessionId, target);
+    if (targetBinding.parentSessionId !== actor.sessionId || !canSendSessionTurn(
+      { sessionId: actor.sessionId, ...actorBinding },
+      { sessionId: target.sessionId, ...targetBinding },
+    )) {
+      throw new WorkItemAuthorityError("The actor Session cannot delegate the replacement to the target Session.", {
+        actorSessionId: actor.sessionId,
+        targetSessionId: target.sessionId,
+      });
+    }
+    return this.deps.storage.retryAggregation({
+      parentWorkItemId: input.parentWorkItemId,
+      childWorkItemId: input.childWorkItemId,
+      actorSessionId: binding.actorSessionId,
+      expectedAggregateRevision: input.expectedAggregateRevision,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: fingerprintMutation(input, binding.actorSessionId),
+      replacementId: this.deps.createWorkItemId(),
+      replacementBinding: {
+        rootSessionId: parent.rootSessionId,
+        creatorSessionId: binding.actorSessionId,
+        targetSessionId: input.targetSessionId,
+        parentWorkItemId: parent.id,
+        goal: input.goal,
+        scope: input.scope,
+        completionCriteria: input.completionCriteria,
+        authority: input.authority,
+        sourceIdentity: { ...input.sourceIdentity },
+      },
+      reason: input.reason ?? null,
+      decidedAt,
+      expiresAt: resolveIdempotencyExpiresAt(decidedAt),
+    });
+  }
+
   private targetMutation(
     operation: "work.transition" | "work.result",
     input: WorkItemTransitionInput | WorkItemResultInput,
@@ -326,7 +430,26 @@ export class WorkItemService {
       result,
       updatedAt,
       expiresAt: resolveIdempotencyExpiresAt(updatedAt),
+      ...(operation === "work.result" && "expectedAggregateRevision" in input && input.expectedAggregateRevision !== undefined
+        ? { expectedAggregateRevision: input.expectedAggregateRevision }
+        : {}),
     });
+  }
+
+  private requireAggregationActor(parentWorkItemId: string, binding: ResolvedAgentRuntimeBinding): WorkItem {
+    const parent = this.requireVisibleItem(parentWorkItemId, binding, false);
+    if (parent.targetSessionId !== binding.actorSessionId) {
+      throw new WorkItemAuthorityError("Only the parent target Session can mutate its aggregation.", {
+        parentWorkItemId,
+        actorSessionId: binding.actorSessionId,
+      });
+    }
+    const actor = this.requireSession(binding.actorSessionId);
+    const role = requireSessionRoleBinding(actor.sessionId, actor).sessionRole;
+    if (role !== "overall-coordinator" && role !== "task-coordinator") {
+      throw new WorkItemAuthorityError("Only coordinator Sessions can mutate Work Item aggregation.");
+    }
+    return parent;
   }
 
   private requireVisibleItem(
