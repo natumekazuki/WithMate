@@ -96,7 +96,10 @@ import { buildHomeMateSetupContentProps } from "./mate/home-mate-setup-props.js"
 import { buildMateStatusRefreshers } from "./mate/mate-status-refreshers.js";
 import { buildHomeMonitorContentProps } from "./home/home-monitor-content-props.js";
 import { renderHomeMonitorWindowIcon, renderHomeSearchIcon } from "./home/home-icons.js";
-import { buildSessionWindowRestoreFeedback } from "./home/home-session-window-restore.js";
+import {
+  buildSessionWindowRestoreFeedback,
+  selectPendingSessionWindowRestoreIds,
+} from "./home/home-session-window-restore.js";
 import {
   createHomeActiveAuxiliarySessionRefresher,
   resolveHomeActiveAuxiliarySessionsState,
@@ -182,6 +185,12 @@ export default function HomeApp() {
   const [sessionWindowRestoreIds, setSessionWindowRestoreIds] = useState<string[]>([]);
   const [sessionWindowRestorePending, setSessionWindowRestorePending] = useState(false);
   const [sessionWindowRestoreFeedback, setSessionWindowRestoreFeedback] = useState("");
+  const pendingSessionWindowRestoreIds = useMemo(
+    () => openSessionWindowIdsState.status === "loaded"
+      ? selectPendingSessionWindowRestoreIds(sessionWindowRestoreIds, openSessionWindowIds)
+      : [],
+    [openSessionWindowIds, openSessionWindowIdsState.status, sessionWindowRestoreIds],
+  );
   const [rightPaneView, setRightPaneView] = useState<HomeRightPaneView>("monitor");
   const [settingsFeedback, setSettingsFeedback] = useState("");
   const [sessionCleanupCutoffDate, setSessionCleanupCutoffDate] = useState("");
@@ -936,7 +945,7 @@ export default function HomeApp() {
       loadingMore: sessionSummariesState.loadingRecentPage || sessionSummariesState.loadingPinnedPage,
       onLoadMore: loadNextSessionSummaryPage,
       pendingSessionPinIds,
-      sessionWindowRestoreIds,
+      sessionWindowRestoreIds: pendingSessionWindowRestoreIds,
       sessionWindowRestorePending,
       sessionWindowRestoreFeedback,
     }),

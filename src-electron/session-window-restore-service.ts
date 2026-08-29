@@ -13,17 +13,32 @@ type SessionWindowRestoreServiceDeps = {
   storage: SessionWindowRestoreStorageLike;
   getSession(sessionId: string): Awaitable<unknown | null>;
   openSessionWindow(sessionId: string): Promise<unknown>;
-  onSnapshotSaved?(sessionIds: readonly string[]): void;
+  onRestoreSetChanged?(sessionIds: readonly string[]): void;
 };
 
 export class SessionWindowRestoreService {
-  private writeTail: Promise<void> = Promise.resolve();
+  private readonly restoreSetLoaded: Promise<void>;
+  private restoreSet: string[] = [];
+  private writeTail: Promise<void>;
 
-  constructor(private readonly deps: SessionWindowRestoreServiceDeps) {}
+  constructor(private readonly deps: SessionWindowRestoreServiceDeps) {
+    this.restoreSetLoaded = this.deps.storage.loadSnapshot().then((sessionIds) => {
+      const normalized = normalizeSessionWindowRestoreIds(sessionIds);
+      if (!normalized) {
+        throw new Error("Session Window restore snapshot が不正です。");
+      }
+      this.restoreSet = normalized;
+    });
+    this.writeTail = this.restoreSetLoaded.then(
+      () => undefined,
+      () => undefined,
+    );
+  }
 
   async getSnapshot(): Promise<string[]> {
+    await this.restoreSetLoaded;
     await this.writeTail;
-    return this.deps.storage.loadSnapshot();
+    return [...this.restoreSet];
   }
 
   saveSnapshot(sessionIds: readonly string[]): Promise<void> {
@@ -31,11 +46,11 @@ export class SessionWindowRestoreService {
     if (!normalized) {
       return Promise.reject(new TypeError("Session Window restore snapshot が不正です。"));
     }
-    const write = this.writeTail
-      .catch(() => undefined)
-      .then(() => this.deps.storage.saveSnapshot(normalized))
-      .then(() => this.deps.onSnapshotSaved?.(normalized));
-    this.writeTail = write;
+    const write = this.writeTail.then(() => this.deps.storage.saveSnapshot(normalized));
+    this.writeTail = write.then(
+      () => undefined,
+      () => undefined,
+    );
     return write;
   }
 
@@ -62,6 +77,13 @@ export class SessionWindowRestoreService {
       } catch {
         failures.push({ sessionId, reason: "open-failed" });
       }
+    }
+
+    this.restoreSet = failures.map(({ sessionId }) => sessionId);
+    try {
+      this.deps.onRestoreSetChanged?.(this.restoreSet);
+    } catch {
+      // The invoke result remains the canonical projection when a renderer notification fails.
     }
 
     return { requestedSessionIds, openedSessionIds, failures };

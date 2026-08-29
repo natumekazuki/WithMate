@@ -94,7 +94,7 @@ describe("SessionWindowRestoreService", () => {
       await firstBridge.openSessionWindow("session-a");
       await firstBridge.openSessionWindow("session-b");
       await firstBridge.openSessionWindow("session-a");
-      assert.deepEqual(await firstService.getSnapshot(), ["session-a", "session-b"]);
+      assert.deepEqual(await firstStorage.loadSnapshot(), ["session-a", "session-b"]);
 
       const secondStorage = new SessionWindowRestoreStorage(root);
       const secondCreated = new Map<string, StubWindow[]>();
@@ -119,9 +119,11 @@ describe("SessionWindowRestoreService", () => {
       assert.equal(secondCreated.get("session-a")?.length, 1);
       assert.equal(secondCreated.get("session-b")?.length, 1);
       assert.deepEqual(secondBridge.listOpenSessionWindowIds(), ["session-a", "session-b"]);
+      assert.deepEqual(await secondService.getSnapshot(), []);
 
       secondBridge.closeSessionWindow("session-a");
-      assert.deepEqual(await secondService.getSnapshot(), ["session-b"]);
+      await secondService.getSnapshot();
+      assert.deepEqual(await secondStorage.loadSnapshot(), ["session-b"]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -182,5 +184,87 @@ describe("SessionWindowRestoreService", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it("起動時の復元集合を先に読み込み、現在集合の保存では上書きしない", async () => {
+    let resolveInitialSnapshot: ((sessionIds: string[]) => void) | null = null;
+    const durableSnapshots: string[][] = [];
+    const opened: string[] = [];
+    const service = new SessionWindowRestoreService({
+      storage: {
+        loadSnapshot: () => new Promise<string[]>((resolve) => {
+          resolveInitialSnapshot = resolve;
+        }),
+        async saveSnapshot(sessionIds) {
+          durableSnapshots.push([...sessionIds]);
+        },
+      },
+      getSession: (sessionId) => ({ id: sessionId }),
+      async openSessionWindow(sessionId) {
+        opened.push(sessionId);
+      },
+    });
+
+    const saveCurrentSnapshot = service.saveSnapshot(["session-c"]);
+    await Promise.resolve();
+    assert.deepEqual(durableSnapshots, []);
+
+    assert.ok(resolveInitialSnapshot);
+    resolveInitialSnapshot(["session-a", "session-b"]);
+    await saveCurrentSnapshot;
+
+    assert.deepEqual(durableSnapshots, [["session-c"]]);
+    assert.deepEqual(await service.getSnapshot(), ["session-a", "session-b"]);
+    assert.deepEqual((await service.restoreSnapshot()).requestedSessionIds, ["session-a", "session-b"]);
+    assert.deepEqual(opened, ["session-a", "session-b"]);
+  });
+
+  it("保存失敗をsettleして復元集合のreadと後続保存を維持する", async () => {
+    let shouldFailSave = true;
+    let durableSnapshot = ["session-a", "session-b"];
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() {
+          return [...durableSnapshot];
+        },
+        async saveSnapshot(sessionIds) {
+          if (shouldFailSave) {
+            throw new Error("save failed");
+          }
+          durableSnapshot = [...sessionIds];
+        },
+      },
+      getSession: () => ({}),
+      openSessionWindow: async () => undefined,
+    });
+
+    await assert.rejects(service.saveSnapshot(["session-c"]), /save failed/);
+    assert.deepEqual(await service.getSnapshot(), ["session-a", "session-b"]);
+
+    shouldFailSave = false;
+    await service.saveSnapshot(["session-d"]);
+    assert.deepEqual(durableSnapshot, ["session-d"]);
+    assert.deepEqual(await service.getSnapshot(), ["session-a", "session-b"]);
+  });
+
+  it("復元後通知の失敗で復元結果と未復元集合を失敗させない", async () => {
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() {
+          return ["session-a"];
+        },
+        async saveSnapshot() {},
+      },
+      getSession: () => ({}),
+      openSessionWindow: async () => undefined,
+      onRestoreSetChanged() {
+        throw new Error("broadcast failed");
+      },
+    });
+
+    const result = await service.restoreSnapshot();
+
+    assert.deepEqual(result.openedSessionIds, ["session-a"]);
+    assert.deepEqual(await service.getSnapshot(), []);
   });
 });

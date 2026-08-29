@@ -6,6 +6,14 @@ const FAILURE_LABELS = {
   "open-failed": "Windowを開けませんでした",
 } as const;
 
+export function selectPendingSessionWindowRestoreIds(
+  restoreSessionIds: readonly string[],
+  openSessionIds: readonly string[],
+): string[] {
+  const openSessionIdSet = new Set(openSessionIds);
+  return restoreSessionIds.filter((sessionId) => !openSessionIdSet.has(sessionId));
+}
+
 export function buildSessionWindowRestoreFeedback(result: SessionWindowRestoreResult): string {
   if (result.requestedSessionIds.length === 0) {
     return "復元できる前回のSessionはありません。";
