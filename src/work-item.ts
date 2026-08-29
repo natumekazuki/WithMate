@@ -5,6 +5,10 @@ export const WORK_ITEM_MAX_RESULT_BYTES = 256 * 1024;
 export const WORK_ITEM_MAX_TEXT_LENGTH = 16_000;
 export const WORK_ITEM_MAX_RESULT_ITEMS = 100;
 export const WORK_ITEM_IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1000;
+export const WORK_ITEM_AGGREGATION_CONTRACT_REVISION = 1 as const;
+export const WORK_ITEM_AGGREGATION_DEFAULT_LIST_LIMIT = 50;
+export const WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT = 200;
+export const WORK_ITEM_AGGREGATION_DECISIONS = ["accepted", "excluded", "retry_requested"] as const;
 
 export const WORK_ITEM_STATES = [
   "pending",
@@ -22,6 +26,7 @@ export type WorkItemTerminalState = Extract<
   "completed" | "partially_completed" | "failed" | "canceled"
 >;
 export type WorkItemResultState = Exclude<WorkItemTerminalState, "canceled">;
+export type WorkItemAggregationDecisionType = (typeof WORK_ITEM_AGGREGATION_DECISIONS)[number];
 
 export const WORK_ITEM_ACTIVE_STATES = ["pending", "in_progress", "waiting"] as const;
 export const WORK_ITEM_RESULT_STATES = ["completed", "partially_completed", "failed"] as const;
@@ -79,6 +84,37 @@ export type WorkItem = WorkItemBase & (
       [S in WorkItemResultState]: Readonly<{ state: S; result: WorkItemResult<S> }>;
     }[WorkItemResultState]
 );
+
+export type WorkItemAggregationDecision = Readonly<{
+  parentWorkItemId: string;
+  childWorkItemId: string;
+  revision: number;
+  childRevision: number;
+  actorSessionId: string;
+  decision: WorkItemAggregationDecisionType;
+  reason: string | null;
+  replacementWorkItemId: string | null;
+  decidedAt: string;
+}>;
+
+export type WorkItemAggregationListItem = Readonly<{
+  child: Pick<WorkItem, "id" | "sequence" | "creatorSessionId" | "targetSessionId" | "parentWorkItemId" | "state" | "revision" | "createdAt" | "updatedAt">;
+  hasResult: boolean;
+  resultSummary: string | null;
+  decision: WorkItemAggregationDecision | null;
+}>;
+
+export type WorkItemAggregationSummary = Readonly<{
+  contractRevision: typeof WORK_ITEM_AGGREGATION_CONTRACT_REVISION;
+  parentWorkItemId: string;
+  aggregateRevision: number;
+  directChildCount: number;
+  activeCount: number;
+  undecidedTerminalCount: number;
+  acceptedCount: number;
+  excludedCount: number;
+  retryRequestedCount: number;
+}>;
 
 export const WORK_ITEM_TRANSITIONS: Readonly<Record<WorkItemState, readonly WorkItemState[]>> = {
   pending: ["in_progress", "canceled"],

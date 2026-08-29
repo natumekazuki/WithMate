@@ -35,12 +35,12 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 31 operations:
+The CLI and MCP expose the same 35 operations:
 
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
 - SessionFolder: `session.files.list`, `session.files.read_text`, `session.files.write_text`
-- Work Item: `work.create`, `work.list`, `work.get`, `work.transition`, `work.result`, `work.cancel`
+- Work Item: `work.create`, `work.list`, `work.get`, `work.transition`, `work.result`, `work.cancel`, `work.aggregation.get`, `work.aggregation.list`, `work.aggregation.decide`, `work.aggregation.retry`
 - Turn: `turn.options`, `turn.run`, `turn.enqueue`, `turn.list`, `turn.get`, `turn.cancel`
 - Interaction: `interaction.list`, `interaction.respond`
 - Transcript: `transcript.export`
@@ -96,7 +96,7 @@ A wait timeout and MCP or CLI disconnect affect delivery only. They do not cance
 
 ## Idempotency and reconciliation
 
-Effect-bearing operations are Session create and rename, Session file write, Work Item create, transition, result, and cancel, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
+Effect-bearing operations are Session create and rename, Session file write, Work Item create, transition, result, cancel, aggregation decide, and aggregation retry, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.
@@ -116,7 +116,7 @@ An MCP application error uses `isError: true` and a versioned error envelope. A 
 
 ## Pagination and limits
 
-List operations use opaque cursors, a default limit of 50, and a maximum of 500. Never parse or synthesize a cursor. Send `nextCursor` back unchanged with the same operation, filter, and sort context.
+Cursor-based Session, Turn, and Interaction lists use a default limit of 50 and a maximum of 500. Work Item lists (`work.list` and `work.aggregation.list`) use a default limit of 50 and a maximum of 200. Never parse or synthesize a cursor. Send `nextCursor` back unchanged with the same operation, filter, and sort context.
 
 Coordination event lists are the exception: default 50, maximum 100. Their cursors are also bound to the principal Session, scope, kind, and state.
 

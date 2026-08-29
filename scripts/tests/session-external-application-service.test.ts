@@ -660,6 +660,13 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         maxListLimit: 200,
         maxListResponseBytes: 8388608,
         maxResultBytes: 262144,
+        aggregation: {
+          contractRevision: 1,
+          decisions: ["accepted", "excluded", "retry_requested"],
+          operations: ["get", "list", "decide", "retry"],
+          defaultListLimit: 50,
+          maxListLimit: 200,
+        },
       },
       providers: [{
         id: "codex",
@@ -1787,6 +1794,116 @@ test("WORK-EXEC-05: run/enqueue/get/listは同じWork Item associationを投影�
   assert.equal((enqueue as any).result.workItemId, "work-1");
   assert.equal((get as any).result.workItemId, "work-1");
   assert.equal((list as any).result.items[0].workItemId, "work-1");
+});
+
+test("AGG-ADAPTER-01: aggregation operationはshared Work Item serviceへdispatchする", async () => {
+  const calls: unknown[] = [];
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      getAggregation(input, binding) {
+        calls.push({ input, actorSessionId: binding.actorSessionId });
+        return {
+          contractRevision: 1, parentWorkItemId: input.parentWorkItemId, aggregateRevision: 2,
+          directChildCount: 1, activeCount: 0, undecidedTerminalCount: 0,
+          acceptedCount: 1, excludedCount: 0, retryRequestedCount: 0,
+        };
+      },
+    } as never,
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; }, listPage() { return []; },
+      async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+  });
+  const response = await executeBound(service, "work.aggregation.get", { parentWorkItemId: "work-parent" });
+  assert.ok("result" in response);
+  assert.deepEqual(calls, [{ input: { parentWorkItemId: "work-parent" }, actorSessionId: "session-actor" }]);
+});
+
+test("AGG-EFFECT-02: aggregation mutationの予期しないfailureはindeterminateを返す", async () => {
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator,
+    crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }),
+    isProviderEnabled: () => true,
+    isProviderSupported: () => true,
+    discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      decideAggregation() { throw new Error("unexpected decide failure"); },
+      retryAggregation() { throw new Error("unexpected retry failure"); },
+    } as never,
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; }, listPage() { return []; },
+      async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+  });
+  const sourceIdentity = { workspace: null, repository: null, branch: null, base: null, head: null };
+  const cases = [
+    ["work.aggregation.decide", {
+      parentWorkItemId: "work-parent", childWorkItemId: "work-child", decision: "accepted",
+      expectedAggregateRevision: 1, idempotencyKey: "decide-key",
+    }],
+    ["work.aggregation.retry", {
+      parentWorkItemId: "work-parent", childWorkItemId: "work-child", targetSessionId: "session-target",
+      goal: "retry", scope: "scope", completionCriteria: "done", authority: "local", sourceIdentity,
+      expectedAggregateRevision: 1, idempotencyKey: "retry-key",
+    }],
+  ] as const;
+  for (const [operation, input] of cases) {
+    const response = await executeBound(service, operation, input);
+    assert.ok("error" in response);
+    if ("error" in response) {
+      assert.equal(response.error.code, "RUNTIME_UNAVAILABLE", operation);
+      assert.equal(response.error.effect, "indeterminate", operation);
+    }
+  }
+});
+
+test("AGG-QUERY-05: aggregation cursorをparent・actor・visibility・filterへ束縛する", async () => {
+  const item = (sequence: number) => ({
+    child: {
+      id: `child-${sequence}`, sequence, creatorSessionId: "session-actor", targetSessionId: "target",
+      parentWorkItemId: "work-parent", state: "completed" as const, revision: 2,
+      createdAt: "2026-08-24T00:00:00.000Z", updatedAt: "2026-08-24T00:01:00.000Z",
+    },
+    hasResult: true, resultSummary: `summary-${sequence}`, decision: null,
+  });
+  const service = new SessionExternalApplicationService({
+    resolveTurnInitiator, crudService: defaultCommunicationCrudService,
+    getTurnAuthoritySession: getDefaultTurnAuthoritySession,
+    currentModelCatalog: () => ({ revision: 4, providers: [] }), isProviderEnabled: () => true,
+    isProviderSupported: () => true, discoverSessionCustomAgents: async () => [],
+    workItemService: {
+      resolveListScope(binding) { return { rootSessionId: "root", actorSessionId: binding.actorSessionId, visibility: "root" as const }; },
+      listAggregation(input) { return [item((input.afterSequence ?? 0) + 1), item((input.afterSequence ?? 0) + 2)]; },
+    } as never,
+    executionService: {
+      beginShutdown() {}, async run() { throw new Error("unused"); }, async enqueue() { throw new Error("unused"); },
+      resolveReplay() { return null; }, get() { return execution; }, listPage() { return []; },
+      async cancel() { throw new Error("unused"); }, async waitForTerminal() { return execution; },
+    },
+  });
+  const first = await executeBound(service, "work.aggregation.list", { parentWorkItemId: "work-parent", decision: "accepted", limit: 1 });
+  assert.ok("result" in first);
+  if (!("result" in first)) return;
+  assert.ok(first.result.nextCursor);
+  const otherActor = await executeBound(service, "work.aggregation.list", {
+    parentWorkItemId: "work-parent", decision: "accepted", limit: 1, cursor: first.result.nextCursor,
+  }, { ...actorBinding, actorSessionId: "other-actor" });
+  const otherParent = await executeBound(service, "work.aggregation.list", {
+    parentWorkItemId: "other-parent", decision: "accepted", limit: 1, cursor: first.result.nextCursor,
+  });
+  assert.ok("error" in otherActor && otherActor.error.code === "INVALID_CURSOR");
+  assert.ok("error" in otherParent && otherParent.error.code === "INVALID_CURSOR");
 });
 
 test("WORK-EXEC-05: 同じTurn keyでWork Item associationを変更するとconflictになる", async () => {

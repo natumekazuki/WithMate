@@ -4,6 +4,10 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import { SESSION_RUNTIME_OPERATIONS } from "../../src/session-external-runtime-contract.js";
+import {
+  WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
+  WORK_ITEM_MAX_LIST_LIMIT,
+} from "../../src/work-item.js";
 
 const skillRoot = path.resolve("resources", "skills", "withmate-session");
 
@@ -86,6 +90,22 @@ describe("withmate-session managed Skill contract", () => {
       .sort();
 
     assert.deepEqual(documentedOperations, [...SESSION_RUNTIME_OPERATIONS].sort());
+  });
+
+  it("runbookとreferenceのoperation数・Work Item list上限をruntime contractへ同期する", async () => {
+    const runbook = await readFile(path.resolve("docs", "runbooks", "session-cli.md"), "utf8");
+    const operations = await readFile(path.join(skillRoot, "references", "operations.md"), "utf8");
+    const aggregationOperations = SESSION_RUNTIME_OPERATIONS.filter((operation) => operation.startsWith("work.aggregation."));
+
+    assert.match(runbook, new RegExp(`公開toolは計${SESSION_RUNTIME_OPERATIONS.length}操作`));
+    for (const operation of aggregationOperations) {
+      assert.match(runbook, new RegExp("`" + operation.replaceAll(".", "\\.") + "`"), operation);
+    }
+    assert.match(
+      operations,
+      new RegExp(`Work Item lists[^\\n]*maximum of ${WORK_ITEM_MAX_LIST_LIMIT}`),
+    );
+    assert.equal(WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT, WORK_ITEM_MAX_LIST_LIMIT);
   });
 
   it("packaged resourceを起動時と設定保存後に同期する", async () => {

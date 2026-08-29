@@ -483,6 +483,17 @@ test("Session runtime list limit is rejected instead of clamped", () => {
   );
 });
 
+test("AGG-QUERY-05: aggregation list limit超過はLIMIT_EXCEEDEDで拒否する", () => {
+  assert.throws(
+    () => parseSessionRuntimeRequestEnvelope({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "work.aggregation.list",
+      input: { parentWorkItemId: "work-parent", limit: 201 },
+    }),
+    (error) => error instanceof SessionRuntimeValidationError && error.code === "LIMIT_EXCEEDED",
+  );
+});
+
 test("ID-02: turn.cancel requires an idempotency key", () => {
   assert.throws(
     () => parseSessionRuntimeRequestEnvelope({

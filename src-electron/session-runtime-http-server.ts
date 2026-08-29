@@ -440,6 +440,7 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
     case "FORBIDDEN": return 403;
     case "SESSION_TURN_FORBIDDEN": return 403;
     case "WORK_ITEM_FORBIDDEN": return 403;
+    case "WORK_ITEM_AGGREGATION_FORBIDDEN": return 403;
     case "WORK_ITEM_EXECUTION_FORBIDDEN": return 403;
     case "ROUTE_NOT_FOUND":
     case "EXECUTION_NOT_FOUND": return 404;
@@ -451,6 +452,15 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
     case "WORK_ITEM_REVISION_CONFLICT": return 409;
     case "WORK_ITEM_STATE_CONFLICT": return 409;
     case "WORK_ITEM_PARENT_INVALID": return 409;
+    case "WORK_ITEM_AGGREGATION_REVISION_REQUIRED": return 409;
+    case "WORK_ITEM_AGGREGATION_REVISION_CONFLICT": return 409;
+    case "WORK_ITEM_AGGREGATION_CHILD_INVALID": return 409;
+    case "WORK_ITEM_AGGREGATION_CHILD_ACTIVE": return 409;
+    case "WORK_ITEM_AGGREGATION_DECISION_IMMUTABLE": return 409;
+    case "WORK_ITEM_AGGREGATION_DECISION_INVALID": return 409;
+    case "WORK_ITEM_AGGREGATION_REASON_REQUIRED": return 409;
+    case "WORK_ITEM_AGGREGATION_INCOMPLETE": return 409;
+    case "WORK_ITEM_AGGREGATION_PARENT_TERMINAL": return 409;
     case "CONTENT_TOO_LARGE":
     case "LIMIT_EXCEEDED": return 413;
     case "RUNTIME_UNAVAILABLE": return 503;

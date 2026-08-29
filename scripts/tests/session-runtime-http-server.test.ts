@@ -81,6 +81,18 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
     result: { summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
   },
   "work.cancel": { workItemId: "work-1", expectedRevision: 1, idempotencyKey: "work-cancel-key" },
+  "work.aggregation.get": { parentWorkItemId: "work-parent" },
+  "work.aggregation.list": { parentWorkItemId: "work-parent" },
+  "work.aggregation.decide": {
+    parentWorkItemId: "work-parent", childWorkItemId: "work-child", decision: "accepted",
+    expectedAggregateRevision: 1, idempotencyKey: "work-aggregation-decide-key",
+  },
+  "work.aggregation.retry": {
+    parentWorkItemId: "work-parent", childWorkItemId: "work-child", targetSessionId: "session-1",
+    goal: "retry", scope: "scope", completionCriteria: "done", authority: "local",
+    sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+    expectedAggregateRevision: 1, idempotencyKey: "work-aggregation-retry-key",
+  },
   "turn.options": { sessionId: "session-1" },
   "turn.run": {
     sessionId: "session-1", catalogRevision: 4, idempotencyKey: "run-key",
@@ -419,6 +431,33 @@ test("Session runtime rejects a declared body over 8 MiB before handler invocati
       "Content-Length": String(SESSION_RUNTIME_MAX_BODY_BYTES + 1),
     }, false);
     assert.equal(response.status, 413);
+    assert.equal(invoked, false);
+  } finally {
+    await server.stop();
+  }
+});
+
+test("AGG-QUERY-05: aggregation list limit超過はHTTP 413でhandler前に拒否する", async () => {
+  let invoked = false;
+  const server = createSessionRuntimeHttpServer({
+    ...boundServerOptions,
+    handle: async (operation) => {
+      invoked = true;
+      return createSessionRuntimeResult(operation, {});
+    },
+  });
+  await server.start();
+  try {
+    const address = server.address();
+    assert.ok(address);
+    const body = JSON.stringify({
+      schemaVersion: SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+      operation: "work.aggregation.list",
+      input: { parentWorkItemId: "work-parent", limit: 201 },
+    });
+    const response = await post(address.port, exchangePayload("cli", body));
+    assert.equal(response.status, 413);
+    assert.equal(JSON.parse(response.body).error.code, "LIMIT_EXCEEDED");
     assert.equal(invoked, false);
   } finally {
     await server.stop();

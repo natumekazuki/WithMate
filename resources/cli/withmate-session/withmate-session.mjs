@@ -218,6 +218,11 @@ function invalid$1(field, message) {
 //#region src/work-item.ts
 var WORK_ITEM_MAX_RESULT_BYTES = 256 * 1024;
 var WORK_ITEM_MAX_TEXT_LENGTH = 16e3;
+var WORK_ITEM_AGGREGATION_DECISIONS = [
+	"accepted",
+	"excluded",
+	"retry_requested"
+];
 var WORK_ITEM_STATES = [
 	"pending",
 	"in_progress",
@@ -255,6 +260,10 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"work.transition",
 	"work.result",
 	"work.cancel",
+	"work.aggregation.get",
+	"work.aggregation.list",
+	"work.aggregation.decide",
+	"work.aggregation.retry",
 	"turn.options",
 	"turn.run",
 	"turn.enqueue",
@@ -310,6 +319,10 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "work.transition") return parseWorkItemTransitionInput(value);
 	if (operation === "work.result") return parseWorkItemResultInput(value);
 	if (operation === "work.cancel") return parseWorkItemCancelInput(value);
+	if (operation === "work.aggregation.get") return parseWorkItemAggregationGetInput(value);
+	if (operation === "work.aggregation.list") return parseWorkItemAggregationListInput(value);
+	if (operation === "work.aggregation.decide") return parseWorkItemAggregationDecisionInput(value);
+	if (operation === "work.aggregation.retry") return parseWorkItemAggregationRetryInput(value);
 	if (operation === "turn.options") return parseSessionInput(value);
 	if (operation === "turn.run") return parseTurnRunInput(value);
 	if (operation === "turn.enqueue") return parseTurnEnqueueInput(value);
@@ -626,6 +639,7 @@ function parseWorkItemResultInput(value) {
 		"workItemId",
 		"state",
 		"expectedRevision",
+		"expectedAggregateRevision",
 		"result",
 		"idempotencyKey"
 	], "input");
@@ -668,6 +682,92 @@ function parseWorkItemResultInput(value) {
 		state,
 		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		result: parsedResult,
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+		...record.expectedAggregateRevision === void 0 ? {} : { expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 0, Number.MAX_SAFE_INTEGER) }
+	};
+}
+function parseWorkItemAggregationGetInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, ["parentWorkItemId"], "input");
+	return { parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId") };
+}
+function parseWorkItemAggregationListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"decision",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		...record.decision === void 0 ? {} : { decision: requireEnum(record.decision, WORK_ITEM_AGGREGATION_DECISIONS, "decision") },
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
+}
+function parseWorkItemAggregationDecisionInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"childWorkItemId",
+		"decision",
+		"reason",
+		"expectedAggregateRevision",
+		"idempotencyKey"
+	], "input");
+	const decision = requireEnum(record.decision, ["accepted", "excluded"], "decision");
+	const reason = record.reason === void 0 ? void 0 : requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH);
+	if (decision === "excluded" && reason === void 0) throw invalid("reason", "excluded requires a reason.");
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+		decision,
+		...reason === void 0 ? {} : { reason },
+		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemAggregationRetryInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"parentWorkItemId",
+		"childWorkItemId",
+		"targetSessionId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"sourceIdentity",
+		"reason",
+		"expectedAggregateRevision",
+		"idempotencyKey"
+	], "input");
+	const sourceIdentity = requireObject(record.sourceIdentity, "sourceIdentity");
+	assertKeys(sourceIdentity, [
+		"workspace",
+		"repository",
+		"branch",
+		"base",
+		"head"
+	], "sourceIdentity");
+	return {
+		parentWorkItemId: requireNonEmptyString(record.parentWorkItemId, "parentWorkItemId"),
+		childWorkItemId: requireNonEmptyString(record.childWorkItemId, "childWorkItemId"),
+		targetSessionId: requireNonEmptyString(record.targetSessionId, "targetSessionId"),
+		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedString(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedString(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedString(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		sourceIdentity: {
+			workspace: requireNullableBoundedString(sourceIdentity.workspace, "sourceIdentity.workspace"),
+			repository: requireNullableBoundedString(sourceIdentity.repository, "sourceIdentity.repository"),
+			branch: requireNullableBoundedString(sourceIdentity.branch, "sourceIdentity.branch"),
+			base: requireNullableBoundedString(sourceIdentity.base, "sourceIdentity.base"),
+			head: requireNullableBoundedString(sourceIdentity.head, "sourceIdentity.head")
+		},
+		...record.reason === void 0 ? {} : { reason: requireBoundedString(record.reason, "reason", WORK_ITEM_MAX_TEXT_LENGTH) },
+		expectedAggregateRevision: requireInteger(record.expectedAggregateRevision, "expectedAggregateRevision", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
 }
@@ -21534,7 +21634,42 @@ var workItemResultInputSchema = object({
 		"failed"
 	]),
 	expectedRevision: number().int().min(1),
+	expectedAggregateRevision: number().int().min(0).optional(),
 	result: workItemResultBodySchema,
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var workItemAggregationGetInputSchema = object({ parentWorkItemId: nonEmptyStringSchema }).strict();
+var workItemAggregationListInputSchema = object({
+	parentWorkItemId: nonEmptyStringSchema,
+	decision: _enum(WORK_ITEM_AGGREGATION_DECISIONS).optional(),
+	limit: number().int().min(1).max(200).default(50),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var workItemAggregationDecisionInputSchema = object({
+	parentWorkItemId: nonEmptyStringSchema,
+	childWorkItemId: nonEmptyStringSchema,
+	decision: _enum(["accepted", "excluded"]),
+	reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH).optional(),
+	expectedAggregateRevision: number().int().min(1),
+	idempotencyKey: nonEmptyStringSchema
+}).strict().superRefine((value, context) => {
+	if (value.decision === "excluded" && value.reason === void 0) context.addIssue({
+		code: "custom",
+		path: ["reason"],
+		message: "excluded requires a reason."
+	});
+});
+var workItemAggregationRetryInputSchema = object({
+	parentWorkItemId: nonEmptyStringSchema,
+	childWorkItemId: nonEmptyStringSchema,
+	targetSessionId: nonEmptyStringSchema,
+	goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	scope: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	completionCriteria: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	authority: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	sourceIdentity: workItemSourceIdentitySchema,
+	reason: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH).optional(),
+	expectedAggregateRevision: number().int().min(1),
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var workItemCancelInputSchema = object({
@@ -22041,6 +22176,33 @@ var workItemSchema = union([
 	canceledWorkItemSchema,
 	resultWorkItemSchema
 ]);
+var workItemAggregationDecisionSchema = object({
+	parentWorkItemId: string(),
+	childWorkItemId: string(),
+	revision: number().int().positive(),
+	childRevision: number().int().positive(),
+	actorSessionId: string(),
+	decision: _enum(WORK_ITEM_AGGREGATION_DECISIONS),
+	reason: string().nullable(),
+	replacementWorkItemId: string().nullable(),
+	decidedAt: string()
+}).strict();
+var workItemAggregationItemSchema = object({
+	child: object({
+		id: string(),
+		sequence: number().int().positive(),
+		creatorSessionId: string(),
+		targetSessionId: string(),
+		parentWorkItemId: string().nullable(),
+		state: _enum(WORK_ITEM_STATES),
+		revision: number().int().positive(),
+		createdAt: string(),
+		updatedAt: string()
+	}).strict(),
+	hasResult: boolean(),
+	resultSummary: string().nullable(),
+	decision: workItemAggregationDecisionSchema.nullable()
+}).strict();
 var resultSchemas = {
 	"runtime.catalog": object({
 		revision: number().int(),
@@ -22073,7 +22235,23 @@ var resultSchemas = {
 			defaultListLimit: literal(50),
 			maxListLimit: literal(200),
 			maxListResponseBytes: literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
-			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES)
+			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES),
+			aggregation: object({
+				contractRevision: literal(1),
+				decisions: tuple([
+					literal("accepted"),
+					literal("excluded"),
+					literal("retry_requested")
+				]),
+				operations: tuple([
+					literal("get"),
+					literal("list"),
+					literal("decide"),
+					literal("retry")
+				]),
+				defaultListLimit: literal(50),
+				maxListLimit: literal(200)
+			}).strict()
 		}).strict(),
 		providers: array(object({
 			id: string(),
@@ -22112,6 +22290,26 @@ var resultSchemas = {
 	"work.transition": workItemSchema,
 	"work.result": resultWorkItemSchema,
 	"work.cancel": canceledWorkItemSchema,
+	"work.aggregation.get": object({
+		contractRevision: literal(1),
+		parentWorkItemId: string(),
+		aggregateRevision: number().int().nonnegative(),
+		directChildCount: number().int().nonnegative(),
+		activeCount: number().int().nonnegative(),
+		undecidedTerminalCount: number().int().nonnegative(),
+		acceptedCount: number().int().nonnegative(),
+		excludedCount: number().int().nonnegative(),
+		retryRequestedCount: number().int().nonnegative()
+	}).strict(),
+	"work.aggregation.list": object({
+		items: array(workItemAggregationItemSchema),
+		nextCursor: string().optional()
+	}).strict(),
+	"work.aggregation.decide": workItemAggregationDecisionSchema,
+	"work.aggregation.retry": object({
+		decision: workItemAggregationDecisionSchema,
+		replacement: workItemSchema
+	}).strict(),
 	"turn.options": turnOptionsSchema,
 	"turn.run": runExecutionSchema,
 	"turn.enqueue": enqueueExecutionSchema,
@@ -22289,6 +22487,34 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		destructive: true
 	},
 	{
+		name: "work.aggregation.get",
+		title: "Get Work Item aggregation",
+		description: "Get bounded aggregation counts for one parent Work Item.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "work.aggregation.list",
+		title: "List Work Item aggregation",
+		description: "List direct child summaries and immutable decisions using a bounded cursor.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "work.aggregation.decide",
+		title: "Decide Work Item result",
+		description: "Accept or exclude one terminal direct child result.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "work.aggregation.retry",
+		title: "Retry Work Item result",
+		description: "Atomically record a retry decision and create its replacement Work Item.",
+		readOnly: false,
+		destructive: false
+	},
+	{
 		name: "turn.options",
 		title: "Get Session turn options",
 		description: "Read valid turn options for one normal Session.",
@@ -22410,7 +22636,7 @@ function annotations(definition) {
 	};
 }
 function isMutation(operation, input) {
-	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.result" || operation === "work.cancel" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
+	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.result" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
@@ -22578,6 +22804,30 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: workItemCancelInputSchema,
 		outputSchema: createOutputSchema("work.cancel")
 	}, async (input) => executeOperation("work.cancel", input, deps));
+	server.registerTool("work.aggregation.get", {
+		...definitions.get("work.aggregation.get"),
+		annotations: annotations(definitions.get("work.aggregation.get")),
+		inputSchema: workItemAggregationGetInputSchema,
+		outputSchema: createOutputSchema("work.aggregation.get")
+	}, async (input) => executeOperation("work.aggregation.get", input, deps));
+	server.registerTool("work.aggregation.list", {
+		...definitions.get("work.aggregation.list"),
+		annotations: annotations(definitions.get("work.aggregation.list")),
+		inputSchema: workItemAggregationListInputSchema,
+		outputSchema: createOutputSchema("work.aggregation.list")
+	}, async (input) => executeOperation("work.aggregation.list", input, deps));
+	server.registerTool("work.aggregation.decide", {
+		...definitions.get("work.aggregation.decide"),
+		annotations: annotations(definitions.get("work.aggregation.decide")),
+		inputSchema: workItemAggregationDecisionInputSchema,
+		outputSchema: createOutputSchema("work.aggregation.decide")
+	}, async (input) => executeOperation("work.aggregation.decide", input, deps));
+	server.registerTool("work.aggregation.retry", {
+		...definitions.get("work.aggregation.retry"),
+		annotations: annotations(definitions.get("work.aggregation.retry")),
+		inputSchema: workItemAggregationRetryInputSchema,
+		outputSchema: createOutputSchema("work.aggregation.retry")
+	}, async (input) => executeOperation("work.aggregation.retry", input, deps));
 	server.registerTool("turn.options", {
 		...definitions.get("turn.options"),
 		annotations: annotations(definitions.get("turn.options")),
@@ -22715,6 +22965,10 @@ var commandMap = /* @__PURE__ */ new Map([
 	["work transition", "work.transition"],
 	["work result", "work.result"],
 	["work cancel", "work.cancel"],
+	["work aggregation get", "work.aggregation.get"],
+	["work aggregation list", "work.aggregation.list"],
+	["work aggregation decide", "work.aggregation.decide"],
+	["work aggregation retry", "work.aggregation.retry"],
 	["turn options", "turn.options"],
 	["turn run", "turn.run"],
 	["turn enqueue", "turn.enqueue"],
@@ -22838,15 +23092,16 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command, input) {
-	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work result" || command === "work cancel" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
+	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work result" || command === "work cancel" || command === "work aggregation decide" || command === "work aggregation retry" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
 	const coordinationCommand = args[0] === "coordination" && args[1] === "event";
+	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
-	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|transition|result|cancel|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
-	const optionStart = fileCommand || coordinationCommand ? 3 : namespacedCommand ? 2 : 1;
+	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|transition|result|cancel|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	const optionStart = fileCommand || coordinationCommand || workAggregationCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
 	let useStdin = false;

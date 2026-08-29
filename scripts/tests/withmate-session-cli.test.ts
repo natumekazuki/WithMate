@@ -430,6 +430,27 @@ describe("withmate-session CLI", () => {
     }]);
   });
 
+  test("AGG-ADAPTER-01: work aggregation retryはshared strict inputへdispatchする", async () => {
+    const stdout = capture();
+    const requests: unknown[] = [];
+    const input = {
+      parentWorkItemId: "work-parent", childWorkItemId: "work-child", targetSessionId: "session-2",
+      goal: "retry", scope: "scope", completionCriteria: "done", authority: "local",
+      sourceIdentity: { workspace: null, repository: null, branch: null, base: null, head: null },
+      expectedAggregateRevision: 2, idempotencyKey: "retry-key",
+    };
+    const exitCode = await runWithMateSessionCli(["work", "aggregation", "retry", "--json", JSON.stringify(input)], {
+      stdout: stdout.stream,
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        requests.push(envelope);
+        return { ok: true, status: 200, value: createSessionRuntimeResult("work.aggregation.retry", {} as never) };
+      },
+    });
+    assert.equal(exitCode, WITHMATE_SESSION_CLI_EXIT_CODES.ok);
+    assert.deepEqual(requests, [{ schemaVersion: "withmate-session-request-v2", operation: "work.aggregation.retry", input }]);
+  });
+
   test("COORD-RESOLVE-SURFACE-01: agentはCLIでも回答optionなしでblockerを解決できる", async () => {
     const stdout = capture();
     const requests: unknown[] = [];
