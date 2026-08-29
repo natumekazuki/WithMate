@@ -692,6 +692,15 @@ describe("Work Item contract", () => {
 
   it("WORK-MIGRATE-06: partial repairは既存Session、execution、Work Itemを保持して再実行可能に収束する", () => {
     const item = createRootWork();
+    let parent = createRootWork("migration-parent");
+    parent = service.transition({
+      workItemId: parent.id,
+      state: "in_progress",
+      expectedRevision: parent.revision,
+      idempotencyKey: "migration-parent-start",
+    }, binding("task"));
+    const child = createChild(parent.id, "migration-child");
+    completeChild(child.id, "migration-child");
     const executionStorage = new SessionExecutionStorageV6(dbPath);
     try {
       executionStorage.enqueue({
@@ -706,6 +715,7 @@ describe("Work Item contract", () => {
     } finally {
       executionStorage.close();
     }
+    storage.close();
     const db = new DatabaseSync(dbPath);
     try {
       db.exec(`
@@ -722,10 +732,37 @@ describe("Work Item contract", () => {
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6 WHERE id = 'execution-existing'").get() as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM work_items_v6 WHERE id = ?").get(item.id) as { count: number }).count, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table' AND name LIKE 'work_item_aggregation%'").get() as { count: number }).count, 3);
+      assert.equal((db.prepare("SELECT aggregate_revision FROM work_item_aggregations_v6 WHERE parent_work_item_id = ?").get(parent.id) as { aggregate_revision: number }).aggregate_revision, 1);
       assert.equal((db.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'trigger' AND name = 'trg_v6_work_items_protect_session_delete'").get() as { count: number }).count, 1);
     } finally {
       db.close();
     }
+    storage = new WorkItemStorageV6(dbPath);
+    service = makeService(storage);
+    assert.equal(service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).aggregateRevision, 1);
+    service.decideAggregation({
+      parentWorkItemId: parent.id,
+      childWorkItemId: child.id,
+      decision: "accepted",
+      expectedAggregateRevision: 1,
+      idempotencyKey: "migration-child-accept",
+    }, binding("task"));
+    const finalized = service.reportResult({
+      workItemId: parent.id,
+      state: "completed",
+      expectedRevision: parent.revision,
+      expectedAggregateRevision: 2,
+      result: {
+        summary: "migrated aggregation finalized",
+        changes: [],
+        verificationResults: [],
+        findings: [],
+        unverifiedItems: [],
+        remainingWork: [],
+      },
+      idempotencyKey: "migration-parent-result",
+    }, binding("task"));
+    assert.equal(finalized.state, "completed");
   });
 
   it("WORK-MIGRATE-06/WORK-IDEM-07: expiry列のない既存ledgerを保持して24時間expiryを補完する", () => {

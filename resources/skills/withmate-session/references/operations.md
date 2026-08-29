@@ -35,7 +35,7 @@ After exit `4`, do not assume success or failure. Reconcile the resource or exec
 
 ## Public operations
 
-The CLI and MCP expose the same 31 operations:
+The CLI and MCP expose the same 35 operations:
 
 - Runtime: `runtime.catalog`
 - Session: `session.self`, `session.create`, `session.list`, `session.get`, `session.rename`
@@ -96,7 +96,7 @@ A wait timeout and MCP or CLI disconnect affect delivery only. They do not cance
 
 ## Idempotency and reconciliation
 
-Effect-bearing operations are Session create and rename, Session file write, Work Item create, transition, result, and cancel, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
+Effect-bearing operations are Session create and rename, Session file write, Work Item create, transition, result, cancel, aggregation decide, and aggregation retry, Turn run, enqueue, and cancel, interaction response, Coordination create, resolve, consume, cancel, and correct, and SessionFolder transcript export. The fingerprint includes values that change the effect. Response mode, wait timeout, and request ID are delivery settings and do not change the fingerprint.
 
 - Same operation, same key, same effect-bearing input: converge on the canonical result.
 - Same operation and key, different effect-bearing input: `IDEMPOTENCY_CONFLICT` with no new effect.

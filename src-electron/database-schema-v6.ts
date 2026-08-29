@@ -2874,6 +2874,29 @@ function ensureWorkItemIdempotencyExpiry(db: DatabaseSync): void {
   }
 }
 
+function backfillWorkItemAggregations(db: DatabaseSync): void {
+  db.exec(`
+    INSERT INTO work_item_aggregations_v6 (
+      parent_work_item_id, aggregate_revision, updated_at
+    )
+    SELECT
+      child.parent_work_item_id,
+      COUNT(*) + COUNT(decision.child_work_item_id),
+      MAX(CASE
+        WHEN decision.decided_at IS NOT NULL AND decision.decided_at > child.updated_at
+        THEN decision.decided_at
+        ELSE child.updated_at
+      END)
+    FROM work_items_v6 AS child
+    LEFT JOIN work_item_aggregation_decisions_v6 AS decision
+      ON decision.child_work_item_id = child.id
+      AND decision.parent_work_item_id = child.parent_work_item_id
+    WHERE child.parent_work_item_id IS NOT NULL
+    GROUP BY child.parent_work_item_id
+    ON CONFLICT(parent_work_item_id) DO NOTHING;
+  `);
+}
+
 export function cleanupForbiddenV6Tables(db: DatabaseSync): void {
   for (const tableName of FORBIDDEN_V6_TABLES) {
     db.exec(`DROP TABLE IF EXISTS ${tableName};`);
@@ -2904,6 +2927,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     }
     db.exec(statement);
   }
+  backfillWorkItemAggregations(db);
 
   if (!sessionRoleBindingsExisted) {
     db.exec(`
