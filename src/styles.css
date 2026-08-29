@@ -7284,26 +7284,24 @@ button:disabled {
 }
 
 .message-collapse-control {
-  position: sticky;
-  top: 8px;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  grid-area: 1 / 1;
-  align-self: start;
-  display: flex;
-  justify-content: flex-end;
-  height: 28px;
-  margin: -6px -8px 0 0;
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease;
 }
 
 .message-collapse-toggle {
+  position: sticky;
+  top: 8px;
+  float: right;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
+  margin: 8px;
   padding: 0;
   border: 1px solid rgba(148, 163, 184, 0.28);
   border-radius: 999px;
@@ -7725,37 +7723,32 @@ button:disabled {
 }
 
 .message-code-block-shell.copyable {
-  display: grid;
   width: 100%;
   max-width: 100%;
 }
 
 .message-code-block-actions {
-  position: sticky;
-  top: 8px;
+  position: absolute;
+  inset: 0;
   z-index: 1;
-  grid-area: 1 / 1;
-  align-self: start;
-  display: flex;
-  justify-content: flex-end;
-  min-width: 0;
-  height: 30px;
-  margin: 8px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 140ms ease;
 }
 
 .message-code-block-shell > .message-code-block {
-  grid-area: 1 / 1;
   max-width: 100%;
 }
 
 .message-code-copy-button {
+  position: sticky;
+  top: 8px;
+  float: right;
   display: inline-grid;
   width: 30px;
   max-width: 100%;
   height: 30px;
+  margin: 8px;
   place-items: center;
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.22);
