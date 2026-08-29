@@ -83,6 +83,7 @@ describe("SessionWindowRestoreService", () => {
       const firstService = new SessionWindowRestoreService({
         storage: firstStorage,
         getSession: () => ({}),
+        getOpenSessionWindowIds: () => [],
         openSessionWindow: async () => undefined,
       });
       const firstCreated = new Map<string, StubWindow[]>();
@@ -102,6 +103,7 @@ describe("SessionWindowRestoreService", () => {
       const secondService = new SessionWindowRestoreService({
         storage: secondStorage,
         getSession: (sessionId) => ({ id: sessionId }),
+        getOpenSessionWindowIds: () => secondBridge.listOpenSessionWindowIds(),
         openSessionWindow: (sessionId) => secondBridge.openSessionWindow(sessionId),
       });
       secondBridge = createBridge({
@@ -147,6 +149,7 @@ describe("SessionWindowRestoreService", () => {
         }
         return { id: sessionId };
       },
+      getOpenSessionWindowIds: () => [],
       async openSessionWindow(sessionId) {
         if (sessionId === "open-failed") {
           throw new Error("open failed");
@@ -200,6 +203,7 @@ describe("SessionWindowRestoreService", () => {
         },
       },
       getSession: (sessionId) => ({ id: sessionId }),
+      getOpenSessionWindowIds: () => [],
       async openSessionWindow(sessionId) {
         opened.push(sessionId);
       },
@@ -235,6 +239,7 @@ describe("SessionWindowRestoreService", () => {
         },
       },
       getSession: () => ({}),
+      getOpenSessionWindowIds: () => [],
       openSessionWindow: async () => undefined,
     });
 
@@ -256,6 +261,7 @@ describe("SessionWindowRestoreService", () => {
         async saveSnapshot() {},
       },
       getSession: () => ({}),
+      getOpenSessionWindowIds: () => [],
       openSessionWindow: async () => undefined,
       onRestoreSetChanged() {
         throw new Error("broadcast failed");
@@ -265,6 +271,38 @@ describe("SessionWindowRestoreService", () => {
     const result = await service.restoreSnapshot();
 
     assert.deepEqual(result.openedSessionIds, ["session-a"]);
+    assert.deepEqual(await service.getSnapshot(), []);
+  });
+
+  it("すでにopenのSessionを消費し、未openのSessionだけを復元結果へ含める", async () => {
+    const opened: string[] = [];
+    const restoreSetChanges: string[][] = [];
+    const service = new SessionWindowRestoreService({
+      storage: {
+        async loadSnapshot() {
+          return ["session-a", "session-b"];
+        },
+        async saveSnapshot() {},
+      },
+      getSession: (sessionId) => ({ id: sessionId }),
+      getOpenSessionWindowIds: () => ["session-a"],
+      async openSessionWindow(sessionId) {
+        opened.push(sessionId);
+      },
+      onRestoreSetChanged(sessionIds) {
+        restoreSetChanges.push([...sessionIds]);
+      },
+    });
+
+    const result = await service.restoreSnapshot();
+
+    assert.deepEqual(result, {
+      requestedSessionIds: ["session-b"],
+      openedSessionIds: ["session-b"],
+      failures: [],
+    });
+    assert.deepEqual(opened, ["session-b"]);
+    assert.deepEqual(restoreSetChanges, [[]]);
     assert.deepEqual(await service.getSnapshot(), []);
   });
 });
