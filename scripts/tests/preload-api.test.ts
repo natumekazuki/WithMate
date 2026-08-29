@@ -345,12 +345,22 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   });
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "preloadはRoot WorkItemの取得、改訂、履歴追加、履歴一覧を含むcurrent renderer API keyを欠落なく公開する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
+// failure_mode = "main IPCへ実装したRoot WorkItem操作がpreload APIから欠落しrendererだけが呼び出せない"
+// scope = "WithMateWindowApi preload surface"
+// lifecycle = "permanent"
+// distinction = "個別invokeだけでなくpublic API全key集合の同期を一括検証する"
+// @end-test-value
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
 
   const keys = Object.keys(api).sort();
   const expectedKeys = [
+    "appendRootWorkItemHistory",
     "cancelCompanionSessionRun",
     "cancelAuxiliarySessionRun",
     "cancelSessionExecution",
@@ -393,6 +403,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getLiveSessionRun",
     "getModelCatalog",
     "getProviderQuotaTelemetry",
+    "getRootWorkItem",
     "getSession",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
@@ -433,6 +444,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionSkills",
     "listSessionCharacterUsage",
     "listRelatedSessionSummaries",
+    "listRootWorkItemHistory",
     "listSessionSummaryPage",
     "listFileRootChanges",
     "listWorkspaceCustomAgents",
@@ -480,6 +492,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "resetAppDatabase",
     "restoreCompanionTargetStash",
     "resumeSessionSchedule",
+    "reviseRootWorkItem",
     "resolveLiveApproval",
     "resolveLiveElicitation",
     "resolveCoordinationEvent",

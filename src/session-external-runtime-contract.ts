@@ -49,6 +49,7 @@ import {
   WORK_ITEM_MAX_TEXT_LENGTH,
   WORK_ITEM_STATES,
   type WorkItem,
+  type WorkItemEvent,
   type WorkItemAggregationDecision,
   type WorkItemAggregationDecisionType,
   type WorkItemAggregationListItem,
@@ -94,6 +95,9 @@ export const SESSION_RUNTIME_OPERATIONS = [
   "work.create",
   "work.list",
   "work.get",
+  "work.revise",
+  "work.history.append",
+  "work.history.list",
   "work.transition",
   "work.result",
   "work.cancel",
@@ -142,7 +146,13 @@ export type SessionRuntimeCatalogResult = {
   workItems: {
     contractRevision: typeof WORK_ITEM_CONTRACT_REVISION;
     states: typeof WORK_ITEM_STATES;
-    mutations: readonly ["create", "transition", "result", "cancel"];
+    mutations: readonly ["create", "revise", "transition", "result", "cancel", "history.append"];
+    history: {
+      events: readonly ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"];
+      operations: readonly ["append", "list"];
+      defaultListLimit: number;
+      maxListLimit: number;
+    };
     defaultListLimit: typeof WORK_ITEM_DEFAULT_LIST_LIMIT;
     maxListLimit: typeof WORK_ITEM_MAX_LIST_LIMIT;
     aggregation: {
@@ -265,6 +275,30 @@ export type SessionRuntimeWorkItemCreateInput = {
   idempotencyKey: string;
 };
 export type SessionRuntimeWorkItemInput = { workItemId: string };
+export type SessionRuntimeWorkItemReviseInput = {
+  workItemId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemHistoryAppendInput = {
+  workItemId: string;
+  type: "progress" | "handoff";
+  summary: string;
+  blockers: string[];
+  nextAction: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+export type SessionRuntimeWorkItemHistoryListInput = {
+  workItemId: string;
+  limit: number;
+  cursor?: string;
+};
+export type SessionRuntimeWorkItemHistoryListResult = { items: readonly WorkItemEvent[]; nextCursor?: string };
 export type SessionRuntimeWorkItemListInput = {
   creatorSessionId?: string;
   targetSessionId?: string;
@@ -500,6 +534,9 @@ export type SessionRuntimeResultByOperation = {
   "work.create": WorkItem;
   "work.list": SessionRuntimeWorkItemListResult;
   "work.get": WorkItem;
+  "work.revise": WorkItem;
+  "work.history.append": WorkItem;
+  "work.history.list": SessionRuntimeWorkItemHistoryListResult;
   "work.transition": WorkItem;
   "work.result": WorkItem;
   "work.cancel": WorkItem;
@@ -614,6 +651,15 @@ export function parseSessionRuntimeRequestEnvelope(value: unknown): SessionRunti
   };
 }
 
+export function parseSessionRuntimeOperationInput(
+  operation: "work.revise",
+  value: unknown,
+): SessionRuntimeWorkItemReviseInput;
+export function parseSessionRuntimeOperationInput(
+  operation: "work.history.append",
+  value: unknown,
+): SessionRuntimeWorkItemHistoryAppendInput;
+export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOperation, value: unknown): unknown;
 export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOperation, value: unknown): unknown {
   if (!SESSION_RUNTIME_OPERATIONS.includes(operation)) {
     throw invalid("operation", "Unsupported Session runtime operation.");
@@ -647,6 +693,9 @@ export function parseSessionRuntimeOperationInput(operation: SessionRuntimeOpera
   if (operation === "work.create") return parseWorkItemCreateInput(value);
   if (operation === "work.list") return parseWorkItemListInput(value);
   if (operation === "work.get") return parseWorkItemInput(value);
+  if (operation === "work.revise") return parseWorkItemReviseInput(value);
+  if (operation === "work.history.append") return parseWorkItemHistoryAppendInput(value);
+  if (operation === "work.history.list") return parseWorkItemHistoryListInput(value);
   if (operation === "work.transition") return parseWorkItemTransitionInput(value);
   if (operation === "work.result") return parseWorkItemResultInput(value);
   if (operation === "work.cancel") return parseWorkItemCancelInput(value);
@@ -940,6 +989,49 @@ function parseWorkItemInput(value: unknown): SessionRuntimeWorkItemInput {
   const record = requireObject(value, "input");
   assertKeys(record, ["workItemId"], "input");
   return { workItemId: requireNonEmptyString(record.workItemId, "workItemId") };
+}
+function requireBoundedStringAllowEmpty(value: unknown, field: string, maxLength: number): string {
+  if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
+  if (value.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
+  return value;
+}
+
+function parseWorkItemReviseInput(value: unknown): SessionRuntimeWorkItemReviseInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId", "goal", "scope", "completionCriteria", "authority", "expectedRevision", "idempotencyKey"], "input");
+  return {
+    workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+    goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+    scope: requireBoundedStringAllowEmpty(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+    completionCriteria: requireBoundedStringAllowEmpty(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+    authority: requireBoundedStringAllowEmpty(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemHistoryAppendInput(value: unknown): SessionRuntimeWorkItemHistoryAppendInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId", "type", "summary", "blockers", "nextAction", "expectedRevision", "idempotencyKey"], "input");
+  return {
+    workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+    type: requireEnum(record.type, ["progress", "handoff"] as const, "type"),
+    summary: requireBoundedString(record.summary, "summary", WORK_ITEM_MAX_TEXT_LENGTH),
+    blockers: parseWorkItemStringList(record.blockers, "blockers"),
+    nextAction: requireBoundedString(record.nextAction, "nextAction", WORK_ITEM_MAX_TEXT_LENGTH),
+    expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+    idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
+  };
+}
+
+function parseWorkItemHistoryListInput(value: unknown): SessionRuntimeWorkItemHistoryListInput {
+  const record = requireObject(value, "input");
+  assertKeys(record, ["workItemId", "limit", "cursor"], "input");
+  return {
+    workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+    limit: record.limit === undefined ? WORK_ITEM_DEFAULT_LIST_LIMIT : requireInteger(record.limit, "limit", 1, WORK_ITEM_MAX_LIST_LIMIT, "LIMIT_EXCEEDED"),
+    ...(record.cursor === undefined ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }),
+  };
 }
 
 function parseWorkItemListInput(value: unknown): SessionRuntimeWorkItemListInput {

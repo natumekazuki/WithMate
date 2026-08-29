@@ -76,6 +76,9 @@ const commandMap = new Map<string, SessionRuntimeOperation>([
   ["work create", "work.create"],
   ["work list", "work.list"],
   ["work get", "work.get"],
+  ["work revise", "work.revise"],
+  ["work history append", "work.history.append"],
+  ["work history list", "work.history.list"],
   ["work transition", "work.transition"],
   ["work result", "work.result"],
   ["work cancel", "work.cancel"],
@@ -217,6 +220,7 @@ function isMutationCommand(command: string, input?: unknown): boolean {
     || command === "session files write-text"
     || command === "turn run" || command === "turn enqueue" || command === "turn cancel"
     || command === "work create" || command === "work transition"
+    || command === "work revise" || command === "work history append"
     || command === "work result" || command === "work cancel"
     || command === "work aggregation decide" || command === "work aggregation retry"
     || command === "interaction respond"
@@ -238,16 +242,17 @@ async function parseArgs(args: readonly string[], deps: CliDeps): Promise<{
   const fileCommand = args[0] === "session" && args[1] === "files";
   const coordinationCommand = args[0] === "coordination" && args[1] === "event";
   const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
+  const workHistoryCommand = args[0] === "work" && args[1] === "history";
   const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "work"
     || args[0] === "interaction" || args[0] === "transcript";
   const command = fileCommand
     ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
-    : coordinationCommand || workAggregationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
+    : coordinationCommand || workAggregationCommand || workHistoryCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim()
     : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
   if (command !== "status" && command !== "schema" && !commandMap.has(command)) {
-    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|transition|result|cancel|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+    throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
   }
-  const optionStart = fileCommand || coordinationCommand || workAggregationCommand ? 3 : namespacedCommand ? 2 : 1;
+  const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand ? 3 : namespacedCommand ? 2 : 1;
   let json: string | undefined;
   let file: string | undefined;
   let useStdin = false;

@@ -31,8 +31,8 @@ const AFTER_EXPIRES = "2026-08-25T12:00:00.001Z";
 
 function binding(actorSessionId: string): ResolvedAgentRuntimeBinding {
   return {
-    bindingId: `binding-${actorSessionId}`,
-    bindingIdHash: `hash-${actorSessionId}`,
+    bindingId: "binding-" + actorSessionId,
+    bindingIdHash: "hash-" + actorSessionId,
     actorSessionId,
     providerId: "codex",
     executionGeneration: "generation-1",
@@ -84,7 +84,7 @@ describe("Work Item contract", () => {
           db.close();
         }
       },
-      createWorkItemId: () => `work-${nextId++}`,
+      createWorkItemId: () => "work-" + nextId++,
       currentTimestamp: () => currentNow,
     });
   }
@@ -150,11 +150,11 @@ describe("Work Item contract", () => {
   }
 
   function completeChild(workItemId: string, key: string) {
-    const active = service.transition({ workItemId, state: "in_progress", expectedRevision: 1, idempotencyKey: `${key}-start` }, binding("executor"));
+    const active = service.transition({ workItemId, state: "in_progress", expectedRevision: 1, idempotencyKey: key + "-start" }, binding("executor"));
     return service.reportResult({
       workItemId, state: "completed", expectedRevision: active.revision,
       result: { summary: "child result", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
-      idempotencyKey: `${key}-result`,
+      idempotencyKey: key + "-result",
     }, binding("executor"));
   }
 
@@ -186,6 +186,15 @@ describe("Work Item contract", () => {
     assert.equal(page[0]?.decision?.decision, "accepted");
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "retry decisionとreplacementは同じidempotency keyの再送とprocess restart後の再送で同じ永続結果へ収束する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Migration と repair" }
+  // failure_mode = "response lossかprocess restart後のretry再送がreplacementを重複作成する、decisionとの対応を失う、または同じkeyの異なるpayloadを受理する"
+  // scope = "WorkItemStorageV6 aggregation retry transaction and idempotency"
+  // lifecycle = "permanent"
+  // distinction = "同一connection内の即時再送に加え、replacementをterminalにした後でstorage connectionを再生成してledger replayを観測する"
+  // @end-test-value
   it("AGG-RETRY-03: retry decisionとreplacementをatomicかつ再送可能に保存する", () => {
     const parent = createRootWork("retry-parent");
     const child = createChild(parent.id, "retry-child");
@@ -216,15 +225,6 @@ describe("Work Item contract", () => {
       expectedRevision: first.replacement.revision,
       idempotencyKey: "cancel-replacement-before-replay",
     }, binding("task"));
-    const deleteTargetDb = new DatabaseSync(dbPath);
-    try {
-      deleteTargetDb.exec(`
-        DELETE FROM session_role_bindings_v6 WHERE session_id = 'task-sibling';
-        DELETE FROM sessions_v6 WHERE id = 'task-sibling';
-      `);
-    } finally {
-      deleteTargetDb.close();
-    }
     storage.close();
     storage = new WorkItemStorageV6(dbPath);
     service = makeService(storage);
@@ -232,6 +232,15 @@ describe("Work Item contract", () => {
     assert.throws(() => service.retryAggregation({ ...request, goal: "different" }, binding("task")), WorkItemIdempotencyConflictError);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "aggregation decisionはterminal childだけを対象とし、canceledはacceptedを拒否しつつexcluded、failedとpartially_completedはexcludedを許可する"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Work Item contract" }
+  // failure_mode = "未完了または取消済みchildを採用するか、除外可能なterminal結果を集約から外せずparentの完了判定が不正になる"
+  // scope = "WorkItemService.decideAggregationのchild state別decision matrix"
+  // lifecycle = "permanent"
+  // distinction = "active、canceled、failed、partially_completedを一つのdecision境界へ通し、accepted拒否とexcluded許可の差を観測する"
+  // @end-test-value
   it("AGG-DECISION-02: activeとcanceled採用を拒否しfailedとpartially_completedを除外できる", () => {
     const parent = createRootWork("state-parent");
     const active = createChild(parent.id, "state-active");
@@ -249,17 +258,17 @@ describe("Work Item contract", () => {
       expectedAggregateRevision: 1, idempotencyKey: "canceled-exclude",
     }, binding("task"));
     for (const state of ["failed", "partially_completed"] as const) {
-      const child = createChild(parent.id, `state-${state}`);
-      service.transition({ workItemId: child.id, state: "in_progress", expectedRevision: 1, idempotencyKey: `${state}-start` }, binding("executor"));
+      const child = createChild(parent.id, "state-" + state);
+      service.transition({ workItemId: child.id, state: "in_progress", expectedRevision: 1, idempotencyKey: state + "-start" }, binding("executor"));
       service.reportResult({
         workItemId: child.id, state, expectedRevision: 2,
         result: { summary: state, changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
-        idempotencyKey: `${state}-result`,
+        idempotencyKey: state + "-result",
       }, binding("executor"));
       const revision = service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).aggregateRevision;
       service.decideAggregation({
         parentWorkItemId: parent.id, childWorkItemId: child.id, decision: "excluded", reason: state,
-        expectedAggregateRevision: revision, idempotencyKey: `${state}-exclude`,
+        expectedAggregateRevision: revision, idempotencyKey: state + "-exclude",
       }, binding("task"));
     }
     assert.equal(service.getAggregation({ parentWorkItemId: parent.id }, binding("task")).excludedCount, 3);
@@ -471,6 +480,15 @@ describe("Work Item contract", () => {
     }, binding("task")), WorkItemParentError);
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "bounded listはroot actorへ同じroot配下のRoot WorkItemとdelegated WorkItemをsequence順で返し、child actorへ自身が作成または担当するdelegated WorkItemだけを返す"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#直接検証" }
+  // failure_mode = "Root WorkItemがroot一覧から欠落する、childへroot-wideな作業が漏れる、またはcursor境界で項目を重複か欠落させる"
+  // scope = "WorkItemService bounded list visibility and keyset pagination"
+  // lifecycle = "permanent"
+  // distinction = "root projectionを含む第一pageとdelegatedだけの第二pageを分け、actor visibilityの非対称性も同じfixtureで観測する"
+  // @end-test-value
   it("WORK-AUTH-02: bounded listはrootとactor visibilityをstorage queryで固定する", () => {
     const assigned = createRootWork("list-task");
     const sibling = service.create({
@@ -493,12 +511,16 @@ describe("Work Item contract", () => {
       visibility: "actor",
     });
     assert.deepEqual(service.list({ limit: 10, afterSequence: null }, binding("task")).map((item) => item.id), [assigned.id]);
+    const rootItem = storage.get("root-work-item:root");
+    assert.ok(rootItem);
     const firstPage = service.list({ limit: 1, afterSequence: null }, binding("root"));
-    assert.deepEqual(firstPage.map((item) => item.id), [assigned.id]);
-    assert.deepEqual(
-      service.list({ limit: 1, afterSequence: firstPage[0]!.sequence }, binding("root")).map((item) => item.id),
-      [sibling.id],
-    );
+    assert.deepEqual(firstPage.map((item) => item.id), [rootItem.id]);
+    const secondPage = service.list({ limit: 1, afterSequence: firstPage[0]!.sequence }, binding("root"));
+    assert.deepEqual(secondPage.map((item) => item.id), [assigned.id]);
+    assert.deepEqual(service.list({
+      limit: 1,
+      afterSequence: secondPage[0]!.sequence,
+    }, binding("root")).map((item) => item.id), [sibling.id]);
   });
 
   it("WORK-STATE-03/WORK-RESULT-04: revision付き遷移とterminal resultを同時commitする", () => {

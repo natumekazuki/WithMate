@@ -64,9 +64,9 @@ const resolveTurnInitiator = async (actorSessionId: string) => ({
   kind: "session" as const,
   sessionId: actorSessionId,
   character: {
-    characterId: `character-${actorSessionId}`,
-    name: `Character ${actorSessionId}`,
-    iconFilePath: `C:/characters/${actorSessionId}.png`,
+    characterId: "character-" + actorSessionId,
+    name: "Character " + actorSessionId,
+    iconFilePath: "C:/characters/" + actorSessionId + ".png",
   },
 });
 
@@ -79,7 +79,7 @@ function communicationSession(
 ) {
   return {
     sessionId,
-    title: `Session ${sessionId}`,
+    title: "Session " + sessionId,
     sessionRole,
     roleContractRevision: 1 as const,
     rootSessionId,
@@ -567,6 +567,15 @@ test("READ-EFFECT-01: read-only operationの予期しない例外はnot_applied�
   assert.equal("error" in response && response.error.effect, "not_applied");
 });
 
+// @test-value v1
+// kind = "contract"
+// claim = "runtime catalogはWorkItem revision 2とroot改訂・履歴能力をpublic projectionへ返しexecution副作用を起こさない"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
+// failure_mode = "public consumerがrevision 1 catalogを受け取りRoot WorkItem操作をdiscoverできない、またはreadでexecutionを起動する"
+// scope = "SessionExternalApplicationService runtime.catalog projection"
+// lifecycle = "permanent"
+// distinction = "operation追加だけでなくevent種別、履歴limit、mutation集合を一つのcatalog snapshotで固定する"
+// @end-test-value
 test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecutionへ触れない", async () => {
   let executionInvoked = false;
   const service = new SessionExternalApplicationService({
@@ -653,9 +662,15 @@ test("RUNTIME-CATALOG-01: current catalogをpublic projectionで返しexecution�
         maxListLimit: 100,
       },
       workItems: {
-        contractRevision: 1,
+        contractRevision: 2,
         states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-        mutations: ["create", "transition", "result", "cancel"],
+        mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+        history: {
+          events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"],
+          operations: ["append", "list"],
+          defaultListLimit: 50,
+          maxListLimit: 200,
+        },
         defaultListLimit: 50,
         maxListLimit: 200,
         maxListResponseBytes: 8388608,

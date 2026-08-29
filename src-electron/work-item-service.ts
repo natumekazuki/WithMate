@@ -13,7 +13,8 @@ import {
   type WorkItemAggregationDecisionType,
   type WorkItemAggregationListItem,
   type WorkItemAggregationSummary,
-  type WorkItemBinding,
+  type DelegatedWorkItemBinding,
+  type WorkItemEvent,
   type WorkItemResult,
   type WorkItemResultState,
   type WorkItemSourceIdentity,
@@ -41,6 +42,36 @@ export type WorkItemTransitionInput = {
   state: "in_progress" | "waiting";
   expectedRevision: number;
   idempotencyKey: string;
+};
+
+export type WorkItemReviseInput = {
+  workItemId: string;
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+
+type WorkItemHistoryAppendBase = {
+  workItemId: string;
+  summary: string;
+  blockers: readonly string[];
+  nextAction: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+};
+
+export type WorkItemHistoryAppendInput = WorkItemHistoryAppendBase & (
+  | { type: "progress" }
+  | { type: "handoff" }
+);
+
+export type WorkItemHistoryListInput = {
+  workItemId: string;
+  limit: number;
+  afterSequence: number | null;
 };
 
 export type WorkItemResultInput = {
@@ -135,6 +166,7 @@ export class WorkItemService {
     storage: Pick<
       WorkItemStorageV6,
       "cleanupExpiredIdempotency" | "create" | "get" | "iteratePage" | "listPage" | "mutate" | "resolveIdempotency"
+      | "reviseRoot" | "appendRootHistory" | "listHistory"
       | "getAggregationSummary" | "listAggregationItems" | "decideAggregation" | "retryAggregation"
       | "resolveAggregationIdempotency"
     >;
@@ -193,7 +225,8 @@ export class WorkItemService {
         throw new WorkItemParentError(input.parentWorkItemId);
       }
     }
-    const bindingRecord: WorkItemBinding = {
+    const bindingRecord: DelegatedWorkItemBinding = {
+      kind: "delegated",
       rootSessionId: actorBinding.rootSessionId,
       creatorSessionId: actor.sessionId,
       targetSessionId: target.sessionId,
@@ -217,6 +250,59 @@ export class WorkItemService {
 
   transition(input: WorkItemTransitionInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
     return this.targetMutation("work.transition", input, binding, input.state, null);
+  }
+
+  revise(input: WorkItemReviseInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+    const updatedAt = this.deps.currentTimestamp();
+    const fingerprint = fingerprintMutation(input, binding.actorSessionId);
+    const replay = this.deps.storage.resolveIdempotency(
+      "work.revise",
+      binding.actorSessionId,
+      input.idempotencyKey,
+      fingerprint,
+      updatedAt,
+    );
+    if (replay) return replay;
+    this.requireRootOwner(input.workItemId, binding);
+    return this.deps.storage.reviseRoot({
+      ...input,
+      principalSessionId: binding.actorSessionId,
+      requestFingerprint: fingerprint,
+      updatedAt,
+      expiresAt: resolveIdempotencyExpiresAt(updatedAt),
+    });
+  }
+
+  appendHistory(input: WorkItemHistoryAppendInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
+    const createdAt = this.deps.currentTimestamp();
+    const fingerprint = fingerprintMutation(input, binding.actorSessionId);
+    const replay = this.deps.storage.resolveIdempotency(
+      "work.history.append",
+      binding.actorSessionId,
+      input.idempotencyKey,
+      fingerprint,
+      createdAt,
+    );
+    if (replay) return replay;
+    this.requireRootOwner(input.workItemId, binding);
+    return this.deps.storage.appendRootHistory({
+      workItemId: input.workItemId,
+      principalSessionId: binding.actorSessionId,
+      idempotencyKey: input.idempotencyKey,
+      requestFingerprint: fingerprint,
+      expectedRevision: input.expectedRevision,
+      eventType: input.type,
+      summary: input.summary,
+      blockers: [...input.blockers],
+      nextAction: input.nextAction,
+      createdAt,
+      expiresAt: resolveIdempotencyExpiresAt(createdAt),
+    });
+  }
+
+  listHistory(input: WorkItemHistoryListInput, binding: ResolvedAgentRuntimeBinding): WorkItemEvent[] {
+    this.requireRootOwner(input.workItemId, binding);
+    return this.deps.storage.listHistory(input);
   }
 
   reportResult(input: WorkItemResultInput, binding: ResolvedAgentRuntimeBinding): WorkItem {
@@ -247,7 +333,7 @@ export class WorkItemService {
     );
     if (replay) return replay;
     const item = this.requireVisibleItem(input.workItemId, binding, false);
-    if (item.creatorSessionId !== binding.actorSessionId || !isWorkItemActive(item.state)) {
+    if (item.kind !== "delegated" || item.creatorSessionId !== binding.actorSessionId || !isWorkItemActive(item.state)) {
       throw new WorkItemAuthorityError("Only the creator can cancel its active Work Item.", {
         workItemId: item.id,
         actorSessionId: binding.actorSessionId,
@@ -309,16 +395,21 @@ export class WorkItemService {
     const target = this.requireSession(targetSessionId);
     const actorBinding = requireSessionRoleBinding(actor.sessionId, actor);
     const targetBinding = requireSessionRoleBinding(target.sessionId, target);
+    const allowed = item.kind === "root"
+      ? item.creatorSessionId === actor.sessionId
+        && item.targetSessionId === actor.sessionId
+        && target.sessionId === actor.sessionId
+      : item.targetSessionId === target.sessionId
+        && (item.creatorSessionId === actor.sessionId || item.targetSessionId === actor.sessionId)
+        && canSendSessionTurn(
+          { sessionId: actor.sessionId, ...actorBinding },
+          { sessionId: target.sessionId, ...targetBinding },
+        );
     if (
       item.rootSessionId !== actorBinding.rootSessionId
       || item.rootSessionId !== targetBinding.rootSessionId
-      || item.targetSessionId !== target.sessionId
-      || (item.creatorSessionId !== actor.sessionId && item.targetSessionId !== actor.sessionId)
       || !isWorkItemActive(item.state)
-      || !canSendSessionTurn(
-        { sessionId: actor.sessionId, ...actorBinding },
-        { sessionId: target.sessionId, ...targetBinding },
-      )
+      || !allowed
     ) {
       throw new WorkItemExecutionAssociationError(
         "The Work Item cannot be associated with this execution.",
@@ -404,6 +495,7 @@ export class WorkItemService {
       requestFingerprint,
       replacementId: this.deps.createWorkItemId(),
       replacementBinding: {
+        kind: "delegated",
         rootSessionId: parent.rootSessionId,
         creatorSessionId: binding.actorSessionId,
         targetSessionId: input.targetSessionId,
@@ -475,6 +567,22 @@ export class WorkItemService {
       throw new WorkItemAuthorityError("Only coordinator Sessions can mutate Work Item aggregation.");
     }
     return parent;
+  }
+
+  private requireRootOwner(workItemId: string, binding: ResolvedAgentRuntimeBinding): WorkItem {
+    const item = this.requireVisibleItem(workItemId, binding, false);
+    if (
+      item.kind !== "root"
+      || item.rootSessionId !== binding.actorSessionId
+      || item.creatorSessionId !== binding.actorSessionId
+      || item.targetSessionId !== binding.actorSessionId
+    ) {
+      throw new WorkItemAuthorityError("Only the self-owning root Session can mutate or inspect Root Work Item history.", {
+        workItemId,
+        actorSessionId: binding.actorSessionId,
+      });
+    }
+    return item;
   }
 
   private requireVisibleItem(

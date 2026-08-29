@@ -61,17 +61,26 @@ async function createFixture(): Promise<{
 
 function enqueueInput(index: number) {
   return {
-    id: `execution-${index}`,
+    id: "execution-" + index,
     sessionId: "session-1",
-    request: { userMessage: `message-${index}` },
-    idempotencyKey: `key-${index}`,
-    requestFingerprint: `fingerprint-${index}`,
-    createdAt: `2026-08-10T00:00:${String(index).padStart(2, "0")}.000Z`,
+    request: { userMessage: "message-" + index },
+    idempotencyKey: "key-" + index,
+    requestFingerprint: "fingerprint-" + index,
+    createdAt: "2026-08-10T00:00:" + String(index).padStart(2, "0") + ".000Z",
     expiresAt: EXPIRES_AT,
   };
 }
 
 describe("SessionExecutionStorageV6", () => {
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "terminal Root WorkItemを持つtarget Sessionの削除後もoutbound execution origin snapshotはsource queryから復元できる"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "Root WorkItem削除保護への対応で削除可能なtargetのorigin snapshotまで失いsource側の履歴が復元できない"
+  // scope = "SessionExecutionStorageV6 outbound origin deletion lifecycle"
+  // lifecycle = "permanent"
+  // distinction = "targetのRoot WorkItemをterminal化し、target execution削除後もsource-owned snapshotだけを保持する"
+  // @end-test-value
   it("ORCH-OUTBOUND-01: origin snapshotをacceptanceと同時保存しtarget削除後もsource queryから復元する", async () => {
     const fixture = await createFixture();
     try {
@@ -136,6 +145,11 @@ describe("SessionExecutionStorageV6", () => {
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare(`
+          UPDATE work_items_v6
+          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
+          WHERE kind = 'root' AND root_session_id = ?
+        `).run(JSON.stringify({ outcome: "completed" }), CREATED_AT, "session-2");
         db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-2");
         db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-2");
       } finally {
@@ -291,18 +305,27 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "GUI execution projection sourceはactive executionと最新terminal一件だけへ制限される"
+  // oracle = { type = "contract", ref = "docs/design/session-external-runtime.md#Turn execution" }
+  // failure_mode = "履歴全件をGUI projectionへ読み込み、Session再開時のread量と表示対象が無制限に増える"
+  // scope = "SessionExecutionStorageV6 GUI projection query"
+  // lifecycle = "permanent"
+  // distinction = "20件のterminal履歴と2件のactive executionを混在させ、最新terminalとactiveだけを観測する"
+  // @end-test-value
   it("TN-BOUND-08: GUI projection sourceはactive executionと最新terminalだけへ制限する", async () => {
     const fixture = await createFixture();
     try {
       for (let index = 1; index <= 20; index += 1) {
         fixture.storage.startImmediate(enqueueInput(index));
         fixture.storage.completeRunning({
-          executionId: `execution-${index}`,
+          executionId: "execution-" + index,
           state: "failed",
           result: null,
           errorCode: "PROVIDER_FAILURE",
           reason: "session_runtime_failed",
-          completedAt: `2026-08-10T00:01:${String(index).padStart(2, "0")}.000Z`,
+          completedAt: "2026-08-10T00:01:" + String(index).padStart(2, "0") + ".000Z",
           expiresAt: EXPIRES_AT,
         });
       }
@@ -542,6 +565,15 @@ describe("SessionExecutionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "削除可能なterminal root Sessionの物理削除はexecutionとexecution idempotencyをcascade削除する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "Root WorkItem削除契約の追加後にexecutionまたはidempotency ledgerが孤児として残る"
+  // scope = "SessionExecutionStorageV6 Session deletion cascade"
+  // lifecycle = "permanent"
+  // distinction = "active rootの削除ではなくterminal化済みrootの外部key cascadeを直接観測する"
+  // @end-test-value
   it("Session削除時にexecutionとidempotencyをcascade削除する", async () => {
     const fixture = await createFixture();
     try {
@@ -549,6 +581,11 @@ describe("SessionExecutionStorageV6", () => {
       const db = new DatabaseSync(fixture.dbPath);
       try {
         db.exec("PRAGMA foreign_keys = ON;");
+        db.prepare(`
+          UPDATE work_items_v6
+          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
+          WHERE kind = 'root' AND root_session_id = ?
+        `).run(JSON.stringify({ outcome: "completed" }), CREATED_AT, "session-1");
         db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = ?").run("session-1");
         db.prepare("DELETE FROM sessions_v6 WHERE id = ?").run("session-1");
         const executionCount = db.prepare("SELECT COUNT(*) AS count FROM session_executions_v6").get() as { count: number };

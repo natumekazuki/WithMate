@@ -46,6 +46,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
+import type { RootWorkItem } from "./work-item.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
@@ -1633,6 +1634,21 @@ export type SessionContextPaneProps = {
   latestCommandEmptyText?: string;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  rootWorkItem?: RootWorkItem | null;
+  rootWorkItemHistory?: readonly { revision: number; eventType: string; occurredAt: string; summary?: string }[];
+  rootWorkItemLoading?: boolean;
+  rootWorkItemErrorMessage?: string | null;
+  isRootWorkItemMutationPending?: boolean;
+  onReviseRootWorkItem?: (input: {
+    goal: string;
+    scope: string;
+    completionCriteria: string;
+    authority: string;
+    progressSummary: string;
+    blockers: string[];
+    nextAction: string;
+  }) => void | Promise<void>;
+  onHandoffRootWorkItem?: () => void | Promise<void>;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -1729,6 +1745,90 @@ export class SessionPaneErrorBoundary extends Component<
   }
 }
 
+function RootWorkItemPane({
+  workItem,
+  history,
+  onRevise,
+  onHandoff,
+  loading,
+  errorMessage,
+  mutationPending,
+}: {
+  workItem: RootWorkItem;
+  history: readonly { revision: number; eventType: string; occurredAt: string; summary?: string }[];
+  onRevise?: SessionContextPaneProps["onReviseRootWorkItem"];
+  onHandoff?: SessionContextPaneProps["onHandoffRootWorkItem"];
+  loading: boolean;
+  errorMessage: string | null;
+  mutationPending: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState({
+    goal: workItem.goal,
+    scope: workItem.scope,
+    completionCriteria: workItem.completionCriteria,
+    authority: workItem.authority,
+    progressSummary: workItem.progressSummary,
+    blockers: workItem.blockers.join("\n"),
+    nextAction: workItem.nextAction,
+  });
+  useEffect(() => {
+    if (editing) return;
+    setDraft({
+      goal: workItem.goal,
+      scope: workItem.scope,
+      completionCriteria: workItem.completionCriteria,
+      authority: workItem.authority,
+      progressSummary: workItem.progressSummary,
+      blockers: workItem.blockers.join("\n"),
+      nextAction: workItem.nextAction,
+    });
+  }, [editing, workItem]);
+  const update = (key: keyof typeof draft, value: string) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+  return (
+    <div className="command-monitor-card root-work-item-pane" aria-busy={loading || mutationPending}>
+      <div className="command-monitor-card-head">
+        <div className="command-monitor-meta">
+          <span className={`live-run-step-status ${liveRunStepToneClassName(workItem.state)}`}>{workItem.state}</span>
+          <span className="live-run-step-type">Root WorkItem</span>
+          <span className="command-monitor-source">REV {workItem.revision}</span>
+        </div>
+        {onRevise ? (
+          <button type="button" className="drawer-toggle compact secondary" onClick={() => setEditing((value) => !value)} aria-expanded={editing} disabled={mutationPending}>
+            {editing ? "閉じる" : "改訂"}
+          </button>
+        ) : null}
+        {onHandoff ? <button type="button" className="drawer-toggle compact secondary" onClick={() => void onHandoff()} disabled={mutationPending}>引き継ぎ</button> : null}
+      </div>
+      {errorMessage ? <p className="live-run-error" role="alert">{errorMessage}</p> : null}
+      {editing ? (
+        <form onSubmit={(event) => { event.preventDefault(); void onRevise?.({ ...draft, blockers: draft.blockers.split("\n").map((value) => value.trim()).filter(Boolean) }); setEditing(false); }} className="root-work-item-edit-form">
+          {(["goal", "scope", "completionCriteria", "authority", "progressSummary", "blockers", "nextAction"] as const).map((key) => (
+            <label key={key}>{key}<textarea value={draft[key]} onChange={(event) => update(key, event.target.value)} rows={key === "goal" ? 2 : 1} /></label>
+          ))}
+          <button type="submit" className="session-send-button" disabled={mutationPending}>保存</button>
+        </form>
+      ) : (
+        <div className="root-work-item-summary">
+          <h3>{workItem.goal || "Root WorkItem"}</h3>
+          {workItem.progressSummary ? <p><strong>progressSummary</strong> {workItem.progressSummary}</p> : null}
+          {workItem.nextAction ? <p><strong>nextAction</strong> {workItem.nextAction}</p> : null}
+          {workItem.blockers.length > 0 ? <p><strong>blockers</strong> {workItem.blockers.join(", ")}</p> : null}
+          {workItem.scope ? <p><strong>scope</strong> {workItem.scope}</p> : null}
+          {workItem.completionCriteria ? <p><strong>completionCriteria</strong> {workItem.completionCriteria}</p> : null}
+        </div>
+      )}
+      {history.length > 0 ? (
+        <details className="command-monitor-details root-work-item-history">
+          <summary>履歴 ({history.length})</summary>
+          <ol>{history.map((event) => <li key={`${event.revision}-${event.eventType}`}><strong>r{event.revision}</strong> {event.eventType} <time>{event.occurredAt}</time>{event.summary ? ` — ${event.summary}` : ""}</li>)}</ol>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function SessionContextPane({
   activeContextPaneTab,
   availableContextPaneTabs,
@@ -1750,6 +1850,13 @@ export function SessionContextPane({
   latestCommandEmptyText = "",
   onCycleContextPaneTab,
   onOpenCompanionReview,
+  rootWorkItem = null,
+  rootWorkItemHistory = [],
+  rootWorkItemLoading = false,
+  rootWorkItemErrorMessage = null,
+  isRootWorkItemMutationPending = false,
+  onReviseRootWorkItem,
+  onHandoffRootWorkItem,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taskEntries = backgroundTasks ?? [];
@@ -1777,6 +1884,8 @@ export function SessionContextPane({
         return companionGroupMonitorEntries
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
           .join("|");
+      case "work-item":
+        return `${rootWorkItem?.id ?? ""}:${rootWorkItem?.revision ?? 0}:${rootWorkItem?.state ?? ""}`;
       default:
         return "";
     }
@@ -1789,6 +1898,7 @@ export function SessionContextPane({
     isSelectedSessionRunning,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
+    rootWorkItem,
   ]);
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
@@ -2039,6 +2149,18 @@ export function SessionContextPane({
                   <p className="command-monitor-empty-subtle">同じ repository の Companion がある時だけここへ出るよ。</p>
                 </div>
               )
+            ) : null}
+
+            {activeContextPaneTab === "work-item" && rootWorkItem ? (
+              <RootWorkItemPane
+                workItem={rootWorkItem}
+                history={rootWorkItemHistory}
+                onRevise={onReviseRootWorkItem}
+                onHandoff={onHandoffRootWorkItem}
+                loading={rootWorkItemLoading}
+                errorMessage={rootWorkItemErrorMessage}
+                mutationPending={isRootWorkItemMutationPending}
+              />
             ) : null}
 
           </div>

@@ -55,6 +55,10 @@ import {
   type SessionRuntimeWorkItemCancelInput,
   type SessionRuntimeWorkItemCreateInput,
   type SessionRuntimeWorkItemInput,
+  type SessionRuntimeWorkItemReviseInput,
+  type SessionRuntimeWorkItemHistoryAppendInput,
+  type SessionRuntimeWorkItemHistoryListInput,
+  type SessionRuntimeWorkItemHistoryListResult,
   type SessionRuntimeWorkItemListInput,
   type SessionRuntimeWorkItemListResult,
   type SessionRuntimeWorkItemResultInput,
@@ -180,7 +184,7 @@ export type SessionExternalApplicationServiceDeps = {
   workItemService?: Pick<
     WorkItemService,
     "create" | "get" | "resolveListScope" | "iterateList" | "transition" | "reportResult" | "cancel" | "requireExecutionAssociation"
-    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation"
+    | "getAggregation" | "listAggregation" | "decideAggregation" | "retryAggregation" | "revise" | "appendHistory" | "listHistory"
   >;
   getExecutionWorkItemId?(executionId: string): string | null;
 };
@@ -279,6 +283,15 @@ export class SessionExternalApplicationService {
     }
     if (operation === "work.get") {
       return this.requireWorkItemService().get((input as SessionRuntimeWorkItemInput).workItemId, agentRuntimeBinding);
+    }
+    if (operation === "work.revise") {
+      return this.requireWorkItemService().revise(input as SessionRuntimeWorkItemReviseInput, agentRuntimeBinding);
+    }
+    if (operation === "work.history.append") {
+      return this.requireWorkItemService().appendHistory(input as SessionRuntimeWorkItemHistoryAppendInput, agentRuntimeBinding);
+    }
+    if (operation === "work.history.list") {
+      return this.listWorkItemHistory(input as SessionRuntimeWorkItemHistoryListInput, agentRuntimeBinding);
     }
     if (operation === "work.list") {
       return this.listWorkItems(input as SessionRuntimeWorkItemListInput, agentRuntimeBinding);
@@ -734,6 +747,27 @@ export class SessionExternalApplicationService {
     return result;
   }
 
+  private listWorkItemHistory(
+    input: SessionRuntimeWorkItemHistoryListInput,
+    binding: ResolvedAgentRuntimeBinding,
+  ): SessionRuntimeWorkItemHistoryListResult {
+    const service = this.requireWorkItemService();
+    const scope = service.resolveListScope(binding);
+    const afterSequence = input.cursor ? decodeWorkItemHistoryCursor(input, scope, input.cursor) : null;
+    const events = service.listHistory({ workItemId: input.workItemId, limit: input.limit + 1, afterSequence }, binding);
+    const items = events.slice(0, input.limit);
+    const projected = { items };
+    if (Buffer.byteLength(JSON.stringify(createSessionRuntimeResult("work.history.list", projected)), "utf8") > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+      throw new SessionRuntimeProjectionLimitError("result.items");
+    }
+    return {
+      items,
+      ...(events.length > input.limit && items.length > 0
+        ? { nextCursor: encodeWorkItemHistoryCursor(input, scope, (items[items.length - 1] as { sequence: number }).sequence) }
+        : {}),
+    };
+  }
+
   private resolveWorkItemAssociation(
     input: SessionRuntimeEnqueueInput,
     binding: ResolvedAgentRuntimeBinding,
@@ -904,7 +938,8 @@ function projectRuntimeCatalog(
     workItems: {
       contractRevision: WORK_ITEM_CONTRACT_REVISION,
       states: WORK_ITEM_STATES,
-      mutations: ["create", "transition", "result", "cancel"],
+      mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+      history: { events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"], operations: ["append", "list"], defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT, maxListLimit: WORK_ITEM_MAX_LIST_LIMIT },
       defaultListLimit: WORK_ITEM_DEFAULT_LIST_LIMIT,
       maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
       maxListResponseBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES,
@@ -1112,6 +1147,20 @@ function decodeWorkItemCursor(
       || !Number.isSafeInteger(value.afterSequence)
       || (value.afterSequence as number) < 1
     ) throw new Error("invalid cursor");
+    return value.afterSequence as number;
+  } catch {
+    throw new SessionRuntimeValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
+  }
+}
+
+function encodeWorkItemHistoryCursor(input: SessionRuntimeWorkItemHistoryListInput, scope: WorkItemListScope, afterSequence: number): string {
+  return Buffer.from(JSON.stringify({ version: 1, operation: "work.history.list", workItemId: input.workItemId, rootSessionId: scope.rootSessionId, actorSessionId: scope.actorSessionId, visibility: scope.visibility, afterSequence }), "utf8").toString("base64url");
+}
+
+function decodeWorkItemHistoryCursor(input: SessionRuntimeWorkItemHistoryListInput, scope: WorkItemListScope, cursor: string): number {
+  try {
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    if (value.version !== 1 || value.operation !== "work.history.list" || value.workItemId !== input.workItemId || value.rootSessionId !== scope.rootSessionId || value.actorSessionId !== scope.actorSessionId || value.visibility !== scope.visibility || !Number.isSafeInteger(value.afterSequence) || (value.afterSequence as number) < 1) throw new Error("invalid cursor");
     return value.afterSequence as number;
   } catch {
     throw new SessionRuntimeValidationError("The pagination cursor is invalid.", { field: "cursor" }, "INVALID_CURSOR");
@@ -1351,6 +1400,8 @@ function isMutationOperation(operation: SessionRuntimeOperation | string, input?
     || operation === "turn.enqueue"
     || operation === "turn.cancel"
     || operation === "work.create"
+    || operation === "work.revise"
+    || operation === "work.history.append"
     || operation === "work.transition"
     || operation === "work.result"
     || operation === "work.cancel"

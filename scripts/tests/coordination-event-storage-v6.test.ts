@@ -19,6 +19,8 @@ import {
   type CoordinationMutationPrincipal,
 } from "../../src-electron/coordination-event-storage-v6.js";
 import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
+import { WorkItemService } from "../../src-electron/work-item-service.js";
+import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 
 const NOW = "2026-08-21T12:00:00.000Z";
 
@@ -69,8 +71,8 @@ function principal(
 function binding(sessionId: "root-a" | "task-a" | "executor-a" | "root-b"): ResolvedAgentRuntimeBinding {
   const value = principal(sessionId);
   return {
-    bindingId: `binding-${sessionId}`,
-    bindingIdHash: `hash-${sessionId}`,
+    bindingId: "binding-" + sessionId,
+    bindingIdHash: "hash-" + sessionId,
     actorSessionId: sessionId,
     providerId: "codex",
     executionGeneration: "generation-1",
@@ -97,7 +99,16 @@ function create(storage: CoordinationEventStorageV6, input: Partial<Parameters<C
 }
 
 describe("CoordinationEventStorageV6", () => {
-  it("COORD-EVENT-01: standaloneとtree leafのbulk削除はCoordination historyも同じtransactionで削除する", async () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "terminal root Sessionとtree leafのbulk削除はCoordination historyも同じtransactionで削除する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "Root WorkItem削除保護への対応後にCoordination historyだけが残留する、またはactive rootを迂回して削除する"
+  // scope = "SessionStorageV6 bulk deletion with CoordinationEventStorageV6"
+  // lifecycle = "permanent"
+  // distinction = "rootを正規のowner mutationでterminal化した後、rootとtree leafのCoordination履歴を一回のbulk削除で観測する"
+  // @end-test-value
+  it("COORD-EVENT-01: terminal rootとtree leafのbulk削除はCoordination historyも同じtransactionで削除する", async () => {
     const fixture = await createFixture();
     let storageClosed = false;
     try {
@@ -124,6 +135,39 @@ describe("CoordinationEventStorageV6", () => {
       storageClosed = true;
       const sessionStorage = new SessionStorageV6(fixture.dbPath);
       try {
+        const workItemStorage = new WorkItemStorageV6(fixture.dbPath);
+        try {
+          const service = new WorkItemService({
+            storage: workItemStorage,
+            getTurnAuthoritySession: (sessionId) => sessionStorage.getSessionTurnAuthority(sessionId),
+            createWorkItemId: () => "unused-coordination-deletion-fixture",
+            currentTimestamp: () => NOW,
+          });
+          const rootWorkItem = workItemStorage.get("root-work-item:root-b");
+          assert.ok(rootWorkItem);
+          const active = service.transition({
+            workItemId: rootWorkItem.id,
+            state: "in_progress",
+            expectedRevision: rootWorkItem.revision,
+            idempotencyKey: "root-b-delete-start",
+          }, binding("root-b"));
+          service.reportResult({
+            workItemId: rootWorkItem.id,
+            state: "completed",
+            expectedRevision: active.revision,
+            result: {
+              summary: "Coordination deletion fixture completed.",
+              changes: [],
+              verificationResults: [],
+              findings: [],
+              unverifiedItems: [],
+              remainingWork: [],
+            },
+            idempotencyKey: "root-b-delete-result",
+          }, binding("root-b"));
+        } finally {
+          workItemStorage.close();
+        }
         sessionStorage.deleteSessions(["root-b", "executor-a"]);
       } finally {
         sessionStorage.close();

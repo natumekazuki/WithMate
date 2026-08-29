@@ -9,9 +9,9 @@ import type {
 } from "./app-state.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
 import { liveRunStepStatusLabel } from "./ui-utils.js";
-export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group";
+export type ContextPaneTabKey = "latest-command" | "reasoning" | "tasks" | "companion-group" | "work-item";
 
-export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group"];
+export const CONTEXT_PANE_TAB_ORDER: ContextPaneTabKey[] = ["latest-command", "reasoning", "tasks", "companion-group", "work-item"];
 
 export type LatestCommandView = {
   status: string;
@@ -355,6 +355,8 @@ export function contextPaneTabLabel(tab: ContextPaneTabKey): string {
       return "Tasks";
     case "companion-group":
       return "CompanionGroup";
+    case "work-item":
+      return "WorkItem";
     default:
       return tab;
   }
@@ -365,11 +367,13 @@ export function resolveAvailableContextPaneTabs({
   hasCompanionGroupMonitor = false,
   hasReasoningCapability = false,
   hasReasoningText = false,
+  hasRootWorkItem = false,
 }: {
   isCopilotSession: boolean;
   hasCompanionGroupMonitor?: boolean;
   hasReasoningCapability?: boolean;
   hasReasoningText?: boolean;
+  hasRootWorkItem?: boolean;
 }): ContextPaneTabKey[] {
   return CONTEXT_PANE_TAB_ORDER.filter((tab) => {
     if (tab === "reasoning") {
@@ -382,6 +386,10 @@ export function resolveAvailableContextPaneTabs({
 
     if (tab === "companion-group") {
       return hasCompanionGroupMonitor;
+    }
+
+    if (tab === "work-item") {
+      return hasRootWorkItem;
     }
 
     return true;

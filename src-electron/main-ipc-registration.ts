@@ -153,6 +153,11 @@ import type {
   Session,
   SetSessionPinnedRequest,
 } from "../src/session-state.js";
+import type {
+  RootWorkItemHistoryAppendRequest,
+  RootWorkItemRevisionRequest,
+} from "../src/withmate-window-api.js";
+import type { RootWorkItem, WorkItemEvent } from "../src/work-item.js";
 import type { Awaitable } from "./persistent-store-lifecycle-service.js";
 import {
   resolveWorkspaceDirectoryValidationMessage,
@@ -208,6 +213,10 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_ROOT_WORK_ITEM_CHANNEL,
+  WITHMATE_LIST_ROOT_WORK_ITEM_HISTORY_CHANNEL,
+  WITHMATE_REVISE_ROOT_WORK_ITEM_CHANNEL,
+  WITHMATE_APPEND_ROOT_WORK_ITEM_HISTORY_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -448,6 +457,13 @@ export type MainIpcRegistrationDeps = {
   exportModelCatalogDocument(revision: number | null): ModelCatalogDocument | null;
   exportModelCatalogToFile(revision: number | null, targetWindow?: MaybeWindow): Promise<string | null>;
   getSession(sessionId: string): Awaitable<Session | null>;
+  getRootWorkItem(sessionId: string): Awaitable<RootWorkItem | null>;
+  listRootWorkItemHistory(sessionId: string, limit: number): Awaitable<readonly WorkItemEvent[]>;
+  reviseRootWorkItem(sessionId: string, request: RootWorkItemRevisionRequest): Awaitable<RootWorkItem>;
+  appendRootWorkItemHistory(
+    sessionId: string,
+    request: RootWorkItemHistoryAppendRequest,
+  ): Awaitable<RootWorkItem>;
   getSessionFileExplorerOwnerSessionId(sessionId: string): Awaitable<string | null>;
   listSessionFileRoots(sessionId: string): Awaitable<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Awaitable<SessionDirectoryEntry[]>;
@@ -765,6 +781,16 @@ type MainIpcSessionRuntimeDeps = Pick<
   | "getCoordinationEvent"
   | "resolveCoordinationEvent"
   | "cancelCoordinationEvent"
+>;
+
+type MainIpcRootWorkItemDeps = Pick<
+  MainIpcRegistrationDeps,
+  | "resolveEventWindow"
+  | "resolveSessionWindow"
+  | "getRootWorkItem"
+  | "listRootWorkItemHistory"
+  | "reviseRootWorkItem"
+  | "appendRootWorkItemHistory"
 >;
 
 async function assertUsableWorkspaceDirectory(
@@ -1898,6 +1924,37 @@ function assertTargetSessionWindowSender(
   }
 }
 
+function registerRootWorkItemHandlers(
+  ipcMain: IpcHandleRegistrar,
+  deps: MainIpcRootWorkItemDeps,
+): void {
+  ipcMain.handle(WITHMATE_GET_ROOT_WORK_ITEM_CHANNEL, (event, sessionId: string) => {
+    assertTargetSessionWindowSender(event, sessionId, deps);
+    return deps.getRootWorkItem(sessionId);
+  });
+  ipcMain.handle(
+    WITHMATE_LIST_ROOT_WORK_ITEM_HISTORY_CHANNEL,
+    (event, sessionId: string, limit: number) => {
+      assertTargetSessionWindowSender(event, sessionId, deps);
+      return deps.listRootWorkItemHistory(sessionId, limit);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_REVISE_ROOT_WORK_ITEM_CHANNEL,
+    (event, sessionId: string, request: RootWorkItemRevisionRequest) => {
+      assertTargetSessionWindowSender(event, sessionId, deps);
+      return deps.reviseRootWorkItem(sessionId, request);
+    },
+  );
+  ipcMain.handle(
+    WITHMATE_APPEND_ROOT_WORK_ITEM_HISTORY_CHANNEL,
+    (event, sessionId: string, request: RootWorkItemHistoryAppendRequest) => {
+      assertTargetSessionWindowSender(event, sessionId, deps);
+      return deps.appendRootWorkItemHistory(sessionId, request);
+    },
+  );
+}
+
 function registerMateHandlers(ipcMain: IpcHandleRegistrar, deps: MainIpcMateDeps): void {
   ipcMain.handle(WITHMATE_GET_MATE_STATE_CHANNEL, () => deps.getMateState());
   ipcMain.handle(WITHMATE_GET_MATE_PROFILE_CHANNEL, () => deps.getMateProfile());
@@ -1947,6 +2004,7 @@ export function registerMainIpcHandlers(ipcMain: IpcMain, deps: MainIpcRegistrat
   registerSessionQueryHandlers(wrappedIpcMain, deps);
   registerCompanionHandlers(wrappedIpcMain, deps);
   registerSessionRuntimeHandlers(wrappedIpcMain, deps);
+  registerRootWorkItemHandlers(wrappedIpcMain, deps);
   registerSessionScheduleHandlers(wrappedIpcMain, deps);
   registerMateHandlers(wrappedIpcMain, deps);
   registerCharacterHandlers(wrappedIpcMain, deps);

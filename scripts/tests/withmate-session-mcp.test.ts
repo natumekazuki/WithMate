@@ -101,7 +101,8 @@ const publicCoordinationEvent = {
 const publicWorkItem = {
   id: "work-1",
   sequence: 1,
-  contractRevision: 1 as const,
+  kind: "delegated" as const,
+  contractRevision: 2 as const,
   rootSessionId: "root-1",
   creatorSessionId: "session-1",
   targetSessionId: "session-2",
@@ -139,7 +140,16 @@ function parseToolError(result: { content: unknown[] }): any {
 }
 
 describe("WithMate Session MCP contract", () => {
-  it("35 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCPはRoot WorkItem三操作を含む全38 toolをdotted name、strict schema、read/write annotation付きで公開する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
+  // failure_mode = "HTTP/CLIにあるRoot WorkItem操作がMCP tool一覧から欠落するかstrictnessとeffect annotationが分岐する"
+  // scope = "WithMate Session MCP tool catalog"
+  // lifecycle = "permanent"
+  // distinction = "個別tool dispatchではなくtool集合、schema strictness、annotationを横断検証する"
+  // @end-test-value
+  it("全38 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /scope or policy decision/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Use user_decision_required/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /free-text response to your blocker/);
@@ -454,6 +464,15 @@ describe("WithMate Session MCP contract", () => {
     assert.deepEqual(requests.slice(1).map((request) => request.operation), ["session.list", "session.get"]);
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "MCP runtime.catalogはWorkItem revision 2とroot改訂・履歴能力をstrict outputで返すread-only operationである"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
+  // failure_mode = "MCP catalogだけがrevision 1 schemaを要求してvalidなRoot WorkItem capability projectionをtool errorにする"
+  // scope = "WithMate Session MCP runtime.catalog"
+  // lifecycle = "permanent"
+  // distinction = "空input dispatchとrevision 2のnested history catalog outputを同じtool callで検証する"
+  // @end-test-value
   it("RUNTIME-CATALOG-02: runtime.catalogを空inputのread-only operationとしてdispatchする", async () => {
     const requests: unknown[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -483,9 +502,15 @@ describe("WithMate Session MCP contract", () => {
               maxListLimit: 100,
             },
             workItems: {
-              contractRevision: 1,
+              contractRevision: 2,
               states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-              mutations: ["create", "transition", "result", "cancel"],
+              mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+              history: {
+                events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"],
+                operations: ["append", "list"],
+                defaultListLimit: 50,
+                maxListLimit: 200,
+              },
               defaultListLimit: 50,
               maxListLimit: 200,
               maxListResponseBytes: 8388608,
@@ -530,9 +555,15 @@ describe("WithMate Session MCP contract", () => {
           maxListLimit: 100,
         },
         workItems: {
-          contractRevision: 1,
+          contractRevision: 2,
           states: ["pending", "in_progress", "waiting", "completed", "partially_completed", "failed", "canceled"],
-          mutations: ["create", "transition", "result", "cancel"],
+          mutations: ["create", "revise", "transition", "result", "cancel", "history.append"],
+          history: {
+            events: ["created", "migration_baseline", "contract_revised", "progress", "handoff", "state_transitioned", "result_reported"],
+            operations: ["append", "list"],
+            defaultListLimit: 50,
+            maxListLimit: 200,
+          },
           defaultListLimit: 50,
           maxListLimit: 200,
           maxListResponseBytes: 8388608,

@@ -12601,3 +12601,39 @@ button:disabled {
     max-height: min(20vh, 144px);
   }
 }
+.root-work-item-pane .root-work-item-summary h3 {
+  margin: 0 0 0.65rem;
+  font-size: 0.95rem;
+}
+
+.root-work-item-summary p {
+  margin: 0.35rem 0;
+  white-space: pre-wrap;
+}
+
+.root-work-item-edit-form {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.root-work-item-edit-form label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.75rem;
+  color: var(--text-muted, #9ca3af);
+}
+
+.root-work-item-edit-form textarea {
+  width: 100%;
+  resize: vertical;
+}
+
+.root-work-item-history ol {
+  margin: 0.5rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.root-work-item-history li {
+  margin: 0.3rem 0;
+  font-size: 0.78rem;
+}

@@ -75,6 +75,15 @@ const applicationOperationInputs: Record<(typeof SESSION_RUNTIME_OPERATIONS)[num
   },
   "work.list": {},
   "work.get": { workItemId: "work-1" },
+  "work.revise": {
+    workItemId: "work-1", goal: "goal", scope: "scope", completionCriteria: "done", authority: "local",
+    expectedRevision: 1, idempotencyKey: "work-revise-key",
+  },
+  "work.history.append": {
+    workItemId: "work-1", type: "progress", summary: "started", blockers: [], nextAction: "continue",
+    expectedRevision: 1, idempotencyKey: "work-history-append-key",
+  },
+  "work.history.list": { workItemId: "work-1", limit: 50 },
   "work.transition": { workItemId: "work-1", state: "in_progress", expectedRevision: 1, idempotencyKey: "work-transition-key" },
   "work.result": {
     workItemId: "work-1", state: "completed", expectedRevision: 2, idempotencyKey: "work-result-key",

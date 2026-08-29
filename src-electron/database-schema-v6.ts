@@ -24,6 +24,7 @@ export const REQUIRED_V6_TABLES = [
   "session_turn_provider_outputs_v6",
   "session_execution_origins_v6",
   "work_items_v6",
+  "work_item_events_v6",
   "work_item_idempotency_v6",
   "work_item_execution_associations_v6",
   "work_item_aggregations_v6",
@@ -82,6 +83,8 @@ const REQUIRED_V6_INDEXES = [
   "idx_v6_work_items_creator_sequence",
   "idx_v6_work_items_target_sequence",
   "idx_v6_work_items_parent",
+  "idx_v6_work_items_one_root_per_session",
+  "idx_v6_work_item_events_item_sequence",
   "idx_v6_work_item_idempotency_item",
   "idx_v6_work_item_idempotency_expiry",
   "idx_v6_work_item_execution_item",
@@ -200,6 +203,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
   work_items_v6: [
     "sequence",
     "id",
+    "kind",
     "contract_revision",
     "root_session_id",
     "creator_session_id",
@@ -212,9 +216,16 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "source_identity_json",
     "state",
     "revision",
+    "progress_summary",
+    "blockers_json",
+    "next_action",
     "result_json",
     "created_at",
     "updated_at",
+  ],
+  work_item_events_v6: [
+    "sequence", "work_item_id", "revision", "event_type", "actor_session_id",
+    "payload_json", "created_at",
   ],
   work_item_idempotency_v6: [
     "operation",
@@ -222,6 +233,7 @@ const REQUIRED_V6_TABLE_COLUMNS = {
     "idempotency_key",
     "request_fingerprint",
     "work_item_id",
+    "response_json",
     "created_at",
     "expires_at",
   ],
@@ -675,6 +687,8 @@ function hasRequiredForeignKeys(db: DatabaseSync): boolean {
       "CASCADE",
     )
     && hasForeignKey(db, "session_execution_origins_v6", "source_session_id", "sessions_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_item_events_v6", "work_item_id", "work_items_v6", "id", "CASCADE")
+    && hasForeignKey(db, "work_item_events_v6", "actor_session_id", "sessions_v6", "id", "SET NULL")
     && hasForeignKey(db, "coordination_events_v6", "actor_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_events_v6", "root_session_id", "sessions_v6", "id", "CASCADE")
     && hasForeignKey(db, "coordination_events_v6", "parent_session_id", "sessions_v6", "id", "CASCADE")
@@ -796,7 +810,7 @@ function tableSql(db: DatabaseSync, tableName: string): string {
   return typeof row?.sql === "string" ? row.sql : "";
 }
 
-function schemaObjectSql(db: DatabaseSync, type: "table" | "trigger", name: string): string {
+function schemaObjectSql(db: DatabaseSync, type: "table" | "trigger" | "index", name: string): string {
   const row = db.prepare("SELECT sql FROM sqlite_schema WHERE type = ? AND name = ?").get(type, name) as
     | { sql?: unknown }
     | undefined;
@@ -812,10 +826,17 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
   const sessionTurnProviderOutputsSql = tableSql(db, "session_turn_provider_outputs_v6");
   const sessionExecutionPublicProgressSql = tableSql(db, "session_execution_public_progress_v6");
   const workItemsSql = tableSql(db, "work_items_v6");
+  const workItemEventsSql = tableSql(db, "work_item_events_v6");
   const workItemIdempotencySql = tableSql(db, "work_item_idempotency_v6");
   const workItemAggregationDecisionSql = tableSql(db, "work_item_aggregation_decisions_v6");
   const workItemAggregationIdempotencySql = tableSql(db, "work_item_aggregation_idempotency_v6");
   const workItemDeleteTriggerSql = schemaObjectSql(db, "trigger", "trg_v6_work_items_protect_session_delete");
+  const workItemDeleteCleanupTriggerSql = schemaObjectSql(
+    db,
+    "trigger",
+    "trg_v6_work_items_cleanup_terminal_root_session_delete",
+  );
+  const rootWorkItemUniqueIndexSql = schemaObjectSql(db, "index", "idx_v6_work_items_one_root_per_session");
   const sessionTurnPublicContextSql = tableSql(db, "session_turn_public_context_v6");
   const sessionInteractionsSql = tableSql(db, "session_interactions_v6");
   const sessionInteractionIdempotencySql = tableSql(db, "session_interaction_idempotency_v6");
@@ -843,13 +864,21 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && sessionTurnProviderOutputsSql.includes("json_valid(payload_json)")
     && sessionTurnProviderOutputsSql.includes("kind IN")
     && sessionExecutionPublicProgressSql.includes("truncated IN (0, 1)")
-    && workItemsSql.includes("contract_revision = 1")
+    && workItemsSql.includes("contract_revision = 2")
+    && workItemsSql.includes("kind IN ('root', 'delegated')")
     && workItemsSql.includes("'partially_completed'")
     && workItemsSql.includes("length(CAST(result_json AS BLOB)) <= 262144")
-    && workItemsSql.includes("creator_session_id <> target_session_id")
+    && workItemsSql.includes("root_session_id = creator_session_id")
+    && workItemsSql.includes("creator_session_id = target_session_id")
+    && workItemsSql.includes("kind = 'delegated' AND creator_session_id <> target_session_id")
+    && workItemsSql.includes("json_type(blockers_json) = 'array'")
     && workItemsSql.includes("state IN ('completed', 'partially_completed', 'failed')")
     && workItemsSql.includes("json_extract(result_json, '$.outcome') IS state")
-    && workItemIdempotencySql.includes("operation IN ('work.create', 'work.transition', 'work.result', 'work.cancel')")
+    && workItemEventsSql.includes("'migration_baseline'")
+    && workItemEventsSql.includes("UNIQUE (work_item_id, revision)")
+    && rootWorkItemUniqueIndexSql.includes("WHERE kind = 'root'")
+    && workItemIdempotencySql.includes("'work.revise'")
+    && workItemIdempotencySql.includes("'work.history.append'")
     && workItemAggregationDecisionSql.includes("decision_type IN ('accepted', 'excluded', 'retry_requested')")
     && workItemAggregationDecisionSql.includes("replacement_work_item_id IS NOT NULL")
     && workItemAggregationIdempotencySql.includes("operation IN ('work.aggregation.decide', 'work.aggregation.retry')")
@@ -858,6 +887,9 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "child_work_item_id", "work_items_v6", "id")
     && hasForeignKey(db, "work_item_aggregation_decisions_v6", "replacement_work_item_id", "work_items_v6", "id")
     && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
+    && workItemDeleteTriggerSql.includes("work_item_execution_associations_v6")
+    && workItemDeleteCleanupTriggerSql.includes("DELETE FROM work_items_v6")
+    && workItemDeleteCleanupTriggerSql.includes("kind = 'root'")
     && sessionTurnPublicContextSql.includes("json_valid(effective_turn_json)")
     && sessionTurnPublicContextSql.includes("json_type(attachments_json) = 'array'")
     && sessionInteractionsSql.includes("state IN ('pending', 'answered', 'expired')")
@@ -1486,7 +1518,8 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
   CREATE TABLE IF NOT EXISTS work_items_v6 (
     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
-    contract_revision INTEGER NOT NULL CHECK (contract_revision = 1),
+    kind TEXT NOT NULL CHECK (kind IN ('root', 'delegated')),
+    contract_revision INTEGER NOT NULL CHECK (contract_revision = 2),
     root_session_id TEXT NOT NULL,
     creator_session_id TEXT NOT NULL,
     target_session_id TEXT NOT NULL,
@@ -1501,6 +1534,11 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
       'partially_completed', 'failed', 'canceled'
     )),
     revision INTEGER NOT NULL CHECK (revision >= 1),
+    progress_summary TEXT NOT NULL DEFAULT '',
+    blockers_json TEXT NOT NULL DEFAULT '[]' CHECK (
+      json_valid(blockers_json) AND json_type(blockers_json) = 'array'
+    ),
+    next_action TEXT NOT NULL DEFAULT '',
     result_json TEXT CHECK (
       result_json IS NULL
       OR (json_valid(result_json) AND length(CAST(result_json AS BLOB)) <= 262144)
@@ -1508,7 +1546,32 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     FOREIGN KEY (parent_work_item_id) REFERENCES work_items_v6(id),
-    CHECK (creator_session_id <> target_session_id),
+    CHECK (
+      (
+        kind = 'root'
+        AND root_session_id = creator_session_id
+        AND creator_session_id = target_session_id
+        AND parent_work_item_id IS NULL
+      )
+      OR (kind = 'delegated' AND creator_session_id <> target_session_id)
+    ),
+    CHECK (
+      kind = 'root'
+      OR (
+        length(trim(goal)) > 0
+        AND length(trim(scope)) > 0
+        AND length(trim(completion_criteria)) > 0
+        AND length(trim(authority)) > 0
+      )
+    ),
+    CHECK (
+      kind = 'root'
+      OR (
+        progress_summary = ''
+        AND blockers_json = '[]'
+        AND next_action = ''
+      )
+    ),
     CHECK (
       (
         state IN ('completed', 'partially_completed', 'failed')
@@ -1531,13 +1594,45 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     ON work_items_v6(target_session_id, sequence ASC);
   CREATE INDEX IF NOT EXISTS idx_v6_work_items_parent
     ON work_items_v6(parent_work_item_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_v6_work_items_one_root_per_session
+    ON work_items_v6(root_session_id)
+    WHERE kind = 'root';
+
+  CREATE TABLE IF NOT EXISTS work_item_events_v6 (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    work_item_id TEXT NOT NULL,
+    revision INTEGER NOT NULL CHECK (revision >= 1),
+    event_type TEXT NOT NULL CHECK (event_type IN (
+      'created', 'migration_baseline', 'contract_revised', 'progress',
+      'handoff', 'state_transitioned', 'result_reported'
+    )),
+    actor_session_id TEXT,
+    payload_json TEXT NOT NULL CHECK (
+      json_valid(payload_json)
+      AND json_type(payload_json) = 'object'
+      AND length(CAST(payload_json AS BLOB)) <= 524288
+    ),
+    created_at TEXT NOT NULL,
+    UNIQUE (work_item_id, revision),
+    FOREIGN KEY (work_item_id) REFERENCES work_items_v6(id) ON DELETE CASCADE,
+    FOREIGN KEY (actor_session_id) REFERENCES sessions_v6(id) ON DELETE SET NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_v6_work_item_events_item_sequence
+    ON work_item_events_v6(work_item_id, sequence ASC);
 
   CREATE TABLE IF NOT EXISTS work_item_idempotency_v6 (
-    operation TEXT NOT NULL CHECK (operation IN ('work.create', 'work.transition', 'work.result', 'work.cancel')),
+    operation TEXT NOT NULL CHECK (operation IN (
+      'work.create', 'work.revise', 'work.history.append',
+      'work.transition', 'work.result', 'work.cancel'
+    )),
     principal_session_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     request_fingerprint TEXT NOT NULL,
     work_item_id TEXT NOT NULL,
+    response_json TEXT CHECK (
+      response_json IS NULL
+      OR (json_valid(response_json) AND length(CAST(response_json AS BLOB)) <= 524288)
+    ),
     created_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     PRIMARY KEY (operation, principal_session_id, idempotency_key),
@@ -1610,10 +1705,32 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
       OR creator_session_id = OLD.id
       OR target_session_id = OLD.id
     )
-      AND (state IN ('pending', 'in_progress', 'waiting') OR result_json IS NOT NULL)
+      AND (
+        kind = 'delegated'
+        OR (kind = 'root' AND state IN ('pending', 'in_progress', 'waiting'))
+      )
+  )
+  OR EXISTS (
+    SELECT 1
+    FROM work_item_execution_associations_v6 AS association
+    INNER JOIN work_items_v6 AS item ON item.id = association.work_item_id
+    WHERE item.kind = 'root'
+      AND item.root_session_id = OLD.id
   )
   BEGIN
     SELECT RAISE(ABORT, 'WORK_ITEM_SESSION_PROTECTED');
+  END;
+
+  CREATE TRIGGER IF NOT EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete
+  AFTER DELETE ON sessions_v6
+  BEGIN
+    DELETE FROM work_items_v6
+    WHERE kind = 'root'
+      AND root_session_id = OLD.id
+      AND creator_session_id = OLD.id
+      AND target_session_id = OLD.id
+      AND parent_work_item_id IS NULL
+      AND state IN ('completed', 'partially_completed', 'failed', 'canceled');
   END;
 `;
 
@@ -2874,6 +2991,250 @@ function ensureWorkItemIdempotencyExpiry(db: DatabaseSync): void {
   }
 }
 
+function rebuildWorkItemContractV1ToV2(db: DatabaseSync): void {
+  db.exec(`
+    DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;
+    DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;
+    ALTER TABLE work_item_idempotency_v6 RENAME TO work_item_idempotency_v6_legacy;
+    ALTER TABLE work_item_execution_associations_v6 RENAME TO work_item_execution_associations_v6_legacy;
+    ALTER TABLE work_item_aggregations_v6 RENAME TO work_item_aggregations_v6_legacy;
+    ALTER TABLE work_item_aggregation_decisions_v6 RENAME TO work_item_aggregation_decisions_v6_legacy;
+    ALTER TABLE work_item_aggregation_idempotency_v6 RENAME TO work_item_aggregation_idempotency_v6_legacy;
+    ALTER TABLE work_items_v6 RENAME TO work_items_v6_legacy;
+
+    DROP INDEX IF EXISTS idx_v6_work_items_root_sequence;
+    DROP INDEX IF EXISTS idx_v6_work_items_creator_sequence;
+    DROP INDEX IF EXISTS idx_v6_work_items_target_sequence;
+    DROP INDEX IF EXISTS idx_v6_work_items_parent;
+    DROP INDEX IF EXISTS idx_v6_work_item_idempotency_item;
+    DROP INDEX IF EXISTS idx_v6_work_item_idempotency_expiry;
+    DROP INDEX IF EXISTS idx_v6_work_item_execution_item;
+    DROP INDEX IF EXISTS idx_v6_work_item_aggregation_decisions_parent_sequence;
+    DROP INDEX IF EXISTS idx_v6_work_item_aggregation_idempotency_expiry;
+
+    ${CREATE_V6_WORK_ITEM_TABLES_SQL}
+
+    INSERT INTO work_items_v6 (
+      sequence, id, kind, contract_revision, root_session_id, creator_session_id,
+      target_session_id, parent_work_item_id, goal, scope, completion_criteria,
+      authority, source_identity_json, state, revision, progress_summary,
+      blockers_json, next_action, result_json, created_at, updated_at
+    )
+    SELECT
+      sequence, id, 'delegated', 2, root_session_id, creator_session_id,
+      target_session_id, parent_work_item_id, goal, scope, completion_criteria,
+      authority, source_identity_json, state, revision, '', '[]', '', result_json,
+      created_at, updated_at
+    FROM work_items_v6_legacy;
+
+    INSERT INTO work_item_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint,
+      work_item_id, response_json, created_at, expires_at
+    )
+    SELECT operation, principal_session_id, idempotency_key, request_fingerprint,
+      work_item_id, NULL, created_at, expires_at
+    FROM work_item_idempotency_v6_legacy;
+
+    INSERT INTO work_item_execution_associations_v6 (execution_id, work_item_id, created_at)
+    SELECT execution_id, work_item_id, created_at
+    FROM work_item_execution_associations_v6_legacy;
+
+    INSERT INTO work_item_aggregations_v6 (parent_work_item_id, aggregate_revision, updated_at)
+    SELECT parent_work_item_id, aggregate_revision, updated_at
+    FROM work_item_aggregations_v6_legacy;
+
+    INSERT INTO work_item_aggregation_decisions_v6 (
+      sequence, parent_work_item_id, child_work_item_id, decision_revision,
+      child_revision, actor_session_id, decision_type, reason,
+      replacement_work_item_id, decided_at
+    )
+    SELECT sequence, parent_work_item_id, child_work_item_id, decision_revision,
+      child_revision, actor_session_id, decision_type, reason,
+      replacement_work_item_id, decided_at
+    FROM work_item_aggregation_decisions_v6_legacy;
+
+    INSERT INTO work_item_aggregation_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint,
+      child_work_item_id, replacement_work_item_id, created_at, expires_at
+    )
+    SELECT operation, principal_session_id, idempotency_key, request_fingerprint,
+      child_work_item_id, replacement_work_item_id, created_at, expires_at
+    FROM work_item_aggregation_idempotency_v6_legacy;
+
+    DROP TABLE work_item_aggregation_idempotency_v6_legacy;
+    DROP TABLE work_item_aggregation_decisions_v6_legacy;
+    DROP TABLE work_item_aggregations_v6_legacy;
+    DROP TABLE work_item_execution_associations_v6_legacy;
+    DROP TABLE work_item_idempotency_v6_legacy;
+    DROP TABLE work_items_v6_legacy;
+  `);
+}
+
+function rebuildWorkItemIdempotencyV2(db: DatabaseSync): void {
+  const columns = tableColumnNames(db, "work_item_idempotency_v6");
+  const responseProjection = columns.has("response_json") ? "response_json" : "NULL";
+  db.exec(`
+    ALTER TABLE work_item_idempotency_v6 RENAME TO work_item_idempotency_v6_legacy;
+    DROP INDEX IF EXISTS idx_v6_work_item_idempotency_item;
+    DROP INDEX IF EXISTS idx_v6_work_item_idempotency_expiry;
+    ${CREATE_V6_WORK_ITEM_TABLES_SQL}
+    INSERT INTO work_item_idempotency_v6 (
+      operation, principal_session_id, idempotency_key, request_fingerprint,
+      work_item_id, response_json, created_at, expires_at
+    )
+    SELECT operation, principal_session_id, idempotency_key, request_fingerprint,
+      work_item_id, ${responseProjection}, created_at, expires_at
+    FROM work_item_idempotency_v6_legacy;
+    DROP TABLE work_item_idempotency_v6_legacy;
+  `);
+}
+
+function upgradeWorkItemContractV2(db: DatabaseSync): void {
+  if (!tableExists(db, "work_items_v6")) return;
+  const workItemColumns = tableColumnNames(db, "work_items_v6");
+  if (!workItemColumns.has("kind")) {
+    rebuildWorkItemContractV1ToV2(db);
+    return;
+  }
+  if (!tableSql(db, "work_items_v6").includes("contract_revision = 2")) {
+    throw new Error("Unsupported Work Item contract schema.");
+  }
+  if (tableExists(db, "work_item_idempotency_v6")) {
+    const idempotencySql = tableSql(db, "work_item_idempotency_v6");
+    const idempotencyColumns = tableColumnNames(db, "work_item_idempotency_v6");
+    if (
+      !idempotencyColumns.has("response_json")
+      || !idempotencySql.includes("'work.revise'")
+      || !idempotencySql.includes("'work.history.append'")
+    ) {
+      rebuildWorkItemIdempotencyV2(db);
+    }
+  }
+  db.exec("DROP TRIGGER IF EXISTS trg_v6_work_items_protect_session_delete;");
+  db.exec("DROP TRIGGER IF EXISTS trg_v6_work_items_cleanup_terminal_root_session_delete;");
+}
+
+function backfillRootWorkItemsAndBaselines(db: DatabaseSync): void {
+  const invalidRoot = db.prepare(`
+    SELECT item.id
+    FROM work_items_v6 AS item
+    LEFT JOIN session_role_bindings_v6 AS binding
+      ON binding.session_id = item.root_session_id
+      AND binding.root_session_id = item.root_session_id
+      AND binding.parent_session_id IS NULL
+      AND binding.delegation_depth = 0
+      AND binding.session_role IN ('standalone', 'overall-coordinator')
+    WHERE item.kind = 'root'
+      AND binding.session_id IS NULL
+    LIMIT 1
+  `).get() as { id?: unknown } | undefined;
+  if (typeof invalidRoot?.id === "string") {
+    throw new Error(`Root Work Item has an ineligible owner Session: ${invalidRoot.id}`);
+  }
+
+  db.exec(`
+    INSERT INTO work_items_v6 (
+      id, kind, contract_revision, root_session_id, creator_session_id,
+      target_session_id, parent_work_item_id, goal, scope, completion_criteria,
+      authority, source_identity_json, state, revision, progress_summary,
+      blockers_json, next_action, result_json, created_at, updated_at
+    )
+    SELECT
+      'root-work-item:' || session.id,
+      'root',
+      2,
+      session.id,
+      session.id,
+      session.id,
+      NULL,
+      session.title,
+      '',
+      '',
+      '',
+      json_object(
+        'workspace', CASE WHEN trim(session.workspace_path) = '' THEN NULL ELSE session.workspace_path END,
+        'repository', NULL,
+        'branch', CASE
+          WHEN json_type(session.runtime_policy_json, '$.branch') = 'text'
+            AND trim(json_extract(session.runtime_policy_json, '$.branch')) <> ''
+          THEN json_extract(session.runtime_policy_json, '$.branch')
+          ELSE NULL
+        END,
+        'base', NULL,
+        'head', NULL
+      ),
+      'pending',
+      1,
+      '',
+      '[]',
+      '',
+      NULL,
+      session.created_at,
+      session.created_at
+    FROM sessions_v6 AS session
+    INNER JOIN session_role_bindings_v6 AS binding ON binding.session_id = session.id
+    WHERE session.session_kind <> 'character-authoring'
+      AND binding.session_role IN ('standalone', 'overall-coordinator')
+      AND binding.root_session_id = session.id
+      AND binding.parent_session_id IS NULL
+      AND binding.delegation_depth = 0
+      AND NOT EXISTS (
+        SELECT 1
+        FROM work_items_v6 AS existing
+        WHERE existing.kind = 'root'
+          AND existing.root_session_id = session.id
+      );
+
+    INSERT INTO work_item_events_v6 (
+      work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+    )
+    SELECT
+      item.id,
+      item.revision,
+      'migration_baseline',
+      NULL,
+      json_object(
+        'kind', item.kind,
+        'rootSessionId', item.root_session_id,
+        'creatorSessionId', item.creator_session_id,
+        'targetSessionId', item.target_session_id,
+        'parentWorkItemId', item.parent_work_item_id,
+        'sourceIdentity', json(item.source_identity_json),
+        'contract', json_object(
+          'goal', item.goal,
+          'scope', item.scope,
+          'completionCriteria', item.completion_criteria,
+          'authority', item.authority
+        ),
+        'progress', json_object(
+          'progressSummary', item.progress_summary,
+          'blockers', json(item.blockers_json),
+          'nextAction', item.next_action
+        ),
+        'state', item.state,
+        'result', CASE WHEN item.result_json IS NULL THEN NULL ELSE json(item.result_json) END
+      ),
+      item.updated_at
+    FROM work_items_v6 AS item
+    WHERE NOT EXISTS (
+      SELECT 1 FROM work_item_events_v6 AS event
+      WHERE event.work_item_id = item.id
+    );
+  `);
+
+  const inconsistentRevision = db.prepare(`
+    SELECT item.id
+    FROM work_items_v6 AS item
+    LEFT JOIN work_item_events_v6 AS event ON event.work_item_id = item.id
+    GROUP BY item.id, item.revision
+    HAVING MAX(event.revision) IS NULL OR MAX(event.revision) <> item.revision
+    LIMIT 1
+  `).get() as { id?: unknown } | undefined;
+  if (typeof inconsistentRevision?.id === "string") {
+    throw new Error(`Work Item projection and event revision disagree: ${inconsistentRevision.id}`);
+  }
+}
+
 function backfillWorkItemAggregations(db: DatabaseSync): void {
   db.exec(`
     INSERT INTO work_item_aggregations_v6 (
@@ -2915,6 +3276,7 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
   }
   ensureSessionCrudIdempotencyPrincipalScope(db);
   ensureWorkItemIdempotencyExpiry(db);
+  upgradeWorkItemContractV2(db);
   for (const statement of CREATE_V6_SCHEMA_SQL) {
     if (
       statement === CREATE_V6_AUXILIARY_SESSIONS_TABLE_SQL
@@ -2927,8 +3289,6 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
     }
     db.exec(statement);
   }
-  backfillWorkItemAggregations(db);
-
   if (!sessionRoleBindingsExisted) {
     db.exec(`
       INSERT INTO session_role_bindings_v6 (
@@ -2945,6 +3305,9 @@ function ensureV6SchemaUnsafe(db: DatabaseSync): void {
         AND json_extract(runtime_policy_json, '$.sourceSchemaVersion') = 5
     `);
   }
+
+  backfillRootWorkItemsAndBaselines(db);
+  backfillWorkItemAggregations(db);
 
   if (!hasValidTerminalFailureNotificationSchemaIfPresent(db)) {
     throw new Error("Session terminal failure notification delivery schema is invalid.");

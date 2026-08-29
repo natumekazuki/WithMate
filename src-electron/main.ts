@@ -77,7 +77,11 @@ import {
   type OpenSessionWindowIdsPageResult,
   type SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
-import { createSessionRuntimeError } from "../src/session-external-runtime-contract.js";
+import {
+  SESSION_RUNTIME_MAX_RESPONSE_BYTES,
+  createSessionRuntimeError,
+  parseSessionRuntimeOperationInput,
+} from "../src/session-external-runtime-contract.js";
 import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
@@ -314,7 +318,10 @@ import { createElectronSafeStorageKeyProtector, MemoryProtectedObjectKeyStore } 
 import { MemoryProtectedObjectStore } from "./memory-protected-object-store.js";
 import { MemoryV6ReviewService } from "./memory-v6-review-service.js";
 import { getProviderRuntimeCapabilities } from "./provider-support.js";
-import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
+import {
+  AgentRuntimeBindingRegistry,
+  type ResolvedAgentRuntimeBinding,
+} from "./agent-runtime-binding.js";
 import { CoordinationEventInvalidationPublisher } from "./coordination-event-invalidation-publisher.js";
 import { coordinationEventRevision, type CoordinationEvent } from "../src/coordination-event.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
@@ -325,6 +332,16 @@ import {
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_COORDINATION_EVENTS_CHANGED_EVENT,
 } from "../src/withmate-ipc-channels.js";
+import type {
+  RootWorkItemHistoryAppendRequest,
+  RootWorkItemRevisionRequest,
+} from "../src/withmate-window-api.js";
+import {
+  WORK_ITEM_MAX_LIST_LIMIT,
+  isRootWorkItem,
+  type RootWorkItem,
+  type WorkItemEvent,
+} from "../src/work-item.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
 import { CREATE_V3_SCHEMA_SQL, isValidV3Database } from "./database-schema-v3.js";
 import { isValidV4Database } from "./database-schema-v4.js";
@@ -1833,6 +1850,10 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 cancelSessionExecution: (sessionId, request) =>
                   requireMainSessionCommandFacade().cancelSessionExecution(sessionId, request),
                 cancelSessionRun: (sessionId) => requireMainSessionCommandFacade().cancelSessionRun(sessionId),
+                getRootWorkItem,
+                listRootWorkItemHistory,
+                reviseRootWorkItem,
+                appendRootWorkItemHistory,
               },
               sessionSchedules: {
                 listSessionSchedules: (sessionId) => listSessionScheduleSummaries(sessionId),
@@ -3338,6 +3359,123 @@ function requireWorkItemService(): WorkItemService {
     workItemService.cleanupExpiredIdempotency();
   }
   return workItemService;
+}
+
+function createRendererRootWorkItemBinding(sessionId: string): ResolvedAgentRuntimeBinding {
+  const authority = requireSessionStorageV6().getSessionTurnAuthority(sessionId);
+  if (
+    !authority
+    || authority.rootSessionId !== sessionId
+    || (authority.sessionRole !== "standalone" && authority.sessionRole !== "overall-coordinator")
+  ) {
+    throw new Error("Root WorkItem IPC is only available to a root Session.");
+  }
+  return {
+    bindingId: `renderer-root-work-item:${sessionId}`,
+    bindingIdHash: `renderer-root-work-item:${sessionId}`,
+    actorSessionId: sessionId,
+    providerId: "withmate-renderer",
+    executionGeneration: "trusted-session-window",
+    authoritySnapshot: {},
+    operationGrants: [],
+    createdAt: new Date(0).toISOString(),
+    expiresAt: null,
+  };
+}
+
+function getRootWorkItem(sessionId: string): RootWorkItem | null {
+  const binding = createRendererRootWorkItemBinding(sessionId);
+  const candidates = requireWorkItemService().list({
+    creatorSessionId: sessionId,
+    targetSessionId: sessionId,
+    afterSequence: null,
+    limit: 2,
+  }, binding).filter((item): item is RootWorkItem =>
+    isRootWorkItem(item)
+    && item.rootSessionId === sessionId
+    && item.creatorSessionId === sessionId
+    && item.targetSessionId === sessionId
+    && item.parentWorkItemId === null,
+  );
+  if (candidates.length === 0) return null;
+  if (candidates.length !== 1) {
+    throw new Error("A root Session must have exactly one self-owned Root WorkItem.");
+  }
+  const item = requireWorkItemService().get(candidates[0].id, binding);
+  if (
+    !isRootWorkItem(item)
+    || item.rootSessionId !== sessionId
+    || item.creatorSessionId !== sessionId
+    || item.targetSessionId !== sessionId
+    || item.parentWorkItemId !== null
+  ) {
+    throw new Error("The Root WorkItem binding does not match the selected Session.");
+  }
+  return item;
+}
+
+function requireRootWorkItemForSession(sessionId: string): RootWorkItem {
+  const item = getRootWorkItem(sessionId);
+  if (!item) throw new Error("Root WorkItem was not found for the selected Session.");
+  return item;
+}
+
+function listRootWorkItemHistory(sessionId: string, limit: number): readonly WorkItemEvent[] {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > WORK_ITEM_MAX_LIST_LIMIT) {
+    throw new Error(`Root WorkItem history limit must be between 1 and ${WORK_ITEM_MAX_LIST_LIMIT}.`);
+  }
+  const binding = createRendererRootWorkItemBinding(sessionId);
+  const item = requireRootWorkItemForSession(sessionId);
+  const events = requireWorkItemService().listHistory({
+    workItemId: item.id,
+    afterSequence: null,
+    limit,
+  }, binding);
+  const bounded: WorkItemEvent[] = [];
+  let responseBytes = 2;
+  for (const event of events) {
+    const eventBytes = Buffer.byteLength(JSON.stringify(event), "utf8");
+    const candidateBytes = responseBytes + (bounded.length === 0 ? 0 : 1) + eventBytes;
+    if (candidateBytes > SESSION_RUNTIME_MAX_RESPONSE_BYTES) {
+      if (bounded.length === 0) {
+        throw new Error("A Root WorkItem history event exceeds the IPC response limit.");
+      }
+      break;
+    }
+    bounded.push(event);
+    responseBytes = candidateBytes;
+  }
+  return bounded;
+}
+
+function reviseRootWorkItem(
+  sessionId: string,
+  request: RootWorkItemRevisionRequest,
+): RootWorkItem {
+  const binding = createRendererRootWorkItemBinding(sessionId);
+  const item = requireRootWorkItemForSession(sessionId);
+  const input = parseSessionRuntimeOperationInput("work.revise", {
+    ...request,
+    workItemId: item.id,
+  });
+  const revised = requireWorkItemService().revise(input, binding);
+  if (!isRootWorkItem(revised)) throw new Error("Root WorkItem revision returned an invalid item kind.");
+  return revised;
+}
+
+function appendRootWorkItemHistory(
+  sessionId: string,
+  request: RootWorkItemHistoryAppendRequest,
+): RootWorkItem {
+  const binding = createRendererRootWorkItemBinding(sessionId);
+  const item = requireRootWorkItemForSession(sessionId);
+  const input = parseSessionRuntimeOperationInput("work.history.append", {
+    ...request,
+    workItemId: item.id,
+  });
+  const revised = requireWorkItemService().appendHistory(input, binding);
+  if (!isRootWorkItem(revised)) throw new Error("Root WorkItem history append returned an invalid item kind.");
+  return revised;
 }
 
 function requireSessionFileService(): SessionFileService {

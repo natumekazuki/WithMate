@@ -137,6 +137,25 @@ import type {
   CoordinationEventTrustedListInput,
   CoordinationEventListResult,
 } from "./coordination-event.js";
+import type { RootWorkItem, WorkItemEvent } from "./work-item.js";
+
+export type RootWorkItemRevisionRequest = Readonly<{
+  goal: string;
+  scope: string;
+  completionCriteria: string;
+  authority: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+}>;
+
+export type RootWorkItemHistoryAppendRequest = Readonly<{
+  type: "progress" | "handoff";
+  summary: string;
+  blockers: readonly string[];
+  nextAction: string;
+  expectedRevision: number;
+  idempotencyKey: string;
+}>;
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
@@ -183,6 +202,13 @@ export type WithMateWindowSessionApi = {
   listRelatedSessionSummaries(sessionIds: readonly string[]): Promise<RelatedSessionSummary[]>;
   listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  getRootWorkItem(sessionId: string): Promise<RootWorkItem | null>;
+  listRootWorkItemHistory(sessionId: string, limit: number): Promise<readonly WorkItemEvent[]>;
+  reviseRootWorkItem(sessionId: string, request: RootWorkItemRevisionRequest): Promise<RootWorkItem>;
+  appendRootWorkItemHistory(
+    sessionId: string,
+    request: RootWorkItemHistoryAppendRequest,
+  ): Promise<RootWorkItem>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
