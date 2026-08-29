@@ -85,6 +85,7 @@
       "dist/**",
       "dist-electron/**",
       "build/icon.ico",
+      "LICENSE",
       "package.json",
       "!node_modules/@openai/codex-win32-*/**",
       "!node_modules/@openai/codex-darwin-*/**",

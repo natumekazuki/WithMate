@@ -165,6 +165,16 @@ npm run dist:dir
 
 macOS向けの実buildにはmacOS環境またはmacOS CI runnerが必要です。packagingの詳細は[Distribution Packaging](docs/design/distribution-packaging.md)を参照してください。
 
+## ライセンスと利用上の注意
+
+WithMateのソースコードは[ISC License](LICENSE)で提供します。
+
+本ソフトウェアは現状有姿で提供されます。機能、セキュリティ、機密性、可用性、特定目的への適合性、および本ソフトウェアに含まれるか本ソフトウェアが生成または保存する内容の完全性や正確性を保証しません。
+
+導入前に、ソースコード、設定、依存関係、同梱物、および接続先サービスを自身で確認してください。本ソフトウェアの利用、改変、配布、外部サービスへの接続、およびデータの取り扱いは、利用者自身の判断と責任で行ってください。
+
+この節は利用上の注意をまとめたものです。ライセンス条件は[LICENSE](LICENSE)を参照してください。
+
 ## Repository構成
 
 - `src/`: React renderer、UI state、Window API型
