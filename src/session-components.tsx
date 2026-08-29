@@ -1814,7 +1814,7 @@ function RootWorkItemPane({
         ) : null}
       </div>
       {errorMessage ? <p className="live-run-error" role="alert">{errorMessage}</p> : null}
-      {editing ? (
+      {editing && canMutate ? (
         <form onSubmit={(event) => { event.preventDefault(); void onRevise?.({ ...draft, blockers: draft.blockers.split("\n").map((value) => value.trim()).filter(Boolean) }); setEditing(false); }} className="root-work-item-edit-form">
           {(["goal", "scope", "completionCriteria", "authority", "progressSummary", "blockers", "nextAction"] as const).map((key) => (
             <label key={key}>{key}<textarea value={draft[key]} onChange={(event) => update(key, event.target.value)} rows={key === "goal" ? 2 : 1} /></label>

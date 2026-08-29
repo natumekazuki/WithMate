@@ -163,6 +163,10 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
       .find((button) => button.textContent === "引き継ぎ") as HTMLButtonElement;
     assert.equal(disabledHandoff.disabled, true);
     assert.match(disabledHandoff.title, /progressSummary.*nextAction/);
+    const emptyRevise = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "改訂") as HTMLButtonElement;
+    await act(async () => emptyRevise.click());
+    assert.ok(container.querySelector("form.root-work-item-edit-form"));
 
     await act(async () => root.render(<SessionContextPane {...paneProps({
       rootWorkItem: { ...rootWorkItem, state: "completed", result: {
@@ -181,6 +185,8 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
     })} />));
     assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "改訂"), false);
     assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "引き継ぎ"), false);
+    assert.equal(container.querySelector("form.root-work-item-edit-form"), null);
+    assert.equal([...container.querySelectorAll("button")].some((button) => button.textContent === "保存"), false);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
