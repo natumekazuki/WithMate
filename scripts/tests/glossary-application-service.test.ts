@@ -27,7 +27,8 @@ async function createRepository(): Promise<{ root: string; target: ResolvedGloss
   temporaryDirectories.push(root);
   await execFileAsync("git", ["init", "--quiet", root], { windowsHide: true });
   const service = new GlossaryApplicationService();
-  return { root, target: await service.resolvePrimaryCheckout(root) };
+  const target = await service.resolvePrimaryCheckout(root);
+  return { root: target.rootPath, target };
 }
 
 async function writeGlossary(root: string, entries: readonly GlossaryEntry[]): Promise<string> {
