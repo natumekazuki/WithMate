@@ -55,6 +55,7 @@ WorkItem に明示的な種別を追加する。
 - child Session と `character-authoring` Session は Root WorkItem を持たない。
 - `delegated` は引き続き `creatorSessionId <> targetSessionId` とする。
 - 任意の自己対象 delegated WorkItem は作成できない。
+- root coordinatorが作成するtop-level delegated WorkItemは`parentWorkItemId = null`とする。parentを指定できるのは、actor Sessionがtargetであるactiveなdelegated WorkItemだけであり、Root WorkItemはdelegationまたはaggregationのparentにならない。
 
 Root WorkItem ID は再試行時に同じ値を導出できる形式にするか、root Session ID に対する一意制約と同一 transaction 内の upsert で重複を防ぐ。外部から任意の Root WorkItem ID を指定させない。
 
@@ -99,9 +100,9 @@ Root WorkItem の owner Session は次を改訂できる。
 
 Root WorkItem の現在値は一覧や再開時の高速な参照に使い、event stream は変更理由と経過の正本にする。契約改訂 event は goal、scope、completionCriteria、権限の変更前後を復元でき、progress と handoff は summary、blockers、next action、actor、記録日時を保持する。
 
-全 mutation は同じ単調増加 resource revision 上で直列化する。current projection、event、idempotency response を同じ transaction で保存し、expected revision と idempotency key を要求する。
+全 mutation は同じ単調増加 resource revision 上で直列化する。current projection、event、idempotency response を同じ transaction で保存し、expected revision と idempotency key を要求する。migration前のledgerにresponseが存在しない再送は、後続のcurrent projectionをcanonical responseとして返さず、versioned `IDEMPOTENCY_RESPONSE_UNAVAILABLE` errorを`effect: applied`で返す。
 
-履歴取得は cursor と上限件数を持つ。payload size、blocker 件数、文字数を既存の runtime limit と同じ境界で制限する。
+履歴取得は cursor と上限件数を持つ。通常event payloadはUTF-8 JSONで512 KiB以下とし、exact payloadが確定するmutation境界とDB CHECKで検証する。要求件数がresponse上限へ収まらない場合は収まる件数と次cursorを返す。trusted GUIは再開に必要な最新ページを取得する。
 
 ## 状態遷移
 
@@ -143,7 +144,7 @@ WorkItem contract revision を `2` へ上げ、既存 row はすべて `delegate
 
 既存の `standalone` と `overall-coordinator` root Session には Root WorkItem を一つ backfill する。backfill は idempotent とし、既に正しい Root WorkItem がある場合は追加しない。不正な重複または binding 不整合を検出した場合は、任意の一件へ自動統合せず migration error とする。
 
-既存 WorkItem に存在しない過去の event は生成しない。移行時点の現在値を `migration_baseline` event として一件記録し、履歴が移行後から完全であることを machine-readable に示す。
+既存 WorkItem に存在しない過去の event は生成しない。移行時点の現在値を `migration_baseline` event として一件記録し、履歴が移行後から完全であることを machine-readable に示す。V1 public contractから生成できるcurrent projectionを欠落なく保持するため、baselineだけは2 MiB以下を許可する。通常eventの512 KiB上限は緩めない。
 
 既存の parent-null delegated WorkItem は structural identity を変更せず、Root WorkItem と同じ rootSessionId 配下の legacy branch として保持する。自動 reparent は行わない。
 
@@ -157,7 +158,7 @@ Root WorkItem の自動作成後は、現行の Session delete protection をそ
 
 - active な Root WorkItem を持つ root Session の削除は拒否する。
 - terminal な Root WorkItem を持つ root Session の明示削除は、Session と自己所有 Root WorkItem の履歴を同じ transaction で削除する。
-- delegated WorkItem、未回収結果、child Session、execution association が残る場合は従来どおり拒否する。
+- active delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。parent-null delegated resultは報告だけでは回収済みとせず、同じrootのRoot WorkItemがterminalになるまで保護する。terminalかつ回収済みのdelegated WorkItemは、参照Sessionの物理削除時に履歴、idempotency、execution association、aggregation ledgerと同じtransactionで削除する。
 - UI 上の非表示や archive と物理削除を混同しない。
 
 Root WorkItem の履歴は Session の所有データであり、Session の明示的な物理削除後まで独立保存しない。
@@ -171,6 +172,8 @@ Root WorkItem の履歴は Session の所有データであり、Session の明�
 - `work.history.list`: 全 event を revision 順で取得する。
 
 `work.transition` と `work.result` は Root WorkItem でも使えるよう、種別と actor authority を検証する。`work.create` で root 種別を作成することは許可せず、Root WorkItem の生成は Session 永続化境界だけに限定する。
+
+`work.aggregation.get | list | decide | retry`のparentはdelegated WorkItemだけを受け付ける。Root WorkItemはaggregationを持たず、Root WorkItemの`work.result`へ`expectedAggregateRevision`を指定しない。root finalizationはparent-null top-level branchのterminal/resultと、delegated parent配下のnested aggregation decisionから判定する。
 
 次の公開面を同じ contract revision で更新する。
 
@@ -238,6 +241,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 
 - root Session の WorkItem 現在値、progress、blockers、next action を既存 right pane で表示する。
 - owner Session から許可された field だけを改訂できるようにする。
+- editorは開始時のRoot WorkItem revisionをdraftと共に保持する。外部更新後はdraftを保持したまま保存を止め、入力を破棄して最新版を読み込む明示操作でdraftとbase revisionを更新する。draftの契約fieldが最新版と一致する場合は、明示的なrebaseで保持した進捗入力だけを再送できる。これにより契約改訂だけ成功した部分成功を回収する。自動mergeやlatest revisionへの暗黙の付け替えは行わない。
 - 履歴は progressive disclosure で表示し、常設説明で pane を埋めない。
 
 ## 直接検証
@@ -248,7 +252,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 - child と `character-authoring` Session には作成されない。
 - transaction failure で Session と Root WorkItem の片方だけが残らない。
 - 再送、再起動、repair で重複しない。
-- migration 後も既存 delegated WorkItem、結果、association、aggregation、idempotency が保持される。
+- migration 後も既存 delegated WorkItem、結果、association、aggregation、idempotency が保持され、responseを復元できない旧ledgerの再送は適用済みresponse復元不能errorになる。
 - backfill は既存 root Session ごとに一件だけ追加し、二回実行しても変化しない。
 
 ### Service contract integration
@@ -257,14 +261,14 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 - child Session、別 root Session、delegated target は Root WorkItem 契約を改訂できない。
 - immutable binding と canonical authority ceiling を変更できない。
 - arbitrary self-target delegated WorkItem を作成できない。
-- stale expected revision と idempotency conflict を区別して拒否する。
+- stale expected revision、idempotency conflict、migration由来の適用済みresponse復元不能を区別して拒否する。
 - contract revision、progress、handoff が一つの event stream から復元できる。
 - terminal state を再開できない。
 
 ### Public boundary
 
 - raw HTTP、CLI、MCP で新操作の成功と同じ error semantics を確認する。
-- strict validator が unknown field、不正な kind 組み合わせ、過大 payload を拒否する。
+- strict validator が unknown field、不正な kind 組み合わせ、過大 payload を拒否する。MCPのoperation固有terminal schemaも共通のkind不変条件を適用する。
 - runtime catalog が contract revision と mutation 一覧を正しく公開する。
 - history list の cursor、limit、visibility が root を越えて漏れない。
 
@@ -284,7 +288,7 @@ public API、永続化、owner scope、複合不変条件を横断するため�
 2. active な Root WorkItem、active descendant、未回収結果がある root Session は削除できない。条件を満たす terminal root Session の明示削除では、自己所有 Root WorkItem と履歴を同じ transaction で物理削除する。
 3. authority は改訂可能な説明として保持するが、認可には使わない。実効権限は既存の Session role、communication policy、runtime capability だけから判定し、新しい capability model は導入しない。
 4. 新規 Root WorkItem の goal は Session の task title から初期化する。scope、completionCriteria、authority は root 専用で空を許容し、owner が最初の契約改訂で具体化できるようにする。
-5. Root WorkItem の terminal result は、全 descendant WorkItem が terminal で、nested aggregation decision が確定している場合だけ許可する。parent-null legacy delegated WorkItem には新しい decision を捏造せず、terminal result の存在を確認する。
+5. Root WorkItem の terminal result は、全 descendant WorkItem が terminal で、nested aggregation decision が確定している場合だけ許可する。parent-null top-level / legacy delegated WorkItem には新しい decision を捏造せず、result を持つ terminal または再開不能な `canceled` への収束を確認する。
 
 ## 完了条件
 

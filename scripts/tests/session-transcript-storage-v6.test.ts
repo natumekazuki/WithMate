@@ -243,6 +243,15 @@ describe("SessionTranscriptStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "削除可能なterminal root Sessionの物理削除はtranscript export idempotency recordをcascade削除する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "Root WorkItem削除保護の追加後にtranscript export ledgerだけが残り削除済みSessionを参照する"
+  // scope = "SessionTranscriptStorageV6 Session deletion cascade"
+  // lifecycle = "permanent"
+  // distinction = "populated schema repair後のterminal root削除とexport ledger cascadeを同じreal SQLiteで観測する"
+  // @end-test-value
   it("EXT-EXPORT-14: populated V6へadditive再適用しSession削除でexport recordをcascadeする", async () => {
     const f = await fixture();
     f.storage.close();
@@ -265,6 +274,11 @@ describe("SessionTranscriptStorageV6", () => {
             relative_path, temp_name, state, created_at, expires_at
           ) VALUES ('transcript.export', 'pending', 'fp', 'session-1', 'a.json', '.a.tmp', 'pending', ?, ?)
         `).run(NOW, EXPIRES);
+        db.prepare(`
+          UPDATE work_items_v6
+          SET state = 'completed', revision = revision + 1, result_json = ?, updated_at = ?
+          WHERE kind = 'root' AND root_session_id = 'session-1'
+        `).run(JSON.stringify({ outcome: "completed" }), NOW);
         db.prepare("DELETE FROM session_role_bindings_v6 WHERE session_id = 'session-1'").run();
         db.prepare("DELETE FROM sessions_v6 WHERE id = 'session-1'").run();
         const count = db.prepare(`

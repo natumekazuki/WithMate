@@ -549,6 +549,9 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 | `work.create` | `work create` |
 | `work.list` | `work list` |
 | `work.get` | `work get` |
+| `work.revise` | `work revise` |
+| `work.history.append` | `work history append` |
+| `work.history.list` | `work history list` |
 | `work.transition` | `work transition` |
 | `work.result` | `work result` |
 | `work.cancel` | `work cancel` |
@@ -568,9 +571,13 @@ application operation IDをCLIとMCPに共通する正本とする。MCP toolは
 
 ## Work Item contract
 
-Work Itemは一つのSession間委譲を表し、executionとは別のserver生成IDを持つ。root、creator、target、任意のparent、goal、scope、completion criteria、authority、source identityは作成後に変更しない。Role binding revision 1へWork Item IDを追加せず、Work ItemからSessionを参照する。
+Work ItemはSession自身の長期状態またはSession間委譲を表し、executionとは別のserver生成IDを持つ。`root` と `delegated` のunionを判別可能にする。両kindのID、root、creator、target、任意のparent、source identityは作成後に変更しない。`delegated` のgoal、scope、completion criteria、authorityは不変の委譲契約とし、`root` の同fieldだけはroot ownerがrevisioned mutationで改訂できる。Role binding revision 1へWork Item IDを追加せず、Work ItemからSessionを参照する。
 
-作成はruntime bindingで確定した`overall-coordinator | task-coordinator`に限り、既存のSession間Turn authorityで送信可能かつ`parentSessionId`がactor Sessionと一致する直属targetだけを受け付ける。root overall coordinatorや兄弟task coordinatorへの通信許可を委譲authorityへ流用しない。parentは同じrootでactor Sessionがtargetとなっているactive Work Itemに限定する。target Sessionは`pending -> in_progress -> waiting -> in_progress`の進行操作とterminal result報告を行い、creator Sessionはactive Work Itemを取消せる。全mutationはexpected revisionとprincipal Session単位のidempotency keyを要求する。canonical replayはcurrent Session bindingの再検証より先に返し、recordは24時間後にcleanupする。
+root Work Itemは`standalone`または`overall-coordinator`のroot Sessionごとに一件だけ存在し、Session作成と同一database transactionで作成する。goalはSessionのtask titleから初期化し、scope、completion criteria、authority説明は空から開始してroot ownerがrevisioned mutationで具体化できる。root ownerはstate、progress、blockers、next action、terminal resultを同じ単調増加revisionとprincipal単位のidempotency keyで更新し、current projectionとappend-only event history（`created`、`migration_baseline`、`contract_revised`、`progress`、`handoff`、`state_transitioned`、`result_reported`）を一つのstreamへ直列化する。通常のhistory event payloadは512 KiBを上限とし、exact payloadが確定するmutation境界とdatabase CHECKで検証する。V1 public contractから生成できる既存値を欠落なく移すため、`migration_baseline`だけは2 MiBまで許可し、runtime catalogで別上限として公開する。authority説明の自由記述は認可に使わず、既存Session role、communication policy、runtime capabilityだけを実効権限の根拠とする。terminal rootは再開せず、terminal resultは全descendantのterminal化とnested aggregation decision確定を同一transactionで検証する。
+
+既存Work Itemのmigrationはすべて`delegated`として保持し、移行時点の`migration_baseline`から履歴を開始する。過去のeventを生成せず、legacy parent-null delegated Work Itemを自動reparentしない。migration前のidempotency ledgerにcanonical responseが存在しない再送は、後続のcurrent projectionへfallbackせず、versioned `IDEMPOTENCY_RESPONSE_UNAVAILABLE` errorを`effect: applied`で返す。active root、active descendant、未回収結果が残るroot Sessionの削除は拒否し、parent-null delegated resultは同じrootのRoot WorkItemがterminalになるまで未回収として扱う。削除可能なterminal root Sessionでは、自己所有Root Work Itemとterminalかつ回収済みのdelegated Work Item、およびそれらの履歴、idempotency record、execution association、aggregation ledgerを同一transactionで物理削除する。
+
+作成はruntime bindingで確定した`overall-coordinator | task-coordinator`に限り、既存のSession間Turn authorityで送信可能かつ`parentSessionId`がactor Sessionと一致する直属targetだけを受け付ける。root overall coordinatorや兄弟task coordinatorへの通信許可を委譲authorityへ流用しない。parentは同じrootでactor Sessionがtargetとなっているactiveなdelegated Work Itemに限定する。root coordinatorが作成するtop-level delegated Work Itemは`parentWorkItemId = null`とし、Root Work Itemをdelegation parentへ指定できない。target Sessionは`pending -> in_progress -> waiting -> in_progress`の進行操作とterminal result報告を行い、creator Sessionはactive Work Itemを取消せる。全mutationはexpected revisionとprincipal Session単位のidempotency keyを要求する。GUI editorは開始時revisionをdraftと共に保持し、外部更新でcurrent projectionが進んだ場合は保存を止める。入力を破棄して最新版を読み込むか、draftの契約fieldが最新版と一致する場合に限って進捗入力を明示的に引き継ぐ操作でbase revisionを更新する。自動mergeや最新revisionへの暗黙の付け替えは行わない。canonical replayはcurrent Session bindingの再検証より先に返し、recordは24時間後にcleanupする。
 
 `completed | partially_completed | failed`は同名のresult outcomeとstrict result envelopeを同じtransactionで保存し、DB CHECKでもstateとoutcomeの一致を保持する。`canceled`はresultを持たず、terminal stateから再開しない。resultはsummary、changes、verification results、findings、unverified items、remaining work、reporting Session、timestampを区別し、256 KiBを上限とする。
 
@@ -578,7 +585,7 @@ Work Itemは一つのSession間委譲を表し、executionとは別のserver生�
 
 `work.list`はruntime actorのrootを固定し、creator、target、stateの明示filterとsequence keyset cursorをstorage queryへ渡す。cursorはroot、actor Session、root全体またはactor関連だけを示すvisibility、明示filterへ束縛し、scopeが異なる再利用を`INVALID_CURSOR`で拒否する。overall coordinatorは同じrootを参照でき、それ以外のRoleは自分がcreatorまたはtargetのWork Itemだけを参照する。一覧はWork Itemをstorage iteratorから逐次hydrateし、8 MiBのpublic response上限へ達する前にpageを打ち切って`nextCursor`を返す。Work Item mutationはCoordination Eventを必須副作用にせず、Coordination Event schemaも変更しない。
 
-Work Item aggregationはactiveな親と直属子だけを対象とし、孫をflattenしない。親target Sessionはterminalな直属子へ`accepted | excluded | retry_requested`のimmutable decisionを作成する。`excluded`は理由を必須とし、`canceled`は採用できない。retryは明示された新しいbindingでreplacementを作成し、decision、replacement、idempotency resultを同一transactionへ保存する。元Work Itemのstateとresultは変更しない。
+Work Item aggregationはactiveなdelegated parentと直属子だけを対象とし、孫をflattenしない。Root Work Itemに対する`work.aggregation.get | list | decide | retry`は`WORK_ITEM_AGGREGATION_PARENT_INVALID`で拒否し、Root Work Itemのresultはaggregate revisionを受け取らない。親target Sessionはterminalな直属子へ`accepted | excluded | retry_requested`のimmutable decisionを作成する。`excluded`は理由を必須とし、`canceled`は採用できない。retryは明示された新しいbindingでreplacementを作成し、decision、replacement、idempotency resultを同一transactionへ保存する。元Work Itemのstateとresultは変更しない。
 
 `work.aggregation.get | list`はaggregate revisionと件数、およびidentity、state、result summary、decisionだけをbounded queryで返す。full resultは`work.get`で取得する。cursorはparent、actor、visibility、filterへ束縛する。直属子を持つ親の`work.result`はcurrent aggregate revisionを要求し、全直属子がterminalかつdecision済みであるsnapshotを親resultと同一transactionで検証する。親terminal確定後は直属子追加とdecision mutationを拒否する。
 
@@ -655,6 +662,7 @@ provider実行がterminalの`failed`へ到達した場合、operationの受付�
 
 ## Related documents
 
+- `docs/adr/028-session-root-work-item.md`
 - `docs/adr/005-session-folder-workspace-launch.md`
 - `docs/adr/021-session-cli-mcp-application-boundary.md`
 - `docs/adr/022-session-runtime-windows-credential-directory.md`

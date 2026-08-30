@@ -461,9 +461,18 @@ describe("session-ui-projection", () => {
     assert.equal(projection.conversationTokensLabel, "3,090");
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "context paneの既定循環はRoot WorkItem tabを含むcanonical tab順を前後どちらにも維持する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6. UI" }
+  // failure_mode = "keyboard循環でWorkItem tabを飛ばすか逆方向の終端が旧Companion tabへ固定される"
+  // scope = "session-ui-projection context pane tab order"
+  // lifecycle = "permanent"
+  // distinction = "available subsetではなく全command paneのcanonical wrap-around順を検証する"
+  // @end-test-value
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
     assert.equal(cycleContextPaneTab("latest-command", 1), "reasoning");
-    assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
+    assert.equal(cycleContextPaneTab("latest-command", -1), "work-item");
   });
 
   it("available tabs は non-Copilot で Tasks を除外し、Reasoning は capability がある時点で表示する", () => {

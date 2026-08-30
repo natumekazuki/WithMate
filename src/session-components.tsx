@@ -46,6 +46,7 @@ import {
   type SessionContextTelemetryProjection,
 } from "./session-ui-projection.js";
 import type { HomeMonitorEntry } from "./home/home-session-projection.js";
+import { isWorkItemActive, type RootWorkItem } from "./work-item.js";
 import { getWithMateApi } from "./renderer-withmate-api.js";
 import { SessionContentFindBar } from "./session-content-find-bar.js";
 import { clampFindMatchIndex, findTextMatches } from "./find-text-matches.js";
@@ -1633,6 +1634,23 @@ export type SessionContextPaneProps = {
   latestCommandEmptyText?: string;
   onCycleContextPaneTab: (direction: -1 | 1) => void;
   onOpenCompanionReview: (sessionId: string) => void;
+  rootWorkItem?: RootWorkItem | null;
+  rootWorkItemHistory?: readonly { revision: number; eventType: string; occurredAt: string; summary?: string }[];
+  rootWorkItemLoading?: boolean;
+  rootWorkItemErrorMessage?: string | null;
+  isRootWorkItemMutationPending?: boolean;
+  onRetryRootWorkItem?: () => void | Promise<void>;
+  onReviseRootWorkItem?: (input: {
+    expectedRevision: number;
+    goal: string;
+    scope: string;
+    completionCriteria: string;
+    authority: string;
+    progressSummary: string;
+    blockers: string[];
+    nextAction: string;
+  }) => boolean | Promise<boolean>;
+  onHandoffRootWorkItem?: () => void | Promise<void>;
 };
 
 type SessionPaneErrorBoundaryProps = {
@@ -1729,6 +1747,145 @@ export class SessionPaneErrorBoundary extends Component<
   }
 }
 
+function RootWorkItemPane({
+  workItem,
+  history,
+  onRevise,
+  onHandoff,
+  loading,
+  errorMessage,
+  mutationPending,
+}: {
+  workItem: RootWorkItem;
+  history: readonly { revision: number; eventType: string; occurredAt: string; summary?: string }[];
+  onRevise?: SessionContextPaneProps["onReviseRootWorkItem"];
+  onHandoff?: SessionContextPaneProps["onHandoffRootWorkItem"];
+  loading: boolean;
+  errorMessage: string | null;
+  mutationPending: boolean;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editorBaseRevision, setEditorBaseRevision] = useState(workItem.revision);
+  const [draft, setDraft] = useState({
+    goal: workItem.goal,
+    scope: workItem.scope,
+    completionCriteria: workItem.completionCriteria,
+    authority: workItem.authority,
+    progressSummary: workItem.progressSummary,
+    blockers: workItem.blockers.join("\n"),
+    nextAction: workItem.nextAction,
+  });
+  const loadCurrentProjection = useCallback(() => {
+    setEditorBaseRevision(workItem.revision);
+    setDraft({
+      goal: workItem.goal,
+      scope: workItem.scope,
+      completionCriteria: workItem.completionCriteria,
+      authority: workItem.authority,
+      progressSummary: workItem.progressSummary,
+      blockers: workItem.blockers.join("\n"),
+      nextAction: workItem.nextAction,
+    });
+  }, [workItem]);
+  useEffect(() => {
+    if (editing) return;
+    loadCurrentProjection();
+  }, [editing, loadCurrentProjection]);
+  const update = (key: keyof typeof draft, value: string) =>
+    setDraft((current) => ({ ...current, [key]: value }));
+  const canMutate = isWorkItemActive(workItem.state);
+  const canHandoff = canMutate
+    && workItem.progressSummary.trim().length > 0
+    && workItem.nextAction.trim().length > 0;
+  const editorIsStale = editing && editorBaseRevision !== workItem.revision;
+  const currentContractMatchesDraft = workItem.goal === draft.goal
+    && workItem.scope === draft.scope
+    && workItem.completionCriteria === draft.completionCriteria
+    && workItem.authority === draft.authority;
+  const retainProgressOnCurrentContract = () => {
+    setEditorBaseRevision(workItem.revision);
+    setDraft((current) => ({
+      ...current,
+      goal: workItem.goal,
+      scope: workItem.scope,
+      completionCriteria: workItem.completionCriteria,
+      authority: workItem.authority,
+    }));
+  };
+  return (
+    <div className="command-monitor-card root-work-item-pane" aria-busy={loading || mutationPending}>
+      <div className="command-monitor-card-head">
+        <div className="command-monitor-meta">
+          <span className={`live-run-step-status ${liveRunStepToneClassName(workItem.state)}`}>{workItem.state}</span>
+          <span className="live-run-step-type">Root WorkItem</span>
+          <span className="command-monitor-source">REV {workItem.revision}</span>
+        </div>
+        {onRevise && canMutate ? (
+          <button type="button" className="drawer-toggle compact secondary" onClick={() => setEditing((value) => !value)} aria-expanded={editing} disabled={mutationPending}>
+            {editing ? "閉じる" : "改訂"}
+          </button>
+        ) : null}
+        {onHandoff && canMutate ? (
+          <button
+            type="button"
+            className="drawer-toggle compact secondary"
+            onClick={() => void onHandoff()}
+            disabled={mutationPending || !canHandoff}
+            title={canHandoff ? undefined : "progressSummaryとnextActionを改訂してから引き継ぎを記録します。"}
+          >引き継ぎ</button>
+        ) : null}
+      </div>
+      {errorMessage ? <p className="live-run-error" role="alert">{errorMessage}</p> : null}
+      {editing && canMutate ? (
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          if (editorIsStale) return;
+          void Promise.resolve(onRevise?.({
+            expectedRevision: editorBaseRevision,
+            ...draft,
+            blockers: draft.blockers.split("\n").map((value) => value.trim()).filter(Boolean),
+          }) ?? false).then((saved) => {
+            if (saved) setEditing(false);
+          }).catch(() => {});
+        }} className="root-work-item-edit-form">
+          {editorIsStale ? (
+            <div className="root-work-item-editor-stale" role="status">
+              <p>別の操作で更新されました。入力内容は保持されています。保存するには最新版を読み込んでください。</p>
+              <button type="button" className="drawer-toggle compact secondary" onClick={loadCurrentProjection}>
+                入力を破棄して最新版を読み込む
+              </button>
+              {currentContractMatchesDraft ? (
+                <button type="button" className="drawer-toggle compact secondary" onClick={retainProgressOnCurrentContract}>
+                  最新版の契約で進捗入力を引き継ぐ
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {(["goal", "scope", "completionCriteria", "authority", "progressSummary", "blockers", "nextAction"] as const).map((key) => (
+            <label key={key}>{key}<textarea value={draft[key]} onChange={(event) => update(key, event.target.value)} rows={key === "goal" ? 2 : 1} /></label>
+          ))}
+          <button type="submit" className="session-send-button" disabled={mutationPending || editorIsStale}>保存</button>
+        </form>
+      ) : (
+        <div className="root-work-item-summary">
+          <h3>{workItem.goal || "Root WorkItem"}</h3>
+          {workItem.progressSummary ? <p><strong>progressSummary</strong> {workItem.progressSummary}</p> : null}
+          {workItem.nextAction ? <p><strong>nextAction</strong> {workItem.nextAction}</p> : null}
+          {workItem.blockers.length > 0 ? <p><strong>blockers</strong> {workItem.blockers.join(", ")}</p> : null}
+          {workItem.scope ? <p><strong>scope</strong> {workItem.scope}</p> : null}
+          {workItem.completionCriteria ? <p><strong>completionCriteria</strong> {workItem.completionCriteria}</p> : null}
+        </div>
+      )}
+      {history.length > 0 ? (
+        <details className="command-monitor-details root-work-item-history">
+          <summary>履歴 ({history.length})</summary>
+          <ol>{history.map((event) => <li key={`${event.revision}-${event.eventType}`}><strong>r{event.revision}</strong> {event.eventType} <time>{event.occurredAt}</time>{event.summary ? ` — ${event.summary}` : ""}</li>)}</ol>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
 export function SessionContextPane({
   activeContextPaneTab,
   availableContextPaneTabs,
@@ -1750,6 +1907,14 @@ export function SessionContextPane({
   latestCommandEmptyText = "",
   onCycleContextPaneTab,
   onOpenCompanionReview,
+  rootWorkItem = null,
+  rootWorkItemHistory = [],
+  rootWorkItemLoading = false,
+  rootWorkItemErrorMessage = null,
+  isRootWorkItemMutationPending = false,
+  onRetryRootWorkItem,
+  onReviseRootWorkItem,
+  onHandoffRootWorkItem,
 }: SessionContextPaneProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const taskEntries = backgroundTasks ?? [];
@@ -1777,6 +1942,8 @@ export function SessionContextPane({
         return companionGroupMonitorEntries
           .map((entry) => `${entry.kind}:${entry.session.id}:${entry.session.taskTitle}:${entry.state.kind}:${entry.state.label}:${entry.session.updatedAt}`)
           .join("|");
+      case "work-item":
+        return `${rootWorkItem?.id ?? ""}:${rootWorkItem?.revision ?? 0}:${rootWorkItem?.state ?? ""}:${rootWorkItemLoading}:${rootWorkItemErrorMessage ?? ""}`;
       default:
         return "";
     }
@@ -1789,6 +1956,9 @@ export function SessionContextPane({
     isSelectedSessionRunning,
     taskEntries,
     selectedSessionLiveRunErrorMessage,
+    rootWorkItem,
+    rootWorkItemErrorMessage,
+    rootWorkItemLoading,
   ]);
 
   const renderCompanionGroupMonitorEntry = (entry: Extract<HomeMonitorEntry, { kind: "companion" }>) => {
@@ -2039,6 +2209,34 @@ export function SessionContextPane({
                   <p className="command-monitor-empty-subtle">同じ repository の Companion がある時だけここへ出るよ。</p>
                 </div>
               )
+            ) : null}
+
+            {activeContextPaneTab === "work-item" ? (
+              rootWorkItem ? (
+                <RootWorkItemPane
+                  workItem={rootWorkItem}
+                  history={rootWorkItemHistory}
+                  onRevise={onReviseRootWorkItem}
+                  onHandoff={onHandoffRootWorkItem}
+                  loading={rootWorkItemLoading}
+                  errorMessage={rootWorkItemErrorMessage}
+                  mutationPending={isRootWorkItemMutationPending}
+                />
+              ) : rootWorkItemLoading ? (
+                <div className="command-monitor-empty-shell root-work-item-load-state" role="status" aria-live="polite" aria-busy="true">
+                  <span className="root-work-item-spinner" aria-hidden="true" />
+                  <p className="command-monitor-empty">Root WorkItemを読み込んでいます。</p>
+                </div>
+              ) : rootWorkItemErrorMessage ? (
+                <div className="command-monitor-empty-shell root-work-item-load-state">
+                  <p className="live-run-error" role="alert">{rootWorkItemErrorMessage}</p>
+                  {onRetryRootWorkItem ? (
+                    <button type="button" className="drawer-toggle compact secondary" onClick={() => void onRetryRootWorkItem()}>
+                      再試行
+                    </button>
+                  ) : null}
+                </div>
+              ) : null
             ) : null}
 
           </div>

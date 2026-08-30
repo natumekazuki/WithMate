@@ -144,6 +144,11 @@ import type {
   SessionScheduleSummary,
   UpdateSessionScheduleInput,
 } from "../src/session-schedule.js";
+import type {
+  RootWorkItemHistoryAppendRequest,
+  RootWorkItemRevisionRequest,
+} from "../src/withmate-window-api.js";
+import type { RootWorkItem, WorkItemEvent } from "../src/work-item.js";
 
 type MaybeWindow = BrowserWindow | null | undefined;
 
@@ -362,6 +367,13 @@ export type MainIpcSessionRuntimeDepsArgs = {
     request: CancelSessionExecutionRequest,
   ): Promise<CancelSessionExecutionResult>;
   cancelSessionRun(sessionId: string): void;
+  getRootWorkItem(sessionId: string): Awaitable<RootWorkItem | null>;
+  listRootWorkItemHistory(sessionId: string, limit: number): Awaitable<readonly WorkItemEvent[]>;
+  reviseRootWorkItem(sessionId: string, request: RootWorkItemRevisionRequest): Awaitable<RootWorkItem>;
+  appendRootWorkItemHistory(
+    sessionId: string,
+    request: RootWorkItemHistoryAppendRequest,
+  ): Awaitable<RootWorkItem>;
 };
 
 export type MainIpcSessionScheduleDepsArgs = {
@@ -599,6 +611,10 @@ export function createMainIpcRegistrationDeps(
     cancelCoordinationEvent: args.sessionRuntime.cancelCoordinationEvent,
     cancelSessionExecution: args.sessionRuntime.cancelSessionExecution,
     cancelSessionRun: args.sessionRuntime.cancelSessionRun,
+    getRootWorkItem: args.sessionRuntime.getRootWorkItem,
+    listRootWorkItemHistory: args.sessionRuntime.listRootWorkItemHistory,
+    reviseRootWorkItem: args.sessionRuntime.reviseRootWorkItem,
+    appendRootWorkItemHistory: args.sessionRuntime.appendRootWorkItemHistory,
     listSessionSchedules: args.sessionSchedules.listSessionSchedules,
     getSessionSchedule: args.sessionSchedules.getSessionSchedule,
     createSessionSchedule: args.sessionSchedules.createSessionSchedule,

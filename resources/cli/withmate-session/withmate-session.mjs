@@ -217,6 +217,8 @@ function invalid$1(field, message) {
 //#endregion
 //#region src/work-item.ts
 var WORK_ITEM_MAX_RESULT_BYTES = 256 * 1024;
+var WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES = 512 * 1024;
+var WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 var WORK_ITEM_MAX_TEXT_LENGTH = 16e3;
 var WORK_ITEM_AGGREGATION_DECISIONS = [
 	"accepted",
@@ -232,6 +234,11 @@ var WORK_ITEM_STATES = [
 	"failed",
 	"canceled"
 ];
+function workItemEventPayloadByteLength(payload) {
+	const serialized = JSON.stringify(payload);
+	if (serialized === void 0) throw new TypeError("Work Item event payload must be JSON serializable.");
+	return new TextEncoder().encode(serialized).byteLength;
+}
 var SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES = 8 * 1024 * 1024;
 var SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES = 1024 * 1024 * 1024;
 //#endregion
@@ -257,6 +264,9 @@ var SESSION_RUNTIME_OPERATIONS = [
 	"work.create",
 	"work.list",
 	"work.get",
+	"work.revise",
+	"work.history.append",
+	"work.history.list",
 	"work.transition",
 	"work.result",
 	"work.cancel",
@@ -316,6 +326,9 @@ function parseSessionRuntimeOperationInput(operation, value) {
 	if (operation === "work.create") return parseWorkItemCreateInput(value);
 	if (operation === "work.list") return parseWorkItemListInput(value);
 	if (operation === "work.get") return parseWorkItemInput(value);
+	if (operation === "work.revise") return parseWorkItemReviseInput(value);
+	if (operation === "work.history.append") return parseWorkItemHistoryAppendInput(value);
+	if (operation === "work.history.list") return parseWorkItemHistoryListInput(value);
 	if (operation === "work.transition") return parseWorkItemTransitionInput(value);
 	if (operation === "work.result") return parseWorkItemResultInput(value);
 	if (operation === "work.cancel") return parseWorkItemCancelInput(value);
@@ -600,6 +613,80 @@ function parseWorkItemInput(value) {
 	const record = requireObject(value, "input");
 	assertKeys(record, ["workItemId"], "input");
 	return { workItemId: requireNonEmptyString(record.workItemId, "workItemId") };
+}
+function requireBoundedStringAllowEmpty(value, field, maxLength) {
+	if (typeof value !== "string") throw invalid(field, `${field} must be a string.`);
+	if (value.length > maxLength) throw invalid(field, `${field} exceeds ${maxLength} characters.`);
+	return value;
+}
+function parseWorkItemReviseInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"goal",
+		"scope",
+		"completionCriteria",
+		"authority",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		goal: requireBoundedString(record.goal, "goal", WORK_ITEM_MAX_TEXT_LENGTH),
+		scope: requireBoundedStringAllowEmpty(record.scope, "scope", WORK_ITEM_MAX_TEXT_LENGTH),
+		completionCriteria: requireBoundedStringAllowEmpty(record.completionCriteria, "completionCriteria", WORK_ITEM_MAX_TEXT_LENGTH),
+		authority: requireBoundedStringAllowEmpty(record.authority, "authority", WORK_ITEM_MAX_TEXT_LENGTH),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+}
+function parseWorkItemHistoryAppendInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"type",
+		"summary",
+		"blockers",
+		"nextAction",
+		"expectedRevision",
+		"idempotencyKey"
+	], "input");
+	const input = {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		type: requireEnum(record.type, ["progress", "handoff"], "type"),
+		summary: requireBoundedString(record.summary, "summary", WORK_ITEM_MAX_TEXT_LENGTH),
+		blockers: parseWorkItemStringList(record.blockers, "blockers"),
+		nextAction: requireBoundedString(record.nextAction, "nextAction", WORK_ITEM_MAX_TEXT_LENGTH),
+		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
+		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
+	};
+	requireWorkItemEventPayloadWithinLimit({
+		progressSummary: input.summary,
+		blockers: input.blockers,
+		nextAction: input.nextAction
+	});
+	return input;
+}
+function requireWorkItemEventPayloadWithinLimit(payload) {
+	const actualBytes = workItemEventPayloadByteLength(payload);
+	if (actualBytes > 524288) throw new SessionRuntimeValidationError("Work Item history payload exceeds the byte limit.", {
+		field: "input",
+		actualBytes,
+		maxBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES
+	}, "CONTENT_TOO_LARGE");
+}
+function parseWorkItemHistoryListInput(value) {
+	const record = requireObject(value, "input");
+	assertKeys(record, [
+		"workItemId",
+		"limit",
+		"cursor"
+	], "input");
+	return {
+		workItemId: requireNonEmptyString(record.workItemId, "workItemId"),
+		limit: record.limit === void 0 ? 50 : requireInteger(record.limit, "limit", 1, 200, "LIMIT_EXCEEDED"),
+		...record.cursor === void 0 ? {} : { cursor: requireNonEmptyString(record.cursor, "cursor") }
+	};
 }
 function parseWorkItemListInput(value) {
 	const record = requireObject(value, "input");
@@ -21596,6 +21683,139 @@ var workItemCreateInputSchema = object({
 	idempotencyKey: nonEmptyStringSchema
 }).strict();
 var workItemInputSchema = object({ workItemId: nonEmptyStringSchema }).strict();
+var workItemReviseInputSchema = object({
+	workItemId: nonEmptyStringSchema,
+	goal: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	scope: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+	completionCriteria: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+	authority: string().max(WORK_ITEM_MAX_TEXT_LENGTH),
+	expectedRevision: number().int().min(1),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var workItemHistoryAppendInputSchema = object({
+	workItemId: nonEmptyStringSchema,
+	type: _enum(["progress", "handoff"]),
+	summary: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	blockers: array(nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH)).max(100),
+	nextAction: nonEmptyStringSchema.max(WORK_ITEM_MAX_TEXT_LENGTH),
+	expectedRevision: number().int().min(1),
+	idempotencyKey: nonEmptyStringSchema
+}).strict();
+var workItemHistoryListInputSchema = object({
+	workItemId: nonEmptyStringSchema,
+	limit: number().int().min(1).max(200).default(50),
+	cursor: nonEmptyStringSchema.optional()
+}).strict();
+var workItemProgressPayloadSchema = object({
+	progressSummary: string(),
+	blockers: array(string()),
+	nextAction: string()
+}).strict();
+var workItemContractProjectionSchema = object({
+	goal: string(),
+	scope: string(),
+	completionCriteria: string(),
+	authority: string()
+}).strict();
+var workItemEventResultSchema = object({
+	outcome: _enum([
+		"completed",
+		"partially_completed",
+		"failed"
+	]),
+	summary: string(),
+	changes: array(string()),
+	verificationResults: array(object({
+		name: string(),
+		status: _enum([
+			"passed",
+			"failed",
+			"not_run"
+		]),
+		details: string()
+	}).strict()),
+	findings: array(string()),
+	unverifiedItems: array(string()),
+	remainingWork: array(string()),
+	reportingSessionId: string(),
+	reportedAt: string()
+}).strict();
+var workItemEventBase = {
+	sequence: number().int().positive(),
+	workItemId: string(),
+	revision: number().int().positive(),
+	actorSessionId: string().nullable(),
+	createdAt: string()
+};
+var workItemEventSchema = discriminatedUnion("type", [
+	object({
+		...workItemEventBase,
+		type: literal("created"),
+		payload: object({
+			kind: _enum(["root", "delegated"]),
+			rootSessionId: string(),
+			creatorSessionId: string(),
+			targetSessionId: string(),
+			parentWorkItemId: string().nullable(),
+			sourceIdentity: workItemSourceIdentitySchema,
+			contract: workItemContractProjectionSchema,
+			progress: workItemProgressPayloadSchema,
+			state: _enum(WORK_ITEM_STATES),
+			result: workItemEventResultSchema.nullable()
+		}).strict()
+	}).strict(),
+	object({
+		...workItemEventBase,
+		type: literal("migration_baseline"),
+		payload: object({
+			kind: _enum(["root", "delegated"]),
+			rootSessionId: string(),
+			creatorSessionId: string(),
+			targetSessionId: string(),
+			parentWorkItemId: string().nullable(),
+			sourceIdentity: workItemSourceIdentitySchema,
+			contract: workItemContractProjectionSchema,
+			progress: workItemProgressPayloadSchema,
+			state: _enum(WORK_ITEM_STATES),
+			result: workItemEventResultSchema.nullable()
+		}).strict()
+	}).strict(),
+	object({
+		...workItemEventBase,
+		type: literal("contract_revised"),
+		payload: object({
+			before: workItemContractProjectionSchema,
+			after: workItemContractProjectionSchema
+		}).strict()
+	}).strict(),
+	object({
+		...workItemEventBase,
+		type: literal("progress"),
+		payload: workItemProgressPayloadSchema
+	}).strict(),
+	object({
+		...workItemEventBase,
+		type: literal("handoff"),
+		payload: workItemProgressPayloadSchema
+	}).strict(),
+	object({
+		...workItemEventBase,
+		type: literal("state_transitioned"),
+		payload: object({
+			from: _enum(WORK_ITEM_STATES),
+			to: _enum(WORK_ITEM_STATES)
+		}).strict()
+	}).strict(),
+	object({
+		...workItemEventBase,
+		type: literal("result_reported"),
+		payload: object({
+			from: _enum(WORK_ITEM_STATES),
+			to: _enum(WORK_ITEM_STATES),
+			result: workItemEventResultSchema
+		}).strict()
+	}).strict()
+]);
 var workItemListInputSchema = object({
 	creatorSessionId: nonEmptyStringSchema.optional(),
 	targetSessionId: nonEmptyStringSchema.optional(),
@@ -22126,7 +22346,8 @@ var workItemResultSchema = workItemResultBodySchema.extend({
 var workItemIdentityShape = {
 	id: string(),
 	sequence: number().int().positive(),
-	contractRevision: literal(1),
+	contractRevision: literal(2),
+	kind: _enum(["root", "delegated"]),
 	rootSessionId: string(),
 	creatorSessionId: string(),
 	targetSessionId: string(),
@@ -22138,9 +22359,39 @@ var workItemIdentityShape = {
 	sourceIdentity: workItemSourceIdentitySchema,
 	revision: number().int().positive(),
 	createdAt: string(),
-	updatedAt: string()
+	updatedAt: string(),
+	progressSummary: string().optional(),
+	blockers: array(string()).optional(),
+	nextAction: string().optional()
 };
-var activeWorkItemSchema = object({
+function validateWorkItemKind(schema) {
+	return schema.superRefine((value, context) => {
+		const v = value;
+		const b = value;
+		if (v.kind === "root" && (b.rootSessionId !== b.creatorSessionId || b.creatorSessionId !== b.targetSessionId || b.parentWorkItemId !== null)) context.addIssue({
+			code: "custom",
+			path: ["kind"],
+			message: "Root Work Item binding is invalid."
+		});
+		if (v.kind === "delegated" && (b.creatorSessionId === b.targetSessionId || b.goal.length === 0 || b.scope.length === 0 || b.completionCriteria.length === 0 || b.authority.length === 0)) context.addIssue({
+			code: "custom",
+			path: ["kind"],
+			message: "Delegated Work Item binding is invalid."
+		});
+		const hasProgress = v.progressSummary !== void 0 || v.blockers !== void 0 || v.nextAction !== void 0;
+		if (v.kind === "root" && (!hasProgress || v.progressSummary === void 0 || v.blockers === void 0 || v.nextAction === void 0)) context.addIssue({
+			code: "custom",
+			path: ["kind"],
+			message: "Root Work Items require progress fields."
+		});
+		if (v.kind === "delegated" && hasProgress) context.addIssue({
+			code: "custom",
+			path: ["kind"],
+			message: "Delegated Work Items cannot include root progress fields."
+		});
+	});
+}
+var activeWorkItemSchema = validateWorkItemKind(object({
 	...workItemIdentityShape,
 	state: _enum([
 		"pending",
@@ -22148,33 +22399,38 @@ var activeWorkItemSchema = object({
 		"waiting"
 	]),
 	result: _null()
-}).strict();
-var canceledWorkItemSchema = object({
+}).strict());
+var canceledWorkItemSchema = validateWorkItemKind(object({
 	...workItemIdentityShape,
 	state: literal("canceled"),
 	result: _null()
-}).strict();
+}).strict());
+var completedWorkItemSchema = validateWorkItemKind(object({
+	...workItemIdentityShape,
+	state: literal("completed"),
+	result: workItemResultSchema.extend({ outcome: literal("completed") }).strict()
+}).strict());
+var partiallyCompletedWorkItemSchema = validateWorkItemKind(object({
+	...workItemIdentityShape,
+	state: literal("partially_completed"),
+	result: workItemResultSchema.extend({ outcome: literal("partially_completed") }).strict()
+}).strict());
+var failedWorkItemSchema = validateWorkItemKind(object({
+	...workItemIdentityShape,
+	state: literal("failed"),
+	result: workItemResultSchema.extend({ outcome: literal("failed") }).strict()
+}).strict());
 var resultWorkItemSchema = union([
-	object({
-		...workItemIdentityShape,
-		state: literal("completed"),
-		result: workItemResultSchema.extend({ outcome: literal("completed") }).strict()
-	}).strict(),
-	object({
-		...workItemIdentityShape,
-		state: literal("partially_completed"),
-		result: workItemResultSchema.extend({ outcome: literal("partially_completed") }).strict()
-	}).strict(),
-	object({
-		...workItemIdentityShape,
-		state: literal("failed"),
-		result: workItemResultSchema.extend({ outcome: literal("failed") }).strict()
-	}).strict()
+	completedWorkItemSchema,
+	partiallyCompletedWorkItemSchema,
+	failedWorkItemSchema
 ]);
 var workItemSchema = union([
 	activeWorkItemSchema,
 	canceledWorkItemSchema,
-	resultWorkItemSchema
+	completedWorkItemSchema,
+	partiallyCompletedWorkItemSchema,
+	failedWorkItemSchema
 ]);
 var workItemAggregationDecisionSchema = object({
 	parentWorkItemId: string(),
@@ -22224,17 +22480,35 @@ var resultSchemas = {
 			maxListLimit: literal(100)
 		}).strict(),
 		workItems: object({
-			contractRevision: literal(1),
+			contractRevision: literal(2),
 			states: tuple(WORK_ITEM_STATES.map((state) => literal(state))),
 			mutations: tuple([
 				literal("create"),
+				literal("revise"),
 				literal("transition"),
 				literal("result"),
-				literal("cancel")
+				literal("cancel"),
+				literal("history.append")
 			]),
+			history: object({
+				events: tuple([
+					literal("created"),
+					literal("migration_baseline"),
+					literal("contract_revised"),
+					literal("progress"),
+					literal("handoff"),
+					literal("state_transitioned"),
+					literal("result_reported")
+				]),
+				operations: tuple([literal("append"), literal("list")]),
+				defaultListLimit: literal(50),
+				maxListLimit: literal(200)
+			}).strict(),
 			defaultListLimit: literal(50),
 			maxListLimit: literal(200),
 			maxListResponseBytes: literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
+			maxEventPayloadBytes: literal(WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES),
+			maxMigrationBaselinePayloadBytes: literal(WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES),
 			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES),
 			aggregation: object({
 				contractRevision: literal(1),
@@ -22287,6 +22561,12 @@ var resultSchemas = {
 		nextCursor: string().optional()
 	}).strict(),
 	"work.get": workItemSchema,
+	"work.revise": workItemSchema,
+	"work.history.append": workItemSchema,
+	"work.history.list": object({
+		items: array(workItemEventSchema),
+		nextCursor: string().optional()
+	}).strict(),
 	"work.transition": workItemSchema,
 	"work.result": resultWorkItemSchema,
 	"work.cancel": canceledWorkItemSchema,
@@ -22371,8 +22651,8 @@ var SESSION_MCP_SERVER_INSTRUCTIONS = [
 	"Use session.self only to resolve the bound actor Session; keep every target of other Session operations explicit.",
 	"Generate, retain, and reuse the same caller-owned idempotency key when retrying effect-bearing operations.",
 	"A failed terminal execution is a successful tool result; inspect execution.state and errorCode.",
-	"Use a Work Item to track one delegated assignment across multiple executions; do not treat an execution as the Work Item identity.",
-	"Only the target Session reports Work Item progress and results, and only the creator cancels an active Work Item.",
+	"Use a delegated Work Item to track one assignment across multiple executions; do not treat an execution as the Work Item identity.",
+	"A delegated target reports its state and result while its creator alone can cancel it; a root owner keeps its self-owned Root Work Item current with work.revise and work.history.append.",
 	"Coordination events are public records separate from the normal response; do not change the normal response format when recording one.",
 	"Record a coordination event for a scope or policy decision, an ancestor or user decision request, a blocker opening or clearing, a major work milestone, or a correction.",
 	"Use user_decision_required for user confirmation, selection, or free text; use blocker only for an external condition that prevents your work, and resolve your blocker after work can resume.",
@@ -22462,6 +22742,27 @@ var SESSION_MCP_TOOL_DEFINITIONS = [
 		name: "work.get",
 		title: "Get Work Item",
 		description: "Read one visible Work Item.",
+		readOnly: true,
+		destructive: false
+	},
+	{
+		name: "work.revise",
+		title: "Revise Root Work Item",
+		description: "Revise the bound root Work Item contract.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "work.history.append",
+		title: "Append Work Item history",
+		description: "Record progress or handoff history for the bound root Work Item.",
+		readOnly: false,
+		destructive: false
+	},
+	{
+		name: "work.history.list",
+		title: "List Work Item history",
+		description: "Read bounded Work Item history.",
 		readOnly: true,
 		destructive: false
 	},
@@ -22636,7 +22937,7 @@ function annotations(definition) {
 	};
 }
 function isMutation(operation, input) {
-	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.result" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
+	return operation === "session.create" || operation === "session.rename" || operation === "session.files.write_text" || operation === "turn.run" || operation === "turn.enqueue" || operation === "turn.cancel" || operation === "work.create" || operation === "work.transition" || operation === "work.revise" || operation === "work.history.append" || operation === "work.result" || operation === "work.cancel" || operation === "work.aggregation.decide" || operation === "work.aggregation.retry" || operation === "interaction.respond" || operation === "coordination.event.create" || operation === "coordination.event.resolve" || operation === "coordination.event.consume" || operation === "coordination.event.cancel" || operation === "coordination.event.correct" || operation === "transcript.export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 function safeRuntimeError(value) {
 	const parsed = errorSchema.safeParse(value);
@@ -22786,6 +23087,24 @@ function createWithMateSessionMcpServer(deps = {}) {
 		inputSchema: workItemInputSchema,
 		outputSchema: createOutputSchema("work.get")
 	}, async (input) => executeOperation("work.get", input, deps));
+	server.registerTool("work.revise", {
+		...definitions.get("work.revise"),
+		annotations: annotations(definitions.get("work.revise")),
+		inputSchema: workItemReviseInputSchema,
+		outputSchema: createOutputSchema("work.revise")
+	}, async (input) => executeOperation("work.revise", input, deps));
+	server.registerTool("work.history.append", {
+		...definitions.get("work.history.append"),
+		annotations: annotations(definitions.get("work.history.append")),
+		inputSchema: workItemHistoryAppendInputSchema,
+		outputSchema: createOutputSchema("work.history.append")
+	}, async (input) => executeOperation("work.history.append", input, deps));
+	server.registerTool("work.history.list", {
+		...definitions.get("work.history.list"),
+		annotations: annotations(definitions.get("work.history.list")),
+		inputSchema: workItemHistoryListInputSchema,
+		outputSchema: createOutputSchema("work.history.list")
+	}, async (input) => executeOperation("work.history.list", input, deps));
 	server.registerTool("work.transition", {
 		...definitions.get("work.transition"),
 		annotations: annotations(definitions.get("work.transition")),
@@ -22962,6 +23281,9 @@ var commandMap = /* @__PURE__ */ new Map([
 	["work create", "work.create"],
 	["work list", "work.list"],
 	["work get", "work.get"],
+	["work revise", "work.revise"],
+	["work history append", "work.history.append"],
+	["work history list", "work.history.list"],
 	["work transition", "work.transition"],
 	["work result", "work.result"],
 	["work cancel", "work.cancel"],
@@ -23092,16 +23414,17 @@ async function runWithMateSessionCli(args, deps = {}) {
 	}
 }
 function isMutationCommand(command, input) {
-	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work result" || command === "work cancel" || command === "work aggregation decide" || command === "work aggregation retry" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
+	return command === "session create" || command === "session rename" || command === "session files write-text" || command === "turn run" || command === "turn enqueue" || command === "turn cancel" || command === "work create" || command === "work transition" || command === "work revise" || command === "work history append" || command === "work result" || command === "work cancel" || command === "work aggregation decide" || command === "work aggregation retry" || command === "interaction respond" || command === "coordination event create" || command === "coordination event resolve" || command === "coordination event consume" || command === "coordination event cancel" || command === "coordination event correct" || command === "transcript export" && (input === void 0 || input.destination?.kind !== "inline");
 }
 async function parseArgs(args, deps) {
 	const fileCommand = args[0] === "session" && args[1] === "files";
 	const coordinationCommand = args[0] === "coordination" && args[1] === "event";
 	const workAggregationCommand = args[0] === "work" && args[1] === "aggregation";
+	const workHistoryCommand = args[0] === "work" && args[1] === "history";
 	const namespacedCommand = args[0] === "turn" || args[0] === "runtime" || args[0] === "session" || args[0] === "work" || args[0] === "interaction" || args[0] === "transcript";
-	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
-	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|transition|result|cancel|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
-	const optionStart = fileCommand || coordinationCommand || workAggregationCommand ? 3 : namespacedCommand ? 2 : 1;
+	const command = fileCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : coordinationCommand || workAggregationCommand || workHistoryCommand ? `${args[0]} ${args[1]} ${args[2] ?? ""}`.trim() : namespacedCommand ? `${args[0]} ${args[1] ?? ""}`.trim() : args[0] ?? "";
+	if (command !== "status" && command !== "schema" && !commandMap.has(command)) throw new SessionCliUsageError("Usage: withmate-session <runtime catalog|session self|create|list|get|rename|session files list|read-text|write-text|work create|list|get|revise|transition|result|cancel|work history append|list|work aggregation get|list|decide|retry|turn options|run|enqueue|list|get|cancel|interaction list|respond|coordination event create|list|get|resolve|consume|cancel|correct|transcript export|status|schema|mcp-server> [options]");
+	const optionStart = fileCommand || coordinationCommand || workAggregationCommand || workHistoryCommand ? 3 : namespacedCommand ? 2 : 1;
 	let json;
 	let file;
 	let useStdin = false;

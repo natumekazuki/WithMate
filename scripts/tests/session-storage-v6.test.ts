@@ -9,11 +9,14 @@ import { DEFAULT_APPROVAL_MODE } from "../../src/approval-mode.js";
 import type { CharacterRuntimeSnapshot } from "../../src/character/character-catalog.js";
 import { UNKNOWN_CHARACTER_OWNER_ID } from "../../src/character/character-owner.js";
 import { buildNewSession, type MessageArtifact } from "../../src/session-state.js";
+import type { ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { resolveCharacterAuthoringRuntimeSessionForTurn } from "../../src-electron/character-authoring-service.js";
 import {
   SessionCrudIdempotencyConflictError,
   SessionStorageV6,
 } from "../../src-electron/session-storage-v6.js";
+import { WorkItemService } from "../../src-electron/work-item-service.js";
+import { WorkItemStorageV6 } from "../../src-electron/work-item-storage-v6.js";
 
 async function removeDirectoryWithRetry(targetPath: string, attempts = 5): Promise<void> {
   for (let index = 0; index < attempts; index += 1) {
@@ -70,8 +73,8 @@ function createCharacterRuntimeSnapshot(
     description: "",
     iconFilePath: "",
     theme: { main: "#6f8cff", sub: "#6fb8c7" },
-    definitionMarkdown: `# Character\n${name}`,
-    definitionSha256: `${characterId}-sha256`,
+    definitionMarkdown: "# Character\n" + name,
+    definitionSha256: characterId + "-sha256",
     definitionByteSize: name.length,
     snapshotAt: "2026-08-01T00:00:00.000Z",
   };
@@ -194,6 +197,59 @@ function listSessionTurnSummaries(dbPath: string): string[] {
     return rows.map((row) => row.summary);
   } finally {
     db.close();
+  }
+}
+
+function completeRootWorkItemsForDeletion(
+  dbPath: string,
+  sessionStorage: SessionStorageV6,
+  sessionIds: readonly string[],
+): void {
+  const workItemStorage = new WorkItemStorageV6(dbPath);
+  try {
+    const service = new WorkItemService({
+      storage: workItemStorage,
+      getTurnAuthoritySession: (sessionId) => sessionStorage.getSessionTurnAuthority(sessionId),
+      createWorkItemId: () => "unused-root-deletion-fixture",
+      currentTimestamp: () => "2026-08-30T00:00:00.000Z",
+    });
+    for (const sessionId of sessionIds) {
+      const rootWorkItem = workItemStorage.get("root-work-item:" + sessionId);
+      assert.ok(rootWorkItem);
+      const binding: ResolvedAgentRuntimeBinding = {
+        bindingId: "binding-" + sessionId,
+        bindingIdHash: "hash-" + sessionId,
+        actorSessionId: sessionId,
+        providerId: "codex",
+        executionGeneration: "generation-1",
+        authoritySnapshot: {},
+        operationGrants: ["session.runtime.invoke"],
+        createdAt: "2026-08-30T00:00:00.000Z",
+        expiresAt: null,
+      };
+      const active = service.transition({
+        workItemId: rootWorkItem.id,
+        state: "in_progress",
+        expectedRevision: rootWorkItem.revision,
+        idempotencyKey: "complete-for-deletion:" + sessionId + ":start",
+      }, binding);
+      service.reportResult({
+        workItemId: rootWorkItem.id,
+        state: "completed",
+        expectedRevision: active.revision,
+        result: {
+          summary: "Session cleanup fixture completed.",
+          changes: [],
+          verificationResults: [],
+          findings: [],
+          unverifiedItems: [],
+          remainingWork: [],
+        },
+        idempotencyKey: "complete-for-deletion:" + sessionId + ":result",
+      }, binding);
+    }
+  } finally {
+    workItemStorage.close();
   }
 }
 
@@ -668,6 +724,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "保存済みSessionのstable ownerとruntime snapshot ownerが不一致なら、stable ownerを維持したままsnapshotとprovider threadを無効化する"
+  // oracle = { type = "contract", ref = "docs/design/character-storage.md#Runtime Snapshot" }
+  // failure_mode = "破損snapshotからownerを推測するか古いthreadを再利用し、別Characterのruntime contextでSessionが継続する"
+  // scope = "SessionStorageV6のread projectionと再保存、character-authoring turnのsnapshot再解決"
+  // lifecycle = "permanent"
+  // distinction = "通常Sessionとcharacter-authoring Sessionの双方でrelational ownerを保持し、再保存後もthread無効化が残る境界を一つのDB復旧経路で検証する"
+  // @end-test-value
   it("既存 row の runtime snapshot owner が不一致なら relational owner を維持して snapshot と thread を無効化する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -678,7 +743,7 @@ describe("SessionStorageV6", () => {
       insertCharacterRows(dbPath, ["muse", "other"]);
       const sessions = (["default", "character-authoring"] as const).map((sessionKind) => ({
         ...buildNewSession({
-          id: `corrupted-owner-${sessionKind}`,
+          id: "corrupted-owner-" + sessionKind,
           taskTitle: "Muse session",
           workspaceLabel: "Muse workspace",
           workspacePath: "C:/characters/muse",
@@ -691,7 +756,7 @@ describe("SessionStorageV6", () => {
           characterRuntimeSnapshot: createCharacterRuntimeSnapshot("muse", "Muse"),
           approvalMode: DEFAULT_APPROVAL_MODE,
         }),
-        threadId: `thread-for-other-owner-${sessionKind}`,
+        threadId: "thread-for-other-owner-" + sessionKind,
       }));
       sessions.forEach((session) => storage?.insertSession(session));
       storage.close();
@@ -739,6 +804,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "contract"
+  // claim = "provider別の実行設定継承元はlegacy表記を正規化したうえでlast_active_atとID順の最新Session一件になる"
+  // oracle = { type = "contract", ref = "docs/adr/007-provider-runtime-selection-inheritance.md#Decision" }
+  // failure_mode = "表記揺れで履歴を見失うか古いSessionを選び、新規Sessionへ誤ったruntime設定を継承する"
+  // scope = "SessionStorageV6.getLatestSessionSummaryForProviderのprovider正規化、最新一件選択、runtime option projection"
+  // lifecycle = "permanent"
+  // distinction = "legacy provider値と最新順のtie-breakを同時に含め、返却された五つのruntime optionと未知providerのnullを観測する"
+  // @end-test-value
   it("getLatestSessionSummaryForProvider は legacy provider 表記を正規化して最新一件だけを返す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -754,7 +828,7 @@ describe("SessionStorageV6", () => {
         id,
         taskTitle: id,
         workspaceLabel: id,
-        workspacePath: `C:/${id}`,
+        workspacePath: "C:/" + id,
         branch: "main",
         provider,
         model,
@@ -922,6 +996,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "last_active_atのcutoff列挙は境界を除外し、削除可能なterminal root Sessionだけを複数削除する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "cutoff境界のSessionを誤って列挙する、またはterminal Root WorkItemを持つ複数Sessionの明示削除を拒否して履歴整理が進まない"
+  // scope = "SessionStorageV6 last-active selection and batch deletion"
+  // lifecycle = "permanent"
+  // distinction = "単一削除ではなくcutoff前、cutoff一致、cutoff後の三Sessionを作り、選択結果と複数削除後の残存Sessionを観測する"
+  // @end-test-value
   it("last_active_at が cutoff より前の session id を列挙し、複数削除できる", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -961,6 +1044,7 @@ describe("SessionStorageV6", () => {
         [oldSession.id],
       );
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [oldSession.id, recentSession.id]);
       storage.deleteSessions([oldSession.id, recentSession.id]);
 
       assert.deepEqual(storage.listSessions().map((session) => session.id), [cutoffSession.id]);
@@ -970,6 +1054,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "terminal root Sessionのdelete、replace、clear経路は削除対象を親に持つauxiliary_sessionsだけをcleanupする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "terminal root Sessionの物理削除後にauxiliary Sessionが孤児化する、または保持対象のrootかactive/recovery companionに属するauxiliary Sessionまで失う"
+  // scope = "SessionStorageV6 Session and auxiliary cleanup transaction"
+  // lifecycle = "permanent"
+  // distinction = "delete、replace、clearの三入口とcompanion status別の保持境界を同じreal SQLiteで観測する"
+  // @end-test-value
   it("親 Session の削除経路で auxiliary_sessions を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -1003,6 +1096,7 @@ describe("SessionStorageV6", () => {
         { id: "aux-replaced", parentSessionId: replacedParent.id },
       ]);
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [deletedParent.id]);
       storage.deleteSession(deletedParent.id);
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [replacedParent.id, retainedParent.id]);
 
@@ -1019,6 +1113,7 @@ describe("SessionStorageV6", () => {
         { id: "aux-companion-discarded", parentSessionId: "companion-discarded-parent" },
       ]);
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [replacedParent.id]);
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained after replace" }]);
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), [
         "companion-active-parent",
@@ -1026,6 +1121,7 @@ describe("SessionStorageV6", () => {
         retainedParent.id,
       ]);
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [retainedParent.id]);
       storage.clearSessions();
       assert.deepEqual(listAuxiliarySessionParentIds(dbPath), []);
     } finally {
@@ -1034,6 +1130,15 @@ describe("SessionStorageV6", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "terminal root Sessionのdelete、replace、clear経路は削除対象SessionとAuxiliary Sessionのturn payloadだけをcleanupする"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 削除" }
+  // failure_mode = "物理削除したSessionのturn payloadが残留する、または保持対象Sessionかactive companion配下の監査payloadまで失う"
+  // scope = "SessionStorageV6 Session turn payload cleanup transaction"
+  // lifecycle = "permanent"
+  // distinction = "Session直結とauxiliary直結のpayloadをdelete、replace、clearの各入口で区別して観測する"
+  // @end-test-value
   it("Session / Auxiliary 削除経路で session_turns_v6 payload を cleanup する", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-v6-"));
     const dbPath = path.join(tempDirectory, "withmate-v6.db");
@@ -1074,6 +1179,7 @@ describe("SessionStorageV6", () => {
         { auxiliarySessionId: "aux-audit-replaced", summary: "audit-replaced-auxiliary" },
       ]);
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [deletedParent.id]);
       storage.deleteSession(deletedParent.id);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
         "audit-replaced-auxiliary",
@@ -1095,6 +1201,7 @@ describe("SessionStorageV6", () => {
         { auxiliarySessionId: "aux-audit-companion-merged", summary: "audit-companion-merged-auxiliary" },
       ]);
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [replacedParent.id]);
       storage.replaceSessions([{ ...retainedParent, taskTitle: "retained audit after replace" }]);
       assert.deepEqual(listSessionTurnSummaries(dbPath), [
         "audit-companion-active-auxiliary",
@@ -1102,6 +1209,7 @@ describe("SessionStorageV6", () => {
         "audit-retained-session",
       ]);
 
+      completeRootWorkItemsForDeletion(dbPath, storage, [retainedParent.id]);
       storage.clearSessions();
       assert.deepEqual(listSessionTurnSummaries(dbPath), []);
     } finally {
