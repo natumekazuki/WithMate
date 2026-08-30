@@ -99,6 +99,52 @@ describe("Memory V6 runtime API", () => {
     }
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "legacy pointerのrename後にlock解放が失敗しても、read-backでcommit済みと確定し参照中のgeneration pairを維持する"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer and generation pair consistency" }
+  // failure_mode = "pointer commit後のlock解放失敗をpublish失敗として扱い、catchがpointer参照中のCLI/MCP generation fileを削除する"
+  // scope = "memory-legacy-projection-publication-recovery"
+  // lifecycle = "permanent"
+  // distinction = "callbackの疑似例外ではなく、lock directoryを非emptyにして実際のproper-lockfile release失敗を発生させる"
+  // @end-test-value
+  it("legacy pointer commit後のlock解放失敗はread-backしてgeneration pairを維持する", async () => {
+    const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const legacyLockDirectoryPath = path.join(runtimeDirectoryPath, ".memory-v6-legacy-pointer.lock");
+    let runtime: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    try {
+      runtime = await startMemoryV6RuntimeApi({
+        userDataPath,
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "development",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeLegacyPointerLockRelease: async () => {
+          await writeFile(path.join(legacyLockDirectoryPath, "release-blocker"), "blocked");
+        },
+      });
+
+      await stat(path.join(legacyLockDirectoryPath, "release-blocker"));
+      const cli = await readDiscoveryProjection(runtime.discoveryFilePath, "cli");
+      const mcp = await readDiscoveryProjection(runtime.discoveryFilePath, "mcp");
+      assert.equal(cli.document.runtimeGenerationId, runtime.runtimeGenerationId);
+      assert.equal(mcp.document.runtimeGenerationId, runtime.runtimeGenerationId);
+      await stat(cli.generationFilePath);
+      await stat(mcp.generationFilePath);
+
+      await rm(legacyLockDirectoryPath, { recursive: true, force: true });
+      await runtime.stop();
+      runtime = null;
+    } finally {
+      await rm(legacyLockDirectoryPath, { recursive: true, force: true });
+      await runtime?.stop().catch(() => undefined);
+      await rm(userDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
   it("cleanup中に新runtimeがpublishされてもcurrent pointerと新generationを削除しない", async () => {
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
     let releaseCleanup!: () => void;
@@ -772,6 +818,63 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
           secondRuntimeGenerationId,
         ),
       )));
+    } finally {
+      await secondRuntime?.stop().catch(() => undefined);
+      await firstRuntime?.stop().catch(() => undefined);
+      await rm(firstUserDataPath, { recursive: true, force: true });
+      await rm(secondUserDataPath, { recursive: true, force: true });
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "停止runtime自身のlegacy projectionが未公開でも、active集合が一意へ収束したら生存runtimeへpointerをhandoffする"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer owner-aware handoff" }
+  // failure_mode = "後発runtimeのlegacy generation準備が失敗してhandleがnullになると、停止時のreplacement解決をskipしてpointerが欠落したままになる"
+  // scope = "memory-legacy-projection-owner-cleanup"
+  // lifecycle = "permanent"
+  // distinction = "正常にprojectionを保持する後発runtimeの逆順終了testとは異なり、後発だけgeneration security failureを注入する"
+  // @end-test-value
+  it("legacy projection未公開の後発runtime停止でも先発runtimeへpointerをhandoffする", async () => {
+    const firstUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const secondUserDataPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"));
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    let firstRuntime: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    let secondRuntime: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    try {
+      firstRuntime = await startMemoryV6RuntimeApi({
+        userDataPath: firstUserDataPath,
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      const firstGeneration = firstRuntime.runtimeGenerationId;
+      secondRuntime = await startMemoryV6RuntimeApi({
+        userDataPath: secondUserDataPath,
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+        buildChannel: "development",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+        runtimePathSecurity: async (targetPath) => {
+          if (path.basename(targetPath).startsWith("memory-v6-cli.")) {
+            throw new Error("Injected legacy generation security failure.");
+          }
+        },
+      });
+
+      await assert.rejects(() => stat(secondRuntime.discoveryFilePath));
+      await secondRuntime.stop();
+      secondRuntime = null;
+
+      const cli = (await readDiscoveryProjection(firstRuntime.discoveryFilePath, "cli")).document;
+      const mcp = (await readDiscoveryProjection(firstRuntime.discoveryFilePath, "mcp")).document;
+      assert.equal(cli.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
+      assert.equal(cli.runtimeGenerationId, firstGeneration);
+      assert.equal(mcp.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
+      assert.equal(mcp.runtimeGenerationId, firstGeneration);
     } finally {
       await secondRuntime?.stop().catch(() => undefined);
       await firstRuntime?.stop().catch(() => undefined);

@@ -110,6 +110,8 @@ export type StartMemoryV6RuntimeApiOptions = {
   fetch?: typeof fetch;
   /** Test-only barrier after registry validation while the mutation lock is held. */
   beforeLegacyPointerCommit?: () => Promise<void>;
+  /** Test-only observation point after legacy pointer commit and before lock release. */
+  beforeLegacyPointerLockRelease?: () => Promise<void>;
   /** Test-only observation point immediately before registry entry publication. */
   beforeRuntimeRegistryPublicationCommit?: () => Promise<void>;
   /** Test-only observation point immediately before waiting for registry publication. */
@@ -196,14 +198,24 @@ type LegacyGenerationArtifact = {
 
 async function cleanupLegacyDiscoveryProjection(
   projection: PublishedMemoryV6DiscoveryFile | null,
-  replacement?: LegacyPointerReplacement,
+  input: {
+    runtimeDirectoryPath: string;
+    runtimeGenerationId: string;
+    security: RuntimePathSecurity;
+    replacement?: LegacyPointerReplacement;
+  },
 ): Promise<void> {
-  await projection?.cleanup(replacement);
+  if (projection) {
+    await projection.cleanup(input.replacement);
+    return;
+  }
+  await cleanupMemoryV6LegacyDiscoveryGeneration(input);
 }
 
 async function withLegacyPointerLock<T>(
   runtimeDirectoryPath: string,
   operation: () => Promise<T>,
+  beforeRelease?: () => Promise<void>,
 ): Promise<T> {
   const release = await properLockfile.lock(runtimeDirectoryPath, {
     realpath: false,
@@ -218,9 +230,30 @@ async function withLegacyPointerLock<T>(
     },
   });
   try {
-    return await operation();
+    const result = await operation();
+    await beforeRelease?.();
+    return result;
   } finally {
     await release();
+  }
+}
+
+async function commitLegacyPointerMutation(input: {
+  runtimeDirectoryPath: string;
+  expectedRuntimeGenerationId: string | null;
+  commit: (operation: () => Promise<void>) => Promise<boolean>;
+  operation: () => Promise<void>;
+}): Promise<boolean> {
+  try {
+    return await input.commit(input.operation);
+  } catch (error) {
+    const committedRuntimeGenerationId = await readCurrentLegacyRuntimeGenerationId(
+      input.runtimeDirectoryPath,
+    ).catch(() => undefined);
+    if (committedRuntimeGenerationId !== input.expectedRuntimeGenerationId) {
+      throw error;
+    }
+    return true;
   }
 }
 
@@ -700,6 +733,79 @@ async function cleanupPreparedDiscoveryProjection(projection: PreparedDiscoveryP
   await rm(projection.generationFilePath, { force: true });
 }
 
+async function cleanupMemoryV6LegacyDiscoveryGeneration(input: {
+  runtimeDirectoryPath: string;
+  runtimeGenerationId: string;
+  security: RuntimePathSecurity;
+  replacement?: LegacyPointerReplacement;
+  generationFilePaths?: readonly string[];
+}): Promise<void> {
+  const { discoveryFilePath } = resolveRuntimeDiscoveryPaths(input.runtimeDirectoryPath);
+  const generationFilePaths = input.generationFilePaths ?? (["cli", "mcp"] as const).map(
+    (adapter) => path.join(
+      input.runtimeDirectoryPath,
+      buildWithMateMemoryDiscoveryGenerationFileName(adapter, input.runtimeGenerationId),
+    ),
+  );
+  let replacementPointerTemporaryFilePath: string | null = null;
+  if (input.replacement) {
+    replacementPointerTemporaryFilePath = await prepareDiscoveryPairPointer(
+      discoveryFilePath,
+      input.replacement.runtimeGenerationId,
+      input.security,
+    );
+  }
+  try {
+    const commitCleanup = async () => {
+      const currentRuntimeGenerationId = await readCurrentLegacyRuntimeGenerationId(
+        input.runtimeDirectoryPath,
+      );
+      if (currentRuntimeGenerationId !== null
+        && currentRuntimeGenerationId !== input.runtimeGenerationId) {
+        return;
+      }
+      if (replacementPointerTemporaryFilePath) {
+        await rename(replacementPointerTemporaryFilePath, discoveryFilePath);
+        replacementPointerTemporaryFilePath = null;
+      } else if (currentRuntimeGenerationId === input.runtimeGenerationId) {
+        await rm(discoveryFilePath, { force: true });
+      }
+      if (await readCurrentLegacyRuntimeGenerationId(input.runtimeDirectoryPath)
+        === input.runtimeGenerationId) {
+        throw new Error("Legacy Memory discovery pointer cleanup did not commit.");
+      }
+    };
+    const expectedRuntimeGenerationId = input.replacement?.runtimeGenerationId ?? null;
+    if (input.replacement) {
+      await commitLegacyPointerMutation({
+        runtimeDirectoryPath: input.runtimeDirectoryPath,
+        expectedRuntimeGenerationId,
+        commit: input.replacement.commit,
+        operation: commitCleanup,
+      });
+    } else {
+      await commitLegacyPointerMutation({
+        runtimeDirectoryPath: input.runtimeDirectoryPath,
+        expectedRuntimeGenerationId,
+        commit: async (operation) => {
+          await withLegacyPointerLock(input.runtimeDirectoryPath, operation);
+          return true;
+        },
+        operation: commitCleanup,
+      });
+    }
+  } finally {
+    if (replacementPointerTemporaryFilePath) {
+      await rm(replacementPointerTemporaryFilePath, { force: true }).catch(() => undefined);
+    }
+  }
+  if (await readCurrentLegacyRuntimeGenerationId(input.runtimeDirectoryPath)
+    === input.runtimeGenerationId) {
+    throw new Error("Legacy Memory discovery generation is still referenced by the current pointer.");
+  }
+  await Promise.all(generationFilePaths.map((filePath) => rm(filePath, { force: true })));
+}
+
 export async function publishMemoryV6DiscoveryFile(
   options: PublishMemoryV6DiscoveryFileOptions,
 ): Promise<PublishedMemoryV6DiscoveryFile> {
@@ -740,31 +846,50 @@ export async function publishMemoryV6DiscoveryFile(
       let committed = false;
       for (let attempt = 0; attempt < 3 && !committed; attempt += 1) {
         const decision = await options.resolvePointerCommit();
-        committed = await decision.commit(async () => {
-          if (decision.runtimeGenerationId === runtimeGenerationId) {
-            await rename(pointerTemporaryFilePath!, discoveryFilePath);
-            pointerTemporaryFilePath = null;
-            pointerPublished = true;
-          } else {
-            await rm(discoveryFilePath, { force: true });
-            pointerPublished = false;
-          }
+        committed = await commitLegacyPointerMutation({
+          runtimeDirectoryPath,
+          expectedRuntimeGenerationId: decision.runtimeGenerationId,
+          commit: decision.commit,
+          operation: async () => {
+            if (decision.runtimeGenerationId === runtimeGenerationId) {
+              await rename(pointerTemporaryFilePath!, discoveryFilePath);
+              pointerTemporaryFilePath = null;
+              pointerPublished = true;
+            } else {
+              await rm(discoveryFilePath, { force: true });
+              pointerPublished = false;
+            }
+          },
         });
       }
     } else {
-      await withLegacyPointerLock(runtimeDirectoryPath, async () => {
-        await rename(pointerTemporaryFilePath!, discoveryFilePath);
+      await commitLegacyPointerMutation({
+        runtimeDirectoryPath,
+        expectedRuntimeGenerationId: runtimeGenerationId,
+        commit: async (operation) => {
+          await withLegacyPointerLock(runtimeDirectoryPath, operation);
+          return true;
+        },
+        operation: async () => {
+          await rename(pointerTemporaryFilePath!, discoveryFilePath);
+          pointerTemporaryFilePath = null;
+          pointerPublished = true;
+        },
       });
-      pointerTemporaryFilePath = null;
-      pointerPublished = true;
     }
     if (pointerTemporaryFilePath) {
       await rm(pointerTemporaryFilePath, { force: true });
       pointerTemporaryFilePath = null;
     }
   } catch (error) {
+    const pointerReferencesPreparedGeneration = await readCurrentLegacyRuntimeGenerationId(
+      runtimeDirectoryPath,
+    ).then(
+      (currentRuntimeGenerationId) => currentRuntimeGenerationId === runtimeGenerationId,
+      () => false,
+    );
     await Promise.all([
-      ...prepared.map(cleanupPreparedDiscoveryProjection),
+      ...(pointerReferencesPreparedGeneration ? [] : prepared.map(cleanupPreparedDiscoveryProjection)),
       ...(pointerTemporaryFilePath ? [rm(pointerTemporaryFilePath, { force: true })] : []),
     ]);
     throw error;
@@ -781,44 +906,13 @@ export async function publishMemoryV6DiscoveryFile(
     runtimeInstanceId: runtimeGenerationId,
     async cleanup(replacement?: LegacyPointerReplacement): Promise<void> {
       await options.beforeCleanup?.();
-      let replacementPointerTemporaryFilePath: string | null = null;
-      if (replacement) {
-        replacementPointerTemporaryFilePath = await prepareDiscoveryPairPointer(
-          discoveryFilePath,
-          replacement.runtimeGenerationId,
-          security,
-        );
-      }
-      try {
-        const commitCleanup = async () => {
-          const currentRuntimeGenerationId = await readCurrentLegacyRuntimeGenerationId(
-            runtimeDirectoryPath,
-          );
-          if (currentRuntimeGenerationId !== null
-            && currentRuntimeGenerationId !== runtimeGenerationId) {
-            return;
-          }
-          if (replacementPointerTemporaryFilePath) {
-            await rename(replacementPointerTemporaryFilePath, discoveryFilePath);
-            replacementPointerTemporaryFilePath = null;
-          } else if (currentRuntimeGenerationId === runtimeGenerationId) {
-            await rm(discoveryFilePath, { force: true });
-          }
-          if (await readCurrentLegacyRuntimeGenerationId(runtimeDirectoryPath) === runtimeGenerationId) {
-            throw new Error("Legacy Memory discovery pointer cleanup did not commit.");
-          }
-        };
-        if (replacement) {
-          await replacement.commit(commitCleanup);
-        } else {
-          await withLegacyPointerLock(runtimeDirectoryPath, commitCleanup);
-        }
-      } finally {
-        if (replacementPointerTemporaryFilePath) {
-          await rm(replacementPointerTemporaryFilePath, { force: true }).catch(() => undefined);
-        }
-      }
-      await Promise.all(generationFilePaths.map((filePath) => rm(filePath, { force: true })));
+      await cleanupMemoryV6LegacyDiscoveryGeneration({
+        runtimeDirectoryPath,
+        runtimeGenerationId,
+        security,
+        ...(replacement ? { replacement } : {}),
+        generationFilePaths,
+      });
     },
   };
 }
@@ -989,6 +1083,7 @@ async function commitObservedMemoryPublications(input: {
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
   operation: () => Promise<void>;
   beforeCommit?: () => Promise<void>;
+  beforeLockRelease?: () => Promise<void>;
 }): Promise<boolean> {
   return withRuntimeDiscoveryRegistryMutationLock(
     input.registryDirectoryPath,
@@ -1004,7 +1099,11 @@ async function commitObservedMemoryPublications(input: {
         return false;
       }
       await input.beforeCommit?.();
-      await withLegacyPointerLock(input.runtimeDirectoryPath, input.operation);
+      await withLegacyPointerLock(
+        input.runtimeDirectoryPath,
+        input.operation,
+        input.beforeLockRelease,
+      );
       return true;
     },
   );
@@ -1019,6 +1118,7 @@ async function resolveLegacyPointerPublishDecision(input: {
   limits?: Partial<RuntimeDiscoveryRegistryLimits>;
   fetch: typeof fetch;
   beforeCommit?: () => Promise<void>;
+  beforeLockRelease?: () => Promise<void>;
 }): Promise<LegacyPointerPublishDecision> {
   const snapshot = await listRuntimeDiscoveryRegistryEntries(
     input.registryDirectoryPath,
@@ -1054,6 +1154,7 @@ async function resolveLegacyPointerPublishDecision(input: {
       ...(input.limits ? { limits: input.limits } : {}),
       operation,
       ...(input.beforeCommit ? { beforeCommit: input.beforeCommit } : {}),
+      ...(input.beforeLockRelease ? { beforeLockRelease: input.beforeLockRelease } : {}),
     }),
   };
 }
@@ -1470,6 +1571,9 @@ export async function startMemoryV6RuntimeApi(
           ...(options.beforeLegacyPointerCommit
             ? { beforeCommit: options.beforeLegacyPointerCommit }
             : {}),
+          ...(options.beforeLegacyPointerLockRelease
+            ? { beforeLockRelease: options.beforeLegacyPointerLockRelease }
+            : {}),
         }),
       });
     } catch (error) {
@@ -1519,16 +1623,14 @@ export async function startMemoryV6RuntimeApi(
           cleanupErrors.push(error);
         }
         try {
-          if (legacyDiscoveryFile) {
-            legacyReplacement = await resolveLegacyPointerReplacement({
-              runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
-              ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
-              currentRuntimeGenerationId: runtimeGenerationId,
-              clock,
-              ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
-              fetch: options.fetch ?? fetch,
-            });
-          }
+          legacyReplacement = await resolveLegacyPointerReplacement({
+            runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
+            ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
+            currentRuntimeGenerationId: runtimeGenerationId,
+            clock,
+            ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
+            fetch: options.fetch ?? fetch,
+          });
         } catch (error) {
           cleanupErrors.push(error);
         }
@@ -1545,18 +1647,29 @@ export async function startMemoryV6RuntimeApi(
         try {
           await cleanupLegacyDiscoveryProjection(
             legacyDiscoveryFile,
-            legacyReplacement
-              ? {
-                runtimeGenerationId: legacyReplacement.replacement.entry.runtimeGenerationId,
-                commit: (operation) => commitLegacyPointerReplacement({
-                  resolution: legacyReplacement!,
-                  runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
-                  ...(options.registryDirectoryPath ? { registryDirectoryPath: options.registryDirectoryPath } : {}),
-                  ...(options.runtimeDiscoveryLimits ? { limits: options.runtimeDiscoveryLimits } : {}),
-                  operation,
-                }),
-              }
-              : undefined,
+            {
+              runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
+              runtimeGenerationId,
+              security,
+              ...(legacyReplacement
+                ? {
+                  replacement: {
+                    runtimeGenerationId: legacyReplacement.replacement.entry.runtimeGenerationId,
+                    commit: (operation: () => Promise<void>) => commitLegacyPointerReplacement({
+                      resolution: legacyReplacement!,
+                      runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
+                      ...(options.registryDirectoryPath
+                        ? { registryDirectoryPath: options.registryDirectoryPath }
+                        : {}),
+                      ...(options.runtimeDiscoveryLimits
+                        ? { limits: options.runtimeDiscoveryLimits }
+                        : {}),
+                      operation,
+                    }),
+                  },
+                }
+                : {}),
+            },
           );
         } catch (error) {
           cleanupErrors.push(error);
@@ -1573,7 +1686,11 @@ export async function startMemoryV6RuntimeApi(
     await registryPublication?.unpublish().catch(() => undefined);
     await server?.stop().catch(() => undefined);
     await registryPublication?.cleanupGeneration().catch(() => undefined);
-    await cleanupLegacyDiscoveryProjection(legacyDiscoveryFile).catch(() => undefined);
+    await cleanupLegacyDiscoveryProjection(legacyDiscoveryFile, {
+      runtimeDirectoryPath: legacyPaths.runtimeDirectoryPath,
+      runtimeGenerationId,
+      security,
+    }).catch(() => undefined);
     storage?.close();
     affectStorage?.close();
     throw error;
