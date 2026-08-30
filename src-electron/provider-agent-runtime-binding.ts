@@ -4,6 +4,8 @@ import {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 
 export {
@@ -11,6 +13,8 @@ export {
   WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_HEADER,
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
 } from "../src/agent-runtime/agent-runtime-binding-contract.js";
 
 export type ProviderAgentRuntimeBindingCapability = {
@@ -76,12 +80,21 @@ export function getProviderAgentRuntimeBindingCapability(
 export function buildProviderAgentRuntimeBindingEnv(
   projection: ProviderAgentRuntimeBindingProjection | null | undefined,
 ): Record<string, string> {
+  const memoryOwner = projection?.memoryRuntimeOwner;
+  const memoryApplicationInstanceId = memoryOwner?.applicationInstanceId?.trim();
+  const memoryGenerationId = memoryOwner?.runtimeGenerationId?.trim();
   return projection?.transport === "env"
       ? {
         [WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV]: projection.bindingReference,
         [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "1",
         ...(projection.turnCapability
           ? { [WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV]: projection.turnCapability }
+          : {}),
+        ...(memoryApplicationInstanceId && memoryGenerationId
+          ? {
+            [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]: memoryApplicationInstanceId,
+            [WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]: memoryGenerationId,
+          }
           : {}),
       }
     : {};
@@ -93,6 +106,7 @@ export function buildProviderAgentRuntimeBindingCacheKey(
   if (!projection || projection.transport === "unsupported") {
     return "";
   }
+  const memoryOwner = projection.memoryRuntimeOwner;
   return JSON.stringify([
     projection.bindingId,
     projection.providerId,
@@ -101,6 +115,8 @@ export function buildProviderAgentRuntimeBindingCacheKey(
     projection.turnCapability
       ? createHash("sha256").update(projection.turnCapability, "utf8").digest("base64url")
       : null,
+    memoryOwner?.applicationInstanceId ?? null,
+    memoryOwner?.runtimeGenerationId ?? null,
   ]);
 }
 
@@ -112,12 +128,16 @@ export function mergeDefinedProviderEnv(
   const bindingReferenceKey = WITHMATE_AGENT_RUNTIME_BINDING_REFERENCE_ENV.toLowerCase();
   const bindingRequiredKey = WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV.toLowerCase();
   const turnCapabilityKey = WITHMATE_AGENT_RUNTIME_TURN_CAPABILITY_ENV.toLowerCase();
+  const memoryApplicationInstanceIdKey = WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV.toLowerCase();
+  const memoryGenerationIdKey = WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV.toLowerCase();
   for (const [key, value] of Object.entries(baseEnv)) {
     const normalizedKey = key.toLowerCase();
     if (
       normalizedKey !== bindingReferenceKey
       && normalizedKey !== bindingRequiredKey
       && normalizedKey !== turnCapabilityKey
+      && normalizedKey !== memoryApplicationInstanceIdKey
+      && normalizedKey !== memoryGenerationIdKey
       && value !== undefined
     ) {
       merged[key] = value;

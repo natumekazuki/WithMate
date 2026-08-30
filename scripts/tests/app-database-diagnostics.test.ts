@@ -145,12 +145,26 @@ describe("inspectAppDatabase", () => {
     }
   });
 
-  it("Memory V6 runtime bootstrap後のfresh diagnosticsはV6 runtime DBを返す", async () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "分離registryを使うMemory runtime bootstrap後もV6 runtime DB diagnosticsがreadyになる"
+  // oracle = { type = "contract", ref = "V6 runtime database diagnostics" }
+  // failure_mode = "runtime discovery初期化の追加によりV6 DB bootstrapまたはdiagnosticsのruntime eligible判定が失敗する"
+  // scope = "memory-v6-database-bootstrap-diagnostics"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("分離registryを使うMemory V6 runtime bootstrap後のfresh diagnosticsはV6 runtime DBを返す", async () => {
     const userDataPath = await mkdtemp(path.join(tmpdir(), "withmate-app-db-diagnostics-"));
     const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
     try {
       const activeDatabasePath = path.join(userDataPath, APP_DATABASE_V4_FILENAME);
-      const runtime = await startMemoryV6RuntimeApi({ userDataPath, runtimeDirectoryPath });
+      const runtime = await startMemoryV6RuntimeApi({
+        userDataPath,
+        applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+        buildChannel: "development",
+        registryDirectoryPath: path.join(runtimeDirectoryPath, "registry"),
+        runtimeDirectoryPath,
+      });
       try {
         const diagnostics = inspectAppDatabase(userDataPath, activeDatabasePath, false);
         const v6File = diagnostics.files.find((file) => file.fileName === APP_DATABASE_V6_FILENAME);

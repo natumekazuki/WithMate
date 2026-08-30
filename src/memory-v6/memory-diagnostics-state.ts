@@ -1,15 +1,14 @@
 export type MemoryV6RuntimeDiagnostics = {
   status: "running" | "stopped" | "failed";
-  baseUrl: string | null;
-  dbPath: string | null;
-  discoveryFilePath: string | null;
-  hasApiSecret: boolean;
+  applicationInstanceId: string | null;
+  runtimeGenerationId: string | null;
+  buildChannel: "installed" | "development" | "visual-check" | "unknown" | null;
+  discoveryPublished: boolean;
 };
 
 export type MemoryV6SkillSyncDiagnostics = {
   providerId: string;
   skillRootConfigured: boolean;
-  skillPath: string | null;
   status:
     | "installed"
     | "updated"
@@ -19,7 +18,6 @@ export type MemoryV6SkillSyncDiagnostics = {
     | "skipped-collision"
     | "failed"
     | "not-run";
-  errorMessage?: string;
 };
 
 export type MemoryV6CliShimDiagnostics = {
@@ -35,16 +33,13 @@ export type MemoryV6CliShimDiagnostics = {
     | "blocked-existing"
     | "unsupported"
     | "failed";
-  shimDirectory: string | null;
-  shimPath: string | null;
   pathContainsShimDirectory: boolean;
-  message: string;
 };
 
 export type MemoryV6DiagnosticEvent = {
   kind: string;
-  message: string;
   occurredAt: string;
+  discoveryCode?: "WITHMATE_RUNTIME_REGISTRY_CAPACITY";
 };
 
 export type MemoryV6Diagnostics = {

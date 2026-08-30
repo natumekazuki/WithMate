@@ -7,15 +7,19 @@ import {
 } from "../src/glossary-contract.js";
 import type { GlossaryRuntimeOperation } from "../src/glossary-operation-schema.js";
 import { WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH } from "../src/memory-v6/memory-runtime-exchange.js";
+import type { RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import {
   callWithMateMemoryRuntime,
-  discoverWithMateMemoryApi,
+  mapWithMateMemoryDiscoveryCode,
   resolveAgentRuntimeBindingReference,
   resolveAgentRuntimeTurnCapability,
+  resolveWithMateMemoryApi,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryPublicDiscoveryCode,
   type WithMateMemoryRuntimeResponse,
+  type WithMateMemoryRuntimeResolution,
 } from "./withmate-memory-runtime-client.js";
 
 export type GlossaryRuntimeClientDeps = {
@@ -23,6 +27,12 @@ export type GlossaryRuntimeClientDeps = {
   env?: NodeJS.ProcessEnv;
   apiUrl?: string;
   discoveryFilePath?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
+  registryRootDirectoryPath?: string;
+  clock?: RuntimeDiscoveryClock;
+  staleThresholdMs?: number;
+  fetch?: typeof fetch;
   readFile?: typeof readFile;
   runtimeCall?: (
     connection: WithMateMemoryRuntimeConnection,
@@ -71,6 +81,56 @@ function createGlossaryBindingRequiredError(): GlossaryRuntimeEnvelope<GlossaryO
   };
 }
 
+function mapGlossaryRuntimeDiscoveryCode(
+  discoveryCode: WithMateMemoryPublicDiscoveryCode,
+): GlossaryOperationError["code"] {
+  switch (discoveryCode) {
+    case "WITHMATE_RUNTIME_INSTANCE_MISMATCH":
+      return "GLOSSARY_RUNTIME_INSTANCE_MISMATCH";
+    case "WITHMATE_RUNTIME_GENERATION_CHANGED":
+      return "GLOSSARY_RUNTIME_GENERATION_CHANGED";
+    case "WITHMATE_RUNTIME_AMBIGUOUS":
+      return "GLOSSARY_RUNTIME_AMBIGUOUS";
+    case "WITHMATE_RUNTIME_STALE":
+      return "GLOSSARY_RUNTIME_STALE";
+    case "WITHMATE_RUNTIME_REGISTRY_CAPACITY":
+      return "GLOSSARY_RUNTIME_REGISTRY_CAPACITY";
+    case "WITHMATE_RUNTIME_SELECTOR_INVALID":
+      return "GLOSSARY_RUNTIME_SELECTOR_INVALID";
+    case "WITHMATE_RUNTIME_CREDENTIAL_UNAVAILABLE":
+      return "GLOSSARY_RUNTIME_CREDENTIAL_UNAVAILABLE";
+    case "WITHMATE_RUNTIME_UNAVAILABLE":
+      return "GLOSSARY_RUNTIME_UNAVAILABLE";
+  }
+}
+
+function createGlossaryPublicDiscoveryError(
+  discoveryCode: WithMateMemoryPublicDiscoveryCode,
+  candidates: Extract<WithMateMemoryRuntimeResolution, { kind: "error" }>["candidates"] = [],
+): GlossaryRuntimeEnvelope<GlossaryOperationError> {
+  return {
+    schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
+    ok: false,
+    code: mapGlossaryRuntimeDiscoveryCode(discoveryCode),
+    message: "WithMate glossary runtime discovery could not select a runtime.",
+    effect: "none",
+    retryable: discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" || discoveryCode === "WITHMATE_RUNTIME_STALE",
+    details: {
+      discoveryCode,
+      candidates,
+    },
+  };
+}
+
+function createGlossaryRuntimeDiscoveryError(
+  resolution: Extract<WithMateMemoryRuntimeResolution, { kind: "error" }>,
+): GlossaryRuntimeEnvelope<GlossaryOperationError> {
+  return createGlossaryPublicDiscoveryError(
+    mapWithMateMemoryDiscoveryCode(resolution.code),
+    resolution.candidates,
+  );
+}
+
 function createGlossaryRequestTooLargeError(): GlossaryRuntimeEnvelope<GlossaryOperationError> {
   return {
     schemaVersion: GLOSSARY_RUNTIME_SCHEMA_VERSION,
@@ -102,21 +162,28 @@ export async function callGlossaryRuntime(input: {
   } catch {
     return createGlossaryBindingRequiredError();
   }
-  let connection: WithMateMemoryRuntimeConnection | null;
+  let resolution: WithMateMemoryRuntimeResolution;
   try {
-    connection = await discoverWithMateMemoryApi({
+    resolution = await resolveWithMateMemoryApi({
       adapter: deps.adapter,
       env: deps.env,
       apiUrl: deps.apiUrl,
       discoveryFilePath: deps.discoveryFilePath,
+      applicationInstanceId: deps.applicationInstanceId,
+      runtimeGenerationId: deps.runtimeGenerationId,
+      registryRootDirectoryPath: deps.registryRootDirectoryPath,
+      clock: deps.clock,
+      staleThresholdMs: deps.staleThresholdMs,
+      fetch: deps.fetch,
       readFile: deps.readFile,
     });
   } catch {
     return createGlossaryTransportError("WithMate runtime discovery failed.");
   }
-  if (!connection) {
-    return createGlossaryTransportError("WithMate runtime is unavailable.");
+  if (resolution.kind === "error") {
+    return createGlossaryRuntimeDiscoveryError(resolution);
   }
+  const connection = resolution.connection;
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? 10_000);
   let dispatched = false;
@@ -146,6 +213,9 @@ export async function callGlossaryRuntime(input: {
     const wasDispatched = error instanceof WithMateMemoryRuntimeExchangeError
       ? error.dispatched
       : dispatched;
+    if (error instanceof WithMateMemoryRuntimeExchangeError && !wasDispatched && error.discoveryCode) {
+      return createGlossaryPublicDiscoveryError(error.discoveryCode);
+    }
     return createGlossaryTransportError(
       "WithMate glossary runtime request failed.",
       isWriteOperation(input.operation) && wasDispatched ? "unknown" : "none",

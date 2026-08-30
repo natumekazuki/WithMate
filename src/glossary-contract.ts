@@ -108,6 +108,14 @@ export type GlossaryOperationErrorCode =
   | "GLOSSARY_SESSION_BINDING_INVALID"
   | "GLOSSARY_SESSION_BINDING_FORBIDDEN"
   | "GLOSSARY_CHECKOUT_NOT_FOUND"
+  | "GLOSSARY_RUNTIME_UNAVAILABLE"
+  | "GLOSSARY_RUNTIME_INSTANCE_MISMATCH"
+  | "GLOSSARY_RUNTIME_GENERATION_CHANGED"
+  | "GLOSSARY_RUNTIME_AMBIGUOUS"
+  | "GLOSSARY_RUNTIME_STALE"
+  | "GLOSSARY_RUNTIME_REGISTRY_CAPACITY"
+  | "GLOSSARY_RUNTIME_SELECTOR_INVALID"
+  | "GLOSSARY_RUNTIME_CREDENTIAL_UNAVAILABLE"
   | "GLOSSARY_TRANSPORT_ERROR";
 
 export type GlossaryCheckoutSelector =
@@ -134,6 +142,7 @@ export type GlossaryOperationError = {
   effect: GlossaryEffect;
   retryable: boolean;
   issues?: GlossaryValidationIssue[];
+  details?: Record<string, unknown>;
 };
 
 export type GlossaryListResult = {

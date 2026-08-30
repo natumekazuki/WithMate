@@ -191,37 +191,42 @@ describe("HomeSettingsContent", () => {
     assert.match(html, /指定日より前に最後に使われた Session を削除する/);
   });
 
-  it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Memory diagnosticsはruntime selectorに必要なsafe metadataだけを表示し、secretまたは個人pathを表示しない"
+  // oracle = { type = "adr", ref = "ADR-023 diagnostics and security" }
+  // failure_mode = "Settings diagnosticsからcredential、userData、Skillまたはshimの個人pathが露出する"
+  // scope = "memory-runtime-diagnostics-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Memory V6 diagnostics はinstance metadataだけのredacted summaryとして表示する", () => {
     const html = renderSettings({
       memoryV6Diagnostics: {
         generatedAt: "2026-06-27T00:00:00.000Z",
         runtime: {
           status: "running",
-          baseUrl: "http://127.0.0.1:12345",
-          dbPath: "C:/userdata/withmate-v6.db",
-          discoveryFilePath: "C:/runtime/memory-v6-api.json",
-          hasApiSecret: true,
+          applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+          runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
+          buildChannel: "installed",
+          discoveryPublished: true,
         },
         providers: [
           { providerId: "codex", providerSupported: true },
           { providerId: "custom", providerSupported: false },
         ],
         skillSync: [
-          { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
-          { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
+          { providerId: "codex", skillRootConfigured: true, status: "unchanged" },
+          { providerId: "custom", skillRootConfigured: true, status: "skipped-collision" },
         ],
         cliShim: {
           platform: "darwin",
           commandName: "withmate-memory",
           supported: true,
           status: "installed",
-          shimDirectory: "/Users/test/.local/bin",
-          shimPath: "/Users/test/.local/bin/withmate-memory",
           pathContainsShimDirectory: true,
-          message: "withmate-memory is available from the configured shim directory.",
         },
         lastErrors: [
-          { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
+          { kind: "memory-v6.runtime-api.start-failed", occurredAt: "2026-06-27T00:00:00.000Z" },
         ],
       },
     });
@@ -240,6 +245,8 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Do not read or write WithMate database files directly."));
     assert.ok(!html.includes("apiSecret"));
     assert.ok(!html.includes("bindingReference"));
+    assert.ok(!html.includes("C:/"));
+    assert.ok(!html.includes("/Users/"));
     assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_BINDING_REFERENCE"));
     assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_API_SECRET"));
     assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
@@ -249,7 +256,15 @@ describe("HomeSettingsContent", () => {
     assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
   });
 
-  it("Provider Instruction Sample の copy button は handler を呼ぶ", async () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "safe diagnostics schemaを表示中でもProvider Instruction Sampleのcopy操作が維持される"
+  // oracle = { type = "contract", ref = "Settings copy action" }
+  // failure_mode = "diagnostics projection変更によりcopy buttonが描画されないかhandlerへ到達しない"
+  // scope = "settings-provider-instruction-copy"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Provider Instruction Sample の copy button はsafe diagnostics表示中もhandlerを呼ぶ", async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
@@ -275,12 +290,11 @@ describe("HomeSettingsContent", () => {
             generatedAt: "2026-06-27T00:00:00.000Z",
             runtime: {
               status: "running",
-              baseUrl: "http://127.0.0.1:12345",
-              dbPath: "C:/userdata/withmate-v6.db",
-              discoveryFilePath: "C:/runtime/memory-v6-api.json",
-              hasApiSecret: true,
+              applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+              runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
+              buildChannel: "development",
+              discoveryPublished: true,
             },
-            binding: { activeBindingCount: 0 },
             providers: [],
             skillSync: [],
             cliShim: {
@@ -288,10 +302,7 @@ describe("HomeSettingsContent", () => {
               commandName: "withmate-memory",
               supported: false,
               status: "managed-by-installer",
-              shimDirectory: null,
-              shimPath: null,
               pathContainsShimDirectory: true,
-              message: "Windows installer manages the withmate-memory command alias.",
             },
             lastErrors: [],
           },

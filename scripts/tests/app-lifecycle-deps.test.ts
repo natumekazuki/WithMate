@@ -3,7 +3,15 @@ import test from "node:test";
 
 import { createAppLifecycleDeps } from "../../src-electron/app-lifecycle-deps.js";
 
-test("createAppLifecycleDeps は引数をそのまま AppLifecycleService 依存へ詰める", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "main compositionから渡したMemory runtime stop callbackがquit lifecycle依存へ欠落せず投影される"
+// oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
+// failure_mode = "composition境界でruntime stopが欠落し、will-quitの非同期best-effort cleanupへ退行する"
+// scope = "application-lifecycle-composition"
+// lifecycle = "permanent"
+// @end-test-value
+test("createAppLifecycleDeps はMemory runtime stopを含む引数をAppLifecycleService依存へ詰める", async () => {
   const calls: string[] = [];
   const deps = createAppLifecycleDeps({
     hasInFlightSessionRuns: () => true,
@@ -22,6 +30,9 @@ test("createAppLifecycleDeps は引数をそのまま AppLifecycleService 依存
     closePersistentStores() {
       calls.push("close");
     },
+    async stopMemoryRuntime() {
+      calls.push("stop-runtime");
+    },
   });
 
   assert.equal(deps.hasInFlightSessionRuns(), true);
@@ -31,6 +42,7 @@ test("createAppLifecycleDeps は引数をそのまま AppLifecycleService 依存
   deps.quitApp();
   assert.equal(deps.shouldQuitWhenAllWindowsClosed(), false);
   assert.equal(deps.confirmQuitWhileRunning(), true);
+  await deps.stopMemoryRuntime?.();
   deps.closePersistentStores();
-  assert.deepEqual(calls, ["set:true", "home", "quit", "close"]);
+  assert.deepEqual(calls, ["set:true", "home", "quit", "stop-runtime", "close"]);
 });

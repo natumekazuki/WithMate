@@ -611,7 +611,15 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     }
   });
 
-  it("不正な明示runtime URLはCharacterと一般Memoryでstructured pre-dispatch errorを返す", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "不正selectorをdispatch前にstructured errorへ変換する"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "別instanceへfallbackする"
+// scope = "memory-mcp-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("不正な明示runtime URLはCharacterと一般Memoryでstructured pre-dispatch errorを返す", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer({
       env: {
@@ -646,21 +654,23 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         schemaVersion: "withmate-character-context-v1",
         error: {
           code: "storage_unavailable",
-          message: "WithMate runtime request failed.",
-          retryable: true,
+          message: "WithMate runtime discovery could not select a runtime.",
+          retryable: false,
           conversationMayContinue: true,
           effect: "none",
+          details: { discoveryCode: "WITHMATE_RUNTIME_SELECTOR_INVALID", candidates: [] },
         },
       });
       assert.equal(memory.isError, true);
       assert.deepEqual(memory.structuredContent, {
         schemaVersion: "withmate-memory-v1",
         error: {
-          code: "WITHMATE_MEMORY_TRANSPORT_ERROR",
-          message: "WithMate runtime request failed.",
-          retryable: true,
+          code: "WITHMATE_RUNTIME_SELECTOR_INVALID",
+          message: "WithMate Memory runtime discovery could not select a runtime.",
+          retryable: false,
           conversationMayContinue: true,
           effect: "none",
+          details: { discoveryCode: "WITHMATE_RUNTIME_SELECTOR_INVALID", candidates: [] },
         },
       });
     } finally {
@@ -669,7 +679,15 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     }
   });
 
-  it("runtime unavailableをwrite成功にせず、retryabilityとconversation継続可否を返す", async () => {
+// @test-value v1
+// kind = "regression"
+// claim = "runtime unavailableをwrite成功へ変換しない"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "停止runtimeを成功として扱う"
+// scope = "memory-mcp-discovery"
+// lifecycle = "permanent"
+// @end-test-value
+it("runtime unavailableをwrite成功にせず、retryabilityとconversation継続可否を返す", async () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createWithMateMemoryMcpServer({
       env: { WITHMATE_MEMORY_DISCOVERY_FILE: "Z:/missing/withmate-memory.json" },
@@ -688,10 +706,11 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
         schemaVersion: "withmate-character-context-v1",
         error: {
           code: "storage_unavailable",
-          message: "WithMate runtime is not available.",
+          message: "WithMate runtime discovery could not select a runtime.",
           retryable: true,
           conversationMayContinue: true,
           effect: "none",
+          details: { discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE", candidates: [] },
         },
       });
     } finally {
@@ -872,7 +891,15 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
     }
   });
 
-  it("challenge後に同じportのpeerが差し替わってもcredentialとmutationを再送せず偽成功を拒否する", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "challenge後のpeer差替えでMCP dispatchを再実行しない"
+// oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
+// failure_mode = "偽peerへcredentialを再送する"
+// scope = "memory-mcp-transport"
+// lifecycle = "permanent"
+// @end-test-value
+it("challenge後に同じportのpeerが差し替わってもcredentialとmutationを再送せず偽成功を拒否する", async () => {
     const apiSecret = "swap-api-secret";
     const runtimeInstanceId = "swap-runtime";
     let replacementRequests = 0;
@@ -931,7 +958,7 @@ describe("WithMate Memory / Character Affect MCP contract", () => {
       }
       assert.equal(result.isError, true);
       assert.equal((result.structuredContent as any).error.code, "storage_unavailable");
-      assert.equal((result.structuredContent as any).error.effect, "unknown");
+      assert.equal((result.structuredContent as any).error.effect, "none");
       assert.equal(replacementRequests, 0);
       assert.equal(firstHeaders.length, 1);
       assert.equal(firstHeaders[0]["x-withmate-memory-api-secret"], undefined);

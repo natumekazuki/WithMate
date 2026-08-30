@@ -75,6 +75,8 @@ Input shorthands:
 Connection options:
   --api-url <loopback-url>
   --discovery-file <path>
+  --instance <application-instance-id>
+  --generation <runtime-generation-id>
 `;
 
 type ParsedCliRequest = {
@@ -82,6 +84,8 @@ type ParsedCliRequest = {
   body: Record<string, unknown>;
   apiUrl?: string;
   discoveryFilePath?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
 };
 
 class GlossaryCliUsageError extends Error {}
@@ -135,6 +139,8 @@ export async function parseWithMateGlossaryCliArgs(
   let inputSourceSeen = false;
   let apiUrl: string | undefined;
   let discoveryFilePath: string | undefined;
+  let applicationInstanceId: string | undefined;
+  let runtimeGenerationId: string | undefined;
   let checkoutId: string | undefined;
   const shorthand: Record<string, unknown> = {};
   const read = deps.readFile ?? readFile;
@@ -164,6 +170,12 @@ export async function parseWithMateGlossaryCliArgs(
       index += 1;
     } else if (argument === "--discovery-file") {
       discoveryFilePath = requireOptionValue(args, index, argument);
+      index += 1;
+    } else if (argument === "--instance") {
+      applicationInstanceId = requireOptionValue(args, index, argument);
+      index += 1;
+    } else if (argument === "--generation") {
+      runtimeGenerationId = requireOptionValue(args, index, argument);
       index += 1;
     } else if (argument === "--checkout-id") {
       checkoutId = requireOptionValue(args, index, argument);
@@ -206,7 +218,14 @@ export async function parseWithMateGlossaryCliArgs(
     }
     body = parsed.data;
   }
-  return { command, body, ...(apiUrl ? { apiUrl } : {}), ...(discoveryFilePath ? { discoveryFilePath } : {}) };
+  return {
+    command,
+    body,
+    ...(apiUrl ? { apiUrl } : {}),
+    ...(discoveryFilePath ? { discoveryFilePath } : {}),
+    ...(applicationInstanceId ? { applicationInstanceId } : {}),
+    ...(runtimeGenerationId ? { runtimeGenerationId } : {}),
+  };
 }
 
 function schemaProjection() {
@@ -249,10 +268,14 @@ export async function runWithMateGlossaryCli(
       adapter: "cli",
       apiUrl: request.apiUrl,
       discoveryFilePath: request.discoveryFilePath,
+      applicationInstanceId: request.applicationInstanceId,
+      runtimeGenerationId: request.runtimeGenerationId,
     });
     stdout.write(`${JSON.stringify(value)}\n`);
     if ("ok" in value && value.ok === false) {
-      return "code" in value && value.code === "GLOSSARY_TRANSPORT_ERROR"
+      return "code" in value
+        && typeof value.code === "string"
+        && (value.code === "GLOSSARY_TRANSPORT_ERROR" || value.code.startsWith("GLOSSARY_RUNTIME_"))
         ? WITHMATE_GLOSSARY_CLI_EXIT_CODES.transportError
         : WITHMATE_GLOSSARY_CLI_EXIT_CODES.operationError;
     }

@@ -10,17 +10,21 @@ import {
 import {
   DEFAULT_REQUEST_TIMEOUT_MS,
   callWithMateMemoryRuntime,
+  createCharacterRuntimeDiscoveryError,
+  createMemoryRuntimeDiscoveryError,
   createMemoryRuntimeError,
-  discoverWithMateMemoryApi,
   isMemoryErrorResponse,
   mapRuntimeHttpFailureToCharacterContext,
   mapRuntimeHttpFailureToMemory,
   resolveAgentRuntimeBindingReference,
+  resolveWithMateMemoryApi,
   WithMateMemoryRuntimeExchangeError,
   type WithMateMemoryRuntimeConnection,
   type WithMateMemoryRuntimeOperation,
+  type WithMateMemoryPublicDiscoveryCode,
   type WithMateMemoryRuntimeResponse,
 } from "./withmate-memory-runtime-client.js";
+import type { RuntimeDiscoveryClock } from "../src/runtime-discovery/runtime-discovery-contract.js";
 import {
   GENERAL_MEMORY_MCP_TOOL_DEFINITIONS,
   registerGeneralMemoryMcpTools,
@@ -34,6 +38,10 @@ type McpRuntimeDeps = {
     options: { signal: AbortSignal; bindingReference?: string },
   ) => Promise<WithMateMemoryRuntimeResponse>;
   readFile?: typeof import("node:fs/promises").readFile;
+  fetch?: typeof fetch;
+  clock?: RuntimeDiscoveryClock;
+  registryRootDirectoryPath?: string;
+  staleThresholdMs?: number;
   requestTimeoutMs?: number;
   fileOperationRequestTimeoutMs?: number;
 };
@@ -44,6 +52,10 @@ const GENERAL_MEMORY_FILE_OPERATION_PATHS = new Set([
   "/v1/get_file",
   "/v1/export_files",
 ]);
+
+function runtimeExchangeDiscoveryCode(error: WithMateMemoryRuntimeExchangeError): WithMateMemoryPublicDiscoveryCode | undefined {
+  return error.discoveryCode;
+}
 
 const affectValueSchema = z.object({
   label: z.string().min(1),
@@ -346,23 +358,6 @@ async function callRuntime(
   operationKind: "read" | "write",
   deps: McpRuntimeDeps,
 ): Promise<unknown> {
-  let connection: WithMateMemoryRuntimeConnection | null;
-  try {
-    connection = await discoverWithMateMemoryApi({ adapter: "mcp", env: deps.env, readFile: deps.readFile });
-  } catch {
-    return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
-      retryable: true,
-      conversationMayContinue: true,
-      effect: "none",
-    });
-  }
-  if (!connection) {
-    return createCharacterContextError("storage_unavailable", "WithMate runtime is not available.", {
-      retryable: true,
-      conversationMayContinue: true,
-      effect: "none",
-    });
-  }
   let bindingReference: string | undefined;
   try {
     bindingReference = resolveAgentRuntimeBindingReference(deps.env);
@@ -376,6 +371,29 @@ async function callRuntime(
     }
     throw error;
   }
+  let resolution;
+  try {
+    resolution = await resolveWithMateMemoryApi({
+      adapter: "mcp",
+      env: deps.env,
+      readFile: deps.readFile,
+      fetch: deps.fetch,
+      clock: deps.clock,
+      registryRootDirectoryPath: deps.registryRootDirectoryPath,
+      staleThresholdMs: deps.staleThresholdMs,
+    });
+  } catch {
+    return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: "none",
+      details: { discoveryCode: "WITHMATE_RUNTIME_UNAVAILABLE" },
+    });
+  }
+  if (resolution.kind === "error") {
+    return createCharacterRuntimeDiscoveryError(resolution);
+  }
+  const connection = resolution.connection;
   const abortController = new AbortController();
   const timeout = setTimeout(() => abortController.abort(), deps.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
   let dispatched = false;
@@ -394,10 +412,14 @@ async function callRuntime(
     const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError
       ? error.dispatched
       : dispatched;
+    const discoveryCode = error instanceof WithMateMemoryRuntimeExchangeError && !operationDispatched
+      ? runtimeExchangeDiscoveryCode(error)
+      : undefined;
     return createCharacterContextError("storage_unavailable", "WithMate runtime request failed.", {
       retryable: true,
       conversationMayContinue: true,
       effect: operationKind === "write" && operationDispatched ? "unknown" : "none",
+      ...(discoveryCode ? { details: { discoveryCode } } : {}),
     });
   } finally {
     clearTimeout(timeout);
@@ -413,23 +435,6 @@ async function callMemoryRuntime(
   },
   deps: McpRuntimeDeps,
 ): Promise<unknown> {
-  let connection: WithMateMemoryRuntimeConnection | null;
-  try {
-    connection = await discoverWithMateMemoryApi({ adapter: "mcp", env: deps.env, readFile: deps.readFile });
-  } catch {
-    return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
-      retryable: true,
-      conversationMayContinue: true,
-      effect: "none",
-    });
-  }
-  if (!connection) {
-    return createMemoryRuntimeError("WITHMATE_NOT_RUNNING", "WithMate runtime is not available.", {
-      retryable: true,
-      conversationMayContinue: true,
-      effect: "none",
-    });
-  }
   let bindingReference: string | undefined;
   try {
     bindingReference = resolveAgentRuntimeBindingReference(deps.env);
@@ -439,6 +444,28 @@ async function callMemoryRuntime(
     }
     throw error;
   }
+  let resolution;
+  try {
+    resolution = await resolveWithMateMemoryApi({
+      adapter: "mcp",
+      env: deps.env,
+      readFile: deps.readFile,
+      fetch: deps.fetch,
+      clock: deps.clock,
+      registryRootDirectoryPath: deps.registryRootDirectoryPath,
+      staleThresholdMs: deps.staleThresholdMs,
+    });
+  } catch {
+    return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
+      retryable: true,
+      conversationMayContinue: true,
+      effect: "none",
+    });
+  }
+  if (resolution.kind === "error") {
+    return createMemoryRuntimeDiscoveryError(resolution);
+  }
+  const connection = resolution.connection;
   const operationPath = new URL(operation.path, "http://127.0.0.1").pathname;
   const requestTimeoutMs = GENERAL_MEMORY_FILE_OPERATION_PATHS.has(operationPath)
     ? deps.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS
@@ -461,6 +488,17 @@ async function callMemoryRuntime(
     const operationDispatched = error instanceof WithMateMemoryRuntimeExchangeError
       ? error.dispatched
       : dispatched;
+    const discoveryCode = error instanceof WithMateMemoryRuntimeExchangeError && !operationDispatched
+      ? runtimeExchangeDiscoveryCode(error)
+      : undefined;
+    if (discoveryCode) {
+      return createMemoryRuntimeError(discoveryCode, "WithMate Memory runtime identity changed before dispatch.", {
+        retryable: discoveryCode === "WITHMATE_RUNTIME_UNAVAILABLE" || discoveryCode === "WITHMATE_RUNTIME_STALE",
+        conversationMayContinue: true,
+        effect: "none",
+        details: { discoveryCode },
+      });
+    }
     return createMemoryRuntimeError("WITHMATE_MEMORY_TRANSPORT_ERROR", "WithMate runtime request failed.", {
       retryable: true,
       conversationMayContinue: true,
