@@ -713,8 +713,8 @@ export async function publishMemoryV6DiscoveryFile(
     }));
 
     pointerTemporaryFilePath = await prepareDiscoveryPairPointer(discoveryFilePath, runtimeGenerationId, security);
+    await options.beforePairCommit?.();
     await withLegacyPointerLock(runtimeDirectoryPath, async () => {
-      await options.beforePairCommit?.();
       await rename(pointerTemporaryFilePath!, discoveryFilePath);
     });
     pointerTemporaryFilePath = null;

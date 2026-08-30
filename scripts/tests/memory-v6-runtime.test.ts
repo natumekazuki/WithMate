@@ -629,10 +629,10 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         await runtime.stop();
       }
 
-      const currentPointer = JSON.parse(await readFile(path.join(runtimeDirectoryPath, "memory-v6.current.json"), "utf8"));
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
       await assert.rejects(() => stat(path.join(
         runtimeDirectoryPath,
-        buildWithMateMemoryDiscoveryGenerationFileName("cli", currentPointer.runtimeInstanceId),
+        buildWithMateMemoryDiscoveryGenerationFileName("cli", runtime.runtimeGenerationId),
       )));
     } finally {
       await rm(userDataPath, { recursive: true, force: true });
