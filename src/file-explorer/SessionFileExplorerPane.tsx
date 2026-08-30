@@ -8,7 +8,13 @@ import type {
 } from "./file-explorer-contract.js";
 import type { WithMateWindowApi } from "../withmate-window-api.js";
 
-type FileExplorerApi = Pick<WithMateWindowApi, "listSessionFileRoots" | "listSessionDirectory">;
+type FileExplorerApi = Pick<
+  WithMateWindowApi,
+  | "listSessionFileRoots"
+  | "listSessionDirectory"
+  | "isSessionFileObjectCopyAvailable"
+  | "showSessionFileObjectCopyContextMenu"
+>;
 
 type SessionFileExplorerPaneProps = {
   api: FileExplorerApi | null;
@@ -16,11 +22,13 @@ type SessionFileExplorerPaneProps = {
   enabled: boolean;
   rootsRevision: string;
   selectedFile: SessionFileRootResourceRequest | null;
-  activeTab: "files" | "changes";
-  onActiveTabChange: (tab: "files" | "changes") => void;
+  activeTab: "files" | "changes" | "history";
+  onActiveTabChange: (tab: "files" | "changes" | "history") => void;
   onRefreshChanges: () => void;
+  onRefreshHistory?: () => void;
   onOpenFile: (request: SessionFileRootResourceRequest, openInWindow: boolean) => void;
   changesContent?: ReactNode;
+  historyContent?: ReactNode;
 };
 
 type FileTreeRow =
@@ -57,9 +65,12 @@ export function SessionFileExplorerPane({
   activeTab,
   onActiveTabChange,
   onRefreshChanges,
+  onRefreshHistory,
   onOpenFile,
   changesContent,
+  historyContent,
 }: SessionFileExplorerPaneProps) {
+  const fileObjectCopyAvailable = api?.isSessionFileObjectCopyAvailable?.() ?? false;
   const loadRevisionRef = useRef(0);
   const directoryRequestSequenceRef = useRef(0);
   const inFlightDirectoryLoadsRef = useRef(new Map<string, DirectoryLoadRequest>());
@@ -71,6 +82,7 @@ export function SessionFileExplorerPane({
   const expandedDirectoriesRef = useRef(expandedDirectories);
   const [loadingDirectories, setLoadingDirectories] = useState<Record<string, boolean>>({});
   const [errorMessage, setErrorMessage] = useState("");
+  const [feedbackMessage, setFeedbackMessage] = useState("");
   const treeScrollRef = useRef<HTMLDivElement | null>(null);
 
   const loadDirectory = useCallback((rootId: string, relativePath: string, revision: number): Promise<void> => {
@@ -133,6 +145,7 @@ export function SessionFileExplorerPane({
     expandedDirectoriesRef.current = {};
     setLoadingDirectories({});
     setErrorMessage("");
+    setFeedbackMessage("");
     if (!api || !sessionId || !enabled) {
       return;
     }
@@ -224,6 +237,15 @@ export function SessionFileExplorerPane({
           >
             Changes
           </button>
+          <button
+            className={activeTab === "history" ? "is-active" : ""}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === "history"}
+            onClick={() => onActiveTabChange("history")}
+          >
+            History
+          </button>
         </div>
         <button
           className="session-file-explorer-refresh"
@@ -233,10 +255,14 @@ export function SessionFileExplorerPane({
               onRefreshChanges();
               return;
             }
+            if (activeTab === "history") {
+              onRefreshHistory?.();
+              return;
+            }
             void reloadRoots();
           }}
-          aria-label={activeTab === "changes" ? "Refresh changes" : "Refresh files"}
-          title={activeTab === "changes" ? "Refresh changes" : "Refresh files"}
+          aria-label={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
+          title={activeTab === "changes" ? "Refresh changes" : activeTab === "history" ? "Refresh history" : "Refresh files"}
         >
           ↻
         </button>
@@ -244,13 +270,18 @@ export function SessionFileExplorerPane({
 
       <div
         ref={treeScrollRef}
-        className={`session-file-explorer-body${activeTab === "changes" ? " has-changes" : ""}`}
+        className={`session-file-explorer-body${activeTab === "changes" ? " has-changes" : activeTab === "history" ? " has-history" : ""}`}
       >
         {activeTab === "changes" ? (
           changesContent ?? <p className="session-file-tree-empty">No changes.</p>
+        ) : activeTab === "history" ? (
+          historyContent ?? <p className="session-file-tree-empty">No history.</p>
         ) : (
           <>
             {errorMessage ? <p className="session-file-tree-error">{errorMessage}</p> : null}
+            {feedbackMessage ? (
+              <p className="session-file-tree-feedback" role="status" aria-live="polite">{feedbackMessage}</p>
+            ) : null}
             {!errorMessage && roots.length === 0 ? <p className="session-file-tree-empty">Loading roots…</p> : null}
             <div className="session-file-tree-virtual" style={{ height: treeVirtualizer.getTotalSize() }}>
               {treeVirtualizer.getVirtualItems().map((virtualRow) => {
@@ -299,6 +330,29 @@ export function SessionFileExplorerPane({
                                 event.ctrlKey || event.metaKey,
                               );
                             }
+                          }}
+                          onContextMenu={(event) => {
+                            if (!api || !fileObjectCopyAvailable || row.entry.kind !== "file") {
+                              return;
+                            }
+                            event.preventDefault();
+                            void api.showSessionFileObjectCopyContextMenu({
+                              resource: {
+                                sessionId: sessionId!,
+                                rootId: row.rootId,
+                                relativePath: row.entry.relativePath,
+                              },
+                              point: {
+                                x: Math.max(0, Math.round(event.clientX)),
+                                y: Math.max(0, Math.round(event.clientY)),
+                              },
+                            }).then((result) => {
+                              if (result.status !== "dismissed") {
+                                setFeedbackMessage(result.message);
+                              }
+                            }).catch(() => {
+                              setFeedbackMessage("File copy menu could not be opened.");
+                            });
                           }}
                           title={row.entry.relativePath}
                         >

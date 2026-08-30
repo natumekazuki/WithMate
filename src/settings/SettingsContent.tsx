@@ -1,4 +1,9 @@
 import type { AppSettings } from "../app-state.js";
+import {
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX,
+  GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN,
+} from "../provider-settings-state.js";
+import type { KeyboardShortcutSettings } from "../keyboard-shortcut-state.js";
 import type { MemoryV6Diagnostics } from "../memory-v6/memory-diagnostics-state.js";
 import { WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE } from "../memory-v6/provider-instruction-sample.js";
 import { MICROCOPY_SLOTS, type MicrocopySlot } from "../microcopy-state.js";
@@ -13,6 +18,8 @@ import {
   SETTINGS_DELETE_OLD_SESSIONS_HELP,
   SETTINGS_DELETE_OLD_SESSIONS_LABEL,
   SETTINGS_DIAGNOSTICS_LABEL,
+  SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP,
+  SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL,
   SETTINGS_LAUNCH_AT_LOGIN_LABEL,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_HELP,
   SETTINGS_MEMORY_PROVIDER_INSTRUCTION_SAMPLE_LABEL,
@@ -34,6 +41,7 @@ import {
   SETTINGS_SESSION_TURN_NOTIFICATION_RESPONSE_PREVIEW_LABEL,
   SETTINGS_SCROLL_TO_LATEST_ON_SEND_LABEL,
 } from "./settings-ui.js";
+import { KeyboardShortcutsHelpSection } from "./KeyboardShortcutsDialog.js";
 
 export type HomeSettingsContentProps = {
   settingsDraft: AppSettings;
@@ -47,10 +55,12 @@ export type HomeSettingsContentProps = {
   deletingOldSessions: boolean;
   onChangeAutoCollapseActionDockOnSend: (enabled: boolean) => void;
   onChangeScrollToLatestOnSend: (enabled: boolean) => void;
+  onChangeKeyboardShortcuts: (settings: KeyboardShortcutSettings) => void;
   onChangeLaunchAtLoginEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationEnabled: (enabled: boolean) => void;
   onChangeSessionTurnNotificationResponsePreviewEnabled: (enabled: boolean) => void;
   onChangeMemoryFileQuotaMegabytes: (value: string) => void;
+  onChangeGlossaryProactiveCreateLimit: (value: string) => void;
   onChangeSessionCleanupCutoffDate: (value: string) => void;
   onChangeUserMicrocopySlot: (slot: MicrocopySlot, value: string) => void;
   onChangeProviderEnabled: (providerId: string, enabled: boolean) => void;
@@ -108,10 +118,12 @@ export function HomeSettingsContent({
   deletingOldSessions,
   onChangeAutoCollapseActionDockOnSend,
   onChangeScrollToLatestOnSend,
+  onChangeKeyboardShortcuts,
   onChangeLaunchAtLoginEnabled,
   onChangeSessionTurnNotificationEnabled,
   onChangeSessionTurnNotificationResponsePreviewEnabled,
   onChangeMemoryFileQuotaMegabytes,
+  onChangeGlossaryProactiveCreateLimit,
   onChangeSessionCleanupCutoffDate,
   onChangeUserMicrocopySlot,
   onChangeProviderEnabled,
@@ -315,7 +327,7 @@ export function HomeSettingsContent({
                   <div className="settings-diagnostics-item">
                     <span>Memory API</span>
                     <strong>{memoryV6Diagnostics.runtime.status}</strong>
-                    <small>{memoryV6Diagnostics.runtime.discoveryFilePath ? "discovery published" : "discovery unavailable"}</small>
+                    <small>{memoryV6Diagnostics.runtime.discoveryPublished ? "discovery published" : "discovery unavailable"}</small>
                   </div>
                   <div className="settings-diagnostics-item">
                     <span>Managed Skill</span>
@@ -329,8 +341,12 @@ export function HomeSettingsContent({
                   </div>
                   <div className="settings-diagnostics-item settings-diagnostics-wide">
                     <span>Last Error</span>
-                    <strong>{memoryV6Diagnostics.lastErrors[0]?.kind ?? "none"}</strong>
-                    <small>{memoryV6Diagnostics.lastErrors[0]?.message ?? "Memory V6 diagnostics has no recorded error."}</small>
+                    <strong>
+                      {memoryV6Diagnostics.lastErrors[0]?.discoveryCode
+                        ?? memoryV6Diagnostics.lastErrors[0]?.kind
+                        ?? "none"}
+                    </strong>
+                    <small>{memoryV6Diagnostics.lastErrors.length > 0 ? "Review the application log for details." : "Memory V6 diagnostics has no recorded error."}</small>
                   </div>
                 </div>
               ) : (
@@ -399,6 +415,27 @@ export function HomeSettingsContent({
 
           <section className="settings-section-card">
             <div className="settings-field">
+              <strong>Repository Glossary</strong>
+              <label className="settings-provider-input">
+                <span>{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_LABEL}</span>
+                <div className="settings-inline-input-row">
+                  <input
+                    type="number"
+                    min={GLOSSARY_PROACTIVE_CREATE_LIMIT_MIN}
+                    max={GLOSSARY_PROACTIVE_CREATE_LIMIT_MAX}
+                    step={1}
+                    value={settingsDraft.glossaryProactiveCreateLimit ?? ""}
+                    onChange={(event) => onChangeGlossaryProactiveCreateLimit(event.target.value)}
+                  />
+                  <span className="settings-inline-unit">terms</span>
+                </div>
+                <p className="settings-help">{SETTINGS_GLOSSARY_PROACTIVE_CREATE_LIMIT_HELP}</p>
+              </label>
+            </div>
+          </section>
+
+          <section className="settings-section-card">
+            <div className="settings-field">
               <strong>Storage Maintenance</strong>
               <label className="settings-provider-input">
                 <span>{SETTINGS_MEMORY_FILE_QUOTA_LABEL}</span>
@@ -438,6 +475,11 @@ export function HomeSettingsContent({
             </div>
           </section>
 
+          <KeyboardShortcutsHelpSection
+            settings={settingsDraft.keyboardShortcuts}
+            onChange={onChangeKeyboardShortcuts}
+          />
+
           </section>
         </div>
       </div>
@@ -470,11 +512,11 @@ function formatSkillSyncDetail(diagnostics: MemoryV6Diagnostics): string {
 function formatCliShimDetail(diagnostics: MemoryV6Diagnostics): string {
   const shim = diagnostics.cliShim;
   if (!shim.supported) {
-    return shim.message;
+    return shim.status === "managed-by-installer" ? "managed by installer" : "unsupported";
   }
 
   const pathStatus = shim.pathContainsShimDirectory ? "PATH ready" : "PATH missing";
-  return `${pathStatus}: ${shim.shimPath ?? shim.shimDirectory ?? shim.message}`;
+  return `${pathStatus}: ${shim.commandName}`;
 }
 
 function canUninstallCliShim(diagnostics: MemoryV6Diagnostics | null): boolean {

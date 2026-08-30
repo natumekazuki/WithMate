@@ -27,7 +27,12 @@ import type {
 } from "./character-context-application-service.js";
 import {
   createWithMateMemoryRuntimeChallenge,
+  createWithMateMemoryRuntimeOwnerChallenge,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH,
+  WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES,
   WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_PATH,
   WITHMATE_MEMORY_RUNTIME_EXCHANGE_SCHEMA_VERSION,
   WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER,
@@ -40,7 +45,11 @@ export type MemoryV6HttpServerOptions = {
   apiSecret: string;
   operatorApiSecret: string;
   mcpApiSecret: string;
-  runtimeInstanceId: string;
+  /** @deprecated use runtimeGenerationId; retained as a wire-compatibility alias. */
+  runtimeInstanceId?: string;
+  applicationInstanceId?: string;
+  runtimeGenerationId?: string;
+  buildChannel?: "installed" | "development" | "visual-check" | "unknown";
   host?: string;
   port?: number;
   maxBodyBytes?: number;
@@ -51,12 +60,31 @@ export type MemoryV6HttpServerOptions = {
   resolveActorSession?: (
     sessionId: string,
   ) => Promise<AgentRuntimeActorSession | null> | AgentRuntimeActorSession | null;
+  routeAgentRuntimeExtension?: (
+    request: AgentRuntimeExtensionRequest,
+  ) => Promise<AgentRuntimeExtensionResponse | null> | AgentRuntimeExtensionResponse | null;
 };
 
 export type AgentRuntimeActorSession = {
   id: string;
   providerId: string;
   characterId: string;
+  workspacePath?: string;
+};
+
+export type AgentRuntimeExtensionRequest = {
+  method: "GET" | "POST";
+  path: string;
+  body: unknown;
+  transport: CharacterContextTransport;
+  bindingReference?: string;
+  turnCapability?: string;
+  fallbackFrom?: "mcp";
+};
+
+export type AgentRuntimeExtensionResponse = {
+  status: number;
+  value: unknown;
 };
 
 export type MemoryV6HttpServer = {
@@ -502,14 +530,37 @@ function createStatusChallenge(apiSecret: string, nonce: string): string {
   return createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url");
 }
 
-function buildStatusResponse(input: { apiSecret: string; runtimeInstanceId: string; requestUrl: string | undefined }): unknown {
+function buildStatusResponse(input: {
+  apiSecret: string;
+  applicationInstanceId: string;
+  runtimeGenerationId: string;
+  buildChannel: "installed" | "development" | "visual-check" | "unknown";
+  requestUrl: string | undefined;
+}): unknown {
   const url = new URL(input.requestUrl ?? "/", "http://127.0.0.1");
   const nonce = url.searchParams.get(STATUS_CHALLENGE_NONCE_QUERY)?.trim() ?? "";
   return {
     ok: true,
-    runtimeInstanceId: input.runtimeInstanceId,
+    applicationInstanceId: input.applicationInstanceId,
+    runtimeGenerationId: input.runtimeGenerationId,
+    // Explicit legacy alias. It has the generation semantics, never the app identity.
+    runtimeInstanceId: input.runtimeGenerationId,
+    buildChannel: input.buildChannel,
     ...(nonce
-      ? { challenge: { nonce, hmacSha256: createStatusChallenge(input.apiSecret, nonce) } }
+      ? {
+          challenge: {
+            nonce,
+            // Legacy challenge remains for 6.3.x clients.
+            hmacSha256: createStatusChallenge(input.apiSecret, nonce),
+            // New clients verify this before sending exchange credentials/body.
+            ownerHmacSha256: createWithMateMemoryRuntimeOwnerChallenge(
+              input.apiSecret,
+              input.applicationInstanceId,
+              input.runtimeGenerationId,
+              nonce,
+            ),
+          },
+        }
       : {}),
   };
 }
@@ -520,6 +571,7 @@ type RuntimeExchangePayload = {
   adapter: CharacterContextTransport;
   adapterSecret: string;
   bindingReference?: string;
+  turnCapability?: string;
   operation: {
     method: "GET" | "POST";
     path: string;
@@ -540,6 +592,7 @@ function parseRuntimeExchangePayload(value: unknown): RuntimeExchangePayload | n
     || (payload.adapter !== "cli" && payload.adapter !== "mcp")
     || typeof payload.adapterSecret !== "string"
     || (payload.bindingReference !== undefined && typeof payload.bindingReference !== "string")
+    || (payload.turnCapability !== undefined && typeof payload.turnCapability !== "string")
     || !operation
     || (operation.method !== "GET" && operation.method !== "POST")
     || typeof operation.path !== "string"
@@ -793,15 +846,22 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
   const apiSecret = requireNonEmptySecret(options.apiSecret, "apiSecret");
   const operatorApiSecret = requireNonEmptySecret(options.operatorApiSecret, "operatorApiSecret");
   const mcpApiSecret = requireNonEmptySecret(options.mcpApiSecret, "mcpApiSecret");
-  const runtimeInstanceId = requireNonEmptySecret(options.runtimeInstanceId, "runtimeInstanceId");
+  const applicationInstanceId = requireNonEmptySecret(options.applicationInstanceId ?? "legacy", "applicationInstanceId");
+  const runtimeGenerationId = requireNonEmptySecret(
+    options.runtimeGenerationId ?? options.runtimeInstanceId ?? "",
+    "runtimeGenerationId",
+  );
+  const buildChannel = options.buildChannel ?? "unknown";
   const maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const fileOperationRequestTimeoutMs = options.fileOperationRequestTimeoutMs ?? DEFAULT_FILE_OPERATION_REQUEST_TIMEOUT_MS;
   const maxConcurrentRequests = options.maxConcurrentRequests ?? DEFAULT_MAX_CONCURRENT_REQUESTS;
   let activeRequests = 0;
+  let activeAgentExtensionRequests = 0;
 
   const server = createServer(async (request, response) => {
     let admitted = false;
+    let admittedAgentExtension = false;
     try {
       if (!isLoopbackRemoteAddress(request.socket.remoteAddress)) {
         writeJson(response, 403, memoryTransportError("MEMORY_FORBIDDEN", "Memory API only accepts loopback requests."));
@@ -819,7 +879,13 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Memory API route does not support this method."));
           return;
         }
-        writeJson(response, 200, buildStatusResponse({ apiSecret, runtimeInstanceId, requestUrl: request.url }));
+        writeJson(response, 200, buildStatusResponse({
+          apiSecret,
+          applicationInstanceId,
+          runtimeGenerationId,
+          buildChannel,
+          requestUrl: request.url,
+        }));
         return;
       }
 
@@ -830,10 +896,14 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         }
         const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
         const expectedRuntimeInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+        const expectedRuntimeGenerationId = request.headers[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER];
+        const expectedApplicationInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER];
         if (
           typeof nonce !== "string"
-          || typeof expectedRuntimeInstanceId !== "string"
-          || expectedRuntimeInstanceId !== runtimeInstanceId
+          || (typeof expectedRuntimeGenerationId !== "string" && typeof expectedRuntimeInstanceId !== "string")
+          || (expectedRuntimeGenerationId !== undefined && expectedRuntimeGenerationId !== runtimeGenerationId)
+          || (expectedRuntimeInstanceId !== undefined && expectedRuntimeInstanceId !== runtimeGenerationId)
+          || (expectedApplicationInstanceId !== undefined && expectedApplicationInstanceId !== applicationInstanceId)
         ) {
           writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Memory runtime identity challenge is invalid."));
           return;
@@ -848,10 +918,12 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         response.setTimeout(requestTimeoutMs);
         response.writeEarlyHints({
           link: "</v1/exchange>; rel=preconnect",
-          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
           [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
             apiSecret,
-            runtimeInstanceId,
+            runtimeGenerationId,
             nonce,
           ),
         });
@@ -862,7 +934,13 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
         }
         const operationUrl = new URL(payload.operation.path, "http://127.0.0.1");
         if (operationUrl.pathname === "/v1/status" && payload.operation.method === "GET") {
-          writeJson(response, 200, { ok: true, runtimeInstanceId });
+          writeJson(response, 200, {
+            ok: true,
+            applicationInstanceId,
+            runtimeGenerationId,
+            runtimeInstanceId: runtimeGenerationId,
+            buildChannel,
+          });
           return;
         }
         const route = routeByPath.get(operationUrl.pathname);
@@ -900,6 +978,68 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
           ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
         });
         writeJson(response, statusForMemoryResponse(result), result);
+        return;
+      }
+
+      if (pathname === WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH) {
+        if (request.method !== "POST" || !acceptsJsonRequest(request)) {
+          writeJson(response, 405, memoryTransportError("MEMORY_METHOD_NOT_ALLOWED", "Agent runtime extension exchange requires JSON POST."));
+          return;
+        }
+        const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
+        const expectedRuntimeInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER];
+        const expectedRuntimeGenerationId = request.headers[WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER];
+        const expectedApplicationInstanceId = request.headers[WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER];
+        if (
+          typeof nonce !== "string"
+          || (typeof expectedRuntimeGenerationId !== "string" && typeof expectedRuntimeInstanceId !== "string")
+          || (expectedRuntimeGenerationId !== undefined && expectedRuntimeGenerationId !== runtimeGenerationId)
+          || (expectedRuntimeInstanceId !== undefined && expectedRuntimeInstanceId !== runtimeGenerationId)
+          || (expectedApplicationInstanceId !== undefined && expectedApplicationInstanceId !== applicationInstanceId)
+        ) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime identity challenge is invalid."));
+          return;
+        }
+        if (activeAgentExtensionRequests >= 1) {
+          writeJson(response, 429, memoryTransportError("MEMORY_TOO_MANY_REQUESTS", "Agent runtime extension exchange has an in-flight request."));
+          return;
+        }
+        activeAgentExtensionRequests += 1;
+        admittedAgentExtension = true;
+        request.setTimeout(requestTimeoutMs);
+        response.setTimeout(requestTimeoutMs);
+        response.writeEarlyHints({
+          link: `<${WITHMATE_AGENT_RUNTIME_EXTENSION_EXCHANGE_PATH}>; rel=preconnect`,
+          [WITHMATE_MEMORY_RUNTIME_GENERATION_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_INSTANCE_HEADER]: runtimeGenerationId,
+          [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_HEADER]: applicationInstanceId,
+          [WITHMATE_MEMORY_RUNTIME_CHALLENGE_HEADER]: createWithMateMemoryRuntimeChallenge(
+            apiSecret,
+            runtimeGenerationId,
+            nonce,
+          ),
+        });
+        const payload = parseRuntimeExchangePayload(
+          await readJsonBody(request, WITHMATE_AGENT_RUNTIME_EXTENSION_MAX_BODY_BYTES),
+        );
+        if (!payload || !authenticateRuntimeExchange(payload, apiSecret, operatorApiSecret, mcpApiSecret)) {
+          writeJson(response, 401, memoryTransportError("MEMORY_UNAUTHORIZED", "Agent runtime extension exchange is not authorized."));
+          return;
+        }
+        const extensionResponse = await options.routeAgentRuntimeExtension?.({
+          method: payload.operation.method,
+          path: payload.operation.path,
+          body: payload.operation.body,
+          transport: payload.adapter,
+          bindingReference: payload.bindingReference,
+          turnCapability: payload.turnCapability,
+          ...(payload.operation.fallbackFrom ? { fallbackFrom: payload.operation.fallbackFrom } : {}),
+        }) ?? null;
+        if (!extensionResponse) {
+          writeJson(response, 404, memoryTransportError("MEMORY_ROUTE_NOT_FOUND", "Agent runtime extension route was not found."));
+          return;
+        }
+        writeJson(response, extensionResponse.status, extensionResponse.value);
         return;
       }
 
@@ -973,6 +1113,9 @@ export function createMemoryV6HttpServer(options: MemoryV6HttpServerOptions): Me
     } finally {
       if (admitted) {
         activeRequests -= 1;
+      }
+      if (admittedAgentExtension) {
+        activeAgentExtensionRequests -= 1;
       }
     }
   });

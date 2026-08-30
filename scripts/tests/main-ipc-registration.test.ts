@@ -34,7 +34,10 @@ import {
   WITHMATE_LIST_CHARACTERS_CHANNEL,
   WITHMATE_LIST_AUXILIARY_SESSIONS_CHANNEL,
   WITHMATE_LIST_OPEN_ACTIVE_AUXILIARY_SESSION_SUMMARIES_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -44,12 +47,20 @@ import {
   WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL,
   WITHMATE_GET_SESSION_FILE_PREVIEW_WINDOW_PAYLOAD_CHANNEL,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_PICK_IMAGE_FILE_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
@@ -161,15 +172,24 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   registerMainIpcHandlers(ipcMain, deps);
 
   assert.ok(handlers.has(WITHMATE_OPEN_SESSION_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_OPEN_CHARACTER_EDITOR_WINDOW_CHANNEL));
   assert.ok(handlers.has(WITHMATE_VALIDATE_WORKSPACE_DIRECTORY_CHANNEL));
-  assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL));
   assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL));
+  assert.ok(handlers.has(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL));
   assert.ok(handlers.has(WITHMATE_GET_APP_SETTINGS_CHANNEL));
   assert.ok(handlers.has(WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL));
   assert.ok(handlers.has(WITHMATE_CREATE_PROMPT_TEMPLATE_CHANNEL));
@@ -222,6 +242,84 @@ test("registerMainIpcHandlers は保持する public IPC だけを登録する",
   for (const channel of removedChannels) {
     assert.equal(handlers.has(channel), false, `${channel} should not be registered`);
   }
+});
+
+test("Session Window restore IPC はHomeだけからsnapshot取得と一括復元を実行できる", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const homeWindow = createWindowStub("http://localhost:5173/");
+  const sessionWindow = createWindowStub("http://localhost:5173/?mode=session&sessionId=session-1");
+  let eventWindow = homeWindow;
+  const calls: string[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveHomeWindow: () => homeWindow,
+    getSessionWindowRestoreSet: async () => {
+      calls.push("get");
+      return ["session-1"];
+    },
+    restoreSessionWindows: async () => {
+      calls.push("restore");
+      return {
+        requestedSessionIds: ["session-1"],
+        openedSessionIds: ["session-1"],
+        failures: [],
+      };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL)?.({}),
+    ["session-1"],
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL)?.({}),
+    {
+      requestedSessionIds: ["session-1"],
+      openedSessionIds: ["session-1"],
+      failures: [],
+    },
+  );
+
+  eventWindow = sessionWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL)?.({}) as Promise<unknown>,
+    /only available from the Home window/,
+  );
+  assert.deepEqual(calls, ["get", "restore"]);
+});
+
+test("Session summary IPC は bounded requestをparseしてpage / Character usageへ委譲する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const pageRequests: unknown[] = [];
+  const { deps } = createDeps({
+    listSessionSummaryPage: (request: unknown) => {
+      pageRequests.push(request);
+      return { entries: [], nextCursor: null, hasMore: false };
+    },
+    listSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
+  });
+
+  registerMainIpcHandlers(ipcMain, deps);
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL)?.({}, {
+      scope: "recent",
+      limit: 50,
+      searchText: "  Task ",
+    }),
+    { entries: [], nextCursor: null, hasMore: false },
+  );
+  assert.deepEqual(await handlers.get(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL)?.({}), [
+    { characterId: "char-1", sessionKind: "default" },
+  ]);
+  assert.deepEqual(pageRequests, [{
+    scope: "recent",
+    cursor: null,
+    limit: 50,
+    searchText: "task",
+    sessionIds: undefined,
+  }]);
 });
 
 test("workspace validation IPC は Home window だけから validation service を呼べる", async () => {
@@ -565,6 +663,10 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   const inspectRequests: unknown[] = [];
   const readRequests: unknown[] = [];
   const openRequests: unknown[] = [];
+  const historyRepositoryRequests: unknown[] = [];
+  const historyCommitRequests: unknown[] = [];
+  const historyDetailRequests: unknown[] = [];
+  const historyDiffRequests: unknown[] = [];
   const changesRequests: unknown[] = [];
   const diffRequests: unknown[] = [];
   const previewNavigationRequests: unknown[] = [];
@@ -614,6 +716,22 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     },
     getFileRootDiff: async (request: unknown) => {
       diffRequests.push(request);
+      return { status: "not-changed", message: "none" };
+    },
+    listFileRootGitHistoryRepositories: async (request: unknown) => {
+      historyRepositoryRequests.push(request);
+      return { status: "ok", repositories: [] };
+    },
+    listFileRootGitHistoryCommits: async (request: unknown) => {
+      historyCommitRequests.push(request);
+      return { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } };
+    },
+    getFileRootGitHistoryCommitDetail: async (request: unknown) => {
+      historyDetailRequests.push(request);
+      return { status: "commit-not-found", message: "none" };
+    },
+    getFileRootGitHistoryDiff: async (request: unknown) => {
+      historyDiffRequests.push(request);
       return { status: "not-changed", message: "none" };
     },
   });
@@ -694,6 +812,55 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
     message: "none",
   });
   assert.deepEqual(diffRequests, [diffRequest]);
+  const historyRepositoriesRequest = { sessionId: "aux-1" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL)?.({}, historyRepositoriesRequest),
+    { status: "ok", repositories: [] },
+  );
+  const historyRequest = {
+    sessionId: "aux-1",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    rootId: "workspace",
+  };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, { ...historyRequest, cursor: null }),
+    { status: "ok", page: { entries: [], nextCursor: null, hasMore: false } },
+  );
+  const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, historyDetailRequest),
+    { status: "commit-not-found", message: "none" },
+  );
+  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
+  assert.deepEqual(
+    await handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, historyDiffRequest),
+    { status: "not-changed", message: "none" },
+  );
+  assert.deepEqual(historyRepositoryRequests, [historyRepositoriesRequest]);
+  assert.deepEqual(historyCommitRequests, [{ ...historyRequest, cursor: null }]);
+  assert.deepEqual(historyDetailRequests, [historyDetailRequest]);
+  assert.deepEqual(historyDiffRequests, [historyDiffRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL)?.({}, {
+      ...historyRequest,
+      repositoryId: "not-a-repository",
+    }) as Promise<unknown>,
+    /Git history request/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL)?.({}, {
+      ...historyRequest,
+      commitId: "not-a-commit",
+    }) as Promise<unknown>,
+    /commit id is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL)?.({}, {
+      ...historyDiffRequest,
+      relativePath: "../outside.ts",
+    }) as Promise<unknown>,
+    /file path is invalid/,
+  );
   await assert.rejects(
     () => handlers.get(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL)?.({}, { sessionId: "aux-1", rootId: "" }) as Promise<unknown>,
     /File root changes request/,
@@ -807,6 +974,56 @@ test("File Explorer IPC は owning Session window からだけ利用でき、Aux
   );
 });
 
+test("Glossary IPCはtarget Session windowだけをauthorityとし、renderer pathを受け取らない", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("http://localhost/?sessionId=session-1");
+  const otherWindow = createWindowStub("http://localhost/?sessionId=session-2");
+  let eventWindow = ownerWindow;
+  let subscriptionCount = 0;
+  const projection = {
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 1,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  };
+  const { deps } = createDeps({
+    resolveEventWindow: () => eventWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : otherWindow,
+    ensureSessionGlossarySubscription: async () => {
+      subscriptionCount += 1;
+    },
+    getSessionGlossaryProjection: async () => projection,
+    searchSessionGlossary: async (_sessionId: string, request: { query: string }) => ({
+      ok: true,
+      revision: null,
+      entries: [],
+      total: 0,
+      offset: 0,
+      pageSize: 50,
+      query: request.query,
+    }),
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  const getProjection = handlers.get(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL)!;
+  assert.deepEqual(await getProjection({ sender: {} }, "session-1"), projection);
+  assert.equal(subscriptionCount, 1);
+  const search = handlers.get(WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL)!;
+  const searchResult = await search({ sender: {} }, "session-1", { query: "runtime" });
+  assert.equal((searchResult as { ok: boolean }).ok, true);
+
+  eventWindow = otherWindow;
+  await assert.rejects(
+    () => Promise.resolve(getProjection({ sender: {} }, "session-1")),
+    /target Session window/,
+  );
+  await assert.rejects(
+    () => Promise.resolve(search({ sender: {} }, "session-1", { query: "runtime", path: "C:\\other" })),
+    /target Session window/,
+  );
+});
+
 test("File Preview の Git IPC は current root file だけを投影する", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
@@ -876,6 +1093,109 @@ test("File Preview の Git IPC は current root file だけを投影する", asy
   assert.deepEqual(diffRequests, [currentDiff]);
 });
 
+test("commit file preview IPC はseparator表記が変わるinspect / chunk遷移もcurrent resourceとして認可する", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const previewWindow = createWindowStub("file:///file-preview.html?token=commit-preview-1");
+  let currentWindow = ownerWindow;
+  const resource = {
+    resourceKind: "git-commit-file" as const,
+    sessionId: "aux-1",
+    rootId: "workspace",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    commitId: "a".repeat(40),
+    relativePath: "src\\current.ts",
+  };
+  const descriptor = {
+    ...resource,
+    relativePath: "src/current.ts",
+    name: "current.ts",
+    kind: "text" as const,
+    byteLength: 32,
+    modifiedAt: "2026-08-29T00:00:00.000Z",
+    mimeType: "text/plain",
+    suggestedEncoding: "utf-8" as const,
+    revision: "b".repeat(40),
+  };
+  const inspectRequests: unknown[] = [];
+  const readRequests: unknown[] = [];
+  const navigationRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    getFilePreviewWindowResource: (window: unknown, sessionId: string) => (
+      window === previewWindow && sessionId === "aux-1" ? resource : null
+    ),
+    openSessionFilePreviewWindow: async (request: unknown) => {
+      navigationRequests.push(request);
+      return { status: "opened", targetType: "preview-window", disposition: "created", resource };
+    },
+    inspectSessionFile: async (request: unknown) => {
+      inspectRequests.push(request);
+      return descriptor;
+    },
+    readSessionFileChunk: async (request: unknown) => {
+      readRequests.push(request);
+      return null;
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, {
+      kind: "resource",
+      resource,
+      view: { kind: "diff", scope: "working-tree" },
+    }) as Promise<unknown>,
+    /do not support working tree diff views/,
+  );
+  assert.deepEqual(navigationRequests, []);
+  const openRequest = { kind: "resource", resource };
+  assert.equal(
+    (await handlers.get(WITHMATE_OPEN_SESSION_FILE_PREVIEW_WINDOW_CHANNEL)?.({}, openRequest) as { status: string }).status,
+    "opened",
+  );
+  assert.deepEqual(navigationRequests, [openRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_OPEN_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, { resource }) as Promise<unknown>,
+    /Working tree file resource is invalid/,
+  );
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as Promise<unknown>,
+    /current Preview resource/,
+  );
+
+  currentWindow = previewWindow;
+  const inspected = await handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, resource) as typeof descriptor;
+  assert.equal(inspected.relativePath, "src/current.ts");
+  const chunkRequest = {
+    resourceKind: inspected.resourceKind,
+    sessionId: inspected.sessionId,
+    rootId: inspected.rootId,
+    repositoryId: inspected.repositoryId,
+    commitId: inspected.commitId,
+    relativePath: inspected.relativePath,
+    offset: 0,
+    length: inspected.byteLength,
+    expectedRevision: inspected.revision,
+  };
+  await handlers.get(WITHMATE_READ_SESSION_FILE_CHUNK_CHANNEL)?.({}, chunkRequest);
+  assert.deepEqual(inspectRequests, [resource]);
+  assert.deepEqual(readRequests, [chunkRequest]);
+  await assert.rejects(
+    () => handlers.get(WITHMATE_INSPECT_SESSION_FILE_CHANNEL)?.({}, {
+      ...resource,
+      commitId: "c".repeat(40),
+    }) as Promise<unknown>,
+    /current Preview resource/,
+  );
+});
+
 test("画像copy IPCはowning Session windowと非負の整数座標だけを受け付ける", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
@@ -930,49 +1250,132 @@ test("画像copy IPCはowning Session windowと非負の整数座標だけを受
   );
 });
 
-test("Markdown link context menu IPCはtarget文字列と非負の整数座標を変換せず渡す", async () => {
+test("file object copy IPCは認可対象resourceとowning senderだけを受け付ける", async () => {
+  const { ipcMain, handlers } = createIpcMainStub();
+  const ownerWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const otherWindow = createWindowStub("file:///home.html");
+  let currentWindow = ownerWindow;
+  const copyRequests: unknown[] = [];
+  const menuRequests: unknown[] = [];
+  const { deps } = createDeps({
+    resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? ownerWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => sessionId === "aux-1" ? "session-1" : null,
+    copySessionFileObject: async (_event: unknown, request: unknown) => {
+      copyRequests.push(request);
+      return { status: "copied", message: "File copied." };
+    },
+    showSessionFileObjectCopyContextMenu: async (_event: unknown, request: unknown) => {
+      menuRequests.push(request);
+      return { status: "dismissed" };
+    },
+  });
+  registerMainIpcHandlers(ipcMain, deps);
+  const resource = { sessionId: "aux-1", rootId: "workspace", relativePath: "docs/report.txt" };
+  const copyRequest = { resource };
+  const menuRequest = { resource, point: { x: 24, y: 48 } };
+
+  assert.deepEqual(
+    await handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, copyRequest),
+    { status: "copied", message: "File copied." },
+  );
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL)?.({}, menuRequest),
+    { status: "dismissed" },
+  );
+  assert.deepEqual(copyRequests, [copyRequest]);
+  assert.deepEqual(menuRequests, [menuRequest]);
+
+  for (const invalidRequest of [
+    { resource: { ...resource, absolutePath: "C:/outside.txt" } },
+    { resource, point: { x: -1, y: 2 } },
+    { resource, point: { x: 1.5, y: 2 } },
+  ]) {
+    const channel = "point" in invalidRequest
+      ? WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL
+      : WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL;
+    await assert.rejects(
+      () => handlers.get(channel)?.({}, invalidRequest) as Promise<unknown>,
+      /File (?:preview resource|copy(?: context menu)? request) is invalid/,
+    );
+  }
+
+  currentWindow = otherWindow;
+  await assert.rejects(
+    () => handlers.get(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL)?.({}, copyRequest) as Promise<unknown>,
+    /current Preview resource/,
+  );
+  assert.deepEqual(copyRequests, [copyRequest]);
+});
+
+test("Markdown link context menu IPCはtargetと認可用file contextを変換せず渡す", async () => {
   const { ipcMain, handlers } = createIpcMainStub();
   const sourceWindow = createWindowStub("file:///session.html?sessionId=session-1");
+  const companionWindow = createWindowStub("file:///companion-review.html?sessionId=session-1");
   let currentWindow: ReturnType<typeof createWindowStub> | null = sourceWindow;
   const requests: unknown[] = [];
   const { deps } = createDeps({
     resolveEventWindow: () => currentWindow,
+    resolveSessionWindow: (sessionId: string) => sessionId === "session-1" ? sourceWindow : null,
+    resolveCompanionReviewWindow: (sessionId: string) => sessionId === "session-1" ? companionWindow : null,
+    getSessionFileExplorerOwnerSessionId: async (sessionId: string) => (
+      sessionId === "session-1" ? "session-1" : null
+    ),
     showMarkdownLinkContextMenu: async (_event: unknown, request: unknown) => {
       requests.push(request);
-      return { status: "copied" };
+      return { status: "link-copied" };
     },
   });
   registerMainIpcHandlers(ipcMain, deps);
   const request = {
     target: "file:///C:/tmp/candidate-source%20final.json",
     point: { x: 24, y: 48 },
+    fileContext: {
+      sessionId: "session-1",
+      baseResource: { sessionId: "session-1", rootId: "workspace", relativePath: "docs/readme.md" },
+    },
   };
 
   assert.deepEqual(
     await handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request),
-    { status: "copied" },
+    { status: "link-copied" },
   );
   assert.deepEqual(requests, [request]);
+
+  currentWindow = companionWindow;
+  assert.deepEqual(
+    await handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request),
+    { status: "link-copied" },
+  );
+  assert.deepEqual(requests, [request, request]);
 
   for (const invalidRequest of [
     null,
     { target: "", point: { x: 1, y: 2 } },
     { target: "docs/review-brief.md", point: { x: -1, y: 2 } },
     { target: "docs/review-brief.md", point: { x: 1.5, y: 2 } },
+    {
+      target: "docs/review-brief.md",
+      point: { x: 1, y: 2 },
+      fileContext: {
+        sessionId: "session-1",
+        baseResource: { sessionId: "other-session", rootId: "workspace", relativePath: "readme.md" },
+      },
+    },
   ]) {
     await assert.rejects(
       () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, invalidRequest) as Promise<unknown>,
-      /Markdown link context menu request is invalid/,
+      /Markdown link (?:context menu request|file context) is invalid/,
     );
   }
-  assert.deepEqual(requests, [request]);
+  assert.deepEqual(requests, [request, request]);
 
   currentWindow = null;
   await assert.rejects(
     () => handlers.get(WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL)?.({}, request) as Promise<unknown>,
     /only available from a WithMate window/,
   );
-  assert.deepEqual(requests, [request]);
+  assert.deepEqual(requests, [request, request]);
 });
 
 test("registerMainIpcHandlers は Mate 未作成時でも session runtime IPC を block しない", async () => {

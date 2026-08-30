@@ -297,6 +297,7 @@ describe("Memory HTTP agent runtime binding policy", () => {
       api: {
         baseUrl: `http://127.0.0.1:${address.port}`,
         apiSecret: API_SECRET,
+        runtimeGenerationId: RUNTIME_ID,
         runtimeInstanceId: RUNTIME_ID,
       },
       credential: { adapter: "mcp" as const, adapterSecret: MCP_SECRET },

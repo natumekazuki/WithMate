@@ -13,6 +13,7 @@ import { createOrVerifyV6FreshDatabase } from "../../src-electron/app-database-v
 import { createMemoryV6HttpServer } from "../../src-electron/memory-v6-http-server.js";
 import { MemoryV6Service } from "../../src-electron/memory-v6-service.js";
 import { MemoryV6Storage } from "../../src-electron/memory-v6-storage.js";
+import { mergeDefinedProviderEnv } from "../../src-electron/provider-agent-runtime-binding.js";
 import { runWithMateMemoryCli } from "../withmate-memory.js";
 import { buildWithMateMemoryCli } from "../build-withmate-memory-cli.js";
 import { createWithMateMemoryMcpServer } from "../withmate-memory-mcp.js";
@@ -289,9 +290,12 @@ describe("general Memory MCP runtime integration", () => {
     const client = new Client({ name: "general-memory-distribution-smoke", version: "1.0.0" });
     try {
       const helperPath = await buildWithMateMemoryCli(artifactDirectory);
-      const childEnv = Object.fromEntries(
-        Object.entries({ ...process.env, ...fixture.env })
-          .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+      const childEnv = mergeDefinedProviderEnv(
+        process.env,
+        Object.fromEntries(
+          Object.entries(fixture.env)
+            .filter((entry): entry is [string, string] => typeof entry[1] === "string"),
+        ),
       );
       const transport = new StdioClientTransport({
         command: process.execPath,

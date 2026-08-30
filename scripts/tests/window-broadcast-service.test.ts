@@ -25,16 +25,16 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
   const service = new WindowBroadcastService({
     getAllWindows: () => [home.window, session.window, closed.window],
     getHomeWindows: () => [home.window, closed.window],
+    getPrimaryHomeWindow: () => home.window,
     getSessionWindows: () => [session.window, closed.window],
   });
 
-  service.broadcastSessionSummaries([]);
-  service.broadcastSessionInvalidation(["session-1"]);
+  service.broadcastSessionInvalidation({ scope: "ids", sessionIds: ["session-1"] });
   service.broadcastOpenSessionWindowIds(["session-1"]);
   service.broadcastPromptTemplates([]);
 
   assert.deepEqual(home.sent.map((entry) => entry.channel), [
-    "withmate:sessions-changed",
+    "withmate:sessions-invalidated",
     "withmate:open-session-windows-changed",
     "withmate:prompt-templates-changed",
   ]);
@@ -44,4 +44,56 @@ test("WindowBroadcastService は用途別 window に event を振り分ける", 
     "withmate:prompt-templates-changed",
   ]);
   assert.equal(closed.sent.length, 0);
+  assert.deepEqual(home.sent[1]?.payload, { scope: "ids", sessionIds: ["session-1"] });
+});
+
+test("WindowBroadcastService は Session Window復元集合をHomeだけへ通知する", () => {
+  const home = createWindow(false);
+  const settings = createWindow(false);
+  const session = createWindow(false);
+  const closedPrimaryHome = createWindow(true);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [home.window, settings.window, session.window, closedPrimaryHome.window],
+    getHomeWindows: () => [home.window, settings.window],
+    getPrimaryHomeWindow: () => home.window,
+    getSessionWindows: () => [session.window],
+  });
+
+  service.broadcastSessionWindowRestoreSet(["session-1", "session-2"]);
+
+  assert.deepEqual(home.sent, [{
+    channel: "withmate:session-window-restore-set-changed",
+    payload: ["session-1", "session-2"],
+  }]);
+  assert.equal(settings.sent.length, 0);
+  assert.equal(session.sent.length, 0);
+  assert.equal(closedPrimaryHome.sent.length, 0);
+});
+
+test("WindowBroadcastService はprimary Home不在時に復元集合を通知しない", () => {
+  const settings = createWindow(false);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [settings.window],
+    getHomeWindows: () => [settings.window],
+    getPrimaryHomeWindow: () => null,
+    getSessionWindows: () => [],
+  });
+
+  service.broadcastSessionWindowRestoreSet(["session-1"]);
+
+  assert.equal(settings.sent.length, 0);
+});
+
+test("WindowBroadcastService は open Session ID の上限超過を all にする", () => {
+  const home = createWindow(false);
+  const service = new WindowBroadcastService({
+    getAllWindows: () => [home.window],
+    getHomeWindows: () => [home.window],
+    getPrimaryHomeWindow: () => home.window,
+    getSessionWindows: () => [],
+  });
+
+  service.broadcastOpenSessionWindowIds(Array.from({ length: 101 }, (_, index) => `session-${index}`));
+
+  assert.deepEqual(home.sent[0]?.payload, { scope: "all" });
 });

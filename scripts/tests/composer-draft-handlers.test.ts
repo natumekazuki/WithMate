@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { KeyboardEvent } from "react";
 
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
-  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftCompositionEndHandler,
   buildOnDraftCompositionStartHandler,
@@ -215,22 +213,4 @@ test("buildOnDraftCompositionHandlers は start/end handler set を作る", () =
   assert.equal(state.isComposing, false);
   assert.equal(state.composerCaret, 9);
   assert.equal(state.mainCaret, 9);
-});
-
-test("buildComposerDraftKeyDownHandler は submit へ委譲する", () => {
-  const events: string[] = [];
-  const event = {
-    key: "Enter",
-    ctrlKey: true,
-    metaKey: false,
-    nativeEvent: { isComposing: false },
-    preventDefault: () => events.push("prevent"),
-  } as KeyboardEvent<HTMLTextAreaElement>;
-  const handler = buildComposerDraftKeyDownHandler({
-    submit: (event) => events.push(`submit:${event.key}:${event.ctrlKey}`),
-  });
-
-  handler(event);
-
-  assert.deepEqual(events, ["submit:Enter:true"]);
 });

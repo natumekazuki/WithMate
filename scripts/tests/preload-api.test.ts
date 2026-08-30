@@ -74,6 +74,14 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:open-memory-v6-review-window",
     args: [],
   });
+  assert.deepEqual(await api.getSessionGlossaryProjection("session-1"), {
+    channel: "withmate:get-session-glossary-projection",
+    args: ["session-1"],
+  });
+  assert.deepEqual(await api.searchSessionGlossary("session-1", { query: "runtime" }), {
+    channel: "withmate:search-session-glossary",
+    args: ["session-1", { query: "runtime" }],
+  });
   assert.deepEqual(await api.getMemoryV6FileUsage(), {
     channel: "withmate:get-memory-v6-file-usage",
     args: [],
@@ -169,8 +177,12 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:get-session-background-activity",
     args: ["session-1", "memory-generation"],
   });
-  assert.deepEqual(await api.listSessionSummaries(), {
-    channel: "withmate:list-session-summaries",
+  assert.deepEqual(await api.listSessionSummaryPage({ scope: "recent", limit: 25 }), {
+    channel: "withmate:list-session-summary-page",
+    args: [{ scope: "recent", limit: 25 }],
+  });
+  assert.deepEqual(await api.listSessionCharacterUsage(), {
+    channel: "withmate:list-session-character-usage",
     args: [],
   });
   assert.deepEqual(await api.listSessionAuditLogSummaryPage("session-1", { cursor: 50, limit: 25 }), {
@@ -239,6 +251,8 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     args: ["session-1"],
   });
   const fileRequest = { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" };
+  assert.equal(api.isSessionFileObjectCopyAvailable(), true);
+  assert.equal(createWithMateWindowApi(ipcRenderer as never, "linux").isSessionFileObjectCopyAvailable(), false);
   assert.deepEqual(await api.listSessionFileRoots("session-1"), {
     channel: "withmate:list-session-file-roots",
     args: ["session-1"],
@@ -282,6 +296,16 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
     channel: "withmate:show-session-file-preview-image-context-menu",
     args: [imageActionRequest],
   });
+  const fileCopyRequest = { resource: fileRequest };
+  assert.deepEqual(await api.copySessionFileObject(fileCopyRequest), {
+    channel: "withmate:copy-session-file-object",
+    args: [fileCopyRequest],
+  });
+  const fileCopyContextMenuRequest = { ...fileCopyRequest, point: { x: 40, y: 60 } };
+  assert.deepEqual(await api.showSessionFileObjectCopyContextMenu(fileCopyContextMenuRequest), {
+    channel: "withmate:show-session-file-object-copy-context-menu",
+    args: [fileCopyContextMenuRequest],
+  });
   const markdownLinkRequest = {
     target: "docs/review-brief%20final.md",
     point: { x: 80, y: 160 },
@@ -302,6 +326,29 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   }), {
     channel: "withmate:get-file-root-diff",
     args: [{ sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx", scope: "working-tree" }],
+  });
+  const historyRequest = {
+    sessionId: "session-1",
+    repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+    rootId: "workspace",
+  };
+  assert.deepEqual(await api.listFileRootGitHistoryRepositories({ sessionId: "session-1" }), {
+    channel: "withmate:list-file-root-git-history-repositories",
+    args: [{ sessionId: "session-1" }],
+  });
+  assert.deepEqual(await api.listFileRootGitHistoryCommits({ ...historyRequest, cursor: "100" }), {
+    channel: "withmate:list-file-root-git-history-commits",
+    args: [{ ...historyRequest, cursor: "100" }],
+  });
+  const historyDetailRequest = { ...historyRequest, commitId: "a".repeat(40) };
+  assert.deepEqual(await api.getFileRootGitHistoryCommitDetail(historyDetailRequest), {
+    channel: "withmate:get-file-root-git-history-commit-detail",
+    args: [historyDetailRequest],
+  });
+  const historyDiffRequest = { ...historyDetailRequest, relativePath: "src/App.tsx" };
+  assert.deepEqual(await api.getFileRootGitHistoryDiff(historyDiffRequest), {
+    channel: "withmate:get-file-root-git-history-diff",
+    args: [historyDiffRequest],
   });
   assert.deepEqual(await api.createAuxiliarySession({ parentSessionId: "session-1", provider: "copilot" }), {
     channel: "withmate:create-auxiliary-session",
@@ -337,6 +384,45 @@ test("createWithMateWindowApi は invoke 系 API を domain ごとに束ねる",
   });
 });
 
+test("Session Window restore API はsnapshotと対象別resultを検証して公開する", async () => {
+  const listeners = new Map<string, Listener>();
+  const api = createWithMateWindowApi({
+    invoke(channel: string) {
+      if (channel === "withmate:get-session-window-restore-set") {
+        return Promise.resolve(["session-a", "session-a", "session-b"]);
+      }
+      if (channel === "withmate:restore-session-windows") {
+        return Promise.resolve({
+          requestedSessionIds: ["session-a", "session-b"],
+          openedSessionIds: ["session-a"],
+          failures: [{ sessionId: "session-b", reason: "missing" }],
+        });
+      }
+      return Promise.resolve(undefined);
+    },
+    on(channel: string, listener: Listener) {
+      listeners.set(channel, listener);
+    },
+    removeListener(channel: string) {
+      listeners.delete(channel);
+    },
+    send() {},
+  } as never);
+
+  assert.deepEqual(await api.getSessionWindowRestoreSet(), ["session-a", "session-b"]);
+  assert.deepEqual(await api.restoreSessionWindows(), {
+    requestedSessionIds: ["session-a", "session-b"],
+    openedSessionIds: ["session-a"],
+    failures: [{ sessionId: "session-b", reason: "missing" }],
+  });
+
+  const snapshots: string[][] = [];
+  const unsubscribe = api.subscribeSessionWindowRestoreSet((sessionIds) => snapshots.push(sessionIds));
+  listeners.get("withmate:session-window-restore-set-changed")?.({}, ["session-c", "session-c"]);
+  assert.deepEqual(snapshots, [["session-c"]]);
+  unsubscribe();
+});
+
 test("createWithMateWindowApi は current public API の key を揃えて expose する", () => {
   const { ipcRenderer } = createIpcRendererStub();
   const api = createWithMateWindowApi(ipcRenderer as never);
@@ -349,6 +435,7 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "closeAuxiliarySession",
     "copyFilesToSessionFiles",
     "copySessionFilePreviewImage",
+    "copySessionFileObject",
     "archiveCharacter",
     "createMate",
     "createAuxiliarySession",
@@ -380,6 +467,8 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "getModelCatalog",
     "getProviderQuotaTelemetry",
     "getSession",
+    "getSessionWindowRestoreSet",
+    "getSessionGlossaryProjection",
     "getSessionAuditLogDetail",
     "getSessionAuditLogDetailSection",
     "getSessionAuditLogOperationDetail",
@@ -412,8 +501,13 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "listSessionAuditLogs",
     "listSessionCustomAgents",
     "listSessionSkills",
-    "listSessionSummaries",
+    "listSessionCharacterUsage",
+    "listSessionSummaryPage",
     "listFileRootChanges",
+    "listFileRootGitHistoryRepositories",
+    "listFileRootGitHistoryCommits",
+    "getFileRootGitHistoryCommitDetail",
+    "getFileRootGitHistoryDiff",
     "listWorkspaceCustomAgents",
     "listWorkspaceSkills",
     "mergeCompanionSelectedFiles",
@@ -449,12 +543,14 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "previewCompanionComposerInput",
     "previewComposerInput",
     "inspectSessionFile",
+    "isSessionFileObjectCopyAvailable",
     "listSessionDirectory",
     "listSessionFileRoots",
     "readSessionFileChunk",
     "reportRendererLog",
     "resetAppDatabase",
     "restoreCompanionTargetStash",
+    "restoreSessionWindows",
     "resolveLiveApproval",
     "resolveLiveElicitation",
     "resolveLaunchCharacter",
@@ -463,9 +559,11 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "runSessionTurn",
     "savePastedSessionFile",
     "searchMemoryV6Entries",
+    "searchSessionGlossary",
     "setMateAvatar",
     "setSessionPinned",
     "showSessionFilePreviewImageContextMenu",
+    "showSessionFileObjectCopyContextMenu",
     "showMarkdownLinkContextMenu",
     "startCharacterAuthoringSession",
     "stashCompanionTargetChanges",
@@ -476,13 +574,14 @@ test("createWithMateWindowApi は current public API の key を揃えて expose
     "subscribeModelCatalog",
     "subscribeOpenCompanionReviewWindowIds",
     "subscribeOpenSessionWindowIds",
+    "subscribeSessionWindowRestoreSet",
     "subscribePromptTemplates",
     "subscribeProviderQuotaTelemetry",
     "subscribeSessionFilePreviewNavigation",
     "subscribeSessionInvalidation",
-    "subscribeSessionSummaries",
     "subscribeSessionBackgroundActivity",
     "subscribeSessionContextTelemetry",
+    "subscribeSessionGlossary",
     "syncCompanionTarget",
     "forgetMemoryV6Entry",
     "uninstallMemoryV6CliShim",
@@ -532,7 +631,8 @@ test("preload type surface は destructive storage maintenance API を Settings 
   const sessionKeys = [
     "createSession",
     "deleteSession",
-    "listSessionSummaries",
+    "listSessionCharacterUsage",
+    "listSessionSummaryPage",
   ] satisfies Array<keyof WithMateWindowSessionApi>;
 
   assert.equal(settingsKeys.includes("deleteSessionsLastActiveBefore"), true);
@@ -544,14 +644,11 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   const api = createWithMateWindowApi(ipcRenderer as never);
   const received: unknown[] = [];
 
-  const disposeSummaries = api.subscribeSessionSummaries((summaries) => {
-    received.push({ kind: "summaries", summaries });
-  });
   const disposeBoot = api.subscribeAppBootStatus((status) => {
     received.push({ kind: "boot", status });
   });
-  const disposeInvalidation = api.subscribeSessionInvalidation((sessionIds) => {
-    received.push({ kind: "invalidation", sessionIds });
+  const disposeInvalidation = api.subscribeSessionInvalidation((payload) => {
+    received.push({ kind: "invalidation", payload });
   });
   const disposePreviewNavigation = api.subscribeSessionFilePreviewNavigation((payload) => {
     received.push({ kind: "previewNavigation", payload });
@@ -563,9 +660,8 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
     received.push({ kind: "templates", templates });
   });
 
-  listeners.get("withmate:sessions-changed")?.({}, [{ id: "session-1", taskTitle: "task" }]);
   listeners.get("withmate:app-boot-status")?.({}, { kind: "running", stage: "database", title: "DB" });
-  listeners.get("withmate:sessions-invalidated")?.({}, ["session-1"]);
+  listeners.get("withmate:sessions-invalidated")?.({}, { scope: "ids", sessionIds: ["session-1"] });
   listeners.get("withmate:session-file-preview-navigation")?.({}, {
     resource: { sessionId: "session-1", rootId: "workspace", relativePath: "src/App.tsx" },
     ownerSessionId: "session-1",
@@ -574,7 +670,6 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   });
   listeners.get("withmate:live-session-run")?.({}, { sessionId: "session-1", state: { phase: "running" } });
   listeners.get("withmate:prompt-templates-changed")?.({}, [{ id: "template-1", name: "Review" }]);
-  disposeSummaries();
   disposeBoot();
   disposeInvalidation();
   disposePreviewNavigation();
@@ -582,9 +677,8 @@ test("createWithMateWindowApi は subscribe 系 API で payload を unwrap す�
   disposeTemplates();
 
   assert.deepEqual(received, [
-    { kind: "summaries", summaries: [{ id: "session-1", taskTitle: "task" }] },
     { kind: "boot", status: { kind: "running", stage: "database", title: "DB" } },
-    { kind: "invalidation", sessionIds: ["session-1"] },
+    { kind: "invalidation", payload: { scope: "ids", sessionIds: ["session-1"] } },
     {
       kind: "previewNavigation",
       payload: {
@@ -610,12 +704,16 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
   const api = createWithMateWindowApi(ipcRenderer as never);
   const quotaReceived: unknown[] = [];
   const backgroundReceived: unknown[] = [];
+  const glossaryReceived: unknown[] = [];
 
   const disposeQuota = api.subscribeProviderQuotaTelemetry((providerId, telemetry) => {
     quotaReceived.push({ providerId, telemetry });
   });
   const disposeBackground = api.subscribeSessionBackgroundActivity((sessionId, kind, state) => {
     backgroundReceived.push({ sessionId, kind, state });
+  });
+  const disposeGlossary = api.subscribeSessionGlossary((projection) => {
+    glossaryReceived.push(projection);
   });
 
   listeners.get("withmate:provider-quota-telemetry")?.({}, {
@@ -627,11 +725,27 @@ test("createWithMateWindowApi は telemetry / background activity の payload �
     kind: "monologue",
     state: { kind: "monologue", status: "running" },
   });
+  listeners.get("withmate:session-glossary-changed")?.({}, {
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 2,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  });
   disposeQuota();
   disposeBackground();
+  disposeGlossary();
 
   assert.deepEqual(quotaReceived, [{ providerId: "copilot", telemetry: { provider: "copilot", snapshots: [] } }]);
   assert.deepEqual(backgroundReceived, [
     { sessionId: "session-1", kind: "monologue", state: { kind: "monologue", status: "running" } },
   ]);
+  assert.deepEqual(glossaryReceived, [{
+    sessionId: "session-1",
+    scopeRevision: "scope-1",
+    sequence: 2,
+    checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+    state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+  }]);
+  assert.equal(listeners.has("withmate:session-glossary-changed"), false);
 });

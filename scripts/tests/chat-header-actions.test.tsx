@@ -11,6 +11,7 @@ import { SessionHeader } from "../../src/session-components.js";
 import {
   buildLiveSessionHeaderProps,
   createAuxiliaryHeaderActions,
+  createMessageCollapseHeaderAction,
   createWorkspaceExplorerAction,
   resolveAuxiliaryHeaderActionState,
 } from "../../src/chat/chat-header-actions.js";
@@ -160,6 +161,62 @@ test("createWorkspaceExplorerAction は disabled state を反映する", () => {
   }));
 
   assert.match(html, /disabled=""/);
+});
+
+test("createMessageCollapseHeaderAction は既存header button語彙とshortcut名を使う", () => {
+  const html = renderToStaticMarkup(createMessageCollapseHeaderAction({
+    allMessagesCollapsed: false,
+    onToggle: noop,
+  }));
+
+  assert.match(html, /class="drawer-toggle compact secondary"/);
+  assert.match(html, /aria-label="完了済みmessageをすべて縮小"/);
+  assert.match(html, /title="完了済みmessageをすべて縮小 \(Ctrl\+Shift\+M\)"/);
+  assert.match(html, />Collapse<\/button>/);
+
+  const expandedHtml = renderToStaticMarkup(createMessageCollapseHeaderAction({
+    allMessagesCollapsed: true,
+    onToggle: noop,
+  }));
+  assert.match(expandedHtml, />Expand<\/button>/);
+});
+
+test("SessionHeader はmessage collapse actionをAuxiliaryの左隣へ描画する", () => {
+  const html = renderToStaticMarkup(
+    <SessionHeader
+      taskTitle="Session"
+      isEditingTitle={false}
+      titleDraft="Session"
+      isRunning={false}
+      actions={(
+        <>
+          {createMessageCollapseHeaderAction({ allMessagesCollapsed: false, onToggle: noop })}
+          {createAuxiliaryHeaderActions({
+            isActive: false,
+            onStart: noop,
+            onReturnToMain: noop,
+          })}
+        </>
+      )}
+      showTerminalButton={false}
+      showRenameButton={false}
+      showAuditLogButton={false}
+      showDeleteButton={false}
+      onOpenAuditLog={noop}
+      onOpenTerminal={noop}
+      onTitleDraftChange={noop}
+      onTitleInputKeyDown={noop}
+      onSaveTitle={noop}
+      onCancelTitleEdit={noop}
+      onStartTitleEdit={noop}
+      onDeleteSession={noop}
+    />,
+  );
+
+  assert.ok(
+    html.indexOf('aria-label="完了済みmessageをすべて縮小"')
+      < html.indexOf('aria-label="Auxiliary session actions"'),
+  );
 });
 
 test("createAuxiliaryHeaderActions は idle 時の Auxiliary start action を描画する", () => {

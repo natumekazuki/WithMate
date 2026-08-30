@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Session, SessionSummary } from "../../src/app-state.js";
+import {
+  projectHomeSessionSummary,
+  type Session,
+  type SessionSummary,
+} from "../../src/app-state.js";
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
 import { MainQueryService } from "../../src-electron/main-query-service.js";
 
@@ -49,6 +53,8 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
   const fullSessionRequests: string[] = [];
   const service = new MainQueryService({
     getSessionSummaries: () => sourceSessions.map((session) => createSessionSummary(session)),
+    getSessionSummaryPage: () => ({ entries: sourceSessions.map((session) => createSessionSummary(session)), nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [{ characterId: "char-1", sessionKind: "default" }],
     getSession: (sessionId) => {
       fullSessionRequests.push(sessionId);
       return sourceSessions.find((session) => session.id === sessionId) ?? null;
@@ -102,6 +108,48 @@ test("MainQueryService は session skills/custom agents と preview/terminal を
   assert.deepEqual(fullSessionRequests, ["session-1"]);
 });
 
+test("MainQueryService は bounded summary page と Character usage を clone して返す", async () => {
+  const entry = createSessionSummary({ id: "page-session" });
+  const usage = { characterId: "char-page", sessionKind: "default" as const };
+  const service = new MainQueryService({
+    getSessionSummaries: () => [],
+    getSessionSummaryPage: () => ({ entries: [entry], nextCursor: "cursor-1", hasMore: true }),
+    getSessionCharacterUsage: () => [usage],
+    getSession: () => null,
+    getSessionMessageArtifact: () => null,
+    getAuditLogs: () => [],
+    getAuditLogSummaries: () => [],
+    getAuditLogSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false, total: 0 }),
+    getAuditLogDetail: () => null,
+    getAuditLogDetailSection: () => null,
+    getAuditLogOperationDetail: () => null,
+    getAppSettings: () => ({
+      providers: {},
+      codingProviderSettings: {},
+      memoryExtractionProviderSettings: {},
+      characterReflectionProviderSettings: {},
+    }) as never,
+    discoverSessionSkills: async () => [],
+    discoverSessionCustomAgents: async () => [],
+    resolveComposerPreview: async () => ({ attachments: [], errors: [] }),
+    launchTerminalAtPath: async () => undefined,
+  });
+
+  const page = await service.listSessionSummaryPage({ scope: "recent", limit: 1 });
+  const usages = await service.listSessionCharacterUsage();
+
+  assert.deepEqual(page, {
+    entries: [projectHomeSessionSummary(entry)],
+    nextCursor: "cursor-1",
+    hasMore: true,
+  });
+  assert.equal("provider" in page.entries[0], false);
+  assert.equal("threadId" in page.entries[0], false);
+  assert.notEqual(page.entries[0], entry);
+  assert.deepEqual(usages, [usage]);
+  assert.notEqual(usages[0], usage);
+});
+
 test("MainQueryService は path 参照なし draft の preview を早期 return する", async () => {
   let getSessionSummariesCalls = 0;
   const service = new MainQueryService({
@@ -109,6 +157,8 @@ test("MainQueryService は path 参照なし draft の preview を早期 return 
       getSessionSummariesCalls += 1;
       return [createSessionSummary()];
     },
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
     getSession: () => createSession(),
     getSessionMessageArtifact: () => null,
     getAuditLogs: () => [],
@@ -159,6 +209,8 @@ test("MainQueryService は session provider ごとの skill directory を discov
       createSessionSummary({ id: "codex-session", provider: "codex", workspacePath: "C:/workspace" }),
       createSessionSummary({ id: "copilot-session", provider: "copilot", workspacePath: "C:/workspace" }),
     ],
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
     getSession: () => null,
     getSessionMessageArtifact: () => null,
     getAuditLogs: () => [],
@@ -191,6 +243,8 @@ test("MainQueryService は session provider ごとの skill directory を discov
 test("MainQueryService は一覧を summary に射影して detail payload を含めない", async () => {
   const service = new MainQueryService({
     getSessionSummaries: () => [createSessionSummary()],
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
     getSession: () => createSession(),
     getSessionMessageArtifact: () => null,
     getAuditLogs: () => [],
@@ -224,6 +278,8 @@ test("MainQueryService は対象 session detail だけを clone して返す", a
   let requestedSessionId: string | null = null;
   const service = new MainQueryService({
     getSessionSummaries: () => [createSessionSummary(targetSession)],
+    getSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+    getSessionCharacterUsage: () => [],
     getSession: (sessionId) => {
       requestedSessionId = sessionId;
       return sessionId === targetSession.id ? targetSession : null;

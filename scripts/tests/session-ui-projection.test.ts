@@ -7,6 +7,7 @@ import type {
   LiveRunStep,
   ProviderQuotaTelemetry,
 } from "../../src/app-state.js";
+import type { GlossaryProjectionState, SessionGlossaryProjection } from "../../src/glossary-contract.js";
 import {
   buildContextPaneProjection,
   buildCopilotQuotaProjection,
@@ -15,9 +16,12 @@ import {
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
   cycleContextPaneTab,
+  contextPaneTabLabel,
   findLatestAuditCommandOperation,
   findLatestLiveCommandStep,
   resolveAvailableContextPaneTabs,
+  shouldIncludeGlossaryContextPane,
+  isGlossarySearchRevisionCurrent,
 } from "../../src/session-ui-projection.js";
 
 function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBackgroundTask, "id" | "kind" | "status" | "title" | "updatedAt">): LiveBackgroundTask {
@@ -28,6 +32,12 @@ function makeBackgroundTask(partial: Partial<LiveBackgroundTask> & Pick<LiveBack
 }
 
 describe("session-ui-projection", () => {
+  it("Glossary検索結果は初回・追加取得ともcurrent projection revisionだけを採用する", () => {
+    assert.equal(isGlossarySearchRevisionCurrent("revision-a", "revision-a"), true);
+    assert.equal(isGlossarySearchRevisionCurrent("revision-b", "revision-a"), false);
+    assert.equal(isGlossarySearchRevisionCurrent("revision-a", null), false);
+  });
+
   it("latest command helpers は末尾の command_execution を拾う", () => {
     const liveSteps: LiveRunStep[] = [
       {
@@ -462,7 +472,7 @@ describe("session-ui-projection", () => {
   });
 
   it("cycleContextPaneTab は利用可能な command pane を循環する", () => {
-    assert.equal(cycleContextPaneTab("latest-command", 1), "reasoning");
+    assert.equal(cycleContextPaneTab("latest-command", 1), "messages");
     assert.equal(cycleContextPaneTab("latest-command", -1), "companion-group");
   });
 
@@ -498,5 +508,84 @@ describe("session-ui-projection", () => {
     const availableTabs = resolveAvailableContextPaneTabs({ isCopilotSession: false });
     assert.equal(cycleContextPaneTab("latest-command", 1, availableTabs), "latest-command");
     assert.equal(cycleContextPaneTab("latest-command", -1, availableTabs), "latest-command");
+  });
+
+  it("Messages tab は明示的に有効化したSession Windowだけへ追加される", () => {
+    assert.deepEqual(resolveAvailableContextPaneTabs({
+      isCopilotSession: true,
+      includeMessages: true,
+      hasReasoningCapability: true,
+      hasCompanionGroupMonitor: true,
+    }), [
+      "latest-command",
+      "messages",
+      "reasoning",
+      "tasks",
+      "companion-group",
+    ]);
+    assert.deepEqual(resolveAvailableContextPaneTabs({ isCopilotSession: true }), [
+      "latest-command",
+      "tasks",
+    ]);
+    assert.equal(contextPaneTabLabel("messages"), "Messages");
+    assert.equal(cycleContextPaneTab("latest-command", 1, ["latest-command", "messages"]), "messages");
+  });
+
+  it("Glossary tabはAgent Sessionで明示的に有効化し、既存right pane順へ追加する", () => {
+    assert.deepEqual(resolveAvailableContextPaneTabs({
+      isCopilotSession: false,
+      includeMessages: true,
+      includeGlossary: true,
+    }), ["latest-command", "messages", "glossary"]);
+    assert.equal(contextPaneTabLabel("glossary"), "Glossary");
+  });
+
+  it("Glossary tabはloading・missing・空を含む全状態で安定して表示する", () => {
+    const projection = (state: GlossaryProjectionState): SessionGlossaryProjection => ({
+      sessionId: "session-1",
+      scopeRevision: "scope-1",
+      sequence: 1,
+      checkout: { repositoryName: "repository", branch: "main", pathLabel: "repository" },
+      state,
+    });
+    const issue = { path: "$", code: "INVALID_YAML", message: "invalid" };
+
+    assert.equal(shouldIncludeGlossaryContextPane(null), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "missing",
+      relativePath: ".withmate/glossary.yaml",
+      revision: null,
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "valid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "empty",
+      entries: [],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "valid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "populated",
+      entries: [{ term: "Runtime", aliases: [], definition: "definition" }],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "invalid",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "invalid",
+      issues: [issue],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "unsupported",
+      relativePath: ".withmate/glossary.yaml",
+      revision: "unsupported",
+      schemaVersion: 2,
+      issues: [issue],
+    })), true);
+    assert.equal(shouldIncludeGlossaryContextPane(projection({
+      status: "watch-error",
+      relativePath: ".withmate/glossary.yaml",
+      revision: null,
+      message: "watch failed",
+    })), true);
   });
 });

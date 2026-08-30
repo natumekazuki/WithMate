@@ -18,6 +18,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  parseGitHistoryLog,
+  parseGitHistoryNameStatusZ,
   parseGitPorcelainV1Z,
   FileRootGitChangesService,
 } from "../../src-electron/file-root-git-changes-service.js";
@@ -119,6 +121,379 @@ test("parseGitPorcelainV1Z は nested Workspace の path を Workspace-relative 
       scopes: ["staged"],
     },
   ]);
+});
+
+test("Git history parser はcommit metadata、HEAD/local branch/tag、rename/copy statusをprojectionする", () => {
+  const firstCommitId = "a".repeat(40);
+  const secondCommitId = "b".repeat(40);
+  const output = Buffer.from(
+    `${firstCommitId}\0aaaaaaa\0Author\0author@example.invalid\x002026-08-22T00:00:00+00:00\0Add history\0${secondCommitId}\0HEAD -> refs/heads/main, refs/tags/v1.0, refs/remotes/origin/main\0\x01\n`
+      + `${secondCommitId}\0bbbbbbb\0Author\0author@example.invalid\x002026-08-21T00:00:00+00:00\0Base\0\0\0\x01\n`,
+    "utf8",
+  );
+  assert.deepEqual(parseGitHistoryLog(output), [
+    {
+      id: firstCommitId,
+      shortHash: "aaaaaaa",
+      subject: "Add history",
+      authorName: "Author",
+      authorEmail: "author@example.invalid",
+      authoredAt: "2026-08-22T00:00:00.000Z",
+      refs: [
+        { kind: "head", name: "HEAD" },
+        { kind: "branch", name: "main" },
+        { kind: "tag", name: "v1.0" },
+      ],
+      parentIds: [secondCommitId],
+    },
+    {
+      id: secondCommitId,
+      shortHash: "bbbbbbb",
+      subject: "Base",
+      authorName: "Author",
+      authorEmail: "author@example.invalid",
+      authoredAt: "2026-08-21T00:00:00.000Z",
+      refs: [],
+      parentIds: [],
+    },
+  ]);
+  assert.deepEqual(parseGitHistoryNameStatusZ(Buffer.from("R100\0src/old.ts\0src/new.ts\0C100\0src/new.ts\0src/copy.ts\0", "utf8")), [
+    {
+      relativePath: "src/new.ts",
+      previousRelativePath: "src/old.ts",
+      kinds: { commit: "renamed" },
+      scopes: ["commit"],
+    },
+    {
+      relativePath: "src/copy.ts",
+      previousRelativePath: "src/new.ts",
+      kinds: { commit: "copied" },
+      scopes: ["commit"],
+    },
+  ]);
+});
+
+test("FileRootGitChangesService はcanonical repository単位のhistory、root/parent diff、binary metadataを返す", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-"));
+  try {
+    await initializeRepository(repositoryPath);
+    await writeFile(path.join(repositoryPath, "tracked.txt"), "changed\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "tracked.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "changed",
+    ])).exitCode, 0);
+    await runGitForTest(repositoryPath, ["mv", "tracked.txt", "renamed.txt"]);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "rename",
+    ])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([0, 1, 2, 3, 255]));
+    assert.equal((await runGitForTest(repositoryPath, ["add", "binary.bin"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "binary",
+    ])).exitCode, 0);
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+        { rootId: "additional:repo", label: "repo", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    assert.equal(repositories.repositories.length, 1);
+    const repository = repositories.repositories[0]!;
+    const page = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+    });
+    assert.equal(page.status, "ok");
+    if (page.status !== "ok") {
+      return;
+    }
+    assert.equal(page.page.entries[0]?.subject, "binary");
+    const binaryCommit = page.page.entries[0]!;
+    const binaryDetail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: binaryCommit.id,
+    });
+    assert.equal(binaryDetail.status, "ok");
+    if (binaryDetail.status !== "ok") {
+      return;
+    }
+    assert.deepEqual(binaryDetail.entries[0]?.kinds.commit, "added");
+    const binaryDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: binaryCommit.id,
+      relativePath: "binary.bin",
+    });
+    assert.equal(binaryDiff.status, "ok");
+    if (binaryDiff.status === "ok") {
+      assert.match(binaryDiff.patch, /Binary files .* differ/);
+      assert.doesNotMatch(binaryDiff.patch, /GIT binary patch/);
+      assert.deepEqual(binaryDiff.previewResource, {
+        resourceKind: "git-commit-file",
+        sessionId: "session-1",
+        repositoryId: repository.repositoryId,
+        rootId: repository.rootId,
+        commitId: binaryCommit.id,
+        relativePath: "binary.bin",
+      });
+      let blobReadAttempts = 0;
+      let allowBlobInspection = false;
+      const metadataOnlyService = new FileRootGitChangesService({
+        resolveRootContext: async () => ({ rootPath: repositoryPath }),
+        resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+        runGit: async (workspacePath, args, options) => {
+          if (args.some((arg, index) => arg === "cat-file" && args[index + 1] === "blob")) {
+            blobReadAttempts += 1;
+            if (!allowBlobInspection) {
+              throw new Error("Blob contents must not be read during preview Window admission.");
+            }
+            assert.equal(options.captureStdoutBytes, 8 * 1024);
+          }
+          return runGitForTest(workspacePath, args, {
+            env: options.env,
+            executablePath: options.executablePath,
+            stdin: options.stdin,
+            signal: options.signal,
+          });
+        },
+      });
+      assert.deepEqual(
+        await metadataOnlyService.resolveHistoryFilePreview(binaryDiff.previewResource!),
+        { name: "binary.bin" },
+      );
+      assert.equal(blobReadAttempts, 0);
+      await writeFile(path.join(repositoryPath, "binary.bin"), Buffer.from([9, 9, 9]));
+      allowBlobInspection = true;
+      const descriptor = await metadataOnlyService.inspectHistoryFile(binaryDiff.previewResource!);
+      assert.equal(blobReadAttempts, 1);
+      assert.equal(descriptor.revision.length, binaryCommit.id.length);
+      assert.equal(descriptor.kind, "binary");
+      assert.equal(descriptor.byteLength, 5);
+      const chunk = await service.readHistoryFileChunk({
+        ...binaryDiff.previewResource!,
+        offset: 0,
+        length: descriptor.byteLength,
+        expectedRevision: descriptor.revision,
+      });
+      assert.deepEqual([...new Uint8Array(chunk.data)], [0, 1, 2, 3, 255]);
+    }
+
+    await unlink(path.join(repositoryPath, "binary.bin"));
+    assert.equal((await runGitForTest(repositoryPath, ["add", "--all", "binary.bin"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "delete binary",
+    ])).exitCode, 0);
+    const deletedCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    const deletedDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: deletedCommitId,
+      relativePath: "binary.bin",
+    });
+    assert.equal(deletedDiff.status, "ok");
+    if (deletedDiff.status === "ok") {
+      assert.equal(deletedDiff.previewResource, null);
+    }
+    assert.equal((await runGitForTest(repositoryPath, [
+      "update-index",
+      "--add",
+      "--cacheinfo",
+      `160000,${binaryCommit.id},vendor/example`,
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "add gitlink",
+    ])).exitCode, 0);
+    const gitlinkCommitId = (await runGitForTest(repositoryPath, ["rev-parse", "HEAD"])).stdout.toString("utf8").trim();
+    const gitlinkDiff = await service.getHistoryDiff({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: gitlinkCommitId,
+      relativePath: "vendor/example",
+    });
+    assert.equal(gitlinkDiff.status, "ok");
+    if (gitlinkDiff.status === "ok") {
+      assert.equal(gitlinkDiff.previewResource, null);
+    }
+
+    const renameCommit = page.page.entries.find((entry) => entry.subject === "rename");
+    assert.ok(renameCommit);
+    const renameDetail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: renameCommit.id,
+    });
+    assert.equal(renameDetail.status, "ok");
+    if (renameDetail.status === "ok") {
+      assert.equal(renameDetail.entries[0]?.kinds.commit, "renamed");
+      assert.equal(renameDetail.entries[0]?.previousRelativePath, "tracked.txt");
+    }
+
+    const rootCommitId = (await runGitForTest(repositoryPath, ["rev-list", "--max-parents=0", "HEAD"])).stdout
+      .toString("utf8").trim();
+    const rootDetail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: rootCommitId,
+    });
+    assert.equal(rootDetail.status, "ok");
+    if (rootDetail.status === "ok") {
+      assert.ok(rootDetail.entries.some((entry) => entry.relativePath === "tracked.txt"));
+    }
+    const invalidCommit = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: "not-a-commit",
+    });
+    assert.equal(invalidCommit.status, "failed");
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+test("FileRootGitChangesService はmerge commitをfirst parentと比較する", async () => {
+  const repositoryPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-merge-"));
+  try {
+    await initializeRepository(repositoryPath);
+    const mainBranch = (await runGitForTest(repositoryPath, ["branch", "--show-current"])).stdout
+      .toString("utf8").trim();
+    assert.ok(mainBranch);
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", "-b", "history-side"])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "side.txt"), "side\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "side.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "side",
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, ["checkout", mainBranch])).exitCode, 0);
+    await writeFile(path.join(repositoryPath, "main.txt"), "main\n");
+    assert.equal((await runGitForTest(repositoryPath, ["add", "main.txt"])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "commit", "--quiet", "-m", "main",
+    ])).exitCode, 0);
+    assert.equal((await runGitForTest(repositoryPath, [
+      "-c", "user.name=WithMate Test", "-c", "user.email=withmate@example.invalid",
+      "merge", "--no-ff", "--quiet", "-m", "merge side", "history-side",
+    ])).exitCode, 0);
+
+    const service = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+    });
+    const repositories = await service.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0];
+    assert.ok(repository);
+    const page = await service.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+    });
+    assert.equal(page.status, "ok");
+    if (page.status !== "ok") {
+      return;
+    }
+    const mergeCommit = page.page.entries.find((entry) => entry.subject === "merge side");
+    assert.ok(mergeCommit);
+    const detail = await service.getHistoryCommitDetail({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+      commitId: mergeCommit.id,
+    });
+    assert.equal(detail.status, "ok");
+    if (detail.status === "ok") {
+      assert.deepEqual(detail.entries.map((entry) => entry.relativePath), ["side.txt"]);
+    }
+  } finally {
+    await rm(repositoryPath, { recursive: true, force: true });
+  }
+});
+
+test("FileRootGitChangesService は空のrepository集合とhistory stdout上限を結果へ投影する", async () => {
+  const nonGitPath = await mkdtemp(path.join(os.tmpdir(), "withmate-git-history-empty-"));
+  const missingPath = path.join(nonGitPath, "missing");
+  try {
+    const emptyService = new FileRootGitChangesService({
+      resolveRootContext: async () => null,
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: nonGitPath, rootPath: nonGitPath },
+        { rootId: "missing", label: "Missing", displayPath: missingPath, rootPath: missingPath },
+      ],
+    });
+    assert.deepEqual(await emptyService.listHistoryRepositories({ sessionId: "session-1" }), {
+      status: "ok",
+      repositories: [],
+    });
+
+    const repositoryPath = path.join(nonGitPath, "repository");
+    await initializeRepository(repositoryPath);
+    const largeOutput = Buffer.alloc(2 * 1024 * 1024 + 1, 0x61);
+    const limitedService = new FileRootGitChangesService({
+      resolveRootContext: async () => ({ rootPath: repositoryPath }),
+      resolveHistoryRootContexts: async () => [
+        { rootId: "workspace", label: "Workspace", displayPath: repositoryPath, rootPath: repositoryPath },
+      ],
+      resolveHistoryRootContext: async () => ({ rootPath: repositoryPath }),
+      runGit: async (workspacePath, args, options) => {
+        if (args.includes("log")) {
+          return { exitCode: 0, stdout: largeOutput, stderr: "" };
+        }
+        return runGitForTest(workspacePath, args, {
+          env: options.env,
+          executablePath: options.executablePath,
+          stdin: options.stdin,
+          signal: options.signal,
+        });
+      },
+    });
+    const repositories = await limitedService.listHistoryRepositories({ sessionId: "session-1" });
+    assert.equal(repositories.status, "ok");
+    if (repositories.status !== "ok") {
+      return;
+    }
+    const repository = repositories.repositories[0];
+    assert.ok(repository);
+    const page = await limitedService.listHistoryCommits({
+      sessionId: "session-1",
+      repositoryId: repository.repositoryId,
+      rootId: repository.rootId,
+    });
+    assert.equal(page.status, "failed");
+    if (page.status === "failed") {
+      assert.match(page.message, /stdout.*resource limit/i);
+    }
+  } finally {
+    await rm(nonGitPath, { recursive: true, force: true });
+  }
 });
 
 test("FileRootGitChangesService は隔離した status / diff と非継承 Git 環境を使う", async () => {

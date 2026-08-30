@@ -14,8 +14,8 @@ import { PromptTemplateStorage } from "../../src-electron/prompt-template-storag
 describe("prompt template contract", () => {
   it("名前を正規化し、空本文と上限超過を拒否する", () => {
     assert.equal(normalizePromptTemplateName("  Review   Brief  "), "Review Brief");
-    assert.throws(() => normalizePromptTemplateName("   "), /テンプレート名/);
-    assert.throws(() => normalizePromptTemplatePrompt("\n\t"), /プロンプト本文/);
+    assert.throws(() => normalizePromptTemplateName("   "), /template name/i);
+    assert.throws(() => normalizePromptTemplatePrompt("\n\t"), /prompt/i);
     assert.throws(
       () => normalizePromptTemplatePrompt("a".repeat(PROMPT_TEMPLATE_PROMPT_MAX_BYTES + 1)),
       /256 KiB/,
@@ -59,13 +59,13 @@ describe("PromptTemplateStorage", () => {
       storage.createPromptTemplate({ name: "Review", prompt: "first" });
       assert.throws(
         () => storage.createPromptTemplate({ name: "review", prompt: "second" }),
-        /同じ名前/,
+        /same name/i,
       );
       assert.throws(
         () => storage.updatePromptTemplate({ id: "missing", name: "Missing", prompt: "body" }),
-        /見つかりません/,
+        /not found/i,
       );
-      assert.throws(() => storage.deletePromptTemplate("missing"), /見つかりません/);
+      assert.throws(() => storage.deletePromptTemplate("missing"), /not found/i);
       assert.equal(storage.listPromptTemplates().length, 1);
     } finally {
       storage?.close();

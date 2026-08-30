@@ -370,6 +370,71 @@ describe("SessionWindowBridge", () => {
     assert.equal(bridge.getWindow(session.id), null);
   });
 
+  it("open通知の集合にはopening中を含め、復元除外用の集合にはload完了後だけ含める", async () => {
+    const session = createSession();
+    let resolveLoad: (() => void) | null = null;
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      loadChatEntry: () => new Promise<void>((resolve) => {
+        resolveLoad = resolve;
+      }),
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+    });
+
+    const opening = bridge.openSessionWindow(session.id);
+
+    assert.deepEqual(bridge.listOpenSessionWindowIds(), [session.id]);
+    assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), []);
+    assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "opening");
+
+    assert.ok(resolveLoad);
+    resolveLoad();
+    await opening;
+
+    assert.deepEqual(bridge.listSettledOpenSessionWindowIds(), [session.id]);
+    assert.equal(bridge.getSessionWindowRestoreStates().get(session.id)?.kind, "settled-open");
+  });
+
+  it("別Sessionのopen完了時に読込中のWindowをsnapshotへ混ぜず、読込失敗後も残さない", async () => {
+    const sessionA = createSession({ id: "session-a" });
+    const sessionB = createSession({ id: "session-b" });
+    let rejectSessionA: ((error: Error) => void) | null = null;
+    const savedSnapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      loadChatEntry(_window, mode) {
+        if (mode.sessionId === sessionA.id) {
+          return new Promise<void>((_resolve, reject) => {
+            rejectSessionA = reject;
+          });
+        }
+        return Promise.resolve();
+      },
+      getSession: (sessionId) => sessionId === sessionA.id ? sessionA : sessionB,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(sessionIds) {
+        savedSnapshots.push([...sessionIds]);
+      },
+    });
+
+    const openingA = bridge.openSessionWindow(sessionA.id);
+    await bridge.openSessionWindow(sessionB.id);
+    assert.deepEqual(savedSnapshots, [[sessionB.id]]);
+
+    assert.ok(rejectSessionA);
+    rejectSessionA(new Error("load failed"));
+    await assert.rejects(openingA, /load failed/);
+
+    assert.deepEqual(savedSnapshots, [[sessionB.id]]);
+  });
+
   it("古い window の遅延 closed は同じ Session の新しい window claim を解放しない", async () => {
     const session = createSession();
     const windows: StubWindow[] = [];
@@ -472,5 +537,58 @@ describe("SessionWindowBridge", () => {
     window.close();
 
     assert.deepEqual(broadcasts.at(-1), []);
+  });
+
+  it("snapshot保存失敗でもopenとcloseを維持する", async () => {
+    const session = createSession();
+    const errors: unknown[] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => false,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds() {
+        throw new Error("save failed");
+      },
+      onSnapshotPersistenceError(error) {
+        errors.push(error);
+      },
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    assert.equal(bridge.getWindow(session.id), window);
+    window.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(bridge.getWindow(session.id), null);
+    assert.equal(errors.length, 2);
+  });
+
+  it("quit前に現在集合を保存し、その後のWindow closeではsnapshotを空にしない", async () => {
+    const session = createSession();
+    const savedSnapshots: string[][] = [];
+    const bridge = new SessionWindowBridge({
+      createWindow: () => new StubWindow(),
+      async loadChatEntry() {},
+      getSession: () => session,
+      isRunInFlight: () => false,
+      getAllowQuitWithInFlightRuns: () => true,
+      confirmCloseWhileRunning: () => false,
+      broadcastOpenSessionWindowIds() {},
+      async persistOpenSessionWindowIds(sessionIds) {
+        savedSnapshots.push([...sessionIds]);
+      },
+    });
+
+    const window = await bridge.openSessionWindow(session.id);
+    savedSnapshots.splice(0);
+    await bridge.prepareSnapshotForQuit();
+    window.close();
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(savedSnapshots, [[session.id]]);
   });
 });

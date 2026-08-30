@@ -1,12 +1,18 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
+  normalizeHomeSessionSummary,
   normalizeSession,
   normalizeSessionSummary,
   type MessageArtifact,
+  type HomeSessionSummary,
   type Session,
+  type SessionCharacterUsage,
+  type SessionSummaryPageRequest,
+  type HomeSessionSummaryPageResult,
   type SessionSummary,
 } from "../src/session-state.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
@@ -25,6 +31,13 @@ import {
 import { openAppDatabase } from "./sqlite-connection.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 import { SessionIdCollisionError } from "./session-storage-errors.js";
+import {
+  buildSessionSummaryKeysetClause,
+  buildSessionSummarySearchClauseForColumns,
+  decodeSessionSummaryCursor,
+  encodeSessionSummaryCursor,
+  parseSessionSummaryPageRequest,
+} from "./session-summary-query.js";
 
 type SessionRow = {
   id: string;
@@ -55,6 +68,7 @@ type SessionRow = {
   thread_id: string;
   messages_json: string;
   stream_json: string;
+  last_active_at: string | number;
 };
 
 type SessionIdRow = {
@@ -62,6 +76,26 @@ type SessionIdRow = {
 };
 
 type SessionSummaryRow = Omit<SessionRow, "character_runtime_snapshot_json" | "messages_json" | "stream_json">;
+
+type HomeSessionSummaryRow = {
+  id: string;
+  task_title: string;
+  status: string;
+  updated_at: string;
+  workspace_label: string;
+  workspace_path: string;
+  session_kind: string;
+  access_mode: string;
+  source_schema_version: number;
+  character_id: string;
+  character_name: string;
+  character_icon_path: string;
+  character_theme_main: string;
+  character_theme_sub: string;
+  run_state: string;
+  is_pinned: number;
+  last_active_at: string | number;
+};
 
 type TableColumnRow = {
   name: string;
@@ -131,6 +165,25 @@ const SESSION_SUMMARY_SELECT_COLUMNS = `
   custom_agent_name,
   allowed_additional_directories_json,
   thread_id
+`;
+
+const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
+  id,
+  task_title,
+  status,
+  updated_at,
+  workspace_label,
+  workspace_path,
+  session_kind,
+  access_mode,
+  source_schema_version,
+  character_id,
+  character_name,
+  character_icon_path,
+  character_theme_main,
+  character_theme_sub,
+  run_state,
+  0 AS is_pinned
 `;
 
 const LIST_SESSION_SUMMARIES_SQL = `
@@ -358,6 +411,29 @@ function rowToSessionSummary(row: SessionSummaryRow, mode: SessionRowParseMode =
   return summary;
 }
 
+function rowToHomeSessionSummary(row: HomeSessionSummaryRow): HomeSessionSummary | null {
+  return normalizeHomeSessionSummary({
+    id: row.id,
+    taskTitle: row.task_title,
+    status: row.status,
+    updatedAt: row.updated_at,
+    isPinned: row.is_pinned === 1,
+    workspaceLabel: row.workspace_label,
+    workspacePath: row.workspace_path,
+    sessionKind: row.session_kind,
+    accessMode: row.access_mode,
+    sourceSchemaVersion: row.source_schema_version,
+    characterId: row.character_id,
+    character: row.character_name,
+    characterIconPath: row.character_icon_path,
+    characterThemeColors: {
+      main: row.character_theme_main,
+      sub: row.character_theme_sub,
+    },
+    runState: row.run_state,
+  });
+}
+
 export class SessionStorage {
   private readonly db: DatabaseSync;
 
@@ -471,6 +547,85 @@ export class SessionStorage {
     return cloneSessionSummaries(
       rows.map((row) => rowToSessionSummary(row)).filter((session): session is SessionSummary => session !== null),
     );
+  }
+
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
+    const parsed = parseSessionSummaryPageRequest(request);
+    const cursor = parsed.scope === "open"
+      ? null
+      : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
+    if (parsed.scope === "pinned") {
+      return { entries: [], nextCursor: null, hasMore: false };
+    }
+    const search = buildSessionSummarySearchClauseForColumns("s", parsed.searchText, {
+      title: "s.task_title",
+      workspacePath: "s.workspace_path",
+      workspaceLabel: "s.workspace_label",
+      sessionKind: "s.session_kind",
+    });
+    const keyset = buildSessionSummaryKeysetClause("s", cursor);
+    const where: string[] = [];
+    const params: Array<string | number> = [];
+    if (parsed.scope === "open") {
+      const sessionIds = parsed.sessionIds ?? [];
+      if (sessionIds.length === 0) {
+        return { entries: [], nextCursor: null, hasMore: false };
+      }
+      where.push(`s.id IN (${sessionIds.map(() => "?").join(", ")})`);
+      params.push(...sessionIds);
+    } else if (keyset.sql) {
+      where.push(keyset.sql);
+      params.push(...keyset.params);
+    }
+    if (parsed.scope !== "open" && search.sql) {
+      where.push(search.sql);
+      params.push(...search.params);
+    }
+    const rows = this.db.prepare(`
+      SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}, last_active_at
+      FROM sessions AS s
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY s.last_active_at DESC, s.id DESC
+      LIMIT ?
+    `).all(...params, parsed.limit + 1) as HomeSessionSummaryRow[];
+    const visibleRows = rows.slice(0, parsed.limit);
+    const entries = cloneHomeSessionSummaries(
+      visibleRows.map((row) => rowToHomeSessionSummary(row)).filter((summary): summary is HomeSessionSummary => summary !== null),
+    );
+    const hasMore = parsed.scope !== "open" && rows.length > parsed.limit;
+    const lastRow = visibleRows.at(-1);
+    return {
+      entries,
+      hasMore,
+      nextCursor: hasMore && lastRow && parsed.scope !== "open"
+        ? encodeSessionSummaryCursor(parsed.scope, String(lastRow.last_active_at), lastRow.id, parsed.searchText)
+        : null,
+    };
+  }
+
+  listSessionCharacterUsage(): SessionCharacterUsage[] {
+    const rows = this.db.prepare(`
+      SELECT s.character_id
+      FROM sessions AS s
+      WHERE s.session_kind = 'default'
+        AND s.character_id IS NOT NULL
+        AND s.character_id <> ''
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sessions AS newer
+          WHERE newer.session_kind = 'default'
+            AND newer.character_id = s.character_id
+            AND (
+              newer.last_active_at > s.last_active_at
+              OR (newer.last_active_at = s.last_active_at AND newer.id > s.id)
+            )
+        )
+      ORDER BY s.last_active_at DESC, s.id DESC
+    `).all() as Array<{ character_id: string }>;
+    return rows
+      .map((row) => row.character_id.trim())
+      .filter(Boolean)
+      .map((characterId) => ({ characterId, sessionKind: "default" as const }));
   }
 
   getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {

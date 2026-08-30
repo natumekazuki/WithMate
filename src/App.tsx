@@ -82,8 +82,10 @@ import {
   buildLatestCommandProjection,
   buildRunningDetailsEntries,
   buildSessionContextTelemetryProjection,
+  isGlossarySearchRevisionCurrent,
   type ContextPaneTabKey,
   resolveAvailableContextPaneTabs,
+  shouldIncludeGlossaryContextPane,
 } from "./session-ui-projection.js";
 import { buildMainAuxiliaryRuntimeSession } from "./auxiliary-runtime-projection.js";
 import {
@@ -105,6 +107,7 @@ import { AuxiliaryLaunchProviderDialog } from "./chat/AuxiliaryLaunchProviderDia
 import { useAuxiliaryLaunchDialogState } from "./chat/use-auxiliary-launch-dialog-state.js";
 import {
   createAuxiliaryHeaderActions,
+  createMessageCollapseHeaderAction,
   resolveAuxiliaryHeaderActionState,
 } from "./chat/chat-header-actions.js";
 import {
@@ -138,7 +141,6 @@ import {
 import {
   applyComposerDraftClearCommand,
   applyComposerDraftChangeCommand,
-  buildComposerDraftKeyDownHandler,
   buildOnDraftCompositionHandlers,
   buildOnDraftSelectHandler,
 } from "./chat/composer-draft-handlers.js";
@@ -159,11 +161,20 @@ import { SessionDiffPreview, SessionFilePreview } from "./file-explorer/SessionF
 import { PromptTemplateWorkspace } from "./prompt-templates/PromptTemplateWorkspace.js";
 import { insertComposerTextAtSelection } from "./chat/message-text-actions.js";
 import { FileRootChangesPane } from "./file-explorer/FileRootChangesPane.js";
+import { FileRootGitHistoryPane } from "./file-explorer/FileRootGitHistoryPane.js";
 import type {
   FileRootFileDiffRequest,
-  FileRootGitChangeScope,
+  FileRootGitDiffScope,
+  FileRootGitHistoryDiffRequest,
+  SessionFileGitCommitResourceRequest,
   SessionFileRootResourceRequest,
 } from "./file-explorer/file-explorer-contract.js";
+import {
+  GLOSSARY_RELATIVE_PATH,
+  type GlossaryEntry,
+  type SessionGlossaryProjection,
+} from "./glossary-contract.js";
+import { createGlossaryAnnotationMatcher } from "./glossary/glossary-annotation-projection.js";
 import { buildFileRootDiffPreviewWindowRequest } from "./file-explorer/file-explorer-contract.js";
 import { projectFileRootDiffAvailability } from "./file-explorer/file-preview-utils.js";
 import {
@@ -193,7 +204,18 @@ import {
   recoverRejectedSessionSnapshot,
 } from "./session-submit-coordinator.js";
 import { buildAgentSessionChatWindowProps } from "./chat/session-chat-projection.js";
+import {
+  buildMessageCollapseTargets,
+  buildMessageNavigatorEntries,
+  reconcileMessageCollapseState,
+  toggleAllMessageCollapseState,
+  toggleMessageCollapseState,
+  type MessageCollapseState,
+  type MessageCollapseTarget,
+  type MessageJumpRequest,
+} from "./session-message-collapse.js";
 import { getWithMateApi, isDesktopRuntime } from "./renderer-withmate-api.js";
+import { ShortcutSettingsProvider } from "./shortcut-settings-context.js";
 import { resolveOpenPathFeedback, showOpenPathFeedback } from "./open-path-result.js";
 import { buildCompanionGroupMonitorEntries } from "./home/home-session-projection.js";
 import {
@@ -201,7 +223,7 @@ import {
   applySessionWorkspaceAvailabilityResult,
   beginSessionWorkspaceAvailabilityCheck,
   isSessionWorkspaceAvailable,
-  resolveSessionWorkspaceBlockedReason,
+  resolveSessionWorkspaceExecutionGate,
   resolveSessionWorkspaceUnavailableMessage,
 } from "./session-workspace-availability.js";
 import { useSessionAuditLogs } from "./session-audit-log-state.js";
@@ -293,9 +315,11 @@ import {
   runAuxiliarySessionSendOperationWithApi,
 } from "./auxiliary-session-send-operation.js";
 import {
+  applyComposerSubmitCommand,
   applyPickedAdditionalDirectoryUiStateCommand,
   applyPickedComposerReferencePathCommand,
   applyComposerReferenceInsertionCommand,
+  applyCentralSurfaceOpenCommand,
   applySelectedPathReferenceInsertionCommand,
   applySkillPromptInsertionCommand,
   applySessionFilesReferencePathsCommand,
@@ -307,7 +331,6 @@ import {
   createAgentPickerCloseHandler,
   createAgentPickerToggleHandler,
   createCancelTitleEditHandler,
-  createComposerSubmitKeyHandler,
   createContextPaneTabCycleHandler,
   createExpandedArtifactToggleHandler,
   createHeaderExpandedToggleHandler,
@@ -319,6 +342,12 @@ import {
   createStartTitleEditHandler,
   createTitleInputKeyHandler,
 } from "./chat/session-shell-handlers.js";
+import {
+  SHORTCUT_COMMAND_IDS,
+  useShortcutCommandHandler,
+  useShortcutDispatcherSettings,
+  useShortcutScope,
+} from "./shortcut-registry.js";
 
 const DEFAULT_SESSION_RUNTIME_NAME = "Mate";
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
@@ -505,22 +534,38 @@ export default function AgentSessionWindowApp() {
   const [selectedDiff, setSelectedDiff] = useState<DiffPreviewPayload | null>(null);
   const [selectedFilePreview, setSelectedFilePreview] = useState<SessionFileRootResourceRequest | null>(null);
   const [isPromptTemplateWorkspaceOpen, setIsPromptTemplateWorkspaceOpen] = useState(false);
-  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitChangeScope[]>([]);
+  const promptTemplateCloseGuardRef = useRef<(() => boolean) | null>(null);
+  const registerPromptTemplateCloseGuard = useCallback((guard: (() => boolean) | null) => {
+    promptTemplateCloseGuardRef.current = guard;
+  }, []);
+  const [selectedFileDiffScopes, setSelectedFileDiffScopes] = useState<FileRootGitDiffScope[]>([]);
   const [selectedFileDiffAvailabilityMessage, setSelectedFileDiffAvailabilityMessage] = useState("");
-  const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes">("files");
+  const [fileExplorerTab, setFileExplorerTab] = useState<"files" | "changes" | "history">("files");
   const [fileRootChangesRefreshRevision, setFileRootChangesRefreshRevision] = useState(0);
+  const [fileRootGitHistoryRefreshRevision, setFileRootGitHistoryRefreshRevision] = useState(0);
   const [fileRootDiffPreview, setFileRootDiffPreview] = useState<{
     sessionId: string;
     rootId: string;
     relativePath: string;
-    scope: FileRootGitChangeScope;
+    scope: FileRootGitDiffScope;
     generation: number;
     patch: string;
   } | null>(null);
   const [fileRootDiffPendingPreview, setFileRootDiffPendingPreview] = useState<
     (FileRootFileDiffRequest & { generation: number }) | null
   >(null);
-  const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitChangeScope | null>(null);
+  const [fileRootDiffLoadingScope, setFileRootDiffLoadingScope] = useState<FileRootGitDiffScope | null>(null);
+  const [fileRootGitHistoryDiffPreview, setFileRootGitHistoryDiffPreview] = useState<{
+    request: FileRootGitHistoryDiffRequest;
+    generation: number;
+    patch: string;
+    previewResource: SessionFileGitCommitResourceRequest | null;
+  } | null>(null);
+  const [fileRootGitHistoryDiffPendingPreview, setFileRootGitHistoryDiffPendingPreview] = useState<{
+    request: FileRootGitHistoryDiffRequest;
+    generation: number;
+  } | null>(null);
+  const [fileRootGitHistoryDiffLoading, setFileRootGitHistoryDiffLoading] = useState(false);
   const [previewChatActivity, setPreviewChatActivity] = useState(() => endPreviewChatActivity());
   const [inlinePathError, setInlinePathError] = useState<{
     ownerSessionId: string;
@@ -543,7 +588,25 @@ export default function AgentSessionWindowApp() {
     ownerSessionId: null,
     telemetry: null,
   });
+  const [messageCollapseWindowState, setMessageCollapseWindowState] = useState<{
+    sessionId: string | null;
+    entries: MessageCollapseState;
+  }>({
+    sessionId: null,
+    entries: new Map(),
+  });
+  const messageCollapseTargetsRef = useRef<readonly MessageCollapseTarget[]>([]);
+  const [messageJumpRequest, setMessageJumpRequest] = useState<MessageJumpRequest | null>(null);
+  const messageJumpRequestIdRef = useRef(0);
   const [activeContextPaneTab, setActiveContextPaneTab] = useState<ContextPaneTabKey>("latest-command");
+  const [sessionGlossaryProjection, setSessionGlossaryProjection] = useState<SessionGlossaryProjection | null>(null);
+  const [glossarySearchQuery, setGlossarySearchQuery] = useState("");
+  const [glossarySearchEntries, setGlossarySearchEntries] = useState<GlossaryEntry[]>([]);
+  const [glossarySearchTotal, setGlossarySearchTotal] = useState(0);
+  const [isGlossarySearchLoading, setIsGlossarySearchLoading] = useState(false);
+  const [glossarySearchError, setGlossarySearchError] = useState("");
+  const [selectedGlossaryTerm, setSelectedGlossaryTerm] = useState<string | null>(null);
+  const glossarySearchRequestIdRef = useRef(0);
   const [appSettings, setAppSettings] = useState<AppSettings>(createDefaultAppSettings());
   const [isAppSettingsLoaded, setIsAppSettingsLoaded] = useState(false);
   const [composerPreview, setComposerPreview] = useState<ComposerPreview>(() => createEmptyComposerPreview());
@@ -614,6 +677,7 @@ export default function AgentSessionWindowApp() {
   const mainComposerCaretRef = useRef(0);
   const promptTemplateSelectionRef = useRef({ start: 0, end: 0 });
   const fileRootDiffRequestRevisionRef = useRef(0);
+  const fileRootGitHistoryDiffRequestRevisionRef = useRef(0);
   const sessionRefetchRevisionRef = useRef(new LatestRequestRevision());
   const sessionSubmitCoordinatorRef = useRef(new SessionSubmitCoordinator());
   const selectedId = useMemo(() => getSessionIdFromLocation(), []);
@@ -689,8 +753,8 @@ export default function AgentSessionWindowApp() {
 
     hydrateSelectedSession();
 
-    const unsubscribe = withmateApi.subscribeSessionInvalidation((sessionIds) => {
-      if (!active || !sessionIds.includes(selectedId)) {
+    const unsubscribe = withmateApi.subscribeSessionInvalidation((payload) => {
+      if (!active || (payload.scope === "ids" && !payload.sessionIds.includes(selectedId))) {
         return;
       }
 
@@ -818,6 +882,7 @@ export default function AgentSessionWindowApp() {
     isFilesPaneResizing,
     handleStartContextRailResize,
     handleStartFilesPaneResize,
+    handleShowContextRail,
     handleToggleContextRailVisibility,
     handleToggleFilesPaneVisibility,
   } = useSessionSidePanes({
@@ -830,13 +895,15 @@ export default function AgentSessionWindowApp() {
   const isCentralPreviewActive = selectedFilePreview !== null
     || fileRootDiffPreview !== null
     || fileRootDiffPendingPreview !== null
+    || fileRootGitHistoryDiffPreview !== null
+    || fileRootGitHistoryDiffPendingPreview !== null
     || isPromptTemplateWorkspaceOpen;
-  const beginCentralPreviewIfNeeded = useCallback(() => {
-    setIsPromptTemplateWorkspaceOpen(false);
-    if (!isCentralPreviewActive && activeRunSessionId) {
-      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
-    }
-  }, [activeRunMessageCount, activeRunSessionId, isCentralPreviewActive]);
+  const clearHistoryDiffPreview = useCallback(() => {
+    fileRootGitHistoryDiffRequestRevisionRef.current += 1;
+    setFileRootGitHistoryDiffPendingPreview(null);
+    setFileRootGitHistoryDiffPreview(null);
+    setFileRootGitHistoryDiffLoading(false);
+  }, []);
   const closeCentralPreview = useCallback(() => {
     fileRootDiffRequestRevisionRef.current += 1;
     setFileRootDiffLoadingScope(null);
@@ -844,9 +911,47 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
+    clearHistoryDiffPreview();
     setIsPromptTemplateWorkspaceOpen(false);
+    setIsSkillPickerOpen(false);
     setPreviewChatActivity(endPreviewChatActivity());
-  }, []);
+  }, [clearHistoryDiffPreview]);
+  const canClosePromptTemplate = useCallback(
+    () => promptTemplateCloseGuardRef.current?.() ?? true,
+    [],
+  );
+  const prepareCentralSurfaceOpen = useCallback((): boolean => {
+    const shouldBeginPreviewActivity = !isCentralPreviewActive && activeRunSessionId !== null;
+    const canOpen = applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen,
+      canClosePromptTemplate,
+      closeCentralSurface: () => {
+        setIsPromptTemplateWorkspaceOpen(false);
+        setIsSkillPickerOpen(false);
+      },
+    });
+    if (!canOpen) {
+      return false;
+    }
+    if (shouldBeginPreviewActivity) {
+      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
+    }
+    return true;
+  }, [
+    activeRunMessageCount,
+    activeRunSessionId,
+    canClosePromptTemplate,
+    isCentralPreviewActive,
+    isPromptTemplateWorkspaceOpen,
+  ]);
+  const requestCentralSurfaceClose = useCallback(
+    () => applyCentralSurfaceOpenCommand({
+      isPromptTemplateWorkspaceOpen,
+      canClosePromptTemplate,
+      closeCentralSurface: closeCentralPreview,
+    }),
+    [canClosePromptTemplate, closeCentralPreview, isPromptTemplateWorkspaceOpen],
+  );
   useEffect(() => {
     if (!isCentralPreviewActive || !activeRunSessionId) {
       setPreviewChatActivity((current) => (
@@ -869,7 +974,8 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setFileRootDiffLoadingScope(null);
-  }, [activeRunSessionId]);
+    clearHistoryDiffPreview();
+  }, [activeRunSessionId, clearHistoryDiffPreview]);
   useEffect(() => {
     let active = true;
     setSelectedFileDiffScopes([]);
@@ -918,15 +1024,17 @@ export default function AgentSessionWindowApp() {
         return error instanceof Error ? error.message : "The file preview could not be opened.";
       }
     }
+    if (!prepareCentralSurfaceOpen()) {
+      return null;
+    }
     fileRootDiffRequestRevisionRef.current += 1;
-    beginCentralPreviewIfNeeded();
     setFileRootDiffLoadingScope(null);
     setFileRootDiffPendingPreview(null);
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(request);
     return null;
-  }, [beginCentralPreviewIfNeeded, withmateApi]);
+  }, [prepareCentralSurfaceOpen, withmateApi]);
   const handleShowFileRootDiff = useCallback((
     request: FileRootFileDiffRequest,
     openInWindow = false,
@@ -941,9 +1049,11 @@ export default function AgentSessionWindowApp() {
         error instanceof Error ? error.message : "The Git diff preview could not be opened."
       ));
     }
+    if (!prepareCentralSurfaceOpen()) {
+      return Promise.resolve(null);
+    }
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;
-    beginCentralPreviewIfNeeded();
     setFileRootDiffPendingPreview({ ...request, generation: revision });
     setFileRootDiffLoadingScope(request.scope);
     return withmateApi.getFileRootDiff(request).then((result) => {
@@ -973,10 +1083,13 @@ export default function AgentSessionWindowApp() {
         setFileRootDiffLoadingScope(null);
       }
     });
-  }, [activeRunSessionId, beginCentralPreviewIfNeeded, withmateApi]);
-  const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitChangeScope): Promise<string | null> => {
+  }, [activeRunSessionId, prepareCentralSurfaceOpen, withmateApi]);
+  const handleOpenSelectedFileDiff = useCallback(async (scope: FileRootGitDiffScope): Promise<string | null> => {
     if (!withmateApi || !activeRunSessionId || !selectedFilePreview) {
       return "Git Diff is not available for this file.";
+    }
+    if (!prepareCentralSurfaceOpen()) {
+      return null;
     }
     const revision = fileRootDiffRequestRevisionRef.current + 1;
     fileRootDiffRequestRevisionRef.current = revision;
@@ -1036,7 +1149,7 @@ export default function AgentSessionWindowApp() {
         setFileRootDiffLoadingScope(null);
       }
     }
-  }, [activeRunSessionId, selectedFilePreview, withmateApi]);
+  }, [activeRunSessionId, prepareCentralSurfaceOpen, selectedFilePreview, withmateApi]);
   const handleReloadFileRootDiff = useCallback(async (): Promise<string | null> => {
     if (!withmateApi || !fileRootDiffPreview || fileRootDiffPreview.sessionId !== activeRunSessionId) {
       return "Git diff is no longer available for this session.";
@@ -1076,6 +1189,92 @@ export default function AgentSessionWindowApp() {
       }
     }
   }, [activeRunSessionId, withmateApi, fileRootDiffPreview]);
+  const handleShowFileRootGitHistoryDiff = useCallback((
+    request: FileRootGitHistoryDiffRequest,
+    _openInWindow = false,
+  ): Promise<string | null> => {
+    if (!withmateApi || request.sessionId !== activeRunSessionId) {
+      return Promise.resolve("Git history diff is not available for this session.");
+    }
+    if (!prepareCentralSurfaceOpen()) {
+      return Promise.resolve(null);
+    }
+    const revision = fileRootGitHistoryDiffRequestRevisionRef.current + 1;
+    fileRootGitHistoryDiffRequestRevisionRef.current = revision;
+    setFileRootGitHistoryDiffPendingPreview({ request, generation: revision });
+    setFileRootGitHistoryDiffLoading(true);
+    return withmateApi.getFileRootGitHistoryDiff(request).then((result) => {
+      if (fileRootGitHistoryDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      setFileRootGitHistoryDiffPreview({
+        request,
+        generation: revision,
+        patch: result.patch,
+        previewResource: result.previewResource,
+      });
+      setFileRootGitHistoryDiffPendingPreview(null);
+      return null;
+    }).catch((error) => (
+      fileRootGitHistoryDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git history diff failed."
+        : null
+    )).finally(() => {
+      if (fileRootGitHistoryDiffRequestRevisionRef.current === revision) {
+        setFileRootGitHistoryDiffPendingPreview(null);
+        setFileRootGitHistoryDiffLoading(false);
+      }
+    });
+  }, [activeRunSessionId, prepareCentralSurfaceOpen, withmateApi]);
+  const handleReloadFileRootGitHistoryDiff = useCallback(async (): Promise<string | null> => {
+    const preview = fileRootGitHistoryDiffPreview;
+    if (!withmateApi || !preview || preview.request.sessionId !== activeRunSessionId) {
+      return "Git history diff is no longer available for this session.";
+    }
+    const revision = fileRootGitHistoryDiffRequestRevisionRef.current + 1;
+    fileRootGitHistoryDiffRequestRevisionRef.current = revision;
+    setFileRootGitHistoryDiffLoading(true);
+    try {
+      const result = await withmateApi.getFileRootGitHistoryDiff(preview.request);
+      if (fileRootGitHistoryDiffRequestRevisionRef.current !== revision) {
+        return null;
+      }
+      if (result.status !== "ok") {
+        return result.message;
+      }
+      setFileRootGitHistoryDiffPreview({
+        request: preview.request,
+        generation: revision,
+        patch: result.patch,
+        previewResource: result.previewResource,
+      });
+      return null;
+    } catch (error) {
+      return fileRootGitHistoryDiffRequestRevisionRef.current === revision
+        ? error instanceof Error ? error.message : "Git history diff failed."
+        : null;
+    } finally {
+      if (fileRootGitHistoryDiffRequestRevisionRef.current === revision) {
+        setFileRootGitHistoryDiffLoading(false);
+      }
+    }
+  }, [activeRunSessionId, fileRootGitHistoryDiffPreview, withmateApi]);
+  const handleOpenFileRootGitHistoryPreview = useCallback(async (
+    resource: SessionFileGitCommitResourceRequest,
+  ): Promise<string | null> => {
+    if (!withmateApi || resource.sessionId !== activeRunSessionId) {
+      return "Git history file preview is not available for this session.";
+    }
+    try {
+      const result = await withmateApi.openSessionFilePreviewWindow({ kind: "resource", resource });
+      return result.status === "opened" ? null : result.message;
+    } catch (error) {
+      return error instanceof Error ? error.message : "The Git history file preview could not be opened.";
+    }
+  }, [activeRunSessionId, withmateApi]);
   const selectedSessionLiveRun = useMemo(
     () => (activeRunSessionId !== null && liveRunState.ownerSessionId === activeRunSessionId ? liveRunState.state : null),
     [activeRunSessionId, liveRunState.ownerSessionId, liveRunState.state],
@@ -1188,34 +1387,16 @@ export default function AgentSessionWindowApp() {
     ),
     [appSettings, modelCatalog],
   );
-  const sessionExecutionBlockedReason = useMemo(() => {
-    if (!selectedSession) {
-      return "";
-    }
-
-    if (isSelectedSessionReadOnly) {
-      return "This session is read-only. Create a new session to send messages.";
-    }
-
-    if (!isSelectedProviderEnabled) {
-      return "Provider is disabled. Enable it in Settings.";
-    }
-
-    const workspaceBlockedReason = resolveSessionWorkspaceBlockedReason(
-      workspaceAvailability,
-      selectedSession.id,
-      selectedSession.workspacePath,
-    );
-    if (workspaceBlockedReason) {
-      return workspaceBlockedReason;
-    }
-
-    return "";
-  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceAvailability]);
-  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
-    ? "Message submission is in progress."
-    : "";
-  const composerBlockedReason = composerBusyReason || sessionExecutionBlockedReason;
+  const workspaceExecutionGate = useMemo(
+    () => selectedSession
+      ? resolveSessionWorkspaceExecutionGate(
+          workspaceAvailability,
+          selectedSession.id,
+          selectedSession.workspacePath,
+        )
+      : { isPending: false, blockedReason: "" },
+    [selectedSession, workspaceAvailability],
+  );
   const isSelectedWorkspaceAvailable = selectedSession
     ? isSessionWorkspaceAvailable(
         workspaceAvailability,
@@ -1232,6 +1413,31 @@ export default function AgentSessionWindowApp() {
     : "";
   const isWorkspaceAvailabilityCheckPending = workspaceAvailability.status === "checking"
     && workspaceAvailability.sessionId === selectedSession?.id;
+  const sessionExecutionBlockedReason = useMemo(() => {
+    if (!selectedSession) {
+      return "";
+    }
+
+    if (isSelectedSessionReadOnly) {
+      return "This session is read-only. Create a new session to send messages.";
+    }
+
+    if (!isSelectedProviderEnabled) {
+      return "Provider is disabled. Enable it in Settings.";
+    }
+
+    if (workspaceExecutionGate.blockedReason) {
+      return workspaceExecutionGate.blockedReason;
+    }
+
+    return "";
+  }, [isSelectedProviderEnabled, isSelectedSessionReadOnly, selectedSession, workspaceExecutionGate]);
+  const composerBusyReason = pendingSubmitSessionId === selectedSession?.id
+    ? "Message submission is in progress."
+    : workspaceExecutionGate.isPending
+      ? "Workspace availability is being checked."
+      : "";
+  const composerBlockedReason = composerBusyReason || sessionExecutionBlockedReason;
 
   useEffect(() => {
     if (!selectedSession || isEditingTitle) {
@@ -1240,6 +1446,197 @@ export default function AgentSessionWindowApp() {
 
     setTitleDraft(selectedSession.taskTitle);
   }, [isEditingTitle, selectedSession]);
+
+  useEffect(() => {
+    let active = true;
+    let highestSequence = 0;
+    setSessionGlossaryProjection(null);
+    setGlossarySearchQuery("");
+    setGlossarySearchEntries([]);
+    setGlossarySearchTotal(0);
+    setGlossarySearchError("");
+    setSelectedGlossaryTerm(null);
+
+    if (!withmateApi || !selectedSession) {
+      return () => {
+        active = false;
+      };
+    }
+
+    const applyProjection = (projection: SessionGlossaryProjection) => {
+      if (!active || projection.sessionId !== selectedSession.id || projection.sequence < highestSequence) {
+        return;
+      }
+      highestSequence = projection.sequence;
+      setSessionGlossaryProjection(projection);
+    };
+    const unsubscribe = withmateApi.subscribeSessionGlossary(applyProjection);
+    void withmateApi.getSessionGlossaryProjection(selectedSession.id)
+      .then(applyProjection)
+      .catch((error) => {
+        if (!active) {
+          return;
+        }
+        setSessionGlossaryProjection({
+          sessionId: selectedSession.id,
+          scopeRevision: "renderer-load-error",
+          sequence: highestSequence + 1,
+          checkout: {
+            repositoryName: selectedSession.workspaceLabel || "Repository",
+            branch: selectedSession.branch || "unavailable",
+            pathLabel: selectedSession.workspaceLabel || "Repository",
+          },
+          state: {
+            status: "watch-error",
+            relativePath: GLOSSARY_RELATIVE_PATH,
+            revision: null,
+            message: error instanceof Error ? error.message : "用語集を読み込めませんでした。",
+          },
+        });
+      });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, [selectedSession?.id, withmateApi]);
+
+  useEffect(() => {
+    let active = true;
+    const requestId = ++glossarySearchRequestIdRef.current;
+    const query = glossarySearchQuery.trim();
+    if (
+      !withmateApi
+      || !selectedSession
+      || sessionGlossaryProjection?.state.status !== "valid"
+      || !query
+    ) {
+      setGlossarySearchEntries([]);
+      setGlossarySearchTotal(0);
+      setIsGlossarySearchLoading(false);
+      setGlossarySearchError("");
+      return () => {
+        active = false;
+      };
+    }
+
+    setIsGlossarySearchLoading(true);
+    setGlossarySearchError("");
+    setGlossarySearchEntries([]);
+    setGlossarySearchTotal(0);
+    void withmateApi.searchSessionGlossary(selectedSession.id, {
+      query,
+      offset: 0,
+      pageSize: 100,
+    }).then((result) => {
+      if (!active || glossarySearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (!result.ok) {
+        setGlossarySearchEntries([]);
+        setGlossarySearchTotal(0);
+        setGlossarySearchError(result.message);
+      } else if (isGlossarySearchRevisionCurrent(
+        result.revision,
+        sessionGlossaryProjection.state.revision,
+      )) {
+        setGlossarySearchEntries(result.entries);
+        setGlossarySearchTotal(result.total);
+      }
+      setIsGlossarySearchLoading(false);
+    }).catch((error) => {
+      if (active && glossarySearchRequestIdRef.current === requestId) {
+        setGlossarySearchEntries([]);
+        setGlossarySearchTotal(0);
+        setGlossarySearchError(error instanceof Error ? error.message : "用語集を検索できませんでした。");
+        setIsGlossarySearchLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [glossarySearchQuery, selectedSession?.id, sessionGlossaryProjection?.state.status, sessionGlossaryProjection?.state.revision, withmateApi]);
+
+  useEffect(() => {
+    if (
+      selectedGlossaryTerm
+      && sessionGlossaryProjection?.state.status === "valid"
+      && !sessionGlossaryProjection.state.entries.some((entry) => entry.term === selectedGlossaryTerm)
+    ) {
+      setSelectedGlossaryTerm(null);
+    }
+  }, [selectedGlossaryTerm, sessionGlossaryProjection]);
+
+  const glossaryAnnotationMatcher = useMemo(
+    () => sessionGlossaryProjection?.state.status === "valid"
+      ? createGlossaryAnnotationMatcher(
+        sessionGlossaryProjection.state.entries,
+        sessionGlossaryProjection.state.revision,
+      )
+      : undefined,
+    [sessionGlossaryProjection],
+  );
+  const handleActivateGlossaryEntry = useCallback((canonicalTerm: string) => {
+    if (
+      sessionGlossaryProjection?.state.status !== "valid"
+      || !sessionGlossaryProjection.state.entries.some((entry) => entry.term === canonicalTerm)
+    ) {
+      return;
+    }
+    setSelectedGlossaryTerm(canonicalTerm);
+    setActiveContextPaneTab("glossary");
+    handleShowContextRail();
+  }, [handleShowContextRail, sessionGlossaryProjection]);
+
+  const handleLoadMoreGlossarySearchResults = useCallback(() => {
+    const query = glossarySearchQuery.trim();
+    if (
+      !withmateApi
+      || !selectedSession
+      || !query
+      || isGlossarySearchLoading
+      || glossarySearchEntries.length >= glossarySearchTotal
+    ) {
+      return;
+    }
+    setIsGlossarySearchLoading(true);
+    setGlossarySearchError("");
+    const requestId = ++glossarySearchRequestIdRef.current;
+    void withmateApi.searchSessionGlossary(selectedSession.id, {
+      query,
+      offset: glossarySearchEntries.length,
+      pageSize: 100,
+    }).then((result) => {
+      if (glossarySearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      if (!result.ok) {
+        setGlossarySearchError(result.message);
+      } else if (isGlossarySearchRevisionCurrent(
+        result.revision,
+        sessionGlossaryProjection?.state.revision,
+      )) {
+        setGlossarySearchEntries((current) => [...current, ...result.entries]);
+        setGlossarySearchTotal(result.total);
+      }
+      setIsGlossarySearchLoading(false);
+    }).catch((error) => {
+      if (glossarySearchRequestIdRef.current !== requestId) {
+        return;
+      }
+      setGlossarySearchError(error instanceof Error ? error.message : "用語集を検索できませんでした。");
+      setIsGlossarySearchLoading(false);
+    });
+  }, [
+    glossarySearchEntries.length,
+    glossarySearchQuery,
+    glossarySearchTotal,
+    isGlossarySearchLoading,
+    selectedSession,
+    sessionGlossaryProjection?.state.revision,
+    withmateApi,
+  ]);
 
   useEffect(() => {
     applySessionDocumentTitle(resolveAgentSessionDocumentTitle({
@@ -1437,6 +1834,81 @@ export default function AgentSessionWindowApp() {
   const messageListSources = messageListProjection.sources;
   const messageListKeys = messageListProjection.keys;
   const messageListGroups = messageListProjection.groups;
+  const messageCollapseTargets = useMemo(
+    () => buildMessageCollapseTargets(
+      messageListMessages,
+      messageListSources,
+      messageListKeys,
+      messageCollapseTargetsRef.current,
+    ),
+    [messageListKeys, messageListMessages, messageListSources],
+  );
+  useLayoutEffect(() => {
+    messageCollapseTargetsRef.current = messageCollapseTargets;
+  }, [messageCollapseTargets]);
+  const reconciledMessageCollapseState = useMemo(
+    () => messageCollapseWindowState.sessionId === selectedSessionId
+      ? reconcileMessageCollapseState(messageCollapseWindowState.entries, messageCollapseTargets)
+      : new Map(),
+    [messageCollapseTargets, messageCollapseWindowState.entries, messageCollapseWindowState.sessionId, selectedSessionId],
+  );
+  const collapsedMessageKeys = useMemo(
+    () => new Set(reconciledMessageCollapseState.keys()),
+    [reconciledMessageCollapseState],
+  );
+  const messageNavigatorEntries = useMemo(
+    () => buildMessageNavigatorEntries(messageCollapseTargets, reconciledMessageCollapseState),
+    [messageCollapseTargets, reconciledMessageCollapseState],
+  );
+  useEffect(() => {
+    setMessageCollapseWindowState((current) => {
+      const nextEntries = current.sessionId === selectedSessionId
+        ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
+        : new Map();
+      if (current.sessionId === selectedSessionId
+        && current.entries.size === nextEntries.size
+        && Array.from(nextEntries).every(([key, entry]) => current.entries.get(key) === entry)) {
+        return current;
+      }
+      return { sessionId: selectedSessionId, entries: nextEntries };
+    });
+  }, [messageCollapseTargets, selectedSessionId]);
+  useEffect(() => {
+    setMessageJumpRequest(null);
+  }, [selectedSessionId]);
+  const handleToggleMessageCollapse = useCallback((key: string) => {
+    setMessageCollapseWindowState((current) => {
+      const state = current.sessionId === selectedSessionId
+        ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
+        : new Map();
+      const target = messageCollapseTargets.find((candidate) => candidate.key === key);
+      return target
+        ? { sessionId: selectedSessionId, entries: toggleMessageCollapseState(state, target) }
+        : { sessionId: selectedSessionId, entries: state };
+    });
+  }, [messageCollapseTargets, selectedSessionId]);
+  const handleToggleAllMessageCollapse = useCallback(() => {
+    setMessageCollapseWindowState((current) => {
+      const state = current.sessionId === selectedSessionId
+        ? reconcileMessageCollapseState(current.entries, messageCollapseTargets)
+        : new Map();
+      return {
+        sessionId: selectedSessionId,
+        entries: toggleAllMessageCollapseState(state, messageCollapseTargets),
+      };
+    });
+  }, [messageCollapseTargets, selectedSessionId]);
+  const handleJumpToMessage = useCallback((key: string) => {
+    if (!selectedSessionId) {
+      return;
+    }
+    messageJumpRequestIdRef.current += 1;
+    setMessageJumpRequest({
+      sessionId: selectedSessionId,
+      key,
+      requestId: messageJumpRequestIdRef.current,
+    });
+  }, [selectedSessionId]);
   useEffect(() => {
     if (!activeRunSessionId || !liveRunAssistantText) {
       return;
@@ -1841,14 +2313,23 @@ export default function AgentSessionWindowApp() {
   const hasLiveRunReasoningText = liveRunReasoningText.trim().length > 0;
   const hasReasoningCapability =
     availableReasoningEfforts.length > 0 || Boolean(selectedSession?.reasoningEffort);
+  const includeGlossaryContextPane = shouldIncludeGlossaryContextPane(sessionGlossaryProjection);
   const availableContextPaneTabs = useMemo(
     () => resolveAvailableContextPaneTabs({
       isCopilotSession,
+      includeMessages: true,
+      includeGlossary: includeGlossaryContextPane,
       hasCompanionGroupMonitor: selectedCompanionGroupMonitorEntries.length > 0,
       hasReasoningCapability,
       hasReasoningText: hasLiveRunReasoningText,
     }),
-    [hasLiveRunReasoningText, hasReasoningCapability, isCopilotSession, selectedCompanionGroupMonitorEntries.length],
+    [
+      hasLiveRunReasoningText,
+      hasReasoningCapability,
+      isCopilotSession,
+      selectedCompanionGroupMonitorEntries.length,
+      includeGlossaryContextPane,
+    ],
   );
 
   const hasInProgressLiveRunStep = useMemo(
@@ -2441,7 +2922,7 @@ export default function AgentSessionWindowApp() {
     }
   };
 
-  const handleComposerSubmitKey = createComposerSubmitKeyHandler({
+  const handleComposerSubmitShortcut = () => applyComposerSubmitCommand({
     isSubmitDisabled: () => (
       activeAuxiliarySession
         ? activeAuxiliarySession.runState === "running"
@@ -2465,9 +2946,9 @@ export default function AgentSessionWindowApp() {
     submit: () => void handleSend(),
   });
 
-  const handleComposerKeyDown = buildComposerDraftKeyDownHandler({
-    submit: handleComposerSubmitKey,
-  });
+  useShortcutDispatcherSettings(appSettings.keyboardShortcuts);
+  useShortcutScope("composer");
+  useShortcutCommandHandler(SHORTCUT_COMMAND_IDS.composerSubmit, handleComposerSubmitShortcut);
 
   const handleSelectSkill = createSkillPromptInsertionHandler<DiscoveredSkill>({
     getProvider: () => selectedSession?.provider,
@@ -2860,10 +3341,17 @@ export default function AgentSessionWindowApp() {
     setSkillPickerOpen: setIsSkillPickerOpen,
   });
 
-  const handleToggleSkillPicker = createSkillPickerToggleHandler({
+  const toggleSkillPicker = createSkillPickerToggleHandler({
     setAgentPickerOpen: setIsAgentPickerOpen,
     setSkillPickerOpen: setIsSkillPickerOpen,
   });
+
+  const handleToggleSkillPicker = () => {
+    if (!isSkillPickerOpen && !requestCentralSurfaceClose()) {
+      return;
+    }
+    toggleSkillPicker();
+  };
 
   const handleToggleAdditionalDirectoryList = createAdditionalDirectoryListToggleHandler({
     setAdditionalDirectoryListOpen: setIsAdditionalDirectoryListOpen,
@@ -3572,8 +4060,12 @@ export default function AgentSessionWindowApp() {
   const renderedMessages = messageListMessages;
   const renderedDraft = activeAuxiliarySession ? activeAuxiliarySession.composerDraft : draft;
   const handleOpenPromptTemplates = () => {
+    clearHistoryDiffPreview();
     if (isPromptTemplateWorkspaceOpen) {
-      closeCentralPreview();
+      requestCentralSurfaceClose();
+      return;
+    }
+    if (!prepareCentralSurfaceOpen()) {
       return;
     }
     const textarea = composerTextareaRef.current;
@@ -3588,9 +4080,6 @@ export default function AgentSessionWindowApp() {
     setFileRootDiffPreview(null);
     setSelectedFileDiffAvailabilityMessage("");
     setSelectedFilePreview(null);
-    if (!isCentralPreviewActive && activeRunSessionId) {
-      setPreviewChatActivity(beginPreviewChatActivity(activeRunSessionId, activeRunMessageCount));
-    }
     setIsPromptTemplateWorkspaceOpen(true);
   };
   const handleInsertPromptTemplate = (prompt: string) => {
@@ -3636,6 +4125,18 @@ export default function AgentSessionWindowApp() {
     onStart: handleOpenAuxiliaryLaunchDialog,
     onReturnToMain: () => void handleReturnToMainSession(),
   });
+  const sessionHeaderActions = (
+    <>
+      {messageCollapseTargets.length > 0 ? (
+        createMessageCollapseHeaderAction({
+          allMessagesCollapsed: messageCollapseTargets.every((target) => collapsedMessageKeys.has(target.key)),
+          onToggle: handleToggleAllMessageCollapse,
+          keyboardShortcuts: appSettings.keyboardShortcuts,
+        })
+      ) : null}
+      {auxiliaryHeaderActions}
+    </>
+  );
 
   if (!desktopRuntime) {
     return <ChatWindowStatusScreen message="Session Window は Electron から開いてね。" />;
@@ -3657,8 +4158,14 @@ export default function AgentSessionWindowApp() {
       rootsRevision={fileExplorerRootsRevision}
       selectedFile={selectedFilePreview}
       activeTab={fileExplorerTab}
-      onActiveTabChange={setFileExplorerTab}
+      onActiveTabChange={(tab) => {
+        if (tab !== "history") {
+          clearHistoryDiffPreview();
+        }
+        setFileExplorerTab(tab);
+      }}
       onRefreshChanges={() => setFileRootChangesRefreshRevision((current) => current + 1)}
+      onRefreshHistory={() => setFileRootGitHistoryRefreshRevision((current) => current + 1)}
       onOpenFile={(request, openInWindow) => {
         void handleOpenFileRootFile(request, openInWindow).then((message) => {
           if (message) {
@@ -3675,6 +4182,17 @@ export default function AgentSessionWindowApp() {
           refreshRevision={fileRootChangesRefreshRevision}
           onOpenFile={handleOpenFileRootFile}
           onOpenDiff={handleShowFileRootDiff}
+        />
+      )}
+      historyContent={(
+        <FileRootGitHistoryPane
+          api={withmateApi}
+          sessionId={activeRunSessionId}
+          enabled={isFilesPaneVisible && isSelectedWorkspaceAvailable && fileExplorerTab === "history"}
+          rootsRevision={fileExplorerRootsRevision}
+          refreshRevision={fileRootGitHistoryRefreshRevision}
+          onOpenDiff={handleShowFileRootGitHistoryDiff}
+          onRepositoryChange={clearHistoryDiffPreview}
         />
       )}
     />
@@ -3701,8 +4219,39 @@ export default function AgentSessionWindowApp() {
       canInsert={activeAuxiliarySession
         ? activeAuxiliarySession.runState !== "running" && !composerBlockedReason && !isAuxiliaryActionPending
         : !isComposerDisabled}
+      onRegisterCloseGuard={registerPromptTemplateCloseGuard}
       onBack={closeCentralPreview}
       onInsert={handleInsertPromptTemplate}
+    />
+  ) : fileRootGitHistoryDiffPendingPreview ? (
+    <SessionDiffPreview
+      title={fileRootGitHistoryDiffPendingPreview.request.relativePath
+        ?? `Commit ${fileRootGitHistoryDiffPendingPreview.request.commitId.slice(0, 7)}`}
+      previewRevision={fileRootGitHistoryDiffPendingPreview.generation}
+      patch=""
+      loading
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
+      onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
+      onReload={() => handleShowFileRootGitHistoryDiff(fileRootGitHistoryDiffPendingPreview.request)}
+      reloadPending
+      chatNotice={previewChatNotice}
+    />
+  ) : fileRootGitHistoryDiffPreview ? (
+    <SessionDiffPreview
+      title={fileRootGitHistoryDiffPreview.request.relativePath
+        ?? `Commit ${fileRootGitHistoryDiffPreview.request.commitId.slice(0, 7)}`}
+      previewRevision={fileRootGitHistoryDiffPreview.generation}
+      patch={fileRootGitHistoryDiffPreview.patch}
+      backNavigation={{ label: "Back to Chat", onBack: closeCentralPreview }}
+      onCopyText={handleCopyMessageText}
+      onQuoteText={handleQuoteMessageText}
+      onOpenPreview={fileRootGitHistoryDiffPreview.previewResource
+        ? () => handleOpenFileRootGitHistoryPreview(fileRootGitHistoryDiffPreview.previewResource!)
+        : undefined}
+      onReload={handleReloadFileRootGitHistoryDiff}
+      reloadPending={fileRootGitHistoryDiffLoading}
+      chatNotice={previewChatNotice}
     />
   ) : fileRootDiffPendingPreview ? (
     <SessionDiffPreview
@@ -3755,7 +4304,8 @@ export default function AgentSessionWindowApp() {
   ) : undefined;
 
   return (
-    <>
+    <ShortcutSettingsProvider settings={appSettings.keyboardShortcuts}>
+      <>
       <ChatWindow
       {...buildAgentSessionChatWindowProps({
         mainContent: filePreviewContent,
@@ -3766,6 +4316,11 @@ export default function AgentSessionWindowApp() {
         displayedMessages: renderedMessages,
         displayedMessageKeys: messageListKeys,
         displayedMessageGroups: messageListGroups,
+        messageCollapseTargets,
+        collapsedMessageKeys,
+        messageJumpRequest,
+        messageNavigatorEntries,
+        messageNavigatorCharacter: selectedSessionCharacter,
         expandedArtifacts,
         sessionThemeStyle,
         sessionDockLayoutRef,
@@ -3850,6 +4405,21 @@ export default function AgentSessionWindowApp() {
         activeContextPaneTab,
         availableContextPaneTabs,
         contextPaneProjection,
+        glossaryPaneProps: includeGlossaryContextPane ? {
+          projection: sessionGlossaryProjection,
+          searchQuery: glossarySearchQuery,
+          searchEntries: glossarySearchEntries,
+          searchTotal: glossarySearchTotal,
+          searchLoading: isGlossarySearchLoading,
+          searchError: glossarySearchError,
+          selectedTerm: selectedGlossaryTerm,
+          onSearchQueryChange: setGlossarySearchQuery,
+          onLoadMoreSearchResults: handleLoadMoreGlossarySearchResults,
+          onSelectTerm: setSelectedGlossaryTerm,
+          onBackToList: () => setSelectedGlossaryTerm(null),
+        } : undefined,
+        glossaryAnnotationMatcher,
+        onActivateGlossaryEntry: handleActivateGlossaryEntry,
         selectedBackgroundTasks,
         selectedCompanionGroupMonitorEntries,
         isCopilotSession,
@@ -3873,7 +4443,7 @@ export default function AgentSessionWindowApp() {
         auditLogsTotal,
         auditLogsErrorMessage,
         onToggleHeaderSplitter: handleToggleHeaderSplitter,
-        headerActions: auxiliaryHeaderActions,
+        headerActions: sessionHeaderActions,
         onOpenAuditLog: () => setAuditLogsOpen(true),
         onOpenSessionTerminal: () => void handleOpenSessionTerminal(),
         onOpenSessionFilesTerminal: () => void handleOpenSessionFilesTerminal(),
@@ -3887,6 +4457,9 @@ export default function AgentSessionWindowApp() {
         onOpenSessionExplorer: () => void handleOpenSessionExplorer(),
         onOpenSessionFilesExplorer: () => void handleOpenSessionFilesExplorer(),
         onMessageListScroll: handleMessageListScroll,
+        onToggleMessageCollapse: handleToggleMessageCollapse,
+        onToggleAllMessageCollapse: handleToggleAllMessageCollapse,
+        onJumpToMessage: handleJumpToMessage,
         onToggleArtifact: toggleArtifact,
         onLoadArtifactDetail: (messageIndex) =>
           loadProjectedMessageArtifact({
@@ -3969,7 +4542,6 @@ export default function AgentSessionWindowApp() {
           });
         },
         onDraftFocus: () => handleExpandActionDock({ focusComposer: false }),
-        onDraftKeyDown: handleComposerKeyDown,
         onDraftPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void handleComposerPaste(event),
         onDraftSelect: buildOnDraftSelectHandler({
           setComposerCaret,
@@ -4046,6 +4618,7 @@ export default function AgentSessionWindowApp() {
         onSelectProvider={handleSelectAuxiliaryLaunchProvider}
         onStart={() => void handleStartAuxiliarySession()}
       />
-    </>
+      </>
+    </ShortcutSettingsProvider>
   );
 }

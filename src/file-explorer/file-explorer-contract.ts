@@ -31,35 +31,60 @@ export type SessionFileAbsoluteResourceRequest = {
   absolutePath: string;
 };
 
+export type SessionFileGitCommitResourceRequest = {
+  resourceKind: "git-commit-file";
+  sessionId: string;
+  rootId: string;
+  repositoryId: string;
+  commitId: string;
+  relativePath: string;
+};
+
 export type SessionFileResourceRequest =
   | SessionFileRootResourceRequest
   | SessionFileAbsoluteResourceRequest;
 
+export type SessionFilePreviewResourceRequest =
+  | SessionFileResourceRequest
+  | SessionFileGitCommitResourceRequest;
+
 export function isSessionFileAbsoluteResource(
-  resource: SessionFileResourceRequest,
+  resource: SessionFilePreviewResourceRequest,
 ): resource is SessionFileAbsoluteResourceRequest {
   return "absolutePath" in resource;
 }
 
-export function isSessionFileRootResource(
-  resource: SessionFileResourceRequest,
-): resource is SessionFileRootResourceRequest {
-  return "rootId" in resource;
+export function isSessionFileGitCommitResource(
+  resource: SessionFilePreviewResourceRequest,
+): resource is SessionFileGitCommitResourceRequest {
+  return "resourceKind" in resource && resource.resourceKind === "git-commit-file";
 }
 
-export function getSessionFileResourceDisplayPath(resource: SessionFileResourceRequest): string {
+export function isSessionFileRootResource(
+  resource: SessionFilePreviewResourceRequest,
+): resource is SessionFileRootResourceRequest {
+  return "rootId" in resource && !isSessionFileGitCommitResource(resource);
+}
+
+export function getSessionFileResourceDisplayPath(resource: SessionFilePreviewResourceRequest): string {
   return isSessionFileAbsoluteResource(resource) ? resource.absolutePath : resource.relativePath;
 }
 
 export function areSessionFileResourcesEqual(
-  left: SessionFileResourceRequest,
-  right: SessionFileResourceRequest,
+  left: SessionFilePreviewResourceRequest,
+  right: SessionFilePreviewResourceRequest,
 ): boolean {
   if (left.sessionId !== right.sessionId) {
     return false;
   }
   if (isSessionFileAbsoluteResource(left) && isSessionFileAbsoluteResource(right)) {
     return left.absolutePath === right.absolutePath;
+  }
+  if (isSessionFileGitCommitResource(left) && isSessionFileGitCommitResource(right)) {
+    return left.rootId === right.rootId
+      && left.repositoryId === right.repositoryId
+      && left.commitId === right.commitId
+      && left.relativePath.replaceAll("\\", "/") === right.relativePath.replaceAll("\\", "/");
   }
   return isSessionFileRootResource(left)
     && isSessionFileRootResource(right)
@@ -74,22 +99,36 @@ export type SessionFilePreviewWindowOpenRequest =
       view?: SessionFilePreviewWindowView;
     }
   | {
+      kind: "resource";
+      resource: SessionFileGitCommitResourceRequest;
+      view?: { kind: "preview" };
+    }
+  | {
       kind: "link";
       sessionId: string;
       target: string;
-      baseResource?: SessionFileResourceRequest;
+      baseResource?: SessionFilePreviewResourceRequest;
     };
 
 export type SessionFilePreviewWindowView =
   | { kind: "preview" }
-  | { kind: "diff"; scope: FileRootGitChangeScope };
+  | { kind: "diff"; scope: FileRootGitDiffScope };
 
-export type SessionFilePreviewWindowPayload = {
-  resource: SessionFileResourceRequest;
+type SessionFilePreviewWindowPayloadBase = {
   ownerSessionId: string;
   windowTitle: string;
-  view?: SessionFilePreviewWindowView;
 };
+
+export type SessionFilePreviewWindowPayload = SessionFilePreviewWindowPayloadBase & (
+  | {
+      resource: SessionFileResourceRequest;
+      view?: SessionFilePreviewWindowView;
+    }
+  | {
+      resource: SessionFileGitCommitResourceRequest;
+      view?: { kind: "preview" };
+    }
+);
 
 export const FILE_PREVIEW_WINDOW_TITLE_FALLBACK = "File Preview";
 
@@ -101,12 +140,19 @@ export function resolveSessionFilePreviewWindowTitle(fileName: string | null | u
     : FILE_PREVIEW_WINDOW_TITLE_FALLBACK;
 }
 
+export function resolveSessionFileGitCommitPreviewWindowTitle(
+  fileName: string | null | undefined,
+  commitId: string,
+): string {
+  return `${resolveSessionFilePreviewWindowTitle(fileName)} · ${commitId.slice(0, 7)}`;
+}
+
 export type SessionFilePreviewWindowOpenResult =
   | {
       status: "opened";
       targetType: "preview-window";
       disposition: "created" | "focused";
-      resource: SessionFileResourceRequest;
+      resource: SessionFilePreviewResourceRequest;
     }
   | {
       status: "opened";
@@ -154,7 +200,7 @@ export type SessionFileOpenRequest = SessionFileResourceRequest & {
   reveal?: boolean;
 };
 
-export type SessionFileDescriptor = SessionFileResourceRequest & {
+export type SessionFileDescriptor = SessionFilePreviewResourceRequest & {
   name: string;
   kind: SessionFileResourceKind;
   byteLength: number;
@@ -164,7 +210,7 @@ export type SessionFileDescriptor = SessionFileResourceRequest & {
   revision: string;
 };
 
-export type SessionFileChunkRequest = SessionFileResourceRequest & {
+export type SessionFileChunkRequest = SessionFilePreviewResourceRequest & {
   offset: number;
   length: number;
   expectedRevision: string;
@@ -179,8 +225,15 @@ export type SessionFileChunkResult = {
   revision: string;
 };
 
-export type FileRootGitChangeScope = "working-tree" | "staged";
-export type FileRootGitChangeKind = "added" | "modified" | "deleted" | "renamed" | "untracked";
+export type FileRootGitDiffScope = "working-tree" | "staged";
+export type FileRootGitChangeScope = FileRootGitDiffScope | "commit";
+export type FileRootGitChangeKind =
+  | "added"
+  | "modified"
+  | "deleted"
+  | "renamed"
+  | "copied"
+  | "untracked";
 
 export type FileRootGitChangeEntry = {
   relativePath: string;
@@ -200,7 +253,7 @@ export type FileRootChangesResult =
 
 export type FileRootFileDiffRequest = FileRootChangesRequest & {
   relativePath: string;
-  scope: FileRootGitChangeScope;
+  scope: FileRootGitDiffScope;
 };
 
 export function buildFileRootDiffPreviewWindowRequest(
@@ -218,5 +271,87 @@ export function buildFileRootDiffPreviewWindowRequest(
 }
 
 export type FileRootFileDiffResult =
-  | { status: "ok"; relativePath: string; scope: FileRootGitChangeScope; patch: string }
+  | { status: "ok"; relativePath: string; scope: FileRootGitDiffScope; patch: string }
   | { status: "untracked" | "not-changed" | "not-git" | "root-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryRepository = {
+  repositoryId: string;
+  rootId: string;
+  label: string;
+  displayPath: string;
+};
+
+export type FileRootGitHistoryRepositoriesRequest = {
+  sessionId: string;
+};
+
+export type FileRootGitHistoryRepositoriesResult =
+  | { status: "ok"; repositories: FileRootGitHistoryRepository[] }
+  | { status: "failed"; message: string };
+
+export type FileRootGitHistoryRequest = {
+  sessionId: string;
+  repositoryId: string;
+  rootId: string;
+};
+
+export type FileRootGitHistoryRefKind = "head" | "branch" | "tag";
+
+export type FileRootGitHistoryRef = {
+  kind: FileRootGitHistoryRefKind;
+  name: string;
+};
+
+export type FileRootGitHistoryCommit = {
+  id: string;
+  shortHash: string;
+  subject: string;
+  authorName: string;
+  authorEmail: string;
+  authoredAt: string;
+  refs: FileRootGitHistoryRef[];
+  parentIds: string[];
+};
+
+export type FileRootGitHistoryCommitsRequest = FileRootGitHistoryRequest & {
+  cursor?: string | null;
+};
+
+export type FileRootGitHistoryPage = {
+  entries: FileRootGitHistoryCommit[];
+  nextCursor: string | null;
+  hasMore: boolean;
+};
+
+export type FileRootGitHistoryCommitsResult =
+  | { status: "ok"; page: FileRootGitHistoryPage }
+  | { status: "repository-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryCommitDetailRequest = FileRootGitHistoryRequest & {
+  commitId: string;
+};
+
+export type FileRootGitHistoryCommitDetailResult =
+  | {
+      status: "ok";
+      commit: FileRootGitHistoryCommit;
+      entries: FileRootGitChangeEntry[];
+    }
+  | { status: "commit-not-found" | "repository-not-found" | "failed"; message: string };
+
+export type FileRootGitHistoryDiffRequest = FileRootGitHistoryCommitDetailRequest & {
+  relativePath?: string | null;
+};
+
+export type FileRootGitHistoryDiffResult =
+  | {
+      status: "ok";
+      commitId: string;
+      relativePath: string | null;
+      patch: string;
+      previewResource: SessionFileGitCommitResourceRequest | null;
+    }
+  | {
+      status: "commit-not-found" | "not-changed" | "repository-not-found" | "failed";
+      message: string;
+    };

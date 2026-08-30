@@ -28,12 +28,18 @@ describe("data loading benchmark", () => {
       assert.equal(result.generated.rawItems, 12);
       assert.ok(result.generated.dbBytes > 0);
       assert.equal(result.sample.sessionSummaryCount, 2);
+      assert.equal(result.sample.sessionSummaryPageCount, 2);
+      assert.equal(result.sample.searchSessionSummaryPageCount, 2);
+      assert.equal(result.sample.sessionCharacterUsageCount, 1);
       assert.equal(result.sample.firstSessionMessageCount, 4);
       assert.equal(result.sample.middleSessionMessageCount, 4);
       assert.equal(result.sample.firstAuditPageCount, 2);
       assert.equal(result.sample.firstAuditDetailOperationCount, 2);
       assert.ok(result.timingsMs.generateDatabase >= 0);
       assert.ok(result.timingsMs.listSessionSummaries >= 0);
+      assert.ok(result.timingsMs.listSessionSummaryPage >= 0);
+      assert.ok(result.timingsMs.searchSessionSummaryPage >= 0);
+      assert.ok(result.timingsMs.listSessionCharacterUsage >= 0);
       assert.ok(result.timingsMs.auditDetailFirstEntry >= 0);
     } finally {
       rmSync(dirPath, { recursive: true, force: true });

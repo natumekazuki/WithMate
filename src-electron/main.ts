@@ -46,13 +46,14 @@ import {
   type SessionBackgroundActivityKind,
   type SessionBackgroundActivityState,
   type SessionContextTelemetry,
+  type SessionCharacterUsage,
+  type SessionSummaryPageRequest,
+  type HomeSessionSummaryPageResult,
 } from "../src/app-state.js";
 import {
   type DiffPreviewPayload,
   type MessageArtifact,
-  projectSessionSummary,
   type Session,
-  type SessionSummary,
 } from "../src/session-state.js";
 import type {
   CharacterAuthoringSessionStartResult,
@@ -63,16 +64,25 @@ import {
   type ModelCatalogProvider,
   type ModelCatalogSnapshot,
 } from "../src/model-catalog.js";
+import {
+  buildOpenSessionWindowIdsPage,
+} from "../src/withmate-window-types.js";
 import type {
   OpenPathOptions,
   OpenPathResult,
+  OpenSessionWindowIdsPageRequest,
+  OpenSessionWindowIdsPageResult,
   SavePastedSessionFileRequest,
 } from "../src/withmate-window-types.js";
 import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
 } from "../src/file-explorer/file-explorer-contract.js";
-import { resolveSessionFilePreviewWindowTitle } from "../src/file-explorer/file-explorer-contract.js";
+import {
+  isSessionFileGitCommitResource,
+  resolveSessionFileGitCommitPreviewWindowTitle,
+  resolveSessionFilePreviewWindowTitle,
+} from "../src/file-explorer/file-explorer-contract.js";
 import { AuditLogStorage } from "./audit-log-storage.js";
 import { AuditLogService } from "./audit-log-service.js";
 import { AppSettingsStorage } from "./app-settings-storage.js";
@@ -141,6 +151,8 @@ import {
 } from "./character-affect-turn-settlement-storage.js";
 import { SessionPersistenceService } from "./session-persistence-service.js";
 import { SessionWindowBridge } from "./session-window-bridge.js";
+import { SessionWindowRestoreService } from "./session-window-restore-service.js";
+import { SessionWindowRestoreStorage } from "./session-window-restore-storage.js";
 import { SettingsCatalogService } from "./settings-catalog-service.js";
 import { SessionObservabilityService } from "./session-observability-service.js";
 import { SessionApprovalService } from "./session-approval-service.js";
@@ -151,7 +163,9 @@ import { WorkspaceDirectoryValidationService } from "./workspace-directory-valid
 import { SessionMemorySupportService } from "./session-memory-support-service.js";
 import { SessionFileExplorerService, type SessionFileExplorerContext } from "./session-file-explorer-service.js";
 import { SessionFilePreviewImageCopyService } from "./session-file-preview-image-copy-service.js";
+import { SessionFileObjectCopyService } from "./session-file-object-copy-service.js";
 import { MarkdownLinkContextMenuService } from "./markdown-link-context-menu-service.js";
+import { WindowsFileDropClipboardWriter } from "./windows-file-drop-clipboard-writer.js";
 import { FileRootGitChangesService } from "./file-root-git-changes-service.js";
 import {
   appendSessionFilesDirectory,
@@ -200,8 +214,10 @@ import { SessionLaunchSelectionService } from "./session-launch-selection-servic
 import { MainWindowFacade } from "./main-window-facade.js";
 import { MainQueryService } from "./main-query-service.js";
 import {
-  ManagedMemorySkillService,
+  ManagedSkillDistributionService,
+  type ManagedSkillBundleDescriptor,
   type ManagedMemorySkillSyncResult,
+  WITHMATE_GLOSSARY_SKILL_NAME,
   WITHMATE_MEMORY_SKILL_NAME,
 } from "./managed-memory-skill-service.js";
 import { MemoryCliShimService } from "./memory-cli-shim-service.js";
@@ -242,9 +258,19 @@ import { getProviderRuntimeCapabilities } from "./provider-support.js";
 import { AgentRuntimeBindingRegistry } from "./agent-runtime-binding.js";
 import { updateAuxiliarySessionWithProviderRuntimeLifecycle } from "./auxiliary-provider-runtime-lifecycle.js";
 import { getMemoryV6AgentRuntimeOperations } from "./memory-v6-http-server.js";
+import { RuntimeDiscoveryRegistryError } from "../src/runtime-discovery/runtime-discovery-contract.js";
+import {
+  GlossaryApplicationService,
+  projectGlossaryCheckoutAuthority,
+} from "./glossary-application-service.js";
+import { GlossaryRuntimeService } from "./glossary-runtime-service.js";
+import { GlossarySessionProjectionService } from "./glossary-session-projection-service.js";
+import { SessionGlossaryWindowSubscriptionCoordinator } from "./session-glossary-window-subscription.js";
+import { getGlossaryAgentRuntimeOperations } from "../src/glossary-operation-schema.js";
 import {
   WITHMATE_APP_BOOT_STATUS_EVENT,
   WITHMATE_GET_APP_BOOT_STATUS_CHANNEL,
+  WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
 } from "../src/withmate-ipc-channels.js";
 import { CREATE_V2_SCHEMA_SQL } from "./database-schema-v2.js";
@@ -264,6 +290,13 @@ const rendererDistPath = path.resolve(currentDir, "../../dist");
 const appDataPath = app.getPath("appData");
 const userDataPathOverride = process.env.WITHMATE_USER_DATA_PATH?.trim();
 const fixedUserDataPath = userDataPathOverride ? path.resolve(userDataPathOverride) : path.join(appDataPath, "WithMate");
+const applicationInstanceId = crypto.randomUUID();
+const processStartedAt = new Date().toISOString();
+const runtimeBuildChannel = process.argv.some((argument) => argument.toLowerCase() === "--withmate-visual-check")
+  ? "visual-check" as const
+  : app.isPackaged
+    ? "installed" as const
+    : "development" as const;
 app.setAppUserModelId(resolveAppUserModelId({
   isPackaged: app.isPackaged,
   execPath: process.execPath,
@@ -293,13 +326,30 @@ const bundledCharacterAuthoringSkillPath = app.isPackaged
 const bundledMemorySkillPath = app.isPackaged
   ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_MEMORY_SKILL_NAME)
   : path.resolve(currentDir, "../../resources/skills", WITHMATE_MEMORY_SKILL_NAME);
+const bundledGlossarySkillPath = app.isPackaged
+  ? path.join(process.resourcesPath, "resources", "skills", WITHMATE_GLOSSARY_SKILL_NAME)
+  : path.resolve(currentDir, "../../resources/skills", WITHMATE_GLOSSARY_SKILL_NAME);
 const trayIconPath = path.resolve(currentDir, "../../build/icon.ico");
 const sessionFilePreviewImageCopyService = new SessionFilePreviewImageCopyService({
+  buildMenu: (template) => Menu.buildFromTemplate(template),
+});
+const windowsFileDropClipboardWriter = new WindowsFileDropClipboardWriter({ platform: process.platform });
+const sessionFileObjectCopyService = new SessionFileObjectCopyService({
+  platform: process.platform,
+  createAuthorizationBoundary: createSessionFileExplorerService,
+  writeNativeFileDrop: (targetPath) => windowsFileDropClipboardWriter.copyFile(targetPath),
   buildMenu: (template) => Menu.buildFromTemplate(template),
 });
 const markdownLinkContextMenuService = new MarkdownLinkContextMenuService({
   buildMenu: (template) => Menu.buildFromTemplate(template),
   writeText: (target) => clipboard.writeText(target),
+  resolveCopyableFile: (request) => request.fileContext
+    ? sessionFileObjectCopyService.resolveCopyableLinkResource({
+        ...request.fileContext,
+        target: request.target,
+      })
+    : Promise.resolve(null),
+  copyFile: (resource) => sessionFileObjectCopyService.copyResource(resource),
 });
 const codexAdapter = new CodexAdapter((input) => writeAppLog({
   ...input,
@@ -321,7 +371,7 @@ let modelCatalogStorage: ModelCatalogStorage | null = null;
 let characterStorage: CharacterStorageAccess | null = null;
 let characterService: CharacterService | null = null;
 let characterAuthoringService: CharacterAuthoringService | null = null;
-let managedMemorySkillService: ManagedMemorySkillService | null = null;
+let managedSkillDistributionService: ManagedSkillDistributionService | null = null;
 let memoryCliShimService: MemoryCliShimService | null = null;
 let auditLogStorage: AuditLogStorageRead | null = null;
 let auxiliarySessionStorage: AuxiliarySessionStorageAccess | null = null;
@@ -361,6 +411,7 @@ let auxiliarySessionService: AuxiliarySessionService | null = null;
 let auxiliarySessionRuntimeService: SessionRuntimeService | null = null;
 let sessionPersistenceService: SessionPersistenceService | null = null;
 let sessionWindowBridge: SessionWindowBridge<BrowserWindow> | null = null;
+let sessionWindowRestoreService: SessionWindowRestoreService | null = null;
 let settingsCatalogService: SettingsCatalogService | null = null;
 let sessionObservabilityService: SessionObservabilityService | null = null;
 let sessionApprovalService: SessionApprovalService | null = null;
@@ -381,6 +432,23 @@ let sessionLaunchSelectionService: SessionLaunchSelectionService | null = null;
 const providerRuntimeOperationCoordinator = new ProviderRuntimeOperationCoordinator();
 const characterAffectTurnOwnershipCoordinator = new CharacterAffectTurnOwnershipCoordinator();
 const agentRuntimeBindingRegistry = new AgentRuntimeBindingRegistry();
+const glossaryApplicationService = new GlossaryApplicationService();
+const glossarySessionProjectionService = new GlossarySessionProjectionService({
+  applicationService: glossaryApplicationService,
+  getSession,
+  getBindingGeneration: (sessionId, providerId) =>
+    agentRuntimeBindingRegistry.getExecutionGeneration(sessionId, providerId),
+  subscribeBindingChanges: (listener) => agentRuntimeBindingRegistry.subscribeChanges((change) => {
+    listener({ sessionId: change.actorSessionId, providerId: change.providerId });
+  }),
+});
+const glossaryWindowSubscriptionCoordinator = new SessionGlossaryWindowSubscriptionCoordinator<BrowserWindow>({
+  getWindow: (sessionId) => requireSessionWindowBridge().getWindow(sessionId),
+  subscribe: (sessionId, listener) => glossarySessionProjectionService.subscribe(sessionId, listener),
+  deliver: (window, projection) => {
+    window.webContents.send(WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT, projection);
+  },
+});
 const workspaceDirectoryValidationService = new WorkspaceDirectoryValidationService();
 let mainWindowFacade: MainWindowFacade | null = null;
 let mainQueryService: MainQueryService | null = null;
@@ -430,12 +498,16 @@ function getAppDatabaseDiagnostics(): AppDatabaseDiagnostics {
   return appDatabaseDiagnostics;
 }
 
-function recordMemoryV6DiagnosticError(kind: string, message: string): void {
+function recordMemoryV6DiagnosticError(
+  kind: string,
+  _message: string,
+  discoveryCode?: MemoryV6DiagnosticEvent["discoveryCode"],
+): void {
   memoryV6DiagnosticErrors = [
     {
       kind,
-      message,
       occurredAt: new Date().toISOString(),
+      ...(discoveryCode ? { discoveryCode } : {}),
     },
     ...memoryV6DiagnosticErrors,
   ].slice(0, 3);
@@ -455,15 +527,16 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
   const latestSkillResultByProvider = new Map(
     managedMemorySkillSyncResults.map((result) => [result.providerId, result]),
   );
+  const cliShimDiagnostics = await requireMemoryCliShimService().getDiagnostics();
 
   return {
     generatedAt: new Date().toISOString(),
     runtime: {
       status: memoryV6RuntimeApi ? "running" : memoryV6RuntimeStatus,
-      baseUrl: memoryV6RuntimeApi?.baseUrl ?? null,
-      dbPath: memoryV6RuntimeApi?.dbPath ?? null,
-      discoveryFilePath: memoryV6RuntimeApi?.discoveryFilePath ?? null,
-      hasApiSecret: Boolean(memoryV6RuntimeApi),
+      applicationInstanceId: memoryV6RuntimeApi?.applicationInstanceId ?? null,
+      runtimeGenerationId: memoryV6RuntimeApi?.runtimeGenerationId ?? null,
+      buildChannel: memoryV6RuntimeApi?.buildChannel ?? null,
+      discoveryPublished: Boolean(memoryV6RuntimeApi),
     },
     providers: configuredProviderIds.map((providerId) => {
       const capabilities = getProviderRuntimeCapabilities({ providerId });
@@ -478,12 +551,16 @@ async function getMemoryV6Diagnostics(): Promise<MemoryV6Diagnostics> {
       return {
         providerId,
         skillRootConfigured: Boolean(result?.skillRootPath ?? configuredSkillRootPath.trim()),
-        skillPath: result?.skillPath ?? null,
         status: result?.status ?? "not-run",
-        ...(result?.errorMessage ? { errorMessage: result.errorMessage } : {}),
       };
     }),
-    cliShim: await requireMemoryCliShimService().getDiagnostics(),
+    cliShim: {
+      platform: cliShimDiagnostics.platform,
+      commandName: cliShimDiagnostics.commandName,
+      supported: cliShimDiagnostics.supported,
+      status: cliShimDiagnostics.status,
+      pathContainsShimDirectory: cliShimDiagnostics.pathContainsShimDirectory,
+    },
     lastErrors: memoryV6DiagnosticErrors,
   };
 }
@@ -552,6 +629,81 @@ function forgetMemoryV6Entry(entryId: string, reason?: MemoryForgetReason | null
   return createMemoryV6ReviewService().forgetEntry(entryId, reason);
 }
 
+async function resolveAgentRuntimeActorSession(sessionId: string) {
+  const session = getSession(sessionId);
+  if (session) {
+    return {
+      id: session.id,
+      providerId: session.provider,
+      characterId: session.characterId,
+      workspacePath: session.workspacePath,
+    };
+  }
+  if (!auxiliarySessionStorage) {
+    return null;
+  }
+  const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
+  return auxiliary
+    ? {
+        id: auxiliary.id,
+        providerId: auxiliary.provider,
+        characterId: auxiliary.characterId,
+        workspacePath: auxiliary.workspacePath,
+      }
+    : null;
+}
+
+function getGlossaryProactiveCreateLimit(): number | null {
+  return requireAppSettingsStorage().getSettings().glossaryProactiveCreateLimit;
+}
+
+async function ensureSessionGlossarySubscription(sessionId: string): Promise<void> {
+  await glossaryWindowSubscriptionCoordinator.ensure(sessionId);
+}
+
+const glossaryRuntimeService = new GlossaryRuntimeService({
+  applicationService: glossaryApplicationService,
+  bindingRegistry: agentRuntimeBindingRegistry,
+  resolveActorSession: resolveAgentRuntimeActorSession,
+  getProactiveCreateLimit: getGlossaryProactiveCreateLimit,
+});
+
+async function issueProviderAgentRuntimeBinding(
+  session: Pick<Session, "id" | "characterId" | "sessionKind" | "workspacePath">,
+  providerId: string,
+) {
+  let glossaryAuthority: ReturnType<typeof projectGlossaryCheckoutAuthority> | null = null;
+  try {
+    glossaryAuthority = projectGlossaryCheckoutAuthority(
+      await glossaryApplicationService.resolvePrimaryCheckout(session.workspacePath),
+    );
+  } catch {
+    // Non-Git workspaces keep Memory grants but do not receive glossary authority.
+  }
+  const binding = agentRuntimeBindingRegistry.issueOrReuse({
+    actorSessionId: session.id,
+    providerId,
+    authoritySnapshot: {
+      characterId: session.characterId,
+      sessionKind: session.sessionKind,
+      ...(glossaryAuthority ? { glossaryPrimaryCheckout: glossaryAuthority } : {}),
+    },
+    operationGrants: [
+      ...getMemoryV6AgentRuntimeOperations(),
+      ...(glossaryAuthority ? getGlossaryAgentRuntimeOperations() : []),
+    ],
+  });
+  return memoryV6RuntimeApi
+    ? {
+        ...binding,
+        memoryRuntimeOwner: {
+          applicationInstanceId: memoryV6RuntimeApi.applicationInstanceId,
+          runtimeGenerationId: memoryV6RuntimeApi.runtimeGenerationId,
+        },
+      }
+    : binding;
+}
+
 async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
   if (memoryV6RuntimeApi) {
     return;
@@ -561,6 +713,9 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     memoryV6RuntimeStatus = "stopped";
     memoryV6RuntimeApi = await startMemoryV6RuntimeApi({
       userDataPath: app.getPath("userData"),
+      applicationInstanceId,
+      buildChannel: runtimeBuildChannel,
+      processStartedAt,
       listCharacters: () => requireCharacterService().listCharacters(),
       resolveCharacterById: (id) => {
         const character = requireCharacterService().getCharacterCatalogEntry(id);
@@ -571,19 +726,8 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
       getMemoryFileQuotaBytes: () => requireAppSettingsStorage().getSettings().memoryFileQuotaBytes,
       protectedObjectKeyProtector: createElectronSafeStorageKeyProtector(safeStorage),
       agentRuntimeBindingRegistry,
-      resolveActorSession: async (sessionId) => {
-        const session = getSession(sessionId);
-        if (session) {
-          return { id: session.id, providerId: session.provider, characterId: session.characterId };
-        }
-        if (!auxiliarySessionStorage) {
-          return null;
-        }
-        const auxiliary = await requireAuxiliarySessionService().getAuxiliaryRuntimeSession(sessionId);
-        return auxiliary
-          ? { id: auxiliary.id, providerId: auxiliary.provider, characterId: auxiliary.characterId }
-          : null;
-      },
+      resolveActorSession: resolveAgentRuntimeActorSession,
+      routeAgentRuntimeExtension: (request) => glossaryRuntimeService.route(request),
       log: writeAppLog,
     });
     memoryV6RuntimeStatus = "running";
@@ -593,13 +737,16 @@ async function startMemoryV6RuntimeApiBestEffort(): Promise<void> {
     recordMemoryV6DiagnosticError(
       "memory-v6.runtime-api.start-failed",
       error instanceof Error ? error.message : String(error),
+      error instanceof RuntimeDiscoveryRegistryError && error.code === "registry_capacity"
+        ? "WITHMATE_RUNTIME_REGISTRY_CAPACITY"
+        : undefined,
     );
     writeAppLog({
       level: "warn",
       kind: "memory-v6.runtime-api.start-failed",
       process: "main",
       message: "Memory V6 runtime API did not start",
-      error: appLogService.errorToLogError(error),
+      data: { errorName: error instanceof Error ? error.name : "UnknownError" },
     });
   }
 }
@@ -630,17 +777,18 @@ async function stopMemoryV6RuntimeApiBestEffort(): Promise<void> {
       kind: "memory-v6.runtime-api.stop-failed",
       process: "main",
       message: "Memory V6 runtime API cleanup failed",
-      error: appLogService.errorToLogError(error),
+      data: { errorName: error instanceof Error ? error.name : "UnknownError" },
     });
   }
 }
 
 async function syncManagedMemorySkillBestEffort(): Promise<void> {
   try {
-    const results = await requireManagedMemorySkillService().syncConfiguredProviderSkills();
-    managedMemorySkillSyncResults = results;
-    const failed = results.filter((result) => result.status === "failed");
-    const collisions = results.filter((result) => result.status === "skipped-collision");
+    const distribution = requireManagedSkillDistributionService();
+    const memoryResults = await distribution.syncConfiguredProviderSkills(MANAGED_MEMORY_SKILL_BUNDLE);
+    managedMemorySkillSyncResults = memoryResults;
+    const failed = memoryResults.filter((result) => result.status === "failed");
+    const collisions = memoryResults.filter((result) => result.status === "skipped-collision");
     for (const result of failed) {
       recordMemoryV6DiagnosticError(
         "memory-v6.skill.sync.provider-failed",
@@ -653,7 +801,7 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       process: "main",
       message: "Memory V6 managed skill sync completed",
       data: {
-        results,
+        results: memoryResults,
       },
     });
   } catch (error) {
@@ -666,6 +814,31 @@ async function syncManagedMemorySkillBestEffort(): Promise<void> {
       kind: "memory-v6.skill.sync.failed",
       process: "main",
       message: "Memory V6 managed skill sync failed",
+      error: appLogService.errorToLogError(error),
+    });
+  }
+
+  try {
+    const results = await requireManagedSkillDistributionService().syncConfiguredProviderSkills(
+      MANAGED_GLOSSARY_SKILL_BUNDLE,
+    );
+    const failed = results.filter((result) => result.status === "failed");
+    const collisions = results.filter((result) => result.status === "skipped-collision");
+    writeAppLog({
+      level: failed.length > 0 || collisions.length > 0 ? "warn" : "info",
+      kind: "glossary.skill.sync.completed",
+      process: "main",
+      message: "Glossary managed skill sync completed",
+      data: {
+        results,
+      },
+    });
+  } catch (error) {
+    writeAppLog({
+      level: "warn",
+      kind: "glossary.skill.sync.failed",
+      process: "main",
+      message: "Glossary managed skill sync failed",
       error: appLogService.errorToLogError(error),
     });
   }
@@ -1135,8 +1308,12 @@ function listSessions(): Session[] {
   return sessions;
 }
 
-function listSessionSummaries(): SessionSummary[] {
-  return sessions.map(projectSessionSummary);
+async function listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult> {
+  return requireMainQueryService().listSessionSummaryPage(request);
+}
+
+async function listSessionCharacterUsage(): Promise<SessionCharacterUsage[]> {
+  return requireMainQueryService().listSessionCharacterUsage();
 }
 
 async function listCompanionSessionSummaries() {
@@ -1205,6 +1382,7 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
         new WindowBroadcastService({
           getAllWindows: () => BrowserWindow.getAllWindows(),
           getHomeWindows: () => requireAuxWindowService().listHomeWindows(),
+          getPrimaryHomeWindow: () => requireAuxWindowService().getHomeWindow(),
           getSessionWindows: () => requireSessionWindowBridge().listWindows(),
         }),
       createWindowDialogService: () =>
@@ -1357,6 +1535,9 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
               });
               return choice === 1;
             },
+            prepareSessionWindowSnapshotForQuit: () =>
+              requireSessionWindowBridge().prepareSnapshotForQuit(),
+            stopMemoryRuntime: stopMemoryV6RuntimeApiBestEffort,
             closePersistentStores,
             invalidateAllProviderSessionThreads,
             revokeAllAgentRuntimeBindings: () => agentRuntimeBindingRegistry.revokeAll(),
@@ -1385,6 +1566,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 resolveCompanionReviewWindow: (sessionId) =>
                   requireMainWindowFacade().getCompanionReviewWindow(sessionId),
                 openSessionWindow,
+                getSessionWindowRestoreSet: () => requireSessionWindowRestoreService().getSnapshot(),
+                restoreSessionWindows: () => requireSessionWindowRestoreService().restoreSnapshot(),
                 openHomeWindow: createHomeWindow,
                 openSessionMonitorWindow,
                 openSettingsWindow,
@@ -1425,6 +1608,13 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                     BrowserWindow.fromWebContents(event.sender) ?? null,
                     event.sender,
                     request.point,
+                  ),
+                copySessionFileObject: (_event, request) =>
+                  sessionFileObjectCopyService.copyResource(request.resource),
+                showSessionFileObjectCopyContextMenu: (event, request) =>
+                  sessionFileObjectCopyService.showContextMenu(
+                    BrowserWindow.fromWebContents(event.sender) ?? null,
+                    request,
                   ),
                 showMarkdownLinkContextMenu: (event, request) =>
                   markdownLinkContextMenuService.showContextMenu(
@@ -1469,7 +1659,8 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                 deletePromptTemplate,
               },
               sessionQuery: {
-                listSessionSummaries: () => listSessionSummaries(),
+                listSessionSummaryPage: (request) => listSessionSummaryPage(request),
+                listSessionCharacterUsage: () => listSessionCharacterUsage(),
                 listCompanionSessionSummaries: () => listCompanionSessionSummaries(),
                 listSessionAuditLogs: (sessionId) => listSessionAuditLogs(sessionId),
                 listSessionAuditLogSummaries: (sessionId) => listSessionAuditLogSummaries(sessionId),
@@ -1495,20 +1686,37 @@ function requireMainInfrastructureRegistry(): MainInfrastructureRegistry<
                   requireMainQueryService().listWorkspaceSkills(providerId, workspacePath),
                 listWorkspaceCustomAgents: async (providerId, workspacePath) =>
                   requireMainQueryService().listWorkspaceCustomAgents(providerId, workspacePath),
-                listOpenSessionWindowIds: () => listOpenSessionWindowIds(),
+                listOpenSessionWindowIdsPage: (request) => listOpenSessionWindowIdsPage(request),
                 listOpenCompanionReviewWindowIds: () => listOpenCompanionReviewWindowIds(),
                 getSession: (sessionId) => getDisplaySession(sessionId),
+                getSessionGlossaryProjection: (sessionId) =>
+                  glossarySessionProjectionService.load(sessionId),
+                searchSessionGlossary: (sessionId, request) =>
+                  glossarySessionProjectionService.search(sessionId, request),
+                ensureSessionGlossarySubscription,
                 getSessionFileExplorerOwnerSessionId,
                 listSessionFileRoots: (sessionId) => createSessionFileExplorerService().listRoots(sessionId),
                 listSessionDirectory: (request) => createSessionFileExplorerService().listDirectory(request),
-                inspectSessionFile: (request) => createSessionFileExplorerService().inspectFile(request),
-                readSessionFileChunk: (request) => createSessionFileExplorerService().readFileChunk(request),
+                inspectSessionFile: (request) => isSessionFileGitCommitResource(request)
+                  ? createFileRootGitChangesService().inspectHistoryFile(request)
+                  : createSessionFileExplorerService().inspectFile(request),
+                readSessionFileChunk: (request) => isSessionFileGitCommitResource(request)
+                  ? createFileRootGitChangesService().readHistoryFileChunk(request)
+                  : createSessionFileExplorerService().readFileChunk(request),
                 openSessionFile: (request) => createSessionFileExplorerService().openFile(request),
                 openSessionFilePreviewWindow,
                 getSessionFilePreviewWindowPayload: (token) =>
                   requireMainWindowFacade().getFilePreviewPayload(token),
                 listFileRootChanges: (request) => createFileRootGitChangesService().listChanges(request),
                 getFileRootDiff: (request) => createFileRootGitChangesService().getFileDiff(request),
+                listFileRootGitHistoryRepositories: (request) =>
+                  createFileRootGitChangesService().listHistoryRepositories(request),
+                listFileRootGitHistoryCommits: (request) =>
+                  createFileRootGitChangesService().listHistoryCommits(request),
+                getFileRootGitHistoryCommitDetail: (request) =>
+                  createFileRootGitChangesService().getHistoryCommitDetail(request),
+                getFileRootGitHistoryDiff: (request) =>
+                  createFileRootGitChangesService().getHistoryDiff(request),
                 getSessionMessageArtifact,
                 getDiffPreview: (token) => requireAuxWindowService().getDiffPreview(token),
                 previewComposerInput,
@@ -1718,6 +1926,20 @@ function requireMainQueryService(): MainQueryService {
   if (!mainQueryService) {
     mainQueryService = new MainQueryService({
       getSessionSummaries: () => requireSessionStorage().listSessionSummaries(),
+      getSessionSummaryPage: (request) => {
+        const storage = requireSessionStorage();
+        if (!storage.listSessionSummaryPage) {
+          throw new Error("このDBのSession summary page queryは利用できないよ。");
+        }
+        return storage.listSessionSummaryPage(request);
+      },
+      getSessionCharacterUsage: () => {
+        const storage = requireSessionStorage();
+        if (!storage.listSessionCharacterUsage) {
+          throw new Error("このDBのSession character usage queryは利用できないよ。");
+        }
+        return storage.listSessionCharacterUsage();
+      },
       getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
       getSessionMessageArtifact: (sessionId, messageIndex) =>
         requireSessionStorage().getSessionMessageArtifact(sessionId, messageIndex),
@@ -1746,7 +1968,6 @@ function requireMainBroadcastFacade(): MainBroadcastFacade<BrowserWindow> {
   if (!mainBroadcastFacade) {
     mainBroadcastFacade = new MainBroadcastFacade({
       getWindowBroadcastService: () => requireWindowBroadcastService(),
-      listSessionSummaries: () => listSessionSummaries(),
       getModelCatalog: () => getModelCatalog(),
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       listPromptTemplates,
@@ -2035,18 +2256,31 @@ function requireCharacterAuthoringService(): CharacterAuthoringService {
   return characterAuthoringService;
 }
 
-function requireManagedMemorySkillService(): ManagedMemorySkillService {
-  if (!managedMemorySkillService) {
-    managedMemorySkillService = new ManagedMemorySkillService({
-      bundledSkillPath: bundledMemorySkillPath,
+const MANAGED_MEMORY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
+  skillName: WITHMATE_MEMORY_SKILL_NAME,
+  bundledSkillPath: bundledMemorySkillPath,
+  documentationRelativePaths: ["SKILL.md", "reference"],
+};
+
+const MANAGED_GLOSSARY_SKILL_BUNDLE: ManagedSkillBundleDescriptor = {
+  skillName: WITHMATE_GLOSSARY_SKILL_NAME,
+  bundledSkillPath: bundledGlossarySkillPath,
+  documentationRelativePaths: ["SKILL.md", "agents"],
+};
+
+function requireManagedSkillDistributionService(): ManagedSkillDistributionService {
+  if (!managedSkillDistributionService) {
+    managedSkillDistributionService = new ManagedSkillDistributionService({
       getAppSettings: () => requireAppSettingsStorage().getSettings(),
       getAppVersion: () => app.getVersion(),
       isPackagedApp: () => app.isPackaged,
-      shouldSyncSkillMarkdownOnly: () => requireMemoryCliShimService().isPathShimUsable(),
+      shouldSyncDocumentationOnly: (bundle) => bundle.skillName === WITHMATE_MEMORY_SKILL_NAME
+        ? requireMemoryCliShimService().isPathShimUsable()
+        : false,
     });
   }
 
-  return managedMemorySkillService;
+  return managedSkillDistributionService;
 }
 
 function requireMemoryCliShimService(): MemoryCliShimService {
@@ -2084,7 +2318,7 @@ async function startCharacterAuthoringSession(
 ): Promise<CharacterAuthoringSessionStartResult> {
   const result = await requireCharacterAuthoringService().startSession(input);
   await openSessionWindow(result.session.id);
-  void broadcastSessions();
+  void broadcastSessions([result.session.id]);
   return result;
 }
 
@@ -2446,6 +2680,10 @@ function requireSessionRuntimeService(): SessionRuntimeService {
     sessionRuntimeService = new SessionRuntimeService({
       getSession: getRuntimeSession,
       upsertSession: (session) => requireMainSessionPersistenceFacade().upsertSessionPreservingPin(session),
+      persistRunningTurnStart: (session, expectedMessageCount) =>
+        requireMainSessionPersistenceFacade().persistRunningTurnStart(session, expectedMessageCount),
+      clearCharacterAuthoringRuntimeState: (session) =>
+        requireMainSessionPersistenceFacade().clearCharacterAuthoringRuntimeState(session),
       upsertTerminalSession: (session, terminalCommit) =>
         requireMainSessionPersistenceFacade().upsertTerminalSession(session, terminalCommit),
       resolveRuntimeSessionForTurn: (session) => resolveCharacterAuthoringRuntimeSessionForTurn(
@@ -2460,15 +2698,12 @@ function requireSessionRuntimeService(): SessionRuntimeService {
       getProviderCodingAdapter,
       resetProviderSessionThread,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
-        agentRuntimeBindingRegistry.issueOrReuse({
-          actorSessionId: session.id,
-          providerId: provider.id,
-          authoritySnapshot: {
-            characterId: session.characterId,
-            sessionKind: session.sessionKind,
-          },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
-        }),
+        issueProviderAgentRuntimeBinding(session, provider.id),
+      beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
+        ? glossaryRuntimeService.beginProviderTurn(session.id, binding)
+        : undefined,
+      endProviderAgentRuntimeTurn: (handle) =>
+        glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
         workspacePath: session.workspacePath,
@@ -2680,15 +2915,12 @@ function requireAuxiliarySessionRuntimeService(): SessionRuntimeService {
       resolveProviderCatalog,
       getProviderCodingAdapter,
       getProviderAgentRuntimeBinding: ({ session, provider }) =>
-        agentRuntimeBindingRegistry.issueOrReuse({
-          actorSessionId: session.id,
-          providerId: provider.id,
-          authoritySnapshot: {
-            characterId: session.characterId,
-            sessionKind: "auxiliary",
-          },
-          operationGrants: getMemoryV6AgentRuntimeOperations(),
-        }),
+        issueProviderAgentRuntimeBinding(session, provider.id),
+      beginProviderAgentRuntimeTurn: ({ session, provider, binding }) => binding
+        ? glossaryRuntimeService.beginProviderTurn(session.id, binding)
+        : undefined,
+      endProviderAgentRuntimeTurn: (handle) =>
+        glossaryRuntimeService.endProviderTurn(handle as import("./glossary-proactive-turn.js").GlossaryProactiveTurnHandle),
       resetProviderSessionThread,
       getSessionMemory: (session) => createDefaultSessionMemory({
         id: session.id,
@@ -2842,6 +3074,20 @@ function requireSessionPersistenceService(): SessionPersistenceService {
           ? storage.insertSession(session)
           : storage.upsertSession(session);
       },
+      appendStoredRunningTurnStart: (input) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.appendRunningTurnStart) {
+          throw new Error("running turn 開始のincremental storageが利用できないよ。");
+        }
+        return storage.appendRunningTurnStart(input);
+      },
+      clearStoredCharacterAuthoringRuntimeState: (input) => {
+        const storage = requireSessionStorageForWrite() as SessionStorageWrite;
+        if (!storage.clearCharacterAuthoringRuntimeState) {
+          throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+        }
+        return storage.clearCharacterAuthoringRuntimeState(input);
+      },
       replaceStoredSessions: async (nextSessions) => {
         await requireSessionStorageForWrite().replaceSessions(nextSessions);
       },
@@ -2906,10 +3152,37 @@ function requireSessionWindowBridge(): SessionWindowBridge<BrowserWindow> {
         return choice === 1;
       },
       broadcastOpenSessionWindowIds,
+      persistOpenSessionWindowIds: (sessionIds) =>
+        requireSessionWindowRestoreService().saveSnapshot(sessionIds),
+      onSnapshotPersistenceError: (error) => {
+        writeAppLog({
+          level: "warn",
+          kind: "session.window.restore_snapshot.save_failed",
+          process: "main",
+          message: "Session Window restore snapshot save failed",
+          error: appLogService.errorToLogError(error),
+        });
+      },
     });
   }
 
   return sessionWindowBridge;
+}
+
+function requireSessionWindowRestoreService(): SessionWindowRestoreService {
+  if (!sessionWindowRestoreService) {
+    sessionWindowRestoreService = new SessionWindowRestoreService({
+      storage: new SessionWindowRestoreStorage(app.getPath("userData")),
+      getSession: (sessionId) => requireSessionStorage().getSession(sessionId),
+      getSessionWindowRestoreStates: () =>
+        requireSessionWindowBridge().getSessionWindowRestoreStates(),
+      openSessionWindow: (sessionId) => requireSessionWindowBridge().openSessionWindow(sessionId),
+      onRestoreSetChanged: (sessionIds) => {
+        requireWindowBroadcastService().broadcastSessionWindowRestoreSet(sessionIds);
+      },
+    });
+  }
+  return sessionWindowRestoreService;
 }
 
 function requireSettingsCatalogService(): SettingsCatalogService {
@@ -3159,7 +3432,7 @@ function closePersistentStores(): void {
   characterStorage = null;
   characterService = null;
   characterAuthoringService = null;
-  managedMemorySkillService = null;
+  managedSkillDistributionService = null;
   memoryCliShimService = null;
   sessionStorage = null;
   sessionMemoryStorage = null;
@@ -3573,14 +3846,21 @@ async function getSessionFileExplorerContext(sessionId: string): Promise<Session
   }
 
   const session = await getRuntimeSession(sessionId);
-  if (!session) {
-    return null;
+  if (session) {
+    return {
+      workspacePath: session.workspacePath,
+      parentSessionId: session.id,
+      allowedAdditionalDirectories: session.allowedAdditionalDirectories,
+    };
   }
-  return {
-    workspacePath: session.workspacePath,
-    parentSessionId: session.id,
-    allowedAdditionalDirectories: session.allowedAdditionalDirectories,
-  };
+  const companionSession = await requireCompanionStorage().getSession(sessionId);
+  return companionSession
+    ? {
+        workspacePath: companionSession.worktreePath,
+        parentSessionId: companionSession.id,
+        allowedAdditionalDirectories: companionSession.allowedAdditionalDirectories ?? [],
+      }
+    : null;
 }
 
 async function getSessionFileExplorerOwnerSessionId(sessionId: string): Promise<string | null> {
@@ -3596,9 +3876,20 @@ function createSessionFileExplorerService(): SessionFileExplorerService {
 }
 
 function createFileRootGitChangesService(): FileRootGitChangesService {
+  const explorer = createSessionFileExplorerService();
   return new FileRootGitChangesService({
     resolveRootContext: async (request) => {
-      const root = await createSessionFileExplorerService().resolveRoot(request.sessionId, request.rootId);
+      const root = await explorer.resolveRoot(request.sessionId, request.rootId);
+      return root ? { rootPath: root.absolutePath } : null;
+    },
+    resolveHistoryRootContexts: async (sessionId) => (await explorer.resolveHistoryRoots(sessionId)).map((root) => ({
+      rootId: root.id,
+      label: root.label,
+      displayPath: root.displayPath,
+      rootPath: root.absolutePath,
+    })),
+    resolveHistoryRootContext: async (request) => {
+      const root = await explorer.resolveHistoryRoot(request.sessionId, request.rootId);
       return root ? { rootPath: root.absolutePath } : null;
     },
   });
@@ -3733,6 +4024,12 @@ function clearAllSessionBackgroundActivities(): void {
 
 function listOpenSessionWindowIds(): string[] {
   return requireMainWindowFacade().listOpenSessionWindowIds();
+}
+
+function listOpenSessionWindowIdsPage(
+  request?: OpenSessionWindowIdsPageRequest | null,
+): OpenSessionWindowIdsPageResult {
+  return buildOpenSessionWindowIdsPage(listOpenSessionWindowIds(), request);
 }
 
 function listOpenCompanionReviewWindowIds(): string[] {
@@ -4036,7 +4333,9 @@ async function openSessionFilePreviewWindow(
     };
   }
   try {
-    const descriptor = await explorer.inspectFile(resource);
+    const fileName = isSessionFileGitCommitResource(resource)
+      ? (await createFileRootGitChangesService().resolveHistoryFilePreview(resource)).name
+      : (await explorer.inspectFile(resource)).name;
     const ownerSessionId = await getSessionFileExplorerOwnerSessionId(resource.sessionId);
     if (!ownerSessionId) {
       throw new Error("The owning Session could not be resolved.");
@@ -4044,7 +4343,9 @@ async function openSessionFilePreviewWindow(
     const { disposition } = await requireMainWindowFacade().openFilePreviewWindow({
       resource,
       ownerSessionId,
-      windowTitle: resolveSessionFilePreviewWindowTitle(descriptor.name),
+      windowTitle: isSessionFileGitCommitResource(resource)
+        ? resolveSessionFileGitCommitPreviewWindowTitle(fileName, resource.commitId)
+        : resolveSessionFilePreviewWindowTitle(fileName),
       view: request.kind === "resource" ? request.view ?? { kind: "preview" } : { kind: "preview" },
     });
     return { status: "opened", targetType: "preview-window", disposition, resource };
@@ -4226,6 +4527,5 @@ if (!hasSingleInstanceLock) {
     });
     appTrayService?.dispose();
     characterAffectTurnRetryScheduler?.dispose();
-    void stopMemoryV6RuntimeApiBestEffort();
   });
 }

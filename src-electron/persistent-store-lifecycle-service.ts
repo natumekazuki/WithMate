@@ -2,7 +2,13 @@ import { basename, dirname, join } from "node:path";
 import { rm } from "node:fs/promises";
 
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
-import type { Session, SessionSummary } from "../src/session-state.js";
+import type {
+  Session,
+  SessionCharacterUsage,
+  SessionSummary,
+  SessionSummaryPageRequest,
+  HomeSessionSummaryPageResult,
+} from "../src/session-state.js";
 import type { AuxiliarySession, AuxiliarySessionSummary } from "../src/auxiliary-session-state.js";
 import type {
   CharacterCatalogEntry,
@@ -40,6 +46,12 @@ import { sessionSummariesToSessions } from "./session-summary-adapter.js";
 import { openAppDatabase, truncateAppDatabaseWal } from "./sqlite-connection.js";
 import type { ConversationTimingStorageSnapshot } from "./conversation-timing.js";
 import type { SessionTurnTerminalCommit } from "./session-turn-terminal-commit.js";
+import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 type ClosableStore = {
   close(): void;
@@ -61,12 +73,19 @@ export type SessionStorageRead = AwaitableStorageMethods<
   | "getSession"
   | "getSessionMessageArtifact"
   | "listSessionIdsLastActiveBefore"
-> & Pick<SessionStorage, "close">;
+> & Pick<SessionStorage, "close"> & {
+  listSessionSummaryPage?(request?: SessionSummaryPageRequest | null): Awaitable<HomeSessionSummaryPageResult>;
+  listSessionCharacterUsage?(): Awaitable<SessionCharacterUsage[]>;
+};
 export type SessionStorageWrite = AwaitableStorageMethods<
   SessionStorage,
   "insertSession" | "upsertSession" | "replaceSessions" | "deleteSession" | "deleteSessions" | "clearSessions"
 > & SessionStorageRead & {
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
+  appendRunningTurnStart?(input: SessionRunningTurnStartInput): Awaitable<SessionRunningTurnStartResult>;
+  clearCharacterAuthoringRuntimeState?(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): Awaitable<SessionCharacterAuthoringRuntimeClearResult>;
 };
 export type SessionPinStorage = {
   setSessionPinned(sessionId: string, isPinned: boolean): Awaitable<SessionSummary>;

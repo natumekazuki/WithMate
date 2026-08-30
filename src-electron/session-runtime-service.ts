@@ -55,6 +55,8 @@ function logSessionRunStuckInvestigation(
 export type SessionRuntimeServiceDeps = {
   getSession(sessionId: string): Awaitable<Session | null>;
   upsertSession(session: Session): Awaitable<Session>;
+  persistRunningTurnStart?(session: Session, expectedMessageCount: number): Awaitable<Session>;
+  clearCharacterAuthoringRuntimeState?(session: Session): Awaitable<Session>;
   upsertTerminalSession?(session: Session, terminalCommit: SessionTurnTerminalCommit): Awaitable<Session>;
   resolveRuntimeSessionForTurn?: (session: Session) => Awaitable<Session>;
   resolveComposerPreview(session: Session, userMessage: string): Promise<ComposerPreview>;
@@ -123,6 +125,15 @@ export type SessionRuntimeServiceDeps = {
     session: Session;
     provider: ModelCatalogProvider;
   }): Awaitable<ProviderAgentRuntimeBindingProjection | null>;
+  beginProviderAgentRuntimeTurn?(input: {
+    session: Session;
+    provider: ModelCatalogProvider;
+    binding: ProviderAgentRuntimeBindingProjection | null;
+  }): Awaitable<{
+    handle: unknown;
+    binding: ProviderAgentRuntimeBindingProjection | null;
+  } | undefined>;
+  endProviderAgentRuntimeTurn?(handle: unknown): void;
   scheduleProviderQuotaTelemetryRefresh(providerId: string, delaysMs: number[]): void;
   broadcastLiveSessionRun(sessionId: string): void;
   resolvePendingApprovalRequest(sessionId: string, decision: LiveApprovalDecision): void;
@@ -891,7 +902,10 @@ export class SessionRuntimeService {
       ? { ...resolvedSession, threadId: "" }
       : resolvedSession;
     if (shouldResetCharacterAuthoringThread) {
-      session = await this.deps.upsertSession(session);
+      if (!this.deps.clearCharacterAuthoringRuntimeState) {
+        throw new Error("Character authoring runtime clearのstorageが利用できないよ。");
+      }
+      session = await this.deps.clearCharacterAuthoringRuntimeState(session);
       await this.deps.invalidateProviderSessionThread(storedSession.provider, storedSession.id);
     }
     throwIfRunCanceled(runAbortController.signal);
@@ -979,14 +993,17 @@ export class SessionRuntimeService {
       };
 
       const runningUpsertStartedAt = Date.now();
-      await this.deps.upsertSession(runningSession);
+      runningSession = await (
+        this.deps.persistRunningTurnStart?.(runningSession, session.messages.length)
+        ?? this.deps.upsertSession(runningSession)
+      );
+      setupRunningSessionSaved = true;
       logSessionRunStuckInvestigation("runtime.running-session-upsert.done", {
         sessionId,
         durationMs: Date.now() - runningUpsertStartedAt,
         elapsedMs: Date.now() - investigationStartedAt,
         messageCount: runningSession.messages.length,
       });
-      setupRunningSessionSaved = true;
       throwIfRunCanceled(runAbortController.signal);
       this.inFlightSessionRuns.add(sessionId);
       initialLiveState = {
@@ -1200,7 +1217,19 @@ export class SessionRuntimeService {
       );
     };
 
+    let providerAgentRuntimeTurnHandle: unknown;
     try {
+      const providerAgentRuntimeTurn = await Promise.resolve(
+        this.deps.beginProviderAgentRuntimeTurn?.({
+          session: activeRunningSession,
+          provider,
+          binding: agentRuntimeBinding,
+        }),
+      );
+      providerAgentRuntimeTurnHandle = providerAgentRuntimeTurn?.handle;
+      if (providerAgentRuntimeTurn) {
+        agentRuntimeBinding = providerAgentRuntimeTurn.binding;
+      }
       let result: RunSessionTurnResult | null = null;
       let didInternalRetry = false;
       while (true) {
@@ -1632,6 +1661,9 @@ export class SessionRuntimeService {
       runInBackgroundMacrotask("Detached terminal audit processing failed", completeFailedAudit);
       return storedFailedSession;
     } finally {
+      if (providerAgentRuntimeTurnHandle !== undefined) {
+        this.deps.endProviderAgentRuntimeTurn?.(providerAgentRuntimeTurnHandle);
+      }
       if (runningSession.provider === "copilot") {
         this.deps.scheduleProviderQuotaTelemetryRefresh(runningSession.provider, [0, 3000, 10000]);
       }

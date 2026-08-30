@@ -79,6 +79,7 @@ describe("HomeSettingsContent", () => {
     onChangeLaunchAtLoginEnabled: noOp,
     onChangeSessionTurnNotificationEnabled: noOp,
     onChangeSessionTurnNotificationResponsePreviewEnabled: noOp,
+    onChangeGlossaryProactiveCreateLimit: noOp,
     onChangeSessionCleanupCutoffDate: noOp,
     onChangeUserMicrocopySlot: noOp,
     onChangeProviderEnabled: noOp,
@@ -109,6 +110,19 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Windows 通知に返答の冒頭を表示する"));
     assert.ok(html.includes("送信後に Action Dock を自動で閉じる"));
     assert.ok(html.includes("送信時にチャット末尾へ移動する"));
+  });
+
+  it("Repository Glossaryにproactive create上限を0から100のnumber inputで表示する", () => {
+    const document = new JSDOM(renderSettings()).window.document;
+    const label = Array.from(document.querySelectorAll("label"))
+      .find((candidate) => candidate.textContent?.includes("Glossary proactive create limit"));
+    const input = label?.querySelector("input");
+
+    assert.equal(input?.type, "number");
+    assert.equal(input?.min, "0");
+    assert.equal(input?.max, "100");
+    assert.equal(input?.value, "5");
+    assert.ok(label?.textContent?.includes("明示的な作成依頼には影響しない"));
   });
 
   it("返答 preview toggle は Session turn notification が無効な間だけ操作できない", () => {
@@ -177,37 +191,42 @@ describe("HomeSettingsContent", () => {
     assert.match(html, /指定日より前に最後に使われた Session を削除する/);
   });
 
-  it("Memory V6 diagnostics はredacted summaryとして表示する", () => {
+  // @test-value v1
+  // kind = "security"
+  // claim = "Memory diagnosticsはruntime selectorに必要なsafe metadataだけを表示し、secretまたは個人pathを表示しない"
+  // oracle = { type = "adr", ref = "ADR-023 diagnostics and security" }
+  // failure_mode = "Settings diagnosticsからcredential、userData、Skillまたはshimの個人pathが露出する"
+  // scope = "memory-runtime-diagnostics-projection"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Memory V6 diagnostics はinstance metadataだけのredacted summaryとして表示する", () => {
     const html = renderSettings({
       memoryV6Diagnostics: {
         generatedAt: "2026-06-27T00:00:00.000Z",
         runtime: {
           status: "running",
-          baseUrl: "http://127.0.0.1:12345",
-          dbPath: "C:/userdata/withmate-v6.db",
-          discoveryFilePath: "C:/runtime/memory-v6-api.json",
-          hasApiSecret: true,
+          applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+          runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
+          buildChannel: "installed",
+          discoveryPublished: true,
         },
         providers: [
           { providerId: "codex", providerSupported: true },
           { providerId: "custom", providerSupported: false },
         ],
         skillSync: [
-          { providerId: "codex", skillRootConfigured: true, skillPath: "C:/skills/withmate-memory", status: "unchanged" },
-          { providerId: "custom", skillRootConfigured: true, skillPath: null, status: "skipped-collision" },
+          { providerId: "codex", skillRootConfigured: true, status: "unchanged" },
+          { providerId: "custom", skillRootConfigured: true, status: "skipped-collision" },
         ],
         cliShim: {
           platform: "darwin",
           commandName: "withmate-memory",
           supported: true,
           status: "installed",
-          shimDirectory: "/Users/test/.local/bin",
-          shimPath: "/Users/test/.local/bin/withmate-memory",
           pathContainsShimDirectory: true,
-          message: "withmate-memory is available from the configured shim directory.",
         },
         lastErrors: [
-          { kind: "memory-v6.runtime-api.start-failed", message: "startup failed", occurredAt: "2026-06-27T00:00:00.000Z" },
+          { kind: "memory-v6.runtime-api.start-failed", occurredAt: "2026-06-27T00:00:00.000Z" },
         ],
       },
     });
@@ -226,6 +245,8 @@ describe("HomeSettingsContent", () => {
     assert.ok(html.includes("Do not read or write WithMate database files directly."));
     assert.ok(!html.includes("apiSecret"));
     assert.ok(!html.includes("bindingReference"));
+    assert.ok(!html.includes("C:/"));
+    assert.ok(!html.includes("/Users/"));
     assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_BINDING_REFERENCE"));
     assert.ok(!WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE.includes("WITHMATE_MEMORY_API_SECRET"));
     assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /binding reference/i);
@@ -235,7 +256,15 @@ describe("HomeSettingsContent", () => {
     assert.doesNotMatch(WITHMATE_MEMORY_PROVIDER_INSTRUCTION_SAMPLE, /local runtime identifier/i);
   });
 
-  it("Provider Instruction Sample の copy button は handler を呼ぶ", async () => {
+  // @test-value v1
+  // kind = "regression"
+  // claim = "safe diagnostics schemaを表示中でもProvider Instruction Sampleのcopy操作が維持される"
+  // oracle = { type = "contract", ref = "Settings copy action" }
+  // failure_mode = "diagnostics projection変更によりcopy buttonが描画されないかhandlerへ到達しない"
+  // scope = "settings-provider-instruction-copy"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("Provider Instruction Sample の copy button はsafe diagnostics表示中もhandlerを呼ぶ", async () => {
     const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>");
     const previousWindow = globalThis.window;
     const previousDocument = globalThis.document;
@@ -261,12 +290,11 @@ describe("HomeSettingsContent", () => {
             generatedAt: "2026-06-27T00:00:00.000Z",
             runtime: {
               status: "running",
-              baseUrl: "http://127.0.0.1:12345",
-              dbPath: "C:/userdata/withmate-v6.db",
-              discoveryFilePath: "C:/runtime/memory-v6-api.json",
-              hasApiSecret: true,
+              applicationInstanceId: "11111111-1111-4111-8111-111111111111",
+              runtimeGenerationId: "22222222-2222-4222-8222-222222222222",
+              buildChannel: "development",
+              discoveryPublished: true,
             },
-            binding: { activeBindingCount: 0 },
             providers: [],
             skillSync: [],
             cliShim: {
@@ -274,10 +302,7 @@ describe("HomeSettingsContent", () => {
               commandName: "withmate-memory",
               supported: false,
               status: "managed-by-installer",
-              shimDirectory: null,
-              shimPath: null,
               pathContainsShimDirectory: true,
-              message: "Windows installer manages the withmate-memory command alias.",
             },
             lastErrors: [],
           },
@@ -733,12 +758,18 @@ describe("HomeRecentSessionsPanel", () => {
     companionSessions = [],
     normalizedSessionSearch = "",
     searchText = "",
+    hasMore = false,
+    loadingMore = false,
+    onLoadMore = noOp,
   }: {
     canUsePrimaryFeatures?: boolean;
     filteredSessionEntries?: React.ComponentProps<typeof HomeRecentSessionsPanel>["filteredSessionEntries"];
     companionSessions?: CompanionSessionSummary[];
     normalizedSessionSearch?: string;
     searchText?: string;
+    hasMore?: boolean;
+    loadingMore?: boolean;
+    onLoadMore?: () => void;
   } = {}) => renderToStaticMarkup(
     <HomeRecentSessionsPanel
       filteredSessionEntries={filteredSessionEntries}
@@ -752,6 +783,9 @@ describe("HomeRecentSessionsPanel", () => {
       onSetSessionPinned={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
+      hasMore={hasMore}
+      loadingMore={loadingMore}
+      onLoadMore={onLoadMore}
     />,
   );
 
@@ -765,6 +799,115 @@ describe("HomeRecentSessionsPanel", () => {
     const html = renderHomeRecentSessions();
     const newSessionButtons = html.match(/<button class="start-session-button"/g);
     assert.equal(newSessionButtons?.length, 1);
+  });
+
+  it("検索行には検索欄とNew Sessionだけを表示する", () => {
+    const html = renderHomeRecentSessions();
+
+    assert.match(html, /class="toolbar-search-field"/);
+    assert.match(html, /class="start-session-button"/);
+    assert.doesNotMatch(html, /Restore Sessions|restore-session-windows-button/);
+  });
+
+  it("追加読み込みは一覧末尾のsentinelだけを使い、追加ボタンを表示しない", () => {
+    const html = renderHomeRecentSessions({ hasMore: true });
+
+    assert.match(html, /class="home-session-list-load-sentinel"/);
+    assert.doesNotMatch(html, /Sessionをさらに読み込む|ピン留めをさらに読み込む/);
+    assert.doesNotMatch(html, /class="secondary-button"/);
+  });
+
+  it("一覧末尾のsentinelが交差した時だけ追加読み込みcallbackを呼ぶ", async () => {
+    const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", {
+      pretendToBeVisual: true,
+    });
+    const previousWindow = globalThis.window;
+    const previousDocument = globalThis.document;
+    const previousHTMLElement = globalThis.HTMLElement;
+    const previousIntersectionObserver = globalThis.IntersectionObserver;
+    let observerCallback: IntersectionObserverCallback | null = null;
+    let observedTarget: Element | null = null;
+    let loadMoreCount = 0;
+
+    class TestIntersectionObserver {
+      constructor(callback: IntersectionObserverCallback) {
+        observerCallback = callback;
+      }
+
+      observe(target: Element) {
+        observedTarget = target;
+      }
+
+      disconnect() {}
+    }
+
+    Object.defineProperty(globalThis, "window", { value: dom.window, configurable: true });
+    Object.defineProperty(globalThis, "document", { value: dom.window.document, configurable: true });
+    Object.defineProperty(globalThis, "HTMLElement", { value: dom.window.HTMLElement, configurable: true });
+    Object.defineProperty(globalThis, "IntersectionObserver", {
+      value: TestIntersectionObserver,
+      configurable: true,
+    });
+
+    const rootElement = dom.window.document.getElementById("root");
+    assert.ok(rootElement);
+    let root: Root | null = null;
+
+    try {
+      await act(async () => {
+        root = createRoot(rootElement);
+        root.render(
+          <HomeRecentSessionsPanel
+            filteredSessionEntries={[]}
+            companionSessions={[]}
+            normalizedSessionSearch=""
+            searchText=""
+            searchIcon={<span />}
+            onChangeSearchText={noOp}
+            onOpenLaunchDialog={noOp}
+            onOpenSession={noOp}
+            onSetSessionPinned={noOp}
+            onOpenCompanionReview={noOp}
+            hasMore
+            onLoadMore={() => {
+              loadMoreCount += 1;
+            }}
+          />,
+        );
+      });
+
+      const sentinel = rootElement.querySelector(".home-session-list-load-sentinel");
+      assert.ok(sentinel);
+      assert.equal(observedTarget, sentinel);
+      assert.equal(loadMoreCount, 0);
+
+      await act(async () => {
+        observerCallback?.(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      assert.equal(loadMoreCount, 0);
+
+      await act(async () => {
+        observerCallback?.(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      assert.equal(loadMoreCount, 1);
+    } finally {
+      await act(async () => {
+        root?.unmount();
+      });
+      Object.defineProperty(globalThis, "window", { value: previousWindow, configurable: true });
+      Object.defineProperty(globalThis, "document", { value: previousDocument, configurable: true });
+      Object.defineProperty(globalThis, "HTMLElement", { value: previousHTMLElement, configurable: true });
+      Object.defineProperty(globalThis, "IntersectionObserver", {
+        value: previousIntersectionObserver,
+        configurable: true,
+      });
+    }
   });
 
   it("character authoring session は Character badge で表示する", () => {
@@ -860,7 +1003,8 @@ describe("HomeRecentSessionsPanel", () => {
     assert.equal((html.match(/character-avatar tiny home-session-card-avatar/g) ?? []).length, 2);
     assert.ok(html.includes("mate.png"));
     assert.ok(html.includes("閲覧専用"));
-    assert.ok(!html.includes("disabled=\"\""));
+    assert.match(html, /class="home-session-card-open"[^>]*aria-disabled="false"/);
+    assert.match(html, /class="session-card home-session-card"[^>]*aria-disabled="false"/);
   });
 });
 
@@ -1001,6 +1145,9 @@ describe("HomeRightPane", () => {
   }],
     canUsePrimaryFeatures = true,
     characterListFeedback = "",
+    sessionWindowRestoreIds: readonly string[] = [],
+    sessionWindowRestorePending = false,
+    sessionWindowRestoreFeedback = "",
   ) => renderToStaticMarkup(
     <HomeRightPane
       rightPaneView={rightPaneView}
@@ -1012,11 +1159,15 @@ describe("HomeRightPane", () => {
       onChangeRightPaneView={noOp}
       onOpenSessionMonitorWindow={noOp}
       onOpenSettingsWindow={noOp}
+      onRestoreSessionWindows={noOp}
       onCreateCharacter={noOp}
       onEditCharacter={noOp}
       onOpenSession={noOp}
       onOpenCompanionReview={noOp}
       canUsePrimaryFeatures={canUsePrimaryFeatures}
+      sessionWindowRestoreIds={sessionWindowRestoreIds}
+      sessionWindowRestorePending={sessionWindowRestorePending}
+      sessionWindowRestoreFeedback={sessionWindowRestoreFeedback}
     />,
   );
 
@@ -1110,6 +1261,28 @@ describe("HomeRightPane", () => {
     assert.doesNotMatch(characterHtml, /<button class="launch-toggle home-settings-button"[^>]*>メイトーク<\/button>/);
     assertNoMateTalkChatSurface(monitorHtml);
     assertNoMateTalkChatSurface(characterHtml);
+  });
+
+  it("一括復元操作を上部へ常設し、対象なし・処理中のdisabledと対象別failureを投影する", () => {
+    const emptyHtml = renderHomeRightPane("monitor");
+    const enabledHtml = renderHomeRightPane("monitor", undefined, true, "", ["session-a", "session-b"]);
+    const pendingHtml = renderHomeRightPane(
+      "monitor",
+      undefined,
+      true,
+      "",
+      ["session-a", "session-b"],
+      true,
+      "1件のSessionを開きました。 復元できなかったSession: session-b（削除済み）",
+    );
+
+    assert.match(emptyHtml, /Restore Sessions/);
+    assert.match(emptyHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(enabledHtml, /Restore Sessions/);
+    assert.doesNotMatch(enabledHtml, /class="restore-session-windows-button"[^>]*disabled=""/);
+    assert.match(pendingHtml, /class="restore-session-windows-button"[^>]*disabled=""[^>]*aria-busy="true"/);
+    assert.match(pendingHtml, /session-b（削除済み）/);
+    assert.match(pendingHtml, /role="status" aria-live="polite"/);
   });
 
   it("Character icon 未設定のとき fallback がレンダリングされ、画像タグは出力されない", () => {

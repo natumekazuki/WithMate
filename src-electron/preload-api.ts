@@ -1,6 +1,16 @@
 import type { IpcRenderer } from "electron";
 
 import type { RendererLogInput } from "../src/app-log-types.js";
+import { normalizeSessionSummaryInvalidation } from "./session-summary-query.js";
+import {
+  normalizeOpenSessionWindowIdsChangedPayload,
+  normalizeOpenSessionWindowIdsPageResult,
+  OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
+} from "../src/withmate-window-types.js";
+import {
+  normalizeSessionWindowRestoreIds,
+  normalizeSessionWindowRestoreResult,
+} from "../src/session-window-restore.js";
 import type {
   WithMateWindowApi,
   WithMateWindowCatalogApi,
@@ -69,6 +79,7 @@ import {
   WITHMATE_GET_SESSION_AUDIT_LOG_OPERATION_DETAIL_CHANNEL,
   WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL,
   WITHMATE_GET_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL,
   WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL,
   WITHMATE_LIST_SESSION_FILE_ROOTS_CHANNEL,
   WITHMATE_LIST_SESSION_DIRECTORY_CHANNEL,
@@ -80,9 +91,15 @@ import {
   WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT,
   WITHMATE_COPY_SESSION_FILE_PREVIEW_IMAGE_CHANNEL,
   WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL,
+  WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL,
+  WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL,
   WITHMATE_SHOW_MARKDOWN_LINK_CONTEXT_MENU_CHANNEL,
   WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL,
   WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL,
+  WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL,
+  WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL,
   WITHMATE_GET_SESSION_CONTEXT_TELEMETRY_CHANNEL,
   WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL,
   WITHMATE_IMPORT_MODEL_CATALOG_CHANNEL,
@@ -98,7 +115,8 @@ import {
   WITHMATE_LIST_SESSION_AUDIT_LOG_SUMMARY_PAGE_CHANNEL,
   WITHMATE_LIST_SESSION_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_SESSION_SKILLS_CHANNEL,
-  WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL,
+  WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL,
+  WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL,
   WITHMATE_LIST_PROMPT_TEMPLATES_CHANNEL,
   WITHMATE_LIST_WORKSPACE_CUSTOM_AGENTS_CHANNEL,
   WITHMATE_LIST_WORKSPACE_SKILLS_CHANNEL,
@@ -113,11 +131,14 @@ import {
   WITHMATE_OPEN_CRASH_DUMP_FOLDER_CHANNEL,
   WITHMATE_OPEN_PATH_CHANNEL,
   WITHMATE_OPEN_SESSION_CHANNEL,
+  WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL,
+  WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_DIRECTORY_CHANNEL,
   WITHMATE_OPEN_SESSION_FILES_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_MONITOR_WINDOW_CHANNEL,
   WITHMATE_OPEN_SESSION_TERMINAL_CHANNEL,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
+  WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_OPEN_SETTINGS_WINDOW_CHANNEL,
   WITHMATE_OPEN_MEMORY_V6_REVIEW_WINDOW_CHANNEL,
@@ -145,7 +166,6 @@ import {
   WITHMATE_RESOLVE_LIVE_ELICITATION_CHANNEL,
   WITHMATE_RUN_SESSION_TURN_CHANNEL,
   WITHMATE_RUN_COMPANION_SESSION_TURN_CHANNEL,
-  WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SYNC_COMPANION_TARGET_CHANNEL,
   WITHMATE_STASH_COMPANION_TARGET_CHANGES_CHANNEL,
   WITHMATE_RESTORE_COMPANION_TARGET_STASH_CHANNEL,
@@ -155,7 +175,9 @@ import {
   WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT,
   WITHMATE_RENDERER_LOG_CHANNEL,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
+  WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
+  WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL,
   WITHMATE_UPDATE_APP_SETTINGS_CHANNEL,
   WITHMATE_UPDATE_CHAT_LAYOUT_PREFERENCE_CHANNEL,
   WITHMATE_UNINSTALL_MEMORY_V6_CLI_SHIM_CHANNEL,
@@ -233,6 +255,24 @@ function createWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowNavigation
     openSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_OPEN_SESSION_CHANNEL, sessionId);
     },
+    async getSessionWindowRestoreSet() {
+      const sessionIds = normalizeSessionWindowRestoreIds(
+        await ipcRenderer.invoke(WITHMATE_GET_SESSION_WINDOW_RESTORE_SET_CHANNEL),
+      );
+      if (!sessionIds) {
+        throw new Error("Session Window restore set response が不正です。");
+      }
+      return sessionIds;
+    },
+    async restoreSessionWindows() {
+      const result = normalizeSessionWindowRestoreResult(
+        await ipcRenderer.invoke(WITHMATE_RESTORE_SESSION_WINDOWS_CHANNEL),
+      );
+      if (!result) {
+        throw new Error("Session Window restore result が不正です。");
+      }
+      return result;
+    },
     openHomeWindow() {
       return ipcRenderer.invoke(WITHMATE_OPEN_HOME_WINDOW_CHANNEL);
     },
@@ -304,13 +344,28 @@ function createCatalogApi(ipcRenderer: IpcRendererLike): WithMateWindowCatalogAp
   };
 }
 
-function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionApi {
+function createSessionApi(
+  ipcRenderer: IpcRendererLike,
+  platform: NodeJS.Platform,
+): WithMateWindowSessionApi {
   return {
-    listSessionSummaries() {
-      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARIES_CHANNEL);
+    isSessionFileObjectCopyAvailable() {
+      return platform === "win32";
+    },
+    listSessionSummaryPage(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_SUMMARY_PAGE_CHANNEL, request ?? null);
+    },
+    listSessionCharacterUsage() {
+      return ipcRenderer.invoke(WITHMATE_LIST_SESSION_CHARACTER_USAGE_CHANNEL);
     },
     getSession(sessionId) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_CHANNEL, sessionId);
+    },
+    getSessionGlossaryProjection(sessionId) {
+      return ipcRenderer.invoke(WITHMATE_GET_SESSION_GLOSSARY_PROJECTION_CHANNEL, sessionId);
+    },
+    searchSessionGlossary(sessionId, request) {
+      return ipcRenderer.invoke(WITHMATE_SEARCH_SESSION_GLOSSARY_CHANNEL, sessionId, request);
     },
     validateSessionWorkspace(sessionId) {
       return ipcRenderer.invoke(WITHMATE_VALIDATE_SESSION_WORKSPACE_CHANNEL, sessionId);
@@ -339,11 +394,29 @@ function createSessionApi(ipcRenderer: IpcRendererLike): WithMateWindowSessionAp
     showSessionFilePreviewImageContextMenu(request) {
       return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_PREVIEW_IMAGE_CONTEXT_MENU_CHANNEL, request);
     },
+    copySessionFileObject(request) {
+      return ipcRenderer.invoke(WITHMATE_COPY_SESSION_FILE_OBJECT_CHANNEL, request);
+    },
+    showSessionFileObjectCopyContextMenu(request) {
+      return ipcRenderer.invoke(WITHMATE_SHOW_SESSION_FILE_OBJECT_COPY_CONTEXT_MENU_CHANNEL, request);
+    },
     listFileRootChanges(request) {
       return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_CHANGES_CHANNEL, request);
     },
     getFileRootDiff(request) {
       return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_DIFF_CHANNEL, request);
+    },
+    listFileRootGitHistoryRepositories(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_REPOSITORIES_CHANNEL, request);
+    },
+    listFileRootGitHistoryCommits(request) {
+      return ipcRenderer.invoke(WITHMATE_LIST_FILE_ROOT_GIT_HISTORY_COMMITS_CHANNEL, request);
+    },
+    getFileRootGitHistoryCommitDetail(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_COMMIT_DETAIL_CHANNEL, request);
+    },
+    getFileRootGitHistoryDiff(request) {
+      return ipcRenderer.invoke(WITHMATE_GET_FILE_ROOT_GIT_HISTORY_DIFF_CHANNEL, request);
     },
     getSessionMessageArtifact(sessionId, messageIndex) {
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_MESSAGE_ARTIFACT_CHANNEL, sessionId, messageIndex);
@@ -534,7 +607,7 @@ function createObservabilityApi(ipcRenderer: IpcRendererLike): Pick<
       return ipcRenderer.invoke(WITHMATE_GET_SESSION_BACKGROUND_ACTIVITY_CHANNEL, sessionId, kind);
     },
     listOpenSessionWindowIds() {
-      return ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL);
+      return listAllOpenSessionWindowIds(ipcRenderer);
     },
     listOpenCompanionReviewWindowIds() {
       return ipcRenderer.invoke(WITHMATE_LIST_OPEN_COMPANION_REVIEW_WINDOW_IDS_CHANNEL);
@@ -728,11 +801,13 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
     subscribeSessionFilePreviewNavigation(listener) {
       return subscribe(ipcRenderer, WITHMATE_SESSION_FILE_PREVIEW_NAVIGATION_EVENT, listener);
     },
-    subscribeSessionSummaries(listener) {
-      return subscribe(ipcRenderer, WITHMATE_SESSIONS_CHANGED_EVENT, listener);
-    },
     subscribeSessionInvalidation(listener) {
-      return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_SESSIONS_INVALIDATED_EVENT, (payload: unknown) => {
+        const normalized = normalizeSessionSummaryInvalidation(payload);
+        if (normalized) {
+          listener(normalized);
+        }
+      });
     },
     subscribeModelCatalog(listener) {
       return subscribe(ipcRenderer, WITHMATE_MODEL_CATALOG_CHANGED_EVENT, (catalog: ModelCatalogChangedPayload) => {
@@ -768,8 +843,29 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
         },
       );
     },
+    subscribeSessionGlossary(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_GLOSSARY_CHANGED_EVENT, listener);
+    },
     subscribeOpenSessionWindowIds(listener) {
-      return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, listener);
+      return subscribe(ipcRenderer, WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, (payload: unknown) => {
+        const normalized = normalizeOpenSessionWindowIdsChangedPayload(payload);
+        if (!normalized) {
+          return;
+        }
+        if (normalized.scope === "ids") {
+          listener(normalized.sessionIds);
+          return;
+        }
+        void listAllOpenSessionWindowIds(ipcRenderer).then(listener);
+      });
+    },
+    subscribeSessionWindowRestoreSet(listener) {
+      return subscribe(ipcRenderer, WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT, (payload: unknown) => {
+        const sessionIds = normalizeSessionWindowRestoreIds(payload);
+        if (sessionIds) {
+          listener(sessionIds);
+        }
+      });
     },
     subscribeOpenCompanionReviewWindowIds(listener) {
       return subscribe(ipcRenderer, WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT, listener);
@@ -778,6 +874,29 @@ function createSubscriptionApi(ipcRenderer: IpcRendererLike): WithMateWindowSubs
       return subscribe(ipcRenderer, WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, listener);
     },
   };
+}
+
+async function listAllOpenSessionWindowIds(ipcRenderer: IpcRendererLike): Promise<string[]> {
+  const sessionIds: string[] = [];
+  let cursor: string | null = null;
+  while (true) {
+    const rawPage = await ipcRenderer.invoke(WITHMATE_LIST_OPEN_SESSION_WINDOW_IDS_CHANNEL, {
+      cursor,
+      limit: OPEN_SESSION_WINDOW_IDS_PAGE_MAX,
+    });
+    const page = normalizeOpenSessionWindowIdsPageResult(rawPage);
+    if (!page) {
+      throw new Error("open Session Window ID page response が不正です。");
+    }
+    sessionIds.push(...page.sessionIds);
+    if (!page.hasMore) {
+      return Array.from(new Set(sessionIds));
+    }
+    if (page.nextCursor === null || page.nextCursor === cursor) {
+      throw new Error("open Session Window ID page cursor が進まないよ。");
+    }
+    cursor = page.nextCursor;
+  }
 }
 
 function reportRendererLog(ipcRenderer: IpcRendererLike, input: RendererLogInput): void {
@@ -834,13 +953,16 @@ function installRendererErrorLogging(ipcRenderer: IpcRendererLike): void {
   });
 }
 
-export function createWithMateWindowApi(ipcRenderer: IpcRendererLike): WithMateWindowApi {
+export function createWithMateWindowApi(
+  ipcRenderer: IpcRendererLike,
+  platform: NodeJS.Platform = process.platform,
+): WithMateWindowApi {
   installRendererErrorLogging(ipcRenderer);
   return {
     ...createWindowApi(ipcRenderer),
     ...createMemoryV6ReviewApi(ipcRenderer),
     ...createCatalogApi(ipcRenderer),
-    ...createSessionApi(ipcRenderer),
+    ...createSessionApi(ipcRenderer, platform),
     ...createAuxiliaryApi(ipcRenderer),
     ...createCompanionApi(ipcRenderer),
     ...createObservabilityApi(ipcRenderer),

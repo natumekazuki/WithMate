@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { calculateImageFitZoom } from "../../src/image-viewport.js";
 import {
-  calculateImageFitZoom,
   decodeSessionFileBytes,
   findPreviewTextMatches,
   PreviewByteAccumulator,

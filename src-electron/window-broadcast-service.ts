@@ -2,10 +2,10 @@ import type {
   AppSettings,
   LiveSessionRunState,
   ProviderQuotaTelemetry,
-  SessionSummary,
   SessionBackgroundActivityKind,
   SessionBackgroundActivityState,
   SessionContextTelemetry,
+  SessionSummaryInvalidation,
 } from "../src/app-state.js";
 import type { CompanionSessionSummary } from "../src/companion-state.js";
 import type { ModelCatalogSnapshot } from "../src/model-catalog.js";
@@ -16,14 +16,18 @@ import {
   WITHMATE_LIVE_SESSION_RUN_EVENT,
   WITHMATE_MODEL_CATALOG_CHANGED_EVENT,
   WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT,
+  WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
   WITHMATE_OPEN_COMPANION_REVIEW_WINDOWS_CHANGED_EVENT,
   WITHMATE_PROVIDER_QUOTA_TELEMETRY_EVENT,
   WITHMATE_PROMPT_TEMPLATES_CHANGED_EVENT,
-  WITHMATE_SESSIONS_CHANGED_EVENT,
   WITHMATE_SESSIONS_INVALIDATED_EVENT,
   WITHMATE_SESSION_BACKGROUND_ACTIVITY_EVENT,
   WITHMATE_SESSION_CONTEXT_TELEMETRY_EVENT,
 } from "../src/withmate-ipc-channels.js";
+import {
+  OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX,
+  type OpenSessionWindowIdsChangedPayload,
+} from "../src/withmate-window-types.js";
 
 type WindowLike = {
   isDestroyed(): boolean;
@@ -35,22 +39,23 @@ type WindowLike = {
 type WindowBroadcastServiceOptions<TWindow extends WindowLike> = {
   getAllWindows(): TWindow[];
   getHomeWindows(): TWindow[];
+  getPrimaryHomeWindow(): TWindow | null;
   getSessionWindows(): TWindow[];
 };
 
 export class WindowBroadcastService<TWindow extends WindowLike> {
   public constructor(private readonly options: WindowBroadcastServiceOptions<TWindow>) {}
 
-  public broadcastSessionSummaries(sessions: SessionSummary[]): void {
-    this.broadcastTo(this.options.getHomeWindows(), WITHMATE_SESSIONS_CHANGED_EVENT, sessions);
-  }
-
   public broadcastCompanionSessionSummaries(sessions: CompanionSessionSummary[]): void {
     this.broadcastTo(this.options.getHomeWindows(), WITHMATE_COMPANION_SESSIONS_CHANGED_EVENT, sessions);
   }
 
-  public broadcastSessionInvalidation(sessionIds: string[]): void {
-    this.broadcastTo(this.options.getSessionWindows(), WITHMATE_SESSIONS_INVALIDATED_EVENT, sessionIds);
+  public broadcastSessionInvalidation(payload: SessionSummaryInvalidation): void {
+    this.broadcastTo(
+      [...this.options.getHomeWindows(), ...this.options.getSessionWindows()],
+      WITHMATE_SESSIONS_INVALIDATED_EVENT,
+      payload,
+    );
   }
 
   public broadcastModelCatalog(snapshot: ModelCatalogSnapshot): void {
@@ -66,7 +71,23 @@ export class WindowBroadcastService<TWindow extends WindowLike> {
   }
 
   public broadcastOpenSessionWindowIds(sessionIds: string[]): void {
-    this.broadcast(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, sessionIds);
+    const uniqueSessionIds = Array.from(new Set(sessionIds.map((sessionId) => sessionId.trim()).filter(Boolean)));
+    const payload: OpenSessionWindowIdsChangedPayload = uniqueSessionIds.length > OPEN_SESSION_WINDOW_IDS_BROADCAST_MAX
+      ? { scope: "all" }
+      : { scope: "ids", sessionIds: uniqueSessionIds };
+    this.broadcast(WITHMATE_OPEN_SESSION_WINDOWS_CHANGED_EVENT, payload);
+  }
+
+  public broadcastSessionWindowRestoreSet(sessionIds: readonly string[]): void {
+    const homeWindow = this.options.getPrimaryHomeWindow();
+    if (!homeWindow) {
+      return;
+    }
+    this.broadcastTo(
+      [homeWindow],
+      WITHMATE_SESSION_WINDOW_RESTORE_SET_CHANGED_EVENT,
+      [...sessionIds],
+    );
   }
 
   public broadcastOpenCompanionReviewWindowIds(sessionIds: string[]): void {

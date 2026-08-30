@@ -330,6 +330,55 @@ describe("SessionStorage", () => {
     }
   });
 
+  it("listSessionSummaryPage は Home 用の bounded projection だけを返す", async () => {
+    const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
+    const dbPath = path.join(tempDirectory, "withmate.db");
+
+    try {
+      const storage = new SessionStorage(dbPath);
+      const session = storage.upsertSession({
+        ...createSession("home page", "workspace-home", "char-home", "Home"),
+        provider: "copilot",
+        model: "hidden-model",
+        threadId: "hidden-thread",
+        allowedAdditionalDirectories: ["C:/hidden"],
+      });
+      const secondSession = storage.upsertSession(createSession("another page", "workspace-another", "char-another", "Another"));
+
+      const page = storage.listSessionSummaryPage({
+        scope: "open",
+        sessionIds: [session.id, "missing", secondSession.id, session.id],
+        searchText: "",
+      });
+      assert.deepEqual(page.entries.map((entry) => entry.id).sort(), [session.id, secondSession.id].sort());
+      assert.equal(page.entries.length, 2);
+      assert.equal(page.hasMore, false);
+      assert.equal(page.nextCursor, null);
+      assert.deepEqual(Object.keys(page.entries[0] ?? {}).sort(), [
+        "accessMode",
+        "character",
+        "characterIconPath",
+        "characterId",
+        "characterThemeColors",
+        "id",
+        "isPinned",
+        "runState",
+        "sessionKind",
+        "sourceSchemaVersion",
+        "status",
+        "taskTitle",
+        "updatedAt",
+        "workspaceLabel",
+        "workspacePath",
+      ]);
+      assert.equal("provider" in (page.entries[0] ?? {}), false);
+      assert.equal("threadId" in (page.entries[0] ?? {}), false);
+      storage.close();
+    } finally {
+      await removeDirectoryWithRetry(tempDirectory);
+    }
+  });
+
   it("破損 JSON を含む row は listSessions で skip しつつ正常 row を返す", async () => {
     const tempDirectory = await mkdtemp(path.join(os.tmpdir(), "withmate-session-storage-"));
     const dbPath = path.join(tempDirectory, "withmate.db");

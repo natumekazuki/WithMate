@@ -1,16 +1,22 @@
 import type { DatabaseSync } from "node:sqlite";
 
 import {
+  cloneHomeSessionSummaries,
   cloneSessionSummaries,
   cloneSessions,
   CURRENT_SESSION_SCHEMA_VERSION,
   normalizeMessage,
+  normalizeHomeSessionSummary,
   normalizeSession,
   normalizeSessionSummary,
   summarizeMessageArtifact,
   type Message,
   type MessageArtifact,
+  type HomeSessionSummary,
   type Session,
+  type SessionCharacterUsage,
+  type SessionSummaryPageRequest,
+  type HomeSessionSummaryPageResult,
   type SessionSummary,
 } from "../src/session-state.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
@@ -19,6 +25,7 @@ import {
   stringifyCharacterRuntimeSnapshot,
 } from "../src/character/character-runtime-snapshot.js";
 import {
+  UNKNOWN_CHARACTER_OWNER_ID,
   isUnknownCharacterOwnerId,
   normalizeCharacterOwnerId,
   recoverStoredCharacterOwnerId,
@@ -30,12 +37,28 @@ import {
 import { deleteAuditEventsForSessionTargets } from "./audit-log-storage-v6.js";
 import { ensureV6Schema } from "./database-schema-v6.js";
 import { openAppDatabase } from "./sqlite-connection.js";
-import { SessionIdCollisionError } from "./session-storage-errors.js";
+import {
+  SessionIdCollisionError,
+  SessionRunningTurnStartConflictError,
+} from "./session-storage-errors.js";
+import {
+  buildSessionSummaryKeysetClause,
+  buildSessionSummarySearchClause,
+  decodeSessionSummaryCursor,
+  encodeSessionSummaryCursor,
+  parseSessionSummaryPageRequest,
+} from "./session-summary-query.js";
 import type { DeleteSessionsLastActiveBeforeCutoff } from "../src/withmate-window-types.js";
 import {
   writeSessionTurnTerminalCommit,
   type SessionTurnTerminalCommit,
 } from "./session-turn-terminal-commit.js";
+import type {
+  SessionCharacterAuthoringRuntimeClearInput,
+  SessionCharacterAuthoringRuntimeClearResult,
+  SessionRunningTurnStartInput,
+  SessionRunningTurnStartResult,
+} from "./session-running-turn-start.js";
 
 type SessionV6Row = {
   id: string;
@@ -60,6 +83,26 @@ type SessionV6Row = {
   last_active_at: string;
 };
 
+type HomeSessionSummaryV6Row = {
+  id: string;
+  task_title: string;
+  status: string;
+  updated_at: string;
+  workspace_label: string;
+  workspace_path: string;
+  session_kind: string;
+  access_mode: string;
+  source_schema_version: number;
+  character_id: string;
+  character_name: string | null;
+  character_icon_path: string | null;
+  character_theme_main: string | null;
+  character_theme_sub: string | null;
+  run_state: string | null;
+  is_pinned: number;
+  last_active_at: string;
+};
+
 type MessageV6Row = {
   role: "user" | "assistant" | "tool" | "system";
   body: string;
@@ -75,6 +118,14 @@ type SessionIdRow = {
   id: string;
 };
 
+type SessionMessageSequenceRow = {
+  seq: number;
+};
+
+type SessionCharacterUsageRow = {
+  character_id: string | null;
+};
+
 type DecodedSessionV6RuntimeState = {
   runtimePolicy: Record<string, unknown>;
   characterId: string;
@@ -86,6 +137,67 @@ const AUXILIARY_SESSIONS_TABLE_NAME = "auxiliary_sessions";
 const COMPANION_SESSIONS_TABLE_NAME = "companion_sessions";
 
 const SESSION_RUN_STUCK_INVESTIGATION_LOG = "[investigate:session-run-stuck]";
+
+function v6RuntimeJsonValue(path: string): string {
+  return `CASE WHEN json_valid(s.runtime_policy_json) THEN json_extract(s.runtime_policy_json, '${path}') ELSE NULL END`;
+}
+
+function v6SnapshotJsonValue(path: string): string {
+  return `CASE WHEN json_valid(s.character_snapshot_json) THEN json_extract(s.character_snapshot_json, '${path}') ELSE NULL END`;
+}
+
+const V6_HOME_RUNTIME_CHARACTER_ID_EXPRESSION = v6RuntimeJsonValue("$.characterId");
+const V6_HOME_CHARACTER_ID_EXPRESSION = `COALESCE(
+  NULLIF(TRIM(s.character_id), ''),
+  NULLIF(TRIM(CAST(${V6_HOME_RUNTIME_CHARACTER_ID_EXPRESSION} AS TEXT)), ''),
+  '${UNKNOWN_CHARACTER_OWNER_ID}'
+)`;
+const V6_HOME_SNAPSHOT_STRUCTURE_EXPRESSION = `CASE WHEN json_valid(s.character_snapshot_json) THEN
+  CASE WHEN json_type(s.character_snapshot_json, '$.characterId') = 'text'
+    AND json_type(s.character_snapshot_json, '$.name') = 'text'
+    AND json_type(s.character_snapshot_json, '$.definitionMarkdown') = 'text'
+    THEN 1 ELSE 0 END
+  ELSE 0 END`;
+const V6_HOME_SNAPSHOT_MATCH_EXPRESSION = `CASE WHEN ${V6_HOME_SNAPSHOT_STRUCTURE_EXPRESSION} = 1 THEN
+  CASE WHEN TRIM(COALESCE(json_extract(s.character_snapshot_json, '$.characterId'), '')) = TRIM(${V6_HOME_CHARACTER_ID_EXPRESSION})
+    AND TRIM(${V6_HOME_CHARACTER_ID_EXPRESSION}) <> '${UNKNOWN_CHARACTER_OWNER_ID}'
+    THEN 1 ELSE 0 END
+  ELSE 0 END`;
+const HOME_SESSION_SUMMARY_SELECT_COLUMNS = `
+  s.id,
+  s.title AS task_title,
+  CASE
+    WHEN ${v6RuntimeJsonValue("$.appStatus")} IN ('running', 'idle', 'saved') THEN ${v6RuntimeJsonValue("$.appStatus")}
+    WHEN s.state = 'active' THEN 'running'
+    ELSE 'idle'
+  END AS status,
+  COALESCE(NULLIF(s.updated_at, ''), s.last_active_at) AS updated_at,
+  COALESCE(${v6RuntimeJsonValue("$.workspaceLabel")}, '') AS workspace_label,
+  s.workspace_path,
+  s.session_kind,
+  COALESCE(${v6RuntimeJsonValue("$.accessMode")}, 'active') AS access_mode,
+  COALESCE(${v6RuntimeJsonValue("$.sourceSchemaVersion")}, ${CURRENT_SESSION_SCHEMA_VERSION}) AS source_schema_version,
+  ${V6_HOME_CHARACTER_ID_EXPRESSION} AS character_id,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.name")}
+    ELSE ${v6RuntimeJsonValue("$.characterName")}
+  END AS character_name,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.iconFilePath")}
+    ELSE ${v6RuntimeJsonValue("$.characterIconPath")}
+  END AS character_icon_path,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.theme.main")}
+    ELSE ${v6RuntimeJsonValue("$.characterThemeColors.main")}
+  END AS character_theme_main,
+  CASE WHEN ${V6_HOME_SNAPSHOT_MATCH_EXPRESSION} = 1
+    THEN ${v6SnapshotJsonValue("$.theme.sub")}
+    ELSE ${v6RuntimeJsonValue("$.characterThemeColors.sub")}
+  END AS character_theme_sub,
+  COALESCE(${v6RuntimeJsonValue("$.runState")}, 'idle') AS run_state,
+  s.is_pinned,
+  s.last_active_at
+`;
 
 function logSessionRunStuckInvestigation(
   event: string,
@@ -242,6 +354,95 @@ export class SessionStorageV6 {
     return cloneSessionSummaries(rows.map((row) => this.rowToSessionSummary(row)));
   }
 
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): HomeSessionSummaryPageResult {
+    const parsed = parseSessionSummaryPageRequest(request);
+    const isOpenScope = parsed.scope === "open";
+    const cursor = parsed.scope === "open"
+      ? null
+      : decodeSessionSummaryCursor(parsed.cursor, parsed.scope, parsed.searchText);
+    const search = buildSessionSummarySearchClause("s", parsed.searchText);
+    const keyset = buildSessionSummaryKeysetClause("s", cursor);
+    const where: string[] = [];
+    const params: string[] = [];
+
+    if (parsed.scope === "pinned") {
+      where.push("s.is_pinned = 1");
+    }
+    if (isOpenScope) {
+      const sessionIds = parsed.sessionIds ?? [];
+      if (sessionIds.length === 0) {
+        return { entries: [], nextCursor: null, hasMore: false };
+      }
+      where.push(`s.id IN (${sessionIds.map(() => "?").join(", ")})`);
+      params.push(...sessionIds);
+    } else if (keyset.sql) {
+      where.push(keyset.sql);
+      params.push(...keyset.params);
+    }
+    if (!isOpenScope && search.sql) {
+      where.push(search.sql);
+      params.push(...search.params);
+    }
+
+    const rows = this.db.prepare(`
+      SELECT ${HOME_SESSION_SUMMARY_SELECT_COLUMNS}
+      FROM sessions_v6 AS s
+      ${where.length > 0 ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY s.last_active_at DESC, s.id DESC
+      LIMIT ?
+    `).all(...params, parsed.limit + 1) as HomeSessionSummaryV6Row[];
+    const visibleRows = rows.slice(0, parsed.limit);
+    const entries = cloneHomeSessionSummaries(
+      visibleRows
+        .map((row) => this.rowToHomeSessionSummary(row))
+        .filter((summary): summary is HomeSessionSummary => summary !== null),
+    );
+    const hasMore = parsed.scope !== "open" && rows.length > parsed.limit;
+    const lastRow = visibleRows.at(-1);
+
+    return {
+      entries,
+      hasMore,
+      nextCursor: hasMore && lastRow && parsed.scope !== "open"
+        ? encodeSessionSummaryCursor(parsed.scope, lastRow.last_active_at, lastRow.id, parsed.searchText)
+        : null,
+    };
+  }
+
+  listSessionCharacterUsage(): SessionCharacterUsage[] {
+    const characterIdExpression = `COALESCE(
+      NULLIF(TRIM(s.character_id), ''),
+      NULLIF(TRIM(CASE WHEN json_valid(s.runtime_policy_json) THEN json_extract(s.runtime_policy_json, '$.characterId') ELSE '' END), '')
+    )`;
+    const newerCharacterIdExpression = `COALESCE(
+      NULLIF(TRIM(newer.character_id), ''),
+      NULLIF(TRIM(CASE WHEN json_valid(newer.runtime_policy_json) THEN json_extract(newer.runtime_policy_json, '$.characterId') ELSE '' END), '')
+    )`;
+    const rows = this.db.prepare(`
+      SELECT
+        ${characterIdExpression} AS character_id
+      FROM sessions_v6 AS s
+      WHERE s.session_kind = 'default'
+        AND ${characterIdExpression} IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1
+          FROM sessions_v6 AS newer
+            WHERE newer.session_kind = 'default'
+            AND ${newerCharacterIdExpression} = ${characterIdExpression}
+            AND (
+              newer.last_active_at > s.last_active_at
+              OR (newer.last_active_at = s.last_active_at AND newer.id > s.id)
+            )
+        )
+      ORDER BY s.last_active_at DESC, s.id DESC
+    `).all() as SessionCharacterUsageRow[];
+
+    return rows
+      .map((row) => recoverStoredCharacterOwnerId(normalizeCharacterOwnerId(row.character_id)))
+      .filter((characterId): characterId is string => Boolean(characterId))
+      .map((characterId) => ({ characterId, sessionKind: "default" as const }));
+  }
+
   getLatestSessionSummaryForProvider(providerId: string): SessionSummary | null {
     const normalizedProviderId = providerId.trim();
     if (!normalizedProviderId) {
@@ -296,6 +497,176 @@ export class SessionStorageV6 {
 
   upsertTerminalSession(session: Session, terminalCommit: SessionTurnTerminalCommit): Session {
     return this.storeSession(session, "upsert", terminalCommit);
+  }
+
+  clearCharacterAuthoringRuntimeState(
+    input: SessionCharacterAuthoringRuntimeClearInput,
+  ): SessionCharacterAuthoringRuntimeClearResult {
+    const sessionId = input.sessionId.trim();
+    if (!sessionId) {
+      throw new Error("Character authoring runtime clearの保存形式が不正だよ。");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+      if (!currentRow) {
+        throw new Error("対象セッションが見つからないよ。");
+      }
+      if (currentRow.session_kind !== "character-authoring") {
+        throw new Error("Character authoring runtime clearのownerが一致しないよ。");
+      }
+
+      const updateResult = this.db.prepare(`
+        UPDATE sessions_v6
+        SET character_snapshot_json = NULL,
+            character_id = NULL,
+            thread_id = ''
+        WHERE id = ?
+      `).run(sessionId);
+      if (Number(updateResult.changes) !== 1) {
+        throw new Error("Character authoring runtime stateをclearできなかったよ。");
+      }
+
+      const storedRow: SessionV6Row = {
+        ...currentRow,
+        character_snapshot_json: null,
+        character_id: null,
+        thread_id: "",
+      };
+      const storedResult: SessionCharacterAuthoringRuntimeClearResult = {
+        summary: this.rowToSessionSummary(storedRow, decodeSessionV6RuntimeState(storedRow)),
+        characterRuntimeSnapshot: null,
+      };
+      this.db.exec("COMMIT");
+      return storedResult;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  appendRunningTurnStart(input: SessionRunningTurnStartInput): SessionRunningTurnStartResult {
+    const sessionId = input.sessionId.trim();
+    if (
+      !sessionId
+      || !Number.isSafeInteger(input.expectedMessageCount)
+      || input.expectedMessageCount < 0
+      || input.userMessage.role !== "user"
+      || !input.userMessage.text.trim()
+      || !input.updatedAt.trim()
+    ) {
+      throw new Error("running turn 開始の保存形式が不正だよ。");
+    }
+
+    this.db.exec("BEGIN IMMEDIATE TRANSACTION");
+    try {
+      const currentRow = this.db.prepare("SELECT * FROM sessions_v6 WHERE id = ?").get(sessionId) as SessionV6Row | undefined;
+      if (!currentRow) {
+        throw new Error("対象セッションが見つからないよ。");
+      }
+
+      const updatesCharacterSnapshot = input.characterRuntimeSnapshot !== undefined;
+      const nextCharacterSnapshot = input.characterRuntimeSnapshot;
+      const currentRuntimeState = decodeSessionV6RuntimeState(currentRow);
+      if (updatesCharacterSnapshot) {
+        if (currentRow.session_kind !== "character-authoring") {
+          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+        }
+        if (
+          nextCharacterSnapshot
+          && nextCharacterSnapshot.characterId !== currentRuntimeState.characterId
+        ) {
+          throw new Error("running turn 開始のCharacter snapshot ownerが一致しないよ。");
+        }
+      }
+
+      const tailRow = this.db.prepare(`
+        SELECT seq
+        FROM session_messages_v6
+        WHERE session_id = ?
+        ORDER BY seq DESC
+        LIMIT 1
+      `).get(sessionId) as SessionMessageSequenceRow | undefined;
+      const actualMessageCount = tailRow ? tailRow.seq + 1 : 0;
+      if (actualMessageCount !== input.expectedMessageCount) {
+        throw new SessionRunningTurnStartConflictError(
+          sessionId,
+          input.expectedMessageCount,
+          actualMessageCount,
+        );
+      }
+
+      const runtimePolicyJson = JSON.stringify({
+        ...parseJsonObject(currentRow.runtime_policy_json),
+        appStatus: "running",
+        runState: "running",
+        ...(nextCharacterSnapshot ? {
+          characterName: nextCharacterSnapshot.name,
+          characterIconPath: nextCharacterSnapshot.iconFilePath,
+          characterThemeColors: nextCharacterSnapshot.theme,
+        } : {}),
+      });
+      const characterSnapshotJson = updatesCharacterSnapshot
+        ? nextCharacterSnapshot
+          ? stringifyCharacterRuntimeSnapshot(nextCharacterSnapshot)
+          : null
+        : currentRow.character_snapshot_json;
+      const clearsProviderThread = updatesCharacterSnapshot && nextCharacterSnapshot === null;
+      const updateResult = this.db.prepare(`
+        UPDATE sessions_v6
+        SET state = 'active',
+            runtime_policy_json = ?,
+            character_snapshot_json = CASE WHEN ? = 1 THEN ? ELSE character_snapshot_json END,
+            character_id = CASE WHEN ? = 1 THEN NULL ELSE character_id END,
+            thread_id = CASE WHEN ? = 1 THEN '' ELSE thread_id END,
+            updated_at = ?,
+            last_active_at = ?
+        WHERE id = ?
+      `).run(
+        runtimePolicyJson,
+        updatesCharacterSnapshot ? 1 : 0,
+        characterSnapshotJson,
+        clearsProviderThread ? 1 : 0,
+        clearsProviderThread ? 1 : 0,
+        input.updatedAt,
+        input.updatedAt,
+        sessionId,
+      );
+      if (Number(updateResult.changes) !== 1) {
+        throw new Error("running turn のSession metadataを更新できなかったよ。");
+      }
+
+      this.db.prepare(`
+        INSERT INTO session_messages_v6 (session_id, seq, role, body, artifact_body, created_at)
+        VALUES (?, ?, 'user', ?, NULL, ?)
+      `).run(
+        sessionId,
+        input.expectedMessageCount,
+        encodeMessage(input.userMessage),
+        input.updatedAt,
+      );
+      const storedRow: SessionV6Row = {
+        ...currentRow,
+        state: "active",
+        runtime_policy_json: runtimePolicyJson,
+        character_snapshot_json: characterSnapshotJson,
+        character_id: clearsProviderThread ? null : currentRow.character_id,
+        thread_id: clearsProviderThread ? "" : currentRow.thread_id,
+        updated_at: input.updatedAt,
+        last_active_at: input.updatedAt,
+      };
+      const decodedStoredRow = decodeSessionV6RuntimeState(storedRow);
+      const storedResult: SessionRunningTurnStartResult = {
+        summary: this.rowToSessionSummary(storedRow, decodedStoredRow),
+        characterRuntimeSnapshot: decodedStoredRow.snapshot,
+      };
+      this.db.exec("COMMIT");
+      return storedResult;
+    } catch (error) {
+      this.db.exec("ROLLBACK");
+      throw error;
+    }
   }
 
   insertSession(session: Session): Session {
@@ -595,6 +966,29 @@ export class SessionStorageV6 {
       throw new Error(`V6 session row を summary に変換できないよ: ${row.id}`);
     }
     return summary;
+  }
+
+  private rowToHomeSessionSummary(row: HomeSessionSummaryV6Row): HomeSessionSummary | null {
+    return normalizeHomeSessionSummary({
+      id: row.id,
+      taskTitle: row.task_title,
+      status: row.status,
+      updatedAt: row.updated_at,
+      isPinned: row.is_pinned === 1,
+      workspaceLabel: row.workspace_label,
+      workspacePath: row.workspace_path,
+      sessionKind: row.session_kind,
+      accessMode: row.access_mode,
+      sourceSchemaVersion: row.source_schema_version,
+      characterId: row.character_id,
+      character: row.character_name,
+      characterIconPath: row.character_icon_path,
+      characterThemeColors: {
+        main: row.character_theme_main,
+        sub: row.character_theme_sub,
+      },
+      runState: row.run_state,
+    });
   }
 
   private rowToSession(row: SessionV6Row): Session {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { execFile, execFileSync } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -11,6 +12,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 import { createDefaultAppSettings } from "../../src/provider-settings-state.js";
+import {
+  WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
+  WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
+  WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
+} from "../../src/agent-runtime/agent-runtime-binding-contract.js";
 import {
   ManagedMemorySkillService,
   WITHMATE_MEMORY_SKILL_NAME,
@@ -31,6 +37,16 @@ import {
 } from "../build-withmate-memory-cli.js";
 
 const execFileAsync = promisify(execFile);
+
+function unboundHelperEnv(overrides: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    ...overrides,
+    [WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV]: "",
+    [WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV]: "",
+    [WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV]: "",
+  };
+}
 
 async function initializeIsolatedMcpServer(helperPath: string, cwd: string): Promise<Record<string, unknown>> {
   const client = new Client({ name: "isolated-layout-test", version: "1.0.0" });
@@ -540,7 +556,16 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
-  it("runtime directory の discovery path で status できる", async () => {
+// @test-value v1
+// kind = "compatibility"
+// claim = "生成済みCLIはlegacy discovery runtimeもidentity preflight後に利用できる"
+// oracle = { type = "adr", ref = "ADR-023" }
+// failure_mode = "registry移行後に有効なlegacy runtimeを発見できない、またはchallenge前にoperationを送る"
+// scope = "bundled-memory-cli"
+// lifecycle = "characterization"
+// review_when = "legacy pointer compatibility is removed"
+// @end-test-value
+it("runtime directory のlegacy discovery pathでidentity検証後にstatusできる", async () => {
     const tempRootPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-runtime-root-"));
     const ownerSegment = typeof process.getuid === "function" ? `uid-${process.getuid()}` : "local-user";
     const runtimeDirectoryPath = path.join(tempRootPath, "withmate-memory", ownerSegment);
@@ -551,6 +576,18 @@ describe("withmate-memory bundled helper", () => {
     const server = createServer(async (request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       requestedPaths.push(`${request.method ?? "UNKNOWN"} ${url.pathname}${url.search}`);
+      if (request.method === "GET" && url.pathname === "/v1/status") {
+        const nonce = url.searchParams.get("nonce") ?? "";
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({
+          runtimeInstanceId,
+          challenge: {
+            nonce,
+            hmacSha256: createHmac("sha256", apiSecret).update(nonce, "utf8").digest("base64url"),
+          },
+        }));
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/v1/exchange") {
         const nonce = request.headers[WITHMATE_MEMORY_RUNTIME_NONCE_HEADER];
         response.writeEarlyHints({
@@ -604,12 +641,11 @@ describe("withmate-memory bundled helper", () => {
       );
 
       const { stdout } = await execFileAsync(process.execPath, [helperPath, "status"], {
-        env: {
-          ...process.env,
+        env: unboundHelperEnv({
           WITHMATE_MEMORY_RUNTIME_DIR: runtimeDirectoryPath,
           WITHMATE_MEMORY_DISCOVERY_FILE: "",
           WITHMATE_MEMORY_API_URL: "",
-        },
+        }),
       }).catch((error: unknown) => {
         throw new Error(`Bundled helper requests: ${JSON.stringify(requestedPaths)}`, { cause: error });
       });
@@ -621,47 +657,70 @@ describe("withmate-memory bundled helper", () => {
     }
   });
 
-  it("current CLI command names を受け付け、未起動時は JSON error を返す", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "生成済みCLIはruntime不在をcanonical discovery codeで返す"
+// oracle = { type = "adr", ref = "ADR-023" }
+// failure_mode = "配布CLIだけがlegacy not-running codeを正本として返す"
+// scope = "bundled-memory-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("current CLI command namesを受け付け、未起動時はcanonical JSON errorを返す", async () => {
     const { stdout } = await execFileAsync(process.execPath, [
       helperPath,
       "get-entry",
       "--json",
       '{"schemaVersion":"withmate-memory-v1","entryId":"entry-1","target":{"owner":"project","scope":"project","project":{"type":"id","id":"project-a"}}}',
     ], {
-      env: {
-        ...process.env,
+      env: unboundHelperEnv({
         WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),
-      },
+      }),
     }).catch((error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
       assert.equal(execError.code, 2);
       return { stdout: execError.stdout ?? "" };
     });
 
-    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
-  it("stale discovery endpoint へ接続できない場合は JSON not running error を返す", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "生成済みCLIは到達不能な明示runtimeをcanonical unavailableへ写像する"
+// oracle = { type = "adr", ref = "ADR-023" }
+// failure_mode = "stale endpointをlegacy codeまたは別instance fallbackとして扱う"
+// scope = "bundled-memory-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("stale discovery endpointへ接続できない場合はcanonical unavailableを返す", async () => {
     const { stdout } = await execFileAsync(process.execPath, [
       helperPath,
       "status",
     ], {
-      env: {
-        ...process.env,
+      env: unboundHelperEnv({
         WITHMATE_MEMORY_API_URL: "http://127.0.0.1:9",
         WITHMATE_MEMORY_API_SECRET: "stale-secret",
-        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "stale-runtime",
-      },
+        WITHMATE_MEMORY_OPERATOR_API_SECRET: "stale-operator-secret",
+        WITHMATE_MEMORY_RUNTIME_INSTANCE_ID: "00000000-0000-4000-8000-000000000002",
+      }),
     }).catch((error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
       assert.equal(execError.code, 2);
       return { stdout: execError.stdout ?? "" };
     });
 
-    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
-  it("schema は helper 単体で capability を返す", async () => {
+// @test-value v1
+// kind = "contract"
+// claim = "生成済みCLI schemaはmulti-instance operator commandを列挙する"
+// oracle = { type = "adr", ref = "ADR-023" }
+// failure_mode = "配布artifactのcapabilityからinstancesが欠落する"
+// scope = "bundled-memory-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("schema は helper 単体で capability を返す", async () => {
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "schema"], {
       env: process.env,
     });
@@ -669,6 +728,7 @@ describe("withmate-memory bundled helper", () => {
     const schema = JSON.parse(stdout);
     assert.deepEqual(schema.commands, [
       "help",
+      "instances",
       "status",
       "characters",
       "file-usage",
@@ -926,19 +986,26 @@ describe("withmate-memory bundled helper", () => {
     }]);
   });
 
-  it("read shorthand は helper でも request body を組み立てる", async () => {
+// @test-value v1
+// kind = "compatibility"
+// claim = "生成済みCLIのread shorthandはcanonical discovery failureでも入力構築を維持する"
+// oracle = { type = "contract", ref = "withmate-memory CLI shorthand contract" }
+// failure_mode = "bundle更新でread shorthandがusageまたはtransport errorへ退行する"
+// scope = "bundled-memory-cli"
+// lifecycle = "permanent"
+// @end-test-value
+it("read shorthandはhelperでもrequest bodyを組み立てcanonical unavailableを返す", async () => {
     const { stdout } = await execFileAsync(process.execPath, [helperPath, "search", "--project", path.resolve("."), "--query", "cli"], {
-      env: {
-        ...process.env,
+      env: unboundHelperEnv({
         WITHMATE_MEMORY_DISCOVERY_FILE: path.join(tmpdir(), "withmate-memory-missing.json"),
-      },
+      }),
     }).catch((error: unknown) => {
       const execError = error as { code?: number; stdout?: string };
       assert.equal(execError.code, 2);
       return { stdout: execError.stdout ?? "" };
     });
 
-    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_NOT_RUNNING");
+    assert.equal(JSON.parse(stdout).error.code, "WITHMATE_RUNTIME_UNAVAILABLE");
   });
 
   it("usage error は PATH CLI command 形式を案内する", async () => {

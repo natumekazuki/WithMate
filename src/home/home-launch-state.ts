@@ -1,4 +1,4 @@
-import type { CreateSessionRequest, SessionSummary } from "../app-state.js";
+import type { CreateSessionRequest, HomeSessionSummary } from "../app-state.js";
 import { DEFAULT_CHARACTER_THEME_COLORS, type CharacterThemeColors } from "../character-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
 import type { CreateCompanionSessionInput } from "../companion-state.js";
@@ -26,7 +26,7 @@ type LaunchCharacterSnapshot = {
   characterThemeColors: CharacterThemeColors;
 };
 
-type CharacterUsageSessionSource = Pick<SessionSummary, "characterId" | "sessionKind">;
+type CharacterUsageSessionSource = Pick<HomeSessionSummary, "characterId" | "sessionKind">;
 
 export type LaunchCharacterSelectionMode = "specific" | "random";
 export type HomeLaunchWorkspaceValidationState = "idle" | "debouncing" | "pending" | "valid" | "invalid";

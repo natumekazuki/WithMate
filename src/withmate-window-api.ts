@@ -22,10 +22,14 @@ import type {
   SessionBackgroundActivityState,
   SessionContextTelemetry,
   MessageArtifact,
-    RunSessionTurnRequest,
-    Session,
-    SessionSummary,
-    SetSessionPinnedRequest,
+  SessionCharacterUsage,
+  RunSessionTurnRequest,
+  Session,
+  SessionSummaryInvalidation,
+  SessionSummaryPageRequest,
+  HomeSessionSummaryPageResult,
+  SessionSummary,
+  SetSessionPinnedRequest,
 } from "./app-state.js";
 import type { CompanionSession, CompanionSessionSummary, CreateCompanionSessionInput } from "./companion-state.js";
 import type { ChatLayoutPreferenceUpdate } from "./chat/chat-layout-preference.js";
@@ -99,16 +103,40 @@ import type {
   SessionFilePreviewWindowOpenRequest,
   SessionFilePreviewWindowOpenResult,
   SessionFilePreviewWindowPayload,
+  SessionFilePreviewResourceRequest,
   SessionFileResourceRequest,
   SessionFileRoot,
   FileRootChangesRequest,
   FileRootChangesResult,
   FileRootFileDiffRequest,
   FileRootFileDiffResult,
+  FileRootGitHistoryCommitDetailRequest,
+  FileRootGitHistoryCommitDetailResult,
+  FileRootGitHistoryCommitsRequest,
+  FileRootGitHistoryCommitsResult,
+  FileRootGitHistoryDiffRequest,
+  FileRootGitHistoryDiffResult,
+  FileRootGitHistoryRepositoriesRequest,
+  FileRootGitHistoryRepositoriesResult,
 } from "./file-explorer/file-explorer-contract.js";
+import type {
+  SessionFileObjectCopyContextMenuRequest,
+  SessionFileObjectCopyContextMenuResult,
+  SessionFileObjectCopyRequest,
+  SessionFileObjectCopyResult,
+} from "./file-explorer/session-file-object-copy-contract.js";
+import type {
+  GlossaryListResult,
+  GlossaryOperationResult,
+  GlossarySearchRequest,
+  SessionGlossaryProjection,
+} from "./glossary-contract.js";
+import type { SessionWindowRestoreResult } from "./session-window-restore.js";
 
 export type WithMateWindowNavigationApi = {
   openSession(sessionId: string): Promise<void>;
+  getSessionWindowRestoreSet(): Promise<string[]>;
+  restoreSessionWindows(): Promise<SessionWindowRestoreResult>;
   openHomeWindow(): Promise<void>;
   openSessionMonitorWindow(): Promise<void>;
   openSettingsWindow(): Promise<void>;
@@ -140,12 +168,19 @@ export type WithMateWindowCatalogApi = {
 };
 
 export type WithMateWindowSessionApi = {
-  listSessionSummaries(): Promise<SessionSummary[]>;
+  isSessionFileObjectCopyAvailable(): boolean;
+  listSessionSummaryPage(request?: SessionSummaryPageRequest | null): Promise<HomeSessionSummaryPageResult>;
+  listSessionCharacterUsage(): Promise<SessionCharacterUsage[]>;
   getSession(sessionId: string): Promise<Session | null>;
+  getSessionGlossaryProjection(sessionId: string): Promise<SessionGlossaryProjection>;
+  searchSessionGlossary(
+    sessionId: string,
+    request: GlossarySearchRequest,
+  ): Promise<GlossaryOperationResult<GlossaryListResult>>;
   validateSessionWorkspace(sessionId: string): Promise<WorkspaceDirectoryValidationResult>;
   listSessionFileRoots(sessionId: string): Promise<SessionFileRoot[]>;
   listSessionDirectory(request: SessionDirectoryRequest): Promise<SessionDirectoryEntry[]>;
-  inspectSessionFile(request: SessionFileResourceRequest): Promise<SessionFileDescriptor>;
+  inspectSessionFile(request: SessionFilePreviewResourceRequest): Promise<SessionFileDescriptor>;
   readSessionFileChunk(request: SessionFileChunkRequest): Promise<SessionFileChunkResult>;
   openSessionFile(request: SessionFileOpenRequest): Promise<OpenPathResult>;
   getSessionFilePreviewWindowPayload(token: string): Promise<SessionFilePreviewWindowPayload | null>;
@@ -155,8 +190,24 @@ export type WithMateWindowSessionApi = {
   showSessionFilePreviewImageContextMenu(
     request: SessionFilePreviewImageActionRequest,
   ): Promise<SessionFilePreviewImageContextMenuResult>;
+  copySessionFileObject(request: SessionFileObjectCopyRequest): Promise<SessionFileObjectCopyResult>;
+  showSessionFileObjectCopyContextMenu(
+    request: SessionFileObjectCopyContextMenuRequest,
+  ): Promise<SessionFileObjectCopyContextMenuResult>;
   listFileRootChanges(request: FileRootChangesRequest): Promise<FileRootChangesResult>;
   getFileRootDiff(request: FileRootFileDiffRequest): Promise<FileRootFileDiffResult>;
+  listFileRootGitHistoryRepositories(
+    request: FileRootGitHistoryRepositoriesRequest,
+  ): Promise<FileRootGitHistoryRepositoriesResult>;
+  listFileRootGitHistoryCommits(
+    request: FileRootGitHistoryCommitsRequest,
+  ): Promise<FileRootGitHistoryCommitsResult>;
+  getFileRootGitHistoryCommitDetail(
+    request: FileRootGitHistoryCommitDetailRequest,
+  ): Promise<FileRootGitHistoryCommitDetailResult>;
+  getFileRootGitHistoryDiff(
+    request: FileRootGitHistoryDiffRequest,
+  ): Promise<FileRootGitHistoryDiffResult>;
   getSessionMessageArtifact(sessionId: string, messageIndex: number): Promise<MessageArtifact | null>;
   createSession(input: CreateSessionRequest): Promise<Session>;
   updateSession(session: Session): Promise<Session>;
@@ -294,8 +345,7 @@ export type WithMateWindowSubscriptionApi = {
   subscribeSessionFilePreviewNavigation(
     listener: (payload: SessionFilePreviewWindowPayload) => void,
   ): () => void;
-  subscribeSessionSummaries(listener: (sessions: SessionSummary[]) => void): () => void;
-  subscribeSessionInvalidation(listener: (sessionIds: string[]) => void): () => void;
+  subscribeSessionInvalidation(listener: (payload: SessionSummaryInvalidation) => void): () => void;
   subscribeModelCatalog(listener: (catalog: ModelCatalogSnapshot) => void): () => void;
   subscribeAppSettings(listener: (settings: AppSettings) => void): () => void;
   subscribeLiveSessionRun(listener: (sessionId: string, state: LiveSessionRunState | null) => void): () => void;
@@ -308,7 +358,9 @@ export type WithMateWindowSubscriptionApi = {
       state: SessionBackgroundActivityState | null,
     ) => void,
   ): () => void;
+  subscribeSessionGlossary(listener: (projection: SessionGlossaryProjection) => void): () => void;
   subscribeOpenSessionWindowIds(listener: (sessionIds: string[]) => void): () => void;
+  subscribeSessionWindowRestoreSet(listener: (sessionIds: string[]) => void): () => void;
   subscribeOpenCompanionReviewWindowIds(listener: (sessionIds: string[]) => void): () => void;
   subscribeCompanionSessionSummaries(listener: (sessions: CompanionSessionSummary[]) => void): () => void;
 };

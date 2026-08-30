@@ -21,6 +21,9 @@ import { openAppDatabase } from "./sqlite-connection.js";
 const LOCAL_USER_ID = "local-user";
 export const DEFAULT_SESSION_AFFECT_HALF_LIFE_MS = 6 * 60 * 60 * 1_000;
 export const MINIMUM_SESSION_AFFECT_DECAY_WEIGHT = 0.05;
+export const CROSS_SESSION_AFTERGLOW_WEIGHT = 0.5;
+export const MAX_CROSS_SESSION_AFTERGLOW_EVENT_ROWS = 64;
+export const MAX_CROSS_SESSION_AFTERGLOW_COMPONENTS = 3;
 
 export class CharacterAffectIdempotencyConflictError extends Error {
   constructor() {
@@ -116,6 +119,20 @@ type AffectEventRow = {
   created_at: string;
 };
 
+type ProjectionInput = {
+  layer: "baseline" | AffectLayer;
+  targetType: AffectTargetType;
+  targetId: string;
+  family: CharacterAffectFamily | null;
+  value: AffectValue;
+  intensity: number;
+  reason: string;
+  eventId: string | null;
+  occurredAt: string | null;
+  weight: number;
+  isAfterglow?: boolean;
+};
+
 export class CharacterAffectStorage {
   private readonly db: DatabaseSync;
   private readonly now: () => Date;
@@ -128,6 +145,11 @@ export class CharacterAffectStorage {
     cacheHits: 0,
     cacheMisses: 0,
     cacheStale: 0,
+    afterglowCandidateRows: 0,
+    afterglowSelectedComponents: 0,
+    afterglowSameTargetExcluded: 0,
+    afterglowContinuityExcluded: 0,
+    afterglowComponentCapExcluded: 0,
   };
 
   constructor(dbPath: string, options: {
@@ -465,6 +487,9 @@ export class CharacterAffectStorage {
     for (const component of input.baseline ?? []) {
       assertValidAffectBaseline(component);
     }
+    const evaluatedAt = this.now().toISOString();
+    const evaluatedAtMs = Date.parse(evaluatedAt);
+    const afterglowCutoff = new Date(evaluatedAtMs - this.sessionHalfLifeMs).toISOString();
     const relationshipResetAt = this.latestResetAt(input.characterId, input.userId, "relationship", null);
     const sessionResetAt = this.latestResetAt(input.characterId, input.userId, "session", input.sessionId);
     const rows = this.db.prepare(`
@@ -486,12 +511,124 @@ export class CharacterAffectStorage {
       sessionResetAt,
     ) as AffectEventRow[];
 
-    const evaluatedAt = this.now().toISOString();
-    const evaluatedAtMs = Date.parse(evaluatedAt);
+    const sourceSessionRow = this.db.prepare(`
+      SELECT session_id
+      FROM character_affect_events_v6 AS events
+      WHERE character_id = ?
+        AND user_id = ?
+        AND layer = 'session'
+        AND session_id IS NOT NULL
+        AND session_id <> ?
+        AND state = 'active'
+        AND occurred_at > ?
+        AND NOT EXISTS (
+          SELECT 1
+          FROM character_affect_resets_v6 AS resets
+          WHERE resets.character_id = events.character_id
+            AND resets.user_id = events.user_id
+            AND resets.layer = 'session'
+            AND resets.session_id = events.session_id
+            AND resets.reset_at >= events.occurred_at
+        )
+      ORDER BY occurred_at DESC, id ASC
+      LIMIT 1
+    `).get(
+      input.characterId,
+      input.userId,
+      input.sessionId,
+      afterglowCutoff,
+    ) as { session_id: string } | undefined;
+    const afterglowRows = sourceSessionRow
+      ? this.db.prepare(`
+        SELECT *, CAST(target_id AS BLOB) AS target_id_bytes
+        FROM character_affect_events_v6 AS events
+        WHERE character_id = ?
+          AND user_id = ?
+          AND layer = 'session'
+          AND session_id = ?
+          AND state = 'active'
+          AND occurred_at > ?
+          AND NOT EXISTS (
+            SELECT 1
+            FROM character_affect_resets_v6 AS resets
+            WHERE resets.character_id = events.character_id
+              AND resets.user_id = events.user_id
+              AND resets.layer = 'session'
+              AND resets.session_id = events.session_id
+              AND resets.reset_at >= events.occurred_at
+          )
+        ORDER BY occurred_at DESC, id ASC
+        LIMIT ${MAX_CROSS_SESSION_AFTERGLOW_EVENT_ROWS}
+      `).all(
+        input.characterId,
+        input.userId,
+        sourceSessionRow.session_id,
+        afterglowCutoff,
+      ) as AffectEventRow[]
+      : [];
     this.projectionMetrics.reads += 1;
     this.projectionMetrics.cacheMisses += 1;
 
-    const layers = [
+    const currentSessionRows = rows.filter((row) => row.layer === "session");
+    const currentComponentIdentities = new Set(
+      currentSessionRows.map((row) => componentIdentity(
+        row.target_type,
+        decodeSqliteText(row.target_id_bytes),
+        row.family,
+        parseValue(row.value_json).label,
+      )),
+    );
+    const currentTargetTuples = new Set(
+      currentSessionRows.map((row) => targetTuple(row.target_type, decodeSqliteText(row.target_id_bytes))),
+    );
+    this.projectionMetrics.afterglowCandidateRows += afterglowRows.length;
+
+    const afterglowInputs = afterglowRows.flatMap((row): ProjectionInput[] => {
+      const targetId = decodeSqliteText(row.target_id_bytes);
+      const value = parseValue(row.value_json);
+      if (currentComponentIdentities.has(componentIdentity(row.target_type, targetId, row.family, value.label))) {
+        this.projectionMetrics.afterglowSameTargetExcluded += 1;
+        return [];
+      }
+      if (isTaskContinuityTarget(row.target_type) && !currentTargetTuples.has(targetTuple(row.target_type, targetId))) {
+        this.projectionMetrics.afterglowContinuityExcluded += 1;
+        return [];
+      }
+      const weight = CROSS_SESSION_AFTERGLOW_WEIGHT * Math.pow(
+        0.5,
+        Math.max(0, evaluatedAtMs - Date.parse(row.occurred_at)) / this.sessionHalfLifeMs,
+      );
+      if (weight < this.minimumDecayWeight) {
+        this.projectionMetrics.decayExcluded += 1;
+        return [];
+      }
+      if (row.family === null) {
+        this.projectionMetrics.legacyComponents += 1;
+      }
+      return [{
+        layer: "session",
+        targetType: row.target_type,
+        targetId,
+        family: row.family,
+        value,
+        intensity: row.intensity,
+        reason: "",
+        eventId: row.id,
+        occurredAt: row.occurred_at,
+        weight,
+        isAfterglow: true,
+      }];
+    });
+    const afterglowComponentSelection = selectTopAfterglowComponents(afterglowInputs);
+    this.projectionMetrics.afterglowSelectedComponents += afterglowComponentSelection.selectedIdentities.size;
+    this.projectionMetrics.afterglowComponentCapExcluded +=
+      afterglowComponentSelection.componentCount - afterglowComponentSelection.selectedIdentities.size;
+    const selectedAfterglowInputs = afterglowInputs.filter((candidate) =>
+      afterglowComponentSelection.selectedIdentities.has(
+        componentIdentity(candidate.targetType, candidate.targetId, candidate.family, candidate.value.label),
+      ));
+
+    const layers: ProjectionInput[] = [
       ...(input.baseline ?? []).map((component) => ({
         layer: "baseline" as const,
         targetType: component.targetType,
@@ -528,6 +665,7 @@ export class CharacterAffectStorage {
           weight,
         }];
       }),
+      ...selectedAfterglowInputs,
     ];
 
     return {
@@ -690,6 +828,11 @@ export class CharacterAffectStorage {
       cacheHits: number;
       cacheMisses: number;
       cacheStale: number;
+      afterglowCandidateRows: number;
+      afterglowSelectedComponents: number;
+      afterglowSameTargetExcluded: number;
+      afterglowContinuityExcluded: number;
+      afterglowComponentCapExcluded: number;
     };
   } {
     const eventCounts = this.db.prepare(`
@@ -974,25 +1117,88 @@ function decodeSqliteText(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("utf8");
 }
 
+function componentIdentity(
+  targetType: AffectTargetType,
+  targetId: string,
+  family: CharacterAffectFamily | null,
+  label: string,
+): string {
+  return JSON.stringify([
+    targetType,
+    targetId,
+    family === null ? "legacy-label" : "family",
+    family ?? label,
+  ]);
+}
+
+function targetTuple(targetType: AffectTargetType, targetId: string): string {
+  return JSON.stringify([targetType, targetId]);
+}
+
+function isTaskContinuityTarget(targetType: AffectTargetType): boolean {
+  return targetType === "task"
+    || targetType === "bug"
+    || targetType === "artifact"
+    || targetType === "self";
+}
+
+function selectTopAfterglowComponents(inputs: readonly ProjectionInput[]): {
+  componentCount: number;
+  selectedIdentities: Set<string>;
+} {
+  const groups = new Map<string, {
+    contribution: number;
+    occurredAt: string;
+    eventId: string;
+  }>();
+  for (const input of inputs) {
+    const identity = componentIdentity(input.targetType, input.targetId, input.family, input.value.label);
+    const contribution = input.intensity * input.weight;
+    const current = groups.get(identity);
+    if (!current) {
+      groups.set(identity, {
+        contribution,
+        occurredAt: input.occurredAt ?? "",
+        eventId: input.eventId ?? "",
+      });
+      continue;
+    }
+    current.contribution += contribution;
+    if (
+      input.occurredAt !== null
+      && (input.occurredAt > current.occurredAt
+        || (input.occurredAt === current.occurredAt && (input.eventId ?? "") < current.eventId))
+    ) {
+      current.occurredAt = input.occurredAt;
+      current.eventId = input.eventId ?? "";
+    }
+  }
+  const selectedIdentities = new Set(
+    [...groups.entries()]
+      .sort(([, left], [, right]) => {
+        if (left.contribution !== right.contribution) {
+          return right.contribution - left.contribution;
+        }
+        if (left.occurredAt !== right.occurredAt) {
+          return right.occurredAt.localeCompare(left.occurredAt);
+        }
+        return left.eventId.localeCompare(right.eventId);
+      })
+      .slice(0, MAX_CROSS_SESSION_AFTERGLOW_COMPONENTS)
+      .map(([identity]) => identity),
+  );
+  return { componentCount: groups.size, selectedIdentities };
+}
+
 function aggregateComponents(
-  inputs: Array<{
-    layer: "baseline" | AffectLayer;
-    targetType: AffectTargetType;
-    targetId: string;
-    family: CharacterAffectFamily | null;
-    value: AffectValue;
-    intensity: number;
-    reason: string;
-    eventId: string | null;
-    occurredAt: string | null;
-    weight: number;
-  }>,
+  inputs: ProjectionInput[],
   separateLayers: boolean,
 ): EffectiveAffectComponent[] {
   const groups = new Map<string, EffectiveAffectComponent & {
     representativeContribution: number;
     representativeOccurredAt: string;
     representativeEventId: string;
+    representativeIsAfterglow: boolean;
   }>();
   for (const input of inputs) {
     const identity = input.family === null ? `legacy-label:${input.value.label}` : `family:${input.family}`;
@@ -1017,22 +1223,32 @@ function aggregateComponents(
       representativeContribution: -1,
       representativeOccurredAt: "",
       representativeEventId: "",
+      representativeIsAfterglow: false,
     };
     const representativeEventId = input.eventId ?? "";
     const representativeOccurredAt = input.occurredAt ?? "";
+    const representativeIsAfterglow = input.isAfterglow === true;
     if (
-      contribution > current.representativeContribution
-      || (contribution === current.representativeContribution && representativeOccurredAt > current.representativeOccurredAt)
+      current.representativeContribution < 0
+      || (!representativeIsAfterglow && current.representativeIsAfterglow)
       || (
-        contribution === current.representativeContribution
-        && representativeOccurredAt === current.representativeOccurredAt
-        && representativeEventId < current.representativeEventId
+        representativeIsAfterglow === current.representativeIsAfterglow
+        && (
+          contribution > current.representativeContribution
+          || (contribution === current.representativeContribution && representativeOccurredAt > current.representativeOccurredAt)
+          || (
+            contribution === current.representativeContribution
+            && representativeOccurredAt === current.representativeOccurredAt
+            && representativeEventId < current.representativeEventId
+          )
+        )
       )
     ) {
       current.label = input.value.label;
       current.representativeContribution = contribution;
       current.representativeOccurredAt = representativeOccurredAt;
       current.representativeEventId = representativeEventId;
+      current.representativeIsAfterglow = representativeIsAfterglow;
     }
     current.valence = clamp(current.valence + input.value.valence * contribution);
     if (input.value.arousal !== undefined) {
@@ -1042,7 +1258,9 @@ function aggregateComponents(
       current.dimensions[dimension] = clamp((current.dimensions[dimension] ?? 0) + value * contribution);
     }
     current.intensity = clamp(current.intensity + contribution, 0, 1);
-    current.reasons.push(input.reason);
+    if (input.reason) {
+      current.reasons.push(input.reason);
+    }
     if (input.eventId) {
       current.eventIds.push(input.eventId);
     }
@@ -1055,6 +1273,7 @@ function aggregateComponents(
     representativeContribution: _representativeContribution,
     representativeOccurredAt: _representativeOccurredAt,
     representativeEventId: _representativeEventId,
+    representativeIsAfterglow: _representativeIsAfterglow,
     ...component
   }) => component);
 }

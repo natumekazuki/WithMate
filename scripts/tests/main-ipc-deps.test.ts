@@ -15,6 +15,18 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
         calls.push(`openSession:${sessionId}`);
         return {} as never;
       },
+      async getSessionWindowRestoreSet() {
+        calls.push("getSessionWindowRestoreSet");
+        return ["session-1"];
+      },
+      async restoreSessionWindows() {
+        calls.push("restoreSessionWindows");
+        return {
+          requestedSessionIds: ["session-1"],
+          openedSessionIds: ["session-1"],
+          failures: [],
+        };
+      },
       async openHomeWindow() {
         calls.push("openHome");
         return {} as never;
@@ -118,7 +130,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       deletePromptTemplate: () => [],
     },
     sessionQuery: {
-      listSessionSummaries: () => [],
+      listSessionSummaryPage: () => ({ entries: [], nextCursor: null, hasMore: false }),
+      listSessionCharacterUsage: () => [],
       listCompanionSessionSummaries: () => [],
       listSessionAuditLogs: () => [],
       listSessionAuditLogSummaries: () => [],
@@ -136,9 +149,18 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
       async listSessionCustomAgents() { return []; },
       async listWorkspaceSkills() { return []; },
       async listWorkspaceCustomAgents() { return []; },
-      listOpenSessionWindowIds: () => [],
+      listOpenSessionWindowIdsPage: () => ({ sessionIds: [], nextCursor: null, hasMore: false }),
       listOpenCompanionReviewWindowIds: () => [],
       getSession: () => null,
+      getSessionGlossaryProjection: (sessionId) => ({
+        sessionId,
+        scopeRevision: "scope",
+        sequence: 1,
+        checkout: { repositoryName: "repo", branch: "main", pathLabel: "repo" },
+        state: { status: "missing", relativePath: ".withmate/glossary.yaml", revision: null },
+      }),
+      searchSessionGlossary: () => ({ ok: true, revision: null, entries: [], total: 0, offset: 0, pageSize: 50 }),
+      ensureSessionGlossarySubscription: () => {},
       getSessionMessageArtifact: () => null,
       getDiffPreview: () => null,
       async previewComposerInput() {
@@ -256,6 +278,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
   assert.equal(deps.isMemoryV6ReviewWindow({} as never), true);
   assert.equal(deps.isSettingsWindow({} as never), true);
   assert.equal(await deps.openSessionWindow("session-1"), undefined);
+  assert.deepEqual(await deps.getSessionWindowRestoreSet(), ["session-1"]);
+  assert.deepEqual((await deps.restoreSessionWindows()).openedSessionIds, ["session-1"]);
   await deps.getMateState();
   await deps.getMateProfile();
   await deps.createMate({ displayName: "Buddy" });
@@ -268,6 +292,8 @@ test("createMainIpcRegistrationDeps は残存する window / mate delegate を�
     "isMemoryReview",
     "isSettings",
     "openSession:session-1",
+    "getSessionWindowRestoreSet",
+    "restoreSessionWindows",
     "getMateState",
     "getMateProfile",
     "createMate:Buddy",

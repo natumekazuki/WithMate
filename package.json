@@ -1,6 +1,6 @@
 {
   "name": "withmate",
-  "version": "6.3.24",
+  "version": "6.3.25",
   "description": "キャラクターロールプレイ対応 coding agent デスクトップアプリ",
   "private": true,
   "main": "dist-electron/src-electron/main.js",
@@ -41,23 +41,29 @@
     "@tanstack/react-virtual": "^3.14.6",
     "ignore": "^7.0.5",
     "mdast-util-from-markdown": "^2.0.3",
+    "mdast-util-frontmatter": "^2.0.1",
     "mdast-util-gfm": "^3.1.0",
     "mdast-util-math": "^3.0.0",
     "mermaid": "^11.16.0",
+    "micromark-extension-frontmatter": "^2.0.0",
     "micromark-extension-gfm": "^3.0.0",
     "micromark-extension-math": "^3.1.0",
     "prettier": "^3.9.6",
+    "proper-lockfile": "^4.1.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",
     "rehype-katex": "^7.0.1",
+    "remark-frontmatter": "^5.0.0",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/jsdom": "^28.0.3",
     "@types/node": "^26.1.1",
+    "@types/proper-lockfile": "^4.1.4",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
@@ -81,6 +87,7 @@
       "dist/**",
       "dist-electron/**",
       "build/icon.ico",
+      "LICENSE",
       "package.json",
       "!node_modules/@openai/codex-win32-*/**",
       "!node_modules/@openai/codex-darwin-*/**",
@@ -104,6 +111,10 @@
       {
         "from": "build/cli/withmate-memory.cmd",
         "to": "withmate-memory.cmd"
+      },
+      {
+        "from": "build/cli/withmate-glossary.cmd",
+        "to": "withmate-glossary.cmd"
       }
     ],
     "win": {

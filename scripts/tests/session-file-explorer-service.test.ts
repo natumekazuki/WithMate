@@ -85,6 +85,27 @@ test("SessionFileExplorerService は preview link を最も具体的な認可 ro
       type: "external-url",
       target: "https://example.com/file.md",
     });
+    const commitResource = {
+      resourceKind: "git-commit-file" as const,
+      sessionId: "session-1",
+      rootId: "workspace",
+      repositoryId: "git:aaaaaaaaaaaaaaaaaaaaaaaa",
+      commitId: "a".repeat(40),
+      relativePath: "README.md",
+    };
+    assert.deepEqual(await service.resolvePreviewTarget(
+      "session-1",
+      "https://example.com/from-commit",
+      commitResource,
+    ), {
+      type: "external-url",
+      target: "https://example.com/from-commit",
+    });
+    assert.deepEqual(await service.resolvePreviewTarget("session-1", "./next.md", commitResource), {
+      type: "not-previewable",
+      targetPath: "./next.md",
+      message: "Relative links from a Git commit file preview are not available.",
+    });
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });
   }
@@ -751,6 +772,33 @@ test("SessionFileExplorerService は認可した path と異なる実体の hand
     await assert.rejects(() => service.inspectFile(request), /認可中に変更された/);
     await assert.rejects(() => service.openFile(request), /認可中に変更された/);
     assert.equal(openResolvedPathCalls, 0);
+  } finally {
+    await rm(basePath, { recursive: true, force: true });
+  }
+});
+
+test("SessionFileExplorerService はfile operation中のpath置換をidentity不一致として返す", async () => {
+  const basePath = await mkdtemp(path.join(os.tmpdir(), "withmate-file-operation-identity-"));
+  const workspacePath = path.join(basePath, "workspace");
+  const targetPath = path.join(workspacePath, "target.txt");
+  const archivedPath = path.join(workspacePath, "archived.txt");
+  await mkdir(workspacePath, { recursive: true });
+  await writeFile(targetPath, "original");
+  const service = new SessionFileExplorerService({
+    userDataPath: path.join(basePath, "user-data"),
+    getSessionContext: async () => ({ workspacePath, parentSessionId: "session-1", allowedAdditionalDirectories: [] }),
+  });
+  try {
+    const result = await service.withAuthorizedFilePath(
+      { sessionId: "session-1", rootId: "workspace", relativePath: "target.txt" },
+      async (authorizedPath) => {
+        assert.equal(authorizedPath, await realpath(targetPath));
+        await rename(targetPath, archivedPath);
+        await writeFile(targetPath, "replacement");
+        return "operation-started";
+      },
+    );
+    assert.deepEqual(result, { result: "operation-started", targetStillCurrent: false });
   } finally {
     await rm(basePath, { recursive: true, force: true });
   }

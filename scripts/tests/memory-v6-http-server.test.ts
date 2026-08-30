@@ -129,21 +129,41 @@ describe("MemoryV6HttpServer", () => {
     assert.equal(resolveMemoryV6RouteTimeoutMs("file_usage", { requestTimeoutMs: 123 }), 123);
   });
 
-  it("status とchallengeをJSONで返し、context routeは公開しない", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "status challengeはapplication instanceとMemory generationを安全なmetadataとして返し、owner tupleをHMACで検証できる"
+// oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
+// failure_mode = "resolverが別instanceまたは別generationを同一runtimeと誤認し、credential送信前のidentity検証を通過させる"
+// scope = "memory-runtime-identity-challenge"
+// lifecycle = "permanent"
+// @end-test-value
+it("status はapplication instance、generation、build channelとowner challengeを返す", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const status = await fetch(`${baseUrl}/v1/status`);
       assert.equal(status.status, 200);
-      assert.deepEqual(await status.json(), { ok: true, runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID });
+      assert.deepEqual(await status.json(), {
+        ok: true,
+        applicationInstanceId: "legacy",
+        runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID,
+        runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+        buildChannel: "unknown",
+      });
 
       const nonce = "nonce-a";
       const challengedStatus = await fetch(`${baseUrl}/v1/status?nonce=${nonce}`);
       assert.equal(challengedStatus.status, 200);
       assert.deepEqual(await challengedStatus.json(), {
         ok: true,
+        applicationInstanceId: "legacy",
+        runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID,
         runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
+        buildChannel: "unknown",
         challenge: {
           nonce,
           hmacSha256: createHmac("sha256", TEST_API_SECRET).update(nonce, "utf8").digest("base64url"),
+          ownerHmacSha256: createHmac("sha256", TEST_API_SECRET)
+            .update(`legacy\n${TEST_RUNTIME_INSTANCE_ID}\n${nonce}`, "utf8")
+            .digest("base64url"),
         },
       });
 
@@ -222,12 +242,21 @@ describe("MemoryV6HttpServer", () => {
     });
   });
 
-  it("MCP credentialは公開した一般Memory routeだけをruntime exchange経由で実行できる", async () => {
+// @test-value v1
+// kind = "security"
+// claim = "MCP credential exchangeは公開routeだけをowner identity検証後にdispatchする"
+// oracle = { type = "adr", ref = "ADR-023 multi-instance-runtime-discovery" }
+// failure_mode = "不正なrouteまたはowner mismatchでもcredential検証後のoperation dispatchが実行される"
+// scope = "memory-runtime-mcp-exchange"
+// lifecycle = "permanent"
+// @end-test-value
+it("MCP credentialは公開した一般Memory routeだけをruntime exchange経由で実行できる", async () => {
     await withMemoryApi(async ({ baseUrl }) => {
       const connection = {
         api: {
           baseUrl,
           apiSecret: TEST_API_SECRET,
+          runtimeGenerationId: TEST_RUNTIME_INSTANCE_ID,
           runtimeInstanceId: TEST_RUNTIME_INSTANCE_ID,
         },
         credential: {

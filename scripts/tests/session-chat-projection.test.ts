@@ -10,6 +10,7 @@ import {
 import type { CharacterProfile } from "../../src/app-state.js";
 import type { SessionContextPaneProps } from "../../src/session-components.js";
 import type { Session } from "../../src/session-state.js";
+import { createGlossaryAnnotationMatcher } from "../../src/glossary/glossary-annotation-projection.js";
 
 const noop = () => {};
 
@@ -377,6 +378,24 @@ test("buildAgentSessionChatWindowProps は submit pending の helper feedback �
   assert.equal(props.composerProps.composerSendability.isBusy, true);
 });
 
+test("buildAgentSessionChatWindowProps は workspace 再検証中の busy status を共通エラー領域へ投影しない", () => {
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    composerSendability: {
+      isBusy: true,
+      busyReason: "Workspace availability is being checked.",
+      primaryFeedback: "",
+      secondaryFeedback: [],
+      feedbackTone: null,
+      shouldShowFeedback: false,
+    },
+    isAuxiliaryMode: true,
+  }));
+
+  assert.deepEqual(props.errorNotices, []);
+  assert.equal(props.composerProps.composerSendability.isBusy, true);
+  assert.equal(props.composerProps.composerSendability.feedbackTone, null);
+});
+
 test("buildAgentSessionChatWindowProps は blank draft の helper feedback を共通エラー領域へ投影しない", () => {
   const props = buildAgentSessionChatWindowProps(createProjectionInput({
     composerSendability: {
@@ -400,6 +419,32 @@ test("buildAgentSessionChatWindowProps は Auxiliary mode で parent header 操�
   assert.equal(auxiliaryProps.headerProps.showRenameButton, false);
   assert.equal(auxiliaryProps.headerProps.showAuditLogButton, true);
   assert.equal(auxiliaryProps.headerProps.showDeleteButton, false);
+});
+
+test("buildAgentSessionChatWindowProps は central preview 中に message shortcut scope を無効にする", () => {
+  const chatProps = buildAgentSessionChatWindowProps(createProjectionInput());
+  const previewProps = buildAgentSessionChatWindowProps(createProjectionInput({
+    mainContent: React.createElement("div", null, "preview"),
+  }));
+
+  assert.equal(chatProps.messageColumnProps.isContentActive, true);
+  assert.equal(previewProps.messageColumnProps.isContentActive, false);
+});
+
+test("buildAgentSessionChatWindowProps はglossary annotation projectionとactivationをmessage ownerへ渡す", () => {
+  const glossaryAnnotationMatcher = createGlossaryAnnotationMatcher([{
+    term: "Runtime",
+    aliases: [],
+    definition: "Runtime definition",
+  }], "revision-1");
+  const onActivateGlossaryEntry = () => {};
+  const props = buildAgentSessionChatWindowProps(createProjectionInput({
+    glossaryAnnotationMatcher,
+    onActivateGlossaryEntry,
+  }));
+
+  assert.equal(props.messageColumnProps.glossaryAnnotationMatcher, glossaryAnnotationMatcher);
+  assert.equal(props.messageColumnProps.onActivateGlossaryEntry, onActivateGlossaryEntry);
 });
 
 test("buildAgentSessionChatWindowProps は Header から独立した right pane props を共通 pane に渡す", () => {

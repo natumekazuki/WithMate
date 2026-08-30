@@ -167,6 +167,12 @@ export type LiveSessionMessageColumnProps = {
   messages: Message[];
   messageKeys?: ChatMessageColumnProps["messageKeys"];
   messageGroups?: ChatMessageColumnProps["messageGroups"];
+  messageCollapseTargets?: ChatMessageColumnProps["messageCollapseTargets"];
+  collapsedMessageKeys?: ChatMessageColumnProps["collapsedMessageKeys"];
+  messageJumpRequest?: ChatMessageColumnProps["messageJumpRequest"];
+  isContentActive?: ChatMessageColumnProps["isContentActive"];
+  onToggleMessageCollapse?: ChatMessageColumnProps["onToggleMessageCollapse"];
+  onToggleAllMessageCollapse?: ChatMessageColumnProps["onToggleAllMessageCollapse"];
   expandedArtifacts: Record<string, boolean>;
   messageListRef: RefObject<HTMLDivElement | null>;
   isRunning: boolean;
@@ -190,6 +196,8 @@ export type LiveSessionMessageColumnProps = {
   getChangedFilesEmptyText: ChatMessageColumnProps["getChangedFilesEmptyText"];
   onCopyMessageText?: ChatMessageColumnProps["onCopyMessageText"];
   onQuoteMessageText?: ChatMessageColumnProps["onQuoteMessageText"];
+  glossaryAnnotationMatcher?: ChatMessageColumnProps["glossaryAnnotationMatcher"];
+  onActivateGlossaryEntry?: ChatMessageColumnProps["onActivateGlossaryEntry"];
 };
 
 export type LiveSessionComposerProps = Omit<
@@ -339,6 +347,12 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     messages: input.messages,
     messageKeys: input.messageKeys,
     messageGroups: input.messageGroups,
+    messageCollapseTargets: input.messageCollapseTargets,
+    collapsedMessageKeys: input.collapsedMessageKeys,
+    messageJumpRequest: input.messageJumpRequest,
+    isContentActive: input.isContentActive,
+    onToggleMessageCollapse: input.onToggleMessageCollapse,
+    onToggleAllMessageCollapse: input.onToggleAllMessageCollapse,
     expandedArtifacts: input.expandedArtifacts,
     messageListRef: input.messageListRef,
     isRunning: input.isRunning,
@@ -362,6 +376,8 @@ export function buildLiveSessionMessageColumnProps(input: LiveSessionMessageColu
     getChangedFilesEmptyText: input.getChangedFilesEmptyText,
     onCopyMessageText: input.onCopyMessageText,
     onQuoteMessageText: input.onQuoteMessageText,
+    glossaryAnnotationMatcher: input.glossaryAnnotationMatcher,
+    onActivateGlossaryEntry: input.onActivateGlossaryEntry,
   };
 }
 

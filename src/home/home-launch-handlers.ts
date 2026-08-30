@@ -1,6 +1,6 @@
 import type { CompanionSessionSummary } from "../companion-state.js";
 import type { CharacterCatalogEntry } from "../character/character-catalog.js";
-import type { CreateSessionRequest, SessionSummary } from "../session-state.js";
+import type { CreateSessionRequest, HomeSessionSummary, Session, SessionCharacterUsage, SessionSummary } from "../session-state.js";
 import type { MateProfile, MateStorageState } from "../mate/mate-state.js";
 import type { CreateCompanionSessionInput, CompanionSession } from "../companion-state.js";
 import type { ModelCatalogProvider } from "../model-catalog.js";
@@ -26,10 +26,11 @@ type HomeLaunchHandlersContext = {
   enabledLaunchProviders: readonly ModelCatalogProvider[];
   characterEntries: readonly CharacterCatalogEntry[];
   selectedLaunchProviderId: string | null;
-  sessions: readonly SessionSummary[];
+  sessions: readonly HomeSessionSummary[];
+  sessionCharacterUsage: readonly SessionCharacterUsage[];
   openSessionWindowIds: readonly string[];
   openSessionWindowIdsLoadStatus: OpenSessionWindowIdsLoadStatus;
-  sessionSummariesLoadStatus: SessionSummariesLoadStatus;
+  sessionCharacterUsageLoadStatus: SessionSummariesLoadStatus;
   refreshCharacterEntries: () => Promise<readonly CharacterCatalogEntry[]>;
   setCharactersLoaded: (loaded: boolean) => void;
   setLaunchFeedback: (message: string) => void;
@@ -40,9 +41,9 @@ type HomeLaunchHandlersContext = {
   cancelWorkspaceValidation: () => void;
   openSessionWindow: (sessionId: string) => Promise<void>;
   openCompanionReviewWindow: (sessionId: string) => Promise<void>;
-  createSession: (input: CreateSessionRequest) => Promise<SessionSummary | null>;
+  createSession: (input: CreateSessionRequest) => Promise<Session | SessionSummary | null>;
   createCompanionSession: (input: CreateCompanionSessionInput) => Promise<CompanionSession | null>;
-  upsertSessionSummary: (summary: SessionSummary) => void;
+  upsertSessionSummary: (summary: HomeSessionSummary) => void;
   upsertCompanionSessionSummary: (summary: CompanionSessionSummary) => void;
 };
 
@@ -69,9 +70,10 @@ export function buildHomeLaunchHandlers({
   characterEntries,
   selectedLaunchProviderId,
   sessions,
+  sessionCharacterUsage,
   openSessionWindowIds,
   openSessionWindowIdsLoadStatus,
-  sessionSummariesLoadStatus,
+  sessionCharacterUsageLoadStatus,
   refreshCharacterEntries,
   setCharactersLoaded,
   setLaunchFeedback,
@@ -135,9 +137,10 @@ export function buildHomeLaunchHandlers({
       selectedProviderId: selectedLaunchProviderId,
       characterEntries,
       sessions,
+      sessionCharacterUsage,
       openSessionWindowIds,
       openSessionWindowIdsLoadStatus,
-      sessionSummariesLoadStatus,
+      sessionCharacterUsageLoadStatus,
       createSession,
       createCompanionSession,
       openSessionWindow,

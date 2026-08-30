@@ -310,7 +310,15 @@ describe("home-settings-actions", () => {
     assert.match(feedback, /キャンセル/);
   });
 
-  it("CLI shim install/uninstall は diagnostics state と feedback を更新する", async () => {
+  // @test-value v1
+  // kind = "contract"
+  // claim = "pathを含まないMemory diagnosticsでもCLI shim install/uninstallのstateとfeedbackを更新できる"
+  // oracle = { type = "adr", ref = "ADR-023 diagnostics and security" }
+  // failure_mode = "diagnosticsからpathを除去した結果、CLI shim操作の成功状態をUIへ反映できない"
+  // scope = "memory-cli-shim-settings-action"
+  // lifecycle = "permanent"
+  // @end-test-value
+  it("CLI shim install/uninstall はsafe diagnostics state と feedback を更新する", async () => {
     const settings = createDefaultAppSettings();
     let feedback = "";
     let status = "";
@@ -318,8 +326,7 @@ describe("home-settings-actions", () => {
       getApi: () => ({
         installMemoryV6CliShim: async () => ({
           generatedAt: "2026-06-28T00:00:00.000Z",
-          runtime: { status: "running", baseUrl: null, dbPath: null, discoveryFilePath: null, hasApiSecret: false },
-          binding: { activeBindingCount: 0 },
+          runtime: { status: "running", applicationInstanceId: null, runtimeGenerationId: null, buildChannel: null, discoveryPublished: false },
           providers: [],
           skillSync: [],
           cliShim: {
@@ -327,17 +334,13 @@ describe("home-settings-actions", () => {
             commandName: "withmate-memory",
             supported: true,
             status: "installed-path-missing",
-            shimDirectory: "/Users/test/.local/bin",
-            shimPath: "/Users/test/.local/bin/withmate-memory",
             pathContainsShimDirectory: false,
-            message: "withmate-memory shim is installed, but the shim directory is not on PATH.",
           },
           lastErrors: [],
         }),
         uninstallMemoryV6CliShim: async () => ({
           generatedAt: "2026-06-28T00:00:00.000Z",
-          runtime: { status: "running", baseUrl: null, dbPath: null, discoveryFilePath: null, hasApiSecret: false },
-          binding: { activeBindingCount: 0 },
+          runtime: { status: "running", applicationInstanceId: null, runtimeGenerationId: null, buildChannel: null, discoveryPublished: false },
           providers: [],
           skillSync: [],
           cliShim: {
@@ -345,10 +348,7 @@ describe("home-settings-actions", () => {
             commandName: "withmate-memory",
             supported: true,
             status: "not-installed",
-            shimDirectory: "/Users/test/.local/bin",
-            shimPath: "/Users/test/.local/bin/withmate-memory",
             pathContainsShimDirectory: false,
-            message: "withmate-memory shim is not installed, and ~/.local/bin is not on PATH.",
           },
           lastErrors: [],
         }),
