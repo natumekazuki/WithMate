@@ -34,7 +34,9 @@ import { buildNewSession, type Session, type SessionKind } from "../../src/sessi
 import {
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
   WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES,
+  WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES,
   WORK_ITEM_MAX_TEXT_LENGTH,
+  WorkItemEventPayloadTooLargeError,
   type WorkItem,
   type WorkItemResultState,
 } from "../../src/work-item.js";
@@ -48,6 +50,7 @@ const SOURCE_IDENTITY = {
   base: "base-commit",
   head: "head-commit",
 } as const;
+const WIDE_LEGACY_TEXT = "界".repeat(WORK_ITEM_MAX_TEXT_LENGTH);
 
 type Harness = {
   directory: string;
@@ -234,12 +237,12 @@ function tableCount(dbPath: string, table: string, where = "1", ...parameters: u
 describe("Root WorkItem contract", () => {
   // @test-value v1
   // kind = "invariant"
-  // claim = "root Sessionの作成は自己所有Root WorkItemとcreated eventを同じtransactionで一件だけ永続化し、childとcharacter-authoring Sessionを除外する"
+  // claim = "root Sessionの作成は上限内の自己所有Root WorkItemとcreated eventを同じtransactionで一件だけ永続化し、event超過時は両方をrollbackし、childとcharacter-authoring Sessionを除外する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Session 作成との原子性" }
-  // failure_mode = "Sessionだけの部分commit、Root WorkItemの重複、または対象外SessionへのRoot WorkItem作成により再開時のroot作業契約が一意に復元できない"
+  // failure_mode = "Sessionだけの部分commit、過大created eventのSQLite内部error、Root WorkItemの重複、または対象外SessionへのRoot WorkItem作成により再開時のroot作業契約が一意に復元できない"
   // scope = "SessionStorageV6 root Session persistence"
   // lifecycle = "permanent"
-  // distinction = "通常作成、失敗注入によるrollback、再起動後の再読込、対象外Sessionを同じreal SQLiteで観測する"
+  // distinction = "通常作成、event byte超過と失敗注入によるrollback、再起動後の再読込、対象外Sessionを同じreal SQLiteで観測する"
   // @end-test-value
   it("RW-1: root SessionとRoot WorkItemをatomicかつ一対一に作成し再起動後も重複させない", async () => {
     const harness = await createHarness();
@@ -306,6 +309,15 @@ describe("Root WorkItem contract", () => {
       harness.service = makeService(harness);
       assert.equal(getRootWorkItem(harness, "root").id, rootItem.id);
       assert.equal(tableCount(harness.dbPath, "work_items_v6", "kind = 'root' AND root_session_id = 'root'"), 1);
+
+      assert.throws(
+        () => insertRootSession(harness, "oversized-root", "standalone", "界".repeat(200_000)),
+        (error) => error instanceof WorkItemEventPayloadTooLargeError
+          && error.eventType === "created"
+          && error.maxBytes === WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+      );
+      assert.equal(harness.sessionStorage.getSession("oversized-root"), null);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "root_session_id = 'oversized-root'"), 0);
 
       const db = new DatabaseSync(harness.dbPath);
       try {
@@ -509,6 +521,59 @@ describe("Root WorkItem contract", () => {
         `).get() as { response_bytes: number };
         assert.ok(ledger.response_bytes > WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES);
         assert.ok(ledger.response_bytes <= WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES);
+      } finally {
+        db.close();
+      }
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "WorkItemStorageV6はmutationが生成するevent全体を共通byte上限で検証し、超過時はprojection、event、idempotencyを一件もcommitしない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
+  // failure_mode = "各入力fieldは受理可能でも生成後のcreated eventが512 KiBを超え、SQLite CHECK由来の内部errorになるかWorkItemだけ部分保存される"
+  // scope = "WorkItemStorageV6 event admission and transaction"
+  // lifecycle = "permanent"
+  // distinction = "history inputの早期validationではなく、bindingを含むexact created payloadとtransaction rollbackをstorage境界で観測する"
+  // @end-test-value
+  it("RW-2C: exact event payload超過をstorage境界で拒否してcreateをrollbackする", async () => {
+    const harness = await createHarness();
+    try {
+      insertRootSession(harness, "root", "standalone", "Initial goal");
+      const oversizedTargetSessionId = "界".repeat(200_000);
+      assert.throws(
+        () => harness.workStorage.create({
+          id: "oversized-created-event",
+          binding: {
+            kind: "delegated",
+            rootSessionId: "root",
+            creatorSessionId: "root",
+            targetSessionId: oversizedTargetSessionId,
+            parentWorkItemId: null,
+            goal: "goal",
+            scope: "scope",
+            completionCriteria: "done",
+            authority: "repository-local",
+            sourceIdentity: SOURCE_IDENTITY,
+          },
+          principalSessionId: "root",
+          idempotencyKey: "oversized-created-event",
+          requestFingerprint: "oversized-created-event-fingerprint",
+          createdAt: NOW,
+          expiresAt: EXPIRES,
+        }),
+        (error) => error instanceof WorkItemEventPayloadTooLargeError
+          && error.eventType === "created"
+          && error.actualBytes > WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES
+          && error.maxBytes === WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+      );
+      assert.equal(harness.workStorage.get("oversized-created-event"), null);
+      const db = new DatabaseSync(harness.dbPath, { readOnly: true });
+      try {
+        assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM work_item_events_v6 WHERE work_item_id = 'oversized-created-event'`).get() as { count: number }).count, 0);
+        assert.equal((db.prepare(`SELECT COUNT(*) AS count FROM work_item_idempotency_v6 WHERE work_item_id = 'oversized-created-event'`).get() as { count: number }).count, 0);
       } finally {
         db.close();
       }
@@ -1059,12 +1124,12 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "compatibility"
-  // claim = "v1 WorkItem migrationは既存rowとledgerを保持して二回目のrepairで増殖させず、responseを持たないlegacy idempotency replayを後続current projectionではなく適用済みresponse復元不能errorへ収束させる"
+  // claim = "v1 WorkItem migrationは通常event上限を超える旧契約上有効なsnapshotをbaseline専用上限内で保持し、二回目のrepairで増殖させず、responseを持たないlegacy idempotency replayを適用済みresponse復元不能errorへ収束させる"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Migration と repair" }
-  // failure_mode = "table rebuildで既存委任契約またはledgerを失う、存在しない履歴を生成する、repairでrowを重複する、または旧key再送へ後続revisionを元のcanonical responseとして返す"
+  // failure_mode = "通常eventの512 KiB制約で正規な旧snapshotのmigrationが失敗する、既存委任契約またはledgerを失う、repairでrowを重複する、または旧key再送へ後続revisionを元のcanonical responseとして返す"
   // scope = "ensureV6Schema WorkItem v1 migration and backfill"
   // lifecycle = "permanent"
-  // distinction = "v1 table shapeへ実データと関連表を投入してmigrationを二回実行した後、WorkItemだけを後続revisionへ進め、旧fingerprint replayのerror tupleを観測する"
+  // distinction = "v1 table shapeへ通常event上限を超えるsnapshotと関連表を投入し、migrationを二回実行した後に旧fingerprint replayのerror tupleを観測する"
   // @end-test-value
   it("RW-5: v1 delegatedをbaselineから保持してroot backfillを二回実行しても収束する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-root-work-item-migration-"));
@@ -1113,6 +1178,16 @@ describe("Root WorkItem contract", () => {
           childWorkItemId: "legacy-child",
         });
         assert.equal(first.childResultSummary, "legacy child result");
+        assert.deepEqual(first.childBaselineContent, {
+          goal: WIDE_LEGACY_TEXT,
+          workspace: WIDE_LEGACY_TEXT,
+          change: WIDE_LEGACY_TEXT,
+          finding: WIDE_LEGACY_TEXT,
+          unverifiedItem: WIDE_LEGACY_TEXT,
+          remainingWork: WIDE_LEGACY_TEXT,
+        });
+        assert.ok(first.childBaselineBytes > WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES);
+        assert.ok(first.childBaselineBytes <= WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES);
       } finally {
         db.close();
       }
@@ -1153,14 +1228,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "compatibility"
-  // claim = "既存V2 databaseの512 KiB idempotency response CHECKは、rowを保持したままcanonical Work Item用の2 MiB境界へrepairされ、再実行しても収束する"
+  // claim = "既存V2 databaseの旧event CHECKと512 KiB idempotency response CHECKは、rowとsequenceを保持したままbaseline専用上限とcanonical response用2 MiB境界へrepairされ、再実行しても収束する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#改訂と進捗の履歴" }
-  // failure_mode = "fresh databaseだけ上限が広がり、既存利用者ではvalidator受理payloadが古いledger CHECKでrollbackし続けるか、table rebuildでreplay rowを失う"
-  // scope = "ensureV6Schema WorkItem idempotency response limit repair"
+  // failure_mode = "fresh databaseだけ上限が更新され、既存利用者ではmigration baselineまたはcanonical responseが古いCHECKでrollbackし続けるか、table rebuildでeventやreplay rowを失う"
+  // scope = "ensureV6Schema Work Item event and idempotency limit repair"
   // lifecycle = "permanent"
-  // distinction = "現行V2 tableを旧CHECKへ狭めて保存済みledger rowを置き、schema repair二回後のDDLとrow保持を直接観測する"
+  // distinction = "現行V2のeventとidempotency tableを旧CHECKへ狭め、schema repair二回後のDDL、event sequence、ledger row保持を直接観測する"
   // @end-test-value
-  it("RW-5B: 旧idempotency response上限をrow保持付きでrepairする", async () => {
+  it("RW-5B: 旧eventとidempotency上限をrow保持付きでrepairする", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-root-idempotency-repair-"));
     try {
       const { dbPath } = await createOrVerifyV6FreshDatabase(directory);
@@ -1200,6 +1275,29 @@ describe("Root WorkItem contract", () => {
           SELECT * FROM work_item_idempotency_v6_old_cap;
           DROP TABLE work_item_idempotency_v6_old_cap;
         `);
+        const currentEvents = db.prepare(`
+          SELECT sql FROM sqlite_schema
+          WHERE type = 'table' AND name = 'work_item_events_v6'
+        `).get() as { sql: string };
+        const baselineLimitSql = `length(CAST(payload_json AS BLOB)) <= CASE event_type
+        WHEN 'migration_baseline' THEN ${WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES}
+        ELSE ${WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES}
+      END`;
+        const oldEventCapSql = currentEvents.sql.replace(
+          baselineLimitSql,
+          `length(CAST(payload_json AS BLOB)) <= ${WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES}`,
+        );
+        assert.notEqual(oldEventCapSql, currentEvents.sql);
+        db.exec(`
+          ALTER TABLE work_item_events_v6 RENAME TO work_item_events_v6_old_cap;
+          DROP INDEX IF EXISTS idx_v6_work_item_events_item_sequence;
+          ${oldEventCapSql};
+          CREATE INDEX idx_v6_work_item_events_item_sequence
+            ON work_item_events_v6(work_item_id, sequence ASC);
+          INSERT INTO work_item_events_v6
+          SELECT * FROM work_item_events_v6_old_cap;
+          DROP TABLE work_item_events_v6_old_cap;
+        `);
 
         ensureV6Schema(db);
         ensureV6Schema(db);
@@ -1210,6 +1308,21 @@ describe("Root WorkItem contract", () => {
         assert.match(
           repaired.sql,
           new RegExp(`length\\(CAST\\(response_json AS BLOB\\)\\) <= ${WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES}`),
+        );
+        const repairedEvents = db.prepare(`
+          SELECT sql FROM sqlite_schema
+          WHERE type = 'table' AND name = 'work_item_events_v6'
+        `).get() as { sql: string };
+        assert.match(
+          repairedEvents.sql,
+          new RegExp(`WHEN 'migration_baseline' THEN ${WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES}`),
+        );
+        const repairedEventRows = db.prepare(
+          "SELECT sequence, revision, event_type AS eventType FROM work_item_events_v6 ORDER BY sequence",
+        ).all() as Array<{ sequence: number; revision: number; eventType: string }>;
+        assert.deepEqual(
+          repairedEventRows.map((row) => ({ ...row })),
+          [{ sequence: 1, revision: 1, eventType: "created" }],
         );
         const preserved = db.prepare(`
           SELECT COUNT(*) AS count
@@ -1321,6 +1434,35 @@ function prepareV1WorkItemDatabase(dbPath: string): void {
       NOW,
     );
     db.prepare(`
+      UPDATE work_items_v6
+      SET goal = ?, scope = ?, completion_criteria = ?, authority = ?,
+        source_identity_json = ?, result_json = ?
+      WHERE id = 'legacy-child'
+    `).run(
+      WIDE_LEGACY_TEXT,
+      WIDE_LEGACY_TEXT,
+      WIDE_LEGACY_TEXT,
+      WIDE_LEGACY_TEXT,
+      JSON.stringify({
+        workspace: WIDE_LEGACY_TEXT,
+        repository: WIDE_LEGACY_TEXT,
+        branch: WIDE_LEGACY_TEXT,
+        base: WIDE_LEGACY_TEXT,
+        head: WIDE_LEGACY_TEXT,
+      }),
+      JSON.stringify({
+        outcome: "completed",
+        summary: "legacy child result",
+        changes: [WIDE_LEGACY_TEXT],
+        verificationResults: [],
+        findings: [WIDE_LEGACY_TEXT],
+        unverifiedItems: [WIDE_LEGACY_TEXT],
+        remainingWork: [WIDE_LEGACY_TEXT],
+        reportingSessionId: "legacy-executor",
+        reportedAt: NOW,
+      }),
+    );
+    db.prepare(`
       INSERT INTO session_executions_v6 (
         id, session_id, operation, state, request_json, result_json,
         error_code, reason, created_at, admitted_at, completed_at, updated_at
@@ -1396,6 +1538,26 @@ function migrationProjection(db: DatabaseSync) {
     SELECT json_extract(result_json, '$.summary') AS summary
     FROM work_items_v6 WHERE id = 'legacy-child'
   `).get() as { summary: string };
+  const childBaseline = db.prepare(`
+    SELECT
+      length(CAST(payload_json AS BLOB)) AS payloadBytes,
+      json_extract(payload_json, '$.contract.goal') AS goal,
+      json_extract(payload_json, '$.sourceIdentity.workspace') AS workspace,
+      json_extract(payload_json, '$.result.changes[0]') AS change,
+      json_extract(payload_json, '$.result.findings[0]') AS finding,
+      json_extract(payload_json, '$.result.unverifiedItems[0]') AS unverifiedItem,
+      json_extract(payload_json, '$.result.remainingWork[0]') AS remainingWork
+    FROM work_item_events_v6
+    WHERE work_item_id = 'legacy-child' AND event_type = 'migration_baseline'
+  `).get() as {
+    payloadBytes: number;
+    goal: string;
+    workspace: string;
+    change: string;
+    finding: string;
+    unverifiedItem: string;
+    remainingWork: string;
+  };
   const parentBaseline = db.prepare(`
     SELECT
       json_extract(payload_json, '$.kind') AS kind,
@@ -1419,6 +1581,15 @@ function migrationProjection(db: DatabaseSync) {
     idempotency: { ...idempotency },
     aggregationIdempotency: { ...aggregationIdempotency },
     childResultSummary: result.summary,
+    childBaselineContent: {
+      goal: childBaseline.goal,
+      workspace: childBaseline.workspace,
+      change: childBaseline.change,
+      finding: childBaseline.finding,
+      unverifiedItem: childBaseline.unverifiedItem,
+      remainingWork: childBaseline.remainingWork,
+    },
+    childBaselineBytes: childBaseline.payloadBytes,
   };
 }
 

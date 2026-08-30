@@ -4,6 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
   WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES,
+  WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES,
 } from "../src/work-item.js";
 
 export const APP_DATABASE_V6_FILENAME = "withmate-v6.db";
@@ -880,6 +881,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && workItemsSql.includes("state IN ('completed', 'partially_completed', 'failed')")
     && workItemsSql.includes("json_extract(result_json, '$.outcome') IS state")
     && workItemEventsSql.includes("'migration_baseline'")
+    && workItemEventsSql.includes(`WHEN 'migration_baseline' THEN ${WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES}`)
     && workItemEventsSql.includes("UNIQUE (work_item_id, revision)")
     && rootWorkItemUniqueIndexSql.includes("WHERE kind = 'root'")
     && workItemIdempotencySql.includes("'work.revise'")
@@ -1620,7 +1622,10 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
     payload_json TEXT NOT NULL CHECK (
       json_valid(payload_json)
       AND json_type(payload_json) = 'object'
-      AND length(CAST(payload_json AS BLOB)) <= ${WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES}
+      AND length(CAST(payload_json AS BLOB)) <= CASE event_type
+        WHEN 'migration_baseline' THEN ${WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES}
+        ELSE ${WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES}
+      END
     ),
     created_at TEXT NOT NULL,
     UNIQUE (work_item_id, revision),
@@ -3148,6 +3153,20 @@ function rebuildWorkItemIdempotencyV2(db: DatabaseSync): void {
   `);
 }
 
+function rebuildWorkItemEventsPayloadLimit(db: DatabaseSync): void {
+  db.exec(`
+    ALTER TABLE work_item_events_v6 RENAME TO work_item_events_v6_legacy;
+    DROP INDEX IF EXISTS idx_v6_work_item_events_item_sequence;
+    ${CREATE_V6_WORK_ITEM_TABLES_SQL}
+    INSERT INTO work_item_events_v6 (
+      sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+    )
+    SELECT sequence, work_item_id, revision, event_type, actor_session_id, payload_json, created_at
+    FROM work_item_events_v6_legacy;
+    DROP TABLE work_item_events_v6_legacy;
+  `);
+}
+
 function upgradeWorkItemContractV2(db: DatabaseSync): void {
   if (!tableExists(db, "work_items_v6")) return;
   const workItemColumns = tableColumnNames(db, "work_items_v6");
@@ -3157,6 +3176,14 @@ function upgradeWorkItemContractV2(db: DatabaseSync): void {
   }
   if (!tableSql(db, "work_items_v6").includes("contract_revision = 2")) {
     throw new Error("Unsupported Work Item contract schema.");
+  }
+  if (
+    tableExists(db, "work_item_events_v6")
+    && !tableSql(db, "work_item_events_v6").includes(
+      `WHEN 'migration_baseline' THEN ${WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES}`,
+    )
+  ) {
+    rebuildWorkItemEventsPayloadLimit(db);
   }
   if (tableExists(db, "work_item_idempotency_v6")) {
     const idempotencySql = tableSql(db, "work_item_idempotency_v6");

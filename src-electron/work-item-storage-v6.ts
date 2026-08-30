@@ -6,6 +6,7 @@ import {
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_MAX_TEXT_LENGTH,
   assertValidWorkItemBinding,
+  assertWorkItemEventPayloadWithinLimit,
   canTransitionWorkItem,
   isWorkItemActive,
   isWorkItemResultState,
@@ -878,6 +879,8 @@ export class WorkItemStorageV6 {
     payload: WorkItemEvent["payload"];
     createdAt: string;
   }): void {
+    assertWorkItemEventPayloadWithinLimit(input.type, input.payload);
+    const payloadJson = serializeJson(input.payload, "Work Item event payload");
     this.db.prepare(`
       INSERT INTO work_item_events_v6 (
         work_item_id, revision, event_type, actor_session_id, payload_json, created_at
@@ -887,7 +890,7 @@ export class WorkItemStorageV6 {
       input.revision,
       input.type,
       input.actorSessionId,
-      serializeJson(input.payload, "Work Item event payload"),
+      payloadJson,
       input.createdAt,
     );
   }

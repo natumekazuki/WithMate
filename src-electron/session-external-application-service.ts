@@ -90,9 +90,11 @@ import {
   WORK_ITEM_AGGREGATION_MAX_LIST_LIMIT,
   WORK_ITEM_DEFAULT_LIST_LIMIT,
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+  WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES,
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_STATES,
+  WorkItemEventPayloadTooLargeError,
   type WorkItemEvent,
 } from "../src/work-item.js";
 import type { SessionExecution, TurnInitiator } from "../src/session-execution.js";
@@ -987,6 +989,7 @@ function projectRuntimeCatalog(
       maxListLimit: WORK_ITEM_MAX_LIST_LIMIT,
       maxListResponseBytes: SESSION_RUNTIME_MAX_RESPONSE_BYTES,
       maxEventPayloadBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+      maxMigrationBaselinePayloadBytes: WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES,
       maxResultBytes: WORK_ITEM_MAX_RESULT_BYTES,
       aggregation: {
         contractRevision: WORK_ITEM_AGGREGATION_CONTRACT_REVISION,
@@ -1395,6 +1398,13 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
       code: error.code,
       message: error.message,
       details: { actualBytes: error.actualBytes, maxBytes: WORK_ITEM_MAX_RESULT_BYTES },
+    });
+  }
+  if (error instanceof WorkItemEventPayloadTooLargeError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: error.message,
+      details: { eventType: error.eventType, actualBytes: error.actualBytes, maxBytes: error.maxBytes },
     });
   }
   if (error instanceof SessionExecutionQueueFullError) {

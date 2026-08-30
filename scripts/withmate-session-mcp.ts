@@ -17,6 +17,7 @@ import {
 import {
   WORK_ITEM_DEFAULT_LIST_LIMIT,
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+  WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES,
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_MAX_RESULT_ITEMS,
@@ -652,27 +653,30 @@ function validateWorkItemKind<T extends z.ZodObject>(schema: T) {
     if (v.kind === "delegated" && hasProgress) context.addIssue({ code: "custom", path: ["kind"], message: "Delegated Work Items cannot include root progress fields." });
   });
 }
-const activeWorkItemSchema = z.object({
+const activeWorkItemSchema = validateWorkItemKind(z.object({
   ...workItemIdentityShape,
   state: z.enum(["pending", "in_progress", "waiting"]),
   result: z.null(),
-}).strict();
-const canceledWorkItemSchema = z.object({
+}).strict());
+const canceledWorkItemSchema = validateWorkItemKind(z.object({
   ...workItemIdentityShape,
   state: z.literal("canceled"),
   result: z.null(),
-}).strict();
+}).strict());
+const completedWorkItemSchema = validateWorkItemKind(z.object({ ...workItemIdentityShape, state: z.literal("completed"), result: workItemResultSchema.extend({ outcome: z.literal("completed") }).strict() }).strict());
+const partiallyCompletedWorkItemSchema = validateWorkItemKind(z.object({ ...workItemIdentityShape, state: z.literal("partially_completed"), result: workItemResultSchema.extend({ outcome: z.literal("partially_completed") }).strict() }).strict());
+const failedWorkItemSchema = validateWorkItemKind(z.object({ ...workItemIdentityShape, state: z.literal("failed"), result: workItemResultSchema.extend({ outcome: z.literal("failed") }).strict() }).strict());
 const resultWorkItemSchema = z.union([
-  z.object({ ...workItemIdentityShape, state: z.literal("completed"), result: workItemResultSchema.extend({ outcome: z.literal("completed") }).strict() }).strict(),
-  z.object({ ...workItemIdentityShape, state: z.literal("partially_completed"), result: workItemResultSchema.extend({ outcome: z.literal("partially_completed") }).strict() }).strict(),
-  z.object({ ...workItemIdentityShape, state: z.literal("failed"), result: workItemResultSchema.extend({ outcome: z.literal("failed") }).strict() }).strict(),
+  completedWorkItemSchema,
+  partiallyCompletedWorkItemSchema,
+  failedWorkItemSchema,
 ]);
 const workItemSchema = z.union([
-  validateWorkItemKind(activeWorkItemSchema),
-  validateWorkItemKind(canceledWorkItemSchema),
-  validateWorkItemKind(resultWorkItemSchema.options[0]),
-  validateWorkItemKind(resultWorkItemSchema.options[1]),
-  validateWorkItemKind(resultWorkItemSchema.options[2]),
+  activeWorkItemSchema,
+  canceledWorkItemSchema,
+  completedWorkItemSchema,
+  partiallyCompletedWorkItemSchema,
+  failedWorkItemSchema,
 ]);
 const workItemAggregationDecisionSchema = z.object({
   parentWorkItemId: z.string(), childWorkItemId: z.string(), revision: z.number().int().positive(),
@@ -736,6 +740,7 @@ const resultSchemas: Record<SessionRuntimeOperation, z.ZodType> = {
       maxListLimit: z.literal(WORK_ITEM_MAX_LIST_LIMIT),
       maxListResponseBytes: z.literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
       maxEventPayloadBytes: z.literal(WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES),
+      maxMigrationBaselinePayloadBytes: z.literal(WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES),
       maxResultBytes: z.literal(WORK_ITEM_MAX_RESULT_BYTES),
       aggregation: z.object({
         contractRevision: z.literal(1),

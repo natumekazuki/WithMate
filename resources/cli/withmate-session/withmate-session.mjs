@@ -218,6 +218,7 @@ function invalid$1(field, message) {
 //#region src/work-item.ts
 var WORK_ITEM_MAX_RESULT_BYTES = 256 * 1024;
 var WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES = 512 * 1024;
+var WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 var WORK_ITEM_MAX_TEXT_LENGTH = 16e3;
 var WORK_ITEM_AGGREGATION_DECISIONS = [
 	"accepted",
@@ -233,6 +234,11 @@ var WORK_ITEM_STATES = [
 	"failed",
 	"canceled"
 ];
+function workItemEventPayloadByteLength(payload) {
+	const serialized = JSON.stringify(payload);
+	if (serialized === void 0) throw new TypeError("Work Item event payload must be JSON serializable.");
+	return new TextEncoder().encode(serialized).byteLength;
+}
 var SESSION_TRANSCRIPT_INLINE_HARD_MAX_BYTES = 8 * 1024 * 1024;
 var SESSION_TRANSCRIPT_FOLDER_HARD_MAX_BYTES = 1024 * 1024 * 1024;
 //#endregion
@@ -654,17 +660,20 @@ function parseWorkItemHistoryAppendInput(value) {
 		expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
 		idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey")
 	};
-	const actualBytes = Buffer.byteLength(JSON.stringify({
+	requireWorkItemEventPayloadWithinLimit({
 		progressSummary: input.summary,
 		blockers: input.blockers,
 		nextAction: input.nextAction
-	}), "utf8");
+	});
+	return input;
+}
+function requireWorkItemEventPayloadWithinLimit(payload) {
+	const actualBytes = workItemEventPayloadByteLength(payload);
 	if (actualBytes > 524288) throw new SessionRuntimeValidationError("Work Item history payload exceeds the byte limit.", {
 		field: "input",
 		actualBytes,
 		maxBytes: WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES
 	}, "CONTENT_TOO_LARGE");
-	return input;
 }
 function parseWorkItemHistoryListInput(value) {
 	const record = requireObject(value, "input");
@@ -22382,7 +22391,7 @@ function validateWorkItemKind(schema) {
 		});
 	});
 }
-var activeWorkItemSchema = object({
+var activeWorkItemSchema = validateWorkItemKind(object({
 	...workItemIdentityShape,
 	state: _enum([
 		"pending",
@@ -22390,35 +22399,38 @@ var activeWorkItemSchema = object({
 		"waiting"
 	]),
 	result: _null()
-}).strict();
-var canceledWorkItemSchema = object({
+}).strict());
+var canceledWorkItemSchema = validateWorkItemKind(object({
 	...workItemIdentityShape,
 	state: literal("canceled"),
 	result: _null()
-}).strict();
+}).strict());
+var completedWorkItemSchema = validateWorkItemKind(object({
+	...workItemIdentityShape,
+	state: literal("completed"),
+	result: workItemResultSchema.extend({ outcome: literal("completed") }).strict()
+}).strict());
+var partiallyCompletedWorkItemSchema = validateWorkItemKind(object({
+	...workItemIdentityShape,
+	state: literal("partially_completed"),
+	result: workItemResultSchema.extend({ outcome: literal("partially_completed") }).strict()
+}).strict());
+var failedWorkItemSchema = validateWorkItemKind(object({
+	...workItemIdentityShape,
+	state: literal("failed"),
+	result: workItemResultSchema.extend({ outcome: literal("failed") }).strict()
+}).strict());
 var resultWorkItemSchema = union([
-	object({
-		...workItemIdentityShape,
-		state: literal("completed"),
-		result: workItemResultSchema.extend({ outcome: literal("completed") }).strict()
-	}).strict(),
-	object({
-		...workItemIdentityShape,
-		state: literal("partially_completed"),
-		result: workItemResultSchema.extend({ outcome: literal("partially_completed") }).strict()
-	}).strict(),
-	object({
-		...workItemIdentityShape,
-		state: literal("failed"),
-		result: workItemResultSchema.extend({ outcome: literal("failed") }).strict()
-	}).strict()
+	completedWorkItemSchema,
+	partiallyCompletedWorkItemSchema,
+	failedWorkItemSchema
 ]);
 var workItemSchema = union([
-	validateWorkItemKind(activeWorkItemSchema),
-	validateWorkItemKind(canceledWorkItemSchema),
-	validateWorkItemKind(resultWorkItemSchema.options[0]),
-	validateWorkItemKind(resultWorkItemSchema.options[1]),
-	validateWorkItemKind(resultWorkItemSchema.options[2])
+	activeWorkItemSchema,
+	canceledWorkItemSchema,
+	completedWorkItemSchema,
+	partiallyCompletedWorkItemSchema,
+	failedWorkItemSchema
 ]);
 var workItemAggregationDecisionSchema = object({
 	parentWorkItemId: string(),
@@ -22496,6 +22508,7 @@ var resultSchemas = {
 			maxListLimit: literal(200),
 			maxListResponseBytes: literal(SESSION_RUNTIME_MAX_RESPONSE_BYTES),
 			maxEventPayloadBytes: literal(WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES),
+			maxMigrationBaselinePayloadBytes: literal(WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES),
 			maxResultBytes: literal(WORK_ITEM_MAX_RESULT_BYTES),
 			aggregation: object({
 				contractRevision: literal(1),

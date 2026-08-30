@@ -101,7 +101,7 @@ Root WorkItem の現在値は一覧や再開時の高速な参照に使い、eve
 
 全 mutation は同じ単調増加 resource revision 上で直列化する。current projection、event、idempotency response を同じ transaction で保存し、expected revision と idempotency key を要求する。migration前のledgerにresponseが存在しない再送は、後続のcurrent projectionをcanonical responseとして返さず、versioned `IDEMPOTENCY_RESPONSE_UNAVAILABLE` errorを`effect: applied`で返す。
 
-履歴取得は cursor と上限件数を持つ。payload size、blocker 件数、文字数を既存の runtime limit と同じ境界で制限し、要求件数が response 上限へ収まらない場合は収まる件数と次 cursor を返す。trusted GUI は再開に必要な最新ページを取得する。
+履歴取得は cursor と上限件数を持つ。通常event payloadはUTF-8 JSONで512 KiB以下とし、exact payloadが確定するmutation境界とDB CHECKで検証する。要求件数がresponse上限へ収まらない場合は収まる件数と次cursorを返す。trusted GUIは再開に必要な最新ページを取得する。
 
 ## 状態遷移
 
@@ -143,7 +143,7 @@ WorkItem contract revision を `2` へ上げ、既存 row はすべて `delegate
 
 既存の `standalone` と `overall-coordinator` root Session には Root WorkItem を一つ backfill する。backfill は idempotent とし、既に正しい Root WorkItem がある場合は追加しない。不正な重複または binding 不整合を検出した場合は、任意の一件へ自動統合せず migration error とする。
 
-既存 WorkItem に存在しない過去の event は生成しない。移行時点の現在値を `migration_baseline` event として一件記録し、履歴が移行後から完全であることを machine-readable に示す。
+既存 WorkItem に存在しない過去の event は生成しない。移行時点の現在値を `migration_baseline` event として一件記録し、履歴が移行後から完全であることを machine-readable に示す。V1 public contractから生成できるcurrent projectionを欠落なく保持するため、baselineだけは2 MiB以下を許可する。通常eventの512 KiB上限は緩めない。
 
 既存の parent-null delegated WorkItem は structural identity を変更せず、Root WorkItem と同じ rootSessionId 配下の legacy branch として保持する。自動 reparent は行わない。
 
@@ -265,7 +265,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 ### Public boundary
 
 - raw HTTP、CLI、MCP で新操作の成功と同じ error semantics を確認する。
-- strict validator が unknown field、不正な kind 組み合わせ、過大 payload を拒否する。
+- strict validator が unknown field、不正な kind 組み合わせ、過大 payload を拒否する。MCPのoperation固有terminal schemaも共通のkind不変条件を適用する。
 - runtime catalog が contract revision と mutation 一覧を正しく公開する。
 - history list の cursor、limit、visibility が root を越えて漏れない。
 

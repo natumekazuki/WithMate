@@ -3,6 +3,7 @@ export const WORK_ITEM_DEFAULT_LIST_LIMIT = 50;
 export const WORK_ITEM_MAX_LIST_LIMIT = 200;
 export const WORK_ITEM_MAX_RESULT_BYTES = 256 * 1024;
 export const WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES = 512 * 1024;
+export const WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 export const WORK_ITEM_MAX_IDEMPOTENCY_RESPONSE_BYTES = 2 * 1024 * 1024;
 export const WORK_ITEM_MAX_TEXT_LENGTH = 16_000;
 export const WORK_ITEM_MAX_RESULT_ITEMS = 100;
@@ -180,6 +181,42 @@ export type WorkItemEvent =
   | WorkItemEventBase<"handoff", WorkItemProgressEventPayload>
   | WorkItemEventBase<"state_transitioned", WorkItemStateTransitionedEventPayload>
   | WorkItemEventBase<"result_reported", WorkItemResultReportedEventPayload>;
+
+export function workItemEventPayloadByteLength(payload: WorkItemEvent["payload"]): number {
+  const serialized = JSON.stringify(payload);
+  if (serialized === undefined) throw new TypeError("Work Item event payload must be JSON serializable.");
+  return new TextEncoder().encode(serialized).byteLength;
+}
+
+export function workItemEventPayloadLimit(eventType: WorkItemEventType): number {
+  return eventType === "migration_baseline"
+    ? WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES
+    : WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES;
+}
+
+export class WorkItemEventPayloadTooLargeError extends Error {
+  readonly code = "CONTENT_TOO_LARGE";
+
+  constructor(
+    readonly eventType: WorkItemEventType,
+    readonly actualBytes: number,
+    readonly maxBytes: number,
+  ) {
+    super("Work Item event payload exceeds the byte limit.");
+    this.name = "WorkItemEventPayloadTooLargeError";
+  }
+}
+
+export function assertWorkItemEventPayloadWithinLimit(
+  eventType: WorkItemEventType,
+  payload: WorkItemEvent["payload"],
+): void {
+  const actualBytes = workItemEventPayloadByteLength(payload);
+  const maxBytes = workItemEventPayloadLimit(eventType);
+  if (actualBytes > maxBytes) {
+    throw new WorkItemEventPayloadTooLargeError(eventType, actualBytes, maxBytes);
+  }
+}
 
 export type WorkItemAggregationDecision = Readonly<{
   parentWorkItemId: string;

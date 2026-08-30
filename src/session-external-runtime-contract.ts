@@ -45,10 +45,12 @@ import {
   WORK_ITEM_DEFAULT_LIST_LIMIT,
   WORK_ITEM_MAX_LIST_LIMIT,
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
+  WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES,
   WORK_ITEM_MAX_RESULT_BYTES,
   WORK_ITEM_MAX_RESULT_ITEMS,
   WORK_ITEM_MAX_TEXT_LENGTH,
   WORK_ITEM_STATES,
+  workItemEventPayloadByteLength,
   type WorkItem,
   type WorkItemEvent,
   type WorkItemAggregationDecision,
@@ -165,6 +167,7 @@ export type SessionRuntimeCatalogResult = {
     };
     maxListResponseBytes: typeof SESSION_RUNTIME_MAX_RESPONSE_BYTES;
     maxEventPayloadBytes: typeof WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES;
+    maxMigrationBaselinePayloadBytes: typeof WORK_ITEM_MAX_MIGRATION_BASELINE_PAYLOAD_BYTES;
     maxResultBytes: typeof WORK_ITEM_MAX_RESULT_BYTES;
   };
   providers: Array<{
@@ -1024,11 +1027,18 @@ function parseWorkItemHistoryAppendInput(value: unknown): SessionRuntimeWorkItem
     expectedRevision: requireInteger(record.expectedRevision, "expectedRevision", 1, Number.MAX_SAFE_INTEGER),
     idempotencyKey: requireNonEmptyString(record.idempotencyKey, "idempotencyKey"),
   };
-  const actualBytes = Buffer.byteLength(JSON.stringify({
+  requireWorkItemEventPayloadWithinLimit({
     progressSummary: input.summary,
     blockers: input.blockers,
     nextAction: input.nextAction,
-  }), "utf8");
+  });
+  return input;
+}
+
+function requireWorkItemEventPayloadWithinLimit(
+  payload: WorkItemEvent["payload"],
+): void {
+  const actualBytes = workItemEventPayloadByteLength(payload);
   if (actualBytes > WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES) {
     throw new SessionRuntimeValidationError(
       "Work Item history payload exceeds the byte limit.",
@@ -1036,7 +1046,6 @@ function parseWorkItemHistoryAppendInput(value: unknown): SessionRuntimeWorkItem
       "CONTENT_TOO_LARGE",
     );
   }
-  return input;
 }
 
 function parseWorkItemHistoryListInput(value: unknown): SessionRuntimeWorkItemHistoryListInput {

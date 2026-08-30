@@ -321,6 +321,70 @@ describe("WithMate Session MCP contract", () => {
     });
   });
 
+  // @test-value v1
+  // kind = "regression"
+  // claim = "MCPのwork.resultとwork.cancelはoperation固有のterminal shapeに加えて、delegatedの非自己対象とroot専用progress fieldというkind不変条件を検証する"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#WorkItem の種別" }
+  // failure_mode = "resultまたはcancelだけ未refine schemaを通り、自己対象delegatedやprogress付きdelegatedがMCPの公開出力として受理される"
+  // scope = "withmate-session-mcp Work Item result schemas"
+  // lifecycle = "permanent"
+  // distinction = "一般workItemSchemaを使う操作ではなく、operation固有schemaを直接参照するresultとcancelの両方を反証する"
+  // @end-test-value
+  it("WORK-ADAPTER-02: resultとcancelの不正なkind tupleをMCP出力境界で拒否する", async () => {
+    const terminalResult = {
+      outcome: "completed" as const,
+      summary: "done",
+      changes: [],
+      verificationResults: [],
+      findings: [],
+      unverifiedItems: [],
+      remainingWork: [],
+      reportingSessionId: "session-2",
+      reportedAt: "2026-08-24T00:01:00.000Z",
+    };
+    await withClient(createWithMateSessionMcpServer({
+      discover: async () => connection,
+      call: async (_connection, envelope) => {
+        const result = envelope.operation === "work.result"
+          ? {
+              ...publicWorkItem,
+              state: "completed" as const,
+              revision: 2,
+              result: terminalResult,
+              progressSummary: "must not exist",
+              blockers: [],
+              nextAction: "must not exist",
+            }
+          : {
+              ...publicWorkItem,
+              creatorSessionId: "session-2",
+              targetSessionId: "session-2",
+              state: "canceled" as const,
+              revision: 2,
+              result: null,
+            };
+        return { ok: true, status: 200, value: createSessionRuntimeResult(envelope.operation, result as never) };
+      },
+    }), async (client) => {
+      const invalidResult = await client.callTool({
+        name: "work.result",
+        arguments: {
+          workItemId: "work-1",
+          state: "completed",
+          expectedRevision: 1,
+          result: { summary: "done", changes: [], verificationResults: [], findings: [], unverifiedItems: [], remainingWork: [] },
+          idempotencyKey: "bad-result-kind",
+        },
+      });
+      const invalidCancel = await client.callTool({
+        name: "work.cancel",
+        arguments: { workItemId: "work-1", expectedRevision: 1, idempotencyKey: "bad-cancel-kind" },
+      });
+      assert.equal(invalidResult.isError, true);
+      assert.equal(invalidCancel.isError, true);
+    });
+  });
+
   it("AGG-ADAPTER-01: Work Item aggregation getをshared operationへdispatchする", async () => {
     const requests: any[] = [];
     await withClient(createWithMateSessionMcpServer({
@@ -515,6 +579,7 @@ describe("WithMate Session MCP contract", () => {
               maxListLimit: 200,
               maxListResponseBytes: 8388608,
               maxEventPayloadBytes: 524288,
+              maxMigrationBaselinePayloadBytes: 2097152,
               maxResultBytes: 262144,
               aggregation: {
                 contractRevision: 1,
@@ -569,6 +634,7 @@ describe("WithMate Session MCP contract", () => {
           maxListLimit: 200,
           maxListResponseBytes: 8388608,
           maxEventPayloadBytes: 524288,
+          maxMigrationBaselinePayloadBytes: 2097152,
           maxResultBytes: 262144,
           aggregation: {
             contractRevision: 1,

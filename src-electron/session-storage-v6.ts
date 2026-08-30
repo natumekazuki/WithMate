@@ -26,6 +26,10 @@ import {
   type SessionRoleBinding,
 } from "../src/session-role-binding.js";
 import type { SessionTurnAuthoritySession } from "../src/session-turn-communication-authority.js";
+import {
+  assertWorkItemEventPayloadWithinLimit,
+  type WorkItemCreatedEventPayload,
+} from "../src/work-item.js";
 import { normalizeProviderId } from "../src/model-catalog.js";
 import {
   parseCharacterRuntimeSnapshotJson,
@@ -1482,7 +1486,7 @@ export class SessionStorageV6 {
       base: null,
       head: null,
     };
-    const payload = {
+    const payload: WorkItemCreatedEventPayload = {
       kind: "root",
       rootSessionId: session.id,
       creatorSessionId: session.id,
@@ -1503,6 +1507,7 @@ export class SessionStorageV6 {
       state: "pending",
       result: null,
     };
+    assertWorkItemEventPayloadWithinLimit("created", payload);
     this.db.prepare(`
       INSERT INTO work_items_v6 (
         id, kind, contract_revision, root_session_id, creator_session_id,

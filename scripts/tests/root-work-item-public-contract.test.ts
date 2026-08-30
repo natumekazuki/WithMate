@@ -25,6 +25,7 @@ import {
   WORK_ITEM_MAX_EVENT_PAYLOAD_BYTES,
   WORK_ITEM_MAX_RESULT_ITEMS,
   WORK_ITEM_MAX_TEXT_LENGTH,
+  WorkItemEventPayloadTooLargeError,
   type WorkItemEvent,
 } from "../../src/work-item.js";
 import { AgentRuntimeBindingRegistry, type ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
@@ -288,12 +289,12 @@ describe("Root WorkItem public contract", () => {
 
 // @test-value v1
 // kind = "contract"
-// claim = "application dispatchはRoot owner bindingを各操作へ渡し、成功mutationだけinvalidateし、history cursor、revision conflict、legacy replay復元不能のapplied effectをstableなerrorへ投影する"
+// claim = "application dispatchはRoot owner bindingを各操作へ渡し、成功mutationだけinvalidateし、history cursor、revision conflict、event payload超過、legacy replay復元不能をstableなerrorへ投影する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-// failure_mode = "外部mutation後もGUIが古いprojectionを保持する、拒否mutationでinvalidateする、cursor scopeを破る、またはstale revisionと適用済みlegacy replayをgeneric/未適用errorへ崩す"
+// failure_mode = "外部mutation後もGUIが古いprojectionを保持する、拒否mutationでinvalidateする、cursor scopeを破る、またはstale revision、payload超過、適用済みlegacy replayをgeneric errorへ崩す"
 // scope = "session-external-application-service"
 // lifecycle = "permanent"
-// distinction = "parserとtransportでは見えないowner binding、成功二件と二種の失敗のinvalidation差、cursor scope、domain errorのeffect/detailsをapplication境界で観測する"
+// distinction = "parserとtransportでは見えないowner binding、成功二件と三種の失敗のinvalidation差、cursor scope、domain errorのeffect/detailsをapplication境界で観測する"
 // @end-test-value
 test("application dispatchはRoot owner method・history cursor scope・revision errorを保つ", async () => {
   const calls: Array<{ method: string; input: unknown; actorSessionId: string }> = [];
@@ -318,6 +319,9 @@ test("application dispatchはRoot owner method・history cursor scope・revision
             input.idempotencyKey,
             input.workItemId,
           );
+        }
+        if (input.expectedRevision === 97) {
+          throw new WorkItemEventPayloadTooLargeError("contract_revised", 524_289, 524_288);
         }
         return rootWorkItem;
       },
@@ -366,6 +370,17 @@ test("application dispatchはRoot owner method・history cursor scope・revision
         operation: "work.revise",
         workItemId: rootWorkItem.id,
       },
+    },
+  });
+  const oversized = await service.execute("work.revise", { ...reviseInput, expectedRevision: 97 }, owner);
+  assert.deepEqual(oversized, {
+    schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
+    error: {
+      code: "CONTENT_TOO_LARGE",
+      message: "Work Item event payload exceeds the byte limit.",
+      retryable: false,
+      effect: "not_applied",
+      details: { eventType: "contract_revised", actualBytes: 524_289, maxBytes: 524_288 },
     },
   });
   assert.deepEqual(invalidatedSessionIds, ["root-a", "root-a"]);
