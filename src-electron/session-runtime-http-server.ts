@@ -454,6 +454,7 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
     case "WORK_ITEM_STATE_CONFLICT": return 409;
     case "WORK_ITEM_PARENT_INVALID": return 409;
     case "WORK_ITEM_AGGREGATION_REVISION_REQUIRED": return 409;
+    case "WORK_ITEM_AGGREGATION_PARENT_INVALID": return 409;
     case "WORK_ITEM_AGGREGATION_REVISION_CONFLICT": return 409;
     case "WORK_ITEM_AGGREGATION_CHILD_INVALID": return 409;
     case "WORK_ITEM_AGGREGATION_CHILD_ACTIVE": return 409;

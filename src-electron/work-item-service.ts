@@ -22,6 +22,7 @@ import {
 } from "../src/work-item.js";
 import type { ResolvedAgentRuntimeBinding } from "./agent-runtime-binding.js";
 import {
+  WorkItemAggregationConflictError,
   WorkItemNotFoundError,
   type WorkItemStorageV6,
 } from "./work-item-storage-v6.js";
@@ -218,6 +219,7 @@ export class WorkItemService {
       const parent = this.deps.storage.get(input.parentWorkItemId);
       if (
         !parent
+        || parent.kind !== "delegated"
         || parent.rootSessionId !== actorBinding.rootSessionId
         || parent.targetSessionId !== actor.sessionId
         || !isWorkItemActive(parent.state)
@@ -450,12 +452,12 @@ export class WorkItemService {
   }
 
   getAggregation(input: WorkItemAggregationGetInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationSummary {
-    this.requireVisibleItem(input.parentWorkItemId, binding, true);
+    this.requireAggregationParent(input.parentWorkItemId, binding, true);
     return this.deps.storage.getAggregationSummary(input.parentWorkItemId);
   }
 
   listAggregation(input: WorkItemAggregationListInput, binding: ResolvedAgentRuntimeBinding): WorkItemAggregationListItem[] {
-    this.requireVisibleItem(input.parentWorkItemId, binding, true);
+    this.requireAggregationParent(input.parentWorkItemId, binding, true);
     return this.deps.storage.listAggregationItems(input);
   }
 
@@ -580,7 +582,7 @@ export class WorkItemService {
   }
 
   private requireAggregationActor(parentWorkItemId: string, binding: ResolvedAgentRuntimeBinding): WorkItem {
-    const parent = this.requireVisibleItem(parentWorkItemId, binding, false);
+    const parent = this.requireAggregationParent(parentWorkItemId, binding, false);
     if (parent.targetSessionId !== binding.actorSessionId) {
       throw new WorkItemAuthorityError("Only the parent target Session can mutate its aggregation.", {
         parentWorkItemId,
@@ -591,6 +593,22 @@ export class WorkItemService {
     const role = requireSessionRoleBinding(actor.sessionId, actor).sessionRole;
     if (role !== "overall-coordinator" && role !== "task-coordinator") {
       throw new WorkItemAuthorityError("Only coordinator Sessions can mutate Work Item aggregation.");
+    }
+    return parent;
+  }
+
+  private requireAggregationParent(
+    parentWorkItemId: string,
+    binding: ResolvedAgentRuntimeBinding,
+    allowRootVisibility: boolean,
+  ): WorkItem {
+    const parent = this.requireVisibleItem(parentWorkItemId, binding, allowRootVisibility);
+    if (parent.kind !== "delegated") {
+      throw new WorkItemAggregationConflictError(
+        "WORK_ITEM_AGGREGATION_PARENT_INVALID",
+        "Only a delegated Work Item can own an aggregation.",
+        { parentWorkItemId },
+      );
     }
     return parent;
   }

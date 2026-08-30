@@ -15,6 +15,7 @@ import { SessionStorageV6 } from "../../src-electron/session-storage-v6.js";
 import {
   WorkItemAuthorityError,
   WorkItemExecutionAssociationError,
+  WorkItemParentError,
   WorkItemService,
 } from "../../src-electron/work-item-service.js";
 import {
@@ -642,6 +643,167 @@ describe("Root WorkItem contract", () => {
       }, runtimeBinding("root")).state, "canceled");
       assert.throws(() => createDelegated(harness, "root", "root", "self-target"), WorkItemAuthorityError);
       assert.equal(task.roleBinding?.parentSessionId, "root");
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v1
+  // kind = "invariant"
+  // claim = "Root WorkItemはdelegated WorkItemのparentにもaggregation parentにもならず、root resultはaggregate revisionを受け取らない"
+  // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#WorkItem の種別" }
+  // failure_mode = "root直属の委譲をnested childとして永続化するか、root aggregationのread・decision・retry・result revisionを受理してtop-level回収とnested aggregationのfinalization契約を分岐させる"
+  // scope = "WorkItemService and WorkItemStorageV6 root parent boundary"
+  // lifecycle = "permanent"
+  // distinction = "serviceの正規createに加えてstorage直接createと既存不正tupleへの全aggregation入口を通し、WorkItem・event・decision・idempotency・aggregate ledgerの不在を観測する"
+  // @end-test-value
+  it("RW-3B: rootをdelegationとaggregationのparentにせずtop-level境界を保つ", async () => {
+    const harness = await createHarness();
+    try {
+      const root = insertRootSession(harness, "root", "overall-coordinator");
+      insertChildSession(harness, "task", root, "task-coordinator");
+      const rootItem = getRootWorkItem(harness, "root");
+      const activeRoot = harness.service.transition({
+        workItemId: rootItem.id,
+        state: "in_progress",
+        expectedRevision: rootItem.revision,
+        idempotencyKey: "root-parent-start",
+      }, runtimeBinding("root"));
+      const isAggregationParentInvalid = (error: unknown) => error instanceof WorkItemAggregationConflictError
+        && error.code === "WORK_ITEM_AGGREGATION_PARENT_INVALID";
+
+      assert.throws(() => reportResult(
+        harness,
+        rootItem.id,
+        "root",
+        "completed",
+        activeRoot.revision,
+        "root-result-with-aggregate",
+        0,
+      ), isAggregationParentInvalid);
+      assert.equal(harness.workStorage.get(rootItem.id)?.state, "in_progress");
+
+      assert.throws(
+        () => createDelegated(harness, "root", "task", "service-root-child", rootItem.id),
+        WorkItemParentError,
+      );
+      assert.throws(() => harness.workStorage.create({
+        id: "storage-root-child",
+        binding: {
+          kind: "delegated",
+          rootSessionId: "root",
+          creatorSessionId: "root",
+          targetSessionId: "task",
+          parentWorkItemId: rootItem.id,
+          goal: "storage root child",
+          scope: "scope",
+          completionCriteria: "complete",
+          authority: "authority",
+          sourceIdentity: SOURCE_IDENTITY,
+        },
+        principalSessionId: "root",
+        idempotencyKey: "storage-root-child",
+        requestFingerprint: "storage-root-child-fingerprint",
+        createdAt: NOW,
+        expiresAt: EXPIRES,
+      }), (error: unknown) => error instanceof WorkItemAggregationConflictError
+        && error.code === "WORK_ITEM_PARENT_INVALID");
+
+      const topLevel = createDelegated(harness, "root", "task", "top-level-valid");
+      assert.equal(topLevel.parentWorkItemId, null);
+      const activeTopLevel = harness.service.transition({
+        workItemId: topLevel.id,
+        state: "in_progress",
+        expectedRevision: topLevel.revision,
+        idempotencyKey: "top-level-valid-start",
+      }, runtimeBinding("task"));
+      reportResult(
+        harness,
+        topLevel.id,
+        "task",
+        "completed",
+        activeTopLevel.revision,
+        "top-level-valid-result",
+      );
+      const db = new DatabaseSync(harness.dbPath);
+      try {
+        db.prepare("UPDATE work_items_v6 SET parent_work_item_id = ? WHERE id = ?")
+          .run(rootItem.id, topLevel.id);
+      } finally {
+        db.close();
+      }
+
+      assert.throws(
+        () => harness.service.getAggregation({ parentWorkItemId: rootItem.id }, runtimeBinding("root")),
+        isAggregationParentInvalid,
+      );
+      assert.throws(() => harness.service.listAggregation({
+        parentWorkItemId: rootItem.id,
+        afterSequence: null,
+        limit: 10,
+      }, runtimeBinding("root")), isAggregationParentInvalid);
+      assert.throws(() => harness.service.decideAggregation({
+        parentWorkItemId: rootItem.id,
+        childWorkItemId: topLevel.id,
+        decision: "accepted",
+        expectedAggregateRevision: 0,
+        idempotencyKey: "service-root-decide",
+      }, runtimeBinding("root")), isAggregationParentInvalid);
+      assert.throws(() => harness.service.retryAggregation({
+        parentWorkItemId: rootItem.id,
+        childWorkItemId: topLevel.id,
+        targetSessionId: "task",
+        goal: "replacement",
+        scope: "scope",
+        completionCriteria: "complete",
+        authority: "authority",
+        sourceIdentity: SOURCE_IDENTITY,
+        expectedAggregateRevision: 0,
+        idempotencyKey: "service-root-retry",
+      }, runtimeBinding("root")), isAggregationParentInvalid);
+      assert.throws(() => harness.workStorage.decideAggregation({
+        parentWorkItemId: rootItem.id,
+        childWorkItemId: topLevel.id,
+        actorSessionId: "root",
+        decision: "accepted",
+        reason: null,
+        expectedAggregateRevision: 0,
+        idempotencyKey: "storage-root-decide",
+        requestFingerprint: "storage-root-decide-fingerprint",
+        decidedAt: NOW,
+        expiresAt: EXPIRES,
+      }), isAggregationParentInvalid);
+      assert.throws(() => harness.workStorage.retryAggregation({
+        parentWorkItemId: rootItem.id,
+        childWorkItemId: topLevel.id,
+        actorSessionId: "root",
+        expectedAggregateRevision: 0,
+        idempotencyKey: "storage-root-retry",
+        requestFingerprint: "storage-root-retry-fingerprint",
+        replacementId: "storage-root-replacement",
+        replacementBinding: {
+          kind: "delegated",
+          rootSessionId: "root",
+          creatorSessionId: "root",
+          targetSessionId: "task",
+          parentWorkItemId: rootItem.id,
+          goal: "replacement",
+          scope: "scope",
+          completionCriteria: "complete",
+          authority: "authority",
+          sourceIdentity: SOURCE_IDENTITY,
+        },
+        reason: null,
+        decidedAt: NOW,
+        expiresAt: EXPIRES,
+      }), isAggregationParentInvalid);
+
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id IN ('service-root-child', 'storage-root-child', 'storage-root-replacement')"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id IN ('service-root-child', 'storage-root-child', 'storage-root-replacement')"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6", "parent_work_item_id = ?", rootItem.id), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6", "parent_work_item_id = ?", rootItem.id), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6", "idempotency_key IN ('service-root-child', 'storage-root-child', 'root-result-with-aggregate')"), 0);
     } finally {
       await closeHarness(harness);
     }

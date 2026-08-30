@@ -207,8 +207,17 @@ export class WorkItemStorageV6 {
       if (replay) return replay;
       if (input.binding.parentWorkItemId !== null) {
         const parent = this.getRequired(input.binding.parentWorkItemId);
-        if (parent.state === "completed" || parent.state === "partially_completed" || parent.state === "failed" || parent.state === "canceled") {
-          throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_PARENT_TERMINAL", "A terminal parent cannot receive a child Work Item.");
+        if (
+          parent.kind !== "delegated"
+          || parent.rootSessionId !== input.binding.rootSessionId
+          || parent.targetSessionId !== input.binding.creatorSessionId
+          || !isWorkItemActive(parent.state)
+        ) {
+          throw new WorkItemAggregationConflictError(
+            "WORK_ITEM_PARENT_INVALID",
+            "The parent Work Item is not an active delegated assignment of the creator Session in the same root.",
+            { parentWorkItemId: parent.id },
+          );
         }
       }
       this.db.prepare(`
@@ -620,7 +629,7 @@ export class WorkItemStorageV6 {
   }
 
   getAggregationSummary(parentWorkItemId: string): WorkItemAggregationSummary {
-    this.getRequired(parentWorkItemId);
+    this.requireDelegatedAggregationParent(parentWorkItemId);
     const row = this.db.prepare(`
       SELECT
         COUNT(child.id) AS direct_child_count,
@@ -655,6 +664,7 @@ export class WorkItemStorageV6 {
     limit: number;
     decision?: WorkItemAggregationDecisionType;
   }): WorkItemAggregationListItem[] {
+    this.requireDelegatedAggregationParent(input.parentWorkItemId);
     const parameters: Array<string | number> = [input.parentWorkItemId, input.afterSequence ?? 0];
     const decisionClause = input.decision === undefined ? "" : "AND decision.decision_type = ?";
     if (input.decision !== undefined) parameters.push(input.decision);
@@ -779,6 +789,7 @@ export class WorkItemStorageV6 {
   }
 
   private requireAggregationMutation(parent: WorkItem, childWorkItemId: string, actorSessionId: string, expectedRevision: number): WorkItem {
+    this.requireDelegatedAggregationParent(parent.id, parent);
     if (parent.targetSessionId !== actorSessionId) throw new WorkItemAggregationConflictError("WORK_ITEM_AGGREGATION_FORBIDDEN", "Only the parent target Session can mutate its aggregation.");
     if (!isWorkItemResultState(parent.state) && parent.state !== "canceled") {
       const revision = this.getAggregationSummary(parent.id).aggregateRevision;
@@ -813,7 +824,13 @@ export class WorkItemStorageV6 {
   }
 
   private requireRootFinalizable(root: WorkItem, expectedAggregateRevision: number | undefined): void {
-    this.requireAggregationFinalizable(root.id, expectedAggregateRevision);
+    if (expectedAggregateRevision !== undefined) {
+      throw new WorkItemAggregationConflictError(
+        "WORK_ITEM_AGGREGATION_PARENT_INVALID",
+        "A Root Work Item does not own an aggregation.",
+        { parentWorkItemId: root.id },
+      );
+    }
     const incomplete = this.db.prepare(`
       SELECT child.id, child.parent_work_item_id, child.state, child.result_json,
         child.revision, decision.child_revision
@@ -863,6 +880,18 @@ export class WorkItemStorageV6 {
         { workItemId: item.id },
       );
     }
+  }
+
+  private requireDelegatedAggregationParent(parentWorkItemId: string, loaded?: WorkItem): WorkItem {
+    const parent = loaded ?? this.getRequired(parentWorkItemId);
+    if (parent.kind !== "delegated") {
+      throw new WorkItemAggregationConflictError(
+        "WORK_ITEM_AGGREGATION_PARENT_INVALID",
+        "Only a delegated Work Item can own an aggregation.",
+        { parentWorkItemId },
+      );
+    }
+    return parent;
   }
 
   private requireExpectedRevision(item: WorkItem, expectedRevision: number): void {

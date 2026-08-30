@@ -55,6 +55,7 @@ WorkItem に明示的な種別を追加する。
 - child Session と `character-authoring` Session は Root WorkItem を持たない。
 - `delegated` は引き続き `creatorSessionId <> targetSessionId` とする。
 - 任意の自己対象 delegated WorkItem は作成できない。
+- root coordinatorが作成するtop-level delegated WorkItemは`parentWorkItemId = null`とする。parentを指定できるのは、actor Sessionがtargetであるactiveなdelegated WorkItemだけであり、Root WorkItemはdelegationまたはaggregationのparentにならない。
 
 Root WorkItem ID は再試行時に同じ値を導出できる形式にするか、root Session ID に対する一意制約と同一 transaction 内の upsert で重複を防ぐ。外部から任意の Root WorkItem ID を指定させない。
 
@@ -171,6 +172,8 @@ Root WorkItem の履歴は Session の所有データであり、Session の明�
 - `work.history.list`: 全 event を revision 順で取得する。
 
 `work.transition` と `work.result` は Root WorkItem でも使えるよう、種別と actor authority を検証する。`work.create` で root 種別を作成することは許可せず、Root WorkItem の生成は Session 永続化境界だけに限定する。
+
+`work.aggregation.get | list | decide | retry`のparentはdelegated WorkItemだけを受け付ける。Root WorkItemはaggregationを持たず、Root WorkItemの`work.result`へ`expectedAggregateRevision`を指定しない。root finalizationはparent-null top-level branchのterminal/resultと、delegated parent配下のnested aggregation decisionから判定する。
 
 次の公開面を同じ contract revision で更新する。
 
