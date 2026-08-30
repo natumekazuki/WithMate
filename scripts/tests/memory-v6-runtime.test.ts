@@ -12,6 +12,12 @@ import {
   WITHMATE_MEMORY_DISCOVERY_SCHEMA_VERSION,
 } from "../../src/memory-v6/memory-discovery.js";
 import {
+  buildRuntimeDiscoveryCredentialFileName,
+} from "../../src/runtime-discovery/runtime-discovery-contract.js";
+import {
+  listRuntimeDiscoveryRegistryEntries,
+} from "../../src/runtime-discovery/runtime-discovery-registry.js";
+import {
   publishMemoryV6DiscoveryFile,
   startMemoryV6RuntimeApi,
 } from "../../src-electron/memory-v6-runtime.js";
@@ -831,6 +837,142 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
       assert.equal(remaining.runtimeGenerationId, runtimeCGeneration);
     } finally {
       for (const runtime of runtimes) {
+        await runtime?.stop().catch(() => undefined);
+      }
+      await Promise.all(userDataPaths.map((userDataPath) => (
+        rm(userDataPath, { recursive: true, force: true })
+      )));
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "concurrency"
+  // claim = "legacy pointerのpublication集合検証からcommitまでregistry mutationを排他し、別runtimeを割り込ませない"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
+  // failure_mode = "Bが集合検証後にCをpublishさせ、BとCがactiveなのにBのpointerをlast-writer公開する"
+  // scope = "memory-legacy-projection-publish"
+  // lifecycle = "permanent"
+  // distinction = "集合変更後の再検証ではなく、検証完了からpointer commitまでのcross-process lock境界を直接観測する"
+  // @end-test-value
+  it("legacy pointer commit中は別runtimeのregistry publishを割り込ませない", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const registryDirectoryPath = path.join(runtimeDirectoryPath, "registry");
+    const userDataPaths = await Promise.all([0, 1, 2].map(() => (
+      mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"))
+    )));
+    const runtimes: Array<Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null> = [null, null, null];
+    let releaseRuntimeBPointerCommit = () => undefined;
+    let markRuntimeBPointerCommitReady = () => undefined;
+    const runtimeBPointerCommitReady = new Promise<void>((resolve) => {
+      markRuntimeBPointerCommitReady = resolve;
+    });
+    const runtimeBPointerCommitBarrier = new Promise<void>((resolve) => {
+      releaseRuntimeBPointerCommit = resolve;
+    });
+    let runtimeCRegistryCommitStarted = false;
+    try {
+      runtimes[0] = await startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[0],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      const runtimeBStart = startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[1],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+        buildChannel: "development",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeLegacyPointerCommit: async () => {
+          markRuntimeBPointerCommitReady();
+          await runtimeBPointerCommitBarrier;
+        },
+      });
+      await runtimeBPointerCommitReady;
+      const runtimeCStart = startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[2],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_C,
+        buildChannel: "development",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeRuntimeRegistryPublicationCommit: async () => {
+          runtimeCRegistryCommitStarted = true;
+        },
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      assert.equal(runtimeCRegistryCommitStarted, false);
+
+      releaseRuntimeBPointerCommit();
+      runtimes[1] = await runtimeBStart;
+      runtimes[2] = await runtimeCStart;
+      assert.equal(runtimeCRegistryCommitStarted, true);
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
+    } finally {
+      releaseRuntimeBPointerCommit();
+      for (const runtime of runtimes.reverse()) {
+        await runtime?.stop().catch(() => undefined);
+      }
+      await Promise.all(userDataPaths.map((userDataPath) => (
+        rm(userDataPath, { recursive: true, force: true })
+      )));
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "compatibility"
+  // claim = "legacy handoffはfreshな候補をregistry credential状態にかかわらずactive集合へ含め、複数ならpointerを公開しない"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
+  // failure_mode = "freshなCのregistry credentialが不正なためCを除外し、AとCがactiveなのにAへpointerをhandoffする"
+  // scope = "memory-legacy-projection-owner-cleanup"
+  // lifecycle = "permanent"
+  // distinction = "operator resolverのcardinalityではなく、正常終了cleanup時のlegacy pointer handoff集合を観測する"
+  // @end-test-value
+  it("legacy handoffはcredential不正でもfreshな候補を曖昧集合へ含める", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const registryDirectoryPath = path.join(runtimeDirectoryPath, "registry");
+    const userDataPaths = await Promise.all([0, 1, 2].map(() => (
+      mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"))
+    )));
+    const runtimes: Array<Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null> = [];
+    try {
+      for (const [index, applicationInstanceId] of [
+        TEST_APPLICATION_INSTANCE_A,
+        TEST_APPLICATION_INSTANCE_B,
+        TEST_APPLICATION_INSTANCE_C,
+      ].entries()) {
+        runtimes.push(await startMemoryV6RuntimeApi({
+          userDataPath: userDataPaths[index]!,
+          applicationInstanceId,
+          buildChannel: index === 0 ? "installed" : "development",
+          registryDirectoryPath,
+          runtimeDirectoryPath,
+          runtimePathSecurity: async () => undefined,
+        }));
+      }
+      const snapshot = await listRuntimeDiscoveryRegistryEntries(registryDirectoryPath);
+      const runtimeCRecord = snapshot.records.find(
+        (record) => record.entry.applicationInstanceId === TEST_APPLICATION_INSTANCE_C,
+      );
+      assert.ok(runtimeCRecord);
+      await writeFile(
+        path.join(
+          runtimeCRecord.slotDirectoryPath,
+          buildRuntimeDiscoveryCredentialFileName("cli"),
+        ),
+        "{}\n",
+      );
+
+      await runtimes[1]!.stop();
+      runtimes[1] = null;
+      await assert.rejects(() => stat(path.join(runtimeDirectoryPath, "memory-v6.current.json")));
+    } finally {
+      for (const runtime of runtimes.reverse()) {
         await runtime?.stop().catch(() => undefined);
       }
       await Promise.all(userDataPaths.map((userDataPath) => (

@@ -76,7 +76,7 @@ export type RuntimeDiscoveryRegistryChallenge = (
 ) => Promise<boolean>;
 
 type RegistryMutationKind =
-  "heartbeat" | "retire" | "unpublish" | "publish" | "rollback";
+  "heartbeat" | "retire" | "unpublish" | "publish" | "rollback" | "projection";
 type RegistryMutationObserver = (
   kind: RegistryMutationKind,
 ) => void | Promise<void>;
@@ -102,6 +102,8 @@ export type PublishRuntimeDiscoveryEntryOptions =
     challenge: RuntimeDiscoveryRegistryChallenge;
     timers?: RuntimeDiscoveryTimers;
     onHeartbeatError?: (error: unknown) => void;
+    /** Runs under the cross-process mutation lock immediately before entry publication. */
+    beforePublicationCommit?: () => Promise<void>;
   };
 
 type RegistryLayout = {
@@ -174,6 +176,24 @@ async function withRegistryMutationLock<T>(
   } finally {
     await release();
   }
+}
+
+export async function withRuntimeDiscoveryRegistryMutationLock<T>(
+  rootDirectoryPath: string | undefined,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const root = normalizeRootDirectoryPath(rootDirectoryPath);
+  return withRegistryMutationLock(
+    {
+      rootDirectoryPath: root,
+      activeDirectoryPath: path.join(root, ACTIVE_DIRECTORY_NAME),
+      stagingDirectoryPath: path.join(root, STAGING_DIRECTORY_NAME),
+      retiredDirectoryPath: path.join(root, RETIRED_DIRECTORY_NAME),
+    },
+    "projection",
+    undefined,
+    operation,
+  );
 }
 
 function isMissingError(error: unknown): boolean {
@@ -1054,6 +1074,7 @@ export async function publishRuntimeDiscoveryEntry(
             slotName,
           );
           try {
+            await options.beforePublicationCommit?.();
             await rename(stagingDirectoryPath, slotDirectoryPath);
             claimedSlotPath = slotDirectoryPath;
           } catch (error) {

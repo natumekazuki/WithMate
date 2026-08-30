@@ -6,6 +6,9 @@ import path from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  buildRuntimeDiscoveryCredentialFileName,
+} from "../../src/runtime-discovery/runtime-discovery-contract.js";
+import {
   WITHMATE_AGENT_RUNTIME_BINDING_REQUIRED_ENV,
   WITHMATE_MEMORY_RUNTIME_APPLICATION_INSTANCE_ID_ENV,
   WITHMATE_MEMORY_RUNTIME_GENERATION_ID_ENV,
@@ -292,6 +295,18 @@ it("legacy pointerの同一runtimeは重複計上せず、別runtimeならambigu
     try {
       const deduped = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv, legacyDiscoveryFilePath: pointerPath, fetch: statusFetch(runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId) });
       assert.equal(deduped.kind, "selected"); if (deduped.kind === "selected") assert.equal(deduped.candidates.length, 1);
+      await writeFile(path.join(
+        root,
+        "active",
+        runtime.publication.slotName,
+        buildRuntimeDiscoveryCredentialFileName("cli"),
+      ), "{}\n");
+      const registryCredentialInvalid = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv, legacyDiscoveryFilePath: pointerPath, fetch: statusFetch(runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId) });
+      assert.equal(registryCredentialInvalid.kind, "selected");
+      if (registryCredentialInvalid.kind === "selected") {
+        assert.equal(registryCredentialInvalid.candidates.length, 1);
+        assert.equal(registryCredentialInvalid.candidate.applicationInstanceId, runtime.identity.applicationInstanceId);
+      }
       const other = await publishMemory(root, ids(), "http://127.0.0.1:39002");
       try { const ambiguous = await resolveWithMateMemoryApi({ adapter: "cli", registryRootDirectoryPath: root, env: unboundEnv, legacyDiscoveryFilePath: pointerPath, fetch: statusFetch(runtime.identity.applicationInstanceId, runtime.identity.runtimeGenerationId) }); assert.equal(ambiguous.kind, "error"); if (ambiguous.kind === "error") assert.equal(ambiguous.code, "runtime_ambiguous"); } finally { await other.publication.unpublish(); }
     } finally { await runtime.publication.unpublish(); await rm(root, { recursive: true, force: true }); await rm(legacyDir, { recursive: true, force: true }); }

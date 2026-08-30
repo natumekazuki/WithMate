@@ -21793,8 +21793,9 @@ function toSafeCandidates(candidates) {
 	return candidates.map(({ safe }) => safe);
 }
 function candidateDedupeKey(candidate) {
+	if (candidate.safe.applicationInstanceId) return `${candidate.safe.applicationInstanceId}\0${candidate.safe.runtimeGenerationId}`;
 	const baseUrl = candidate.connection?.api.baseUrl ?? "";
-	return `${candidate.safe.applicationInstanceId ?? "legacy"}\0${candidate.safe.runtimeGenerationId}\0${baseUrl}`;
+	return `legacy\0${candidate.safe.runtimeGenerationId}\0${baseUrl}`;
 }
 function dedupeCandidates(candidates) {
 	const result = /* @__PURE__ */ new Map();
@@ -21805,7 +21806,20 @@ function dedupeCandidates(candidates) {
 			if (registryMatch) key = candidateDedupeKey(registryMatch);
 		}
 		const existing = result.get(key);
-		if (!existing || existing.safe.source === "legacy" && candidate.safe.source === "registry") result.set(key, candidate);
+		if (!existing) {
+			result.set(key, candidate);
+			continue;
+		}
+		if (existing.safe.source === "legacy" && candidate.safe.source === "registry") result.set(key, {
+			safe: candidate.safe,
+			connection: candidate.connection ?? existing.connection,
+			credentialUnavailable: candidate.connection === null && existing.connection === null
+		});
+		else if (existing.safe.source === "registry" && candidate.safe.source === "legacy" && existing.connection === null) result.set(key, {
+			safe: existing.safe,
+			connection: candidate.connection,
+			credentialUnavailable: candidate.connection === null
+		});
 	}
 	return [...result.values()];
 }
