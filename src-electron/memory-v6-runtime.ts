@@ -112,6 +112,8 @@ export type StartMemoryV6RuntimeApiOptions = {
   beforeLegacyPointerCommit?: () => Promise<void>;
   /** Test-only observation point immediately before registry entry publication. */
   beforeRuntimeRegistryPublicationCommit?: () => Promise<void>;
+  /** Test-only observation point immediately before waiting for registry publication. */
+  beforeRuntimeRegistryPublicationLock?: () => Promise<void>;
 };
 
 export type PublishMemoryV6DiscoveryFileOptions = {
@@ -1389,6 +1391,7 @@ export async function startMemoryV6RuntimeApi(
           await options.beforeRuntimeRegistryPublicationCommit?.();
         },
       ),
+      beforePublicationLock: options.beforeRuntimeRegistryPublicationLock,
       onHeartbeatError: (error) => {
         options.log?.({
           level: "warn",

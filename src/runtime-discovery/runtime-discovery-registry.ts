@@ -104,6 +104,8 @@ export type PublishRuntimeDiscoveryEntryOptions =
     onHeartbeatError?: (error: unknown) => void;
     /** Runs under the cross-process mutation lock immediately before entry publication. */
     beforePublicationCommit?: () => Promise<void>;
+    /** Test-only observation point immediately before waiting for the publication lock. */
+    beforePublicationLock?: () => Promise<void>;
   };
 
 type RegistryLayout = {
@@ -1038,6 +1040,7 @@ export async function publishRuntimeDiscoveryEntry(
       path.join(stagingDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME),
     );
 
+    await options.beforePublicationLock?.();
     await withRegistryMutationLock(
       layout,
       "publish",

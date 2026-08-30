@@ -870,6 +870,10 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
     const runtimeBPointerCommitBarrier = new Promise<void>((resolve) => {
       releaseRuntimeBPointerCommit = resolve;
     });
+    let markRuntimeCRegistryLockAttempted = () => undefined;
+    const runtimeCRegistryLockAttempted = new Promise<void>((resolve) => {
+      markRuntimeCRegistryLockAttempted = resolve;
+    });
     let runtimeCRegistryCommitStarted = false;
     try {
       runtimes[0] = await startMemoryV6RuntimeApi({
@@ -900,11 +904,14 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         registryDirectoryPath,
         runtimeDirectoryPath,
         runtimePathSecurity: async () => undefined,
+        beforeRuntimeRegistryPublicationLock: async () => {
+          markRuntimeCRegistryLockAttempted();
+        },
         beforeRuntimeRegistryPublicationCommit: async () => {
           runtimeCRegistryCommitStarted = true;
         },
       });
-      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      await runtimeCRegistryLockAttempted;
       assert.equal(runtimeCRegistryCommitStarted, false);
 
       releaseRuntimeBPointerCommit();
