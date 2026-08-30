@@ -159,6 +159,10 @@ async function withRegistryMutationLock<T>(
   kind: RegistryMutationKind,
   observer: RegistryMutationObserver | undefined,
   operation: () => Promise<T>,
+  recoverAfterReleaseFailure?: (
+    releaseError: unknown,
+    result: T,
+  ) => Promise<void>,
 ): Promise<T> {
   const release = await properLockfile.lock(layout.rootDirectoryPath, {
     realpath: false,
@@ -174,12 +178,41 @@ async function withRegistryMutationLock<T>(
       maxTimeout: 50,
     },
   });
+  let operationSucceeded = false;
+  let result: T | undefined;
+  let operationError: unknown;
   try {
     await observer?.(kind);
-    return await operation();
-  } finally {
-    await release();
+    result = await operation();
+    operationSucceeded = true;
+  } catch (error) {
+    operationError = error;
   }
+  try {
+    await release();
+  } catch (releaseError) {
+    if (operationSucceeded && recoverAfterReleaseFailure) {
+      try {
+        await recoverAfterReleaseFailure(releaseError, result as T);
+      } catch (recoveryError) {
+        throw new AggregateError(
+          [releaseError, recoveryError],
+          "Runtime registry lock release and committed mutation recovery failed.",
+        );
+      }
+    }
+    if (!operationSucceeded) {
+      throw new AggregateError(
+        [operationError, releaseError],
+        "Runtime registry mutation and lock release both failed.",
+      );
+    }
+    throw releaseError;
+  }
+  if (!operationSucceeded) {
+    throw operationError;
+  }
+  return result as T;
 }
 
 export async function withRuntimeDiscoveryRegistryMutationLock<T>(
@@ -331,38 +364,45 @@ async function readRecordFromSlot(
   if (!slotStats.isDirectory() || slotStats.isSymbolicLink()) {
     return { record: null, issue: { slotName, code: "unsafe_slot" } };
   }
+  let entry: RuntimeDiscoveryRegistryEntry;
   try {
-    const entry = await readEntryFile(
+    entry = await readEntryFile(
       path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME),
     );
-    for (const adapter of entry.adapters) {
-      if (
-        adapter.credentialFileName !==
-        buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)
-      ) {
-        return { record: null, issue: { slotName, code: "invalid_entry" } };
-      }
-      const credentialPath = path.join(
-        slotDirectoryPath,
-        adapter.credentialFileName,
-      );
-      const credentialStats = await lstatSafe(credentialPath);
-      if (!credentialStats) {
-        return {
-          record: null,
-          issue: { slotName, code: "missing_credential" },
-        };
-      }
-      if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) {
-        return { record: null, issue: { slotName, code: "unsafe_credential" } };
-      }
-    }
-    return {
-      record: { slotName, entry, slotDirectoryPath },
-    };
   } catch {
     return { record: null, issue: { slotName, code: "invalid_entry" } };
   }
+  let credentialIssue: RuntimeDiscoveryRegistryListIssue | undefined;
+  for (const adapter of entry.adapters) {
+    if (
+      adapter.credentialFileName !==
+      buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)
+    ) {
+      return { record: null, issue: { slotName, code: "invalid_entry" } };
+    }
+    const credentialPath = path.join(
+      slotDirectoryPath,
+      adapter.credentialFileName,
+    );
+    let credentialStats: Awaited<ReturnType<typeof lstatSafe>>;
+    try {
+      credentialStats = await lstatSafe(credentialPath);
+    } catch {
+      credentialIssue ??= { slotName, code: "unsafe_credential" };
+      continue;
+    }
+    if (!credentialStats) {
+      credentialIssue ??= { slotName, code: "missing_credential" };
+      continue;
+    }
+    if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) {
+      credentialIssue ??= { slotName, code: "unsafe_credential" };
+    }
+  }
+  return {
+    record: { slotName, entry, slotDirectoryPath },
+    ...(credentialIssue ? { issue: credentialIssue } : {}),
+  };
 }
 
 export async function listRuntimeDiscoveryRegistryEntries(
@@ -415,11 +455,15 @@ export async function readRuntimeDiscoveryCredential(
     record.slotDirectoryPath,
     reference.credentialFileName,
   );
-  const stats = await lstatSafe(credentialPath);
-  if (!stats || !stats.isFile() || stats.isSymbolicLink()) {
+  try {
+    const stats = await lstatSafe(credentialPath);
+    if (!stats || !stats.isFile() || stats.isSymbolicLink()) {
+      return null;
+    }
+    return await readFile(credentialPath, "utf8");
+  } catch {
     return null;
   }
-  return readFile(credentialPath, "utf8");
 }
 
 async function writeExclusiveSecureFile(
@@ -1053,6 +1097,18 @@ export async function publishRuntimeDiscoveryEntry(
   let committedRecord: RuntimeDiscoveryRegistryRecord | null = null;
   let claimedSlotPath: string | null = null;
   let publicationProjectionPrepared = false;
+  const rollbackPreparedPublication = async (): Promise<void> => {
+    const rollbackComplete = await rollbackRuntimeDiscoveryPublication({
+      layout,
+      entry,
+      publicationId,
+      claimedSlotPath,
+      limits,
+    });
+    if (publicationProjectionPrepared && rollbackComplete) {
+      await options.afterPublicationRollback?.();
+    }
+  };
   try {
     const stagingStats = await lstat(stagingDirectoryPath);
     if (!stagingStats.isDirectory() || stagingStats.isSymbolicLink()) {
@@ -1214,18 +1270,16 @@ export async function publishRuntimeDiscoveryEntry(
             );
           }
         } catch (error) {
-          const rollbackComplete = await rollbackRuntimeDiscoveryPublication({
-            layout,
-            entry,
-            publicationId,
-            claimedSlotPath,
-            limits,
-          });
-          if (publicationProjectionPrepared && rollbackComplete) {
-            await options.afterPublicationRollback?.();
-          }
+          await rollbackPreparedPublication();
           throw error;
         }
+      },
+      async () => {
+        // proper-lockfile stops refreshing ownership before removing its lock
+        // directory. If that removal fails, the remaining directory still
+        // excludes other processes until stale recovery, so reconcile the
+        // committed publication before reporting failure to the caller.
+        await rollbackPreparedPublication();
       },
     );
   } finally {

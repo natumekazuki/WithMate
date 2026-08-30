@@ -16,6 +16,7 @@ import {
 } from "../../src/runtime-discovery/runtime-discovery-contract.js";
 import {
   listRuntimeDiscoveryRegistryEntries,
+  resolveRuntimeDiscoveryMutationLockFilePath,
 } from "../../src/runtime-discovery/runtime-discovery-registry.js";
 import {
   publishMemoryV6DiscoveryFile,
@@ -978,6 +979,70 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
         [TEST_APPLICATION_INSTANCE_A],
       );
     } finally {
+      await runtimeA?.stop().catch(() => undefined);
+      await Promise.all(userDataPaths.map((userDataPath) => (
+        rm(userDataPath, { recursive: true, force: true })
+      )));
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "regression"
+  // claim = "Memory entry commit後にregistry lock解放が失敗しても、失敗runtimeのentryをrollbackして直前の一意なlegacy pointerを復元する"
+  // oracle = { type = "adr", ref = "ADR-023 publication commit-unknown recovery" }
+  // failure_mode = "Bのstartが失敗を返した後もBのfresh entryまたはBを指すpointerが残り、Aのlegacy CLI/MCP経路を無効化する"
+  // scope = "memory-runtime-publication-recovery"
+  // lifecycle = "permanent"
+  // distinction = "entry commit前のpublication failureではなく、entry read-back完了後のregistry lock releaseだけを失敗させる"
+  // @end-test-value
+  it("registry lock解放失敗時はcommit済みentryをrollbackしてlegacy pointerを復元する", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const registryDirectoryPath = path.join(runtimeDirectoryPath, "registry");
+    const registryLockPath = resolveRuntimeDiscoveryMutationLockFilePath(registryDirectoryPath);
+    const lockBlockerPath = path.join(registryLockPath, "release-blocker");
+    const userDataPaths = await Promise.all([0, 1].map(() => (
+      mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"))
+    )));
+    let runtimeA: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    try {
+      runtimeA = await startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[0],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      const runtimeAGeneration = runtimeA.runtimeGenerationId;
+      await assert.rejects(
+        () => startMemoryV6RuntimeApi({
+          userDataPath: userDataPaths[1],
+          applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+          buildChannel: "development",
+          registryDirectoryPath,
+          runtimeDirectoryPath,
+          runtimePathSecurity: async () => undefined,
+          beforeRuntimeRegistryPublicationCommit: async () => {
+            await writeFile(lockBlockerPath, "block release\n", "utf8");
+          },
+        }),
+        (error: unknown) => (
+          (error as NodeJS.ErrnoException)?.code === "ENOTEMPTY"
+          || (error as NodeJS.ErrnoException)?.code === "EEXIST"
+        ),
+      );
+
+      const restored = (await readDiscoveryProjection(runtimeA.discoveryFilePath)).document;
+      assert.equal(restored.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
+      assert.equal(restored.runtimeGenerationId, runtimeAGeneration);
+      const snapshot = await listRuntimeDiscoveryRegistryEntries(registryDirectoryPath);
+      assert.deepEqual(
+        snapshot.records.map((record) => record.entry.applicationInstanceId),
+        [TEST_APPLICATION_INSTANCE_A],
+      );
+    } finally {
+      await rm(registryLockPath, { recursive: true, force: true });
       await runtimeA?.stop().catch(() => undefined);
       await Promise.all(userDataPaths.map((userDataPath) => (
         rm(userDataPath, { recursive: true, force: true })

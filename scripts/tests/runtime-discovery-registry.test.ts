@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, readdir, rm, utimes } from "node:fs/promises";
+import { mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -398,6 +398,47 @@ test("security callback失敗時はpublication artifactをrollbackする", async
     const staging = path.join(root, "staging");
     const names = await readdir(staging).catch(() => [] as string[]);
     assert.deepEqual(names, []);
+  }));
+
+// @test-value v1
+// kind = "regression"
+// claim = "entry commit後にmutation lockの解放が失敗しても、publisherは同じpublicationをread-backしてowner entryをrollbackする"
+// oracle = { type = "adr", ref = "ADR-023 publication commit-unknown recovery" }
+// failure_mode = "lock解放失敗をpublish失敗として返す一方、handleを持たないfreshなowner entryとcredentialをregistryへ残す"
+// scope = "runtime-discovery-registry-publication-recovery"
+// lifecycle = "permanent"
+// distinction = "entry commit前のACL失敗ではなく、完全なentryのread-back後にlock directoryの削除だけが失敗する時点を注入する"
+// @end-test-value
+test("publication commit後のlock解放失敗はowner entryをrollbackする", async () =>
+  withRoot(async (root) => {
+    const lockDirectoryPath = resolveRuntimeDiscoveryMutationLockFilePath(root);
+    const blockerPath = path.join(lockDirectoryPath, "release-blocker");
+    let projectionRollbackCount = 0;
+    try {
+      await assert.rejects(
+        publishRuntimeDiscoveryEntry({
+          ...options(root, UUIDS[0], UUIDS[1]),
+          mutationObserver: async (kind) => {
+            if (kind === "publish") {
+              await writeFile(blockerPath, "block release\n", "utf8");
+            }
+          },
+          afterPublicationRollback: async () => {
+            projectionRollbackCount += 1;
+          },
+        }),
+        (error: unknown) => (
+          (error as NodeJS.ErrnoException)?.code === "ENOTEMPTY"
+          || (error as NodeJS.ErrnoException)?.code === "EEXIST"
+        ),
+      );
+      const snapshot = await listRuntimeDiscoveryRegistryEntries(root);
+      assert.equal(snapshot.records.length, 0);
+      assert.deepEqual(await readdir(path.join(root, "staging")), []);
+      assert.equal(projectionRollbackCount, 1);
+    } finally {
+      await rm(lockDirectoryPath, { recursive: true, force: true });
+    }
   }));
 
 // @test-value v1

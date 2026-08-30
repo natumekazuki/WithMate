@@ -21594,37 +21594,9 @@ async function readRecordFromSlot(activeDirectoryPath, slotName) {
 			code: "unsafe_slot"
 		}
 	};
+	let entry;
 	try {
-		const entry = await readEntryFile(path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME));
-		for (const adapter of entry.adapters) {
-			if (adapter.credentialFileName !== buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)) return {
-				record: null,
-				issue: {
-					slotName,
-					code: "invalid_entry"
-				}
-			};
-			const credentialStats = await lstatSafe(path.join(slotDirectoryPath, adapter.credentialFileName));
-			if (!credentialStats) return {
-				record: null,
-				issue: {
-					slotName,
-					code: "missing_credential"
-				}
-			};
-			if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) return {
-				record: null,
-				issue: {
-					slotName,
-					code: "unsafe_credential"
-				}
-			};
-		}
-		return { record: {
-			slotName,
-			entry,
-			slotDirectoryPath
-		} };
+		entry = await readEntryFile(path.join(slotDirectoryPath, RUNTIME_DISCOVERY_ENTRY_FILE_NAME));
 	} catch {
 		return {
 			record: null,
@@ -21634,6 +21606,46 @@ async function readRecordFromSlot(activeDirectoryPath, slotName) {
 			}
 		};
 	}
+	let credentialIssue;
+	for (const adapter of entry.adapters) {
+		if (adapter.credentialFileName !== buildRuntimeDiscoveryCredentialFileName(entry, adapter.adapterKind)) return {
+			record: null,
+			issue: {
+				slotName,
+				code: "invalid_entry"
+			}
+		};
+		const credentialPath = path.join(slotDirectoryPath, adapter.credentialFileName);
+		let credentialStats;
+		try {
+			credentialStats = await lstatSafe(credentialPath);
+		} catch {
+			credentialIssue ??= {
+				slotName,
+				code: "unsafe_credential"
+			};
+			continue;
+		}
+		if (!credentialStats) {
+			credentialIssue ??= {
+				slotName,
+				code: "missing_credential"
+			};
+			continue;
+		}
+		if (!credentialStats.isFile() || credentialStats.isSymbolicLink()) credentialIssue ??= {
+			slotName,
+			code: "unsafe_credential"
+		};
+	}
+	return {
+		record: {
+			slotName,
+			entry,
+			slotDirectoryPath
+		},
+		...credentialIssue ? { issue: credentialIssue } : {}
+	};
 }
 async function listRuntimeDiscoveryRegistryEntries(rootDirectoryPath, limitsOverride = {}) {
 	const limits = normalizeRuntimeDiscoveryRegistryLimits(limitsOverride);
@@ -21660,9 +21672,13 @@ async function readRuntimeDiscoveryCredential(record, adapterKind) {
 	const reference = record.entry.adapters.find((adapter) => adapter.adapterKind === adapterKind);
 	if (!reference) return null;
 	const credentialPath = path.join(record.slotDirectoryPath, reference.credentialFileName);
-	const stats = await lstatSafe(credentialPath);
-	if (!stats || !stats.isFile() || stats.isSymbolicLink()) return null;
-	return readFile(credentialPath, "utf8");
+	try {
+		const stats = await lstatSafe(credentialPath);
+		if (!stats || !stats.isFile() || stats.isSymbolicLink()) return null;
+		return await readFile(credentialPath, "utf8");
+	} catch {
+		return null;
+	}
 }
 //#endregion
 //#region scripts/withmate-memory-runtime-client.ts

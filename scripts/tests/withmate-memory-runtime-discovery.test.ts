@@ -123,12 +123,12 @@ function statusFetch(applicationInstanceId: string, runtimeGenerationId: string,
 // kind = "security"
 // claim = "credentialを解決できないactive entryもunbound resolverの選択集合へ残り、active候補が複数ならambiguousになる"
 // oracle = { type = "contract", ref = "multi-instance-runtime-discovery" }
-// failure_mode = "一方のcredential不正を理由にactive候補を除外し、別instanceへ暗黙接続する"
+// failure_mode = "一方のcredential欠損を理由にactive候補を除外し、別instanceへ暗黙接続する"
 // scope = "memory-runtime-resolver"
 // lifecycle = "permanent"
 // distinction = "両credentialが利用可能な通常の複数候補ではなく、一方のcredentialだけが解決不能なactive集合を扱う"
 // @end-test-value
-it("credential不正のactive候補があっても別instanceを暗黙選択しない", async () => {
+it("credential欠損のactive候補があっても別instanceを暗黙選択しない", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "wm-discovery-test-"));
   const a = await publishMemory(root, ids(), "http://127.0.0.1:39001");
   const b = await publishMemory(root, ids(), "http://127.0.0.1:39002");
@@ -142,7 +142,16 @@ it("credential不正のactive候補があっても別instanceを暗黙選択し�
       (adapter) => adapter.adapterKind === "cli",
     )?.credentialFileName;
     assert.ok(credentialFileName);
-    await writeFile(path.join(bRecord.slotDirectoryPath, credentialFileName), "{}\n", "utf8");
+    await rm(path.join(bRecord.slotDirectoryPath, credentialFileName));
+
+    const incompleteSnapshot = await listRuntimeDiscoveryRegistryEntries(root);
+    assert.equal(incompleteSnapshot.records.length, 2);
+    assert.equal(
+      incompleteSnapshot.issues.some((issue) => (
+        issue.slotName === bRecord.slotName && issue.code === "missing_credential"
+      )),
+      true,
+    );
 
     const result = await resolveWithMateMemoryApi({
       adapter: "cli",
