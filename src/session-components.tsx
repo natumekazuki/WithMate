@@ -1641,6 +1641,7 @@ export type SessionContextPaneProps = {
   isRootWorkItemMutationPending?: boolean;
   onRetryRootWorkItem?: () => void | Promise<void>;
   onReviseRootWorkItem?: (input: {
+    expectedRevision: number;
     goal: string;
     scope: string;
     completionCriteria: string;
@@ -1764,6 +1765,7 @@ function RootWorkItemPane({
   mutationPending: boolean;
 }) {
   const [editing, setEditing] = useState(false);
+  const [editorBaseRevision, setEditorBaseRevision] = useState(workItem.revision);
   const [draft, setDraft] = useState({
     goal: workItem.goal,
     scope: workItem.scope,
@@ -1773,8 +1775,8 @@ function RootWorkItemPane({
     blockers: workItem.blockers.join("\n"),
     nextAction: workItem.nextAction,
   });
-  useEffect(() => {
-    if (editing) return;
+  const loadCurrentProjection = useCallback(() => {
+    setEditorBaseRevision(workItem.revision);
     setDraft({
       goal: workItem.goal,
       scope: workItem.scope,
@@ -1784,13 +1786,18 @@ function RootWorkItemPane({
       blockers: workItem.blockers.join("\n"),
       nextAction: workItem.nextAction,
     });
-  }, [editing, workItem]);
+  }, [workItem]);
+  useEffect(() => {
+    if (editing) return;
+    loadCurrentProjection();
+  }, [editing, loadCurrentProjection]);
   const update = (key: keyof typeof draft, value: string) =>
     setDraft((current) => ({ ...current, [key]: value }));
   const canMutate = isWorkItemActive(workItem.state);
   const canHandoff = canMutate
     && workItem.progressSummary.trim().length > 0
     && workItem.nextAction.trim().length > 0;
+  const editorIsStale = editing && editorBaseRevision !== workItem.revision;
   return (
     <div className="command-monitor-card root-work-item-pane" aria-busy={loading || mutationPending}>
       <div className="command-monitor-card-head">
@@ -1818,17 +1825,27 @@ function RootWorkItemPane({
       {editing && canMutate ? (
         <form onSubmit={(event) => {
           event.preventDefault();
+          if (editorIsStale) return;
           void Promise.resolve(onRevise?.({
+            expectedRevision: editorBaseRevision,
             ...draft,
             blockers: draft.blockers.split("\n").map((value) => value.trim()).filter(Boolean),
           }) ?? false).then((saved) => {
             if (saved) setEditing(false);
           }).catch(() => {});
         }} className="root-work-item-edit-form">
+          {editorIsStale ? (
+            <div className="root-work-item-editor-stale" role="status">
+              <p>別の操作で更新されました。入力内容は保持されています。保存するには最新版を読み込んでください。</p>
+              <button type="button" className="drawer-toggle compact secondary" onClick={loadCurrentProjection}>
+                入力を破棄して最新版を読み込む
+              </button>
+            </div>
+          ) : null}
           {(["goal", "scope", "completionCriteria", "authority", "progressSummary", "blockers", "nextAction"] as const).map((key) => (
             <label key={key}>{key}<textarea value={draft[key]} onChange={(event) => update(key, event.target.value)} rows={key === "goal" ? 2 : 1} /></label>
           ))}
-          <button type="submit" className="session-send-button" disabled={mutationPending}>保存</button>
+          <button type="submit" className="session-send-button" disabled={mutationPending || editorIsStale}>保存</button>
         </form>
       ) : (
         <div className="root-work-item-summary">

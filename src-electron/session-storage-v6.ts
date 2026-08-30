@@ -1716,7 +1716,16 @@ export class SessionStorageV6 {
             item.kind = 'delegated'
             AND item.parent_work_item_id IS NULL
             AND item.state <> 'canceled'
-            AND item.result_json IS NULL
+            AND (
+              item.result_json IS NULL
+              OR NOT EXISTS (
+                SELECT 1
+                FROM work_items_v6 AS root_item
+                WHERE root_item.kind = 'root'
+                  AND root_item.root_session_id = item.root_session_id
+                  AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+              )
+            )
           )
           OR (
             item.kind = 'delegated'
@@ -1748,7 +1757,19 @@ export class SessionStorageV6 {
           item.kind = 'root'
           OR (
             item.parent_work_item_id IS NULL
-            AND (item.state = 'canceled' OR item.result_json IS NOT NULL)
+            AND (
+              item.state = 'canceled'
+              OR (
+                item.result_json IS NOT NULL
+                AND EXISTS (
+                  SELECT 1
+                  FROM work_items_v6 AS root_item
+                  WHERE root_item.kind = 'root'
+                    AND root_item.root_session_id = item.root_session_id
+                    AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+                )
+              )
+            )
           )
           OR EXISTS (
             SELECT 1

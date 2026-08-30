@@ -895,6 +895,7 @@ function hasRequiredCheckConstraints(db: DatabaseSync): boolean {
     && workItemDeleteTriggerSql.includes("WORK_ITEM_SESSION_PROTECTED")
     && workItemDeleteTriggerSql.includes("work_item_aggregation_decisions_v6")
     && workItemDeleteTriggerSql.includes("decision.child_revision = work_items_v6.revision")
+    && workItemDeleteTriggerSql.includes("root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')")
     && !workItemDeleteTriggerSql.includes("work_item_execution_associations_v6")
     && workItemDeleteCleanupTriggerSql.includes("DELETE FROM work_items_v6")
     && workItemDeleteCleanupTriggerSql.includes("DELETE FROM work_item_aggregation_decisions_v6")
@@ -1720,7 +1721,16 @@ export const CREATE_V6_WORK_ITEM_TABLES_SQL = `
           kind = 'delegated'
           AND parent_work_item_id IS NULL
           AND state <> 'canceled'
-          AND result_json IS NULL
+          AND (
+            result_json IS NULL
+            OR NOT EXISTS (
+              SELECT 1
+              FROM work_items_v6 AS root_item
+              WHERE root_item.kind = 'root'
+                AND root_item.root_session_id = work_items_v6.root_session_id
+                AND root_item.state IN ('completed', 'partially_completed', 'failed', 'canceled')
+            )
+          )
         )
         OR (
           kind = 'delegated'

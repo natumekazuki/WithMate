@@ -1,6 +1,7 @@
 import type { RootWorkItem } from "./work-item.js";
 
 export type RootWorkItemEditorInput = {
+  expectedRevision: number;
   goal: string;
   scope: string;
   completionCriteria: string;
@@ -57,7 +58,7 @@ export async function saveRootWorkItemEditor(
         scope: input.scope,
         completionCriteria: input.completionCriteria,
         authority: input.authority,
-        expectedRevision: current.revision,
+        expectedRevision: input.expectedRevision,
         idempotencyKey: deps.createIdempotencyKey(),
       });
       contractRevisionCommitted = true;
@@ -72,7 +73,7 @@ export async function saveRootWorkItemEditor(
         summary: input.progressSummary,
         blockers: input.blockers,
         nextAction: input.nextAction,
-        expectedRevision: current.revision,
+        expectedRevision: contractRevisionCommitted ? current.revision : input.expectedRevision,
         idempotencyKey: deps.createIdempotencyKey(),
       });
     }

@@ -448,6 +448,7 @@ function statusForResponse(value: SessionRuntimeResultEnvelope | SessionRuntimeE
     case "SESSION_BUSY":
     case "QUEUE_FULL":
     case "IDEMPOTENCY_CONFLICT":
+    case "IDEMPOTENCY_RESPONSE_UNAVAILABLE":
     case "EXECUTION_NOT_CANCELLABLE": return 409;
     case "WORK_ITEM_REVISION_CONFLICT": return 409;
     case "WORK_ITEM_STATE_CONFLICT": return 409;

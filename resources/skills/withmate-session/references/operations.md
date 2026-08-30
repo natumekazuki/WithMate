@@ -69,6 +69,8 @@ Parallel dispatch is valid only for independent children. For children under a c
 
 A root overall coordinator has exactly one self-owned Root Work Item and creates top-level delegated Work Items with `parentWorkItemId: null`. These delegated items have no parent aggregation. Keep the Root Work Item contract and restart state current with `work.revise` and `work.history.append`. For dependencies between top-level items, use `work.get` to validate and adopt the prerequisite's terminal result before dispatching dependent work. If the result is not adoptable, create a new top-level replacement Work Item and dispatch it through `turn.options` followed by a new `turn.run` or `turn.enqueue` with the replacement ID and a new Turn idempotency key, or revise the plan. Do not call `work.aggregation.*` for top-level items. Submit the self-owned Root Work Item result only after every descendant and nested aggregation decision is terminal and settled. Keep the child count to the minimum needed for independently verifiable responsibilities; capability and capacity limits come from `runtime.catalog`, not an invented fixed limit.
 
+If a migrated idempotency ledger reports `IDEMPOTENCY_RESPONSE_UNAVAILABLE` with `effect: applied`, do not retry the same mutation with a new key. Read the current Work Item identified by `details.workItemId` and reconcile from that state.
+
 Use this sequence for a tracked decomposition:
 
 1. Read `session.self` and `runtime.catalog`. If the incoming delegation prompt names a Work Item ID, call `work.get` and verify that its canonical target matches the actor and that its goal, scope, completion criteria, authority, and source identity match the delegation. Do not infer the current Work Item from other active items.

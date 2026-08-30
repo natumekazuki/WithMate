@@ -1159,6 +1159,7 @@ export default function AgentSessionWindowApp() {
   }, [refreshRootWorkItem, selectedSessionId, selectedSessionSupportsRootWorkItem, withmateApi]);
 
   const handleReviseRootWorkItem = useCallback(async (input: {
+    expectedRevision: number;
     goal: string;
     scope: string;
     completionCriteria: string;
@@ -1174,6 +1175,12 @@ export default function AgentSessionWindowApp() {
       || !rootWorkItemState.item
       || rootWorkItemMutationPendingRef.current
     ) return false;
+    if (rootWorkItemState.item.revision !== input.expectedRevision) {
+      setRootWorkItemState((state) => state.ownerSessionId === selectedSessionId
+        ? { ...state, errorMessage: "別の操作でRoot WorkItemが更新されました。最新版を読み込んでから保存してください。" }
+        : state);
+      return false;
+    }
     rootWorkItemMutationPendingRef.current = true;
     setIsRootWorkItemMutationPending(true);
     try {

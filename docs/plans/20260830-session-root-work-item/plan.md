@@ -99,7 +99,7 @@ Root WorkItem の owner Session は次を改訂できる。
 
 Root WorkItem の現在値は一覧や再開時の高速な参照に使い、event stream は変更理由と経過の正本にする。契約改訂 event は goal、scope、completionCriteria、権限の変更前後を復元でき、progress と handoff は summary、blockers、next action、actor、記録日時を保持する。
 
-全 mutation は同じ単調増加 resource revision 上で直列化する。current projection、event、idempotency response を同じ transaction で保存し、expected revision と idempotency key を要求する。
+全 mutation は同じ単調増加 resource revision 上で直列化する。current projection、event、idempotency response を同じ transaction で保存し、expected revision と idempotency key を要求する。migration前のledgerにresponseが存在しない再送は、後続のcurrent projectionをcanonical responseとして返さず、versioned `IDEMPOTENCY_RESPONSE_UNAVAILABLE` errorを`effect: applied`で返す。
 
 履歴取得は cursor と上限件数を持つ。payload size、blocker 件数、文字数を既存の runtime limit と同じ境界で制限し、要求件数が response 上限へ収まらない場合は収まる件数と次 cursor を返す。trusted GUI は再開に必要な最新ページを取得する。
 
@@ -157,7 +157,7 @@ Root WorkItem の自動作成後は、現行の Session delete protection をそ
 
 - active な Root WorkItem を持つ root Session の削除は拒否する。
 - terminal な Root WorkItem を持つ root Session の明示削除は、Session と自己所有 Root WorkItem の履歴を同じ transaction で削除する。
-- active delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。terminalかつ回収済みのdelegated WorkItemは、参照Sessionの物理削除時に履歴、idempotency、execution association、aggregation ledgerと同じtransactionで削除する。
+- active delegated WorkItem、未回収結果、child Session が残る場合は削除を拒否する。parent-null delegated resultは報告だけでは回収済みとせず、同じrootのRoot WorkItemがterminalになるまで保護する。terminalかつ回収済みのdelegated WorkItemは、参照Sessionの物理削除時に履歴、idempotency、execution association、aggregation ledgerと同じtransactionで削除する。
 - UI 上の非表示や archive と物理削除を混同しない。
 
 Root WorkItem の履歴は Session の所有データであり、Session の明示的な物理削除後まで独立保存しない。
@@ -238,6 +238,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 
 - root Session の WorkItem 現在値、progress、blockers、next action を既存 right pane で表示する。
 - owner Session から許可された field だけを改訂できるようにする。
+- editorは開始時のRoot WorkItem revisionをdraftと共に保持する。外部更新後はdraftを保持したまま保存を止め、入力を破棄して最新版を読み込む明示操作でだけdraftとbase revisionを更新する。自動mergeやlatest revisionへの付け替えは行わない。
 - 履歴は progressive disclosure で表示し、常設説明で pane を埋めない。
 
 ## 直接検証
@@ -248,7 +249,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 - child と `character-authoring` Session には作成されない。
 - transaction failure で Session と Root WorkItem の片方だけが残らない。
 - 再送、再起動、repair で重複しない。
-- migration 後も既存 delegated WorkItem、結果、association、aggregation、idempotency が保持される。
+- migration 後も既存 delegated WorkItem、結果、association、aggregation、idempotency が保持され、responseを復元できない旧ledgerの再送は適用済みresponse復元不能errorになる。
 - backfill は既存 root Session ごとに一件だけ追加し、二回実行しても変化しない。
 
 ### Service contract integration
@@ -257,7 +258,7 @@ provider 固有の repository artifact が存在しなくても、上記だけ�
 - child Session、別 root Session、delegated target は Root WorkItem 契約を改訂できない。
 - immutable binding と canonical authority ceiling を変更できない。
 - arbitrary self-target delegated WorkItem を作成できない。
-- stale expected revision と idempotency conflict を区別して拒否する。
+- stale expected revision、idempotency conflict、migration由来の適用済みresponse復元不能を区別して拒否する。
 - contract revision、progress、handoff が一つの event stream から復元できる。
 - terminal state を再開できない。
 

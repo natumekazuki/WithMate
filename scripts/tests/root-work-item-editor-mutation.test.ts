@@ -45,6 +45,7 @@ test("Root WorkItem editorは契約改訂後のprogress失敗を部分成功と�
   const revised = { ...rootWorkItem, goal: "Revised goal", revision: 5 };
   await assert.rejects(
     saveRootWorkItemEditor(rootWorkItem, {
+      expectedRevision: 4,
       goal: "Revised goal",
       scope: rootWorkItem.scope,
       completionCriteria: rootWorkItem.completionCriteria,
@@ -71,4 +72,43 @@ test("Root WorkItem editorは契約改訂後のprogress失敗を部分成功と�
     { operation: "revise", expectedRevision: 4 },
     { operation: "append", expectedRevision: 5 },
   ]);
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "Root WorkItem editorは外部更新後のcurrent projectionではなく編集開始時のbase revisionを最初のmutationへ渡し、stale draftをrevision conflictへ収束させる"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6-ui" }
+// failure_mode = "外部更新でrevisionだけを最新化したstale draftが競合せず、外部のcontractまたはprogressを上書きする"
+// scope = "Root WorkItem editor mutation orchestration"
+// lifecycle = "permanent"
+// distinction = "current projectionをrevision 5、editor baseをrevision 4として、最初のrevise requestだけを直接観測する"
+// @end-test-value
+test("Root WorkItem editorは編集開始revisionで外部更新との競合を検出する", async () => {
+  const current = { ...rootWorkItem, goal: "Externally revised", revision: 5 };
+  const expectedRevisions: number[] = [];
+  await assert.rejects(
+    saveRootWorkItemEditor(current, {
+      expectedRevision: 4,
+      goal: rootWorkItem.goal,
+      scope: rootWorkItem.scope,
+      completionCriteria: rootWorkItem.completionCriteria,
+      authority: rootWorkItem.authority,
+      progressSummary: rootWorkItem.progressSummary,
+      blockers: [],
+      nextAction: rootWorkItem.nextAction,
+    }, {
+      async revise(request) {
+        expectedRevisions.push(request.expectedRevision);
+        throw new Error("revision conflict");
+      },
+      async appendProgress() {
+        assert.fail("progress must not be appended after a stale contract revision");
+      },
+      createIdempotencyKey: () => "stale-editor-key",
+    }),
+    (error) => error instanceof RootWorkItemEditorSaveError
+      && !error.contractRevisionCommitted
+      && error.message === "revision conflict",
+  );
+  assert.deepEqual(expectedRevisions, [4]);
 });

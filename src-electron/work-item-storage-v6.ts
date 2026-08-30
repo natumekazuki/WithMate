@@ -106,6 +106,19 @@ export class WorkItemIdempotencyConflictError extends Error {
   }
 }
 
+export class WorkItemIdempotencyResponseUnavailableError extends Error {
+  readonly code = "IDEMPOTENCY_RESPONSE_UNAVAILABLE";
+
+  constructor(
+    readonly operation: WorkItemMutationOperation,
+    readonly idempotencyKey: string,
+    readonly workItemId: string,
+  ) {
+    super(`The original Work Item response is unavailable after migration: ${operation}`);
+    this.name = "WorkItemIdempotencyResponseUnavailableError";
+  }
+}
+
 export class WorkItemRevisionConflictError extends Error {
   readonly code = "WORK_ITEM_REVISION_CONFLICT";
   constructor(readonly workItemId: string, readonly expectedRevision: number, readonly actualRevision: number) {
@@ -166,9 +179,10 @@ export class WorkItemStorageV6 {
     if (row.request_fingerprint !== requestFingerprint) {
       throw new WorkItemIdempotencyConflictError(operation, idempotencyKey);
     }
-    return row.response_json === null
-      ? this.getRequired(row.work_item_id)
-      : parseStoredWorkItemResponse(row.response_json);
+    if (row.response_json === null) {
+      throw new WorkItemIdempotencyResponseUnavailableError(operation, idempotencyKey, row.work_item_id);
+    }
+    return parseStoredWorkItemResponse(row.response_json);
   }
 
   create(input: {

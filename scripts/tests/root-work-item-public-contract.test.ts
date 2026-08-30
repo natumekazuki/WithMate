@@ -7,8 +7,10 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import {
   SESSION_RUNTIME_REQUEST_SCHEMA_VERSION,
+  SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
   SESSION_RUNTIME_MAX_RESPONSE_BYTES,
   SessionRuntimeValidationError,
+  createSessionRuntimeError,
   createSessionRuntimeResult,
   parseSessionRuntimeOperationInput,
 } from "../../src/session-external-runtime-contract.js";
@@ -28,7 +30,10 @@ import {
 import { AgentRuntimeBindingRegistry, type ResolvedAgentRuntimeBinding } from "../../src-electron/agent-runtime-binding.js";
 import { SessionExternalApplicationService } from "../../src-electron/session-external-application-service.js";
 import { createSessionRuntimeHttpServer } from "../../src-electron/session-runtime-http-server.js";
-import { WorkItemRevisionConflictError } from "../../src-electron/work-item-storage-v6.js";
+import {
+  WorkItemIdempotencyResponseUnavailableError,
+  WorkItemRevisionConflictError,
+} from "../../src-electron/work-item-storage-v6.js";
 import {
   SESSION_MCP_TOOL_DEFINITIONS,
   createWithMateSessionMcpServer,
@@ -197,9 +202,9 @@ describe("Root WorkItem public contract", () => {
 
   // @test-value v1
   // kind = "contract"
-  // claim = "raw HTTP runtime envelopeはwork.revise、work.history.append、work.history.listを認証済みactor bindingとともにhandlerへ渡し、不正unionをhandler前に拒否する"
+  // claim = "raw HTTP runtime envelopeはRoot WorkItem操作を認証済みactor bindingとともにhandlerへ渡し、不正unionをhandler前に拒否し、適用済みlegacy replay復元不能errorを409で返す"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "新operationがHTTP routingから欠落するか、raw requestの不正な履歴種別がapplication handlerへ到達する"
+  // failure_mode = "新operationがHTTP routingから欠落する、不正な履歴種別がapplication handlerへ到達する、または適用済みlegacy replayを400へ崩してconsumerが競合処理できない"
   // scope = "session-runtime-http"
   // lifecycle = "permanent"
   // distinction = "client wrapperではなく交換envelopeをHTTP socketへ送りwire statusとhandler入力を観測する"
@@ -220,6 +225,15 @@ describe("Root WorkItem public contract", () => {
     agentRuntimeBindingRegistry: registry,
     handle: async (operation, input, _adapter, context) => {
       calls.push({ operation, input, actorSessionId: context.agentRuntimeBinding?.actorSessionId ?? null });
+      if (operation === "work.revise" && (input as { expectedRevision?: number }).expectedRevision === 98) {
+        return createSessionRuntimeError({
+          code: "IDEMPOTENCY_RESPONSE_UNAVAILABLE",
+          message: "The original idempotent Work Item response is unavailable after migration.",
+          retryable: false,
+          effect: "applied",
+          details: { operation: "work.revise", workItemId: rootWorkItem.id },
+        });
+      }
       return createSessionRuntimeResult(operation, {} as never);
     },
   });
@@ -256,7 +270,15 @@ describe("Root WorkItem public contract", () => {
     ));
     assert.equal(emptySummary.status, 400);
     assert.equal(JSON.parse(emptySummary.body).error.code, "INVALID_INPUT");
-    assert.deepEqual(calls.map((call) => call.operation), inputs.map(([operation]) => operation));
+    const unavailableReplay = await postRawRuntime(address.port, createExchangePayload(
+      "work.revise",
+      { ...reviseInput, expectedRevision: 98 },
+      projection.bindingReference,
+    ));
+    assert.equal(unavailableReplay.status, 409);
+    assert.equal(JSON.parse(unavailableReplay.body).error.code, "IDEMPOTENCY_RESPONSE_UNAVAILABLE");
+    assert.equal(JSON.parse(unavailableReplay.body).error.effect, "applied");
+    assert.deepEqual(calls.map((call) => call.operation), [...inputs.map(([operation]) => operation), "work.revise"]);
     assert.ok(calls.every((call) => call.actorSessionId === "root-a"));
     assert.deepEqual(calls[2]?.input, { workItemId: rootWorkItem.id, limit: WORK_ITEM_DEFAULT_LIST_LIMIT });
   } finally {
@@ -266,12 +288,12 @@ describe("Root WorkItem public contract", () => {
 
 // @test-value v1
 // kind = "contract"
-// claim = "application dispatchはRoot owner bindingをrevise、appendHistory、listHistoryへ渡し、成功したmutationだけroot Sessionをinvalidateし、history cursorとdomain errorをstableに保つ"
+// claim = "application dispatchはRoot owner bindingを各操作へ渡し、成功mutationだけinvalidateし、history cursor、revision conflict、legacy replay復元不能のapplied effectをstableなerrorへ投影する"
 // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-// failure_mode = "外部mutation後もGUIが古いprojectionを保持する、拒否されたmutationで不要なinvalidateを出す、別ownerがcursorを再利用する、またはstale revisionがgeneric runtime errorへ崩れる"
+// failure_mode = "外部mutation後もGUIが古いprojectionを保持する、拒否mutationでinvalidateする、cursor scopeを破る、またはstale revisionと適用済みlegacy replayをgeneric/未適用errorへ崩す"
 // scope = "session-external-application-service"
 // lifecycle = "permanent"
-// distinction = "parserとtransportでは見えないowner binding、成功二件とstale失敗のinvalidation差、cursor scope、domain error envelopeをapplication境界で観測する"
+// distinction = "parserとtransportでは見えないowner binding、成功二件と二種の失敗のinvalidation差、cursor scope、domain errorのeffect/detailsをapplication境界で観測する"
 // @end-test-value
 test("application dispatchはRoot owner method・history cursor scope・revision errorを保つ", async () => {
   const calls: Array<{ method: string; input: unknown; actorSessionId: string }> = [];
@@ -290,6 +312,13 @@ test("application dispatchはRoot owner method・history cursor scope・revision
       revise(input: typeof reviseInput, binding: ResolvedAgentRuntimeBinding) {
         calls.push({ method: "revise", input, actorSessionId: binding.actorSessionId });
         if (input.expectedRevision === 99) throw new WorkItemRevisionConflictError(input.workItemId, 99, 2);
+        if (input.expectedRevision === 98) {
+          throw new WorkItemIdempotencyResponseUnavailableError(
+            "work.revise",
+            input.idempotencyKey,
+            input.workItemId,
+          );
+        }
         return rootWorkItem;
       },
       appendHistory(input: typeof historyAppendInput, binding: ResolvedAgentRuntimeBinding) {
@@ -324,6 +353,21 @@ test("application dispatchはRoot owner method・history cursor scope・revision
   const stale = await service.execute("work.revise", { ...reviseInput, expectedRevision: 99 }, owner);
   assert.ok("error" in stale);
   assert.equal("error" in stale ? stale.error.code : "", "WORK_ITEM_REVISION_CONFLICT");
+  const unavailableReplay = await service.execute("work.revise", { ...reviseInput, expectedRevision: 98 }, owner);
+  assert.ok("error" in unavailableReplay);
+  assert.deepEqual(unavailableReplay, {
+    schemaVersion: SESSION_RUNTIME_ERROR_SCHEMA_VERSION,
+    error: {
+      code: "IDEMPOTENCY_RESPONSE_UNAVAILABLE",
+      message: "The original idempotent Work Item response is unavailable after migration.",
+      retryable: false,
+      effect: "applied",
+      details: {
+        operation: "work.revise",
+        workItemId: rootWorkItem.id,
+      },
+    },
+  });
   assert.deepEqual(invalidatedSessionIds, ["root-a", "root-a"]);
   assert.deepEqual(calls.slice(0, 3).map(({ method, actorSessionId }) => ({ method, actorSessionId })), [
     { method: "revise", actorSessionId: "root-a" },

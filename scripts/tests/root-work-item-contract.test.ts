@@ -20,6 +20,7 @@ import {
 import {
   WorkItemAggregationConflictError,
   WorkItemIdempotencyConflictError,
+  WorkItemIdempotencyResponseUnavailableError,
   WorkItemRevisionConflictError,
   WorkItemStateConflictError,
   WorkItemStorageV6,
@@ -864,14 +865,14 @@ describe("Root WorkItem contract", () => {
 
   // @test-value v1
   // kind = "regression"
-  // claim = "Session tree削除はactiveまたは未回収のdelegated WorkItemを拒否し、terminalかつ回収済みのdelegated WorkItemとevent、idempotency、execution association、aggregation ledgerを同じtransactionで物理削除する"
+  // claim = "Session tree削除は未確定nested delegated WorkItemを拒否し、aggregation decisionとroot finalization後にterminal delegated WorkItem、event、idempotency、execution association、aggregation ledgerを同じtransactionで物理削除する"
   // oracle = { type = "contract", ref = "docs/adr/028-session-root-work-item.md#Decision" }
-  // failure_mode = "delegated WorkItemが一件でもあるtreeを永久に削除不能にするか、回収前のterminal resultを消すか、関連ledgerだけを孤児として残す"
+  // failure_mode = "未確定nested resultを削除する、decision済みtreeを永久に削除不能にする、または関連ledgerだけを孤児として残す"
   // scope = "SessionStorageV6 WorkItem-aware tree deletion"
   // lifecycle = "permanent"
   // distinction = "nested delegatedをterminal化した直後の拒否、aggregation decision後のroot finalization、三階層bulk delete後の全関連表を同じfixtureで観測する"
   // @end-test-value
-  it("RW-6B: 回収済みdelegatedをledgerごと削除し未回収resultは保護する", async () => {
+  it("RW-6B: decision済みnested delegatedをledgerごと削除する", async () => {
     const harness = await createHarness();
     try {
       const root = insertRootSession(harness, "root", "overall-coordinator");
@@ -964,13 +965,106 @@ describe("Root WorkItem contract", () => {
   });
 
   // @test-value v1
+  // kind = "regression"
+  // claim = "parent-null delegated resultは報告だけでは回収済みにならず、root WorkItemがactiveな間はtarget Session削除をserviceとschema triggerの両方で拒否し、root terminal後だけtreeと共に削除できる"
+  // oracle = { type = "adr", ref = "docs/adr/028-session-root-work-item.md#Decision" }
+  // failure_mode = "top-level result報告直後のtarget Session削除が成功し、root revisionや履歴に採用証拠がないまま唯一のresultを失う"
+  // scope = "SessionStorageV6 and SQLite trigger WorkItem-aware deletion"
+  // lifecycle = "permanent"
+  // distinction = "nested aggregationではなくparent-null delegatedを使い、active rootでのservice deleteとraw SQL delete、root terminal後のcleanupを順に観測する"
+  // @end-test-value
+  it("RW-6C: top-level delegated resultをroot terminalまで保護する", async () => {
+    const harness = await createHarness();
+    try {
+      const root = insertRootSession(harness, "root", "overall-coordinator");
+      insertChildSession(harness, "task", root, "executor");
+      const rootItem = getRootWorkItem(harness, "root");
+      const branch = createDelegated(harness, "root", "task", "top-level-result");
+      const activeBranch = harness.service.transition({
+        workItemId: branch.id,
+        state: "in_progress",
+        expectedRevision: branch.revision,
+        idempotencyKey: "top-level-result-start",
+      }, runtimeBinding("task"));
+      const terminalBranch = reportResult(
+        harness,
+        branch.id,
+        "task",
+        "completed",
+        activeBranch.revision,
+        "top-level-result-report",
+      );
+      const rootHistoryBeforeDelete = harness.workStorage.listHistory({
+        workItemId: rootItem.id,
+        afterSequence: null,
+        limit: 20,
+      });
+
+      assert.throws(() => harness.sessionStorage.deleteSession("task"), /WORK_ITEM_SESSION_PROTECTED/);
+      const raw = new DatabaseSync(harness.dbPath);
+      try {
+        assert.throws(
+          () => raw.prepare("DELETE FROM sessions_v6 WHERE id = 'task'").run(),
+          /WORK_ITEM_SESSION_PROTECTED/,
+        );
+      } finally {
+        raw.close();
+      }
+      assert.ok(harness.sessionStorage.getSession("task"));
+      assert.equal(harness.workStorage.get(branch.id)?.result?.summary, terminalBranch.result?.summary);
+      assert.equal(harness.workStorage.get(rootItem.id)?.revision, rootItem.revision);
+      assert.deepEqual(
+        harness.workStorage.listHistory({ workItemId: rootItem.id, afterSequence: null, limit: 20 }),
+        rootHistoryBeforeDelete,
+      );
+
+      const activeRoot = harness.service.transition({
+        workItemId: rootItem.id,
+        state: "in_progress",
+        expectedRevision: rootItem.revision,
+        idempotencyKey: "top-level-root-start",
+      }, runtimeBinding("root"));
+      reportResult(
+        harness,
+        rootItem.id,
+        "root",
+        "completed",
+        activeRoot.revision,
+        "top-level-root-result",
+      );
+      const rawCleanup = new DatabaseSync(harness.dbPath);
+      try {
+        rawCleanup.exec(`
+          PRAGMA foreign_keys = ON;
+          BEGIN IMMEDIATE;
+          DELETE FROM session_role_bindings_v6 WHERE session_id IN ('root', 'task');
+          DELETE FROM sessions_v6 WHERE id = 'task';
+          DELETE FROM sessions_v6 WHERE id = 'root';
+          COMMIT;
+        `);
+      } catch (error) {
+        if (rawCleanup.isTransaction) rawCleanup.exec("ROLLBACK;");
+        throw error;
+      } finally {
+        rawCleanup.close();
+      }
+      assert.equal(tableCount(harness.dbPath, "sessions_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6"), 0);
+    } finally {
+      await closeHarness(harness);
+    }
+  });
+
+  // @test-value v1
   // kind = "compatibility"
-  // claim = "v1 WorkItem migrationは既存rowをdelegatedとしてbinding、result、execution association、aggregation、idempotencyと共に保持し、migration_baselineとroot backfillを二回目のrepairで増殖させない"
+  // claim = "v1 WorkItem migrationは既存rowとledgerを保持して二回目のrepairで増殖させず、responseを持たないlegacy idempotency replayを後続current projectionではなく適用済みresponse復元不能errorへ収束させる"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#Migration と repair" }
-  // failure_mode = "table rebuildで既存委任契約または関連ledgerを失う、存在しない履歴を生成する、legacy parent-nullをreparentする、またはrepair再実行でRoot WorkItemとbaselineを重複する"
+  // failure_mode = "table rebuildで既存委任契約またはledgerを失う、存在しない履歴を生成する、repairでrowを重複する、または旧key再送へ後続revisionを元のcanonical responseとして返す"
   // scope = "ensureV6Schema WorkItem v1 migration and backfill"
   // lifecycle = "permanent"
-  // distinction = "v1 table shapeへ実データと関連表を投入してからschema migrationを二回実行し、tupleとrow countを比較する"
+  // distinction = "v1 table shapeへ実データと関連表を投入してmigrationを二回実行した後、WorkItemだけを後続revisionへ進め、旧fingerprint replayのerror tupleを観測する"
   // @end-test-value
   it("RW-5: v1 delegatedをbaselineから保持してroot backfillを二回実行しても収束する", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "withmate-root-work-item-migration-"));
@@ -1021,6 +1115,36 @@ describe("Root WorkItem contract", () => {
         assert.equal(first.childResultSummary, "legacy child result");
       } finally {
         db.close();
+      }
+      const migratedStorage = new WorkItemStorageV6(dbPath);
+      try {
+        const laterRevision = migratedStorage.mutate({
+          operation: "work.transition",
+          workItemId: "legacy-parent",
+          principalSessionId: "legacy-task",
+          idempotencyKey: "later-transition",
+          requestFingerprint: "later-fingerprint",
+          expectedRevision: 3,
+          state: "waiting",
+          result: null,
+          updatedAt: "2026-08-30T01:00:00.000Z",
+          expiresAt: EXPIRES,
+        });
+        assert.equal(laterRevision.revision, 4);
+        assert.throws(
+          () => migratedStorage.resolveIdempotency(
+            "work.transition",
+            "legacy-task",
+            "legacy-transition",
+            "fingerprint",
+            NOW,
+          ),
+          (error) => error instanceof WorkItemIdempotencyResponseUnavailableError
+            && error.code === "IDEMPOTENCY_RESPONSE_UNAVAILABLE"
+            && error.workItemId === "legacy-parent",
+        );
+      } finally {
+        migratedStorage.close();
       }
     } finally {
       await rm(directory, { recursive: true, force: true });

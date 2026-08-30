@@ -203,7 +203,10 @@ test("Root WorkItem の改訂と引き継ぎ callback を操作から検証す�
     const goal = [...container.querySelectorAll("textarea")].find((textarea) => textarea.parentElement?.textContent?.startsWith("goal")) as HTMLTextAreaElement;
     assert.ok(goal);
     await act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")?.click());
-    assert.equal((revisions[0] as { goal: string }).goal, "Root goal");
+    assert.deepEqual(
+      { goal: (revisions[0] as { goal: string }).goal, expectedRevision: (revisions[0] as { expectedRevision: number }).expectedRevision },
+      { goal: "Root goal", expectedRevision: 4 },
+    );
     await act(async () => handoff.click());
     assert.equal(handoffs, 1);
 
@@ -280,6 +283,61 @@ test("Root WorkItem改訂は成功時だけeditorを閉じてfailure時はdraft�
     assert.ok(container.querySelector("form.root-work-item-edit-form"));
     assert.equal(container.querySelector<HTMLTextAreaElement>("textarea")?.value, "Root goal");
     assert.match(container.querySelector('[role="alert"]')?.textContent ?? "", /契約改訂は保存されました/);
+  } finally {
+    await act(async () => root.unmount());
+    dom.window.close();
+    Object.assign(globalThis, previous);
+  }
+});
+
+// @test-value v1
+// kind = "regression"
+// claim = "Root WorkItem editorは編集中に外部revisionが流入するとdraftと編集開始revisionを維持して保存を止め、明示的な破棄操作後だけ最新projectionとrevisionで保存する"
+// oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#6-ui" }
+// failure_mode = "編集中のprojection refreshでexpectedRevisionだけが最新化されるか、stale draftを保存可能なままにして外部変更を上書きする"
+// scope = "SessionContextPane Root WorkItem revision editor"
+// lifecycle = "permanent"
+// distinction = "revision 4でeditorを開いた後、revision 5と外部goalへ再描画し、draft保持、status、保存抑止、明示再読込後のsubmit payloadを順に観測する"
+// @end-test-value
+test("Root WorkItem改訂は外部更新後の保存を止めて明示再読込する", async () => {
+  const dom = new JSDOM("<!doctype html><html><body><div id=\"root\"></div></body></html>", { pretendToBeVisual: true });
+  const container = dom.window.document.getElementById("root") as HTMLElement;
+  const root = createRoot(container);
+  const revisions: Array<{ expectedRevision: number; goal: string }> = [];
+  const onReviseRootWorkItem = (input: { expectedRevision: number; goal: string }) => {
+    revisions.push(input);
+    return false;
+  };
+  const previous = { window: globalThis.window, document: globalThis.document, Node: globalThis.Node, HTMLElement: globalThis.HTMLElement };
+  Object.assign(globalThis, { window: dom.window, document: dom.window.document, Node: dom.window.Node, HTMLElement: dom.window.HTMLElement });
+  try {
+    await act(async () => root.render(<SessionContextPane {...paneProps({ onReviseRootWorkItem })} />));
+    const revise = [...container.querySelectorAll("button")].find((button) => button.textContent === "改訂") as HTMLButtonElement;
+    await act(async () => revise.click());
+
+    await act(async () => root.render(<SessionContextPane {...paneProps({
+      rootWorkItem: { ...rootWorkItem, revision: 5, goal: "Externally revised" },
+      onReviseRootWorkItem,
+    })} />));
+    const goal = [...container.querySelectorAll("textarea")]
+      .find((textarea) => textarea.parentElement?.textContent?.startsWith("goal")) as HTMLTextAreaElement;
+    assert.equal(goal.value, "Root goal");
+    assert.match(container.querySelector('[role="status"]')?.textContent ?? "", /入力内容は保持されています/);
+    assert.equal(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled, true);
+
+    await act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")?.click());
+    assert.deepEqual(revisions, []);
+    const reload = [...container.querySelectorAll("button")]
+      .find((button) => button.textContent === "入力を破棄して最新版を読み込む") as HTMLButtonElement;
+    await act(async () => reload.click());
+    assert.equal(goal.value, "Externally revised");
+    assert.equal(container.querySelector('[role="status"]'), null);
+    assert.equal(container.querySelector<HTMLButtonElement>("button[type=submit]")?.disabled, false);
+    await act(async () => container.querySelector<HTMLButtonElement>("button[type=submit]")?.click());
+    assert.deepEqual(revisions.map(({ expectedRevision, goal: submittedGoal }) => ({ expectedRevision, goal: submittedGoal })), [
+      { expectedRevision: 5, goal: "Externally revised" },
+    ]);
+    assert.ok(container.querySelector("form.root-work-item-edit-form"));
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

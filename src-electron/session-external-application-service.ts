@@ -145,6 +145,7 @@ import {
 } from "./work-item-service.js";
 import {
   WorkItemIdempotencyConflictError,
+  WorkItemIdempotencyResponseUnavailableError,
   WorkItemNotFoundError,
   WorkItemRevisionConflictError,
   WorkItemResultTooLargeError,
@@ -1377,6 +1378,17 @@ function mapApplicationError(error: unknown, operation: SessionRuntimeOperation 
   }
   if (error instanceof WorkItemIdempotencyConflictError) {
     return createSessionRuntimeError({ code: error.code, message: "The idempotency key was reused with different input." });
+  }
+  if (error instanceof WorkItemIdempotencyResponseUnavailableError) {
+    return createSessionRuntimeError({
+      code: error.code,
+      message: "The original idempotent Work Item response is unavailable after migration.",
+      effect: "applied",
+      details: {
+        operation: error.operation,
+        workItemId: error.workItemId,
+      },
+    });
   }
   if (error instanceof WorkItemResultTooLargeError) {
     return createSessionRuntimeError({
