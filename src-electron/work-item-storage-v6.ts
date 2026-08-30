@@ -740,6 +740,17 @@ export class WorkItemStorageV6 {
       const parent = this.getRequired(input.parentWorkItemId);
       const child = this.requireAggregationMutation(parent, input.childWorkItemId, input.actorSessionId, input.expectedAggregateRevision);
       this.validateDecision(child, "retry_requested", input.reason);
+      if (
+        input.replacementBinding.parentWorkItemId !== parent.id
+        || input.replacementBinding.rootSessionId !== parent.rootSessionId
+        || input.replacementBinding.creatorSessionId !== parent.targetSessionId
+      ) {
+        throw new WorkItemAggregationConflictError(
+          "WORK_ITEM_PARENT_INVALID",
+          "The replacement Work Item binding does not match the delegated aggregation parent.",
+          { parentWorkItemId: parent.id },
+        );
+      }
       this.db.prepare(`INSERT INTO work_items_v6 (
         id, contract_revision, kind, root_session_id, creator_session_id, target_session_id, parent_work_item_id,
         goal, scope, completion_criteria, authority, source_identity_json, state, revision,

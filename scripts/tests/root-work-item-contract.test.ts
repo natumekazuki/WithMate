@@ -661,7 +661,8 @@ describe("Root WorkItem contract", () => {
     const harness = await createHarness();
     try {
       const root = insertRootSession(harness, "root", "overall-coordinator");
-      insertChildSession(harness, "task", root, "task-coordinator");
+      const task = insertChildSession(harness, "task", root, "task-coordinator");
+      insertChildSession(harness, "executor", task, "executor");
       const rootItem = getRootWorkItem(harness, "root");
       const activeRoot = harness.service.transition({
         workItemId: rootItem.id,
@@ -798,10 +799,60 @@ describe("Root WorkItem contract", () => {
         expiresAt: EXPIRES,
       }), isAggregationParentInvalid);
 
-      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id IN ('service-root-child', 'storage-root-child', 'storage-root-replacement')"), 0);
-      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id IN ('service-root-child', 'storage-root-child', 'storage-root-replacement')"), 0);
+      const validParent = createDelegated(harness, "root", "task", "retry-valid-parent");
+      const activeValidParent = harness.service.transition({
+        workItemId: validParent.id,
+        state: "in_progress",
+        expectedRevision: validParent.revision,
+        idempotencyKey: "retry-valid-parent-start",
+      }, runtimeBinding("task"));
+      const validChild = createDelegated(harness, "task", "executor", "retry-valid-child", activeValidParent.id);
+      const activeValidChild = harness.service.transition({
+        workItemId: validChild.id,
+        state: "in_progress",
+        expectedRevision: validChild.revision,
+        idempotencyKey: "retry-valid-child-start",
+      }, runtimeBinding("executor"));
+      reportResult(
+        harness,
+        validChild.id,
+        "executor",
+        "completed",
+        activeValidChild.revision,
+        "retry-valid-child-result",
+      );
+      assert.throws(() => harness.workStorage.retryAggregation({
+        parentWorkItemId: activeValidParent.id,
+        childWorkItemId: validChild.id,
+        actorSessionId: "task",
+        expectedAggregateRevision: 1,
+        idempotencyKey: "storage-mismatched-retry",
+        requestFingerprint: "storage-mismatched-retry-fingerprint",
+        replacementId: "storage-mismatched-replacement",
+        replacementBinding: {
+          kind: "delegated",
+          rootSessionId: "root",
+          creatorSessionId: "task",
+          targetSessionId: "executor",
+          parentWorkItemId: rootItem.id,
+          goal: "replacement",
+          scope: "scope",
+          completionCriteria: "complete",
+          authority: "authority",
+          sourceIdentity: SOURCE_IDENTITY,
+        },
+        reason: null,
+        decidedAt: NOW,
+        expiresAt: EXPIRES,
+      }), (error: unknown) => error instanceof WorkItemAggregationConflictError
+        && error.code === "WORK_ITEM_PARENT_INVALID");
+
+      assert.equal(harness.workStorage.getAggregationSummary(activeValidParent.id).aggregateRevision, 1);
+      assert.equal(tableCount(harness.dbPath, "work_items_v6", "id IN ('service-root-child', 'storage-root-child', 'storage-root-replacement', 'storage-mismatched-replacement')"), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_events_v6", "work_item_id IN ('service-root-child', 'storage-root-child', 'storage-root-replacement', 'storage-mismatched-replacement')"), 0);
       assert.equal(tableCount(harness.dbPath, "work_item_aggregations_v6", "parent_work_item_id = ?", rootItem.id), 0);
       assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6", "parent_work_item_id = ?", rootItem.id), 0);
+      assert.equal(tableCount(harness.dbPath, "work_item_aggregation_decisions_v6", "child_work_item_id = ?", validChild.id), 0);
       assert.equal(tableCount(harness.dbPath, "work_item_aggregation_idempotency_v6"), 0);
       assert.equal(tableCount(harness.dbPath, "work_item_idempotency_v6", "idempotency_key IN ('service-root-child', 'storage-root-child', 'root-result-with-aggregate')"), 0);
     } finally {
