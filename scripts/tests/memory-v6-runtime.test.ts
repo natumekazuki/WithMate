@@ -847,7 +847,7 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
   });
 
   // @test-value v1
-  // kind = "concurrency"
+  // kind = "invariant"
   // claim = "legacy pointerのpublication集合検証からcommitまでregistry mutationを排他し、別runtimeを割り込ませない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
   // failure_mode = "Bが集合検証後にCをpublishさせ、BとCがactiveなのにBのpointerをlast-writer公開する"
