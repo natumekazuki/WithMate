@@ -144,12 +144,52 @@ describe("WithMate Session MCP contract", () => {
   // kind = "contract"
   // claim = "MCPはRoot WorkItem三操作を含む全38 toolをdotted name、strict schema、read/write annotation付きで公開する"
   // oracle = { type = "contract", ref = "docs/plans/20260830-session-root-work-item/plan.md#公開操作" }
-  // failure_mode = "HTTP/CLIにあるRoot WorkItem操作がMCP tool一覧から欠落するかstrictnessとeffect annotationが分岐する"
+  // failure_mode = "HTTP/CLIにある操作がMCP tool一覧から欠落するか、いずれかのtoolのreadOnly/destructive分類が実際のeffectと分岐してclientが操作を誤分類する"
   // scope = "WithMate Session MCP tool catalog"
   // lifecycle = "permanent"
-  // distinction = "個別tool dispatchではなくtool集合、schema strictness、annotationを横断検証する"
+  // distinction = "個別tool dispatchではなく、全38件の独立した期待表でtool集合、schema strictness、readOnly/destructive annotationを横断検証する"
   // @end-test-value
   it("全38 toolsをdotted name、strict schema、read/write annotation付きで公開する", async () => {
+    const expectedEffectAnnotations: Record<string, { readOnlyHint: boolean; destructiveHint: boolean }> = {
+      "runtime.catalog": { readOnlyHint: true, destructiveHint: false },
+      "session.self": { readOnlyHint: true, destructiveHint: false },
+      "session.create": { readOnlyHint: false, destructiveHint: false },
+      "session.list": { readOnlyHint: true, destructiveHint: false },
+      "session.get": { readOnlyHint: true, destructiveHint: false },
+      "session.rename": { readOnlyHint: false, destructiveHint: false },
+      "session.files.list": { readOnlyHint: true, destructiveHint: false },
+      "session.files.read_text": { readOnlyHint: true, destructiveHint: false },
+      "session.files.write_text": { readOnlyHint: false, destructiveHint: true },
+      "work.create": { readOnlyHint: false, destructiveHint: false },
+      "work.list": { readOnlyHint: true, destructiveHint: false },
+      "work.get": { readOnlyHint: true, destructiveHint: false },
+      "work.revise": { readOnlyHint: false, destructiveHint: false },
+      "work.history.append": { readOnlyHint: false, destructiveHint: false },
+      "work.history.list": { readOnlyHint: true, destructiveHint: false },
+      "work.transition": { readOnlyHint: false, destructiveHint: false },
+      "work.result": { readOnlyHint: false, destructiveHint: false },
+      "work.cancel": { readOnlyHint: false, destructiveHint: true },
+      "work.aggregation.get": { readOnlyHint: true, destructiveHint: false },
+      "work.aggregation.list": { readOnlyHint: true, destructiveHint: false },
+      "work.aggregation.decide": { readOnlyHint: false, destructiveHint: false },
+      "work.aggregation.retry": { readOnlyHint: false, destructiveHint: false },
+      "turn.options": { readOnlyHint: true, destructiveHint: false },
+      "turn.run": { readOnlyHint: false, destructiveHint: true },
+      "turn.enqueue": { readOnlyHint: false, destructiveHint: true },
+      "turn.list": { readOnlyHint: true, destructiveHint: false },
+      "turn.get": { readOnlyHint: true, destructiveHint: false },
+      "turn.cancel": { readOnlyHint: false, destructiveHint: true },
+      "interaction.list": { readOnlyHint: true, destructiveHint: false },
+      "interaction.respond": { readOnlyHint: false, destructiveHint: true },
+      "coordination.event.create": { readOnlyHint: false, destructiveHint: false },
+      "coordination.event.list": { readOnlyHint: true, destructiveHint: false },
+      "coordination.event.get": { readOnlyHint: true, destructiveHint: false },
+      "coordination.event.resolve": { readOnlyHint: false, destructiveHint: false },
+      "coordination.event.consume": { readOnlyHint: false, destructiveHint: false },
+      "coordination.event.cancel": { readOnlyHint: false, destructiveHint: true },
+      "coordination.event.correct": { readOnlyHint: false, destructiveHint: true },
+      "transcript.export": { readOnlyHint: false, destructiveHint: true },
+    };
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /scope or policy decision/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /Use user_decision_required/);
     assert.match(SESSION_MCP_SERVER_INSTRUCTIONS, /free-text response to your blocker/);
@@ -159,7 +199,10 @@ describe("WithMate Session MCP contract", () => {
     await withClient(createWithMateSessionMcpServer(), async (client) => {
       const result = await client.listTools();
       assert.deepEqual(result.tools.map((tool) => tool.name), SESSION_MCP_TOOL_DEFINITIONS.map((tool) => tool.name));
+      assert.deepEqual(Object.keys(expectedEffectAnnotations), result.tools.map((tool) => tool.name));
       for (const tool of result.tools) {
+        const expectedEffect = expectedEffectAnnotations[tool.name];
+        assert.ok(expectedEffect, `Missing effect annotation expectation for ${tool.name}.`);
         assert.equal(tool.inputSchema.type, "object");
         assert.equal(tool.inputSchema.additionalProperties, false);
         assert.equal(tool.outputSchema?.type, "object");
@@ -172,24 +215,9 @@ describe("WithMate Session MCP contract", () => {
           tool.name === "turn.run" || tool.name === "turn.enqueue" || tool.name === "interaction.respond" || tool.name === "transcript.export",
         );
         assert.equal(tool.annotations?.idempotentHint, true);
+        assert.equal(tool.annotations?.readOnlyHint, expectedEffect.readOnlyHint, `${tool.name} readOnlyHint`);
+        assert.equal(tool.annotations?.destructiveHint, expectedEffect.destructiveHint, `${tool.name} destructiveHint`);
       }
-      assert.equal(result.tools.find((tool) => tool.name === "turn.list")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "runtime.catalog")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "session.self")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "turn.cancel")?.annotations?.destructiveHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "turn.run")?.annotations?.destructiveHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "turn.enqueue")?.annotations?.destructiveHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "session.list")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "session.get")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "turn.options")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "session.files.list")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "session.files.read_text")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.readOnlyHint, false);
-      assert.equal(result.tools.find((tool) => tool.name === "session.files.write_text")?.annotations?.destructiveHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "work.aggregation.get")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "work.aggregation.retry")?.annotations?.readOnlyHint, false);
-      assert.equal(result.tools.find((tool) => tool.name === "interaction.list")?.annotations?.readOnlyHint, true);
-      assert.equal(result.tools.find((tool) => tool.name === "interaction.respond")?.annotations?.destructiveHint, true);
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.create")?.description ?? "", /stable eventId/);
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.list")?.description ?? "", /stable eventId/);
       assert.match(result.tools.find((tool) => tool.name === "coordination.event.get")?.description ?? "", /create idempotencyKey/);
