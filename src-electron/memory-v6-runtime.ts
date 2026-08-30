@@ -1213,6 +1213,7 @@ export async function startMemoryV6RuntimeApi(
   let server: MemoryV6HttpServer | null = null;
   let registryPublication: RuntimeDiscoveryRegistryPublication | null = null;
   let legacyDiscoveryFile: PublishedMemoryV6DiscoveryFile | null = null;
+  let legacyPointerBeforeRegistryPublication: string | null = null;
   const legacyPaths = resolveRuntimeDiscoveryPaths(options.runtimeDirectoryPath);
   const clock = options.runtimeDiscoveryClock
     ?? (options.now ? { now: options.now } : SYSTEM_RUNTIME_DISCOVERY_CLOCK);
@@ -1387,11 +1388,37 @@ export async function startMemoryV6RuntimeApi(
       beforePublicationCommit: () => withLegacyPointerLock(
         legacyPaths.runtimeDirectoryPath,
         async () => {
+          legacyPointerBeforeRegistryPublication = await readCurrentLegacyRuntimeGenerationId(
+            legacyPaths.runtimeDirectoryPath,
+          );
           await rm(legacyPaths.discoveryFilePath, { force: true });
           await options.beforeRuntimeRegistryPublicationCommit?.();
         },
       ),
       beforePublicationLock: options.beforeRuntimeRegistryPublicationLock,
+      afterPublicationRollback: () => withLegacyPointerLock(
+        legacyPaths.runtimeDirectoryPath,
+        async () => {
+          if (!legacyPointerBeforeRegistryPublication
+            || await readCurrentLegacyRuntimeGenerationId(legacyPaths.runtimeDirectoryPath) !== null) {
+            return;
+          }
+          let temporaryFilePath: string | null = null;
+          try {
+            temporaryFilePath = await prepareDiscoveryPairPointer(
+              legacyPaths.discoveryFilePath,
+              legacyPointerBeforeRegistryPublication,
+              security,
+            );
+            await rename(temporaryFilePath, legacyPaths.discoveryFilePath);
+            temporaryFilePath = null;
+          } finally {
+            if (temporaryFilePath) {
+              await rm(temporaryFilePath, { force: true }).catch(() => undefined);
+            }
+          }
+        },
+      ),
       onHeartbeatError: (error) => {
         options.log?.({
           level: "warn",

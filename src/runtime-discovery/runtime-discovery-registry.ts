@@ -106,6 +106,8 @@ export type PublishRuntimeDiscoveryEntryOptions =
     beforePublicationCommit?: () => Promise<void>;
     /** Test-only observation point immediately before waiting for the publication lock. */
     beforePublicationLock?: () => Promise<void>;
+    /** Restores adapter-owned projection state after this publication is fully rolled back. */
+    afterPublicationRollback?: () => Promise<void>;
   };
 
 type RegistryLayout = {
@@ -1001,6 +1003,7 @@ export async function publishRuntimeDiscoveryEntry(
   await mkdir(stagingDirectoryPath, { recursive: false, mode: 0o700 });
   let committedRecord: RuntimeDiscoveryRegistryRecord | null = null;
   let claimedSlotPath: string | null = null;
+  let publicationProjectionPrepared = false;
   try {
     const stagingStats = await lstat(stagingDirectoryPath);
     if (!stagingStats.isDirectory() || stagingStats.isSymbolicLink()) {
@@ -1077,6 +1080,7 @@ export async function publishRuntimeDiscoveryEntry(
             slotName,
           );
           try {
+            publicationProjectionPrepared = true;
             await options.beforePublicationCommit?.();
             await rename(stagingDirectoryPath, slotDirectoryPath);
             claimedSlotPath = slotDirectoryPath;
@@ -1200,6 +1204,30 @@ export async function publishRuntimeDiscoveryEntry(
                 }
               }
             }
+          }
+          const exactAfterRollback = await findExactRecord(
+            layout.rootDirectoryPath,
+            options.identity,
+            limits,
+          );
+          if (!exactAfterRollback) {
+            await options.afterPublicationRollback?.();
+          }
+        },
+      );
+    } else if (publicationProjectionPrepared) {
+      await withRegistryMutationLock(
+        layout,
+        "rollback",
+        options.mutationObserver,
+        async () => {
+          const exactAfterFailure = await findExactRecord(
+            layout.rootDirectoryPath,
+            options.identity,
+            limits,
+          );
+          if (!exactAfterFailure) {
+            await options.afterPublicationRollback?.();
           }
         },
       );

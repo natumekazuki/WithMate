@@ -933,6 +933,61 @@ it("V6 DBをbootstrapし、owner-bound statusとlocal user APIを公開する", 
 
   // @test-value v1
   // kind = "compatibility"
+  // claim = "新runtimeのregistry publicationがpointer非公開化後に失敗しても、既存の一意runtimeへlegacy pointerをrollbackする"
+  // oracle = { type = "adr", ref = "ADR-023 legacy pointer compatibility" }
+  // failure_mode = "Bのentry publish失敗がAの正常なlegacy CLI/MCP discovery経路を失わせる"
+  // scope = "memory-legacy-projection-publication-rollback"
+  // lifecycle = "permanent"
+  // distinction = "credential準備前の失敗ではなく、registry lock内でpointerを非公開化した後のentry commit失敗を注入する"
+  // @end-test-value
+  it("registry publication失敗時は既存runtimeのlegacy pointerを復元する", async () => {
+    const runtimeDirectoryPath = await mkdtemp(path.join(tmpdir(), "withmate-memory-v6-runtime-"));
+    const registryDirectoryPath = path.join(runtimeDirectoryPath, "registry");
+    const userDataPaths = await Promise.all([0, 1].map(() => (
+      mkdtemp(path.join(tmpdir(), "withmate-memory-v6-userdata-"))
+    )));
+    let runtimeA: Awaited<ReturnType<typeof startMemoryV6RuntimeApi>> | null = null;
+    try {
+      runtimeA = await startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[0],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_A,
+        buildChannel: "installed",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+      });
+      const runtimeAGeneration = runtimeA.runtimeGenerationId;
+      await assert.rejects(() => startMemoryV6RuntimeApi({
+        userDataPath: userDataPaths[1],
+        applicationInstanceId: TEST_APPLICATION_INSTANCE_B,
+        buildChannel: "development",
+        registryDirectoryPath,
+        runtimeDirectoryPath,
+        runtimePathSecurity: async () => undefined,
+        beforeRuntimeRegistryPublicationCommit: async () => {
+          throw new Error("injected registry publication failure");
+        },
+      }));
+
+      const restored = (await readDiscoveryProjection(runtimeA.discoveryFilePath)).document;
+      assert.equal(restored.applicationInstanceId, TEST_APPLICATION_INSTANCE_A);
+      assert.equal(restored.runtimeGenerationId, runtimeAGeneration);
+      const snapshot = await listRuntimeDiscoveryRegistryEntries(registryDirectoryPath);
+      assert.deepEqual(
+        snapshot.records.map((record) => record.entry.applicationInstanceId),
+        [TEST_APPLICATION_INSTANCE_A],
+      );
+    } finally {
+      await runtimeA?.stop().catch(() => undefined);
+      await Promise.all(userDataPaths.map((userDataPath) => (
+        rm(userDataPath, { recursive: true, force: true })
+      )));
+      await rm(runtimeDirectoryPath, { recursive: true, force: true });
+    }
+  });
+
+  // @test-value v1
+  // kind = "compatibility"
   // claim = "legacy handoffはfreshな候補をregistry credential状態にかかわらずactive集合へ含め、複数ならpointerを公開しない"
   // oracle = { type = "adr", ref = "ADR-023 legacy pointer ambiguity" }
   // failure_mode = "freshなCのregistry credentialが不正なためCを除外し、AとCがactiveなのにAへpointerをhandoffする"
